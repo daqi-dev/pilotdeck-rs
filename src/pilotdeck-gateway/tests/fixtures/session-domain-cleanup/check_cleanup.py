@@ -1688,15 +1688,19 @@ def _block_rebinds_shared(stmts, name):
     return any(_statement_rebinds_shared(stmt, name) for stmt in stmts)
 
 
-def _is_system_exit_raise(node):
-    """``raise SystemExit`` / ``raise SystemExit(...)``: both leave with 0."""
+def _is_system_exit_raise(node, aliases=None):
+    """``raise SystemExit`` / ``raise SystemExit(...)``: both leave with 0.
+
+    An alias for the exception class -- ``from builtins import SystemExit as
+    SE; raise SE(0)`` -- is the same raise under another name and resolves
+    through ``_exit_target`` like the call family (GLM boundary r16 P0-1).
+    """
     exc = node.exc
-    if isinstance(exc, ast.Call):
-        return isinstance(exc.func, ast.Name) and exc.func.id == 'SystemExit'
-    return isinstance(exc, ast.Name) and exc.id == 'SystemExit'
+    callee = exc.func if isinstance(exc, ast.Call) else exc
+    return _exit_target(callee, aliases) == 'builtins.SystemExit'
 
 
-def _exits_within(stmt):
+def _exits_within(stmt, aliases=None):
     """True when *stmt* can return or exit by itself, at any depth.
 
     A propagating exception is not an optimistic exit: it never returns 0, and a
@@ -1706,14 +1710,14 @@ def _exits_within(stmt):
     for node in ast.walk(stmt):
         if isinstance(node, ast.Return):
             return True
-        if isinstance(node, ast.Raise) and _is_system_exit_raise(node):
+        if isinstance(node, ast.Raise) and _is_system_exit_raise(node, aliases):
             return True
-        if isinstance(node, ast.Call) and _is_exit_call(node):
+        if isinstance(node, ast.Call) and _is_exit_call(node, aliases):
             return True
     return False
 
 
-def _overwritten_before_exit(later, name):
+def _overwritten_before_exit(later, name, aliases=None):
     """True when a later sibling rebinds *name* from the shared call in time.
 
     A ``return`` / ``raise`` between the zero binding and the overwrite leaves a
@@ -1723,13 +1727,13 @@ def _overwritten_before_exit(later, name):
     """
     for stmt in later:
         if _statement_rebinds_shared(stmt, name):
-            return not _exits_within(stmt)
-        if _exits_within(stmt):
+            return not _exits_within(stmt, aliases)
+        if _exits_within(stmt, aliases):
             return False
     return False
 
 
-def _optimistic_binding_sites(function, name):
+def _optimistic_binding_sites(function, name, aliases=None):
     """Linenos where a constant-zero binding of *name* can reach a return.
 
     ``code = 0`` as an initializer that every following path overwrites with the
@@ -1743,7 +1747,7 @@ def _optimistic_binding_sites(function, name):
 
     def visit(stmts):
         for index, stmt in enumerate(stmts):
-            safe = _overwritten_before_exit(stmts[index + 1:], name)
+            safe = _overwritten_before_exit(stmts[index + 1:], name, aliases)
             for lineno, value in _direct_bindings(stmt, name):
                 if _constant_exit_zero(value) and not safe:
                     sites.add(lineno)
@@ -1800,7 +1804,7 @@ def _container_holds_zero(value, bindings):
     return False
 
 
-def _helper_exits_zero(target, lookup, seen):
+def _helper_exits_zero(target, lookup, seen, aliases=None):
     """True when *target* has a path that leaves the process with 0.
 
     A bare ``return`` and a body that simply ends both hand ``None`` back, and
@@ -1810,11 +1814,14 @@ def _helper_exits_zero(target, lookup, seen):
     Exit spellings inside the helper body -- ``sys.exit(0)`` in statement
     position, a bare ``raise SystemExit`` -- are invisible to a walk that only
     looks at ``Return`` nodes, yet they leave the process at 0 just the same
-    (GLM boundary r10 P1-2).
+    (GLM boundary r10 P1-2).  The helper's own body aliases are added to the
+    module-level ones, so ``bail = sys.exit; bail(0)`` reads the same here
+    (GLM boundary r16 P0-1).
     """
     hands_back = False
     raises_plain = False
     bindings = _name_bindings(target)
+    aliases = _binding_exit_aliases(bindings, aliases)
     for item in ast.walk(target):
         if isinstance(item, ast.Return):
             hands_back = True
@@ -1826,17 +1833,18 @@ def _helper_exits_zero(target, lookup, seen):
                     _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
                 return True
             if any(isinstance(arm, ast.Name)
-                   and _exit_name_violation(arm.id, bindings, target, lookup)
+                   and _exit_name_violation(arm.id, bindings, target, lookup,
+                                           aliases)
                    for arm in _exit_arms(item.value)):
                 # ``code = 0; return code`` inside the helper is the same leak
                 # as a literal zero: the point-level rule already judges the
                 # relayed name, so the delegation family may not call it clean
                 # one call away (MiniMax boundary r12 P0-1).
                 return True
-            if _delegated_exit(item.value, lookup, seen):
+            if _delegated_exit(item.value, lookup, seen, aliases=aliases):
                 return True
         elif isinstance(item, ast.Raise):
-            if not _is_system_exit_raise(item):
+            if not _is_system_exit_raise(item, aliases):
                 # ``raise ValueError(...)`` leaves the process non-zero, which
                 # is not an optimistic exit: the point-level rule accepts any
                 # ``raise`` as an exit path, so the delegation family may not
@@ -1850,7 +1858,7 @@ def _helper_exits_zero(target, lookup, seen):
                         else None)
             if argument is None or _constant_exit_zero(argument):
                 return True
-        elif isinstance(item, ast.Call) and _is_exit_call(item):
+        elif isinstance(item, ast.Call) and _is_exit_call(item, aliases):
             hands_back = True
             argument = item.args[0] if item.args else None
             if argument is None or _constant_exit_zero(argument):
@@ -1858,10 +1866,10 @@ def _helper_exits_zero(target, lookup, seen):
     # A body that can fall off the end hands ``None`` back, and
     # ``SystemExit(None)`` exits 0: the raise flag may not veto that path
     # (GLM boundary r12 P0-2).
-    return _body_completes(target.body) or (not hands_back and not raises_plain)
+    return _body_completes(target.body, aliases) or (not hands_back and not raises_plain)
 
 
-def _body_completes(body):
+def _body_completes(body, aliases=None):
     """True when execution can reach the end of *body* (handing ``None`` back).
 
     ``raise ValueError`` on one branch and no ``return`` on the other leaves a
@@ -1877,28 +1885,28 @@ def _body_completes(body):
         if isinstance(statement, (ast.Return, ast.Raise)):
             return False
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call) \
-                and _is_exit_call(statement.value):
+                and _is_exit_call(statement.value, aliases):
             return False
         if isinstance(statement, ast.If):
             # Both arms terminating makes everything after the ``if``
             # unreachable, so the body cannot reach its end either; otherwise
             # execution may continue with the next statement.
-            if not _body_completes(statement.body) \
-                    and not _body_completes(statement.orelse):
+            if not _body_completes(statement.body, aliases) \
+                    and not _body_completes(statement.orelse, aliases):
                 return False
             continue
         if isinstance(statement, ast.With):
-            if not _body_completes(statement.body):
+            if not _body_completes(statement.body, aliases):
                 return False
             continue
         if isinstance(statement, ast.Try):
-            completes = _body_completes(statement.body)
+            completes = _body_completes(statement.body, aliases)
             if statement.handlers:
                 completes = completes or any(
-                    _body_completes(handler.body) for handler in statement.handlers)
+                    _body_completes(handler.body, aliases) for handler in statement.handlers)
             if completes and statement.orelse:
-                completes = _body_completes(statement.orelse)
-            if statement.finalbody and _body_completes(statement.finalbody):
+                completes = _body_completes(statement.orelse, aliases)
+            if statement.finalbody and _body_completes(statement.finalbody, aliases):
                 completes = True
             if not completes:
                 return False
@@ -1928,7 +1936,7 @@ def _callee_names(call, bindings):
     return names
 
 
-def _nested_def_exits_zero(value, function, bindings=None):
+def _nested_def_exits_zero(value, function, bindings=None, aliases=None):
     """``def _exit(): return 0`` called from a registered point."""
     if function is None or not (isinstance(value, ast.Call)
                                 and isinstance(value.func, (ast.Name, ast.Attribute))):
@@ -1940,10 +1948,11 @@ def _nested_def_exits_zero(value, function, bindings=None):
                    if name in lookup), None)
     if target is None or target is function:
         return False
-    return _helper_exits_zero(target, lookup, set(_callee_names(value, bindings)))
+    return _helper_exits_zero(target, lookup,
+                              set(_callee_names(value, bindings)), aliases)
 
 
-def _delegated_exit(value, module, seen=None, bindings=None):
+def _delegated_exit(value, module, seen=None, bindings=None, aliases=None):
     """A registered point returning a same-module helper's own exit code.
 
     ``return _exit_code(report)`` hides the computation one call away: the
@@ -1977,10 +1986,11 @@ def _delegated_exit(value, module, seen=None, bindings=None):
     if name in seen:
         return False  # a delegation cycle proves nothing (fail-closed)
     seen.add(name)
-    return _helper_exits_zero(target, module, seen)
+    return _helper_exits_zero(target, module, seen, aliases)
 
 
-def _exit_call_violation(call, bindings, function, module, point, lineno):
+def _exit_call_violation(call, bindings, function, module, point, lineno,
+                         aliases=None):
     """Judge the argument of ``sys.exit(...)`` / ``os._exit(...)`` (#892 r7).
 
     ``sys.exit(...)`` takes the same exit-code provenance as ``return``; the
@@ -1995,12 +2005,13 @@ def _exit_call_violation(call, bindings, function, module, point, lineno):
     if (_status_literals(argument) or _has_passed_aggregate(argument)) \
             and not _calls_aggregate(argument):
         return f'inline status/exit {ast.unparse(argument)[:60]} at line {lineno}'
-    if _exit_provenance(argument, bindings, function, module, point):
+    if _exit_provenance(argument, bindings, function, module, point, aliases):
         return f'inline exit code {ast.unparse(argument)[:60]} at line {lineno}'
     return None
 
 
-def _exit_provenance(argument, bindings, function, module, point):
+def _exit_provenance(argument, bindings, function, module, point,
+                     aliases=None):
     """Why an exit call's argument still computes its code inline (#892 r6).
 
     ``sys.exit(...)``, ``os._exit(...)`` and ``raise SystemExit(...)`` take the
@@ -2024,12 +2035,13 @@ def _exit_provenance(argument, bindings, function, module, point):
             # P1-1).  A plain literal is still reported by the caller first.
             return True
         if isinstance(arm, ast.Name):
-            if _exit_name_violation(arm.id, bindings, function, module):
+            if _exit_name_violation(arm.id, bindings, function, module,
+                                    aliases):
                 return True
             continue
         if (_container_holds_zero(arm, bindings)
-                or _nested_def_exits_zero(arm, function)
-                or _delegated_exit(arm, module)):
+                or _nested_def_exits_zero(arm, function, aliases=aliases)
+                or _delegated_exit(arm, module, aliases=aliases)):
             return True
         if isinstance(arm, (ast.UnaryOp, ast.Compare)):
             return True
@@ -2038,7 +2050,7 @@ def _exit_provenance(argument, bindings, function, module, point):
     return False
 
 
-def _module_delegated_exit(value, module, function, bindings):
+def _module_delegated_exit(value, module, function, bindings, aliases=None):
     """``code = _exit_code(report)`` where the helper lives at module level.
 
     ``_delegated_exit`` judges the direct ``return _exit_code(report)``
@@ -2060,10 +2072,11 @@ def _module_delegated_exit(value, module, function, bindings):
                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         if any(name in local for name in _callee_names(value, bindings)):
             return False
-    return _delegated_exit(value, module, bindings=bindings)
+    return _delegated_exit(value, module, bindings=bindings, aliases=aliases)
 
 
-def _exit_name_violation(name, bindings, function=None, module=None):
+def _exit_name_violation(name, bindings, function=None, module=None,
+                         aliases=None):
     """Why an exit code travelling through *name* is inline, or None (#892 r3).
 
     A conditional expression that can produce 0 is always inline computation.
@@ -2098,7 +2111,8 @@ def _exit_name_violation(name, bindings, function=None, module=None):
         if _constant_exit_zero(value):
             if function is not None:
                 if owner not in sites:
-                    sites[owner] = _optimistic_binding_sites(function, owner)
+                    sites[owner] = _optimistic_binding_sites(function, owner,
+                                                            aliases)
                 if lineno not in sites[owner]:
                     continue  # an initializer that a later statement overwrites
             return 'literal'
@@ -2107,28 +2121,103 @@ def _exit_name_violation(name, bindings, function=None, module=None):
             return spelling + '()'
         if _container_holds_zero(value, bindings):
             return 'subscript'
-        if _nested_def_exits_zero(value, function):
+        if _nested_def_exits_zero(value, function, aliases=aliases):
             return 'nested def'
-        if _module_delegated_exit(value, module, function, bindings):
+        if _module_delegated_exit(value, module, function, bindings, aliases):
             return 'delegated'
     return None
 
 
-def _is_exit_call(call):
+_EXIT_MODULES = ('sys', 'os', 'builtins', 'posix')
+_EXIT_FUNCTION_NAMES = ('exit', '_exit', 'quit')
+_EXIT_CALL_TARGETS = frozenset(
+    f'{module}.{name}' for module in _EXIT_MODULES
+    for name in _EXIT_FUNCTION_NAMES)
+
+
+def _exit_target(node, aliases=None):
+    """The canonical exit spelling a callee expression stands for, or None.
+
+    ``sys.exit`` / ``os._exit`` / ``exit`` / ``quit`` are the direct spellings;
+    an alias -- ``import sys as s``, ``from sys import exit as bail``,
+    ``from builtins import SystemExit as SE``, ``bail = sys.exit`` in a body --
+    reaches the very same exit under another name.  Every predicate below used
+    to match on the literal name, so an alias was invisible to all of them at
+    once: a registered point could exit with ``s.exit(0)`` in statement
+    position while every rule stayed green, and an unregistered function whose
+    only evidence was that call was never enumerated (GLM boundary r16 P0-1).
+    One resolver keeps the three predicate families from drifting apart.
+    """
+    aliases = aliases or {}
+    if isinstance(node, ast.Name):
+        if node.id in ('exit', 'quit', 'SystemExit'):
+            return f'builtins.{node.id}'
+        target = aliases.get(node.id)
+        if target is not None and target.rsplit('.', 1)[-1] in (
+                _EXIT_FUNCTION_NAMES + ('SystemExit',)):
+            return target
+        return None
+    if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)):
+        module = aliases.get(node.value.id, node.value.id)
+        if module not in _EXIT_MODULES:
+            return None
+        if node.attr in _EXIT_FUNCTION_NAMES:
+            return f'{module}.{node.attr}'
+        if node.attr == 'SystemExit' and module == 'builtins':
+            return 'builtins.SystemExit'
+    return None
+
+
+def _module_exit_aliases(tree):
+    """Local names a module binds to an exit spelling (#892 r17).
+
+    Only the module header is read: ``import sys as s``, ``from sys import
+    exit as bail``, ``from builtins import SystemExit as SE``.  A rebinding
+    inside a function body is read from that function's own bindings by
+    ``_binding_exit_aliases``; a rebinding inside a *called* helper is listed
+    as a known boundary in the fixture README.
+    """
+    aliases = {}
+    if not isinstance(tree, ast.Module):
+        return aliases
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _EXIT_MODULES:
+                    aliases[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module in _EXIT_MODULES:
+            for alias in node.names:
+                if alias.name in _EXIT_FUNCTION_NAMES + ('SystemExit',):
+                    name = 'SystemExit' if alias.name == 'SystemExit' else alias.name
+                    aliases[alias.asname or alias.name] = (
+                        'builtins.SystemExit' if alias.name == 'SystemExit'
+                        else f'{node.module}.{name}')
+    return aliases
+
+
+def _binding_exit_aliases(bindings, aliases=None):
+    """Aliases the function body itself binds (``bail = sys.exit``)."""
+    merged = dict(aliases or {})
+    for name, items in (bindings or {}).items():
+        for _lineno, value in items:
+            target = _exit_target(value, merged)
+            if target is not None:
+                merged[name] = target
+    return merged
+
+
+def _is_exit_call(call, aliases=None):
     """``sys.exit(...)`` / ``os._exit(...)`` / bare ``exit(...)``: no return.
 
     ``from sys import exit`` makes the bare-name call the same exit, so the
     spelling is accepted too (GLM boundary P1-1).  ``quit`` is the same site
     builtin and raises the same ``SystemExit``: leaving it out let
     ``quit(0)`` in statement position skip every rule (MiniMax boundary r13
-    P0-1).
+    P0-1).  Module and body aliases resolve through ``_exit_target`` so the
+    whole family -- ``s.exit``, ``bail``, ``builtins.exit``, ``posix._exit``
+    -- lands on the same predicate (GLM boundary r16 P0-1).
     """
-    func = call.func
-    if isinstance(func, ast.Name):
-        return func.id in ('exit', 'quit')
-    return (isinstance(func, ast.Attribute) and func.attr in ('exit', '_exit')
-            and isinstance(func.value, ast.Name)
-            and func.value.id in ('sys', 'os'))
+    return _exit_target(call.func, aliases) in _EXIT_CALL_TARGETS
 
 
 def _proven_summary_source(value, bindings, module=None, rel=None):
@@ -2215,10 +2304,29 @@ def _call_written_values(call):
     key and the value as two positionals, so it is read directly instead of
     through ``_returned_summary_dicts`` (DeepSeek boundary P0-2 / sibling P1-2:
     the earlier code only saw dict literals, leaving the documented
-    ``setdefault`` support as dead code).
+    ``setdefault`` support as dead code).  ``setattr(obj, 'status', value)`` and
+    ``obj.__setitem__('status', value)`` write the very same slot under a third
+    and fourth spelling, and both were read by nothing: a registered point
+    could make its status write with either and stay green (GLM boundary r16
+    P1-1).
     """
     written = []
-    if call.func.attr == 'setdefault':
+    func = call.func
+    if isinstance(func, ast.Name) and func.id == 'setattr':
+        if len(call.args) == 3:
+            key = call.args[1]
+            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+                written.append(call.args[2])
+        return written
+    if not isinstance(func, ast.Attribute):
+        return written
+    if func.attr == '__setitem__':
+        if len(call.args) >= 2:
+            key = call.args[0]
+            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+                written.append(call.args[1])
+        return written
+    if func.attr == 'setdefault':
         if len(call.args) > 1:
             key = call.args[0]
             if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
@@ -2242,7 +2350,8 @@ def _call_written_values(call):
     return written
 
 
-def unshared_status_slots(function, point=None, module=None, rel=None):
+def unshared_status_slots(function, point=None, module=None, rel=None,
+                          aliases=None):
     """Status/exit computations a registered point must route through the
     shared function, per return path (#892).
 
@@ -2260,6 +2369,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
     violations = []
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
+    aliases = _binding_exit_aliases(bindings, aliases)
     for node in _own_nodes(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             # Incremental report writes (``report['status'] = overall``) never
@@ -2337,16 +2447,30 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                         f'at line {node.lineno}')
                 continue
-            if _is_exit_call(call):
+            written = _call_written_values(call)
+            if written:
+                # ``setattr(report, 'status', 'PASS')`` /
+                # ``report.__setitem__('status', 'PASS')``: the same slot as
+                # ``report['status'] = 'PASS'`` under another spelling, judged
+                # by the same value rule (GLM boundary r16 P1-1).
+                if any(_assigns_clean_status(item, bindings, module=module,
+                                             rel=rel)
+                       for item in written):
+                    violations.append(
+                        f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
+                        f'at line {node.lineno}')
+                continue
+            if _is_exit_call(call, aliases):
                 # ``sys.exit(0)`` / ``os._exit(0)`` leave the process with 0
                 # exactly like ``raise SystemExit(0)`` (MiniMax sibling P1-1);
                 # the same reasoning applies to a name bound to a zero.
                 violation = _exit_call_violation(
-                    call, bindings, function, module, point, node.lineno)
+                    call, bindings, function, module, point, node.lineno,
+                    aliases)
                 if violation:
                     violations.append(violation)
             continue
-        if isinstance(node, ast.Raise) and _is_system_exit_raise(node):
+        if isinstance(node, ast.Raise) and _is_system_exit_raise(node, aliases):
             # ``raise SystemExit(0)`` leaves the process with 0 and never
             # returns through the shared map (MiniMax P1-2); the bare
             # ``raise SystemExit`` raises with no argument, i.e. exit 0 too
@@ -2362,7 +2486,8 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
                     and not _calls_aggregate(argument):
                 violations.append(f'inline status/exit {ast.unparse(argument)[:60]} '
                                   f'at line {node.lineno}')
-            elif _exit_provenance(argument, bindings, function, module, point):
+            elif _exit_provenance(argument, bindings, function, module, point,
+                                  aliases):
                 violations.append(f'inline exit code {ast.unparse(argument)[:60]} '
                                   f'at line {node.lineno}')
             continue
@@ -2373,12 +2498,12 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
             # A bare ``return`` hands back None, and SystemExit(None) exits 0.
             violations.append(f'inline optimistic exit (bare return) at line {node.lineno}')
             continue
-        if isinstance(value, ast.Call) and _is_exit_call(value):
+        if isinstance(value, ast.Call) and _is_exit_call(value, aliases):
             # ``return sys.exit(0)`` evaluates the exit call, which leaves the
             # process before the ``return`` can happen: the Return arm needs
             # the same judgement as the statement form (GLM r6 sibling P1-2).
             violation = _exit_call_violation(
-                value, bindings, function, module, point, node.lineno)
+                value, bindings, function, module, point, node.lineno, aliases)
             if violation:
                 violations.append(violation)
             continue
@@ -2418,13 +2543,16 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
                     # The exit code may travel through a local variable; a
                     # conditional that can yield 0 is inline computation
                     # (MiniMax boundary P0-2 / DeepSeek sibling P1-3).
-                    kind = _exit_name_violation(arm.id, bindings, function, module)
+                    kind = _exit_name_violation(arm.id, bindings, function,
+                                                module, aliases)
                     if kind:
                         violations.append(f'inline exit code ({kind} relay) {arm.id} '
                                           f'at line {node.lineno}')
                 elif (_container_holds_zero(arm, bindings)
-                      or _nested_def_exits_zero(arm, function, bindings)
-                      or _delegated_exit(arm, module, bindings=bindings)):
+                      or _nested_def_exits_zero(arm, function, bindings,
+                                                aliases)
+                      or _delegated_exit(arm, module, bindings=bindings,
+                                         aliases=aliases)):
                     # A zero read back out of a local dict, or a nested helper
                     # that returns a constant zero (GLM concurrency P1-1 /
                     # MiniMax boundary P1-4).
@@ -2445,7 +2573,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None):
                                  and (is_pair or isinstance(arm, ast.Call))))):
                     violations.append(f'inline exit code {ast.unparse(arm)[:60]} '
                                       f'at line {node.lineno}')
-    if point is not None and not _has_exit_path(function):
+    if point is not None and not _has_exit_path(function, aliases):
         # A registered aggregation point that returns nothing (and never exits)
         # leaves the entry point with ``None`` -- ``SystemExit(None)`` is exit 0
         # -- while the audit used to pass it vacuously: the per-return rules
@@ -2545,7 +2673,7 @@ def _augassign_on_summary(node, bound, bindings, parameters=frozenset(),
         node.value, bindings, module, rel)
 
 
-def _has_exit_path(function):
+def _has_exit_path(function, aliases=None):
     """True when *every* path out of *function* is an explicit one.
 
     Judged by reachability, not by existence: one branch ``raise``-ing says
@@ -2557,10 +2685,10 @@ def _has_exit_path(function):
     paths that take it -- a propagating error leaves non-zero (MiniMax
     boundary r10 P2-4).
     """
-    return not _body_completes(function.body)
+    return not _body_completes(function.body, aliases)
 
 
-def aggregation_markers(function, module=None, rel=None):
+def aggregation_markers(function, module=None, rel=None, aliases=None):
     """Markers that make *function* a top-level status/exit computation.
 
     *module* is the file's module-level ``def`` map; the write-side rules need
@@ -2572,12 +2700,13 @@ def aggregation_markers(function, module=None, rel=None):
     # summary point, whatever the name is (DeepSeek P1-3).
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
+    aliases = _binding_exit_aliases(bindings, aliases)
     dict_names = set(bound) | {name for name, items in bindings.items()
                                if any(isinstance(value, ast.Dict)
                                       for _lineno, value in items)}
     parameters = _parameter_names(function)
     for node in ast.walk(function):
-        if isinstance(node, ast.Call) and _is_exit_call(node):
+        if isinstance(node, ast.Call) and _is_exit_call(node, aliases):
             # ``sys.exit(0)`` / ``sys.exit('BLOCKED')`` / ``quit(...)``: the
             # raise family already enumerates ``raise SystemExit(...)``
             # (``raise-exit-status``), the call family did not, so an
@@ -2613,7 +2742,7 @@ def aggregation_markers(function, module=None, rel=None):
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
                 markers.add('return-conditional-status')
-        elif (isinstance(node, ast.Raise) and _is_system_exit_raise(node)):
+        elif (isinstance(node, ast.Raise) and _is_system_exit_raise(node, aliases)):
             # Every ``raise SystemExit(...)`` -- with a status word, with a bare
             # zero, with no argument at all -- leaves the process with an exit
             # code, exactly like ``sys.exit(...)`` above; requiring a status word
@@ -2621,15 +2750,17 @@ def aggregation_markers(function, module=None, rel=None):
             # P1-1).
             markers.add('raise-exit-status')
         elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-              and isinstance(node.value.func, ast.Attribute)
               and (_call_written_values(node.value)
-                   or _unproven_update_on_summary(node.value, dict_names,
-                                                  bindings, parameters,
-                                                  module, rel))):
-            # ``report.update({'status': ...})`` / ``setdefault`` without any
-            # other marker: the only status evidence is the incremental write, so
-            # the function must still be enumerated and registered (MiniMax
-            # sibling P1-1).
+                   or (isinstance(node.value.func, ast.Attribute)
+                       and _unproven_update_on_summary(node.value, dict_names,
+                                                       bindings, parameters,
+                                                       module, rel)))):
+            # ``report.update({'status': ...})`` / ``setdefault`` /
+            # ``setattr(report, 'status', ...)`` / ``report.__setitem__(
+            # 'status', ...)`` without any other marker: the only status
+            # evidence is the incremental write, so the function must still be
+            # enumerated and registered (MiniMax sibling P1-1; the ``setattr``
+            # spelling is GLM boundary r16 P1-1).
             markers.add('write-status')
         elif _augassign_on_summary(node, dict_names, bindings, parameters,
                                    module, rel):
@@ -2646,7 +2777,7 @@ def calls_shared(function):
     return any(_is_shared_call(node) for node in ast.walk(function))
 
 
-def scan_aggregation_tree(tree, rel):
+def scan_aggregation_tree(tree, rel, aliases=None):
     """Aggregation points of *tree*, keyed by ``(rel, function name)``.
 
     A nested ``def`` with the same name as a top-level point used to overwrite
@@ -2658,10 +2789,12 @@ def scan_aggregation_tree(tree, rel):
     duplicates = []
     module = {node.name: node for node in tree.body
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    if aliases is None:
+        aliases = _module_exit_aliases(tree)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        markers = aggregation_markers(function, module, rel)
+        markers = aggregation_markers(function, module, rel, aliases)
         if not markers:
             continue
         key = (rel, function.name)
@@ -2689,6 +2822,7 @@ def aggregation_audit():
         if 'node_modules' not in path.parts and '__pycache__' not in path.parts]
     found = {}
     modules = {}
+    aliases_by_rel = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
@@ -2735,6 +2869,7 @@ def aggregation_audit():
         # boundary P1-2); nested helpers are judged by ``_nested_def_exits_zero``.
         modules[rel] = {node.name: node for node in tree.body
                         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        aliases_by_rel[rel] = _module_exit_aliases(tree)
         scanned, duplicates = scan_aggregation_tree(tree, rel)
         for duplicate in duplicates:
             failures.append(f'#892 aggregation-audit: duplicate aggregation point '
@@ -2751,7 +2886,8 @@ def aggregation_audit():
             continue
         markers, function = found[key]
         shared = calls_shared(function) and 'return-int-status' not in markers
-        slots = unshared_status_slots(function, key, modules.get(rel), rel)
+        slots = unshared_status_slots(function, key, modules.get(rel), rel,
+                                      aliases_by_rel.get(rel))
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers), 'unsharedSlots': slots}
         if not shared:
@@ -3108,7 +3244,42 @@ def aggregation_audit():
         "    raise SystemExit\n"
         "def _zero_raise_exit(report):\n"
         "    print(report)\n"
-        "    raise SystemExit(0)\n")
+        "    raise SystemExit(0)\n"
+        "import sys as _s\n"
+        "import builtins as _bi\n"
+        "import posix as _px\n"
+        "from sys import exit as _bail\n"
+        "from builtins import SystemExit as _SE\n"
+        "def _alias_sysexit(report):\n"
+        "    print(report)\n"
+        "    _s.exit(0)\n"
+        "def _alias_from_import(report):\n"
+        "    print(report)\n"
+        "    _bail(0)\n"
+        "def _alias_builtins_exit(report):\n"
+        "    print(report)\n"
+        "    _bi.exit(0)\n"
+        "def _alias_posix_exit(report):\n"
+        "    print(report)\n"
+        "    _px._exit(0)\n"
+        "def _alias_system_exit(report):\n"
+        "    print(report)\n"
+        "    raise _SE(0)\n"
+        "def _alias_local_binding(report):\n"
+        "    bail = _s.exit\n"
+        "    bail(0)\n"
+        "def _setattr_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    setattr(report, 'status', 'PASS')\n"
+        "    return report\n"
+        "def _dunder_setitem_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report.__setitem__('status', 'PASS')\n"
+        "    return report\n"
+        "def _setattr_non_status(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    setattr(report, 'cases', rows)\n"
+        "    return report\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -3418,6 +3589,43 @@ def aggregation_audit():
         if not probe or 'raise-exit-status' not in probe[0]:
             failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
                             f'{message}')
+    # GLM boundary r16 P0-1 / P1-1: an exit spelling behind an import alias,
+    # and a status write behind ``setattr`` / ``__setitem__``, must be seen by
+    # the same rules as their literal spellings; ``_setattr_non_status`` is the
+    # negative control that keeps a non-status attribute out of the family.
+    alias_probe = ast.parse('import sys as s\n'
+                            'from sys import exit as bail\n'
+                            'from builtins import SystemExit as SE\n')
+    alias_map = _module_exit_aliases(alias_probe)
+    if (alias_map.get('s') != 'sys' or alias_map.get('bail') != 'sys.exit'
+            or alias_map.get('SE') != 'builtins.SystemExit'):
+        failures.append('#892 aggregation-audit: detector self-test lost an exit alias '
+                        'bound by a module-level import')
+    if _is_exit_call(ast.parse('other.exit(0)').body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test treated an arbitrary '
+                        'attribute as a process exit')
+    for probe_name, marker, message in (
+            ('_alias_sysexit', 'exit-call-status', 'import sys as _s; _s.exit(0)'),
+            ('_alias_from_import', 'exit-call-status',
+             'from sys import exit as _bail; _bail(0)'),
+            ('_alias_builtins_exit', 'exit-call-status', 'builtins.exit(0)'),
+            ('_alias_posix_exit', 'exit-call-status', 'posix._exit(0)'),
+            ('_alias_local_binding', 'exit-call-status', 'bail = sys.exit; bail(0)'),
+            ('_alias_system_exit', 'raise-exit-status',
+             'from builtins import SystemExit as _SE; raise _SE(0)')):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe or marker not in probe[0]:
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'{message}')
+    for probe_name in ('_setattr_slot', '_dunder_setitem_slot'):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe or 'write-status' not in probe[0]:
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'a status write spelled {probe_name}')
+    non_status = probe892_found.get(('<self-test-892>', '_setattr_non_status'))
+    if non_status and 'write-status' in non_status[0]:
+        failures.append('#892 aggregation-audit: detector self-test enumerated a setattr '
+                        'of a non-status attribute')
     # GLM boundary r15 P1-1: an attribute head may name any module member, so it
     # may never inherit the ``(rel, name)`` registration of the file it is
     # written in.  Both call sites are asserted against the one rel that
