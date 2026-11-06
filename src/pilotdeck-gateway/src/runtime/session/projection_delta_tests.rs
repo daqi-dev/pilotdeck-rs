@@ -819,6 +819,10 @@ fn factory_generators_clean_only_owned_work() {
             )
             .env_remove("MATRIX_WORK_ROOT")
             .env_remove("MATRIX_NEGATIVE")
+            // #1281 review: the failure hook must never leak in from the outer
+            // environment — a plain cell that inherited it would fail for the
+            // wrong reason and the assertion below would still look right.
+            .env_remove("PDRS_1253_SNAPSHOT_FAIL")
             .env("MATRIX_OUTPUT", "raw");
         if script == "probe.mts" {
             command.arg("resume-missing").env("MATRIX_ROOT", &root);
@@ -837,12 +841,40 @@ fn factory_generators_clean_only_owned_work() {
             Duration::from_secs(300),
         )
         .expect("#1253 cleanup generator bounded execution");
+        // #1281 review: a bare non-zero exit does not prove the cell failed at
+        // its intended point — a missing baseline, a bad flag or a crashed
+        // loader would fail too and the cleanup assertion would still pass.
+        // Pin the marker each failing variant must print: the collision cells
+        // die on the exclusive (wx) open of the foreign file, the snapshot cell
+        // on its own injected hook. Plain cells must print neither.
+        let failure_marker = match variant {
+            Variant::Plain => None,
+            Variant::SnapshotFailure => Some("#1253 snapshot body failure after mkdtemp"),
+            Variant::Collision(_) => Some("EEXIST"),
+        };
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
         assert!(
             status.success() == matches!(variant, Variant::Plain),
             "#1253 factory generator completes before cleanup: {script} {variant:?}: {}{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
+        if let Some(marker) = failure_marker {
+            assert!(
+                output.contains(marker),
+                "#1253 factory generator fails at the intended point: {script} {variant:?} must report {marker:?}: {output}"
+            );
+        } else {
+            assert!(
+                !output.contains("EEXIST")
+                    && !output.contains("#1253 snapshot body failure after mkdtemp"),
+                "#1253 factory generator plain cell reports no injected failure: {script} {variant:?}: {output}"
+            );
+        }
         let mut scratch: Vec<_> = fs::read_dir(&root)
             .expect("#1253 cleanup output list")
             .map(|entry| {

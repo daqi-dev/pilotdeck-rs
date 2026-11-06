@@ -24,7 +24,7 @@ cargo test --offline -p pilotdeck-gateway --lib \
   runtime::session::factory::tests::projection_cache_regenerates_identically -- --exact --ignored --nocapture
 ```
 
-生成器使用 recursive mkdir 与 `flag:'wx'` 独占输出，重复 OUT 拒绝，写 oracle 前只删除本次自建的 `work-*` 根（外来的 `work-*` 不动）。ignored guard 的临时目录由既有共享 helper 管理。配对负控见 `negative_controls.py`，用共享 `negative_process` / `negative_suite`，先编译变异再运行正控→负控→恢复正控。新增文件和修改测试尚未进入 HEAD 时禁止运行；协调者提交后在宿主设置上述环境并传独占 OUT。`--audit` 仅静态锚点检查。
+生成器使用 recursive mkdir 与 `flag:'wx'` 独占输出，重复 OUT 拒绝；本次自建的 `work-*` 根在退出时（`finally`，即成功与 oracle 撞名两条路径都覆盖）删除，外来的 `work-*` 不动，120 秒硬超时则在退出前单独清理。ignored guard 的临时目录由既有共享 helper 管理。配对负控见 `negative_controls.py`，用共享 `negative_process` / `negative_suite`，先编译变异再运行正控→负控→恢复正控。新增文件和修改测试尚未进入 HEAD 时禁止运行；协调者提交后在宿主设置上述环境并传独占 OUT。`--audit` 仅静态锚点检查。
 
 supplemental 行有三种形状：`cold-*` 是顶层 before/held/settled；`invalid-*`、`turn-result`、`save-reject`、`capture-race`、`predecessor-reject` 只有 before/settled；`predecessor-pending`/`cancel-waiter` 把 held 观测嵌在 `details.held`（cancel-waiter 另有 `details.waiter`）。Rust 消费方（`projection_cache_tests.rs`）按各自行形状读取，不改 oracle 判定内容。
 

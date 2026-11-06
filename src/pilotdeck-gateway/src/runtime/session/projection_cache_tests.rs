@@ -561,6 +561,19 @@ fn generator_cleans_owned_work() {
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
+        // #1281 review: the collision cell must die on the exclusive (wx) open
+        // of the pre-existing oracle.json, not on any earlier failure; the
+        // success cell must not report that failure at all.
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert_eq!(
+            output.contains("EEXIST"),
+            collision,
+            "#1011 generator fails at the oracle wx write only in the collision cell: {output}"
+        );
         let mut names: Vec<_> = std::fs::read_dir(&scratch)
             .expect("#1011 inspect generator OUT")
             .map(|entry| {

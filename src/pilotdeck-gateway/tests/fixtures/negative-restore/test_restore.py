@@ -92,7 +92,7 @@ class RestoreTests(unittest.TestCase):
                 invalidate(report_rows, reason)
 
             @contextlib.contextmanager
-            def guard(actual_root, requested):
+            def guard(actual_root, requested, **_kwargs):
                 self.assertEqual(actual_root, root, '#1037 guard must own the temporary root')
                 self.assertEqual({root / path for path in requested}, set(snapshots),
                                  '#1037 guard must own exactly the temporary sources')
@@ -552,9 +552,14 @@ class SessionFactoryTests(unittest.TestCase):
             calls = []
 
             @contextlib.contextmanager
-            def guard(actual_root, paths):
+            def guard(actual_root, paths, **kwargs):
                 self.assertEqual(actual_root, root, '#1037 session guard must own temporary root')
                 self.assertEqual(paths, [source], '#1037 session guard must own only temporary source')
+                # #1281: the session runner now names its baseline explicitly so
+                # an uncommitted candidate can be guarded; with no override in
+                # the environment that has to stay HEAD.
+                self.assertEqual(kwargs.get('baseline'), 'HEAD',
+                                 '#1037 session guard must default to HEAD')
                 yield {source: b'dirty: false,'}
                 self.assertEqual(source.read_text(), 'dirty: false,', '#1037 session restores before guard exit')
                 raise RuntimeError('#1037 session guard exit failure')
@@ -683,7 +688,11 @@ def negative_controls():
           (SessionRunnerTests, 'test_switch_guard_failure_keeps_source_verdicts'): '#1210 switch guard failure must still void its own rows'},
          lambda: patch.dict(globals(), {'SESSION_SOURCE': changed_source(
              FIXTURES / 'session-factory/negative_controls.py',
-             '        with mutating_sources(root, []):',
+             # #1281: the guard call gained an explicit baseline= argument (it
+             # has to follow PDRS_NEGATIVE_BASELINE for uncommitted candidates),
+             # so the anchor is the whole current line, not the old two-argument
+             # form; an expired anchor here makes this reverse control INVALID.
+             "        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):",
              '        for _bypassed_pristine_1218 in [0]:')})),
         ('session-guard-scope-reverted', (SessionRunnerTests,),
          {(SessionRunnerTests, 'test_switch_guard_failure_keeps_source_verdicts'): '#1210 switch guard failure must not revoke source verdicts'},
