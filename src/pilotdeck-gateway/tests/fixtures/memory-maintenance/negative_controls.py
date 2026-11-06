@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 root = Path(__file__).resolve().parents[5]
-baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'
+baseline = (sys.argv[2] if len(sys.argv) > 2 else '') or 'HEAD'
 helper = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/maintenance.rs'
 refresh = root / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
