@@ -204,6 +204,18 @@ LABEL_KNOWN_ACCEPT = {
 # attribution can reject it.  The healthy predecessor must
 # score 72/72 native PASS while the whole batch stays NOT_RUN: cells without
 # evidence can never make the deadline suite PASS.
+# #1372 WS 信封投影控制：每个只改线形（其余面保持健康前件），钉住四条规则 ——
+# 终态必须由 yield 序列派生、恰一个终态且必须在最后、有终态不得发空流 fallback、
+# 相同内容的两条 yield 不得折叠。结构类拒绝先由 chain 的 active-request 守卫命中，
+# 投影函数自身的同一批判据由 test_safety 的正负例直接钉住。
+WS_PROJECTION_CASES = {
+    'native-terminal-not-derived': 'NATIVE_CHAIN',
+    'native-double-final': 'NATIVE_CHAIN',
+    'native-final-not-last': 'NATIVE_CHAIN',
+    'native-fallback-with-terminal': 'NATIVE_CHAIN',
+    'native-content-dedupe': 'EXPECTATION_MISMATCH',
+}
+
 NATIVE_DEADLINE_CASES = {
     'native-missing-descendant': 'PROCESS_WITNESS',
     'native-missing-egress': 'NETWORK_WITNESS',
@@ -219,6 +231,7 @@ NATIVE_DEADLINE_CASES = {
     'native-extra-sidecar': 'NATIVE_PROCESS',
     'native-sidecar-wrong-argv': 'NATIVE_PROCESS',
     'native-sidecar-misallocated': 'NATIVE_PROCESS',
+    **WS_PROJECTION_CASES,
 }
 
 CASES = {
@@ -846,6 +859,63 @@ def native_deadline_case(name, output):
         opens = evidence['transcriptWitness']['opens']
         opens[len(opens) // 2]['afterExecs'] += 1
         rewrite('capture/evidence.json', evidence)
+    elif name in WS_PROJECTION_CASES:
+        # #1372: the WS envelope projection is the only thing under test here.
+        # Each control keeps every other surface pristine (healthy 72/72
+        # predecessor above) and mutates the wire shape the real gateway emits:
+        # one final:false envelope per iterator yield and one trailing
+        # final:true envelope carrying lastError ?? lastCompleted ?? fallback.
+        observer = read(folder / 'session-domain/observer.json')
+        request_id = read(folder / 'session-domain/cases.json')['cases'][0]['identity']['requestId']
+        rows = [row for row in observer['rows'] if row['direction'] == 'receive'
+                and isinstance(row.get('frame'), dict) and row['frame'].get('type') == 'event'
+                and row['frame'].get('id') == request_id]
+        require(len(rows) >= 2 and rows[-1]['frame']['final'] is True
+                and all(row['frame']['final'] is False for row in rows[:-1]),
+                'CONTROL_PRECONDITION', 'fixture must start with yields plus one trailing final envelope')
+        terminal = rows[-1]
+        if name == 'native-terminal-not-derived':
+            # The terminal envelope no longer repeats the last error frame; a
+            # projection that merely takes "whatever the last envelope says"
+            # would accept it as a real terminal.
+            terminal['frame']['event'] = {'type': 'error', 'event': 'turn_timeout', 'code': 'fabricated'}
+            terminal.update(control_wire(terminal['frame']))
+        elif name == 'native-double-final':
+            # Two final envelopes: the chain's own active-request guard rejects
+            # the second one, and the projection independently requires exactly
+            # one trailing terminal (pinned directly in test_safety).
+            rows[-2]['frame']['final'] = True
+            rows[-2].update(control_wire(rows[-2]['frame']))
+        elif name == 'native-final-not-last':
+            # A yield recorded after the terminal envelope: an in-process
+            # projection can only be well-defined if the terminal is last.
+            extra = control_wire({'type': 'event', 'id': request_id, 'seq': len(rows), 'final': False,
+                                  'event': {'type': 'agent_status', 'event': 'completed'}})
+            observer['rows'].insert(observer['rows'].index(terminal) + 1, extra)
+        elif name == 'native-fallback-with-terminal':
+            # A stream that already yielded an error may not end on the
+            # empty-stream fallback: lastError takes priority, so a fallback
+            # terminal is a fabricated finish frame, not a derivation.
+            terminal['frame']['event'] = copy.deepcopy(session.native_evidence.WS_TERMINAL_FALLBACK)
+            terminal.update(control_wire(terminal['frame']))
+        elif name == 'native-content-dedupe':
+            # Two identical final:false yields.  Both the observer and the
+            # recorded observation carry the duplicate, so every consistency
+            # check passes; only score-vs-expectation can fail, and it must --
+            # collapsing equal payloads would silently erase a real repeat.
+            duplicate = copy.deepcopy(rows[0])
+            observer['rows'].insert(observer['rows'].index(rows[0]) + 1, duplicate)
+            for seq, row in enumerate([row for row in observer['rows']
+                                       if row['direction'] == 'receive'
+                                       and isinstance(row.get('frame'), dict)
+                                       and row['frame'].get('type') == 'event'
+                                       and row['frame'].get('id') == request_id]):
+                row['frame']['seq'] = seq
+                row.update(control_wire(row['frame']))
+            document = read(folder / 'session-domain/cases.json')
+            document['cases'][0]['observation']['frames'].insert(1, copy.deepcopy(rows[0]['frame']['event']))
+            rewrite('session-domain/cases.json', document)
+        rewrite('session-domain/observer.json', observer)
 
     def mutated_report():
         # Stage-local audit/comparison controls deliberately start with an
@@ -862,6 +932,20 @@ def native_deadline_case(name, output):
             return session._deadline_report(session._native_deadline_result(capture))
         return control_deadline_report(folder)
 
+    if name == 'native-content-dedupe':
+        # Two identical final:false yields that every consistency check accepts;
+        # only the registered expectation can reject the extra frame, and it
+        # must -- silently collapsing equal payloads would erase a real repeat.
+        report = control_deadline_report(folder)
+        cell = next(c for c in report['cells'] if (c['host'], c['sidecar']) == ('rust', 'rust'))
+        verdict = next((row for row in cell['cases'] if row['status'] != 'PASS'), None)
+        require(report['status'] == 'FAIL' and cell['status'] == 'FAIL' and verdict is not None
+                and verdict['rule'] == 'EXPECTATION_MISMATCH' and verdict['surfaces'] == ['frames']
+                and sum(1 for row in cell['cases'] if row['status'] == 'PASS') == 71,
+                'CONTROL_EXPECTATION',
+                'a duplicated in-process yield must fail exactly one case on the frames surface')
+        raise EvidenceError('EXPECTATION_MISMATCH',
+                            f"{verdict['case']}: frames differ from the registered rust expectation")
     if name == 'native-surface-mismatch':
         # A scoring mismatch is an honest FAIL result, not an audit rejection:
         # exactly one case must fail on exactly the mutated surface.
