@@ -148,7 +148,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '993295d7be05df2163d73e16150dfff25edfff12887f56fe52d6ab8739248777'
+PINNED_DEVICE_SHA256 = '4a95a33075e416776a77396dc44c83ccdf1ce4c591d51fe59990da0e566300df'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -281,14 +281,15 @@ check('verdict_exit 已有 NOT_6 时未判定不改变 2', fa.verdict_exit(80, 2
 check('case_mark 命中 → OK', fa.case_mark('NOT_6', 'NOT_6') == 'OK')
 check('case_mark 实得 UNKNOWN 而期望别 → UNJUDGED（不算 MISMATCH）',
       fa.case_mark('UNKNOWN', 'NOT_6') == 'UNJUDGED')
-check('case_mark 期望 UNKNOWN 且证据点名 trace_identity → OK',
-      fa.case_mark('UNKNOWN', 'UNKNOWN', 'C0 未运行：G03 自报 [trace_identity]') == 'OK')
-check('case_mark 期望 UNKNOWN 且证据点名 trace_input → OK',
-      fa.case_mark('UNKNOWN', 'UNKNOWN', 'C0 未运行：G03 自报 [trace_input]') == 'OK')
-check('case_mark 期望 UNKNOWN 但成因是进程级故障（未点名自报规则）→ UNJUDGED',
-      fa.case_mark('UNKNOWN', 'UNKNOWN', 'C0 未运行：g03 超时（>900s）') == 'UNJUDGED')
-check('case_mark 期望 UNKNOWN 但证据空 → UNJUDGED',
-      fa.case_mark('UNKNOWN', 'UNKNOWN', '') == 'UNJUDGED')
+check('case_mark 期望 UNKNOWN 且自报 trace_identity → OK',
+      fa.case_mark('UNKNOWN', 'UNKNOWN', ('trace_identity',)) == 'OK')
+check('case_mark 期望 UNKNOWN 且自报 trace_input → OK',
+      fa.case_mark('UNKNOWN', 'UNKNOWN', ('trace_input',)) == 'OK')
+check('case_mark 期望 UNKNOWN 但成因是进程级故障（自报集为空）→ UNJUDGED',
+      fa.case_mark('UNKNOWN', 'UNKNOWN', ()) == 'UNJUDGED')
+# 成因只认结构化集合：证据行里的字面量不再参与判定，进程级故障的 stderr 污染不了它。
+check('case_mark 不看证据行文案（只有文本、没有结构化成因 → UNJUDGED）',
+      fa.case_mark('UNKNOWN', 'UNKNOWN') == 'UNJUDGED')
 check('case_mark 真判错 → MISMATCH', fa.case_mark('ATTRIB_6', 'NOT_6') == 'MISMATCH')
 
 # ---- C0 的自报规则名必须仍与冻结件一致（漂移即 C0 静默失效，错向复发）----
@@ -331,29 +332,38 @@ with tempfile.TemporaryDirectory() as tdir:
 _orig_g03 = fa.g03
 try:
     fa.g03 = lambda *a: (None, None, 'g03 超时（>900s）')
-    got, ev = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
+    got, ev, cause = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
     check('judge g03 超时 → UNKNOWN（不当作 NOT_6）',
           got == 'UNKNOWN' and '未判定' in ev[0], f'got={got} ev={ev[0][:80]!r}')
     check('judge g03 超时的证据行归属 C0（与 README 判据表同口径）',
           'C0' in ev[0], f'ev={ev[0][:80]!r}')
+    check('judge g03 超时的结构化成因为空（进程级故障 ≠ C0 自报）', cause == (), f'cause={cause}')
+    fa.g03 = lambda *a: (None, None, 'g03 无法执行：[Errno 24] Too many open files')
+    got, ev, cause = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
+    check('judge g03 起不来（OSError）→ UNKNOWN，不是装置崩溃',
+          got == 'UNKNOWN' and '未判定' in ev[0] and cause == (), f'got={got}')
     fa.g03 = lambda *a: ({}, {}, None)
-    got, ev = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
+    got, ev, _ = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
     check('judge g03 输出缺该场景 → UNKNOWN', got == 'UNKNOWN' and 'C0' in ev[0], f'got={got}')
 finally:
     fa.g03 = _orig_g03
 
 # ---- C0（进程内自报）：G03 说「没比成」→ UNKNOWN；trace_health 不误扩 ----
-got, ev = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_input'], 'error': 'bad record'})
+got, ev, cause = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_input'],
+                                   'error': 'bad record'})
 check('judge G03 自报 trace_input → UNKNOWN', got == 'UNKNOWN' and 'C0' in ev[0], f'got={got}')
-got, ev = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_identity']})
+check('judge G03 自报 trace_input → 结构化成因点名 trace_input', cause == ('trace_input',), f'cause={cause}')
+got, ev, cause = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_identity']})
 check('judge G03 自报 trace_identity → UNKNOWN', got == 'UNKNOWN' and 'C0' in ev[0], f'got={got}')
-got, ev = j(ts_ok, ru_ok,
-            {'verdict': 'FAIL', 'triggered_rules': ['E10', 'E11', 'G03_channels', 'trace_health'],
-             'channel': {'differences': []}})
+check('judge G03 自报 trace_identity → 结构化成因点名 trace_identity',
+      cause == ('trace_identity',), f'cause={cause}')
+got, ev, cause = j(ts_ok, ru_ok,
+                    {'verdict': 'FAIL', 'triggered_rules': ['E10', 'E11', 'G03_channels', 'trace_health'],
+                     'channel': {'differences': []}})
 check('judge trace_health 仍判 NOT_6（C0 不误扩，negctl C/D 依赖它）',
-      got == 'NOT_6' and 'C0' not in ev[0], f'got={got} ev={ev[0][:60]!r}')
+      got == 'NOT_6' and 'C0' not in ev[0] and cause == (), f'got={got} ev={ev[0][:60]!r}')
 # `error: null` 不能把字面量 None 拼进证据行（GitHub 上的 G03 结果可能带 null）
-got, ev = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_input'], 'error': None})
+got, ev, _ = j(ts_ok, ru_ok, {'verdict': 'FAIL', 'triggered_rules': ['trace_input'], 'error': None})
 check('judge 自报 error 为 null → 证据行不出现 "None"',
       got == 'UNKNOWN' and 'None' not in ev[0], f'ev={ev[0][:80]!r}')
 
@@ -450,6 +460,22 @@ _expect_unusable('build_cases 首条记录缺 sequence → BaselineUnusable（�
 # 缺 context.budget：L/M 的变异点不存在。
 _expect_unusable('build_cases 缺 context.budget → BaselineUnusable',
                  [r for r in _rich_ts if r.get('kind') != 'context.budget'], _rich_ru, 'context.budget')
+# E 的变异点（operation.terminal / outcome=result_unknown）缺失：旧写法是静默空操作，
+# 用例退化成第二个 A → 假 MISMATCH → rc=4「判据被证伪」（与 #1968 同向）。
+_expect_unusable('build_cases 缺 operation.terminal(result_unknown) → BaselineUnusable（E 不空变异）',
+                 _rich_ts,
+                 [r for r in _rich_ru
+                  if not (r.get('kind') == 'operation.terminal'
+                          and r.get('outcome') == 'result_unknown')],
+                 'operation.terminal')
+# H 的变异点（side_effect.state）缺失：过滤型变异同样会静默空操作。
+_expect_unusable('build_cases 缺 side_effect.state → BaselineUnusable（H 不空变异）',
+                 _rich_ts,
+                 [r for r in _rich_ru if r.get('kind') != 'side_effect.state'],
+                 'side_effect.state')
+# 缺 gsf：A/B/C/G 都依赖它，且 negctl 不再有第二处前置检查（只此一条 rc=3 路径）。
+_expect_unusable('build_cases 缺 gsf → BaselineUnusable（唯一一处前置，不再重复检查）',
+                 _rich_ts, [r for r in _rich_ru if not fa.is_gsf(r)], 'gsf')
 
 # ---- negctl(): 端到端接线（rc 必须由真实循环折叠出来，不只纯函数）----
 # 判据：线序 A/B/C/D/E/F/G/H/I/J/K/L/M 依用例名桩掉 G03 —— 这是仓库内唯一能在 CI 复现
@@ -526,6 +552,20 @@ with tempfile.TemporaryDirectory() as tdir:
         check('negctl MISMATCH + 未判定 → rc=4 且未判定汇总仍打印（信息不丢）',
               rc == 4 and '未判定：1 条' in out.getvalue(), f'rc={rc}')
 
+        # ⑥ 循环中途崩溃 → rc=9 且删掉半成品证据目录（不与「目录已存在」rc=1 撞码）
+        def _boom(*a):
+            raise RuntimeError('模拟 ENOSPC / EIO')
+        fa.g03 = _boom
+        out_9 = os.path.join(tdir, 'out-crash')
+        out = io.StringIO()
+        err = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = fa.negctl(rounds_dir, 'deadline', out_9)
+        check('negctl 循环中途崩溃 → rc=9（不是 rc=1，不与「已存在」撞码）',
+              rc == 9 and 'rc=9' in out.getvalue(), f'rc={rc}')
+        check('negctl 循环中途崩溃 → 半成品证据目录已删除（不留残缺证据）',
+              not os.path.exists(out_9))
+
         # ⑤ 基线轮次无效 → rc=3（不是「判据被证伪」的 rc=4；#1968 的机检版）
         for name in ('run.json',):
             with open(os.path.join(rounds_dir, 'rust-r1', name), 'w') as fh:
@@ -570,16 +610,31 @@ with tempfile.TemporaryDirectory() as tdir:
     os.makedirs(taken)
     got = _negctl_quiet(taken)
     check('--negctl-out 已存在 → 拒绝（不覆盖证据）',
-          isinstance(got, str) and '必须独占新建' in got, f'got={got!r}')
+          isinstance(got, str) and '可独占新建' in got and '已存在' in got, f'got={got!r}')
     # 悬空符号链接：`os.path.exists()` 返回 False（旧实现会穿过去写目标），
     # `os.makedirs()` 抛 FileExistsError（新实现拒绝）。这条钉住「create 即 check」。
     dangling = os.path.join(tdir, 'dangling')
     os.symlink(os.path.join(tdir, 'no-such-target'), dangling)
     got = _negctl_quiet(dangling)
     check('--negctl-out 是悬空符号链接 → 拒绝（旧 exists() 判 False 会穿透写入）',
-          isinstance(got, str) and '必须独占新建' in got, f'got={got!r}')
+          isinstance(got, str) and '可独占新建' in got and '已存在' in got, f'got={got!r}')
     check('悬空符号链接的写入没有被创建（没有穿透）',
           not os.path.exists(os.path.join(tdir, 'no-such-target')))
+
+    # 空串是 falsy：旧写法 `if args.negctl_out:` 会静默改跑 run()，调用方按 negctl 的 rc 表
+    # 去读 run 的 rc。空串必须显式报错（落到 makedirs 的失败分支）。
+    _argv = sys.argv
+    try:
+        sys.argv = ['frame_attrib.py', rounds_dir, 'deadline', '--negctl-out', '']
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                got = fa.main()
+            except SystemExit as exc:
+                got = f'SystemExit: {exc}'
+    finally:
+        sys.argv = _argv
+    check('--negctl-out "" → 显式报错，不静默落进 run()',
+          isinstance(got, str) and '可独占新建' in got, f'got={got!r}')
 
 print()
 if FAILS:

@@ -36,9 +36,10 @@ negctl 子命令用真实 trace 的变异副本证明这些判据不是空话；
 C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_6 反证。
 
 退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定。
-退出码（`--negctl-out`）：0 全部按期望命中 · 1 `--negctl-out` 已存在（不覆盖证据）·
-3 基线不可用（无有效轮次 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
-4 判据被证伪 · 8 有负控未判定（4 优先于 8）。完整语义见 README「退出码」。
+退出码（`--negctl-out`）：0 全部按期望命中 · 1 证据目录不可用（已存在不覆盖 / 无法创建，
+不覆盖证据）· 3 基线不可用（无有效轮次 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
+4 判据被证伪 · 8 有负控未判定（4 优先于 8）· 9 装置自身崩溃（已删半成品证据目录；与 `1`
+区分开，免得把崩溃读成「目录名已占用」）。完整语义见 README「退出码」。
 """
 import argparse
 import atexit
@@ -47,9 +48,11 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections import Counter
 
 if not sys.flags.isolated:
@@ -128,6 +131,13 @@ def g03_tmpdir():
     if _G03_TMPDIR is None:
         _G03_TMPDIR = tempfile.mkdtemp(prefix='frame-attrib-g03-')
         atexit.register(shutil.rmtree, _G03_TMPDIR, True)
+        # atexit 不覆盖 SIGTERM（CPython 默认走 SIG_DFL，进程直接终止）：CI 用 `timeout`
+        # 包装置时正好是 SIGTERM，那棵 TMPDIR 会残留。转成 SystemExit 让 atexit 得以运行
+        # （只在主线程装；非主线程会抛 ValueError，此时退回「异常终止每进程残留 1 棵」）。
+        try:
+            signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+        except (ValueError, OSError):
+            pass
     return _G03_TMPDIR
 
 
@@ -142,6 +152,11 @@ def g03(left_dir, right_dir, scenario):
                              env={**os.environ, 'TMPDIR': g03_tmpdir()})
     except subprocess.TimeoutExpired:
         result = (None, None, f'g03 超时（>{G03_TIMEOUT}s）')
+        _G03_CACHE[key] = result
+        return result
+    except OSError as exc:
+        # 起不来（解释器缺失 / EMFILE / fork 失败）也是「没比成」，不能当装置崩溃上抛。
+        result = (None, None, f'g03 无法执行：{exc}')
         _G03_CACHE[key] = result
         return result
     try:
@@ -253,25 +268,29 @@ def check_request_evidence(ts_recs, rust_recs, skip_rust=frozenset()):
 
 
 def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
-    """返回 (结论, 证据行列表)。结论 ∈ {PASS, ATTRIB_6, NOT_6, UNKNOWN}。
+    """返回 (结论, 证据行列表, 自报规则元组)。结论 ∈ {PASS, ATTRIB_6, NOT_6, UNKNOWN}。
 
     `UNKNOWN` = 比较器没比成 —— 进程级（超时 / 输出不可解析 / 输出里没有该场景）**或**
     C0 进程内自报（`triggered_rules` 含 `trace_input` / `trace_identity`），**不是**「不是 #6」。
     装置/比较器故障与「反证命中」必须分开：把前者折成 `NOT_6` 会把 rc=2「反证命中」这个最强
     的否定结论发给工具故障（#1926 评审 P1）。
 
+    第三个返回值是**结构化**的自报规则元组：只有 C0 进程内自报路径非空，其余一律空元组。
+    负控靠它区分「C0 按期望命中」与「装置故障」，不再对证据行做子串匹配（#1969 r1 两家评审：
+    进程级路径会把 G03 的 stderr 拼进证据行，子串匹配可能被 traceback 回显的源码行污染）。
+
     `per` 可注入该场景的 G03 结果（`per_scenario[scenario]`）：自测用桩数据覆盖 C1–C6
     的编排层，不必真跑冻结比较器；生产调用传 None，由 `g03()` 现算。
     """
     ev = []
     if scenario not in SCENARIOS:
-        return 'NOT_6', [f'C1 失败：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}']
+        return 'NOT_6', [f'C1 失败：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}'], ()
     if per is None:
         per, _, err = g03(ts_dir, rust_dir, scenario)
         if per is None:
-            return 'UNKNOWN', [f'C0 未运行：{err}（装置/比较器故障，未判定，不当作反证）']
+            return 'UNKNOWN', [f'C0 未运行：{err}（装置/比较器故障，未判定，不当作反证）'], ()
     if not per:
-        return 'UNKNOWN', [f'C0 未运行：G03 输出里没有场景 {scenario} 的结果（未判定，不当作反证）']
+        return 'UNKNOWN', [f'C0 未运行：G03 输出里没有场景 {scenario} 的结果（未判定，不当作反证）'], ()
     diffs = per.get('channel', {}).get('differences') or []
     verdict = per.get('verdict')
     rules = sorted(per.get('triggered_rules') or [])
@@ -284,35 +303,36 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
     not_run = [r for r in sorted(G03_UNRUN_RULES) if r in rules]
     if not_run:
         return 'UNKNOWN', [f'C0 未运行：G03 自报 {not_run}（比较器没比成 / 轮次身份不成立；'
-                           f'未判定，不当作反证）{per.get("error") or ""}']
+                           f'未判定，不当作反证）{per.get("error") or ""}'], tuple(not_run)
     if verdict == 'PASS':
-        return 'PASS', [f'C2：G03 判 PASS，语义差异 0 条']
+        return 'PASS', [f'C2：G03 判 PASS，语义差异 0 条'], ()
     # C2a：规则集必须恰好是 #6 的那三条。#6 只会多一条 durable.status，
     #      因此任何别的规则（E6 终态不符、trace_health、E9 settlement…）都是另一种缺陷。
     if rules != ['E10', 'E11', 'G03_channels']:
-        return 'NOT_6', [f'C2a 失败：triggered_rules={rules}，不是 #6 的 [E10,E11,G03_channels]']
+        return 'NOT_6', [f'C2a 失败：triggered_rules={rules}，不是 #6 的 [E10,E11,G03_channels]'], ()
     if len(diffs) != 1:
         return 'NOT_6', [f'C2b 失败：G03 语义差异 {len(diffs)} 条（#6 只允许 1 条）：'
-                         + json.dumps(diffs, ensure_ascii=False)[:600]]
+                         + json.dumps(diffs, ensure_ascii=False)[:600]], ()
     ok, why = is_the_gsf_insertion(diffs[0])
     if not ok:
-        return 'NOT_6', [f'C2b 失败：唯一差异不是 gsf 新增 —— {why}', json.dumps(diffs[0], ensure_ascii=False)]
+        return 'NOT_6', [f'C2b 失败：唯一差异不是 gsf 新增 —— {why}',
+                         json.dumps(diffs[0], ensure_ascii=False)], ()
     ev.append('C2a ok：triggered_rules 恰好 [E10,E11,G03_channels]')
     ev.append('C2b ok：G03 语义差异恰好 1 条 = 右侧新增 gateway_submit_failed（left=null）')
     ts_gsf = [i for i, r in enumerate(ts_recs) if is_gsf(r)]
     ru_gsf = [i for i, r in enumerate(rust_recs) if is_gsf(r)]
     if len(ru_gsf) != 1 or len(ts_gsf) != 0:
-        return 'NOT_6', [f'C3 失败：gsf 计数 ts={len(ts_gsf)} rust={len(ru_gsf)}（要求 0/1）']
+        return 'NOT_6', [f'C3 失败：gsf 计数 ts={len(ts_gsf)} rust={len(ru_gsf)}（要求 0/1）'], ()
     fc = next((i for i, r in enumerate(rust_recs)
                if r.get('kind') == 'harness.proof' and r.get('state') == FAIL_CLOSED), None)
     if fc is None:
-        return 'NOT_6', ['C3 失败：右侧 trace 里没有 result_unknown_fail_closed 帧']
+        return 'NOT_6', ['C3 失败：右侧 trace 里没有 result_unknown_fail_closed 帧'], ()
     if ru_gsf[0] <= fc:
-        return 'NOT_6', [f'C3 失败：gsf 序号 {ru_gsf[0]} 不晚于 fail_closed 帧 {fc}（分叉前移）']
+        return 'NOT_6', [f'C3 失败：gsf 序号 {ru_gsf[0]} 不晚于 fail_closed 帧 {fc}（分叉前移）'], ()
     ev.append(f'C3 ok：gsf 计数 ts=0 rust=1，位于第 {ru_gsf[0]} 帧，晚于 fail_closed 帧 {fc}')
     ident_ok, ident = identity_ok(rust_recs, 'rust')
     if not ident_ok:
-        return 'NOT_6', ['C4 失败：右侧 sidecar 身份自证不成立']
+        return 'NOT_6', ['C4 失败：右侧 sidecar 身份自证不成立'], ()
     ev.append(f'C4 ok：右侧 sidecar 身份自证 sha256={str(ident.get("sha256"))[:12]}…，spawnObserved=true')
     # C5：把右侧那一条 gsf 删掉后，两侧的帧**集合**必须完全相同（逐条多重集相等）。
     #     抹掉 invocationId（每轮随机 UUID，G03 自己也归一化）、sequence（插入后整段右移，
@@ -327,16 +347,16 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
         only_ru = [x for x in ru_cmp if x not in ts_cmp]
         return 'NOT_6', [f'C5 失败：删掉那条 gsf 后两侧帧集合仍不等 '
                          f'(仅 TS {len(only_ts)} 条 / 仅 Rust {len(only_ru)} 条)：'
-                         + (only_ts[:1] + only_ru[:1]).__str__()[:500]]
+                         + (only_ts[:1] + only_ru[:1]).__str__()[:500]], ()
     ev.append(f'C5 ok：删掉右侧第 {ru_gsf[0]} 帧后，两侧各 {len(ts_cmp)} 帧的集合完全相同'
               '（口径已豁免 requestEvidence）')
     # C6：两侧**都存在** requestEvidence 的同名帧，规范化后必须逐字节相同。
     #     单侧存在属于 C5 的已登记残余（README），C6 不覆盖、也不算失败。
     c6_ok, c6_msg = check_request_evidence(ts_recs, rust_recs, skip_rust=frozenset({ru_gsf[0]}))
     if not c6_ok:
-        return 'NOT_6', [c6_msg]
+        return 'NOT_6', [c6_msg], ()
     ev.append(c6_msg)
-    return 'ATTRIB_6', ev
+    return 'ATTRIB_6', ev, ()
 
 
 def rounds(root, side):
@@ -458,7 +478,7 @@ def run(root, scenario):
         for rd in ru_all:
             ts_recs = load(os.path.join(td, 'artifacts', trace))
             ru_recs = load(os.path.join(rd, 'artifacts', trace))
-            verdict, ev = judge(scenario, td, rd, ts_recs, ru_recs)
+            verdict, ev, _ = judge(scenario, td, rd, ts_recs, ru_recs)
             name = f'{os.path.basename(td)} v {os.path.basename(rd)}'
             per, _, _ = g03(td, rd, scenario)
             g = (per or {}).get('verdict')
@@ -542,16 +562,20 @@ def need(recs, pred, what, valid):
     return recs[need_index(recs, pred, what, valid)]
 
 
-def case_mark(got, want, ev0=''):
+def case_mark(got, want, cause=()):
     """负控结果归类（纯函数，自测可覆盖）。
 
     `UNJUDGED` = 装置/比较器故障，不是判据被证伪；MISMATCH 只留给「真的判错」。
-    期望 `UNKNOWN` 的用例（N/O）额外要求**证据行点名自报规则**（`trace_input` /
-    `trace_identity`）：只比结论值的话，任何一条装置故障（超时 / 缺场景）都会记成 OK，
-    C0 就被静默放过 —— 那是 r4 错向的镜像（把「装置故障」报成「判据命中」，#1969 评审 P2）。
+    期望 `UNKNOWN` 的用例（N/O）额外要求 `cause`（`judge()` 的第三个返回值，结构化自报规则
+    元组）非空：只比结论值的话，任何一条装置故障（超时 / 缺场景）都会记成 OK，C0 就被静默
+    放过 —— 那是 r4 错向的镜像（把「装置故障」报成「判据命中」，#1969 评审 P2）。
+
+    判 `cause` 的结构，不判证据行文案：进程级故障的证据行会把 G03 的 stderr 拼进来，若按子串
+    匹配 `trace_input` / `trace_identity`，traceback 回显的那行源码就可能把它污染成 OK
+    （#1969 r1 两家评审各自独立撞上同一条）。
     """
     if got == want:
-        if want == 'UNKNOWN' and not any(rule in ev0 for rule in G03_UNRUN_RULES):
+        if want == 'UNKNOWN' and not cause:
             return 'UNJUDGED'
         return 'OK'
     if got == 'UNKNOWN':
@@ -610,11 +634,14 @@ def build_cases(base_ts, base_ru):
     ru_d.insert(fc, rec)
     cases.append(('D-moved-before-fail-closed', base_ts, ru_d, 'NOT_6', None))
     # E 替换型：把右侧终态 outcome 改掉（left 非 null）→ NOT_6
+    #   C1–C6 都不要求这帧存在，所以变异点缺失时旧写法是**静默空操作**（ru_e ≡ 基线）：
+    #   实得 ATTRIB_6 vs 期望 NOT_6 → 假 MISMATCH → rc=4「判据被证伪」。
+    #   与 #1968 同向（数据问题被报成判据被证伪），必须前置成 BaselineUnusable（rc=3）。
     ru_e = clone(base_ru)
-    for r in ru_e:
-        if r.get('kind') == 'operation.terminal' and r.get('outcome') == 'result_unknown':
-            r['outcome'] = 'failed'
-            break
+    e = need_index(ru_e,
+                   lambda r: r.get('kind') == 'operation.terminal' and r.get('outcome') == 'result_unknown',
+                   'operation.terminal(outcome=result_unknown) 帧', '需要含该终态的基线')
+    ru_e[e]['outcome'] = 'failed'
     cases.append(('E-terminal-substituted', base_ts, ru_e, 'NOT_6', None))
     # F 场景越界：把场景名换成未登记场景 → NOT_6
     cases.append(('F-scenario-out-of-scope', base_ts, base_ru, 'NOT_6', 'sidecar_budget_limit'))
@@ -625,6 +652,10 @@ def build_cases(base_ts, base_ru):
             r['text'] = 'AgentLoop terminal outcome is result_unknown.'
     cases.append(('G-text-tampered', base_ts, ru_g, 'NOT_6', None))
     # H 静默少一帧（G03 的偏序比较器看不见的那种）→ 只有 C5 能抓 → NOT_6
+    #   H 的全部价值在「确实删掉了帧」：基线没有该帧时 ru_h ≡ 基线，H 退化成第二个 A，
+    #   同样得到假 MISMATCH → rc=4。只探测、不变异，缺失即 BaselineUnusable（rc=3）。
+    need_index(base_ru, lambda r: r.get('kind') == 'side_effect.state', 'side_effect.state 帧',
+               '需要含该帧的基线')
     ru_h = [r for r in base_ru if r.get('kind') != 'side_effect.state']
     cases.append(('H-frame-dropped', base_ts, ru_h, 'NOT_6', None))
     # I 与 #6 无关地多一帧（重复一条 model.request）→ C5 抓 → NOT_6
@@ -710,26 +741,28 @@ def negctl(root, scenario, outdir):
     ru_dir = ru_dirs[0]
     base_ts = load(os.path.join(ts_dir, 'artifacts', trace))
     base_ru = load(os.path.join(ru_dir, 'artifacts', trace))
-    if not any(is_gsf(r) for r in base_ru):
-        print(f'negctl 基线不可用：{ru_dir} 没有 gsf（需要一对 FAIL 作基线，rc=3）')
-        return 3
+    # 基线前置检查**只有一处**：build_cases 里的 need_index / 显式 raise（含 A/B/C/G 依赖的
+    # gsf）。这里不再重复检查 gsf —— 同一条件两条 rc=3 路径、两套文案，将来改口径要改两处。
     # 先把用例造出来（纯内存，必要时 rc=3 退出），再落证据目录：否则基线不可用的失败会
     # 留下一个空目录，把「独占新建」变成「跑一次就废一个名字」。
     try:
         cases = build_cases(base_ts, base_ru)
     except BaselineUnusable as exc:
         # 基线缺变异点 → rc=3（同 run() 的「有效轮次不足」口径），不是 MISMATCH。
-        print(f'negctl 基线不可用：{exc}（rc=3，不判 MISMATCH）')
+        print(f'negctl 基线不可用（{ru_dir}）：{exc}（rc=3，不判 MISMATCH）')
         return 3
 
     # 证据目录独占新建：`os.makedirs` 本身就是检查（O_EXCL 语义），不是 check-then-act。
     # 旧的 `os.path.exists` 再写有窗口：两个并发进程都通过检查，随后 `write_case` 的
     # `rmtree` 会删掉对方正在被 G03 读的用例目录（假 UNKNOWN，甚至假 MISMATCH）。
     # 因此也删掉了 `write_case` 里的 `rmtree` —— 独占新建后用例目录不可能预先存在（#1969 P2）。
+    # 非「已存在」的创建失败（只读父目录 / 路径中段是文件）同样归 1：两者都是「证据目录不可用」，
+    # 消息点名具体原因，免得按 rc 判停的自动化把它读成同一种情形。
     try:
         os.makedirs(outdir)
-    except FileExistsError:
-        raise SystemExit(f'--negctl-out 必须独占新建：{outdir} 已存在（不覆盖证据）')
+    except OSError as exc:
+        why = '已存在（不覆盖证据）' if isinstance(exc, FileExistsError) else f'无法创建：{exc}'
+        raise SystemExit(f'--negctl-out 必须是可独占新建的目录：{outdir} {why}')
 
     def write_case(name, ts_recs, ru_recs):
         d = os.path.join(outdir, name)
@@ -741,16 +774,30 @@ def negctl(root, scenario, outdir):
 
     ok = True
     unjudged = 0
-    for name, ts_recs, ru_recs, want, sc in cases:
-        td, rd = write_case(name, ts_recs, ru_recs)
-        got, ev = judge(sc or scenario, td, rd, ts_recs, ru_recs)
-        mark = case_mark(got, want, ev[0])
-        if mark == 'UNJUDGED':
-            # 装置/比较器故障 ≠ 判据被证伪：单独计，不置 MISMATCH（#1926 r4 评审 P1）。
-            unjudged += 1
-        elif mark == 'MISMATCH':
-            ok = False
-        print(f'negctl {name:32s} 期望={want:9s} 实得={got:9s} {mark}  {ev[0][:110]}')
+    try:
+        for name, ts_recs, ru_recs, want, sc in cases:
+            td, rd = write_case(name, ts_recs, ru_recs)
+            got, ev, cause = judge(sc or scenario, td, rd, ts_recs, ru_recs)
+            mark = case_mark(got, want, cause)
+            if mark == 'UNJUDGED':
+                # 装置/比较器故障 ≠ 判据被证伪：单独计，不置 MISMATCH（#1926 r4 评审 P1）。
+                unjudged += 1
+            elif mark == 'MISMATCH':
+                ok = False
+            print(f'negctl {name:32s} 期望={want:9s} 实得={got:9s} {mark}  {ev[0][:110]}')
+    except (KeyboardInterrupt, SystemExit):
+        # 半成品证据不许留下：独占新建保证 outdir 归本进程所有，删掉是安全的。
+        shutil.rmtree(outdir, ignore_errors=True)
+        raise
+    except BaseException as exc:
+        # 循环中途崩溃（ENOSPC / EIO / 意外形状）若以 traceback 退 1，会与本 README 登记为
+        # 「证据目录已存在」的 rc=1 撞码：按 rc 判停的复查会把它读成命名冲突换名重跑，还可能
+        # 把上一次崩溃留下的残缺目录（形貌与完整证据无异）当成已完成结果。因此独立 rc=9，
+        # 并删掉半成品（#1969 r1 concurrency 评审 P2）。
+        shutil.rmtree(outdir, ignore_errors=True)
+        traceback.print_exc()
+        print(f'## negctl 中断：{exc!r}；已删除半成品证据目录 {outdir}（rc=9，非「目录已存在」rc=1）')
+        return 9
     # 未判定的汇总必须无条件打印：MISMATCH 优先只影响退出码，不该把「其中若干条其实是装置
     # 故障」这条信息吞掉（#1969 评审 P3）。
     if unjudged:
@@ -762,14 +809,16 @@ def negctl(root, scenario, outdir):
     return 0
 
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('root')
     ap.add_argument('scenario')
     ap.add_argument('--negctl-out', default=None)
     args = ap.parse_args()
-    if args.negctl_out:
+    # `is not None` 而不是真值判断：`--negctl-out ''`（未加引号的空 shell 变量）若落进 run()，
+    # 调用方会按 negctl 的 rc 表解读 run 的 rc（rc=0「归因成功」被读成「负控全命中」）。
+    # 空串交给下面的 makedirs 显式报错。
+    if args.negctl_out is not None:
         return negctl(args.root, args.scenario, args.negctl_out)
     return run(args.root, args.scenario)
 
