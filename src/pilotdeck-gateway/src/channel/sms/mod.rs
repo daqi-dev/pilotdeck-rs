@@ -159,7 +159,7 @@ struct SmsRuntime {
     mapper: SmsSessionMapper,
     elicitation: ImElicitationHelper,
     permissions: ImPermissionHelper,
-    active_chats: HashSet<JsString>,
+    active_chats: Arc<StdMutex<HashSet<JsString>>>,
     client: Option<Arc<dyn SmsSender>>,
     from_number: JsString,
     auth_token: JsString,
@@ -296,7 +296,7 @@ impl SmsChannel {
                     mapper: mapper.unwrap_or_default(),
                     elicitation: ImElicitationHelper::default(),
                     permissions: ImPermissionHelper::default(),
-                    active_chats: HashSet::new(),
+                    active_chats: Arc::new(StdMutex::new(HashSet::new())),
                     client: None,
                     from_number: JsString::from(""),
                     auth_token: JsString::from(""),
@@ -1244,7 +1244,13 @@ async fn handle_incoming(
             // TS: `if (!mapped.message) return;`
             ActiveOutcome::EmptyMessage
         } else {
-            runtime.active_chats.insert(chat_id.clone());
+            // #1738: the set itself keeps a std mutex (never held across an
+            // await) so the synchronous `Drop` guard can release the slot.
+            runtime
+                .active_chats
+                .lock()
+                .expect("#1738 sms active chats mutex")
+                .insert(chat_id.clone());
             ActiveOutcome::Dispatch(mapped)
         }
     }
@@ -1253,21 +1259,23 @@ async fn handle_incoming(
     // the negative control's observable (`sms_active_insert_split`). The
     // dedupe switch is read once here so both shapes share it.
     let dedupe_off = crate::mutants::on("sms-active-dedupe-off");
-    let (already_active, outcome) = if crate::mutants::on("sms-active-insert-split") {
+    let (already_active, outcome, active_chats) = if crate::mutants::on("sms-active-insert-split") {
         let already_active = {
             let runtime = shared.runtime.lock().await;
-            runtime.active_chats.contains(&chat_id)
+            runtime
+                .active_chats
+                .lock()
+                .expect("#1738 sms active chats mutex")
+                .contains(&chat_id)
         };
         tokio::task::yield_now().await;
         let mut runtime = shared.runtime.lock().await;
-        if already_active && !dedupe_off {
-            (already_active, ActiveOutcome::Skip)
+        let outcome = if already_active && !dedupe_off {
+            ActiveOutcome::Skip
         } else {
-            (
-                already_active,
-                dispatch_outcome(&mut runtime, &chat_id, &text),
-            )
-        }
+            dispatch_outcome(&mut runtime, &chat_id, &text)
+        };
+        (already_active, outcome, runtime.active_chats.clone())
     } else {
         // #1339 fix-r1: `activeChats.has` → `sessionMapper.resolve` → `add` in
         // one lock section — TS runs the same stretch synchronously; separate
@@ -1275,15 +1283,17 @@ async fn handle_incoming(
         // and double-dispatch. The "already active" log and the `/new` reply
         // stay outside the lock.
         let mut runtime = shared.runtime.lock().await;
-        let already_active = runtime.active_chats.contains(&chat_id);
-        if already_active && !dedupe_off {
-            (already_active, ActiveOutcome::Skip)
+        let already_active = runtime
+            .active_chats
+            .lock()
+            .expect("#1738 sms active chats mutex")
+            .contains(&chat_id);
+        let outcome = if already_active && !dedupe_off {
+            ActiveOutcome::Skip
         } else {
-            (
-                already_active,
-                dispatch_outcome(&mut runtime, &chat_id, &text),
-            )
-        }
+            dispatch_outcome(&mut runtime, &chat_id, &text)
+        };
+        (already_active, outcome, runtime.active_chats.clone())
     };
     if already_active {
         shared.log(
@@ -1302,13 +1312,13 @@ async fn handle_incoming(
         }
         ActiveOutcome::EmptyMessage => Ok(()),
         ActiveOutcome::Dispatch(mapped) => {
-            let result =
-                process_message(shared, &chat_id, &mapped.session_key, &mapped.message).await;
-            {
-                let mut runtime = shared.runtime.lock().await;
-                runtime.active_chats.remove(&chat_id);
-            }
-            result
+            // #1738: the `Drop` guard replaces the paired insert/remove so a
+            // panic in `process_message` (spawned fire-and-forget, so only the
+            // task dies) still releases the slot — the TS `finally { delete }`.
+            // Constructed only on the dispatch path: a non-dispatch outcome
+            // never admitted, so its drop must not release another turn's slot.
+            let _guard = super::ActiveChat::new(active_chats, chat_id.clone());
+            process_message(shared, &chat_id, &mapped.session_key, &mapped.message).await
         }
     }
 }

@@ -234,6 +234,36 @@ impl TurnGateway for FailingGateway {
     }
 }
 
+/// A gateway whose first `submit` panics where the channel awaits it: the
+/// #1738 shape — the fire-and-forget task dies mid-`processMessage`, which a
+/// paired insert/remove cannot survive. Later submits return an empty stream
+/// so the redelivered turn completes.
+struct PanickingGateway {
+    calls: Arc<Mutex<Vec<String>>>,
+}
+
+impl TurnGateway for PanickingGateway {
+    fn submit(
+        &self,
+        request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        let calls = self.calls.clone();
+        Box::pin(async move {
+            let first = {
+                let mut calls = calls.lock().expect("#1738 panicking calls mutex");
+                calls.push(String::from_utf16_lossy(request.session_key.units()));
+                calls.len() == 1
+            };
+            if first {
+                panic!("#1738 injected process_message panic (webhook)");
+            }
+            let (sender, receiver) = mpsc::unbounded_channel();
+            drop(sender);
+            Ok(Box::new(MockStream(receiver)) as Box<dyn TurnEventStream>)
+        })
+    }
+}
+
 /// The direct tests' channel log capture.
 #[derive(Default)]
 struct Recorder {
@@ -1154,10 +1184,82 @@ async fn submit_rejection_delivers_the_failure_without_retrying_or_leaking_the_a
         .lock()
         .expect("#1334 webhook state mutex")
         .active_chats
+        .lock()
+        .expect("#1738 webhook active chats mutex")
         .contains("webhook:main:err");
     negative_assert!(
         !active,
         "#1614 the rejected chat leaves no half-open session"
+    );
+}
+
+/// #1738: a panic inside `processMessage` must not leak the active-chat
+/// slot. The webhook delivery is fire-and-forget (`tokio::spawn`, handle
+/// dropped), so the dying task would otherwise leave the chat marked active
+/// and every later delivery for it silently skipped until restart — the TS
+/// baseline releases the slot in `finally`, which the Rust port's paired
+/// insert/remove could not survive.
+#[tokio::test]
+async fn a_panicking_process_message_does_not_leak_the_active_chat() {
+    let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+    let gateway = Arc::new(PanickingGateway {
+        calls: calls.clone(),
+    });
+    let recorder = Recorder::default();
+    let channel = WebhookChannel::new(test_options());
+    install(&channel, Some(gateway), recorder.logger());
+    let ctx = channel.ctx.clone();
+
+    // The production shape: only the spawned task dies, the process does not.
+    let joined = tokio::spawn({
+        let ctx = ctx.clone();
+        async move { handle_incoming(&ctx, "webhook:main:chat", "one".to_owned()).await }
+    })
+    .await;
+    let error =
+        joined.expect_err("#1738 the injected panic must fail the spawned task, not vanish");
+    negative_assert!(
+        error.is_panic(),
+        "#1738 the spawn must end in the panic, not a clean return"
+    );
+    let panic = error.into_panic();
+    let payload = panic
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    negative_assert!(
+        payload.contains("#1738 injected process_message panic (webhook)"),
+        "#1738 unexpected panic payload: {payload:?}"
+    );
+
+    // C1: the unwind releases the slot — no residue until restart.
+    let active = ctx
+        .state
+        .lock()
+        .expect("#1334 webhook state mutex")
+        .active_chats
+        .lock()
+        .expect("#1738 webhook active chats mutex")
+        .contains("webhook:main:chat");
+    negative_assert!(
+        !active,
+        "#1738 a panicking turn must not leave its chat marked active"
+    );
+
+    // C2: the next delivery for the same chat reaches the gateway again
+    // instead of being dropped as already active.
+    handle_incoming(&ctx, "webhook:main:chat", "two".to_owned())
+        .await
+        .expect("#1738 the redelivery after the panic returns Ok");
+    negative_assert_eq!(
+        calls.lock().expect("#1738 panicking calls mutex").len(),
+        2,
+        "#1738 the redelivery submits a second turn"
+    );
+    negative_assert!(
+        !recorder.has("webhook: chat webhook:main:chat already active, skipping"),
+        "#1738 the redelivery must not be skipped as already active"
     );
 }
 

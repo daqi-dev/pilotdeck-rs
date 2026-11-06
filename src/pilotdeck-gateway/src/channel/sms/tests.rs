@@ -1091,6 +1091,53 @@ fn null_factory() -> TwilioFactory {
     })
 }
 
+/// A gateway whose first `submitTurn` panics where the channel awaits it: the
+/// #1738 shape — the fire-and-forget task dies mid-`processMessage`, which a
+/// paired insert/remove cannot survive. Later submits return an empty event
+/// stream so the redelivered turn completes.
+struct PanickingGateway {
+    calls: Arc<SyncMutex<Vec<String>>>,
+}
+
+impl SmsGateway for PanickingGateway {
+    fn submit_turn(
+        &self,
+        request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        let calls = self.calls.clone();
+        Box::pin(async move {
+            let first = {
+                let mut calls = calls.lock().expect("#1738 panicking calls mutex");
+                calls.push(String::from_utf16_lossy(request.session_key.units()));
+                calls.len() == 1
+            };
+            if first {
+                panic!("#1738 injected process_message panic (sms)");
+            }
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::new(),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        _decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        Box::pin(async { Ok(PermissionDecisionOutcome { delivered: true }) })
+    }
+}
+
 /// A spawned `handle.stop()` outcome as a message: `None` when it completed,
 /// otherwise the stop error or the panic payload it aborted with.
 fn stop_outcome(
@@ -1183,6 +1230,111 @@ async fn logger_panic_does_not_poison_boundaries() {
             .any(|(_, message)| message == "sms: stopping (cleanup)")
     })
     .await;
+}
+
+/// #1738: a panic inside `processMessage` must not leak the active-chat slot.
+/// The sms delivery is fire-and-forget (`tokio::spawn`, handle dropped), so
+/// the dying task would otherwise leave the chat marked active and every
+/// later message for it silently skipped until restart — the TS baseline
+/// releases the slot in `finally`, which the Rust port's paired
+/// insert/remove could not survive.
+#[tokio::test]
+async fn a_panicking_process_message_does_not_leak_the_active_chat() {
+    let logs: Arc<SyncMutex<Vec<(String, String)>>> = Arc::new(SyncMutex::new(Vec::new()));
+    let logger: ChannelLog = {
+        let logs = logs.clone();
+        Arc::new(move |level, message| {
+            logs.lock()
+                .expect("#1738 logger record mutex")
+                .push((level.to_owned(), message.to_owned()));
+        })
+    };
+    let calls = Arc::new(SyncMutex::new(Vec::<String>::new()));
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&json!({
+            "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+            "webhookPort": 0,
+        }))),
+        mapper: None,
+        gateway: Some(Arc::new(PanickingGateway {
+            calls: calls.clone(),
+        })),
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: Some(logger),
+            turn_gateway: None,
+        })
+        .await
+        .expect("#1738 panic-leak test start");
+    let shared = channel.shared.clone();
+    let chat_id = JsString::from("+15550001");
+
+    // The production shape: only the spawned task dies, the process does not.
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat_id = chat_id.clone();
+        async move { handle_incoming(&shared, chat_id, JsString::from("one")).await }
+    })
+    .await;
+    let error =
+        joined.expect_err("#1738 the injected panic must fail the spawned task, not vanish");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1738 the spawn must end in the panic, not a clean return"
+    );
+    let panic = error.into_panic();
+    let payload = panic
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_owned())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    crate::negative_assert!(
+        payload.contains("#1738 injected process_message panic (sms)"),
+        "#1738 unexpected panic payload: {payload:?}"
+    );
+
+    // C3: the unwind releases the slot — no residue until restart.
+    let active = {
+        let runtime = shared.runtime.lock().await;
+        runtime
+            .active_chats
+            .lock()
+            .expect("#1738 sms active chats mutex")
+            .contains(&chat_id)
+    };
+    crate::negative_assert!(
+        !active,
+        "#1738 a panicking turn must not leave its chat marked active"
+    );
+
+    // C4: the next message for the same chat reaches the gateway again
+    // instead of being dropped as already active.
+    handle_incoming(&shared, chat_id.clone(), JsString::from("two"))
+        .await
+        .expect("#1738 the redelivery after the panic returns Ok");
+    crate::negative_assert_eq!(
+        calls.lock().expect("#1738 panicking calls mutex").len(),
+        2,
+        "#1738 the redelivery submits a second turn"
+    );
+    crate::negative_assert!(
+        !logs
+            .lock()
+            .expect("#1738 logger record mutex")
+            .iter()
+            .any(|(_, message)| message.contains("already active, skipping")),
+        "#1738 the redelivery must not be skipped as already active"
+    );
+    handle
+        .stop("#1738 panic-leak test done")
+        .await
+        .expect("#1738 panic-leak test stop");
 }
 
 /// #1339 fix-r1 (P2 #6): a JSON `null` body throws on the TS side with the
