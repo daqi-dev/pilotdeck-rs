@@ -627,10 +627,22 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         "#1333 {case} request {index}: a recorded expectation must be an object, got {expected}"
     );
     if expected.get("error").is_none() {
+        // `Value::get` answers `Some(Null)` for an explicit `"status": null`,
+        // and `compare_response` reads the status with `as_u64()`, so a key
+        // that merely exists would let a null status compare equal to a
+        // connection close (#1759 r2 boundary P1). Pin the value, not the key.
         assert!(
-            expected.get("status").is_some(),
+            expected.get("status").and_then(Value::as_u64).is_some(),
             "#1333 {case} request {index}: a recorded expectation with no `error` must carry a \
-             status line, got {expected}"
+             numeric status line, got {expected}"
+        );
+        // Cells that skip the replay (`body-read-timeout`) read this map
+        // directly, so a missing `headers` would make their `date` pin a
+        // vacuous `None` instead of a comparison (#1759 r2 sibling P3).
+        assert!(
+            expected["headers"].is_object(),
+            "#1333 {case} request {index}: a recorded response must carry a headers object, \
+             got {expected}"
         );
         return;
     }
@@ -649,6 +661,22 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         "#1333 {case} request {index}: a recorded connection error must not carry a status \
          line, got {expected}"
     );
+}
+
+// #1759 r2 (boundary P1 / sibling P3): the two shapes the mutual-exclusion pin
+// exists to refuse. `#[should_panic]` is the point here — the assertion is the
+// product, and these tests would turn red the moment either check is loosened
+// back to "the key exists".
+#[test]
+#[should_panic(expected = "must carry a numeric status line")]
+fn recorded_expectation_refuses_a_null_status() {
+    assert_recorded_error_shape("cell", 0, &json!({ "status": null, "headers": {} }));
+}
+
+#[test]
+#[should_panic(expected = "must carry a headers object")]
+fn recorded_expectation_refuses_a_missing_headers_object() {
+    assert_recorded_error_shape("cell", 0, &json!({ "status": 200 }));
 }
 
 fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResponse) {
@@ -1194,12 +1222,16 @@ async fn replays_real_ts_api_server_cells() {
             // here is the cell's own claim — this surface must be a connection
             // error at all, not an answered `400` — because the replay skips
             // the comparison and nothing else would notice the whole response
-            // turning into a normal one (#1759 r1 boundary P1).
+            // turning into a normal one (#1759 r1 boundary P1). Every recorded
+            // response is checked, so a cell that grows a second, answered
+            // request cannot slip past on `expect[0]` alone (#1759 r2 P3).
+            let expectations = case["expect"].as_array().expect("#1333 expect");
             assert!(
-                case["expect"][0].get("error").is_some(),
+                expectations
+                    .iter()
+                    .all(|expected| expected.get("error").is_some()),
                 "#1333 {id}: an oversized body must record a connection error, not a response, \
-                 got {}",
-                case["expect"][0]
+                 got {expectations:?}"
             );
             continue;
         }
