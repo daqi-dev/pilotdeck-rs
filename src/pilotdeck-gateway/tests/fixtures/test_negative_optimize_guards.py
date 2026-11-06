@@ -52,6 +52,18 @@ SCRIPTS = (
     ('cli-parity-mock-gateway/negative_controls.py', (), ('-I',)),
 )
 
+# #1666: three entries have no "caller target" startup guard, so the
+# missing-target matrix below cannot assert rc 2 for them:
+# `interaction-values` and `turn-submit-admission` let
+# `negative_process.target_environment` default to the shared tree target
+# (#1166), and `cli-parity-mock-gateway` never compiles Cargo. They are named
+# here so the matrix cannot silently shrink.
+TARGET_OPTIONAL = frozenset({
+    'interaction-values/negative_controls.py',
+    'turn-submit-admission/negative_controls.py',
+    'cli-parity-mock-gateway/negative_controls.py',
+})
+
 # #1666 is *not* closed for the whole family: these hand-rolled entries still
 # carry bare `assert` guards and are migrated batch by batch (tracked in the
 # issue). This register is shrink-only: a file that is not listed here may not
@@ -123,13 +135,18 @@ def uses_a_bare_assert(path):
     return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 
-def run(script, args, flags=(), *, optimize, base, claim_exists=False):
+def run(script, args, flags=(), *, optimize, base, claim_exists=False,
+        missing_target=False):
     """Run ``script`` with a throwaway output directory.
 
     Returns ``(process, claimed_dir)``: the output directory path is part of
     the result because "refused before it started" is only honest if the
     evidence directory was never created (a host reads that directory as this
     run's verdict).
+
+    ``missing_target`` drops ``CARGO_TARGET_DIR`` and the unknown mutation name,
+    so the target guard is the first thing the script can hit: that refusal must
+    also be rc 2 and must also leave no evidence directory.
     """
     directory = Path(tempfile.mkdtemp(prefix='negctl-1666-', dir=base))
     _CLEANUP.append(directory)
@@ -140,13 +157,18 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False):
     if claim_exists:
         out.mkdir()
         command_entry = [str(out), *args]
+    elif missing_target:
+        command_entry = [str(out), *args]
     else:
         command_entry = [str(out), *args, UNKNOWN]
     command += [str(FIXTURES / script), *command_entry]
     env = dict(os.environ)
     # Presence-only preconditions some scripts check before their roster guard.
-    env.setdefault('CARGO_TARGET_DIR', str(out.parent / 'cargo-target'))
     env.setdefault('PDRS_BASELINE', str(out.parent / 'pinned-ts-checkout'))
+    if missing_target:
+        env.pop('CARGO_TARGET_DIR', None)
+    else:
+        env.setdefault('CARGO_TARGET_DIR', str(out.parent / 'cargo-target'))
     env.pop('PYTHONOPTIMIZE', None)
     result = subprocess.run(command, cwd=str(FIXTURES), env=env,
                             capture_output=True, text=True, timeout=300)
@@ -222,6 +244,34 @@ class UnknownControlIsRefused(unittest.TestCase):
                               f'{script} must say why it refused')
                 self.assertEqual(list(out.iterdir()), [],
                                  f'{script} must not write into another run\'s directory')
+
+    def test_every_target_guard_refuses_without_a_caller_target(self):
+        """A missing caller target is "never started" (2), not a failed run (1).
+
+        `specs/negative-controls/README.md` promises this for every migrated
+        entry, but the rest of this file always supplies the variable, so the
+        promise had no denominator: `_shared/negative_control.environment` kept
+        raising `SystemExit('<string>')` (exit 1) after the evidence directory
+        was claimed, and nothing caught it.
+        """
+        listed = {script for script, _extra, _flags in SCRIPTS}
+        self.assertLessEqual(TARGET_OPTIONAL, listed,
+                             'TARGET_OPTIONAL must only name listed scripts')
+        for script, extra, flags in SCRIPTS:
+            if script in TARGET_OPTIONAL:
+                continue
+            with self.subTest(script=script):
+                result, out = run(script, extra, flags, optimize=True,
+                                  base=self.base, missing_target=True)
+                self.assertEqual(
+                    result.returncode, 2,
+                    f'{script} must refuse without a caller target: '
+                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                self.assertIn('CARGO_TARGET_DIR', result.stderr,
+                              f'{script} must name the missing variable on stderr')
+                self.assertFalse(
+                    out.exists(),
+                    f'{script} refused but still created its evidence directory {out}')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.

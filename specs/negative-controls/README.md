@@ -149,9 +149,12 @@
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
-另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
-（`network-timing` 在 `mutation_suite` / `baseline_only` 内部占目录，同样在守卫之后）。
-这条由 `test_negative_optimize_guards.py` 机检：每个入口用不存在的变异名拒跑后，
-断言的输出目录不存在；另有一条「目录已存在 → rc=2 且不写入」的用例覆盖全族
-——不是靠读代码维持。共享执行器 `mutation_suite` 的同类拒跑也由这条用例顺带覆盖
-（它的四分见 `tests/fixtures/README.md`，不与本节互相替代）。
+另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录。
+`network-timing` 的正式路径进共享执行器 `mutation_suite`（它先占目录再取环境），因此缺
+`CARGO_TARGET_DIR` 的拒跑放在 `main()` 里、早于名册与源码守卫；共享执行器自身遇到启动期的
+`refuse()`（rc 2）时不发布 `summary.json`，并撤掉本次刚占的空目录——「从未开跑」同样不留证据。
+这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、缺 `CARGO_TARGET_DIR`、
+目录已存在三条矩阵覆盖全族（`interaction-values` / `turn-submit-admission` 由
+`negative_process.target_environment` 默认共享 target、`cli-parity-mock-gateway` 不编译 Cargo，
+这三个入口按 `TARGET_OPTIONAL` 显式登记，不静默漏测）——不是靠读代码维持。
+共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。

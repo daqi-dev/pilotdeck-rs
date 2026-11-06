@@ -283,6 +283,7 @@ class Controls(unittest.TestCase):
                     patch.object(adaptive, 'mutating_sources', side_effect=effect) as guarded, \
                     patch.object(adaptive, 'scratch', new=scratch), \
                     patch.object(adaptive, 'persistent_environment', return_value={'CARGO_TARGET_DIR': 'test-double'}), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': 'test-double'}), \
                     patch.object(adaptive, 'source_copy', return_value=self.root), \
                     patch.object(adaptive.CargoTests, 'run', side_effect=AssertionError('#1048 skipped build')) as run, \
                     redirect_stdout(io.StringIO()):

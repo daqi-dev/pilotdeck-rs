@@ -16,6 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (CARGO_SLOTS_CALL_SECONDS, CARGO_SLOTS_WAIT_SECONDS,
                              mutating_sources, run_owned, wait_for_slot)
+from negative_selection import refuse
 import pending_reanchor as pending
 
 REPO = Path(__file__).resolve().parents[5]
@@ -57,7 +58,11 @@ def scratch(label, *, deadline=580):
 
 def environment(root):
     if not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+        # #1666/#1734: a missing caller target is "never started" (2), not
+        # "ran and did not pass" (1). `SystemExit('...')` carried the message
+        # and therefore exited 1; `refuse()` writes it to stderr and passes
+        # the code as an int.
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'),
                CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'),
                CARGO_INCREMENTAL='0', RUSTC_WRAPPER='', TMPDIR=str(root))
@@ -271,6 +276,13 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
     no synthetic Git repository or alternate baseline is involved.
     """
     output = Path(output).resolve()
+    # #1666/#1734: the caller target is a startup guard, so it is checked
+    # before the evidence directory is claimed and before the source guard can
+    # wait for a cargo slot: a missing target is "never started" (2), not a
+    # run that failed. `environment()` below keeps the same refusal as a
+    # backstop for callers that reach it directly.
+    if not os.environ.get('CARGO_TARGET_DIR'):
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     # #1666: a taken evidence directory means "never started" (2). Letting
     # `FileExistsError` escape printed a traceback and exited 1, which the host
     # triage table reads as "ran and did not pass" -- an investigation of a run
@@ -371,6 +383,16 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
                     publish()
                     print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     except BaseException as error:
+        if isinstance(error, SystemExit) and error.code == 2 and not records:
+            # #1666/#1734: a startup refusal (missing caller target, unreadable
+            # oracle) measured nothing. Re-raise without publishing a summary
+            # and drop the directory this call just claimed, so "never
+            # started" does not leave evidence that reads like a finished run.
+            try:
+                output.rmdir()
+            except OSError:
+                pass
+            raise
         reason = f'suite/source guard: {type(error).__name__}: {error}'
         for row in records:
             row.update(status='INVALID', reason=row['reason'] + '; ' + reason)

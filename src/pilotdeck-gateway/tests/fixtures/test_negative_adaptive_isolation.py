@@ -501,7 +501,8 @@ class CandidateBaselineTests(unittest.TestCase):
 
     def test_formal_mode_still_uses_head_guarded_suite(self):
         with patch.object(self.fixture, 'mutation_suite', return_value=7) as suite, \
-                patch.dict(os.environ, {'PDRS_NEGATIVE_BASELINE': 'not-HEAD'}), \
+                patch.dict(os.environ, {'PDRS_NEGATIVE_BASELINE': 'not-HEAD',
+                                        'CARGO_TARGET_DIR': str(self.out / 'target')}), \
                 patch.object(self.fixture, 'baseline_only', side_effect=AssertionError('#994 formal mode must mutate')), \
                 patch.object(sys, 'argv', ['runner', str(self.out / 'formal'), 'io-as-microtask']):
             self.assertEqual(self.fixture.main(), 7, '#994 formal suite exit code propagates')

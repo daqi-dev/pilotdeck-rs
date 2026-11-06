@@ -30,6 +30,11 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 
 契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
+`_shared.negative_control.mutation_suite` 另有一条启动期规则（#1666/#1734）：它先占证据目录再取环境，
+所以环境守卫（缺 `CARGO_TARGET_DIR`、oracle 读不了）用的是 `negative_selection.refuse()`——rc=2、
+原因进 stderr；抛出时**不发布 `summary.json`，并撤掉本次刚占的空目录**，免得「从未开跑」在宿主侧
+留下一份看起来像跑完的证据。其余失败仍按上面的三分：已跑出判决的记 1。
+
 ### 自管执行脚本（#1666 / #1734）
 
 自己管循环、自己判杀的 `*/negative_controls.py` 走另一套四分（0 全 KILLED / 1 跑过但没全绿 /
@@ -43,8 +48,10 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 - 全部守卫写成 `raise` / `refuse()`，**一个都不依赖 `assert`**。`python3 -O` /
   `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
 
-`test_negative_optimize_guards.py` 对已迁移的十五个入口逐一复算「未知变异名 → rc=2 且
-stderr 点名」，加不加 `-O` 都要成立；它同时自证本解释器确实剥离 `assert`，否则结论无意义。
+`test_negative_optimize_guards.py` 对已迁移的十五个入口逐一复算三条拒跑矩阵：未知变异名
+（加不加 `-O` 各一遍）、缺 `CARGO_TARGET_DIR`、输出目录已存在——都要求 rc=2 且 stderr 点名、
+且不留下证据目录；它同时自证本解释器确实剥离 `assert`，否则结论无意义。（不要求 caller target
+的三个入口按 `TARGET_OPTIONAL` 显式登记，不静默漏测。）
 同一文件里的 `PENDING_BARE_ASSERTS` 是**只减不增**的存量登记：仍带裸 `assert` 的
 `*/negative_controls.py` 必须逐条列出并写理由，新脚本带裸 `assert` 直接让 CI 红。因此
 「已迁移清单」不会被误读成全集——未迁移的都在登记表里，由 #1666 分批推进。
