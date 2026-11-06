@@ -111,10 +111,11 @@ an optimistic exit either, so the delegation family no longer reports it as
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests seventy-one probe functions: seventy inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests seventy-six probe functions: seventy-five inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the seventy (the six helpers
-it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_decoy_code`, `_exit_bare`,
+function.  `probe892` is the authoritative list for the seventy-five (the nine helpers
+it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
+`_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
 `_raising_only` is asserted directly, not through a leaf).  Every rule below has a flagged probe and, where the shape is legal,
 an accepted one: the original twenty-two covered the direct summary, the inline
@@ -286,7 +287,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 85 mutants:
+`JUDGES`, keyed by the same names. The current table has 92 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -326,7 +327,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-helper-bare-return`, `calibrate-helper-exit-call`,
 `calibrate-augassign-unregistered`, `calibrate-opaque-clean-write`,
 `calibrate-opaque-update-payload`, `calibrate-param-augassign`,
-`calibrate-param-update`.
+`calibrate-param-update`, `calibrate-helper-local-relay`,
+`calibrate-helper-bare-sysexit`, `calibrate-attr-head-callee`,
+`calibrate-mixed-branch-helper`, `calibrate-cross-module-name`,
+`calibrate-exempt-callee-write`, `calibrate-param-augassign-opaque`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -432,7 +436,22 @@ call away, and the helper is a real module function so the delegation arm sees
 it rather than failing closed on an unknown name),
 `calibrate-helper-exit-call` puts `raise SystemExit(0)` in statement position
 inside a nested helper, and `calibrate-augassign-unregistered` gives an
-unregistered function `report |= {'status': 'PASS'}`.  The
+unregistered function `report |= {'status': 'PASS'}`.  The seven `fix-r13`
+mutants pin the r12-round gaps: `calibrate-helper-local-relay` stores `0` in a
+helper local and returns it, `calibrate-helper-bare-sysexit` raises a bare
+`SystemExit` (which `SystemExit(None)` makes a zero exit), `calibrate-attr-head-callee`
+takes a status slot from `helpers._clean()` — an attribute-headed callee the
+fail-closed call rule used to wave through — `calibrate-mixed-branch-helper`
+raises on one branch and falls off the end on the other,
+`calibrate-cross-module-name` defines a lookalike of a registered point's name
+in another module, `calibrate-exempt-callee-write` uses an exempted-but-unaudited
+callee as a slot source, and `calibrate-param-augassign-opaque` applies `|=` to
+a parameter with an opaque payload.  Two boundaries stay open and are recorded
+here so they are not re-reported as new: an augmented assignment on a
+*parameter* is only judged by its own payload (a `|=` set-union of two
+parameters is not treated as an aggregation point), and a `{**payload}`
+expansion whose names all resolve locally is not followed into the payload's
+contents.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
