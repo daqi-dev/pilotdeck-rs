@@ -61,18 +61,21 @@ fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, Requ
 }
 
 /// Validates that `sessionKey` is present and non-blank (TS `?.trim()` check).
-/// The blank check is the family-shared lossy helper: TS accepts a lone
-/// surrogate in the key (`?.trim()` leaves it intact, #1455 probe4), so a
-/// `to_utf8` filter here would reject a key TS accepts. Callers that need
-/// UTF-8 bytes convert lossily at the point of use, like TS's own path
-/// encoding.
+/// Delegates to the family-shared guard (#1604) so the blank test is JS trim
+/// (U+FEFF and the other WhiteSpace code points count as blank) and a
+/// non-string produces the bare `input.sessionKey?.trim is not a function`
+/// TypeError instead of a `must be a string.` message. The blank check stays
+/// lossy: TS accepts a lone surrogate in the key (`?.trim()` leaves it intact,
+/// #1455 probe4), so a `to_utf8` filter here would reject a key TS accepts.
+/// Callers that need UTF-8 bytes convert lossily at the point of use, like
+/// TS's own path encoding.
 fn require_session_key(params: &JsValue) -> Result<JsString, RequestError> {
-    params
-        .get("sessionKey")
-        .and_then(JsValue::as_string)
-        .cloned()
-        .filter(super::config::trimmed_string_is_non_empty)
-        .ok_or_else(|| gateway_error("INVALID_SESSION_KEY", "sessionKey is required."))
+    super::require_text(
+        params,
+        "sessionKey",
+        "INVALID_SESSION_KEY",
+        "sessionKey is required.",
+    )
 }
 
 /// Build a transcript adapter for the configured project.
@@ -845,5 +848,45 @@ mod tests {
         );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #1604: the sessionKey gate is the family-shared `?.trim()` guard, so
+    // every session_dir method answers a non-string the way the TS optional
+    // chain does, and treats JS WhiteSpace (U+FEFF included) as blank.
+    fn require_key(value: JsValue) -> Result<JsString, RequestError> {
+        require_session_key(&object([("sessionKey", value)]))
+    }
+
+    fn key_message(error: &RequestError) -> String {
+        error
+            .message
+            .to_utf8()
+            .expect("#1604 the gate's message is UTF-8")
+    }
+
+    #[test]
+    fn a_non_string_session_key_throws_the_optional_chain_type_error() {
+        let error = require_key(JsValue::Number(7.0))
+            .expect_err("#1604 a number is not a trimmable string");
+        assert_eq!("gateway_request_failed", error.code);
+        assert_eq!(
+            "input.sessionKey?.trim is not a function",
+            key_message(&error)
+        );
+    }
+
+    #[test]
+    fn a_bom_only_session_key_is_blank() {
+        let error = require_key(JsValue::from("\u{feff}"))
+            .expect_err("#1604 a BOM-only key is blank after JS trim");
+        assert_eq!("INVALID_SESSION_KEY", error.code);
+        assert_eq!("sessionKey is required.", key_message(&error));
+    }
+
+    #[test]
+    fn a_non_blank_session_key_passes_the_gate() {
+        let key = require_key(JsValue::from("a8/session"))
+            .expect("#1604 a non-blank string passes the gate");
+        assert_eq!("a8/session", key.to_utf8().expect("#1604 key is UTF-8"));
     }
 }
