@@ -1529,28 +1529,37 @@ _CALLABLE_KINDS = ('setattr', 'setitem', 'exec', 'eval', 'globals', 'vars',
 _KIND_CACHE = {}
 
 
-def _value_elements(node):
+def _value_elements(node, simple=None, depth=0):
     """*node*'s tuple elements with a Starred over a literal expanded (#892 r33).
 
     ``*(md,), None`` unpacks to ``md, None``; a Starred over anything else has
     no static shape, so the caller falls back to the whole-value binding.
+    #892 r34: a star over a *name* bound to one tuple literal has that shape
+    (``xs = (md,); m, x = (*xs, None)``), and reading it as unknown lost the
+    receiver (codex boundary r33 P0-3).
     """
+    if depth > 8:
+        return None
     elements = []
     for element in node.elts:
         if not isinstance(element, ast.Starred):
             elements.append(element)
             continue
         inner = element.value
+        if simple is not None and isinstance(inner, ast.Name):
+            values = simple.get(inner.id) or ()
+            if len(values) == 1:
+                inner = values[0]
         if not isinstance(inner, (ast.Tuple, ast.List)):
             return None
-        nested = _value_elements(inner)
+        nested = _value_elements(inner, simple, depth + 1)
         if nested is None:
             return None
         elements.extend(nested)
     return elements
 
 
-def _target_value_pairs(target, value):
+def _target_value_pairs(target, value, simple=None):
     """``(name, value)`` pairs a binding gives, unpacking tuples (#892 r32).
 
     ``m, other = md, None`` binds ``m`` to ``md``; r31 bound ``m`` to the whole
@@ -1561,12 +1570,12 @@ def _target_value_pairs(target, value):
         # #892 r33: ``m, x = *(md,), None`` stores the segment behind a star;
         # pairing ``m`` with the Starred node gave it no kinds at all, so the
         # receiver was lost (GLM boundary r32 P1-3).
-        return _target_value_pairs(target, value.value)
+        return _target_value_pairs(target, value.value, simple)
     if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
         # #892 r33: ``m, x = *(md,), None`` expands the star before the
         # positional pairing; reading the Starred node as one element gave
         # ``m`` no kinds and lost the receiver (GLM boundary r32 P1-3).
-        expanded = _value_elements(value)
+        expanded = _value_elements(value, simple)
         if expanded is None:
             return [(name, value) for name in _target_names(target)]
         value = ast.Tuple(elts=expanded, ctx=ast.Load())
@@ -1581,17 +1590,24 @@ def _target_value_pairs(target, value):
             if len(value.elts) >= index + trailing:
                 pairs = []
                 for element, element_value in zip(target.elts[:index], value.elts[:index]):
-                    pairs.extend(_target_value_pairs(element, element_value))
+                    pairs.extend(_target_value_pairs(element, element_value, simple))
                 if trailing:
                     for element, element_value in zip(target.elts[index + 1:],
                                                       value.elts[len(value.elts) - trailing:]):
-                        pairs.extend(_target_value_pairs(element, element_value))
-                pairs.extend(_target_value_pairs(target.elts[index].value, value))
+                        pairs.extend(_target_value_pairs(element, element_value, simple))
+                # #892 r34: a star target holds the *list* of the elements it
+                # covered, so ``rest[0]`` may be any of them.  Binding the name
+                # to the whole tuple named no element and lost the receiver
+                # (``a, *rest = (None, md); rest[0].common = <stub>``; codex
+                # boundary r33 P0-3).
+                for element_value in value.elts:
+                    pairs.extend(_target_value_pairs(target.elts[index].value,
+                                                     element_value, simple))
                 return pairs
         elif not stars and len(target.elts) == len(value.elts):
             pairs = []
             for element, element_value in zip(target.elts, value.elts):
-                pairs.extend(_target_value_pairs(element, element_value))
+                pairs.extend(_target_value_pairs(element, element_value, simple))
             return pairs
     return [(name, value) for name in _target_names(target)]
 
@@ -1623,22 +1639,26 @@ def _simple_bindings(tree):
     return simple
 
 
-def _context_argument(node, simple, depth=0):
+def _context_argument(node, simple, seen=None):
     """The object a ``with`` manager was handed (#892 r33).
 
     ``with C(md) as m`` binds the value ``C`` returns, which the graph cannot
     name; ``C`` handed exactly one positional argument, so that argument is the
     bound object for the shapes the apparatus uses (``nullcontext``,
-    ``contextlib.suppress``).  A manager held in a name is resolved first.
+    ``contextlib.suppress``).  A manager held in a name is resolved first; the
+    walk is bounded by its own chain through *seen* rather than by a hop cap
+    (#892 r34).
     """
-    if depth > _RESOLVE_DEPTH:
-        return None
+    seen = set() if seen is None else seen
     if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
         return node.args[0]
     if isinstance(node, ast.Name):
+        if node.id in seen:
+            return None
+        seen.add(node.id)
         values = simple.get(node.id) or ()
         if len(values) == 1:
-            return _context_argument(values[0], simple, depth + 1)
+            return _context_argument(values[0], simple, seen)
     return None
 
 
@@ -1649,7 +1669,7 @@ def _alias_assignments(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                pairs.extend(_target_value_pairs(target, node.value))
+                pairs.extend(_target_value_pairs(target, node.value, simple))
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             for name in _target_names(node.target):
                 pairs.append((name, node.value))
@@ -1662,7 +1682,7 @@ def _alias_assignments(tree):
             elements = (node.iter.elts if isinstance(node.iter, (ast.Tuple, ast.List))
                         else _iter_literal_elements(node.iter))
             for element in elements:
-                pairs.extend(_target_value_pairs(node.target, element))
+                pairs.extend(_target_value_pairs(node.target, element, simple))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is None:
@@ -1675,9 +1695,9 @@ def _alias_assignments(tree):
                 # the fallback (codex boundary r32 P0-3).
                 argument = _context_argument(context, simple)
                 if argument is not None:
-                    pairs.extend(_target_value_pairs(item.optional_vars, argument))
+                    pairs.extend(_target_value_pairs(item.optional_vars, argument, simple))
                 else:
-                    pairs.extend(_target_value_pairs(item.optional_vars, context))
+                    pairs.extend(_target_value_pairs(item.optional_vars, context, simple))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             # #892 r32: ``def f(m=md): m.common = <stub>`` binds the parameter
             # to its default (codex boundary r31 P0-5).
@@ -2044,6 +2064,65 @@ def _attrgetter_is_dynamic(call):
     literal = call.args[0]
     return not (isinstance(literal, ast.Constant)
                 and literal.value in _MANAGED_WRITE_ATTRS)
+
+
+def _constant_string(node, simple):
+    """The literal string *node* denotes, through one local binding (#892 r34).
+
+    ``name = '__doc__'; getattr(md, name)`` is a read of a known attribute, not
+    an unknown write handle; without the lookup the r33 scan withdrew the
+    receiver for it (codex boundary r33 P1-8).
+    """
+    seen = set()
+    while isinstance(node, ast.Name) and simple is not None:
+        if node.id in seen:
+            return None
+        seen.add(node.id)
+        values = simple.get(node.id) or ()
+        if len(values) != 1:
+            return None
+        node = values[0]
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _handle_escapes(call, parents):
+    """True when a handle value reaches a call, a name or a return (#892 r34).
+
+    ``h = getattr(md, name)`` / ``h: object = ...`` / ``invoke(getattr(...))`` /
+    ``return getattr(...)`` all let the handle be used as a writer later; a
+    value read into a dict or a list (the save half of a save/restore) does
+    not.
+    """
+    parent = parents.get(call)
+    if isinstance(parent, ast.Call):
+        return True
+    if isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr, ast.Return)):
+        return True
+    return isinstance(parent, ast.Starred)
+
+
+def _dynamic_getattr(call, kinds, simple=None):
+    """True when *call* is ``getattr(obj, <name>)`` with a write-sized name.
+
+    The name counts as unknown unless it is spelled out -- inline or through a
+    single string binding -- and a spelled name still counts when it may write
+    (``__setattr__``) or hand over the mapping (``__dict__``).  A plain read
+    such as ``getattr(md, '__doc__')`` does not withdraw anything (#892 r34,
+    codex boundary r33 P0-4 / P1-8).
+    """
+    if _callable_name(call.func, kinds) != 'getattr' or len(call.args) < 2:
+        return False
+    literal = _getattr_literal(call, kinds)
+    if literal is not None:
+        # The inline spelling is already covered by the kinds/write-handle and
+        # namespace-dict rules; only the through-a-name spelling is new here.
+        return False
+    name = _constant_string(call.args[1], simple)
+    if name is None:
+        return True
+    return name in _MANAGED_WRITE_ATTRS or name == '__dict__'
 
 
 def _unbounded_write(node, kinds):
@@ -2742,13 +2821,18 @@ def _scope_parents(tree):
 
 
 def _scoped_alias_assignments(tree):
-    """``(scope, name, value)`` triples a binding gives a bare name (#892 r33).
+    """``(scope, name, value, value_scope)`` a binding gives a bare name (#892 r33).
 
     *scope* is the enclosing function, ``None`` at module scope; a ``global``
     declaration lands at module scope and a ``nonlocal`` one in the enclosing
     function.  The file-wide table merged ``_x = md`` in one function with
     ``_x = <stub>`` in another, so an unrelated helper withdrew a clean file's
-    relay (codex boundary r32 P1-2).
+    relay (codex boundary r32 P1-2).  #892 r34: the *binding* scope and the
+    scope the right-hand side is evaluated in differ -- a ``global`` hand-off
+    reads the function's own locals (``global g; y = md; g = y``) and a
+    parameter default is evaluated where the ``def`` sits
+    (``def inner(x=x)``), so both are carried separately (codex boundary r33
+    P0-2).
     """
     parents = _scope_parents(tree)
     declared = {}
@@ -2776,45 +2860,57 @@ def _scoped_alias_assignments(tree):
 
     def add(scope, target, value):
         for name in _target_names(target):
-            pairs.append((binding_scope(scope, name), name, value))
+            pairs.append((binding_scope(scope, name), name, value, scope))
 
     pairs = []
     simple = _simple_bindings(tree)
     for scope, node in _walk_scoped(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                for name, value in _target_value_pairs(target, node.value):
-                    pairs.append((binding_scope(scope, name), name, value))
+                for name, value in _target_value_pairs(target, node.value, simple):
+                    pairs.append((binding_scope(scope, name), name, value, scope))
         elif isinstance(node, ast.AnnAssign) and node.value is not None:
             add(scope, node.target, node.value)
         elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
-            pairs.append((binding_scope(scope, node.target.id), node.target.id, node.value))
+            pairs.append((binding_scope(scope, node.target.id), node.target.id,
+                          node.value, scope))
         elif isinstance(node, (ast.For, ast.AsyncFor)):
             elements = (node.iter.elts if isinstance(node.iter, (ast.Tuple, ast.List))
                         else _iter_literal_elements(node.iter))
             for element in elements:
-                for name, value in _target_value_pairs(node.target, element):
-                    pairs.append((binding_scope(scope, name), name, value))
+                for name, value in _target_value_pairs(node.target, element, simple):
+                    pairs.append((binding_scope(scope, name), name, value, scope))
+            if not elements:
+                # #892 r34: an iterable with no static shape still binds the
+                # loop target *in this scope*, shadowing a module-level name of
+                # the same spelling.  Without the shadow a local loop over
+                # unrelated objects resolved to the outer receiver and withdrew
+                # it (codex boundary r33 P1-9).
+                for name in _target_names(node.target):
+                    pairs.append((binding_scope(scope, name), name,
+                                  ast.Constant(value=None), scope))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is None:
                     continue
                 argument = _context_argument(item.context_expr, simple)
                 context = argument if argument is not None else item.context_expr
-                for name, value in _target_value_pairs(item.optional_vars, context):
-                    pairs.append((binding_scope(scope, name), name, value))
+                for name, value in _target_value_pairs(item.optional_vars, context, simple):
+                    pairs.append((binding_scope(scope, name), name, value, scope))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             # Defaults are evaluated in the enclosing scope but land in the
-            # parameter, so they are scoped to the function itself.
+            # parameter, so the binding is scoped to the function itself and
+            # the value to where the ``def`` sits (#892 r34).
+            parent = parents.get(node)
             arguments = node.args
             positional = list(arguments.posonlyargs) + list(arguments.args)
             defaults = list(arguments.defaults)
             for argument, default in zip(positional[len(positional) - len(defaults):],
                                          defaults):
-                pairs.append((node, argument.arg, default))
+                pairs.append((node, argument.arg, default, parent))
             for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
                 if default is not None:
-                    pairs.append((node, argument.arg, default))
+                    pairs.append((node, argument.arg, default, parent))
     return pairs
 
 
@@ -2843,32 +2939,36 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # which both missed the handle held in a name (false PASS, GLM boundary
     # r32 P0-1 / concurrency r32 P1-1) and failed unrelated objects closed
     # (false FAIL, codex boundary r32 P1-1).
+    simple = _simple_bindings(tree)
+    parents = {}
+    for scope, node in _walk_scoped(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
     dynamic_targets = []
     dynamic_handles = {}
     for scope, node in _walk_scoped(tree):
         if isinstance(node, ast.Call):
+            # #892 r34: a ``getattr(obj, <dynamic>)`` handle that reaches a
+            # call -- as the callee, or as an argument to a helper -- a name
+            # (``h = ...``, ``h: object = ...``) or a return puts *obj* at
+            # risk.  The r33 scan read only the direct-call and plain
+            # assignment spellings (codex boundary r33 P0-4).  A handle merely
+            # read into a data structure (``{name: getattr(md, name) for name
+            # in patched}``, the apparatus's own save loop) is not tracked, so
+            # the save/restore stays clean.
+            if (_dynamic_getattr(node, kinds, simple)
+                    and _handle_escapes(node, parents)):
+                dynamic_targets.append((scope, node.args[0]))
             callee = node.func
             if (isinstance(callee, ast.Call)
-                    and _callable_name(callee.func, kinds) == 'getattr'
-                    and _getattr_literal(callee, kinds) is None and callee.args):
-                dynamic_targets.append((scope, callee.args[0]))
-            elif (isinstance(callee, ast.Call)
-                  and 'fn:attrgetter' in _expr_kinds(callee.func, kinds)
-                  and _attrgetter_is_dynamic(callee) and node.args):
+                    and 'fn:attrgetter' in _expr_kinds(callee.func, kinds)
+                    and _attrgetter_is_dynamic(callee) and node.args):
                 dynamic_targets.append((scope, node.args[0]))
         elif isinstance(node, ast.Assign):
             value = node.value
             if (isinstance(value, ast.Call)
-                    and _callable_name(value.func, kinds) == 'getattr'
-                    and _getattr_literal(value, kinds) is None and value.args):
-                # The handle may be called (``__setattr__``) or subscripted
-                # (``__dict__``); either way the object it was taken from is
-                # the one at risk, so it is withdrawn here rather than at the
-                # use site (GLM concurrency r32 P1-1 second sequence).
-                dynamic_targets.append((scope, value.args[0]))
-            elif (isinstance(value, ast.Call)
-                  and 'fn:attrgetter' in _expr_kinds(value.func, kinds)
-                  and _attrgetter_is_dynamic(value)):
+                    and 'fn:attrgetter' in _expr_kinds(value.func, kinds)
+                    and _attrgetter_is_dynamic(value)):
                 # ``h = op.attrgetter(name)`` takes its object at call time.
                 for leaf in _leaf_targets(node.targets):
                     if isinstance(leaf, ast.Name):
@@ -2898,6 +2998,12 @@ def _receiver_attribute_writes(tree, receivers, shared):
     def receiver_roots(node, scope):
         if isinstance(node, ast.Name):
             return _lookup(roots, node.id, scope)
+        if isinstance(node, ast.Subscript):
+            # #892 r34: a star target holds the *list* of the elements it
+            # covered (``a, *rest = (None, md); rest[0].common = <stub>``), so a
+            # subscript off a receiver-rooted name is still that receiver
+            # (codex boundary r33 P0-3).
+            return receiver_roots(node.value, scope)
         return set()
 
     def namespace_dict_roots(node, scope):
@@ -2930,9 +3036,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
     pairs = _scoped_alias_assignments(tree)
     while True:
         grown = False
-        for scope, name, value in pairs:
-            for table, found in ((roots, receiver_roots(value, scope)),
-                                 (dict_roots, namespace_dict_roots(value, scope))):
+        for scope, name, value, value_scope in pairs:
+            for table, found in ((roots, receiver_roots(value, value_scope)),
+                                 (dict_roots, namespace_dict_roots(value, value_scope))):
                 key = (scope, name)
                 if not found:
                     # A binding that is not a receiver shadows the outer name
@@ -3672,15 +3778,23 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
     # outer walk sees only the nested ``def`` name.  ``_outer(common)`` with
     # ``nonlocal common; common = object()`` kept ``common.aggregate_status``
     # counted as the shared call (codex boundary r32 P0-2).
+    # #892 r34: a ``nonlocal`` *declaration* alone replaces nothing -- a
+    # nested reader (``nonlocal md; return md``) withdrew the enclosing relay
+    # and failed a clean file (codex boundary r33 P1-7).  Only a name the
+    # nested function actually writes rebinds the enclosing binding.
     for nested in ast.walk(function):
         if not isinstance(nested, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        for node in ast.walk(nested):
-            if not isinstance(node, ast.Nonlocal):
+        declared, written = set(), set()
+        for node in _own_nodes(nested):
+            if isinstance(node, ast.Nonlocal):
+                declared.update(node.names)
                 continue
-            for name in node.names:
-                trusted.discard(name)
-                rebound.add(name)
+            names, _value = _local_bound_names(node)
+            written.update(names)
+        for name in declared & written:
+            trusted.discard(name)
+            rebound.add(name)
     # #892 r27: a walrus, a ``match`` capture or a nested ``def`` rebinds a
     # receiver exactly like an assignment.  ``_function_local_names`` already
     # unions them for the callee side, but ``rebound`` was still built from the
@@ -5059,18 +5173,21 @@ def _unproven_expansion(call, bindings, module=None, rel=None):
 _WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
 
 
-_RESOLVE_DEPTH = 50
-"""Hops the name-resolution helpers follow before giving up (#892 r33).
+def _bindings_at(bindings, name, line):
+    """The bindings of *name* a use on *line* can see (#892 r34).
 
-The kinds world (``_object_kinds``) is a fixpoint, so a fixed three-hop cap in
-``_builtin_receiver`` / ``_resolved_write_helper`` / ``_name_resolves_to_builtins``
-stopped short of a longer alias chain the main rule already followed
-(``bi4 = bi3 = bi2 = bi1 = __builtins__`` kept the write invisible; GLM
-boundary r32 P2-5).
-"""
+    A name reads the binding that precedes the use, not the last one in the
+    file: ``dict = report; dict.update({'status': 'PASS'}); dict =
+    builtins.dict`` read the trailing rebinding as the builtin and dropped the
+    write (codex boundary r33 P0-1).
+    """
+    values = (bindings or {}).get(name) or ()
+    if line is None:
+        return list(values)
+    return [item for item in values if item[0] <= line]
 
 
-def _builtin_receiver(node, bindings, depth=0):
+def _builtin_receiver(node, bindings, depth=0, seen=None):
     """True when *node* denotes a builtin type/module (#892 r30).
 
     ``dict.update(report, ...)`` / ``operator.setitem(report, ...)`` name their
@@ -5078,22 +5195,28 @@ def _builtin_receiver(node, bindings, depth=0):
     resolver follows one local alias, so ``_d = dict; _d.update(report, ...)``
     is read the same way.
     """
-    if depth > _RESOLVE_DEPTH:
+    # #892 r34: a cycle guard instead of a hop cap -- a chain longer than the
+    # cap silently read as "not a write helper" (``b50 = b49 = ... =
+    # __builtins__``; codex boundary r33 P0-6).
+    seen = set() if seen is None else seen
+    if id(node) in seen:
         return False
+    seen.add(id(node))
     if isinstance(node, ast.Name):
         # #892 r32: a local that shadows the builtin name is not the builtin.
         # Reading ``dict`` as the builtin dropped the real target argument and
         # left ``dict = {...}; dict.update({'status': ...})`` invisible (GLM
         # boundary r31 P0-3).
-        values = (bindings or {}).get(node.id) or ()
+        values = _bindings_at(bindings, node.id, getattr(node, 'lineno', None))
         if values:
             # #892 r33: the name denotes the *last* binding at run time, not
             # any binding it ever had.  Asking whether a historical one was the
             # builtin left ``dict = builtins.dict; dict = report;
             # dict.update({'status': 'PASS'})`` invisible (codex boundary
-            # r32 P0-4).
+            # r32 P0-4).  #892 r34: "last" means the last one *before* the
+            # use.
             _line, last = max(values, key=lambda item: item[0])
-            return _builtin_receiver(last, bindings, depth + 1)
+            return _builtin_receiver(last, bindings, depth + 1, seen)
         if node.id in ('dict', 'type', 'object', 'builtins', 'operator',
                        '__builtins__'):
             return True
@@ -5104,15 +5227,17 @@ def _builtin_receiver(node, bindings, depth=0):
     return False
 
 
-def _resolved_write_helper(node, bindings, depth=0):
+def _resolved_write_helper(node, bindings, depth=0, seen=None):
     """The builtin write callable *node* denotes through local aliases (#892 r30).
 
     ``sa = setattr; sa(report, 'status', 'PASS')`` and
     ``from builtins import setattr as _sa`` bind the same callable; the status
     ruler compared the bare name only and read neither (GLM sibling r29 P1-7).
     """
-    if depth > _RESOLVE_DEPTH:
+    seen = set() if seen is None else seen
+    if id(node) in seen:
         return None
+    seen.add(id(node))
     if isinstance(node, ast.Name):
         if node.id in _WRITE_HELPERS or node.id in ('getattr', 'partial'):
             # #892 r32: ``g = getattr; g(report, '__setitem__')(...)`` binds
@@ -5120,8 +5245,9 @@ def _resolved_write_helper(node, bindings, depth=0):
             # status ruler stopped at the four canonical names (codex sibling
             # r31 P2-11).
             return node.id
-        found = {_resolved_write_helper(value, bindings, depth + 1)
-                 for _line, value in (bindings or {}).get(node.id) or ()}
+        found = {_resolved_write_helper(value, bindings, depth + 1, seen)
+                 for _line, value in _bindings_at(
+                     bindings, node.id, getattr(node, 'lineno', None))}
         if len(found) == 1:
             return found.pop() or None
         return None
@@ -5170,17 +5296,20 @@ def _resolved_write_helper(node, bindings, depth=0):
     return None
 
 
-def _name_resolves_to_builtins(node, bindings, depth=0):
+def _name_resolves_to_builtins(node, bindings, depth=0, seen=None):
     """True when *node* is the ``builtins`` module table (#892 r32)."""
-    if depth > _RESOLVE_DEPTH or not isinstance(node, ast.Name):
+    seen = set() if seen is None else seen
+    if not isinstance(node, ast.Name) or id(node) in seen:
         return False
+    seen.add(id(node))
     if node.id in ('builtins', '__builtins__'):
         return True
-    return any(_name_resolves_to_builtins(value, bindings, depth + 1)
-               for _line, value in (bindings or {}).get(node.id) or ())
+    return any(_name_resolves_to_builtins(value, bindings, depth + 1, seen)
+               for _line, value in _bindings_at(
+                   bindings, node.id, getattr(node, 'lineno', None)))
 
 
-def _partial_bound_arguments(node, bindings, depth=0):
+def _partial_bound_arguments(node, bindings, depth=0, seen=None):
     """Leading positional arguments a ``partial`` handle pre-binds (#892 r33).
 
     ``functools.partial(setattr, report)`` returns a callable whose first
@@ -5188,12 +5317,15 @@ def _partial_bound_arguments(node, bindings, depth=0):
     own arguments, so a pre-bound target/key made the write invisible.
     Returns ``None`` when *node* is not a partial at all.
     """
-    if depth > _RESOLVE_DEPTH:
+    seen = set() if seen is None else seen
+    if id(node) in seen:
         return None
+    seen.add(id(node))
     if isinstance(node, ast.Name):
         found = None
-        for _line, value in (bindings or {}).get(node.id) or ():
-            got = _partial_bound_arguments(value, bindings, depth + 1)
+        for _line, value in _bindings_at(
+                bindings, node.id, getattr(node, 'lineno', None)):
+            got = _partial_bound_arguments(value, bindings, depth + 1, seen)
             if got is None:
                 continue
             if found is not None and [ast.dump(item) for item in got] != [
@@ -5211,6 +5343,20 @@ def _partial_bound_arguments(node, bindings, depth=0):
             if inner in _WRITE_HELPERS:
                 return list(node.args[1:])
     return None
+
+
+def _partial_unbound_target(node, bindings):
+    """True when a ``partial`` handle pre-binds an *unbound* builtin method.
+
+    ``functools.partial(dict.update, report, {...})`` names the mapping first,
+    exactly like ``dict.update(report, ...)``; the expansion must drop that
+    argument instead of reading it as a written slot (#892 r34, codex boundary
+    r33 P0-5).
+    """
+    if not (isinstance(node, ast.Call) and node.args):
+        return False
+    first = node.args[0]
+    return isinstance(first, ast.Attribute) and _builtin_receiver(first.value, bindings)
 
 
 def _call_written_values(call, bindings=None):
@@ -5266,11 +5412,18 @@ def _call_written_values(call, bindings=None):
                                   and func.attr == 'setdefault'):
         # ``dict.setdefault(obj, 'status', value)`` names its target first and
         # the key second; reading ``args[0]`` as the key saw the *object* and
-        # dropped the write (GLM sibling r29 P1-7).
-        if len(call.args) == 3:
-            key, value = call.args[1], call.args[2]
-        elif len(call.args) == 2:
-            key, value = call.args[0], call.args[1]
+        # dropped the write (GLM sibling r29 P1-7).  #892 r34: a partial handle
+        # pre-binds leading arguments here too (``functools.partial(
+        # dict.setdefault, report, 'status')('PASS')``; codex boundary r33
+        # P0-5), and an unbound builtin target keeps its first slot.
+        prebound = _partial_bound_arguments(func, bindings)
+        arguments = list(call.args) if prebound is None else prebound + list(call.args)
+        if prebound is not None and _partial_unbound_target(func, bindings) and arguments:
+            arguments = arguments[1:]
+        if len(arguments) == 3:
+            key, value = arguments[1], arguments[2]
+        elif len(arguments) == 2:
+            key, value = arguments[0], arguments[1]
         else:
             return written
         if _status_key(key):
@@ -5284,8 +5437,15 @@ def _call_written_values(call, bindings=None):
     if helper != 'update' and not (isinstance(func, ast.Attribute)
                                    and func.attr == 'update'):
         return written
-    arguments = call.args
-    if (isinstance(func, ast.Attribute) and func.attr == 'update'
+    arguments = list(call.args)
+    prebound = _partial_bound_arguments(func, bindings)
+    if prebound is not None:
+        # #892 r34: ``functools.partial(dict.update, report, {'status': ...})()``
+        # writes the same slot as the inline spelling (codex boundary r33 P0-5).
+        arguments = prebound + arguments
+        if _partial_unbound_target(func, bindings) and arguments:
+            arguments = arguments[1:]
+    elif (isinstance(func, ast.Attribute) and func.attr == 'update'
             and arguments and _builtin_receiver(func.value, bindings)):
         # ``dict.update(report, ...)``: the first argument is the target, not a
         # value written into it.
