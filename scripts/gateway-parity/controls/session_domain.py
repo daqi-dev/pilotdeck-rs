@@ -923,10 +923,19 @@ def native_deadline_case(name, output):
                     return [numeric(item) for item in value]
                 return value
 
-            require(bool(booleans(terminal['frame']['event'])), 'CONTROL_PRECONDITION',
-                    'terminal must carry a JSON boolean so the drift is observable')
-            terminal['frame']['event'] = numeric(terminal['frame']['event'])
-            terminal.update(control_wire(terminal['frame']))
+            groups = {}
+            for row in observer['rows']:
+                frame = row.get('frame')
+                if (row['direction'] == 'receive' and isinstance(frame, dict)
+                        and frame.get('type') == 'event'):
+                    groups.setdefault(frame.get('id'), []).append(row)
+            target = next((group[-1] for group in groups.values()
+                           if group and group[-1]['frame'].get('final') is True
+                           and booleans(group[-1]['frame']['event'])), None)
+            require(target is not None, 'CONTROL_PRECONDITION',
+                    'no terminal envelope carries a JSON boolean, so the drift is unobservable')
+            target['frame']['event'] = numeric(target['frame']['event'])
+            target.update(control_wire(target['frame']))
         elif name == 'native-content-dedupe':
             # Two identical final:false yields.  Both the observer and the
             # recorded observation carry the duplicate, so every consistency
