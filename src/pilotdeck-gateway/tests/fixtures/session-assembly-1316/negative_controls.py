@@ -876,6 +876,13 @@ DISPATCH_PROBE_STUB = ('#!/bin/sh\n'
                        'echo "$0 $*" >> "{calls}"\n'
                        'exit 1\n')
 
+# #1938 r3（Codex boundary P2 / GLM boundary #3，取高判 P2）：桩的调用记录是
+# 「dispatcher 试过起 cargo」的**唯一正面证据**，而它只在桩被调用时才产生——
+# 「文件不存在」于是同时意味着「没调过」（正常）与「记录通道坏了」（假 PASS）。
+# 先自己写一行哨兵：写不进去当场就红（通道自测），之后整份记录消失也一律红；
+# 只有「只剩哨兵」才算没调过桩。
+DISPATCH_PROBE_RECORD_SENTINEL = '# dispatch probe: no stub was invoked'
+
 
 def _lock_snapshot(path):
     """#1938 r1（Claude boundary P0/P1）：锁的 mtime_ns（不存在即 `None`），一次 `stat`。
@@ -941,6 +948,7 @@ def dispatch_probe():
         directory = Path(directory)
         scratch = Path(scratch)
         calls = scratch / 'cargo-calls.txt'
+        calls.write_text(f'{DISPATCH_PROBE_RECORD_SENTINEL}\n')
         stub_dir = scratch / 'bin'
         stub_dir.mkdir()
         for stub_name in ('cargo', 'rustc', 'git'):
@@ -991,8 +999,10 @@ def dispatch_probe():
         # #1938 r1（Claude boundary P0）：`iterdir` 与 `read_text` 都是「先看后读」，
         # 中间被删就抛 `FileNotFoundError`，探针会以回溯收场而不是给出诊断——那是
         # 假 FAIL。这个 tempdir 是本函数自己建的、自己从不删，消失就意味**没法核**，
-        # 所以照 fail-closed 报一条，而不是当成「什么都没建」。下面的桩调用记录
-        # 相反：文件不存在才是常态（桩被调用才写），读不到就是「没调过」。
+        # 所以照 fail-closed 报一条，而不是当成「什么都没建」。
+        # #1938 r3：桩调用记录同理——上面先写好了哨兵，所以它现在**一定存在**；
+        # 整份消失只可能是记录通道被破坏或被人删掉，那是「没法核」，不是「没调过」。
+        # 读回来只去掉哨兵那一行，剩下的才是桩真正记下的调用。
         try:
             created = sorted(entry.name for entry in directory.iterdir())
         except FileNotFoundError:
@@ -1009,9 +1019,17 @@ def dispatch_probe():
         # mtime trace. The mtime check below still catches the case the stubs
         # cannot: a fall-through in a tree where the lock file does not exist yet.
         try:
-            stub_calls = calls.read_text()
+            record = calls.read_text()
         except FileNotFoundError:
+            record = None
+        if record is None:
+            problems.append(f'dispatch: the stub call record vanished before it could '
+                            f'be checked: {calls}')
             stub_calls = ''
+        else:
+            stub_calls = ''.join(
+                line for line in record.splitlines(keepends=True)
+                if line.rstrip('\n') != DISPATCH_PROBE_RECORD_SENTINEL)
         if stub_calls:
             problems.append(f'dispatch: the probe started a stubbed cargo, rustc or '
                             f'git: {stub_calls.strip()[:200]}')

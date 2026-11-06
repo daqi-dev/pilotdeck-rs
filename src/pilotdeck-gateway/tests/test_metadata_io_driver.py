@@ -842,6 +842,51 @@ class EnvironmentControls(unittest.TestCase):
                     "        for stub_name in ('cargo', 'rustc', 'git'):\n"), 1)
         print('#1938 dispatch stub-name git-removed: KILLED', flush=True)
 
+    def test_bad_value_tables_cannot_shrink_silently(self):
+        # #1938 r3（GLM sibling P2）：同一文件里另外两张「for 消费的字面量表」没有
+        # 行级钉——`deadline_probe` 的 deadline 坏值表与 `slot_timeout_probe` 的
+        # 坏预算表。删掉其中一行（例如 `'１２０'` 或 `float('nan')`），探针少驱动
+        # 一格仍打印通过，witness 钉子也照绿（那几个 f-string 还在源里）。
+        # 整表清空由 `deadline-parser-loosened` / `slot-timeout-guard-removed`
+        # 两条 meta 负控间接兜住；这里补的是「少一行」这一档。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+
+        def table(text, function, target):
+            for node in ast.walk(ast.parse(text)):
+                if isinstance(node, ast.FunctionDef) and node.name == function:
+                    break
+            else:
+                self.fail(f'#1938 the fixture must define {function}()')
+            for inner in ast.walk(node):
+                if (isinstance(inner, ast.For) and isinstance(inner.target, ast.Name)
+                        and inner.target.id == target):
+                    return [ast.get_source_segment(text, element)
+                            for element in inner.iter.elts]
+            self.fail(f'#1938 {function}() must iterate a literal {target} table')
+
+        deadline = table(source, 'deadline_probe', 'bad')
+        self.assertEqual(deadline, [
+            "'0'", "'-3'", "'abc'", "'1.5'", "'1_000'", "' 120 '", "'+120'",
+            "'１２０'", 'str(MAX_DEADLINE_SECONDS + 1)', "'9' * 400",
+        ], '#1938 the ten rejected deadline values are exactly these, not merely ten')
+        slots = table(source, 'slot_timeout_probe', 'bad')
+        self.assertEqual(slots, ["float('inf')", "float('-inf')", "float('nan')",
+                                 '-1', '0'],
+                         '#1938 the five rejected slot budgets are exactly these')
+        for label, function, target, needle in (
+                ('deadline value 1.5-removed', 'deadline_probe', 'bad', ", '1.5'"),
+                ('slot budget nan-removed', 'slot_timeout_probe', 'bad',
+                 ", float('nan')")):
+            mutant = source.replace(needle, '', 1)
+            self.assertNotEqual(mutant, source,
+                                f'#1938 {label}: the mutant really left the table')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1938 {label} must be caught'):
+                self.assertEqual(table(mutant, function, target),
+                                 deadline if function == 'deadline_probe' else slots)
+            print(f'#1938 {label}: KILLED', flush=True)
+
     # r2 GLM sibling P1：`--self-check-controls` 的本体 `self_check_controls_run()`
     # 是自检链的第六个函数，r1 只钉了前五个——删掉它任何一条 `problems.append`
     # （INVALID×2 / SURVIVED×1），`--self-check-controls` 会打印 SURVIVED 却 exit 0，
@@ -1143,6 +1188,7 @@ class EnvironmentControls(unittest.TestCase):
                 "f'dispatch marker: a probe child ran the main path: ' f'{text[-200:]}'",
                 "f'dispatch: the probe output directory vanished before it ' f'could be checked: {directory}'",
                 "f'dispatch: an argument became an output path: {created}'",
+                "f'dispatch: the stub call record vanished before it could ' f'be checked: {calls}'",
                 "f'dispatch: the probe started a stubbed cargo, rustc or ' f'git: {stub_calls.strip()[:200]}'",
                 "f'dispatch: the probe touched the real tree lock: {lock} ' f'went from {lock_before} to {lock_after}'",
             ],
@@ -1178,7 +1224,7 @@ class EnvironmentControls(unittest.TestCase):
         sites = [site for function in self.PROBLEM_FUNCTIONS for site in raw[function]]
         self.assertEqual({function: len(rows) for function, rows in pinned.items()},
                          {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
-                          'dispatch_probe': 9, 'deadline_probe': 15,
+                          'dispatch_probe': 10, 'deadline_probe': 15,
                           'self_check_controls_run': 6},
                          '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
@@ -1232,7 +1278,7 @@ class EnvironmentControls(unittest.TestCase):
             'unknown-mode-guard-removed',
             'bare-invocation-guard-removed',
             'dispatch-probe-marker-removed',
-        ], '#1843 D the meta controls are exactly these, not merely sixteen rows')
+        ], '#1843 D the meta controls are exactly these, not merely eighteen rows')
         # 只钉行数等于允许「换掉一条真负控、行数不变」：名字逐一钉死后，换名同样会红。
         dropped = ast.get_source_segment(source, rows[-1])
         mutant = source.replace(dropped + ',', '', 1)
@@ -1266,7 +1312,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = 'b4758cb395df358aa1b70ed505180d7c51f8f1cda101cf530092f2a89fcd15f0'
+    SESSION_CONTROLS_SHA256 = '9c360f225e35e58f13a89a7cf010eb3d8dd00d92c81c4d761d978b77a78914a8'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
