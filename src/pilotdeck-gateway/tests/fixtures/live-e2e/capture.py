@@ -9,6 +9,12 @@ import subprocess
 import sys
 import time
 
+# #1398: the second-signal guard below uses sys.exception(), which is CPython
+# 3.11+ (PEP 654). Fail loudly here instead of an AttributeError on the first
+# signal, which would surface as a handler crash rather than a version error.
+if sys.version_info < (3, 11):
+    raise SystemExit('#748 capture needs CPython 3.11+ for sys.exception(); run python3.11 or newer')
+
 
 def group_alive(group):
     try:
