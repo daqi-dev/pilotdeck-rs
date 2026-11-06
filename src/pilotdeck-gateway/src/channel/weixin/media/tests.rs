@@ -236,7 +236,13 @@ fn node_base64_semantics() {
         ("!", ""),
         ("", ""),
     ] {
-        crate::negative_assert_eq!(to_hex(&base64(input)), expected, "#1823 base64 decode");
+        // Decode inside `catch_unwind`: the trailing-single-character guard is
+        // pinned by a row whose mutant indexes `chunk[1]` and panics while the
+        // assertion arguments are still being evaluated. The panic must land on
+        // the receipt, so catch it and let the assertion report it.
+        let decoded = std::panic::catch_unwind(|| to_hex(&base64(input)))
+            .unwrap_or_else(|_| "<panic>".to_owned());
+        crate::negative_assert_eq!(decoded, expected, "#1823 base64 decode");
     }
 }
 
@@ -773,6 +779,19 @@ async fn download_replays_the_oracle_cases() {
     }
 }
 
+/// Describe a `download` outcome without touching the payload.
+///
+/// A receipt row must die on a `negative_assert*`, never on a std `expect`:
+/// those run before the assertion and leave no receipt, which the fixture
+/// judge reports as INVALID instead of KILLED. Formatting also keeps the
+/// oversized-body row from Debug-printing a 50 MiB buffer into the log.
+fn outcome_summary(result: &Result<Vec<u8>, WeixinClientError>) -> String {
+    match result {
+        Ok(bytes) => format!("ok {} bytes", bytes.len()),
+        Err(error) => error.formatted(),
+    }
+}
+
 // The baseline buffers `arrayBuffer()` and only then compares the size, so a
 // CDN that streams without a `content-length` could grow memory without bound.
 // The port stops at the limit; this cell is the negative control's death point.
@@ -799,13 +818,14 @@ async fn the_received_body_is_capped_at_the_limit() {
         let _ = stream.write_all(b"A").await;
         let _ = stream.shutdown().await;
     });
-    let error = WeixinCdnClient::new()
+    let outcome = WeixinCdnClient::new()
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
-        .await
-        .expect_err("#1823 an oversized body must be rejected");
+        .await;
     task.await.expect("#1823 cap server");
+    // The mutant lifts the cap, so the port returns the whole body here; the
+    // receipt must come from this assertion, not from a std `expect_err`.
     crate::negative_assert_eq!(
-        error.formatted(),
+        outcome_summary(&outcome),
         "Error: Attachment is 52428801 bytes (limit 52428800).",
         "#1823 received body is capped at the limit"
     );
@@ -828,13 +848,12 @@ async fn a_terminated_body_reports_the_fetch_type_error() {
             .await;
         let _ = stream.shutdown().await;
     });
-    let error = WeixinCdnClient::new()
+    let outcome = WeixinCdnClient::new()
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
-        .await
-        .expect_err("#1823 a truncated body must fail");
+        .await;
     task.await.expect("#1823 terminated server");
     crate::negative_assert_eq!(
-        error.formatted(),
+        outcome_summary(&outcome),
         "TypeError: terminated",
         "#1823 truncated body reports terminated"
     );
@@ -862,15 +881,16 @@ async fn a_slow_body_outlives_the_fetch_deadline() {
         let _ = stream.write_all(b"abc").await;
         let _ = stream.shutdown().await;
     });
-    let bytes = WeixinCdnClient::new()
+    let outcome = WeixinCdnClient::new()
         .with_fetch_timeout(Duration::from_millis(500))
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
-        .await
-        .expect("#1823 a slow body must outlive the fetch deadline");
+        .await;
     task.await.expect("#1823 slow body server");
+    // With the body bound to the fetch deadline the mutant returns an error
+    // here; the receipt has to come from this assertion, not a std `expect`.
     crate::negative_assert_eq!(
-        bytes,
-        b"abc".to_vec(),
+        outcome_summary(&outcome),
+        "ok 3 bytes",
         "#1823 slow body is not bounded by the fetch deadline"
     );
 }
