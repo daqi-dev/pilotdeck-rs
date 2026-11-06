@@ -2093,7 +2093,9 @@ async fn submit_error_stream_turn_emits_channel_submit_failed() {
         "#1737 a rejected stream submit emits channel_submit_failed, got {body:?}"
     );
     assert!(
-        body.contains("\"status\":500"),
+        // The trailing comma pins `error.status` (the last `detail.status` has
+        // `}` after it) and keeps `"status":5000` from matching the prefix.
+        body.contains("\"status\":500,"),
         "#1737 the channel_submit_failed frame carries status 500, got {body:?}"
     );
     assert!(
