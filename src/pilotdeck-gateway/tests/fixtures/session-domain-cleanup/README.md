@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 216 mutants:
+`JUDGES`, keyed by the same names. The current table has 226 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -414,7 +414,13 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-getattr-handle-name`, `calibrate-getattr-handle-dict`,
 `calibrate-nonlocal-common-rebind`, `calibrate-builtin-last-binding`,
 `calibrate-partial-prebound`, `calibrate-partial-name-status`,
-`calibrate-builtins-chain-four`.
+`calibrate-builtins-chain-four`,
+`calibrate-closure-default`, `calibrate-global-handoff`,
+`calibrate-star-from-name`, `calibrate-star-target-rest`,
+`calibrate-handle-annassign`, `calibrate-handle-argument`,
+`calibrate-ordered-binding`, `calibrate-partial-update-prebound`,
+`calibrate-partial-setdefault-prebound`,
+`calibrate-builtins-chain-fiftyone`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -914,12 +920,45 @@ arity, both inline and through a name (`calibrate-partial-prebound`,
 `calibrate-partial-name-status`), a dynamic `getattr` handle kept in a name or
 used as a mapping (`calibrate-getattr-handle-name`,
 `calibrate-getattr-handle-dict`), and an alias chain four hops long
-(`calibrate-builtins-chain-four`; `_RESOLVE_DEPTH` replaces the three-hop cap in
-`_builtin_receiver` / `_resolved_write_helper` / `_name_resolves_to_builtins`).
+(`calibrate-builtins-chain-four`; the three-hop cap in `_builtin_receiver` /
+`_resolved_write_helper` / `_name_resolves_to_builtins` became a `seen` guard
+in `fix-r34`, so the walk is bounded by the chain's own length and
+`calibrate-builtins-chain-fiftyone` pins that).
 The two reversed directions: `getattr(obj, <dynamic>)(...)` now withdraws the
 object the handle was taken from rather than every receiver in the file, and
 the receiver alias table is keyed by scope (`(scope, name)`), so `_x = md` in
 one function no longer merges with `_x = object()` in another.
+
+`fix-r34` closed the six r33 codex P0s and its three P1s.  Bindings are now
+read at the line that uses them (`_bindings_at`), so a name rebound *after* the
+call no longer excuses the call (`calibrate-ordered-binding`).  A closure
+default and a `global` hand-off both carry the receiver into the inner function
+(`calibrate-closure-default`, `calibrate-global-handoff`), a star on either
+side of an unpacking is resolved through names and rest targets
+(`calibrate-star-from-name`, `calibrate-star-target-rest`), a write handle
+reaches a call through an annotated assignment or as an argument
+(`calibrate-handle-annassign`, `calibrate-handle-argument`), and
+`functools.partial` keeps the pre-bound arguments it was given for `update`
+and `setdefault` (`calibrate-partial-update-prebound`,
+`calibrate-partial-setdefault-prebound`).  The two over-withdrawal directions
+are probes, not mutants, because the clean file is what must change: a nested
+function that declares `nonlocal md` without ever writing it keeps the outer
+receiver trusted, and reading a dynamic attribute
+(`getattr(md, name)`) is not a write.  A dynamic `getattr` handle only
+withdraws when it reaches a call, a name, a return or a star
+(`_handle_escapes`), which is also what keeps the harness's own
+`{name: getattr(md, name) for name in patched}` restore loop from withdrawing
+`md`; and an unknown-iterable loop target shadows the name it binds instead of
+inheriting the loop-free binding.
+
+The full 216-mutant batch at r33 also left two survivors, and they were the
+mutants that were wrong rather than the ruler: `calibrate-sm-callable-setitem`
+and `calibrate-sm-mapping-augassign` poisoned `sys.modules['_guard']` inside
+*this* fixture, where `_guard` is never read out of `sys.modules` and the
+static `common` binding stays the shared module, so `PASS` was the correct
+verdict.  Both now spell the same write in `controls/session_domain.py`, the
+file that does read `_guard` from `sys.modules`, and are judged by the
+`rebinds the shared aggregator module` failure (`fix-r34`).
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
