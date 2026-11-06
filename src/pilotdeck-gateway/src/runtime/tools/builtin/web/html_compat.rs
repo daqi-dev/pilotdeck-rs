@@ -947,17 +947,24 @@ mod tests {
         // <select></select> pairs are exactly 8 MiB. Each `</select>` closes
         // the select frame sitting on top of the 100,000 template frames.
         let samples = timing::timing_samples();
-        let (half_elapsed, full_elapsed) =
-            timing::fastest_scaling("deep-frame-select", samples, |is_full| {
-                timed_rewrite(if is_full { 8 } else { 4 })
-            });
+        let sampled = timing::fastest_scaling_ratio(
+            "deep-frame-select",
+            "4 MiB",
+            "8 MiB",
+            samples,
+            |is_full| timed_rewrite(if is_full { 8 } else { 4 }),
+        );
         eprintln!(
-            "deep-frame-select: fastest of {samples}: 4 MiB in {half_elapsed:?}, 8 MiB in {full_elapsed:?}"
+            "deep-frame-select: median of {samples} paired ratios {:.2}x: 4 MiB in {:?}, 8 MiB in {:?}",
+            sampled.median_ratio, sampled.small, sampled.large
         );
         // Doubling the input doubles linear work but quadruples the old
-        // bottom-up rescan per `</select>`; see timing::assert_within_linear_band.
+        // bottom-up rescan per `</select>`; the fixture sizes are exactly 4
+        // and 8 MiB, so the factor is 2.0 and the band is 2^1.5 = 2.83x. The
+        // median of the paired ratios replaces the fastest-of shape that a
+        // single preempted round reddened (#978 r3).
         let checked = std::panic::catch_unwind(|| {
-            timing::assert_within_linear_band("8 MiB rewrite", half_elapsed, full_elapsed, samples);
+            timing::assert_within_scaling_band("8 MiB rewrite", &sampled, 2.0);
         });
         crate::test_negative_receipt::expect_ok(checked, "#978 CPU rewrite stays linear");
     }

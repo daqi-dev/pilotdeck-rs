@@ -608,14 +608,19 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
         // The scaling ratio's premise is that the halved recipe really is
         // about half the input: halving the numerically largest repeat is only
         // equivalent when that repeat also dominates the byte count, and a
-        // "half" that stays at 0.8x would loosen the 3x band into a
-        // constant-factor check. Pin the premise, not the recipe shape.
+        // "half" that stays at 0.8x would loosen the band into a
+        // constant-factor check. Pin the premise, not the recipe shape, and
+        // derive the band's factor from the measured bytes ratio instead of
+        // assuming exactly 2.0: at 0.6x the real factor is 1/0.6 = 1.667x and
+        // a quadratic implementation reads 2.78x, which a hardcoded 2.0
+        // factor's 2.83x band would have admitted (#978 first review).
         let halved_ratio = halved.len() as f64 / html.len() as f64;
         assert!(
-            (0.4..=0.6).contains(&halved_ratio),
+            (0.5..=0.6).contains(&halved_ratio),
             "#978 {name}: halved recipe is {halved_ratio:.3}x the full bytes; \
-             the doubling premise of the scaling ratio no longer holds"
+             the scaling premise of the ratio no longer holds"
         );
+        let factor = 1.0 / halved_ratio;
         // #978 r3: judge the median of the paired per-round ratios, not the
         // fastest half against the fastest full. The CPU worker already took
         // the wall clock out of the sample, but GitHub's shared runners still
@@ -655,8 +660,9 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
         // join can land inside the ratio band at this size (the host measured
         // 33.96 s / 12.41 s = 2.74x against the 2.83x band) and be stopped by
         // the per-sample cap instead, so either failure line must be
-        // recognisable as #978.
-        timing::assert_within_scaling_band(&format!("#978 {name}: full page"), &sampled, 2.0);
+        // recognisable as #978. The band factor follows the measured bytes
+        // ratio (`factor` above), never a hardcoded nominal 2.0.
+        timing::assert_within_scaling_band(&format!("#978 {name}: full page"), &sampled, factor);
         // Constant-factor backstop: the pre-4fbb5f78b moved-subtree rewalk
         // scaled linearly at ~36x the cost per byte, invisible to the ratio;
         // see timing::assert_within_per_sample_cap.
@@ -687,8 +693,8 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
     let expected_full = period.repeat(1024 * 1024);
     let expected_half = period.repeat(512 * 1024);
     let samples = timing::timing_samples();
-    let (half_elapsed, full_elapsed) =
-        timing::fastest_scaling("dense-inline-10mib-flat", samples, |full| {
+    let sampled =
+        timing::fastest_scaling_ratio("dense-inline-10mib-flat", "half", "full", samples, |full| {
             let (input, want) = if full {
                 (&html, expected_full.as_bytes())
             } else {
@@ -701,17 +707,18 @@ fn ten_mib_of_flat_inline_siblings_stays_fast() {
             elapsed
         });
     eprintln!(
-        "dense-inline-10mib-flat: {} HTML bytes, fastest of {samples}: \
-         full {full_elapsed:?}, half {half_elapsed:?}",
-        html.len()
+        "dense-inline-10mib-flat: {} HTML bytes, median of {samples} paired ratios {:.2}x: \
+         fastest full {:?}, fastest half {:?}",
+        html.len(),
+        sampled.median_ratio,
+        sampled.large,
+        sampled.small
     );
-    timing::assert_within_linear_band(
-        "#978 flat inline: 10 MiB",
-        half_elapsed,
-        full_elapsed,
-        samples,
-    );
-    timing::assert_within_per_sample_cap("#978 flat inline: 10 MiB", full_elapsed, samples);
+    // The half input is exactly half the bytes by construction (`html.len()/2`
+    // asserted above), so the factor stays 2.0; the median replaces the
+    // fastest-of shape that a single preempted round reddened (#978 r3).
+    timing::assert_within_scaling_band("#978 flat inline: 10 MiB", &sampled, 2.0);
+    timing::assert_within_per_sample_cap("#978 flat inline: 10 MiB", sampled.large, samples);
 }
 
 #[test]

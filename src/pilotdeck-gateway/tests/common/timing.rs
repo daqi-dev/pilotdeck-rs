@@ -3,11 +3,13 @@
 //!
 //! A single sample plus an absolute wall clock turns red whenever the host
 //! preempts the conversion once. These helpers instead interleave two sizes of
-//! the same shape and check the scaling ratio (the fastest run for the
-//! two-size callers, the median of the paired ratios for the 8x reparented
-//! pair); the callers keep a loose absolute cap as the constant-factor
-//! backstop. Callers that must stay red-free on a loaded host (#978) sample
-//! the CPU seconds of an isolated worker process instead of the wall clock.
+//! the same shape and check the median of the per-round `large / small` ratios;
+//! the fastest runs are kept only for the loose absolute cap that backstops a
+//! constant-factor regression. A host-wide stall contaminates one round, not
+//! the fastest independent runs from different load regimes, so the median
+//! drops a minority of preempted rounds (#978 r3). Callers that must stay
+//! red-free on a loaded host (#978) sample the CPU seconds of an isolated
+//! worker process instead of the wall clock.
 
 use std::time::Duration;
 
@@ -19,8 +21,9 @@ pub fn timing_samples() -> usize {
 }
 
 /// `timing_samples` with a caller-specific default. `PDRS_TIMING_SAMPLES`
-/// still wins, so the quadratic negative controls in
-/// `tests/fixtures/html-timing/negative_controls.py` can force one sample.
+/// still wins, mostly for local debugging; the negative controls in
+/// `tests/fixtures/html-timing/negative_controls.py` run the default sample
+/// count so their red runs exercise the same median path as CI (#978).
 pub fn timing_samples_or(default: usize) -> usize {
     std::env::var("PDRS_TIMING_SAMPLES")
         .ok()
@@ -60,10 +63,11 @@ where
     pairs
 }
 
-/// Interleave the two sizes and keep the fastest run of each. A single
-/// preempted sample must not decide the ratio on a loaded host; alternating
-/// the order also keeps the first allocation from always falling on the
-/// same size.
+/// Interleave the two sizes and keep the fastest run of each. No production
+/// caller judges on this shape any more (#978 r3 moved every two-size caller
+/// to [`fastest_scaling_ratio`]); it is kept so
+/// `paired_median_ignores_whole_round_preemption` can reproduce the CI
+/// fast/slow-regime split that the paired median fixes.
 pub fn fastest_scaling<S>(label: &str, samples: usize, sample: S) -> (Duration, Duration)
 where
     S: FnMut(bool) -> Duration,
@@ -140,29 +144,16 @@ where
     }
 }
 
-/// Doubling the input doubles linear work but quadruples a quadratic rescan.
-/// The fastest interleaved samples keep one preempted run from turning a
-/// linear implementation red, while a quadratic one sits far outside the
-/// 3x + 150 ms band.
-pub fn assert_within_linear_band(label: &str, half: Duration, full: Duration, samples: usize) {
-    const GROWTH: f64 = 3.0;
-    const NOISE: f64 = 0.15;
-    let limit = half.as_secs_f64() * GROWTH + NOISE;
-    assert!(
-        full.as_secs_f64() <= limit,
-        "{label} {full:?} did not scale from half {half:?} (fastest of {samples}): \
-         allowed {limit:.3}s = {GROWTH}x + {NOISE}s; \
-         a quadratic implementation needs about 4x"
-    );
-}
-
 /// Band for a pair of inputs `factor` times apart. Linear work grows by
 /// `factor`; quadratic work by `factor^2`. The geometric midpoint
 /// `factor^1.5` leaves the same multiplicative margin (`sqrt(factor)`) on
 /// both sides: at factor 8 the band is 22.6x, 2.83x above the linear 8x and
-/// 2.83x below the quadratic 64x. The median of the paired ratios tolerates
-/// a minority of preempted rounds; the 150 ms slack is converted to ratio
-/// space through the fastest small run, so short inputs keep the same
+/// 2.83x below the quadratic 64x. Callers pass the factor measured from the
+/// actual input bytes, not a hardcoded nominal one (#978: a "half" that is
+/// 0.6x makes the real factor 1.667x, whose quadratic ratio 2.78x would slip
+/// under a hardcoded 2.0 factor's 2.83x band). The median of the paired ratios
+/// tolerates a minority of preempted rounds; the 150 ms slack is converted to
+/// ratio space through the fastest small run, so short inputs keep the same
 /// absolute allowance.
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
@@ -186,7 +177,7 @@ pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor:
 }
 
 /// Constant-factor backstop for what the ratio cannot see: a linear-but-slow
-/// rewrite stays inside the 3x band (the pre-4fbb5f78b moved-subtree rewalk
+/// rewrite stays inside the ratio band (the pre-4fbb5f78b moved-subtree rewalk
 /// was linear at ~36x the cost per byte). The budget is per full-size sample:
 /// taking more timing samples multiplies a test's wall cost but never divides
 /// this budget (`PDRS_TIMING_SAMPLES=1` gets the same cap), and the fastest
@@ -326,26 +317,106 @@ fn scaling_median_ignores_two_preempted_rounds() {
     assert_within_scaling_band("#873 unit linear pair", &sampled, 8.0);
 }
 
-/// #978: the 3x + 150 ms band is unchanged. Prove it still separates a linear
-/// doubling from a quadratic one by injecting both synthetic samples, instead
-/// of rewriting product code: a 1 s -> 2 s pair must pass, and the same 2x
-/// input taking 4 s must breach the band.
+/// #978: reproduce the CI samples that reddened the retired "fastest half vs
+/// fastest full" shape. Whole-round preemption left half 1.360 / 2.106 /
+/// 2.297 s against full 4.518 / 4.605 / 4.480 s: the fastest runs read 3.29x
+/// (over the retired 3x line) while the per-round ratios are 3.32 / 2.19 /
+/// 1.95, median 2.19x (inside the 2^1.5 = 2.83x band). Pairing cancels a stall
+/// that hits one size inside a round.
 #[test]
-fn linear_band_rejects_quadratic_growth_without_loosening() {
-    let half = Duration::from_secs(1);
-    assert_within_linear_band("#978 unit linear", half, Duration::from_secs(2), 1);
+fn paired_median_ignores_whole_round_preemption() {
+    fn ci_samples() -> impl FnMut(bool) -> Duration {
+        // `sample_pairs` alternates the order: round 0 samples half then full,
+        // round 1 full then half, round 2 half then full.
+        let order = [
+            (false, 1.360),
+            (true, 4.518),
+            (true, 4.605),
+            (false, 2.106),
+            (false, 2.297),
+            (true, 4.480),
+        ];
+        let mut next = 0;
+        move |full| {
+            let (expected, secs) = order[next];
+            next += 1;
+            assert_eq!(expected, full, "#978 sample order");
+            Duration::from_secs_f64(secs)
+        }
+    }
+    let (fastest_half, fastest_full) = fastest_scaling("unit", 3, ci_samples());
+    assert!(
+        (fastest_full.as_secs_f64() / fastest_half.as_secs_f64() - 3.294).abs() < 0.01,
+        "#978 the retired fastest-of shape reads 3.29x on these samples"
+    );
+    let sampled = fastest_scaling_ratio("unit", "half", "full", 3, ci_samples());
+    assert!(
+        (sampled.median_ratio - 2.187).abs() < 0.01,
+        "#978 the paired median reads 2.19x on the same samples"
+    );
+    assert_within_scaling_band("#978 unit paired", &sampled, 2.0);
+}
+
+/// #978: the 2^1.5 = 2.83x band replaces the retired 3x line. Inject both
+/// shapes for a doubling: a linear 2.0x passes, the same input taking 4.0x
+/// breaches the band. The 2.83x band is stricter than the old 3x + 150 ms
+/// line, so this is a tightening, not a relaxation.
+#[test]
+fn scaling_band_rejects_quadratic_growth_without_loosening() {
+    let linear = ScalingSamples {
+        small: Duration::from_secs(1),
+        large: Duration::from_secs(2),
+        median_ratio: 2.0,
+        samples: 3,
+    };
+    assert_within_scaling_band("#978 unit linear", &linear, 2.0);
+    let quadratic = ScalingSamples {
+        small: Duration::from_secs(1),
+        large: Duration::from_secs(4),
+        median_ratio: 4.0,
+        samples: 3,
+    };
     let panic = std::panic::catch_unwind(|| {
-        assert_within_linear_band("#978 unit quadratic", half, Duration::from_secs(4), 1)
+        assert_within_scaling_band("#978 unit quadratic", &quadratic, 2.0)
     })
-    .expect_err("#978 quadratic sample must breach the 3x + 150 ms band");
+    .expect_err("#978 quadratic sample must breach the 2.83x band");
     let message = panic
         .downcast_ref::<String>()
         .map(String::as_str)
         .or_else(|| panic.downcast_ref::<&str>().copied())
         .unwrap_or_default();
     assert!(
-        message.contains("#978 unit quadratic")
-            && message.contains("a quadratic implementation needs about 4x"),
+        message.contains("#978 unit quadratic") && message.contains("a quadratic one about 4x"),
         "#978 band diagnosis must identify the quadratic breach: {message}"
+    );
+}
+
+/// #978: the band follows the factor measured from the actual input bytes.
+/// A "half" that is 0.6x the full bytes makes the real factor 1/0.6 = 1.667x;
+/// a quadratic implementation then reads 1/0.6^2 = 2.78x. The retired
+/// hardcoded factor 2.0 band (2.83x) admitted 2.78x; the derived band
+/// (1.667^1.5 = 2.15x) rejects it. This is the narrow false-PASS window the
+/// first review found, closed without widening any band.
+#[test]
+fn scaling_band_tracks_the_measured_input_factor() {
+    let factor = 1.0 / 0.6;
+    let quadratic_ratio = factor * factor;
+    let sampled = ScalingSamples {
+        small: Duration::from_secs(1),
+        large: Duration::from_secs_f64(quadratic_ratio),
+        median_ratio: quadratic_ratio,
+        samples: 3,
+    };
+    assert!(
+        std::panic::catch_unwind(|| assert_within_scaling_band("#978 unit nominal", &sampled, 2.0))
+            .is_ok(),
+        "#978 the retired hardcoded 2.0 factor band admitted the 0.6x quadratic"
+    );
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_within_scaling_band("#978 unit derived", &sampled, factor)
+        })
+        .is_err(),
+        "#978 the derived factor band must reject the 0.6x quadratic"
     );
 }
