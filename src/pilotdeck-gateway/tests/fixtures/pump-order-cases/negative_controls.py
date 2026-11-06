@@ -232,8 +232,13 @@ def bound_cases(selected):
 def compile_cases(selected, out):
     """Compile every distinct mutation before runtime controls; always summarize."""
     results = []
+    # #1219 r5 review P2: guard every source any mutation touches, not just
+    # `live.rs`. `reject-completes` anchors in `runner.rs`, so a fixed `[path]`
+    # snapshot would KeyError on `originals[source]` and poison the rest of the
+    # compile-only preflight (fail-closed but a false red).
+    sources = list(dict.fromkeys(entry[0] for entry in mutations.values()))
     try:
-        with mutating_sources(root, [path]) as originals:
+        with mutating_sources(root, sources) as originals:
             for name in selected:
                 source, old, new, _test_filter, _checks = mutations[name]
                 status, reason = 'INVALID', ''
