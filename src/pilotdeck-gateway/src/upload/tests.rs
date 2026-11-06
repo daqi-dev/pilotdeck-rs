@@ -1306,6 +1306,107 @@ fn upload_lease_root_link_is_refused() {
     );
 }
 
+/// #1889: `(dev, inode)` alone cannot bind the lease. Measured 2026-11-07
+/// (`_tmp/20261107-issue-1887/inode-probe/`): ext4 hands a recreated file the
+/// just-freed inode number deterministically (20000/20000), while `link(2)`
+/// bumps the inode ctime on every filesystem (5/5), so a ctid term cannot help
+/// either. The auxiliary identity is the content digest `verified` already
+/// checked against the opened handle; rewriting the file in place keeps the
+/// inode *and* the size, so only the digest term can refuse this.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_of_a_rewritten_attachment_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let verified = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .unwrap();
+    let source = PathBuf::from(string(&verified[0], "path").unwrap());
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        let source = source.clone();
+        move |path: &Path| {
+            assert_eq!(path, source.as_path());
+            // Same inode, same length, different bytes.
+            fs::write(&source, b"HELLO").unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(
+        swap_test_hook::SwapWindow::BetweenVerifiedAndLeaseLink,
+        swap,
+    );
+    let result = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None);
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1889 the rewrite hook must fire between verification and the lease link"
+    );
+    let error = result
+        .err()
+        .expect("#1889 a rewritten artifact must never be pinned into the lease");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#1889 a rewritten artifact must be diagnosed as tampering"
+    );
+}
+
+/// #1889, the reported scenario: delete the approved file and recreate it at
+/// the same path inside the window. On ext4 the recreated file gets the same
+/// inode number, so the identity term passes and only the digest term refuses
+/// it; on APFS the inode itself differs. Either way nothing is pinned.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_of_a_recreated_attachment_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let verified = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .unwrap();
+    let source = PathBuf::from(string(&verified[0], "path").unwrap());
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        let source = source.clone();
+        move |path: &Path| {
+            assert_eq!(path, source.as_path());
+            fs::remove_file(&source).unwrap();
+            fs::write(&source, b"HELLO").unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(
+        swap_test_hook::SwapWindow::BetweenVerifiedAndLeaseLink,
+        swap,
+    );
+    let result = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None);
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1889 the recreate hook must fire between verification and the lease link"
+    );
+    let error = result
+        .err()
+        .expect("#1889 a recreated artifact must never be pinned into the lease");
+    assert_eq!(
+        error.code.as_str(),
+        "ATTACHMENT_TAMPERED",
+        "#1889 a recreated artifact must be diagnosed as tampering"
+    );
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();

@@ -26,14 +26,21 @@ red; the pre-open identity row drops the identity term; and the approved-stat
 row restores the follow-the-link sample, which lets a link planted before the
 approved stat become the approved object.
 
-The lease-link rows pin the lease hard link: one drops the identity
-comparison, the other restores the follow-the-link sample of the linked
-entry. Both are killable on every Unix: ``std::fs::hard_link`` does not follow
+The lease-link rows pin the lease hard link: two drop the identity
+comparison or its content term, one restores the follow-the-link sample of
+the linked entry. Both are killable on every Unix: ``std::fs::hard_link`` does not follow
 a symlink source (``linkat(..., 0)`` on macOS as well as Linux), so the
 lease entry is the link itself and the follow-the-link sample accepts it.
 Measured 2026-11-06: after ``fs::hard_link(link, dest)``,
 ``fs::symlink_metadata(dest)`` reports a symlink; Python's ``os.link`` is the
 one that follows, which is why the fixture does not use it.
+
+The #1887/#1888 rows pin the two halves of the shared "home" question: the
+reader's lexical prefix check refuses a `.tmp` that is a link into the same
+project, and the writer's lease root goes through the same guard instead of a
+bare join off `projectKey`. Their composer-side siblings live in
+``tests/fixtures/attach-followups-a/negative_controls.py``; the assertion
+strings name the side, so no row can be satisfied by the other side's test.
 """
 import difflib
 import hashlib
@@ -68,6 +75,7 @@ READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
+LEASE_LINK_REWRITE = 'upload::tests::upload_lease_link_of_a_rewritten_attachment_is_rejected'
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -315,7 +323,11 @@ mutations = [
     # the verified handle. Dropping that comparison pins whatever the path
     # names at link time — the named test must go red.
     ('lease-link-identity-dropped', STORE,
-     '                if !lease_link_matches(&destination, identities.get(index).copied().flatten()) {',
+     '''                if !lease_link_matches(
+                    &destination,
+                    identities.get(index).copied().flatten(),
+                    &string(attachment, "sha256").unwrap_or_default(),
+                ) {''',
      '                if false {',
      LEASE_LINK,
      '#1494 a swapped attachment must never be pinned into the lease'),
@@ -331,6 +343,24 @@ mutations = [
      '    match (fs::metadata(destination), expected) {',
      LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
+    # #1889: `(dev, inode)` does not survive an inode-reusing replacement on
+    # ext4 (measured 2026-11-07: 20000/20000 rounds reuse the freed number),
+    # so the lease link also compares the linked entry's content with the
+    # digest `verified` bound to its handle. This row drops the content term
+    # and leaves the identity term intact: the named test rewrites the file in
+    # place inside the `[verified, hard link]` window (same inode, same
+    # length), so it is killable on every filesystem, not only where inode
+    # reuse happens.
+    ('lease-link-content-dropped', STORE,
+     '''    match File::open(destination) {
+        Ok(mut file) => hash_file(&mut file).is_ok_and(|digest| digest == expected_sha256),
+        // Unreadable is never a match.
+        Err(_) => false,
+    }''',
+     '''    let _ = (destination, expected_sha256);
+    true''',
+     LEASE_LINK_REWRITE,
+     '#1889 a rewritten artifact must never be pinned into the lease'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
