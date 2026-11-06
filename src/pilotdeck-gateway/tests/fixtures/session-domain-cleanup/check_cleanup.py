@@ -1221,7 +1221,14 @@ def _loader_names(tree, rel=None):
         # applies to the proven sources.
         definitions = [node for node in _module_level_defs(tree)
                        if node.name == 'load']
-        if len(definitions) == 1 and not definitions[0].decorator_list:
+        # #892 r27: a ``class load`` is not the loader, and a dynamic write
+        # replaces the function object the single-def rule just accepted (GLM
+        # simplify r26 P1-4 / DeepSeek concurrency r26 P1-8 / boundary r26 P0-2).
+        dynamic = _dynamic_write_names(tree)
+        if (len(definitions) == 1 and not definitions[0].decorator_list
+                and isinstance(definitions[0], (ast.FunctionDef,
+                                                ast.AsyncFunctionDef))
+                and '*' not in dynamic and 'load' not in dynamic):
             loaders.add('load')
     return frozenset(loaders)
 
@@ -1280,8 +1287,36 @@ def _scoped_nodes(scope):
         for child in ast.iter_child_nodes(current):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
                                   ast.ClassDef, ast.Lambda)):
+                # #892 r27: the *header* of a definition -- decorators, default
+                # values, bases, annotations -- is evaluated in the enclosing
+                # scope, so a walrus there rebinds the enclosing name even
+                # though the body belongs to the nested scope (GLM concurrency
+                # r26 P1-2 / DeepSeek boundary r26 P1-6).
+                stack.extend(_definition_header_nodes(child))
                 continue
             stack.append(child)
+
+
+def _definition_header_nodes(node):
+    """Expressions a definition evaluates in its *enclosing* scope (#892 r27)."""
+    nodes = list(getattr(node, 'decorator_list', ()))
+    if isinstance(node, ast.ClassDef):
+        nodes.extend(node.bases)
+        nodes.extend(keyword.value for keyword in node.keywords)
+        return nodes
+    arguments = node.args
+    nodes.extend(arguments.defaults)
+    nodes.extend(default for default in arguments.kw_defaults
+                 if default is not None)
+    for parameter in (*getattr(arguments, 'posonlyargs', ()),
+                      *arguments.args, *arguments.kwonlyargs,
+                      arguments.vararg, arguments.kwarg):
+        if parameter is not None and parameter.annotation is not None:
+            nodes.append(parameter.annotation)
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if node.returns is not None:
+            nodes.append(node.returns)
+    return nodes
 
 
 def _walrus_names(scope):
@@ -1422,7 +1457,7 @@ def _dynamic_write_names(tree):
 
     ``'*'`` means any name could move; the whole file fails closed.
     """
-    namespaces = _namespace_aliases(tree)
+    kinds = _object_kinds(tree)
     names = set()
     # #892 r26: writes to the module namespace land in module scope wherever
     # they are spelled -- ``global md`` plus ``globals()['md'] = ...`` inside a
@@ -1435,82 +1470,243 @@ def _dynamic_write_names(tree):
             for target in targets:
                 if not isinstance(target, ast.Subscript):
                     continue
-                if not _is_namespace_object(target.value, namespaces):
+                if not _is_namespace_object(target.value, kinds):
                     continue
-                key = target.slice
-                names.add(key.value if isinstance(key, ast.Constant)
-                          and isinstance(key.value, str) else '*')
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            # ``globals().update({'name': stub})`` / ``vars().update(...)``
-            if (node.func.attr in ('update', 'setdefault')
-                    and _is_namespace_object(node.func.value, namespaces)):
-                names.update(_literal_dict_keys(node) or {'*'})
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == 'setattr':
-                names.update(_setattr_module_keys(node, namespaces))
-            elif node.func.id == 'exec' and node.args:
-                # ``exec(source, namespace)`` writes *that* namespace; the
-                # apparatus executes committed bytes into a foreign module's
-                # ``__dict__`` and touches nothing here.  Only an ``exec`` that
-                # can land in this module's namespace fails the file closed.
-                if len(node.args) >= 2:
-                    namespace = node.args[1]
-                    if (_is_namespace_object(namespace, namespaces)
-                            or _is_module_object(namespace)):
-                        names.add('*')
-                    continue
-                names.add('*')
+                names |= _write_key_names(target.slice, tree)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            attr = func.attr if isinstance(func, ast.Attribute) else None
+            if (attr in ('update', 'setdefault', 'pop', 'popitem', 'clear')
+                    and _is_namespace_object(func.value, kinds)):
+                # ``globals().update({'name': stub})`` / ``vars().update(...)``
+                if attr == 'setdefault':
+                    names |= _setdefault_key(node)
+                elif attr == 'update':
+                    names |= _updated_keys(node)
+                continue
+            helper = _callable_name(func, kinds)
+            if helper == 'setattr':
+                names |= _setattr_module_keys(node, kinds, tree)
+            elif helper == 'exec' and node.args:
+                # ``exec(source, namespace[, namespace])`` writes *that*
+                # namespace; the apparatus executes committed bytes into a
+                # foreign module's ``__dict__`` and touches nothing here.  Only
+                # an ``exec`` that can land in this module's namespace fails
+                # the file closed.
+                namespaces = [node.args[1]] if len(node.args) >= 2 else []
+                if len(node.args) >= 3:
+                    namespaces.append(node.args[2])
+                if not namespaces:
+                    names.add('*')
+                elif any(_is_namespace_object(n, kinds)
+                         or _is_module_object(n, kinds) for n in namespaces):
+                    names.add('*')
     return frozenset(names)
 
 
-def _namespace_aliases(tree):
-    """Names bound to ``globals()``/``vars()`` (#892 r26)."""
-    aliases = set()
+# #892 r27: the builtin callables whose rewritten call is the same write.  The
+# r26 rules all matched ``ast.Name`` with a literal id, so ``sa = setattr; sa(md,
+# 'common', stub)``, ``builtins.setattr(...)`` and ``bi.globals()`` were the same
+# write under another spelling (GLM sibling r26 P1-4 / simplify r26 P1-2 /
+# DeepSeek concurrency r26 P1-6).  One alias resolver now feeds every rule.
+_CALLABLE_KINDS = ('setattr', 'exec', 'eval', 'globals', 'vars')
+_KIND_CACHE = {}
+
+
+def _alias_assignments(tree):
+    """``(name, value)`` pairs a plain binding gives a bare name (#892 r27)."""
+    pairs = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id in ('globals', 'vars')):
-            continue
-        for target in node.targets:
-            aliases.update(_target_names(target))
-    return aliases
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name in _target_names(target):
+                    pairs.append((name, node.value))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            for name in _target_names(node.target):
+                pairs.append((name, node.value))
+        elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            pairs.append((node.target.id, node.value))
+    return pairs
 
 
-def _is_namespace_object(node, aliases):
-    """True when *node* evaluates to this module's namespace dict (#892 r26)."""
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-        return node.func.id in ('globals', 'vars')
+def _expr_is_sys_modules(node, kinds):
+    """True when *node* evaluates to the ``sys.modules`` dict (#892 r27)."""
     if isinstance(node, ast.Name):
-        return node.id in aliases
-    return _is_module_object(node)
+        return 'sysmods' in kinds.get(node.id, ())
+    return (isinstance(node, ast.Attribute) and node.attr == 'modules'
+            and isinstance(node.value, ast.Name)
+            and 'sys' in kinds.get(node.value.id, ()))
 
 
-def _is_module_object(node):
-    """True when *node* evaluates to a module object (#892 r26).
+def _expr_kinds(node, kinds):
+    """Object kinds *node* can evaluate to under the alias map (#892 r27).
 
-    ``sys.modules[__name__]`` / ``sys.modules['__main__']`` are this module or
-    the entry module; ``setattr`` on them writes the module globals.
+    One shared resolver feeds every rule that has to know whether an
+    expression is this module's namespace, a module object, ``sys``,
+    ``sys.modules`` or a builtin callable.  The r24/r25 rounds each taught one
+    rule one more spelling (``import sys as _s``, ``from sys import modules``,
+    ``g = globals()``) and the other rules stayed one spelling behind (GLM
+    concurrency r26 P1-1 / DeepSeek sibling r26 P1-5).
     """
-    return (isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Attribute)
-            and node.value.attr == 'modules'
-            and _root_name(node.value) is not None)
+    if isinstance(node, ast.Name):
+        return kinds.get(node.id, frozenset())
+    if isinstance(node, ast.Attribute):
+        if node.attr == 'modules':
+            if ((isinstance(node.value, ast.Name)
+                 and 'sys' in kinds.get(node.value.id, ()))
+                    or 'sysmods' in _expr_kinds(node.value, kinds)):
+                return frozenset({'sysmods'})
+            return frozenset()
+        if node.attr == '__dict__':
+            inner = _expr_kinds(node.value, kinds)
+            if 'module' in inner or 'namespace' in inner:
+                return frozenset({'namespace'})
+            return frozenset()
+        if node.attr in _CALLABLE_KINDS:
+            if 'builtins' in _expr_kinds(node.value, kinds):
+                return frozenset({'fn:' + node.attr})
+            return frozenset()
+        return frozenset()
+    if isinstance(node, ast.Subscript):
+        if _expr_is_sys_modules(node.value, kinds):
+            return frozenset({'module'})
+        return frozenset()
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            found = kinds.get(func.id, ())
+            if any('fn:' + helper in found for helper in ('globals', 'vars')):
+                return frozenset({'namespace'})
+            return frozenset()
+        if isinstance(func, ast.Attribute):
+            if (func.attr in ('globals', 'vars')
+                    and 'builtins' in _expr_kinds(func.value, kinds)):
+                return frozenset({'namespace'})
+        return frozenset()
+    return frozenset()
 
 
-def _literal_dict_keys(node):
-    """Literal string keys of a ``{...}`` argument, or ``None`` if not literal."""
-    for argument in list(node.args) + [keyword.value for keyword in node.keywords]:
-        if isinstance(argument, ast.Dict):
-            keys = set()
-            for key in argument.keys:
-                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
-                    return None
-                keys.add(key.value)
-            return keys
+def _object_kinds(tree):
+    """name -> the object kinds it can denote anywhere in *tree* (#892 r27).
+
+    A fixpoint over every alias binding form (``Assign``/``AnnAssign``/walrus),
+    so ``g = globals()``, ``h = g``, ``sm = sys.modules``, ``s = sys``,
+    ``sa = setattr`` and ``bi = builtins`` all resolve the way the direct
+    spelling does.
+    """
+    cached = _KIND_CACHE.get(id(tree))
+    if cached is not None and cached[0] is tree:
+        return cached[1]
+    kinds = {}
+
+    def add(name, kind):
+        bucket = kinds.setdefault(name, set())
+        if kind in bucket:
+            return False
+        bucket.add(kind)
+        return True
+
+    for helper in _CALLABLE_KINDS:
+        add(helper, 'fn:' + helper)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == 'sys':
+                    add(alias.asname or 'sys', 'sys')
+                elif alias.name == 'builtins':
+                    add(alias.asname or 'builtins', 'builtins')
+        elif isinstance(node, ast.ImportFrom) and node.module in ('sys', 'builtins'):
+            for alias in node.names:
+                if node.module == 'sys' and alias.name == 'modules':
+                    add(alias.asname or 'modules', 'sysmods')
+                elif node.module == 'builtins' and alias.name in _CALLABLE_KINDS:
+                    # #892 r27: ``from builtins import setattr as _sa`` names
+                    # the same callable as the bare spelling (DeepSeek boundary
+                    # r26 P1-2).
+                    add(alias.asname or alias.name, 'fn:' + alias.name)
+    pairs = _alias_assignments(tree)
+    changed = True
+    while changed:
+        changed = False
+        for name, value in pairs:
+            for kind in _expr_kinds(value, kinds):
+                if add(name, kind):
+                    changed = True
+    _KIND_CACHE[id(tree)] = (tree, kinds)
+    return kinds
+
+
+def _callable_name(func, kinds):
+    """The builtin a call target denotes, or ``None`` (#892 r27)."""
+    if isinstance(func, ast.Name):
+        for helper in _CALLABLE_KINDS:
+            if 'fn:' + helper in kinds.get(func.id, ()):
+                return helper
+        return None
+    if isinstance(func, ast.Attribute) and func.attr in _CALLABLE_KINDS:
+        if 'builtins' in _expr_kinds(func.value, kinds):
+            return func.attr
     return None
 
 
-def _setattr_module_keys(node, aliases):
+def _is_namespace_object(node, kinds):
+    """True when *node* evaluates to this module's namespace dict (#892 r26)."""
+    return 'namespace' in _expr_kinds(node, kinds)
+
+
+def _is_module_object(node, kinds):
+    """True when *node* evaluates to a module object (#892 r26).
+
+    ``sys.modules[__name__]`` / ``sys.modules['__main__']`` are this module or
+    the entry module; ``setattr`` on them writes the module globals.  #892 r27:
+    ``....__dict__`` is the same mapping (DeepSeek boundary r26 P1-5).
+    """
+    return 'module' in _expr_kinds(node, kinds)
+
+
+def _write_key_names(expr, tree):
+    """Names a subscript/``setattr`` key can spell (#892 r27).
+
+    A literal string is itself; a name whose every binding is a literal string
+    (``_HELD_STATE = "_pdrs_negative_process_held"``) or a literal dict
+    iteration resolves to those spellings; anything else is unbounded and
+    withdraws the whole file (GLM boundary r26 P0-4 / DeepSeek sink r26 P1-4).
+    """
+    found = _constant_string_values(expr, tree)
+    return {'*'} if found is None else found
+
+
+def _updated_items(node):
+    """``(key, value)`` pairs a dict-update call writes, ``('*', node)`` if open."""
+    items = []
+    for argument in node.args:
+        if not isinstance(argument, ast.Dict):
+            return [('*', node)]
+        for key, value in zip(argument.keys, argument.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                return [('*', node)]
+            items.append((key.value, value))
+    for keyword in node.keywords:
+        if keyword.arg is None:
+            return [('*', node)]
+        items.append((keyword.arg, keyword.value))
+    return items
+
+
+def _updated_keys(node):
+    """Keys a ``.update(...)`` call can add, ``{'*'}`` when unbounded (#892 r27)."""
+    return {key for key, _value in _updated_items(node)}
+
+
+def _setdefault_key(node):
+    """Key a ``.setdefault`` call writes, ``{'*'}`` when unbounded (#892 r27)."""
+    if (node.args and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)):
+        return {node.args[0].value}
+    return {'*'}
+
+
+def _setattr_module_keys(node, kinds, tree):
     """Names ``setattr(<module object>, ...)`` can replace (#892 r26).
 
     Only a module-object target is collected here: the apparatus itself calls
@@ -1520,54 +1716,31 @@ def _setattr_module_keys(node, aliases):
     """
     if len(node.args) < 2:
         return set()
-    target, key = node.args[0], node.args[1]
-    if not (_is_namespace_object(target, aliases) or _is_module_object(target)):
+    target = node.args[0]
+    if not (_is_namespace_object(target, kinds) or _is_module_object(target, kinds)):
         return set()
-    if isinstance(key, ast.Constant) and isinstance(key.value, str):
-        return {key.value}
-    return {'*'}
+    return _write_key_names(node.args[1], tree)
 
 
 def _sys_aliases(tree):
-    """Names that denote the ``sys`` module (#892 r25/r26).
-
-    ``import sys as _s`` gives the same ``_s.modules`` handle as ``sys``, so a
-    pre-seed written through the alias has to be seen or the poisoning rule is
-    one spelling away from bypass.  #892 r26: the import may sit inside a
-    function (``def _poison(): import sys as _s; _s.modules[...] = stub``) and
-    a plain assignment alias (``_s = sys``) is the same handle (GLM
-    concurrency r25 P1-4 / simplify r25 P1-3).
-    """
-    names = {'sys'}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names.update(alias.asname for alias in node.names
-                         if alias.name == 'sys' and alias.asname)
-        elif (isinstance(node, ast.Assign) and isinstance(node.value, ast.Name)
-                and node.value.id in names):
-            for target in node.targets:
-                names.update(_target_names(target))
-    return names
+    """Names that denote the ``sys`` module (#892 r25/r27)."""
+    kinds = _object_kinds(tree)
+    return frozenset(name for name, found in kinds.items() if 'sys' in found)
 
 
 def _sys_modules_names(tree):
-    """Names bound to the ``sys.modules`` dict itself (#892 r26).
+    """Names bound to the ``sys.modules`` dict itself (#892 r26/r27).
 
     ``from sys import modules as _m`` binds the dict, not the module, so
     ``_m['_guard'] = stub`` is a pre-seed with no ``.modules`` attribute to
-    match (GLM concurrency r25 P1-4 / boundary r25 P1-6).
+    match (GLM concurrency r25 P1-4 / boundary r25 P1-6); ``sm = sys.modules``
+    is the same binding through an alias (GLM boundary r26 P1-6).
     """
-    names = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.ImportFrom) or node.module != 'sys':
-            continue
-        names.update(alias.asname or alias.name for alias in node.names
-                     if alias.name == 'modules')
-    return names
+    kinds = _object_kinds(tree)
+    return frozenset(name for name, found in kinds.items() if 'sysmods' in found)
 
 
-def _sys_modules_write_values(tree, sys_names=frozenset({'sys'}),
-                              modules_names=frozenset()):
+def _sys_modules_write_values(tree, kinds=None):
     """``sys.modules['<literal>'] = value`` pairs (#892 r25).
 
     The apparatus bootstrap legitimately writes ``sys.modules['_guard'] =
@@ -1579,63 +1752,123 @@ def _sys_modules_write_values(tree, sys_names=frozenset({'sys'}),
     alias of ``sys``, and ``.update``/``.setdefault`` write it as a call (GLM
     boundary r25 P1-6 / concurrency r25 P1-4).
     """
+    if kinds is None:
+        kinds = _object_kinds(tree)
     writes = {}
 
     def record(key, value):
         writes.setdefault(key, []).append(value)
 
-    for node in ast.walk(tree):
+    def record_key(key, value, loops, scope):
+        """Record the key a subscript write spells (#892 r27).
+
+        A name is resolved through the ``for`` loop it runs in, not the whole
+        file: the harness restores ``sys.modules[name] = previous`` inside
+        ``for name, previous in (('common', saved), ...)``, and a file-wide
+        lookup sees every unrelated ``name`` binding.
+        """
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            record(key.value, _resolve_scope_value(value, scope))
+            return
+        key_name = key.id if isinstance(key, ast.Name) else None
+        if key_name is not None:
+            for loop in reversed(loops):
+                if _first_target_name(loop.target) == key_name:
+                    found = _iterable_dict_keys(loop.iter, tree)
+                    if found is None:
+                        record('*', value)
+                        return
+                    items = _iterable_dict_items(loop.iter)
+                    for spelling in found:
+                        record(spelling, _resolve_scope_value(
+                            value if items is None else items.get(spelling, value),
+                            scope))
+                    return
+        record('*', value)
+
+    def visit(node, loops, scope):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.Lambda, ast.ClassDef)):
+            scope = node
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if not isinstance(target, ast.Subscript):
                     continue
-                if not _is_sys_modules(target.value, sys_names, modules_names):
+                if not _expr_is_sys_modules(target.value, kinds):
                     continue
-                key = target.slice
-                if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                    record(key.value, node.value)
-                else:
-                    record('*', node.value)
+                record_key(target.slice, node.value, loops, scope)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr not in ('update', 'setdefault'):
-                continue
-            if not _is_sys_modules(node.func.value, sys_names, modules_names):
-                continue
-            if node.func.attr == 'setdefault':
-                if (len(node.args) >= 2
-                        and isinstance(node.args[0], ast.Constant)
-                        and isinstance(node.args[0].value, str)):
-                    record(node.args[0].value, node.args[1])
+            if node.func.attr in ('update', 'setdefault') \
+                    and _expr_is_sys_modules(node.func.value, kinds):
+                if node.func.attr == 'setdefault':
+                    if (len(node.args) >= 2
+                            and isinstance(node.args[0], ast.Constant)
+                            and isinstance(node.args[0].value, str)):
+                        record(node.args[0].value, node.args[1])
+                    else:
+                        record('*', node)
                 else:
-                    record('*', node)
-                continue
-            for key, value in _dict_items(node):
-                record(key, value)
+                    for key, value in _updated_items(node):
+                        record(key, value)
+        for child in ast.iter_child_nodes(node):
+            visit(child, loops + (node,) if isinstance(node, ast.For) else loops,
+                  scope)
+
+    visit(tree, (), tree)
     return writes
 
 
-def _is_sys_modules(node, sys_names, modules_names):
-    """True when *node* evaluates to the ``sys.modules`` dict (#892 r26)."""
-    if isinstance(node, ast.Name):
-        return node.id in modules_names
-    return (isinstance(node, ast.Attribute) and node.attr == 'modules'
-            and isinstance(node.value, ast.Name)
-            and node.value.id in sys_names)
+def _resolve_scope_value(value, scope):
+    """*value*, or the single expression it is bound to in *scope* (#892 r27).
+
+    ``saved = sys.modules.get('common')`` is how the harness saves an entry, so
+    restoring from ``saved`` republishes that same module.  Only a binding that
+    is unique inside the scope is substituted; anything ambiguous stays the
+    bare name and the caller keeps failing closed.
+    """
+    if not isinstance(value, ast.Name):
+        return value
+    bindings = _scope_value_bindings(scope, value.id)
+    if len(bindings) == 1 and isinstance(bindings[0], ast.Call):
+        return bindings[0]
+    return value
 
 
-def _dict_items(node):
-    """Literal ``{key: value}`` pairs of a call argument, ``('*', node)`` if not."""
-    for argument in list(node.args) + [keyword.value for keyword in node.keywords]:
-        if not isinstance(argument, ast.Dict):
-            continue
-        items = []
-        for key, value in zip(argument.keys, argument.values):
-            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
-                return [('*', node)]
-            items.append((key.value, value))
-        return items
-    return [('*', node)]
+def _scope_value_bindings(scope, name):
+    """Every value *name* is bound to directly in *scope* (#892 r27).
+
+    Nested definitions are skipped: their bindings belong to another scope and
+    must not make an outer name look resolved.
+    """
+    values = []
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.ClassDef, ast.Lambda)):
+                continue
+            stack.append(child)
+        if isinstance(node, ast.Assign):
+            if any(name in _target_names(target) for target in node.targets):
+                values.append(node.value)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if name in _target_names(node.target):
+                values.append(node.value)
+        elif isinstance(node, ast.NamedExpr):
+            if name in _target_names(node.target):
+                values.append(node.value)
+        elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor)):
+            target = node.target
+            if name in _target_names(target):
+                values.append(None)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None \
+                        and name in _target_names(item.optional_vars):
+                    values.append(None)
+    return values
 
 
 def _module_scope_binding_map(tree):
@@ -1731,14 +1964,47 @@ def _module_import_binding_counts(tree):
     return counts
 
 
+def _module_import_sources(tree):
+    """name -> the modules an import binds it from (#892 r27).
+
+    ``_module_import_binding_counts`` proves a name *is* an import; this walk
+    proves *which* module it comes from, so a registered cross-file source
+    cannot be imported from a stub module of the same name (DeepSeek sibling
+    r26 P1-2).
+    """
+    sources = {}
+
+    def visit(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.ClassDef)):
+                continue
+            if isinstance(child, ast.If) and _is_type_checking_test(child.test):
+                for statement in child.orelse:
+                    visit(statement)
+                continue
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                for alias in child.names:
+                    name = alias.asname or alias.name.split('.')[0]
+                    if isinstance(child, ast.ImportFrom):
+                        module = child.module or ''
+                    else:
+                        module = alias.name
+                    sources.setdefault(name, set()).add(module)
+                continue
+            visit(child)
+
+    visit(tree)
+    return sources
+
+
 def _is_type_checking_test(test):
     """True for the ``TYPE_CHECKING`` guard spelling."""
     return ((isinstance(test, ast.Name) and test.id == 'TYPE_CHECKING')
             or (isinstance(test, ast.Attribute) and test.attr == 'TYPE_CHECKING'))
 
 
-def _module_load_call(value, proven, sys_poisoned=frozenset(),
-                      sys_names=frozenset({'sys'})):
+def _module_load_call(value, proven, sys_poisoned=frozenset(), kinds=None):
     """True when *value* is a call that returns a loaded module (#892 r24).
 
     The apparatus bootstrap binds ``_guard`` through
@@ -1755,13 +2021,15 @@ def _module_load_call(value, proven, sys_poisoned=frozenset(),
         return _root_name(func.value) in proven
     if func.attr == 'get':
         base = func.value
+        if kinds is None:
+            kinds = {}
         return (isinstance(base, ast.Attribute) and base.attr == 'modules'
                 and isinstance(base.value, ast.Name)
-                # #892 r26: read side accepts the same aliases the write side
-                # does, so ``import sys as _s; _s.modules.get('_guard')`` is
-                # not a legal spelling that fails closed for no reason (GLM
-                # sibling r25 #8).
-                and base.value.id in sys_names
+                # #892 r26/r27: read side resolves through the same alias map
+                # the write side uses, so ``import sys as _s; _s.modules.get(
+                # '_guard')`` is not a legal spelling that fails closed for no
+                # reason (GLM sibling r25 #8).
+                and 'sys' in kinds.get(base.value.id, ())
                 and base.value.id in proven
                 # #892 r25: the key must be a literal, so the binding names the
                 # module it loads instead of ``sys.modules.get(<anything>)``
@@ -1807,25 +2075,32 @@ def _proven_module_names(tree):
     imported = {name for name, count in imports.items()
                 if bindings.get(name) == [None] * count}
     imported -= _module_extra_bindings(tree)
-    sys_names = _sys_aliases(tree)
-    modules_names = _sys_modules_names(tree)
-    writes = _sys_modules_write_values(tree, sys_names, modules_names)
-    # Phase 1 resolves the modules this file loads with no poisoning at all;
-    # phase 2 poisons every key pre-seeded with something that is not one of
-    # them.  A Name is not automatically the module the bootstrap published --
+    kinds = _object_kinds(tree)
+    writes = _sys_modules_write_values(tree, kinds)
+    if any(key == '*' for key in writes):
+        # #892 r27: a non-literal key can pre-seed any entry, so the sentinel
+        # is a real verdict instead of dead data (GLM boundary r26 P0-3 /
+        # DeepSeek sibling r26 P1-3).
+        return frozenset()
+    # A Name is not automatically the module the bootstrap published --
     # ``stub = SimpleNamespace(...); sys.modules['_guard'] = stub`` is a stub
-    # one assignment away (GLM simplify r25 P1-3).
-    base = _proven_modules_from(tree, bindings, imported, frozenset(), sys_names)
-    sys_poisoned = frozenset(
-        key for key, values in writes.items()
-        if not all(isinstance(value, ast.Name) and value.id in base
-                   for value in values))
-    return frozenset(_proven_modules_from(tree, bindings, imported,
-                                          sys_poisoned, sys_names))
+    # one assignment away (GLM simplify r25 P1-3).  #892 r27: the poisoning
+    # pass is a fixpoint, because a key pre-seeded from another pre-seeded
+    # key's *read* laundered itself in one pass (GLM concurrency r26 P1-1).
+    poisoned = frozenset()
+    while True:
+        proven = _proven_modules_from(tree, bindings, imported, poisoned, kinds)
+        grown = frozenset(
+            key for key, values in writes.items()
+            if not all((isinstance(value, ast.Name) and value.id in proven)
+                       or _module_load_call(value, proven, poisoned, kinds)
+                       for value in values))
+        if grown <= poisoned:
+            return frozenset(proven)
+        poisoned |= grown
 
 
-def _proven_modules_from(tree, bindings, imported, sys_poisoned,
-                         sys_names=frozenset({'sys'})):
+def _proven_modules_from(tree, bindings, imported, sys_poisoned, kinds=None):
     """Fixpoint of module-load bindings given the poisoned ``sys.modules`` keys."""
     proven = {name for name in imported if name not in sys_poisoned}
     changed = True
@@ -1834,7 +2109,7 @@ def _proven_modules_from(tree, bindings, imported, sys_poisoned,
         for name, values in bindings.items():
             if name in proven or not values:
                 continue
-            if all(_module_load_call(value, proven, sys_poisoned, sys_names)
+            if all(_module_load_call(value, proven, sys_poisoned, kinds)
                    for value in values):
                 proven.add(name)
                 changed = True
@@ -1851,11 +2126,41 @@ def _receiver_attribute_writes(tree, receivers, shared):
     poisoned = set()
     if not receivers:
         return poisoned
+    kinds = _object_kinds(tree)
+    # #892 r27: ``m = md`` hands the relay to another name; both spellings are
+    # the same receiver (DeepSeek sibling r26 P1-4).
+    roots = {name: {name} for name in receivers}
+    for _ in range(4):
+        grown = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                value, targets = node.value, node.targets
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value, targets = node.value, [node.target]
+            else:
+                continue
+            if not isinstance(value, ast.Name) or value.id not in roots:
+                continue
+            for target in targets:
+                for name in _target_names(target):
+                    known = roots.setdefault(name, set())
+                    if not roots[value.id] <= known:
+                        known |= roots[value.id]
+                        grown = True
+        if not grown:
+            break
+
+    def receiver_roots(node):
+        if isinstance(node, ast.Name):
+            return set(roots.get(node.id, ())) & receivers
+        return set()
+
     calls = []
 
     def collect(node, scope, loops):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                and node.func.id == 'setattr' and len(node.args) >= 2):
+        if (isinstance(node, ast.Call)
+                and _callable_name(node.func, kinds) == 'setattr'
+                and len(node.args) >= 2):
             calls.append((node, scope, loops))
         for child in ast.iter_child_nodes(node):
             collect(child, child if isinstance(
@@ -1865,8 +2170,8 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     collect(tree, tree, ())
     for node, scope, loops in calls:
-        target = node.args[0]
-        if not isinstance(target, ast.Name):
+        found = receiver_roots(node.args[0])
+        if not found:
             continue
         # #892 r26: the key is resolved in its own scope and from the loop it
         # runs in -- a file-wide lookup sees every unrelated ``name`` binding
@@ -1876,7 +2181,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
         key_name = key.id if isinstance(key, ast.Name) else None
         for loop in reversed(loops):
             if key_name is not None and _first_target_name(loop.target) == key_name:
-                values = _iterable_dict_keys(loop.iter, scope)
+                # #892 r27: the loop's own body may rebind the key variable, so
+                # the iterated dict's keys are not what the call writes (GLM
+                # concurrency r26 P1-5).
+                if _rebound_in_loop(loop, key_name):
+                    values = None
+                else:
+                    values = _iterable_dict_keys(loop.iter, scope)
                 break
         else:
             values = _constant_string_values(key, scope)
@@ -1887,10 +2198,66 @@ def _receiver_attribute_writes(tree, receivers, shared):
             # is judged by its actual spellings (``for name, value in
             # patched.items(): setattr(md, name, value)`` is the apparatus's
             # own wiring control, never the shared name).
-            poisoned |= receivers
+            poisoned |= found
         elif values & shared:
-            poisoned.add(target.id)
+            poisoned |= found
+    # #892 r27: the plain assignment spelling is the same write -- ``md.common
+    # = <stub>`` builds no call at all, so every ``setattr`` rule was one
+    # punctuation mark away from bypass (six r26 findings, GLM boundary r26
+    # P0-1 / DeepSeek boundary r26 P0-1).
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Attribute):
+                found = receiver_roots(target.value)
+                if found and target.attr in shared:
+                    poisoned |= found
+            elif isinstance(target, ast.Subscript):
+                base = target.value
+                if isinstance(base, ast.Attribute) and base.attr == '__dict__':
+                    found = receiver_roots(base.value)
+                elif (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
+                      and base.func.id == 'vars' and base.args):
+                    found = receiver_roots(base.args[0])
+                else:
+                    found = set()
+                if not found:
+                    continue
+                key = target.slice
+                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                    poisoned |= found
+                elif key.value in shared:
+                    poisoned |= found
     return frozenset(poisoned & receivers)
+
+
+def _rebound_in_loop(loop, name):
+    """True when *loop*'s own body rebinds its key variable (#892 r27)."""
+    for node in ast.walk(loop):
+        if node is loop:
+            continue
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            if node.target.id == name:
+                return True
+            continue
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            if name in _target_names(node.target):
+                return True
+            continue
+        else:
+            continue
+        if any(name in _target_names(target) for target in targets):
+            return True
+    return False
 
 
 def _first_target_name(target):
@@ -1929,19 +2296,45 @@ def _dict_keys_of(value, tree):
 
 
 def _dict_binding_keys(name, tree):
-    """Every literal key *name* can hold as a dict, or ``None`` when unbounded."""
+    """Every literal key *name* can hold as a dict, or ``None`` when unbounded.
+
+    #892 r27: a literal dict is not frozen at its binding site -- ``d['x'] = v``,
+    ``d.update({...})``, ``d |= {...}`` and ``d.setdefault(...)`` all add keys
+    the binding walk never sees, so any mutation makes the key set unbounded
+    instead of stale (GLM boundary r26 P0-2 / DeepSeek concurrency r26 P1-4).
+    """
     keys = set()
     seen = False
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        elif isinstance(node, ast.AugAssign):
+            targets = [node.target]
+            value = None
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if (isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == name
+                    and node.func.attr in ('update', 'setdefault', 'pop',
+                                           'popitem', 'clear')):
+                return None
             continue
-        for target in node.targets:
+        else:
+            continue
+        for target in targets:
             if isinstance(target, ast.Name) and target.id == name:
-                found = _dict_keys_of(node.value, tree)
+                found = None if value is None else _dict_keys_of(value, tree)
                 if found is None:
                     return None
                 keys |= found
                 seen = True
+            elif (isinstance(target, ast.Subscript)
+                  and isinstance(target.value, ast.Name)
+                  and target.value.id == name):
+                return None
     return keys if seen else None
 
 
@@ -1953,11 +2346,51 @@ def _iterable_dict_keys(expr, tree):
     if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute)
             and expr.func.attr in ('items', 'keys')):
         return _iterable_dict_keys(expr.func.value, tree)
+    if isinstance(expr, (ast.Tuple, ast.List)):
+        # #892 r27: a literal sequence of ``(key, value)`` pairs iterates a
+        # known key set, which is how the harness restores the modules it
+        # saved (``for name, previous in (('common', saved), ...)``).  Without
+        # it a legitimate restore read as an unbounded pre-seed.
+        keys = set()
+        for element in expr.elts:
+            if not isinstance(element, (ast.Tuple, ast.List)) or not element.elts:
+                return None
+            first = element.elts[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                return None
+            keys.add(first.value)
+        return keys
     if isinstance(expr, ast.Name):
         return _dict_binding_keys(expr.id, tree)
     if isinstance(expr, ast.Dict):
         return _dict_keys_of(expr, tree)
     return None
+
+
+def _iterable_dict_items(expr):
+    """The ``key -> value`` expressions a literal pair sequence holds (#892 r27).
+
+    ``for name, previous in (('common', saved), ...)`` restores each entry from
+    the value paired with its *own* key, so the restore has to be recorded as
+    ``saved`` for ``common`` -- recording the loop variable ``previous`` would
+    poison a key the harness legitimately republishes.
+    """
+    if isinstance(expr, (ast.Tuple, ast.List)):
+        pairs = list(expr.elts)
+    elif isinstance(expr, ast.Dict):
+        pairs = [ast.Tuple(elts=[key, value], ctx=ast.Load())
+                 for key, value in zip(expr.keys, expr.values)]
+    else:
+        return None
+    items = {}
+    for element in pairs:
+        if not isinstance(element, (ast.Tuple, ast.List)) or len(element.elts) < 2:
+            return None
+        key = element.elts[0]
+        if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+            return None
+        items[key.value] = element.elts[1]
+    return items
 
 
 def _constant_string_values(expr, tree):
@@ -1974,6 +2407,7 @@ def _constant_string_values(expr, tree):
         return None
     keys = set()
     seen = False
+    dict_bound = False
     for node in ast.walk(tree):
         if isinstance(node, (ast.For, ast.comprehension)):
             target = node.target
@@ -1990,14 +2424,30 @@ def _constant_string_values(expr, tree):
                 return None
             keys |= found
             seen = True
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == expr.id:
-                    found = _dict_keys_of(node.value, tree)
-                    if found is None:
-                        return None
-                    keys |= found
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target])
+            value = node.value
+            for target in targets:
+                if not (isinstance(target, ast.Name) and target.id == expr.id):
+                    continue
+                if value is None:
+                    continue
+                # #892 r27: a literal string binding is a key spelling the
+                # audit can read (``_HELD_STATE = "..."`` then
+                # ``globals()[_HELD_STATE] = state``), which is what keeps a
+                # real file's own dynamic machinery from failing it closed.
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    keys.add(value.value)
                     seen = True
+                else:
+                    dict_bound = True
+    if dict_bound:
+        found = _dict_binding_keys(expr.id, tree)
+        if found is None:
+            return None
+        keys |= found
+        seen = True
     return keys if seen else None
 
 
@@ -2075,6 +2525,14 @@ def _module_shared_names(tree, rel=None):
     # #892 r26: a module-scope walrus or ``match`` capture rebinds the name
     # outside the statement walk (GLM concurrency r25 P0-1).
     trusted -= _module_extra_bindings(tree)
+    # #892 r27: a dynamic write into the module namespace replaces the binding
+    # with no statement this walk sees, so ``globals()['common'] = stub`` kept
+    # the shared name trusted for every call in the file (GLM sibling r26 P0-1
+    # / concurrency r26 P1-2).
+    dynamic = _dynamic_write_names(tree)
+    if '*' in dynamic:
+        return frozenset()
+    trusted -= dynamic
     for node in _own_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             trusted.discard(node.name)
@@ -2191,16 +2649,28 @@ def _proven_source_names(tree):
         # its definition (GLM boundary r24 P1-4).
         return frozenset()
     bindings = _module_scope_binding_map(tree)
+    # #892 r27: the in-file half of the proof is a real *function* definition.
+    # ``_module_level_defs`` also reports classes, so ``class
+    # load_session_domain:`` with a stub class attribute kept the trust while
+    # ``load_session_domain()`` returned an instance (GLM boundary r26 P0-5).
     defined = {node.name for node in _module_level_defs(tree)
-               if not node.decorator_list}
+               if not node.decorator_list
+               and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     # #892 r26: an imported name is only proven when the file that *defines* it
     # is registered too -- the import form alone says nothing about the def it
     # resolves to, and the defining file's binding graph was never judged (GLM
     # sibling r25 #2 / boundary r25 P1-5).  Every other imported spelling is
-    # not a definition at all (GLM concurrency r25 P1-2).
+    # not a definition at all (GLM concurrency r25 P1-2).  #892 r27: the import
+    # must name the registered definition file, or ``from <stub> import
+    # committed_status_contract`` would keep the trust while resolving to a
+    # stub (DeepSeek sibling r26 P1-2).
     imported = _module_imported_names(tree)
+    sources = _module_import_sources(tree)
+    definition_stems = {Path(rel).stem for rel, _name in PROVEN_SHARED_DEFINITIONS}
     imported_defs = {name for _rel, name in PROVEN_SHARED_DEFINITIONS
-                     if name in imported}    # #892 r25: a function-local rebinding -- nested ``def``, walrus target or
+                     if name in imported
+                     and any(source.split('.')[-1] in definition_stems
+                             for source in sources.get(name, ()))}    # #892 r25: a function-local rebinding -- nested ``def``, walrus target or
     # plain assignment -- shadows the module definition for that body, and the
     # module-scope receiver scan cannot see which function a ``global`` rebind
     # came from (GLM boundary r24 P0-2 / concurrency r24 P1-2).  Withdraw the
@@ -2232,6 +2702,13 @@ def _single_definition(tree, name):
     if len(definitions) != 1 or definitions[0].decorator_list:
         return False
     if not isinstance(definitions[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    # #892 r27: the definition file may run its own dynamic machinery, but a
+    # write that reaches *this* name replaces the function object the registry
+    # names, so the single-def rule has to consult it (GLM boundary r26 P0-4 /
+    # sibling r26 P1-3 / DeepSeek concurrency r26 P1-7).
+    dynamic = _dynamic_write_names(tree)
+    if '*' in dynamic or name in dynamic:
         return False
     bindings = _module_scope_binding_map(tree)
     return (bindings.get(name) == [None]
@@ -2329,6 +2806,15 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
     # unions drifted a binding form per round (GLM simplify r25 P2-6).
     local_names = _function_local_names(function) - declared_global
     rebound |= supplied - declared_global
+    # #892 r27: a walrus, a ``match`` capture or a nested ``def`` rebinds a
+    # receiver exactly like an assignment.  ``_function_local_names`` already
+    # unions them for the callee side, but ``rebound`` was still built from the
+    # statement walk alone, so ``(md := <stub>)`` in the body kept every
+    # ``md.common.aggregate_status`` counted as the shared call (DeepSeek
+    # concurrency r26 P0-1).
+    rebound |= local_names & (_walrus_names(function)
+                              | _match_capture_names(function)
+                              | _nested_definition_names(function))
     for node in _own_nodes(function):
         names, value = _local_bound_names(node)
         for name in names:
@@ -2369,9 +2855,15 @@ def _is_shared_call(node, shared=None, rebound=frozenset()):
     base = func.value
     if isinstance(base, ast.Name):
         return base.id in trusted
-    return (isinstance(base, ast.Attribute) and base.attr in trusted
-            and not (isinstance(base.value, ast.Name)
-                     and base.value.id in rebound))
+    if not (isinstance(base, ast.Attribute) and base.attr in trusted):
+        return False
+    if not isinstance(base.value, ast.Name):
+        # #892 r27: ``md.inner.common.aggregate_status`` walks one attribute
+        # deeper than any receiver rule follows, so the spelling is not the
+        # shared call instead of being trusted by default (GLM boundary r26
+        # P1-8).
+        return False
+    return base.value.id not in rebound
 
 
 def _calls_aggregate(node, shared=None, rebound=frozenset()):
@@ -4200,7 +4692,11 @@ def scan_aggregation_tree(tree, rel, aliases=None):
     """
     found = {}
     duplicates = []
-    module = {node.name: node for node in tree.body
+    # #892 r27: ``aggregation_audit`` reads module-level definitions through
+    # ``_module_level_defs`` (a helper inside ``if``/``try`` still runs at
+    # import time); this scan kept ``tree.body``, so the two layers gave
+    # opposite evidence about the same callee (DeepSeek sibling r26 P1-1).
+    module = {node.name: node for node in _module_level_defs(tree)
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if aliases is None:
         aliases = _module_exit_aliases(tree)
