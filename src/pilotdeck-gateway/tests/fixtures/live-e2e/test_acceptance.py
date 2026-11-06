@@ -3,6 +3,7 @@
 """#748 acceptance inventory and reader ownership, including deterministic negative inputs."""
 import subprocess
 import inspect
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,6 +57,19 @@ class AcceptanceTests(unittest.TestCase):
                 + ''.join(f'test {name} ... ok\n' for name in sorted(expected))
                 + 'test live_ws_extra ... ok\n', ''))
         self.assertIn('unexpected: live_ws_extra', run_host.failure_message('live_e2e', extra))
+        # Announced count drifting on its own (rows exactly match the declared
+        # inventory) must still fail: cargo says it ran a different number.
+        announced_only = run_host.completed_tests(
+            'live_e2e', subprocess.CompletedProcess(
+                [], 0, f'running {len(expected) + 1} tests\n'
+                + ''.join(f'test {name} ... ok\n' for name in sorted(expected)), ''))
+        # Assert the reason line first: `failure_message`'s prefix always says
+        # "cargo announced N", so only the reason text proves the cross-check
+        # ran (a removed check dies on this named expectation).
+        self.assertIn(f'cargo announced {len(expected) + 1} tests but '
+                      f'{len(expected)} reported ok',
+                      run_host.failure_message('live_e2e', announced_only))
+        self.assertFalse(announced_only['passed'])
 
     def test_slot_gate_discovery(self):
         # #589 close-out: a remote runner host has no ~/ws/pdrs-ops; the gate
@@ -81,10 +95,32 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(explicit))), str(explicit))
             with self.assertRaises(RuntimeError):
                 run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(home / 'missing-gate')))
+            # Both installs present but the ops gate is broken: no silent
+            # switch to the runner copy (its slot cap can drift) -> error.
             ops.unlink()
+            with self.assertRaises(RuntimeError) as caught:
+                run_host.slot_gate(env)
+            self.assertNotIn(str(runner), str(caught.exception))
+            # A remote runner host has no ~/ws/pdrs-ops at all: fall back.
+            (home / 'ws/pdrs-ops/bin').rmdir()
+            (home / 'ws/pdrs-ops').rmdir()
             self.assertEqual(run_host.slot_gate(env), str(runner))
             with self.assertRaises(RuntimeError):
                 run_host.slot_gate({})
+
+    def test_cargo_slot_requires_the_gate(self):
+        # #589 r2 P1: the wait must be strict. `wait_for_slot` maps
+        # cargo-slots.sh's 69 ("no gate") to success, so a gate that vanishes
+        # while we are polling for a slot would silently skip the quota unless
+        # gate_required=True turns it into a hard error.
+        with patch.dict(os.environ), \
+                patch.object(run_host, 'slot_gate', return_value='/stub/gate'), \
+                patch.object(run_host, 'wait_for_slot') as wait:
+            gate, _ = run_host.cargo_slot(timeout=7)
+            self.assertEqual(gate, '/stub/gate')
+            self.assertEqual(os.environ['PDRS_CARGO_SLOT_BIN'], '/stub/gate')
+            self.assertIs(wait.call_args.kwargs.get('gate_required'), True)
+            self.assertEqual(wait.call_args.kwargs.get('timeout'), 7)
 
     def test_reader_owns_stdout_close(self):
         process = Mock()
@@ -101,6 +137,14 @@ class AcceptanceTests(unittest.TestCase):
             (run_host, 'completed_tests', "'passed': not reasons,",
              "'passed': True,", 'test_exact_test_inventory',
              '#748 host acceptance requires all expected tests', 'host-empty-set'),
+            (run_host, 'completed_tests',
+             "    elif announced_count != len(names):",
+             '    elif False:', 'test_failure_message_names_missing_tests',
+             'cargo announced', 'announced-count-crosscheck'),
+            (run_host, 'slot_gate',
+             "        raise RuntimeError(f'#748 PDRS_CARGO_SLOT_BIN={configured} is not an executable gate')",
+             '        return None', 'test_slot_gate_discovery',
+             'RuntimeError not raised', 'slot-gate-fail-loud'),
             (stdio_mitm, 'reap_after_host_eof', 'for stream in (process.stdin,):',
              'for stream in (process.stdout, process.stdin):', 'test_reader_owns_stdout_close',
              '#748 only reader closes stdout', 'stdout-close-race'),

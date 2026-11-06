@@ -780,7 +780,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
                     restored[0] = True
 
 
-def wait_for_slot(script, *, timeout=900, interval=30):
+def wait_for_slot(script, *, timeout=900, interval=30, gate_required=False):
     deadline = time.monotonic() + timeout
     stdout, stderr = [], []
     command = ["bash", str(script)]
@@ -804,9 +804,17 @@ def wait_for_slot(script, *, timeout=900, interval=30):
         stderr.append(result.stderr)
         if result.returncode in (0, 69):
             # 0 = slot free. 69 (EX_UNAVAILABLE) = cargo-slots.sh found no
-            # unified gate (a CI runner has no ~/ws/pdrs-ops): no shared quota
-            # exists to wait for, so proceed. Only 1 (pool full) means retry;
+            # unified gate (a CI runner has no ~/ws/pdrs-ops nor a
+            # ~/ws/pdrs-runner-tools runner copy): no shared quota exists to
+            # wait for, so proceed. Only 1 (pool full) means retry;
             # 2 / 3 / 4 / 64 mean the gate itself is broken -> hard error.
+            if result.returncode == 69 and gate_required:
+                # The caller already proved an executable gate exists (see
+                # run_host.slot_gate), so 69 can only mean the pinned gate lost
+                # its executable bit or vanished during the wait. Proceeding
+                # would run cargo with the per-host quota silently skipped.
+                raise subprocess.CalledProcessError(
+                    69, command, "".join(stdout), "".join(stderr))
             return subprocess.CompletedProcess(command, 0, "".join(stdout), "".join(stderr))
         if result.returncode != 1:
             result.check_returncode()

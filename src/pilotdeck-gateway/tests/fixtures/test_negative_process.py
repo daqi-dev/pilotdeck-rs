@@ -286,6 +286,12 @@ class ProcessControls(unittest.TestCase):
             # errors) and 4 (gate present but unusable) -- stays a hard error.
             script.write_text("exit 69\n")
             self.assertEqual(wait_for_slot(script, timeout=2).returncode, 0)
+            # gate_required=True: the caller already proved a gate exists, so
+            # 69 can only mean it vanished mid-wait → hard error instead of
+            # running cargo with the per-host quota skipped (#589 r2 P1).
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                wait_for_slot(script, timeout=2, gate_required=True)
+            self.assertEqual(caught.exception.returncode, 69)
             for broken in ("exit 2\n", "exit 3\n", "exit 4\n", "exit 64\n"):
                 script.write_text(broken)
                 with self.assertRaises(subprocess.CalledProcessError):
@@ -325,17 +331,31 @@ class ProcessControls(unittest.TestCase):
         report = "cargo-slot x host=h 名额 999/999  磁盘 1.0 GiB / 190（cache）"
         with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-runner-") as temp:
             temp = Path(temp)
-            gate = temp / "home/ws/pdrs-runner-tools/bin/cargo"
+            home = temp / "home"
+            gate = home / "ws/pdrs-runner-tools/bin/cargo"
             gate.parent.mkdir(parents=True)
             gate.write_text(f'#!/bin/bash\necho "{report}"\n')
             gate.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if k != "PDRS_CARGO_SLOT_BIN"}
-            env.update(HOME=str(temp / "home"),
+            env.update(HOME=str(home),
                        PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / "cache"))
             result = subprocess.run(["bash", str(script)], capture_output=True,
                                     text=True, timeout=120, env=env)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertNotIn("没有统一闸", result.stderr, result.stdout + result.stderr)
+            # 装了但坏了：runner-tools 目录在、闸不可执行 → fail-closed 4，不是 69。
+            gate.unlink()
+            result = subprocess.run(["bash", str(script)], capture_output=True,
+                                    text=True, timeout=60, env=env)
+            self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+            # 双装宿主：ops 目录在但闸坏了，runner 副本完好 → 仍是 4，不许静默换闸
+            # （两份 cargo_gate.py 的 SLOT_DEFAULTS 可各自漂移，用旧 cap 放行）。
+            (home / "ws/pdrs-ops").mkdir(parents=True)
+            gate.write_text(f'#!/bin/bash\necho "{report}"\n')
+            gate.chmod(0o755)
+            result = subprocess.run(["bash", str(script)], capture_output=True,
+                                    text=True, timeout=60, env=env)
+            self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
 
     def test_cargo_slots_judges_by_gate_used(self):
         # #1556 r3 P1：只看本机 ps 数出的 cargo 会假放行——shim 先取槽位、后做冷 du，那几十秒

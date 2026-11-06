@@ -36,6 +36,12 @@ PASSED_TESTS = re.compile(r'^test ([A-Za-z0-9_:]+) \.\.\. ok$', re.MULTILINE)
 # `scripts/cargo-slots.sh`'s own gate resolution (same two paths, that script
 # owns the single source for every other `wait_for_slot` caller).
 SLOT_GATE_CANDIDATES = ('ws/pdrs-ops/bin/cargo-slot', 'ws/pdrs-runner-tools/bin/cargo')
+# The runner copy is a fallback, not an alternative: a host that does have
+# ~/ws/pdrs-ops must use its gate. Otherwise a broken ops gate (no +x, half
+# upgrade) would be silently replaced by the runner copy, hiding the
+# fail-closed verdict cargo-slots.sh gives it, and the two installs keep
+# independent slot caps that can drift.
+SLOT_GATE_OPS_DIR = 'ws/pdrs-ops'
 
 
 def slot_gate(environ=None):
@@ -57,7 +63,12 @@ def slot_gate(environ=None):
     home = environ.get('HOME')
     tried = []
     if home:
-        for relative in SLOT_GATE_CANDIDATES:
+        candidates = SLOT_GATE_CANDIDATES
+        if (Path(home) / SLOT_GATE_OPS_DIR).is_dir():
+            # Both installed: never fall through to the runner copy (see
+            # SLOT_GATE_OPS_DIR); a missing/broken ops gate stays an error.
+            candidates = candidates[:1]
+        for relative in candidates:
             candidate = Path(home) / relative
             tried.append(str(candidate))
             if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -106,14 +117,17 @@ def completed_tests(target, result):
 def cargo_slot(timeout=900):
     """Wait for a cargo slot after re-resolving the gate.
 
-    Re-resolution is deliberate: if the gate vanished between rounds, the
-    pinned path would send `cargo-slots.sh` down its explicit-but-not-executable
-    branch (69 = "no shared quota, continue") and the next cargo run would
-    silently bypass the per-host quota. Failing loudly is the point.
+    Re-resolution is deliberate: a stale pinned path would send
+    `cargo-slots.sh` down its explicit-but-not-executable branch (69 = "no
+    shared quota, continue") and the next cargo run would silently bypass the
+    per-host quota. `gate_required=True` closes the same hole *inside* one
+    wait: the gate was just proven executable, so a 69 from any retry can only
+    mean it vanished mid-wait, which is a hard error rather than a pass.
     """
     gate = slot_gate()
     os.environ['PDRS_CARGO_SLOT_BIN'] = gate
-    return gate, wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=timeout)
+    return gate, wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=timeout,
+                               gate_required=True)
 
 
 def failure_message(target, record):
