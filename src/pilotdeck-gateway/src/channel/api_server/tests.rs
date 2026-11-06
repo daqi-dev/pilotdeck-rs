@@ -1007,6 +1007,14 @@ async fn replays_real_ts_api_server_cells() {
                 expected.get("error").is_none(),
                 "#1333 {id}: the baseline must deliver the 408, not reset the connection, got {expected}"
             );
+            // The Rust side asserts this 408 carries no `Date`
+            // (`partial_body_is_answered_at_the_body_read_deadline`). Pin the
+            // same contract on the recorded baseline answer, so the two sides
+            // cannot drift into opposite conventions without a red test.
+            assert!(
+                expected["headers"].get("date").is_none(),
+                "#1333 {id}: the baseline requestTimeout 408 has no Date header, got {expected}"
+            );
             let request = &recorded_requests[0];
             let declared: u64 = request["headers"]["content-length"]
                 .as_str()
@@ -1949,6 +1957,25 @@ fn admit_chat_claims_a_chat_id_exactly_once() {
     assert!(
         server::admit_chat(&active, "chat-race"),
         "#1333 a released chat id is reusable"
+    );
+}
+
+#[test]
+fn body_read_deadline_defaults_to_the_node_request_timeout() {
+    // The baseline calls `http.createServer(...)` without setting
+    // `server.requestTimeout`, so Node v22.22.0's default 300 s is the whole
+    // contract (#1620). Nothing else pins the constant: the Rust test injects
+    // a 200 ms deadline and the oracle replay skips this cell, so the default
+    // could drift to 30 s or 1 h with every check still green.
+    assert_eq!(
+        DEFAULT_BODY_READ_TIMEOUT,
+        Duration::from_secs(300),
+        "#1620 the body-read deadline must stay at Node's default requestTimeout"
+    );
+    assert_eq!(
+        ApiServerOptions::default().body_read_timeout,
+        None,
+        "#1620 an unset option means the Node default, not a shorter deadline"
     );
 }
 
