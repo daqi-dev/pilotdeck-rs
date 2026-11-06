@@ -9,8 +9,8 @@
 //! generators' assemblies.
 use super::gateway::{
     ApplyFlagSettings, FlagSettings, LocalSettingsUpdate, LocalSettingsWriter, OutputStylesReload,
-    ReloadOutputStyles, ResolveSettings, SettingsError, SettingsGateway, SettingsGatewayOptions,
-    UpdateSettings,
+    ReloadOutputStyles, ResolveSettings, ResolvedSettingsPort, SettingsError, SettingsGateway,
+    SettingsGatewayOptions, UpdateSettings,
 };
 use crate::config::Env;
 use crate::config::store::{
@@ -19,7 +19,7 @@ use crate::config::store::{
 };
 use crate::runtime::project::{DisposeFuture, RuntimeError, RuntimeResult};
 use crate::runtime::refresh::{
-    BoxFuture, ConfigChangeNotice, ConfigListener, ConfigReloadResult, MemoryMaintenance,
+    BoxFuture, ConfigChangeNotice, ConfigListener, ConfigReloadResult, NoMemoryMaintenance,
     NotificationServer, RefreshBundle, RefreshConfigStore, RefreshLog, RefreshOptions,
     RefreshRegistry, RefreshRouter, SdkConfigChange, Unsubscribe, WarnDetail,
 };
@@ -85,35 +85,27 @@ pub(crate) fn scenario_keys(oracle: &JsValue) -> Vec<String> {
 
 /// `Object.entries` with JS own-key order: array indices first in ascending
 /// numeric order, then other keys in insertion order.
+///
+/// #1748 item 3: the order is defined once, in the protocol crate
+/// (`JsObject::own_entries`, the routine the JSON codec and the wire boundary
+/// share). This used to be a second implementation of ECMAScript key order, so
+/// a correction to either copy would have silently desynchronized the oracle
+/// replays' byte comparison.
 pub(crate) fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
-    let mut indexed = Vec::new();
-    let mut ordinary = Vec::new();
-    for (name, value) in object.entries() {
-        match name.array_index() {
-            Some(index) => indexed.push((index, name.clone(), value.clone())),
-            None => ordinary.push((name.clone(), value.clone())),
-        }
-    }
-    indexed.sort_by_key(|(index, _, _)| *index);
-    indexed
+    object
+        .own_entries()
         .into_iter()
-        .map(|(_, name, value)| (name, value))
-        .chain(ordinary)
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect()
 }
 
-/// JS `String(number)` for the golden's numeric tokens. The `i64` cast is
-/// exact strictly below 1e15; at and above it, Rust's `f64` `Display` prints
-/// the shortest round-trip decimal without an exponent, which matches
-/// `String()` through MAX_SAFE_INTEGER (verified at 1e15 and 2^53 with
-/// Node v22.22.0; JS only switches to exponential notation at 1e21, far
-/// beyond the golden's 100000 range).
+/// JS `String(number)` for the golden's numeric tokens.
+///
+/// #1748 item 3: delegates to the protocol crate's `Number#toString`
+/// implementation (`number_to_string`) instead of keeping a second formatter;
+/// `runtime/tools/builtin/bash.rs` follows the same rule for the same reason.
 pub(crate) fn number_text(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
-    }
+    pilotdeck_protocol::number::number_to_string(value)
 }
 
 // ─────────────────────────────────────────────────── the writer's YAML mirror
@@ -658,16 +650,6 @@ impl ReloadOutputStyles for FakeStyles {
     }
 }
 
-/// `options.resolveSettings` (createLocalGateway.ts:1402) over the current
-/// tree's real store: `toGatewayResolvedSettings(getSnapshot())` is
-/// `ConfigStore::resolved_settings`, so the port is the projection itself.
-pub(crate) struct TreeResolved(pub(crate) ConfigStore);
-impl ResolveSettings for TreeResolved {
-    fn resolve(&self) -> Result<JsValue, SettingsError> {
-        Ok(self.0.resolved_settings())
-    }
-}
-
 /// The `updatePilotLocalSettings` mirror: the allowlist walk, the document
 /// edit and the write, with the same changedPaths contract (the requested
 /// sets and deletes; the store's event diff replaces them in the closure
@@ -814,13 +796,6 @@ impl SdkConfigChange for BundleSdk {
     }
 }
 
-pub(crate) struct BundleMaintenance;
-impl MemoryMaintenance for BundleMaintenance {
-    fn schedule(&self, _project_key: &JsString) -> RuntimeResult {
-        Ok(())
-    }
-}
-
 // ─────────────────────────────────── the bundle's re-binding store delegate
 
 /// The generator's `storeDelegate`: every live subscription (the bundle's
@@ -952,7 +927,7 @@ impl Harness {
         let options = RefreshOptions {
             config_store: delegate.clone(),
             registry,
-            memory_maintenance: Arc::new(BundleMaintenance),
+            memory_maintenance: Arc::new(NoMemoryMaintenance),
             router: Arc::new(move || Some(router.clone())),
             project_root: JsString::from("/pdrs-fixture/project"),
             memory_diagnostics: None,
@@ -985,9 +960,11 @@ impl Harness {
             // createLocalGateway.ts:1402: the current tree's snapshot
             // projected at call time (#1320 added the method to this
             // component; the 54-row oracle predates it).
-            resolve_settings: current
-                .as_ref()
-                .map(|tree| Arc::new(TreeResolved(tree.store.clone())) as Arc<dyn ResolveSettings>),
+            resolve_settings: current.as_ref().map(|tree| {
+                Arc::new(ResolvedSettingsPort {
+                    store: tree.store.clone(),
+                }) as Arc<dyn ResolveSettings>
+            }),
             update_settings: current.map(|tree| UpdateSettings {
                 organization_denied: *lock(&probe.0.org_denied),
                 writer: Arc::new(MirrorWriter {

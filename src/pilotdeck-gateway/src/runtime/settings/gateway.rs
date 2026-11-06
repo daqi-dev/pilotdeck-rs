@@ -125,6 +125,23 @@ pub trait ResolveSettings: Send + Sync {
     fn resolve(&self) -> Result<JsValue, SettingsError>;
 }
 
+/// `options.resolveSettings` (createLocalGateway.ts:1402): the current
+/// snapshot projected through `toGatewayResolvedSettings`, which is
+/// [`ConfigStore::resolved_settings`].
+///
+/// #1748 item 4: the production composition and the settings replay harness
+/// each carried a byte-identical adapter (`NativeResolvedSettings` /
+/// `TreeResolved`). One port now, so a change to the projection cannot leave
+/// one of them behind.
+pub(crate) struct ResolvedSettingsPort {
+    pub(crate) store: ConfigStore,
+}
+impl ResolveSettings for ResolvedSettingsPort {
+    fn resolve(&self) -> Result<JsValue, SettingsError> {
+        Ok(self.store.resolved_settings())
+    }
+}
+
 /// `options.reloadOutputStyles` (createLocalGateway binds
 /// `registry.reloadOutputStylesForSdk`): resolve, the style-only plugin
 /// reload, and the per-session `closeSession("sdk_output_styles_reloaded")`.
@@ -512,20 +529,15 @@ fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, Set
 
 /// `Object.entries(settings)` with JS own-key order: array indices first
 /// in ascending numeric order, then other keys in insertion order.
+///
+/// #1748 item 3: one implementation of ECMAScript key order, in the protocol
+/// crate. This mirror and the replay support used to carry their own copies,
+/// so a correction to any one of them left the other two behind.
 fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
-    let mut indexed = Vec::new();
-    let mut ordinary = Vec::new();
-    for (name, value) in object.entries() {
-        match name.array_index() {
-            Some(index) => indexed.push((index, name.clone(), value.clone())),
-            None => ordinary.push((name.clone(), value.clone())),
-        }
-    }
-    indexed.sort_by_key(|(index, _, _)| *index);
-    indexed
+    object
+        .own_entries()
         .into_iter()
-        .map(|(_, name, value)| (name, value))
-        .chain(ordinary)
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect()
 }
 

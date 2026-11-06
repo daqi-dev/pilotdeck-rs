@@ -1656,7 +1656,7 @@ async fn reload_ticket_releases_after_settlement() {
     let bundle = Arc::new(RefreshBundle::new(RefreshOptions {
         config_store: Arc::new(store.clone()),
         registry: Arc::new(RegistryRefresh::new(registry.clone())),
-        memory_maintenance: Arc::new(crate::runtime::settings::test_support::BundleMaintenance),
+        memory_maintenance: Arc::new(crate::runtime::refresh::NoMemoryMaintenance),
         router: {
             let router = router.clone();
             Arc::new(
