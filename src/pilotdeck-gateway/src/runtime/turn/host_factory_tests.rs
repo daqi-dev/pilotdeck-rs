@@ -198,6 +198,23 @@ async fn wait_for_lease_release(
     )
     .await
 }
+/// Wait for the abort-driven mailbox close to land. `SteerMailbox::close`
+/// clears the admission flag synchronously, before it serializes its discard
+/// loop, so the flag is the event a durable insert is rejected against. The
+/// close travels `abort()` (token only) -> monitor task -> `Run::close` ->
+/// cleanup task, and under CPU contention that chain can take longer than any
+/// fixed window; betting wall-clock time on it made #1847 flaky. Uses the same
+/// 10 s in-process bound as the lease observation above (#1847).
+async fn wait_for_mailbox_close(
+    mailbox: &crate::runtime::steer::SteerMailbox,
+) -> Result<(), tokio::time::error::Elapsed> {
+    timeout(Duration::from_secs(10), async {
+        while mailbox.open_for_test() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+}
 /// Regex-safe argv token unique to one test's pid path. `peer()` appends it so
 /// the reaping assertion can prove absence even when the child died before it
 /// published its pid.
@@ -1738,7 +1755,6 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                                     .get("type")
                                     == Some(&"turn_result".into())
                             });
-                        steer_recorder.release.add_permits(1);
                         crate::negative_assert!(
                             !early_result,
                             "#743 turn_result waits durable steer close"
@@ -1747,9 +1763,25 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                             early.is_err(),
                             "#743 terminal waits durable steer close"
                         );
+                        // #1847: the 100 ms above asserts only the negative
+                        // direction (nothing settles early); it must not double
+                        // as a bet that the close has landed by then. `abort()`
+                        // just cancels a token, and the mailbox close travels
+                        // monitor task -> Run::close -> cleanup task, so under
+                        // load it can land later than any fixed window. Wait for
+                        // the mailbox's own admission flag (cleared synchronously
+                        // by `close`) with the file's 10 s in-process bound, then
+                        // let the durable insert run: it must observe the closed
+                        // mailbox and reject as turn_closing.
+                        let closed = wait_for_mailbox_close(&actual).await;
+                        crate::negative_assert!(
+                            closed.is_ok(),
+                            "#743 steer mailbox close observed"
+                        );
+                        steer_recorder.release.add_permits(1);
                         drop(next);
                         let result = bounded(enqueue).await.expect("#743 steer enqueue settles");
-                        assert!(
+                        crate::negative_assert!(
                             !result.accepted,
                             "#743 steer in-flight insert rejected after close"
                         );

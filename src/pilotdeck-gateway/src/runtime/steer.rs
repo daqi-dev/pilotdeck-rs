@@ -140,6 +140,14 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct SteerMailbox(Arc<Inner>);
 impl SteerMailbox {
+    /// #1847: read-only view of the mailbox's admission flag. `close` clears it
+    /// synchronously, so this is the event a durable insert is rejected
+    /// against; tests must observe it rather than bet a wall-clock window on
+    /// the close task being scheduled.
+    #[cfg(test)]
+    pub(crate) fn open_for_test(&self) -> bool {
+        self.0.state.lock().unwrap().open
+    }
     #[cfg(test)]
     pub(crate) fn poison_state_for_test(&self) {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
