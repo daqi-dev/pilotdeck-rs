@@ -31,10 +31,13 @@ python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景> --negc
 python3 -I scripts/parity-attrib/test_frame_attrib.py
 ```
 
-退出码：`0` 确有 FAIL 且全部归因为 #6（无 `NOT_6`、批次完整）· `2` 有 `NOT_6`（反证命中）·
-`3` negctl 基线不可用 · `4` negctl 有 `MISMATCH` · `5` 有效轮次不足（空对拍，**拒绝给结论**）·
+退出码（`run` 子命令）：`0` 确有 FAIL 且全部归因为 #6（无 `NOT_6` / 未判定、批次完整）·
+`2` 有 `NOT_6`（**反证命中**，已证伪）· `5` 有效轮次不足（空对拍，**拒绝给结论**）·
 `6` 有轮次无效因而只覆盖部分批次（结论不算验收证据）· `7` 本批次**没有任何 FAIL**（全 PASS）
-→ 不能作为 #6 归因证据。
+→ 不能作为 #6 归因证据 · `8` 有 pair **未判定**（比较器超时 / 输出不可解析 / 输出缺该场景）。
+`8` 与 `2` 严格区分：「工具没跑成」不是「不是 #6」，不能把 rc=2 这个最强否定结论发给装置故障。
+`--negctl-out` 子命令的退出码是另一套语义：`0` = 13 条负控全部按期望命中 · `3` 基线不可用 ·
+`4` 有 `MISMATCH`（不存在 rc=2/7/8 的含义）。
 
 脚本内 `_repo_root()` 从自身位置向上找含 `scripts/parity/g03_compare.py` 的仓库根，因此 `_tmp/` 里的
 历史副本与本目录的入仓副本都能跑；**找不到就报错退出**，绝不回退到硬编码的机器路径（否则被审树与
@@ -54,6 +57,7 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 
 | 判据 | 内容 | 不满足 |
 |---|---|---|
+| C0 | G03 必须真的跑成并产出该场景结果（超时 / 不可解析 / 缺场景） | **UNKNOWN**（rc=8） |
 | C1 | 场景 ∈ `{deadline, deadline_during_tool}`（`accepted-diffs` #6 的登记范围） | NOT_6 |
 | C2a | G03 `triggered_rules` 恰好 `[E10, E11, G03_channels]`（别的规则是另一种缺陷） | NOT_6 |
 | C2b | G03 语义差异**恰好 1 条**，且是 `left=null` 的 `durable.status/gateway_submit_failed/error`，`text` = TS 宿主常量，**投影字段集恰好** `{kind, agentScope, event, statusKind, text}` | NOT_6 |
@@ -69,7 +73,8 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 字段改动（negctl J/K），G03 抓语义/规则层。C2b 的字段集按**投影帧**钉死 5 个键——投影时
 `q`、`scenarioId`、`invocationId`、`sequence` 已被丢掉，真实数据实测（20 轮全部命中）。
 
-**G03 的超时**：`G03_TIMEOUT = 900 s`（一次跑全部 53 场景），超时判 `NOT_6`（C2 失败），不当通过；
+**G03 的超时 / 故障**：`G03_TIMEOUT = 900 s`（一次跑全部 53 场景）。超时、输出不可解析、输出里
+没有该场景，一律判 **`UNKNOWN`（未判定，rc=8）**，既不当作通过、也**不**当作 `NOT_6` 反证。
 同一对目录的结果在进程内缓存，`run()` 的展示列不会二次 spawn。
 
 ## C5 / C6 的残余（#1926 明确接受）
@@ -129,10 +134,13 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M 亦符合期望（13/13 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 56 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+- 自测 `test_frame_attrib.py` 现有 65 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
   `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
-  BLOCKED）、`verdict_exit()` 退出码折叠、`judge()` 的 C1–C6 编排（注入 G03 桩，不跑冻结比较器）、
-  空 root 硬失败，以及**装置自身 sha256 pin**。
+  BLOCKED / 超大整数 started_wall）、`verdict_exit()` 退出码折叠（含未判定）、`judge()` 的 C1–C6
+  编排与 `UNKNOWN`（注入 G03 桩，不跑冻结比较器）、`run()` 端到端接线（全 PASS → rc=7、
+  比较器故障 → rc=8 且不打印反证命中）、空 root 硬失败，以及**装置自身 sha256 pin**。
+  每条闸门断言都带判别力：缺 summary 的用例会把 summary 恢复后再测 started_wall，
+  原因串必须点名 `started_wall`（否则删掉闸门也照样绿）。
 
 ## 维护规则
 

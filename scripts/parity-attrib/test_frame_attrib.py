@@ -145,7 +145,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '4ca378bbf9c56d75f4f1f88ce4e14e5a151db579a5d93cb8f2e2e2ebbdf33983'
+PINNED_DEVICE_SHA256 = 'a1de13f2fb0108e8aec40a0c8540990dc31eededca5004412e6806c264614fa2'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -243,9 +243,23 @@ with tempfile.TemporaryDirectory() as tdir:
     os.remove(os.path.join(d, 'artifacts', 'summary.json'))
     check('round_problem 缺 summary.json → 报原因（blocked 未知不算未 blocked）',
           fa.round_problem(d, 'ts') is not None)
+    # 恢复 summary.json：否则下面「缺 started_wall」会因 summary 缺失而通过，那条断言就没有
+    # 判别力（去掉 started_wall 闸门也照样绿，#1926 评审 P2）。
+    with open(os.path.join(d, 'artifacts', 'summary.json'), 'w') as fh:
+        json.dump({'blocked': []}, fh)
+    check('round_problem 恢复 summary 后有效轮次仍 → None（对照）',
+          fa.round_problem(d, 'ts') is None)
     with open(os.path.join(d, 'run.json'), 'w') as fh:
         json.dump({'side': 'ts', 'valid_round': True, 'identity_ok': True}, fh)
-    check('round_problem 缺 started_wall → 报原因', fa.round_problem(d, 'ts') is not None)
+    why = fa.round_problem(d, 'ts')
+    check('round_problem 缺 started_wall → 报原因，且原因点名 started_wall（有判别力）',
+          why is not None and 'started_wall' in why, f'why={why!r}')
+    with open(os.path.join(d, 'run.json'), 'w') as fh:
+        json.dump({'side': 'ts', 'valid_round': True, 'identity_ok': True,
+                   'started_wall': 10 ** 400}, fh)
+    why = fa.round_problem(d, 'ts')
+    check('round_problem 超大整数 started_wall → 报原因（不抛 OverflowError）',
+          why is not None and 'started_wall' in why, f'why={why!r}')
     with open(os.path.join(d, 'run.json'), 'w') as fh:
         json.dump({'side': 'ts', 'valid_round': False, 'identity_ok': True,
                    'started_wall': 1762000000.0}, fh)
@@ -256,6 +270,9 @@ check('verdict_exit 有 NOT_6 → 2', fa.verdict_exit(10, 20, 3, False) == 2)
 check('verdict_exit 批次不完整 → 6', fa.verdict_exit(10, 20, 0, True) == 6)
 check('verdict_exit 全 PASS（n6=0）→ 7', fa.verdict_exit(100, 0, 0, False) == 7)
 check('verdict_exit 正常归因 → 0', fa.verdict_exit(80, 20, 0, False) == 0)
+check('verdict_exit 有未判定 → 8（比较器故障不得给 rc=0）', fa.verdict_exit(80, 20, 0, False, 1) == 8)
+check('verdict_exit 未判定优先于批次不完整 → 8', fa.verdict_exit(80, 20, 0, True, 1) == 8)
+check('verdict_exit 已有 NOT_6 时未判定不改变 2', fa.verdict_exit(80, 20, 1, False, 1) == 2)
 
 # ---- run(): 空对拍必须硬失败（P0：旧版 0 pair 时打印「无第二种差异」并 rc=0）----
 with tempfile.TemporaryDirectory() as tdir:
@@ -264,6 +281,53 @@ with tempfile.TemporaryDirectory() as tdir:
         rc = fa.run(tdir, 'deadline')
     check('run 空 root → rc≠0 且不给结论',
           rc != 0 and '无第二种差异' not in out.getvalue(), f'rc={rc} out={out.getvalue()[:80]!r}')
+
+# ---- judge(): 比较器故障 = UNKNOWN，不是 NOT_6「反证命中」（#1926 评审 P1）----
+_orig_g03 = fa.g03
+try:
+    fa.g03 = lambda *a: (None, None, 'g03 超时（>900s）')
+    got, ev = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
+    check('judge g03 超时 → UNKNOWN（不当作 NOT_6）',
+          got == 'UNKNOWN' and '未判定' in ev[0], f'got={got} ev={ev[0][:80]!r}')
+    fa.g03 = lambda *a: ({}, {}, None)
+    got, ev = fa.judge('deadline', '/no/ts', '/no/rust', [], [])
+    check('judge g03 输出缺该场景 → UNKNOWN', got == 'UNKNOWN', f'got={got}')
+finally:
+    fa.g03 = _orig_g03
+
+# ---- run(): 端到端接线（全 PASS → 7；比较器故障 → 8），用桩替换 g03 ----
+def _mk_round(root, name, side):
+    d = os.path.join(root, name)
+    os.makedirs(os.path.join(d, 'artifacts'))
+    with open(os.path.join(d, 'run.json'), 'w') as fh:
+        json.dump({'side': side, 'valid_round': True, 'identity_ok': True,
+                   'started_wall': 1762000000.0}, fh)
+    with open(os.path.join(d, 'artifacts', 'summary.json'), 'w') as fh:
+        json.dump({'blocked': []}, fh)
+    open(os.path.join(d, 'artifacts', 'deadline.pilotdeck-current-sidecar.jsonl'), 'w').close()
+
+
+with tempfile.TemporaryDirectory() as tdir:
+    _mk_round(tdir, 'ts-r1', 'ts')
+    _mk_round(tdir, 'rust-r1', 'rust')
+    _orig_g03 = fa.g03
+    try:
+        fa.g03 = lambda *a: ({'verdict': 'PASS', 'channel': {'differences': []},
+                              'triggered_rules': []}, {}, None)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = fa.run(tdir, 'deadline')
+        check('run 全 PASS 批次 → rc=7（钉住 run() 的接线，不只纯函数）',
+              rc == 7 and '全部 PASS' in out.getvalue(), f'rc={rc}')
+        fa.g03 = lambda *a: (None, None, 'g03 超时（>900s）')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = fa.run(tdir, 'deadline')
+        txt = out.getvalue()
+        check('run 比较器故障 → rc=8 且不打印「反证命中」',
+              rc == 8 and '反证命中' not in txt and '未判定' in txt, f'rc={rc}')
+    finally:
+        fa.g03 = _orig_g03
 
 # ---- is_gsf / is_identity ----
 check('is_gsf 认 event', fa.is_gsf({'kind': 'durable.status', 'event': 'gateway_submit_failed'}))
