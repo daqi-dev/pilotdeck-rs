@@ -167,9 +167,11 @@ factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它
 150 ms 余量按 `0.15s/small` 折算，并**封顶在「线性到二次」差距的十分之一**
 （`scaling_band_caps_the_slack_on_short_samples` 钉住）。没有这个封顶时，同一个
 150 ms 打在 CPU 采样的 23 ms 小样本上就是 6.5x——比 factor 2 的整个 1.17x 差距还大，
-真二次实现会被直接放过；封顶后任何样本长度下判据都还能分辨。实测调用点上封顶不改变
-既有带宽：factor 2 的 small 1.45 s（deep-frame 4 MiB）折算 0.10x，低于 0.117x 的封顶，
-带宽仍是 2.83x + 0.10x = 2.93x；`large_shallow` 5.8 s 同理。
+真二次实现会被直接放过；封顶后任何样本长度下判据都还能分辨。两类调用点因此表现不同：
+墙钟调用点（factor 2 的 small 1.45 s、deep-frame 4 MiB）折算 0.10x，低于 0.117x 的封顶，
+**带宽不变**（仍是 2.83x + 0.10x = 2.93x，`large_shallow` 5.8 s 同理）；
+CPU 采样调用点（cb8 release：deep-frame 23 ms、`large_shallow` paragraphs 107 ms）
+**封顶生效**，带宽从 9.35x / 4.23x 收到 2.95x，真二次 4.0x 重新可拦。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
 拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
 `PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`

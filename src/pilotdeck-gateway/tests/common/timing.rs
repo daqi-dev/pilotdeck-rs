@@ -185,16 +185,17 @@ pub const SCALING_NOISE: f64 = 0.15;
 /// under a hardcoded 2.0 factor's 2.83x band). The median of the paired ratios
 /// tolerates a minority of preempted rounds; the 150 ms slack is converted to
 /// ratio space through the fastest small run, so short inputs keep the same
-/// absolute allowance.
+/// absolute allowance up to the cap described below.
 ///
 /// The absolute slack can only be allowed to eat a small part of the gap the
-/// band discriminates. On long samples it is tiny (`0.15 s / 1.45 s` = 0.10x
-/// against a 1.17x gap at factor 2), but the same 150 ms against a CPU-sampled
-/// 23 ms run is 6.5x — more than the whole gap — which would let a real
-/// quadratic pass. The slack is therefore capped at a tenth of the gap, so the
-/// band keeps its discriminating power at any sample length: on the measured
-/// call sites the cap never binds, so their limits are unchanged (#978
-/// boundary review).
+/// band discriminates. On the wall-clock sites it is tiny (`0.15 s / 1.45 s` =
+/// 0.10x against a 1.17x gap at factor 2) and the cap does not bind, so their
+/// limits are unchanged. On the CPU-sampled sites it is not: cb8 release
+/// measures 23 ms for the deep-frame small run and 107 ms for the
+/// `large_shallow` paragraphs one, where the same 150 ms becomes 6.5x / 1.4x —
+/// more than the whole gap — and a real quadratic would pass. Capping the
+/// slack at a tenth of the gap keeps the band's discriminating power at any
+/// sample length and never widens it anywhere (#978 boundary review).
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
     let allowed = factor.powf(1.5);
@@ -485,6 +486,32 @@ fn scaling_band_caps_the_slack_on_short_samples() {
         ))
         .is_err(),
         "#978 a long-sample quadratic must still breach the band"
+    );
+    // Pin both limits to +-0.02 by judging ratios on either side of them, so a
+    // cap that silently became "nine tenths of the gap" or a widened long-run
+    // limit cannot pass this test (#978 boundary review).
+    let judged = |ratio: f64, small_secs: f64| {
+        let small = Duration::from_secs_f64(small_secs);
+        let sampled = ScalingSamples {
+            small,
+            large: small.mul_f64(4.0),
+            median_ratio: ratio,
+            samples: 3,
+        };
+        std::panic::catch_unwind(|| assert_within_scaling_band("#978 unit boundary", &sampled, 2.0))
+            .is_ok()
+    };
+    // Capped: 2.83x + 0.117x = 2.95x at 23 ms.
+    assert!(judged(2.94, 0.023), "#978 the 23 ms limit is about 2.95x");
+    assert!(
+        !judged(2.96, 0.023),
+        "#978 the 23 ms limit is not above 2.96x"
+    );
+    // Uncapped: 2.83x + 0.15/1.45 = 2.93x.
+    assert!(judged(2.92, 1.45), "#978 the 1.45 s limit is about 2.93x");
+    assert!(
+        !judged(2.94, 1.45),
+        "#978 the 1.45 s limit is not above 2.94x"
     );
 }
 
