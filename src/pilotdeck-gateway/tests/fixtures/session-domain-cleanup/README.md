@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 125 mutants:
+`JUDGES`, keyed by the same names. The current table has 129 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -368,7 +368,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-computed-status-write`, `calibrate-local-exit-alias-chain`,
 `calibrate-computed-status-key`, `calibrate-computed-status-key-write`,
 `calibrate-shadowed-common-local`, `calibrate-shadowed-receiver-local`,
-`calibrate-shadowed-common-global`.
+`calibrate-shadowed-common-global`, `calibrate-shadowed-receiver-global`,
+`calibrate-shadowed-receiver-poison-fn`,
+`calibrate-shadowed-receiver-same-fn`, `calibrate-redefined-loader`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -579,12 +581,13 @@ four signals -- including one that raises `SystemExit` directly -- because the
 window owns SIGINT / SIGTERM / SIGHUP / SIGQUIT while it is open, whatever was
 installed before (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
 deferral protocol is checked deterministically on every import of
-`negative_controls.py`, and the real-signal path is covered by eight
+`negative_controls.py`, and the real-signal path is covered by nine
 `test_negative_process.RestoreWindowSignals` cases: SIGINT with the default and
 with a fixture handler, SIGTERM with a fixture handler, SIGHUP with the default
 handler, SIGQUIT with the default handler (``^\`` is catchable like the rest;
 GLM sibling r20 P2-4), the first of two signals inside one window winning
-(anthropic concurrency r20 P2-1), an ignored signal staying ignored, and the
+(anthropic concurrency r20 P2-1), an ignored signal staying ignored, a failing
+body not leaking the deferred signum (MiniMax boundary r19 P2), and the
 handlers being put back afterwards (the signal/processor matrix is not fully
 crossed -- the signal/processor combinations the fixture actually exercises are
 the ones listed); the arbitrary bytecode boundary is not reproducible by
@@ -634,6 +637,36 @@ signum is now keep-first so a second signal never overwrites the first (with
 the two-signal case), `_git`'s timeout arm group-kills and collects boundedly
 like `run_owned`, and the restored-positive check applies the same strict
 `is True` / `is None` predicate on non-Darwin that Darwin always did.
+
+`fix-r22` repaired the two `test_restore.py` real-guard anchors the r18
+re-indentation of the restore loop had gone stale on: the write anchor kept the
+old 20-space depth, which matched the 24-space line as a substring and spliced
+the `try` mid-line (CI `IndentationError`), and the head anchor kept 28 spaces
+against a 32-space f-string (`ValueError`, stale anchor).  Both anchors now
+follow the source's real indentation, and the #1110 preflight runs clean.
+
+`fix-r23` closed the three r22 P0/P1 findings, each with its own mutation or
+test: receiver-relay trust now has a module/global layer (`_withdrawn_receivers`)
+-- a relay receiver (`md.common.aggregate_status`) keeps the shared-call credit
+only while every module-scope binding of it is a proven loader or a registered
+proven source, so `md = <stub>` at module scope, an unrelated
+`def _poison(): global md; md = <stub>`, and `global md; md = <stub>` inside the
+registered point itself all lose the relay file-wide
+(`calibrate-shadowed-receiver-global` / `-poison-fn` / `-same-fn`, GLM boundary
+r22 P0-1; `load_session_domain` is registered in `PROVEN_SHARED_SOURCES`, and
+the `md = None` placeholder initializer cannot serve a verdict so it does not
+withdraw); the apparatus loader is no longer callee-blind -- a name keeps the
+loader role only while every module-scope binding of it is the `<name>.load`
+attribute, so a `def _load(name, path)` inserted after `_load = _guard.load`
+keeps the call spelling while returning a stub and now fails the audit
+(`calibrate-redefined-loader`, GLM boundary r22 P1-2; `_guard.py`'s own
+`def load` stays the one sanctioned definition); and the harness batch loop now
+registers SIGQUIT with `terminate_cleanly` too, not only SIGTERM/SIGHUP
+(`_install_terminate_handlers`, anthropic sibling r22 P1 / GLM boundary r22 P2
+taken at the higher grade; two `test_negative_process.TerminateHandlerRegistration`
+cases prove both directions at runtime -- with the registration a SIGQUIT
+outside the window unwinds through `finally` and exits 128+SIGQUIT, without it
+the same signal kills in place and the `finally` never runs).
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the

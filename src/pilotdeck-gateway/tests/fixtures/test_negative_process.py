@@ -1738,5 +1738,56 @@ class RestoreWindowSignals(unittest.TestCase):
             signal.signal(signal.SIGTERM, previous)
 
 
+TERMINATE_HANDLER_CHILD = r"""
+import os, pathlib, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+import negative_controls
+if sys.argv[4] == "registered":
+    negative_controls._install_terminate_handlers()
+sentinel = pathlib.Path(sys.argv[2])
+which = getattr(signal, sys.argv[3])
+try:
+    os.kill(os.getpid(), which)
+    time.sleep(10)
+finally:
+    sentinel.write_text("restored\n", encoding="utf-8")
+"""
+
+
+class TerminateHandlerRegistration(unittest.TestCase):
+    """#892 r23: the harness registers SIGQUIT too, not only SIGTERM/SIGHUP.
+
+    ``_SHIELDED_SIGNALS`` defers SIGQUIT only inside the restore window;
+    outside it the default disposition is kill-with-core, so a ``^\\`` landing
+    between two mutations would leave a mutant in the tree with no finally --
+    the exact SIGTERM hazard ``terminate_cleanly`` exists for (anthropic
+    sibling r22 P1 / GLM boundary r22 P2, taken at the higher grade).  The
+    second case is the control: without the registration the same signal
+    kills in place, which is the only difference the registration makes.
+    """
+
+    def _run(self, signame, registered):
+        cleanup = str(Path(__file__).resolve().parent / "session-domain-cleanup")
+        with tempfile.TemporaryDirectory(prefix="pdrs-terminate-handler-") as temp:
+            sentinel = Path(temp) / "sentinel"
+            cp = subprocess.run(
+                [sys.executable, "-I", "-c", TERMINATE_HANDLER_CHILD, cleanup,
+                 str(sentinel), signame, registered],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return cp, sentinel.exists()
+
+    def test_sigquit_outside_the_window_unwinds_through_finally(self):
+        cp, sentinel = self._run("SIGQUIT", "registered")
+        self.assertTrue(sentinel,
+                        "SIGQUIT outside the window must unwind: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGQUIT)
+
+    def test_the_same_signal_without_the_registration_kills_in_place(self):
+        cp, sentinel = self._run("SIGQUIT", "default")
+        self.assertFalse(sentinel,
+                          "no registration means no finally: " + cp.stderr)
+        self.assertEqual(cp.returncode, -signal.SIGQUIT)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

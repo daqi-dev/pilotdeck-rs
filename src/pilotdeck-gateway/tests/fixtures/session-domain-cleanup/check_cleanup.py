@@ -1160,21 +1160,139 @@ def _status_slot_values(summary):
             if _status_key(key)]
 
 
-def _loads_shared_module(value, name):
+def _loads_shared_module(value, name, loaders=frozenset()):
     """True when *value* is the apparatus loader call for module *name*.
 
     The audited tree binds the shared module as
     ``common = _load('common', _apparatus / 'common.py')`` (or ``load(...)`` in
     ``_guard.py``), so the call names the module it loads.  Any other binding --
     a namespace stub, a local dict, a helper that returns something else -- does
-    not name a module and therefore does not earn the trust.
+    not name a module and therefore does not earn the trust.  #892 r23: the
+    callee itself must resolve to the guard loader; a ``def _load(name, path)``
+    inserted after ``_load = _guard.load`` spells the call the same way while
+    returning a stub, so a first-argument constant alone no longer suffices
+    (GLM boundary r22 P1-2).
     """
     return (isinstance(value, ast.Call) and bool(value.args)
             and isinstance(value.args[0], ast.Constant)
-            and value.args[0].value == name)
+            and value.args[0].value == name
+            and isinstance(value.func, ast.Name)
+            and value.func.id in loaders)
 
 
-def _module_shared_names(tree):
+# #892 r23: the file that defines the apparatus loader itself.  ``load`` there
+# is a plain ``def``, not a ``<module>.load`` attribute, so ``_guard.py``'s own
+# ``run_entry`` call keeps the loader role while exactly one definition exists
+# and nothing else binds the name.
+GUARD_REL = 'scripts/gateway-parity/_guard.py'
+
+
+def _loader_names(tree, rel=None):
+    """Module-scope names that still denote the guard loader (#892 r23).
+
+    ``_load = _guard.load`` earned every ``_load('common', ...)`` call the
+    loader's trust without asking who ``_load`` is.  A name keeps the role
+    only while *every* module-scope binding of it is the ``<name>.load``
+    attribute; ``_guard.py`` itself is the one sanctioned ``def load``.
+    """
+    if not isinstance(tree, ast.Module):
+        return frozenset()
+    bindings = _module_scope_binding_map(tree)
+    loaders = {name for name, values in bindings.items()
+               if all(isinstance(value, ast.Attribute) and value.attr == 'load'
+                      and isinstance(value.value, ast.Name)
+                      for value in values)}
+    if rel == GUARD_REL and bindings.get('load') == [None]:
+        loaders.add('load')
+    return frozenset(loaders)
+
+
+def _module_scope_binding_map(tree):
+    """Every module-scope binding in *tree*: name -> list of values (#892 r23).
+
+    Module-level statements are read through ``_own_nodes`` (which descends
+    into ``if``/``try``/``for`` bodies but not into nested definitions), the
+    module's top-level ``def``/``class`` names count as a ``None`` binding, and
+    so does every binding that lands at module scope at runtime through a
+    ``global name`` declaration inside a function -- that is exactly where a
+    module binding is replaced behind the module walk's back.  ``None`` also
+    marks non-expression bindings (imports, loop and ``with`` targets).
+    """
+    bindings = {}
+
+    def add(name, value):
+        bindings.setdefault(name, []).append(value)
+
+    for node in _own_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            add(node.name, None)
+            continue
+        bound, value = _local_bound_names(node)
+        for name in bound:
+            add(name, value)
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            add(node.name, None)
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        global_names = {name for node in ast.walk(function)
+                        if isinstance(node, ast.Global)
+                        for name in node.names}
+        if not global_names:
+            continue
+        for node in _own_nodes(function):
+            bound, value = _local_bound_names(node)
+            for name in bound:
+                if name in global_names:
+                    add(name, value)
+    return bindings
+
+
+def _withdrawn_receivers(tree, rel=None, shared=None):
+    """Relay receivers whose module-scope bindings are not proven (#892 r23).
+
+    ``_function_shared_names`` withdrew only receivers rebound *inside* the
+    audited function, and the module scan withdrew only the shared name
+    itself, so ``md = <stub>`` at module scope -- or through ``global md`` from
+    any function -- kept every ``md.common.aggregate_status`` in the file
+    taken on the spelling alone (GLM boundary r22 P0-1).  A receiver keeps the
+    relay only while every module-scope binding of it is a proven loader or a
+    registered proven source; the ``md = None`` placeholder initializer cannot
+    serve a verdict, so it does not withdraw.
+    """
+    trusted = _SHARED_MODULES if shared is None else shared
+    receivers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr == 'aggregate_status'):
+            continue
+        base = func.value
+        if (isinstance(base, ast.Attribute) and base.attr in trusted
+                and isinstance(base.value, ast.Name)):
+            receivers.add(base.value.id)
+    if not receivers:
+        return frozenset()
+    bindings = _module_scope_binding_map(tree)
+    loaders = _loader_names(tree, rel)
+    poisoned = set()
+    for name in receivers:
+        for value in bindings.get(name, ()):
+            if isinstance(value, ast.Constant) and value.value is None:
+                continue
+            if not (_proven_source(value, rel)
+                    or any(_loads_shared_module(value, module, loaders)
+                           for module in trusted)):
+                poisoned.add(name)
+                break
+    return frozenset(poisoned)
+
+
+def _module_shared_names(tree, rel=None):
     """Module names that still are the shared aggregator inside *tree* (#892 r20).
 
     ``common.aggregate_status`` only proves a shared call while ``common`` is
@@ -1184,22 +1302,26 @@ def _module_shared_names(tree):
     map, and the function was enumerated, or excused, on a claim the shared map
     never made (GLM boundary r19 P1-1).  A module-scope binding keeps the trust
     only when it is the apparatus loader call naming the module; everything
-    else withdraws it.
+    else withdraws it.  #892 r23: the loader call itself is only the one whose
+    callee still resolves to the guard loader (``_loader_names``).
     """
     trusted = set(_SHARED_MODULES)
     if not isinstance(tree, ast.Module):
         return frozenset(trusted)
+    loaders = _loader_names(tree, rel)
     for node in _own_nodes(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             trusted.discard(node.name)
         elif isinstance(node, ast.Assign):
             for target in node.targets:
                 for name in _target_names(target):
-                    if name in trusted and not _loads_shared_module(node.value, name):
+                    if name in trusted and not _loads_shared_module(node.value, name,
+                                                                    loaders):
                         trusted.discard(name)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             for name in _target_names(node.target):
-                if name in trusted and not _loads_shared_module(node.value, name):
+                if name in trusted and not _loads_shared_module(node.value, name,
+                                                                loaders):
                     trusted.discard(name)
         elif isinstance(node, (ast.For, ast.AsyncFor)):
             trusted.difference_update(_target_names(node.target))
@@ -1222,7 +1344,8 @@ def _module_shared_names(tree):
             for name in names:
                 if (name in trusted
                         and not (value is not None
-                                 and _loads_shared_module(value, name))):
+                                 and _loads_shared_module(value, name,
+                                                           loaders))):
                     trusted.discard(name)
     return frozenset(trusted)
 
@@ -1245,6 +1368,15 @@ PROVEN_SHARED_SOURCES = {
      'load_pristine_common'):
         'same-file loader: importlib-loads the pristine common.py from disk '
         'inside the mutation window',
+    # #892 r23: the fixture's own relay receiver.  ``md = load_session_domain()``
+    # in ``main`` is the binding every ``md.common.aggregate_status`` answers
+    # to; the module it loads binds ``common`` through the apparatus
+    # ``_guard.load`` at module scope, so a proven registration -- not the
+    # loader spelling -- keeps the relay trusted (GLM boundary r22 P0-1).
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     'load_session_domain'):
+        'module loader: importlib-loads scripts/gateway-parity/session_domain.py, '
+        'whose module scope binds common via the apparatus _guard.load',
 }
 
 
@@ -1280,7 +1412,7 @@ def _local_bound_names(node):
     return [], None
 
 
-def _function_shared_names(function, shared=None, rel=None):
+def _function_shared_names(function, shared=None, rel=None, loaders=frozenset()):
     """(trusted names, locally rebound receivers) inside *function* (#892 r21).
 
     The r20 withdrawal walked module scope only, so a *function-scope*
@@ -1295,7 +1427,8 @@ def _function_shared_names(function, shared=None, rel=None):
     (``md.common.aggregate_status``), so every locally bound name is also
     reported as a receiver whose relay is no longer taken on the spelling
     alone; ``global``-declared receivers bind at module scope and stay the
-    module scan's business (``check_cleanup.main`` rebinds ``md`` there).
+    module scan's business (``check_cleanup.main`` rebinds ``md`` there,
+    judged by ``_withdrawn_receivers`` since #892 r23).
     """
     trusted = set(_SHARED_MODULES if shared is None else shared)
     rebound = set()
@@ -1308,7 +1441,7 @@ def _function_shared_names(function, shared=None, rel=None):
                 continue
             if name in trusted:
                 if not (value is not None
-                        and (_loads_shared_module(value, name)
+                        and (_loads_shared_module(value, name, loaders)
                              or _proven_source(value, rel))):
                     trusted.discard(name)
                     rebound.add(name)
@@ -3171,13 +3304,19 @@ def scan_aggregation_tree(tree, rel, aliases=None):
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if aliases is None:
         aliases = _module_exit_aliases(tree)
-    shared = _module_shared_names(tree)
+    shared = _module_shared_names(tree, rel)
+    loaders = _loader_names(tree, rel)
+    # #892 r23: a receiver poisoned at module scope (or through ``global``)
+    # loses the relay in *every* function of the file, not only where it is
+    # rebound locally (GLM boundary r22 P0-1).
+    poisoned = _withdrawn_receivers(tree, rel, shared)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        fn_shared, fn_rebound = _function_shared_names(function, shared, rel)
+        fn_shared, fn_rebound = _function_shared_names(
+            function, shared, rel, loaders)
         markers = aggregation_markers(function, module, rel, aliases,
-                                      fn_shared, fn_rebound)
+                                      fn_shared, fn_rebound | poisoned)
         if not markers:
             continue
         key = (rel, function.name)
@@ -3207,6 +3346,8 @@ def aggregation_audit():
     modules = {}
     aliases_by_rel = {}
     trusted_by_rel = {}
+    loaders_by_rel = {}
+    poisoned_by_rel = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
@@ -3266,7 +3407,10 @@ def aggregation_audit():
                 failures.append(f'#892 aggregation-audit: proven shared source '
                                 f'{rel}:{helper} is neither defined nor imported there')
         aliases_by_rel[rel] = _module_exit_aliases(tree)
-        trusted_by_rel[rel] = _module_shared_names(tree)
+        trusted_by_rel[rel] = _module_shared_names(tree, rel)
+        loaders_by_rel[rel] = _loader_names(tree, rel)
+        poisoned_by_rel[rel] = _withdrawn_receivers(
+            tree, rel, trusted_by_rel[rel])
         lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
         if lost:
             # One file may not bind the shared aggregator to anything but the
@@ -3293,7 +3437,10 @@ def aggregation_audit():
             continue
         markers, function = found[key]
         fn_shared, fn_rebound = _function_shared_names(
-            function, trusted_by_rel.get(rel), rel)
+            function, trusted_by_rel.get(rel), rel,
+            loaders_by_rel.get(rel, frozenset()))
+        # #892 r23: module/global-poisoned receivers lose the relay here too.
+        fn_rebound = fn_rebound | poisoned_by_rel.get(rel, frozenset())
         shared = (calls_shared(function, fn_shared, fn_rebound)
                   and 'return-int-status' not in markers)
         slots = unshared_status_slots(function, key, modules.get(rel), rel,
@@ -3762,7 +3909,26 @@ def aggregation_audit():
         "    md = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
         "    return md.common.aggregate_status(report)[1]\n"
         "def _param_common(report, common):\n"
-        "    return common.aggregate_status(report)[1]\n")
+        "    return common.aggregate_status(report)[1]\n"
+        "_load = _guard.load\n"
+        "_shadow_load = _guard.load\n"
+        "def _shadow_load(name, path):\n"
+        "    return _SN(aggregate_status=lambda *a: ('PASS', 0))\n"
+        "def _redefined_loader(report):\n"
+        "    common = _shadow_load('common', 'common.py')\n"
+        "    return common.aggregate_status(report)[1]\n"
+        "md2 = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
+        "def _module_receiver(report):\n"
+        "    return md2.common.aggregate_status(report)[1]\n"
+        "md4 = _load('common', 'common.py')\n"
+        "def _module_receiver_proven(report):\n"
+        "    return md4.common.aggregate_status(report)[1]\n"
+        "md3 = _load('common', 'common.py')\n"
+        "def _poison_receiver():\n"
+        "    global md3\n"
+        "    md3 = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
+        "def _global_receiver(report):\n"
+        "    return md3.common.aggregate_status(report)[1]\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     # #892 r21: the key side of the r20 constant folding (GLM sibling r20
     # P1-1) and the function-scope trust withdrawal (GLM sibling r20 P1-2 /
@@ -3796,11 +3962,63 @@ def aggregation_audit():
         failures.append('#892 aggregation-audit: detector self-test lost the '
                         'function-scope loader probe')
     else:
-        loader_shared, _loader_rebound = _function_shared_names(loader_local)
+        # #892 r23: the loader probe only keeps trust through the module's
+        # loader alias; ``_function_shared_names`` is handed that alias set the
+        # way ``scan_aggregation_tree`` computes it for a real file.
+        loader_shared, _loader_rebound = _function_shared_names(
+            loader_local, loaders=_loader_names(probe892, '<self-test-892>'))
         if ('common' not in loader_shared
                 or not calls_shared(loader_local, loader_shared, _loader_rebound)):
             failures.append('#892 aggregation-audit: detector self-test rejected the '
                             'apparatus loader bound inside a function')
+    # #892 r23 (GLM boundary r22 P1-2): a ``def _load`` inserted after the
+    # alias rebinds it to an ordinary function; the call keeps its spelling
+    # while returning a stub, so the alias set must drop it.
+    redefined_loader = _probe892_function('_redefined_loader')
+    if redefined_loader is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'redefined-loader probe')
+    else:
+        redefined_shared, _redefined_rebound = _function_shared_names(
+            redefined_loader, loaders=_loader_names(probe892, '<self-test-892>'))
+        if ('common' in redefined_shared
+                or calls_shared(redefined_loader, redefined_shared,
+                                _redefined_rebound)):
+            failures.append('#892 aggregation-audit: detector self-test still '
+                            'trusts a shared binding through a redefined '
+                            'loader alias')
+    # #892 r23 (GLM boundary r22 P0-1): receiver relays poisoned at module
+    # scope or through ``global`` lose the shared call file-wide, with the
+    # proven module-scope receiver kept beside them as the healthy control.
+    probe892_poisoned = _withdrawn_receivers(probe892, '<self-test-892>')
+    module_receiver = _probe892_function('_module_receiver')
+    if module_receiver is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'module-scope receiver probe')
+    elif ('md2' not in probe892_poisoned
+            or calls_shared(module_receiver, _SHARED_MODULES,
+                            probe892_poisoned)):
+        failures.append('#892 aggregation-audit: detector self-test still '
+                        'trusts a relay through a module-scope stub receiver')
+    proven_receiver = _probe892_function('_module_receiver_proven')
+    if proven_receiver is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'proven module-scope receiver control')
+    elif ('md4' in probe892_poisoned
+            or not calls_shared(proven_receiver, _SHARED_MODULES,
+                                probe892_poisoned)):
+        failures.append('#892 aggregation-audit: detector self-test withdrew '
+                        'trust from a proven module-scope receiver')
+    global_receiver = _probe892_function('_global_receiver')
+    if global_receiver is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'globally poisoned receiver probe')
+    elif ('md3' not in probe892_poisoned
+            or calls_shared(global_receiver, _SHARED_MODULES,
+                            probe892_poisoned)):
+        failures.append('#892 aggregation-audit: detector self-test still '
+                        'trusts a relay through a receiver poisoned by '
+                        '``global``')
     receiver_local = _probe892_function('_shadowed_receiver_local')
     if receiver_local is None:
         failures.append('#892 aggregation-audit: detector self-test lost the '
