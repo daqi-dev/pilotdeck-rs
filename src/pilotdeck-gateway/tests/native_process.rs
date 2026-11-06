@@ -139,16 +139,52 @@ async fn explicit_entry_selects_parser() {
     }
 }
 
+// How long a child may say nothing at all before the observation gives up.
+// It bounds silence only: a child that prints keeps resetting it, and the
+// read below returns as soon as the advertisement appears, so a slow but
+// healthy host never spends this (macmini-01 has documented 12-35 s process
+// startup stalls). Silence is still unjudgeable, never a kill.
+const CHILD_OBSERVATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
+// Reads a child's stderr line by line and returns as soon as `needle` shows
+// up, so a child that stays up after advertising listening costs one line,
+// not a whole deadline (#1401 review P2: `read_to_end` under a 5 s deadline
+// spent all 5 s on every intact run and read a slow host as a missing
+// advertisement). Otherwise the bytes collected before EOF, a read error or
+// the deadline come back with `false`.
+async fn read_stderr_until(
+    stderr: tokio::process::ChildStderr,
+    needle: &str,
+    limit: std::time::Duration,
+) -> (Vec<u8>, bool) {
+    use tokio::io::AsyncBufReadExt;
+    let mut reader = tokio::io::BufReader::new(stderr);
+    let mut collected = Vec::new();
+    loop {
+        let mut line = Vec::new();
+        match tokio::time::timeout(limit, reader.read_until(b'\n', &mut line)).await {
+            // EOF, read error and deadline are one case: no more observations
+            // and no advertisement, which every caller judges as INVALID.
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return (collected, false),
+            Ok(Ok(_)) => {
+                collected.extend_from_slice(&line);
+                if String::from_utf8_lossy(&collected).contains(needle) {
+                    return (collected, true);
+                }
+            }
+        }
+    }
+}
+
 // #1261: anchor run()'s validate_environment call site, not the function body
 // (production_entry_snapshot_capabilities_are_disabled already mirrors the
 // combination by calling the function directly). Only the real --native child
 // observes the call site, and each way to displace the call has its own
 // observation: a removed call lets the child reach its own listening
-// advertisement before the deadline counts, and a reordered call lets
-// assembly's project registration leave entries under home before the
-// rejection. Launch, pipe, decode and early-exit failures stay unbound
-// (INVALID): a child that exits before the rejection is on stderr says
-// nothing about the gate.
+// advertisement, and a reordered call lets assembly's project registration
+// leave entries under home before the rejection. Launch, pipe, decode and
+// early-exit failures stay unbound (INVALID): a child that says neither the
+// rejection nor the advertisement says nothing about the gate.
 #[tokio::test]
 async fn native_entry_process_rejects_inherited_authority() {
     // #1401 item 5: this test's scratch is its own (not the shared
@@ -183,7 +219,6 @@ async fn native_entry_process_rejects_inherited_authority() {
         "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n",
     )
     .expect("#1261 native entry home config file");
-    use tokio::io::AsyncReadExt;
     for key in [
         "PILOTDECK_STORAGE_ROOT",
         "PILOTDECK_SNAPSHOT_ROOT",
@@ -209,77 +244,50 @@ async fn native_entry_process_rejects_inherited_authority() {
             .kill_on_drop(true)
             .spawn()
             .expect("#1261 native entry child launch");
-        let mut stderr = child
+        let stderr = child
             .stderr
             .take()
             .expect("#1261 native entry child stderr pipe");
-        // read_to_end keeps every byte it already collected when the deadline
-        // cancels it, so an advertisement the child printed is still observed.
-        let mut collected = Vec::new();
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            stderr.read_to_end(&mut collected),
-        )
-        .await;
-        match outcome {
-            // The child exited and closed stderr: judge the rejection itself.
-            Ok(Ok(_eof)) => {
-                let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
-                    .await
-                    .expect("#1261 native entry child exit deadline")
-                    .expect("#1261 native entry child exit status");
-                let stderr = String::from_utf8_lossy(&collected);
-                // A child that exits before the entry gate (assembly, config,
-                // dyld, OOM) leaves neither the rejection nor the
-                // advertisement on stderr, so this run cannot tell an intact
-                // gate from a displaced one. The plain panic carries no #1261
-                // kill marker: the judge records INVALID instead of a false
-                // KILLED. A child that exits *after* its own listening
-                // advertisement has already proven the entry gate accepted the
-                // authority, so the advertisement reaches a marked assertion
-                // even on this early-exit path.
-                let advertised = stderr.contains("native listening");
-                if !stderr.contains(&rejection) && !advertised {
-                    panic!(
-                        "#1261 native entry child exited early; no rejection and no listening advertisement for {key}, cannot judge"
-                    );
-                }
-                if advertised {
-                    negative_assert!(!advertised, "#1261 native entry rejects inherited {key}");
-                }
-                negative_assert!(
-                    !status.success(),
-                    "#1261 native entry rejects inherited {key}"
-                );
-                // A reordered call reaches assembly before the rejection and
-                // leaves its project registration and run registry under
-                // home; the entry gate leaves home exactly as this test
-                // wrote it (only the config file above).
-                let mut leftover: Vec<_> = std::fs::read_dir(&home)
-                    .expect("#1261 native entry home still readable")
-                    .map(|entry| entry.expect("#1261 native entry home entry").file_name())
-                    .filter(|name| name.as_os_str() != std::ffi::OsStr::new("pilotdeck.yaml"))
-                    .collect();
-                leftover.sort();
-                println!("#1261 leftover under home for {key}: {leftover:?}");
-                negative_assert!(
-                    leftover.is_empty(),
-                    "#1261 native entry rejects inherited {key}"
-                );
-            }
-            Ok(Err(_read)) => panic!("#1261 native entry child stderr read failed"),
-            // Deadline: only the child's own listening advertisement proves
-            // the entry gate accepted the authority; a slow host is not
-            // evidence, so the deadline alone never kills.
-            Err(_deadline) => {
-                let stderr = String::from_utf8_lossy(&collected);
-                negative_assert!(
-                    !stderr.contains("native listening"),
-                    "#1261 native entry rejects inherited {key}"
-                );
-                panic!("#1261 native entry child neither rejected nor advertised listening");
-            }
+        let (collected, advertised) =
+            read_stderr_until(stderr, "native listening", CHILD_OBSERVATION_DEADLINE).await;
+        let stderr = String::from_utf8_lossy(&collected);
+        // The advertisement alone proves the entry gate accepted the inherited
+        // authority, so this marked assertion covers every shape that prints
+        // it -- including a child that exits right after (#1401 item 1).
+        negative_assert!(!advertised, "#1261 native entry rejects inherited {key}");
+        // Neither the rejection nor the advertisement: the child exited (or
+        // went quiet) before the entry gate, so this run cannot tell an intact
+        // gate from a displaced one. The plain panic carries no #1261 kill
+        // marker: the judge records INVALID instead of a false KILLED.
+        if !stderr.contains(&rejection) {
+            panic!(
+                "#1261 native entry child exited early; no rejection and no listening advertisement for {key}, cannot judge"
+            );
         }
+        // The rejection is on stderr, so the child is on its way out.
+        let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+            .await
+            .expect("#1261 native entry child exit deadline")
+            .expect("#1261 native entry child exit status");
+        negative_assert!(
+            !status.success(),
+            "#1261 native entry rejects inherited {key}"
+        );
+        // A reordered call reaches assembly before the rejection and
+        // leaves its project registration and run registry under
+        // home; the entry gate leaves home exactly as this test
+        // wrote it (only the config file above).
+        let mut leftover: Vec<_> = std::fs::read_dir(&home)
+            .expect("#1261 native entry home still readable")
+            .map(|entry| entry.expect("#1261 native entry home entry").file_name())
+            .filter(|name| name.as_os_str() != std::ffi::OsStr::new("pilotdeck.yaml"))
+            .collect();
+        leftover.sort();
+        println!("#1261 leftover under home for {key}: {leftover:?}");
+        negative_assert!(
+            leftover.is_empty(),
+            "#1261 native entry rejects inherited {key}"
+        );
     }
 }
 
@@ -294,10 +302,9 @@ async fn native_entry_process_rejects_inherited_authority() {
 // produce, because the error conversion drops the diagnostics that
 // would have carried the path (measured on cb8: the message text is the
 // whole evidence). With the call intact the child reads the valid home
-// config and stays up, advertising listening before the deadline.
-// Neither branch kills on a slow host alone: an early exit without the
-// parse error, and a deadline without the advertisement, are both
-// unjudgeable (unmarked panics, INVALID).
+// config and stays up, advertising listening. Neither the advertisement
+// nor a silence kills on its own: only the parse error does, so a slow
+// host can only ever be INVALID.
 #[tokio::test]
 async fn native_entry_scrubs_inherited_process_environment() {
     let root =
@@ -334,7 +341,6 @@ async fn native_entry_scrubs_inherited_process_environment() {
     let inherited_config = root.join("inherited-config.yaml");
     std::fs::write(&inherited_config, "not: valid: yaml: {{{\n")
         .expect("#1261 native entry scrub inherited config file");
-    use tokio::io::AsyncReadExt;
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_pilotdeck-gateway"))
         .arg("--native")
         .arg("--home")
@@ -354,42 +360,29 @@ async fn native_entry_scrubs_inherited_process_environment() {
         .kill_on_drop(true)
         .spawn()
         .expect("#1261 native entry scrub child launch");
-    let mut stderr = child
+    let stderr = child
         .stderr
         .take()
         .expect("#1261 native entry scrub child stderr pipe");
-    let mut collected = Vec::new();
-    let outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        stderr.read_to_end(&mut collected),
-    )
-    .await;
-    match outcome {
-        Ok(Ok(_eof)) => {
-            let stderr = String::from_utf8_lossy(&collected);
-            println!("#1261 scrub early exit: {stderr}");
-            let leaked_parse = stderr.contains("Failed to parse default config YAML.");
-            if !leaked_parse {
-                panic!(
-                    "#1261 native entry scrub child exited early; no default config parse observation, cannot judge"
-                );
-            }
-            negative_assert!(
-                !leaked_parse,
-                "#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH"
-            );
-        }
-        Ok(Err(_read)) => panic!("#1261 native entry scrub child stderr read failed"),
-        // Deadline: with the call intact the child is up and listening; a
-        // slow host is not evidence, so the deadline alone never kills.
-        Err(_deadline) => {
-            let stderr = String::from_utf8_lossy(&collected);
-            if !stderr.contains("native listening") {
-                panic!(
-                    "#1261 native entry scrub child neither advertised listening nor exited, cannot judge"
-                );
-            }
-            println!("#1261 scrub child advertised listening; inherited config was not read");
-        }
+    let (collected, advertised) =
+        read_stderr_until(stderr, "native listening", CHILD_OBSERVATION_DEADLINE).await;
+    let stderr = String::from_utf8_lossy(&collected);
+    // The inherited key surviving the scrub is the only kill: the child then
+    // parses the injected file and exits with this message.
+    let leaked_parse = stderr.contains("Failed to parse default config YAML.");
+    if leaked_parse {
+        println!("#1261 scrub early exit: {stderr}");
     }
+    negative_assert!(
+        !leaked_parse,
+        "#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH"
+    );
+    // Intact: the key was scrubbed, the home config loaded and the child is
+    // up. Silence with neither observation is unjudgeable (INVALID).
+    if !advertised {
+        panic!(
+            "#1261 native entry scrub child neither advertised listening nor exited, cannot judge"
+        );
+    }
+    println!("#1261 scrub child advertised listening; inherited config was not read");
 }

@@ -11,10 +11,12 @@
 （`src/pilotdeck-gateway/tests/native_process.rs`）：用 `CARGO_BIN_EXE_pilotdeck-gateway`
 起真实 `--native` 子进程（完整合法 CLI、`env_clear()` 后注入被测键），断言子进程非零
 退出且 stderr 含 `native isolated mode does not accept inherited <key>`。子进程由
-5 秒截止期 + `kill_on_drop` 界定，且调用点的两种破坏各有专属观察：删除调用时子进程
-会带着被接受的权限常驻，只有在 stderr 里观察到子进程自己的 `native listening`
-广播后截止期才计杀（主机慢本身不是证据）；后移调用时装配层的项目注册 / 运行清单
-会在拒绝前写入 `home`，测试断言 `home` 除自身写入的 config 外无新增条目。
+`kill_on_drop` + 60 秒静默上限界定，stderr 按行读、见到目标行立即返回（#1401 评审 P2：
+原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次白等满 5 秒，慢主机又会被读成「没有
+广播」）。调用点的两种破坏各有专属观察：删除调用时子进程会带着被接受的权限常驻，
+stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是证据）；后移调用时
+装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home` 除自身写入的 config
+外无新增条目。
 
 判杀集合（MARKERS）只含上述三个键断言消息：launch / stderr 管道 / exit-wait 等
 环境性失败一律落 INVALID。子进程早退分两支（#1401 项 1）：stderr **既无 rejection
@@ -29,10 +31,10 @@
 `native_entry_scrubs_inherited_process_environment`：`environment()` 会移除
 `PILOTDECK_CONFIG_PATH`（`config::global_config_path` 里该键赢了 `<home>/pilotdeck.yaml`），
 测试注入指向无效 YAML 的该键——正控下键被移除、子进程读测试写好的合法 home config
-并常驻（截止期分支，广播在场即正控结束）；变异 `let env = inherited;`（跳过 scrub）下
+并常驻（见 `native listening` 行即正控结束）；变异 `let env = inherited;`（跳过 scrub）下
 键保留、子进程读注入文件快速失败，stderr 必现 `Failed to parse default config YAML.`
 （实测：错误转换丢弃携带 path 的 diagnostics，消息文本是唯一可观察证据）。两分支的
-失败方向均为 INVALID（早退无该消息 / 截止期无广播都只报无标记 panic），不引入
+失败方向均为 INVALID（早退无该消息 / 静默无广播都只报无标记 panic），不引入
 「慢主机 → KILLED」路径。
 
 cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_...")` 只在集成
@@ -45,10 +47,13 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 ## 运行
 
 `python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
-模板、三个键名与 scrub 标记外，还绑定测试源码里的 `leftover.is_empty()` 与
-`native listening` 两处观察（#1401 项 4——缺任一处，后移 / 删除变异的判杀就静默失效）。
-实际负控命令为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方
-设置 `CARGO_TARGET_DIR`，使用共享 HEAD 守卫、进程所有权和最终汇总：每项先正控，再
+模板、三个键名与 scrub 标记外，还按**测试函数体切段**绑定观察——rejects 测试里的
+`leftover.is_empty()` 与 `read_stderr_until(stderr, "native listening"`，scrub 测试里的
+`Failed to parse default config YAML.` 与同一条广播读取（#1401 项 4 / 评审 P2：整文件
+needle 分不清哪个测试在观察，两个测试都含 `native listening` 后删掉 rejects 那处仍会
+通过）。实际负控命令为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由
+调用方设置 `CARGO_TARGET_DIR`，证据目录走共享 `new_output_directory`（`#953` 非空拒用、
+`.claim` O_EXCL），使用共享 HEAD 守卫、进程所有权和最终汇总：每项先正控，再
 `--no-run` 确认变异体可编译，再判杀，恢复后复跑；过期锚点与无法编译都是 INVALID，
 任一非 KILLED 即非零退出。未提交源码不能运行（`mutating_sources` 拒跑），不得使用
 副本仓库绕过；由协调者在提交后的宿主树上运行。

@@ -9,10 +9,11 @@ real CARGO_BIN_EXE child exercises run()'s validate_environment call site.
 from pathlib import Path
 import difflib
 import os
+import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
 from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -75,34 +76,61 @@ def mutate(case, text):
     return text.replace(case.old, case.new, 1)
 
 
+def test_body(source, name):
+    """The named test function's body, up to the next test attribute.
+
+    File-level needles cannot say *which* test observes what: both tests now
+    contain ``native listening``, so a file-level check passed with the
+    rejects test's own observation deleted (#1401 review P2, both lineages).
+    """
+    start = re.search(rf'^async fn {re.escape(name)}\(', source, re.M)
+    if start is None:
+        start = re.search(rf'^fn {re.escape(name)}\(', source, re.M)
+    if start is None:
+        raise SystemExit(f'#1261 test missing from native_process.rs: {name}')
+    following = re.search(r'^#\[(?:tokio::)?test\]', source[start.end():], re.M)
+    end = start.end() + following.start() if following else len(source)
+    return source[start.end():end]
+
+
 def main():
     selected_rows = [Case(*row) for row in mutations]
     if sys.argv[1:] == ['--check']:
         test_source = TEST_FILE.read_text()
         for case in selected_rows:
             mutate(case, case.path.read_text())
+        rejects = test_body(test_source, TEST)
+        scrub = test_body(test_source, SCRUB_TEST)
         # The runtime judge matches substituted messages, so --check can only
-        # bind the shared template and the key list the test iterates; drift
-        # here fails before any cargo run is needed.
-        if '#1261 native entry rejects inherited {key}' not in test_source:
+        # bind the shared template and the key list each test iterates; drift
+        # here fails before any cargo run is needed. Each needle is bound to
+        # the test that actually observes it (#1401 review P2).
+        if '#1261 native entry rejects inherited {key}' not in rejects:
             raise SystemExit(f'#1261 marker template missing from {TEST}')
         for key in ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT',
                     'PILOTDECK_MANAGED_CONFIG'):
-            if f'"{key}"' not in test_source:
+            if f'"{key}"' not in rejects:
                 raise SystemExit(f'#1261 key missing from {TEST}: {key}')
         # #1401 item 4: the bound test's two observations beyond the
         # rejection itself -- assembly's leftovers under home and the
         # listening advertisement -- must stay in the source; a drift here
         # would silently unbind the reorder and omitted mutants.
         for needle, what in (('leftover.is_empty()', 'home leftover observation'),
-                             ('native listening',
+                             ('read_stderr_until(stderr, "native listening"',
                               'listening advertisement observation')):
-            if needle not in test_source:
+            if needle not in rejects:
                 raise SystemExit(f'#1261 missing {what} from {TEST}')
-        # #1401 item 6: the scrub mutant's marker must stay in the bound
-        # test, so the runtime kill cannot drift away from the anchor.
-        if SCRUB_MARKER not in test_source:
-            raise SystemExit(f'#1261 scrub marker missing from {SCRUB_TEST}')
+        # #1401 item 6: the scrub mutant's marker and the two observations
+        # its verdict rests on must stay in the scrub test, so the runtime
+        # kill cannot drift away from the anchor and an unjudgeable branch
+        # cannot be mistaken for the pass branch.
+        for needle, what in ((SCRUB_MARKER, 'scrub marker'),
+                             ('Failed to parse default config YAML.',
+                              'inherited config parse observation'),
+                             ('read_stderr_until(stderr, "native listening"',
+                              'scrub listening observation')):
+            if needle not in scrub:
+                raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
         return 0
     if len(sys.argv) < 2:
@@ -115,8 +143,7 @@ def main():
         raise SystemExit('unknown mutation name')
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = new_output_directory(Path(sys.argv[1]).resolve())
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only', LANG='en_US.UTF-8')
     env.pop('LC_ALL', None)
     env.pop('LC_MESSAGES', None)
