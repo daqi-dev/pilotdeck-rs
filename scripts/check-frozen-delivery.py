@@ -66,12 +66,18 @@ checkout of the pinned commit (``git worktree add --detach``), so neither a
 moving ``HEAD`` nor a file edit in the audited tree can reach it.  The scope is
 *observed* on two channels, not asserted in general: the audited tree's ``git
 status`` (tracked and untracked) is compared before and after the run, and the
-git worktree bookkeeping is sampled around each child.  A difference on either
-is blocking.  Writes a child makes elsewhere (``$HOME``, some other ``$TMPDIR``
-path) are outside what a wrapper can see; the promise is about the audited
-tree and this repo's worktree records.  The only writes outside temporary
-directories are git's own worktree bookkeeping under ``.git/worktrees``, which
-is removed again before the tool exits.
+git worktree bookkeeping is sampled before and after each child.  A changed
+audited tree, an unreadable bookkeeping sample, or this run's own snapshot
+record surviving is blocking.  A *new* worktree entry that appears while a
+child runs is reported as a diagnostic note, not a blocker: git records no
+creator, so a concurrent sibling coordinator's ``git worktree add`` and a child
+reaching out of its snapshot are indistinguishable, and a false BLOCK for the
+former is the failure this channel must avoid.  Writes a child makes elsewhere
+(``$HOME``, some other ``$TMPDIR`` path) are outside what a wrapper can see;
+the promise is about the audited tree and this repo's worktree records.  The
+only writes outside temporary directories are git's own worktree bookkeeping
+under ``.git/worktrees``, which is removed again before the tool exits; if that
+removal cannot be verified the run is blocking, never silently READY.
 
 Usage:
     python3 -I scripts/check-frozen-delivery.py [--root PATH] [--base REF]
@@ -3543,6 +3549,29 @@ def snapshot_entry(root, entry, snapshot):
     return candidate if candidate.is_file() else None
 
 
+def window_verdict(entries_before, entries_after):
+    """``(block, note)`` for one child's worktree-bookkeeping window.
+
+    An unreadable sample is blocking: skipping the observation silently drops
+    half of the write-scope promise (a child that reached out would leave no
+    trace and the run would still be READY).  A *new* entry is deliberately
+    only a note: git records no creator, so a concurrent sibling coordinator's
+    ``git worktree add`` and a child escaping its snapshot are the same
+    observation, and blocking on it was a false FAIL for siblings.  This run's
+    own snapshot bookkeeping is still blocking (`scope_verdict`), and a
+    delivery is not refused for someone else's worktree.
+    """
+    if entries_before is None or entries_after is None:
+        return ('cannot verify the apparatus\'s write scope: the git worktree '
+                'list was unreadable before or after it ran'), None
+    appeared = sorted(entries_after - entries_before)
+    if not appeared:
+        return None, None
+    return None, ('a git worktree entry appeared while an apparatus ran; it cannot '
+                  'be attributed to that apparatus or to a concurrent sibling and '
+                  'is reported as a diagnostic: ' + '; '.join(appeared[:5]))
+
+
 def run_apparatus(root, kind, entry, base, mb, snapshot=None):
     """Run one check_frozen.py --base and classify its failures.
 
@@ -3565,11 +3594,9 @@ def run_apparatus(root, kind, entry, base, mb, snapshot=None):
                                                    'committed at the pinned snapshot', None))
             return result
         cwd = snapshot
-    # Sample the git worktree bookkeeping around the child only: a concurrent
-    # coordinator creating a sibling worktree is indistinguishable from a child
-    # reaching out of its snapshot, so the window is narrowed to the child's own
-    # runtime instead of the whole run (the run-level sample below then only
-    # has to catch entries that belong to *this* precheck).
+    # Sample the git worktree bookkeeping around the child only: the window is
+    # narrowed to the child's own runtime, and an unreadable sample is blocking
+    # while an unattributable new entry is a diagnostic (see `window_verdict`).
     entries_before = worktree_entries(root)
     try:
         proc = subprocess.run([sys.executable, '-I', str(child), '--base', base],
@@ -3579,14 +3606,11 @@ def run_apparatus(root, kind, entry, base, mb, snapshot=None):
     except (OSError, subprocess.SubprocessError) as error:
         proc, run_error = None, error
     entries_after = worktree_entries(root)
-    if entries_before is not None and entries_after is not None:
-        appeared = sorted(entries_after - entries_before)
-        if appeared:
-            result['blocking'].append(('blocking',
-                                       'a git worktree entry appeared in the audited repo '
-                                       'while this apparatus ran and is not part of the '
-                                       'precheck\'s write scope: '
-                                       + '; '.join(appeared[:5]), None))
+    window_block, window_note = window_verdict(entries_before, entries_after)
+    if window_block:
+        result['blocking'].append(('blocking', window_block, None))
+    if window_note:
+        result['note'] = window_note
     if run_error is not None:
         result['blocking'].append(('blocking', f'cannot run {child}: {run_error}', None))
         return result
@@ -3598,7 +3622,9 @@ def run_apparatus(root, kind, entry, base, mb, snapshot=None):
                                                f'(rc={proc.returncode}): ' + ' | '.join(tail), None))
         return result
     status, failures, reason, unregistered = normalise(report)
-    result['note'] = reason
+    if reason:
+        # Keep the window diagnostic collected above instead of dropping it.
+        result['note'] = reason if result['note'] is None else result['note'] + ' | ' + reason
     edges, pending, issues = event_evidence(root, kind, mb)
     result['pending_events'] = sorted(pending)
     result['blocking'].extend(('blocking', message, None) for message in issues)
@@ -3770,46 +3796,98 @@ def create_snapshot(root, commit):
     return target, None
 
 
+def _real_path(path):
+    """Canonical spelling so ``/tmp``/``/private/tmp`` (macOS) compare equal."""
+    try:
+        return os.path.realpath(str(path))
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _admin_dir(root):
+    """``.git/worktrees`` of the repo at ``root``, or None when it cannot tell."""
+    code, out, _ = git(root, 'rev-parse', '--git-common-dir')
+    if code != 0 or not out.strip():
+        return None
+    common = Path(out.strip())
+    if not common.is_absolute():
+        common = root / common
+    return Path(_real_path(common)) / 'worktrees'
+
+
+def _recorded_gitdir(entry):
+    """The path an admin entry's ``gitdir`` file names, canonicalised."""
+    try:
+        text = (entry / 'gitdir').read_text(encoding='utf-8',
+                                            errors='surrogateescape').strip()
+    except OSError:
+        return None
+    return _real_path(text)
+
+
+def admin_entry_present(root, target):
+    """True when some ``.git/worktrees`` entry still names ``target``.
+
+    ``None`` means the bookkeeping could not be read, which callers treat as
+    "not proven clean" rather than as an absence.
+    """
+    try:
+        admin = _admin_dir(root)
+        if admin is None:
+            return None
+        if not admin.exists():
+            return False
+        wanted = _real_path(target / '.git')
+        for entry in admin.iterdir():
+            if _recorded_gitdir(entry) == wanted:
+                return True
+        return False
+    except OSError:
+        return None
+
+
 def drop_admin_entry(root, target):
-    """Remove the ``.git/worktrees/<id>`` entry git made for ``target``; never raise.
+    """Remove the ``.git/worktrees/<id>`` entry git made for ``target``.
 
     ``git worktree prune`` would be repo-wide: it also drops *other* sessions'
     stale bookkeeping, which this run's write scope does not cover -- and the
     before/after ``worktree_entries`` comparison only sees additions, so the
     tool would never notice its own prune.  Matching on the entry's ``gitdir``
-    file names exactly the target git registered for this holder.
+    file names exactly the target git registered for this holder, compared by
+    canonical path so an equivalent spelling (``/private/tmp`` vs ``/tmp``, a
+    symlinked holder root) still matches.
+
+    Returns True only when no entry for ``target`` remains.  ``rmtree`` is
+    best-effort, so the result is verified rather than assumed: a silent
+    failure here must keep the holder registered for the ``atexit`` retry
+    instead of letting a leftover be demoted to someone else's note.
     """
     try:
-        code, out, _ = git(root, 'rev-parse', '--git-common-dir')
-        if code != 0 or not out.strip():
-            return
-        common = Path(out.strip())
-        if not common.is_absolute():
-            common = root / common
-        admin = common / 'worktrees'
-        if not admin.is_dir():
-            return
-        wanted = str(target / '.git')
+        admin = _admin_dir(root)
+        if admin is None:
+            return False
+        if not admin.exists():
+            return True
+        wanted = _real_path(target / '.git')
         for entry in admin.iterdir():
-            try:
-                recorded = (entry / 'gitdir').read_text(encoding='utf-8',
-                                                        errors='replace').strip()
-            except OSError:
-                continue
-            if recorded == wanted:
+            if _recorded_gitdir(entry) == wanted:
                 shutil.rmtree(entry, ignore_errors=True)
     except OSError:
-        pass
+        return False
+    return admin_entry_present(root, target) is False
 
 
 def drop_holder(root, holder):
-    """Remove one snapshot holder and its git bookkeeping; never raise.
+    """Remove one snapshot holder and its git bookkeeping.
 
     The holder stays in ``_SNAPSHOT_HOLDERS`` until it is actually gone.  A
     SIGTERM landing inside the removal raises out of here (the ``SystemExit``
     the handler installed), and the ``atexit`` cleanup must still see the
     record to retry: dropping it first, as this used to, made an interrupted
-    holder invisible and leaked it for good.
+    holder invisible and leaked it for good.  The same applies to a removal
+    that merely *reports* success: both the holder directory and its
+    ``.git/worktrees`` entry are verified gone before the record is dropped,
+    and the return value says whether that happened.
     """
     target = holder / 'tree'
     try:
@@ -3818,9 +3896,14 @@ def drop_holder(root, holder):
             drop_admin_entry(root, target)
         shutil.rmtree(holder, ignore_errors=True)
     except Exception:  # noqa: BLE001 -- cleanup must not mask the exit path
-        return
+        return False
+    if holder.exists():
+        return False
+    if admin_entry_present(root, target) is not False:
+        return False
     if (root, holder) in _SNAPSHOT_HOLDERS:
         _SNAPSHOT_HOLDERS.remove((root, holder))
+    return True
 
 
 def remove_snapshot(root, snapshot):
@@ -3830,13 +3913,28 @@ def remove_snapshot(root, snapshot):
     drop_holder(root, snapshot.parent)
 
 
+def holder_verdict(holders):
+    """Blocking message for snapshot records this process could not remove.
+
+    ``drop_holder`` only deregisters a holder after verifying both the holder
+    directory and its ``.git/worktrees`` entry are gone, so anything left here
+    is a real leftover: the run must not be reported READY as if it had written
+    nothing, even though the ``atexit`` cleanup will retry once more.
+    """
+    if not holders:
+        return None
+    return ('the precheck could not remove its own snapshot bookkeeping; this run '
+            'must not be treated as read-only: '
+            + '; '.join(sorted({str(holder) for _root, holder in holders})[:5]))
+
+
 def scope_verdict(before, after, snapshot):
     """``(block, note)`` for the run-level worktree comparison; either may be None.
 
     Only an entry this precheck created (the snapshot) surviving is blocking:
     the run cannot tell a concurrent sibling's ``git worktree add`` from a
     child reaching out, and a delivery must not be refused for the former.  A
-    child's own addition is caught inside its run window by ``run_apparatus``.
+    child's own addition is reported by ``run_apparatus`` as a diagnostic.
     """
     if before is None or after is None:
         return ('cannot verify the precheck\'s write scope: git worktree list is '
@@ -4036,15 +4134,25 @@ def main(argv=None):
                                 'reducible': [], 'pending': [], 'pending_events': [], 'note': None})
         finally:
             remove_snapshot(root, snapshot)
+        # `remove_snapshot` only deregisters a holder once the directory *and*
+        # its `.git/worktrees` entry are verified gone.  Anything still
+        # registered is a leftover the run must not hide behind a READY.
+        leftover = holder_verdict(_SNAPSHOT_HOLDERS)
+        if leftover:
+            results.insert(0, {'kind': 'worktree',
+                               'blocking': [('blocking', leftover, None)],
+                               'reducible': [], 'pending': [], 'pending_events': [],
+                               'note': None})
         issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
 
     # Write-scope proof (P1: the read-only promise must be verifiable, not
     # asserted).  The audited tree never hosts a child, so the only record this
-    # run may leave behind is the snapshot's own -- and it must be gone by now.
-    # Entries created by someone else after the last apparatus exited are a
-    # note, not a block: refusing the delivery because a sibling coordinator
-    # created a worktree in the same repo would be a false BLOCK, and a child's
-    # own addition is caught inside that child's run window instead.
+    # run may leave behind is the snapshot's own -- and it must be gone by now
+    # (enforced above through the holder registry).  Entries created by someone
+    # else are a note, not a block: refusing the delivery because a sibling
+    # coordinator created a worktree in the same repo would be a false BLOCK,
+    # and git cannot attribute a new entry to a creator.  A child's own
+    # addition is likewise reported by its run window as a diagnostic.
     worktrees_after = worktree_entries(root)
     scope_block, scope_note = scope_verdict(worktrees_before, worktrees_after, snapshot)
     if scope_block:
