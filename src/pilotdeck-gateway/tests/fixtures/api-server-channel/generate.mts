@@ -67,9 +67,22 @@ type RequestSpec = {
   path?: string;
   headers?: Record<string, string>;
   body?: string;
+  // #1620: write only this many body bytes and never call `req.end()`, so the
+  // request can only be ended by the server's own `requestTimeout`. Kept on
+  // `send` rather than a second helper: the recording semantics below
+  // (first-wins `done`, socket-level byte counting from #1606 fix-r8) must not
+  // have a second copy that a later fix forgets to update.
+  sendBytes?: number;
 };
 
 function send(port: number, spec: RequestSpec): Promise<any> {
+  if (spec.sendBytes !== undefined) {
+    const declared = Number(spec.headers?.['content-length']);
+    assert.ok(
+      Number.isInteger(declared) && spec.sendBytes >= 0 && spec.sendBytes < declared,
+      '#1620 a partial send needs an integer content-length larger than sendBytes',
+    );
+  }
   return new Promise((resolve) => {
     const headers: Record<string, string> = { ...(spec.headers ?? {}) };
     const keepAlive = /keep-alive/i.test(headers.connection ?? '');
@@ -125,70 +138,10 @@ function send(port: number, spec: RequestSpec): Promise<any> {
     });
     req.on('error', (error: any) => done(failure(error)));
     try {
-      if (spec.body !== undefined) req.write(spec.body);
-      req.end();
-    } catch (error: any) {
-      done(failure(error));
-    }
-  });
-}
-
-// #1620: a request whose body is declared but never completed. The baseline's
-// `requestTimeout` (Node default 300 s) is the only thing that ends it, so
-// this helper deliberately never calls `req.end()`.
-function sendPartial(
-  port: number,
-  spec: RequestSpec & { sendBytes: number },
-): Promise<any> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const received: Buffer[] = [];
-    let status: number | undefined;
-    const done = (value: any) => {
-      if (!settled) {
-        settled = true;
-        resolve(value);
-      }
-    };
-    const failure = (error: any) => ({
-      error: String(error.code ?? error.message),
-      bytes: received.reduce((total, chunk) => total + chunk.length, 0),
-      status,
-    });
-    const declared = Number(spec.headers?.['content-length']);
-    assert.ok(
-      Number.isInteger(declared) && spec.sendBytes >= 0 && spec.sendBytes < declared,
-      '#1620 sendPartial needs an integer content-length larger than sendBytes',
-    );
-    const req = http.request(
-      {
-        host: '127.0.0.1',
-        port,
-        method: spec.method ?? 'GET',
-        path: spec.path ?? '/',
-        headers: { ...(spec.headers ?? {}) },
-        agent: false,
-      },
-      (response) => {
-        status = response.statusCode;
-        const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer) => chunks.push(chunk));
-        response.on('end', () =>
-          done({
-            status: response.statusCode,
-            headers: maskHeaders(response.headers),
-            body: maskText(Buffer.concat(chunks).toString('utf8')),
-          }),
-        );
-        response.on('error', (error: any) => done(failure(error)));
-      },
-    );
-    req.on('socket', (socket) => {
-      socket.on('data', (chunk: Buffer) => received.push(chunk));
-    });
-    req.on('error', (error: any) => done(failure(error)));
-    try {
-      req.write(spec.body!.slice(0, spec.sendBytes));
+      if (spec.body !== undefined) req.write(spec.body.slice(0, spec.sendBytes));
+      // A partial send deliberately never ends the request: the baseline's
+      // `requestTimeout` is the only thing that can finish it (#1620).
+      if (spec.sendBytes === undefined) req.end();
     } catch (error: any) {
       done(failure(error));
     }
@@ -512,7 +465,7 @@ const STALLED_DECLARED_BYTES = 64;
 const STALLED_SENT_BYTES = 8;
 {
   const started = await startChannel({}, undefined);
-  const result = await sendPartial(started.port, {
+  const result = await send(started.port, {
     method: 'POST',
     path: '/v1/chat/completions',
     headers: {

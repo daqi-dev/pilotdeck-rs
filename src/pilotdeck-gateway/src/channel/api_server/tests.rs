@@ -1644,6 +1644,17 @@ async fn partial_body_is_answered_at_the_body_read_deadline() {
         Some("close"),
         "#1333 the requestTimeout 408 closes the connection"
     );
+    // Node's `requestTimeoutResponse` is 51 bytes with no `Date` line, and the
+    // registered divergence specs (A8.3-API-SERVER-003-R1 / -004) state that
+    // the Rust answer must not add one. `handle` skips `finish` (the only
+    // place this lane adds `Date`) exactly for that reason, so pin its absence:
+    // without this the whole `BodyReadTimeout` marker could be simplified away
+    // and every test would stay green while the header regressed.
+    assert!(
+        headers.get("date").is_none(),
+        "#1333 the requestTimeout 408 must not gain a Date header, got {:?}",
+        headers
+    );
     assert!(
         dechunk(&response[end..]).is_empty(),
         "#1333 the requestTimeout 408 body is empty"
