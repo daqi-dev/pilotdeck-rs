@@ -145,7 +145,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '1e0f06437c505d9174ecca307e43f8182eb62d41efc260e00424b46e84cc6064'
+PINNED_DEVICE_SHA256 = '4ca378bbf9c56d75f4f1f88ce4e14e5a151db579a5d93cb8f2e2e2ebbdf33983'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -232,14 +232,30 @@ with tempfile.TemporaryDirectory() as tdir:
     d = os.path.join(tdir, 'ts-r1')
     os.makedirs(os.path.join(d, 'artifacts'))
     with open(os.path.join(d, 'run.json'), 'w') as fh:
-        json.dump({'side': 'ts', 'valid_round': True, 'identity_ok': True}, fh)
+        json.dump({'side': 'ts', 'valid_round': True, 'identity_ok': True,
+                   'started_wall': 1762000000.0}, fh)
+    with open(os.path.join(d, 'artifacts', 'summary.json'), 'w') as fh:
+        json.dump({'blocked': []}, fh)
     check('round_problem 有效轮次 → None', fa.round_problem(d, 'ts') is None)
     with open(os.path.join(d, 'artifacts', 'summary.json'), 'w') as fh:
         json.dump({'blocked': ['deadline']}, fh)
     check('round_problem BLOCKED → 报原因', fa.round_problem(d, 'ts') is not None)
+    os.remove(os.path.join(d, 'artifacts', 'summary.json'))
+    check('round_problem 缺 summary.json → 报原因（blocked 未知不算未 blocked）',
+          fa.round_problem(d, 'ts') is not None)
     with open(os.path.join(d, 'run.json'), 'w') as fh:
-        json.dump({'side': 'ts', 'valid_round': False, 'identity_ok': True}, fh)
+        json.dump({'side': 'ts', 'valid_round': True, 'identity_ok': True}, fh)
+    check('round_problem 缺 started_wall → 报原因', fa.round_problem(d, 'ts') is not None)
+    with open(os.path.join(d, 'run.json'), 'w') as fh:
+        json.dump({'side': 'ts', 'valid_round': False, 'identity_ok': True,
+                   'started_wall': 1762000000.0}, fh)
     check('round_problem valid_round 非 true → 报原因', fa.round_problem(d, 'ts') is not None)
+
+# ---- verdict_exit(): 退出码折叠（全 PASS 的批次不算归因证据）----
+check('verdict_exit 有 NOT_6 → 2', fa.verdict_exit(10, 20, 3, False) == 2)
+check('verdict_exit 批次不完整 → 6', fa.verdict_exit(10, 20, 0, True) == 6)
+check('verdict_exit 全 PASS（n6=0）→ 7', fa.verdict_exit(100, 0, 0, False) == 7)
+check('verdict_exit 正常归因 → 0', fa.verdict_exit(80, 20, 0, False) == 0)
 
 # ---- run(): 空对拍必须硬失败（P0：旧版 0 pair 时打印「无第二种差异」并 rc=0）----
 with tempfile.TemporaryDirectory() as tdir:

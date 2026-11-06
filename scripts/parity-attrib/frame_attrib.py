@@ -32,6 +32,7 @@ negctl 子命令用真实 trace 的变异副本证明这些判据不是空话；
 import argparse
 import glob
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -310,15 +311,19 @@ def round_problem(d, side):
         return 'run.json valid_round 不为 true'
     if ledger.get('identity_ok') is not True:
         return 'run.json identity_ok 不为 true'
+    started = ledger.get('started_wall')
+    if type(started) not in (int, float) or not math.isfinite(started):
+        return 'run.json missing/invalid started_wall'
+    # summary.json **缺失即无效**：冻结 `score.py:154-156` 是无条件 read，缺失会抛异常把轮次判无效；
+    # 这里若放行，「blocked 未知」就会被当成「未 blocked」，静默参与判定（#1926 评审 P1）。
     sp = os.path.join(d, 'artifacts', 'summary.json')
-    if os.path.isfile(sp):
-        try:
-            with open(sp) as fh:
-                summary = json.load(fh)
-        except (OSError, ValueError) as exc:
-            return f'summary.json 不可读：{exc}'
-        if summary.get('blocked'):
-            return f'summary.json blocked={summary.get("blocked")!r}'
+    try:
+        with open(sp) as fh:
+            summary = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return f'summary.json 不可读（缺失即无效）：{exc}'
+    if summary.get('blocked'):
+        return f'summary.json blocked={summary.get("blocked")!r}'
     return None
 
 
@@ -334,6 +339,21 @@ def collect_rounds(root, side, trace):
                 why = f'trace 不可读：{exc}'
         (bad.append((os.path.basename(d), why)) if why else good.append(d))
     return good, bad
+
+
+def verdict_exit(npass, n6, not6, invalid_rounds):
+    """把计数折成退出码（纯函数，自测可覆盖）。
+
+    rc=0 只在「确实归因到了 #6 且没有 NOT_6、批次完整」时给出：全 PASS 的批次虽然没出错，
+    但它**没有复现任何 FAIL**，不能当作「#6 已归因」的验收证据（#1926 评审 P1）。
+    """
+    if not6:
+        return 2
+    if invalid_rounds:
+        return 6
+    if n6 == 0:
+        return 7
+    return 0
 
 
 def run(root, scenario):
@@ -395,7 +415,7 @@ def run(root, scenario):
         print('## 反证命中（不能归因 #6）：')
         for name, ev in bad:
             print(' ', name, ev)
-        return 2
+        return verdict_exit(npass, n6, not6, bool(ts_bad or ru_bad))
     if ts_bad or ru_bad:
         # 批次不完整：结论只覆盖有效轮次，不得作为验收证据（fail-closed，不静默通过）。
         print(f'## 警告：{len(ts_bad) + len(ru_bad)} 个轮次无效，已排除：')
@@ -403,9 +423,13 @@ def run(root, scenario):
             for name, why in bad_rounds:
                 print(f'   {side}/{name}: {why}')
         print('## 结论仅覆盖上面列出的有效轮次；含无效轮次的批次不算验收证据。')
-        return 6
+        return verdict_exit(npass, n6, not6, True)
+    if n6 == 0:
+        print(f'## 结论：本批次 {npass} 个 pair 全部 PASS，没有任何 FAIL 可归因；'
+              '该批次不能作为 #6 归因证据。')
+        return verdict_exit(npass, n6, not6, False)
     print('## 结论：该场景所有 FAIL 的语义差异集恰好是 #6 那一条，无第二种差异。')
-    return 0
+    return verdict_exit(npass, n6, not6, False)
 
 
 # ---------- negctl：用真实 trace 的变异副本证明判据不是空话 ----------
