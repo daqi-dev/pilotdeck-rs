@@ -16,6 +16,9 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use pilotdeck_protocol::JsString;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
+use crate::native_process::assembly::Recorders;
+use crate::storage::recorder::Recorder;
+
 /// Weak entries only: a lock lives as long as some request is holding or
 /// waiting on it, and dead handles are pruned on every acquisition.
 static LOCKS: LazyLock<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>> =
@@ -39,6 +42,38 @@ fn registry_key(project_root: &str, session_key: &JsString) -> String {
     key.push('\u{0}');
     key.push_str(&crate::storage::sanitize_session_id(session_key));
     key
+}
+
+/// The cached live writer this request shares a transcript file with, if the
+/// session is loaded. Callers append *through* it instead of building a second
+/// writer: the recorder numbers its appends from an in-memory sequence, so a
+/// fresh writer that restores the tail and appends `sequence + 1` would either
+/// duplicate that number or leave the recorder replaying a stale one.
+///
+/// The lookup uses the stored-transcript identity, not the request spelling --
+/// `/p` and `/p/.`, `a/b` and `a-b` name one file and therefore one writer.
+pub(super) fn live_recorder(
+    recorders: &Recorders,
+    session_key: &JsString,
+) -> Option<Arc<Recorder>> {
+    let wanted = crate::storage::sanitize_session_id(session_key);
+    let map = recorders.lock().unwrap_or_else(|error| error.into_inner());
+    // Prefer the exact spelling when both it and an alias are live; either way
+    // both names belong to one transcript, so any live writer is the writer.
+    let mut alias = None;
+    for (key, weak) in map.iter() {
+        if crate::storage::sanitize_session_id(key) != wanted {
+            continue;
+        }
+        let Some(recorder) = weak.upgrade() else {
+            continue;
+        };
+        if key == session_key {
+            return Some(recorder);
+        }
+        alias = Some(recorder);
+    }
+    alias
 }
 
 /// Hold the returned guard across the whole read-modify-write of one session's
