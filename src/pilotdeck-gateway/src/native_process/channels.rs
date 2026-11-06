@@ -266,12 +266,21 @@ impl NativeChannels {
     /// slot published at construction (TS assigns `activeFeishu` before
     /// `start`).
     async fn make_feishu(&self) -> Arc<dyn ChannelAdapter> {
+        self.make_feishu_with(&self.config).await
+    }
+
+    /// [`Self::make_feishu`] against an explicit config: `reload` must build
+    /// from the config it was handed, not the one the assembly started with
+    /// (`ChannelAdapterBundle.createStartupAdapters(config)` reads the passed
+    /// snapshot, so a reloaded app secret / verify token / domain takes
+    /// effect).
+    async fn make_feishu_with(&self, config: &JsValue) -> Arc<dyn ChannelAdapter> {
         let saved = self.state.load(feishu_key().as_js()).await;
         let state = self.state.clone();
         let on_state_change =
             Arc::new(move |value: JsValue| state.save(feishu_key().as_js(), value));
         Arc::new(FeishuChannel::for_assembly(
-            self.configured_feishu_options(),
+            self.configured_feishu_options(config),
             no_interaction(),
             self.feishu_slot.clone(),
             saved.as_ref(),
@@ -283,9 +292,8 @@ impl NativeChannels {
     /// (an absent field stays `undefined` → the constructor's default). The
     /// assembly-level options supply the loopback `base_url` seam tests need;
     /// a real config keeps the origin its `domainName` selects.
-    fn configured_feishu_options(&self) -> FeishuOptions {
-        let Some(settings) = self
-            .config
+    fn configured_feishu_options(&self, config: &JsValue) -> FeishuOptions {
+        let Some(settings) = config
             .get("adapters")
             .and_then(|adapters| adapters.get("feishu"))
             .and_then(JsValue::as_object)
@@ -333,7 +341,7 @@ impl NativeChannels {
             channels: Vec::new(),
         };
         if feishu_enabled(config) {
-            input.channels.push(self.make_feishu().await);
+            input.channels.push(self.make_feishu_with(config).await);
         }
         if weixin_enabled(config) {
             input.channels.push(self.make_weixin().await);

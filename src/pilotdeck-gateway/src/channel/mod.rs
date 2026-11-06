@@ -34,6 +34,10 @@ use std::{
 pub(crate) struct ActiveChat<K: Eq + Hash> {
     active: Arc<Mutex<HashSet<K>>>,
     chat_id: K,
+    /// Cleared by [`Self::release`]: a slot already given back must not be
+    /// taken back again by `Drop`, which would remove an admission a *later*
+    /// turn of the same chat legitimately holds.
+    armed: bool,
 }
 
 impl<K: Eq + Hash> ActiveChat<K> {
@@ -41,7 +45,11 @@ impl<K: Eq + Hash> ActiveChat<K> {
     /// `Drop` would otherwise release a slot another turn of the same chat
     /// legitimately holds (non-dispatch paths never admit).
     pub(crate) fn new(active: Arc<Mutex<HashSet<K>>>, chat_id: K) -> Self {
-        Self { active, chat_id }
+        Self {
+            active,
+            chat_id,
+            armed: true,
+        }
     }
 
     /// Take the slot and hand back its guard in one step: `Some` only when
@@ -62,10 +70,28 @@ impl<K: Eq + Hash> ActiveChat<K> {
         };
         fresh.then(|| Self::new(active, chat_id))
     }
+
+    /// Give the slot back now, so a later `Drop` cannot release an admission
+    /// another turn took after this one. Callers that release while holding
+    /// their own state lock get an atomic "queue empty and no longer active"
+    /// hand-off: a turn queued by a losing racer under that same lock is
+    /// either seen before the release or wakes a fresh admission.
+    pub(crate) fn release(&mut self) {
+        if self.armed {
+            self.active
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&self.chat_id);
+            self.armed = false;
+        }
+    }
 }
 
 impl<K: Eq + Hash> Drop for ActiveChat<K> {
     fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
         // A poisoned lock still owns a valid set; recover it instead of
         // panicking inside the unwind — a `Drop` panic aborts the process.
         self.active

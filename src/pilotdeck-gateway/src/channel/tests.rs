@@ -1483,17 +1483,21 @@ fn bundle_gate_accepts_an_implemented_key() {
     }
 }
 
-// `weixin` is the one bundle key the native assembly builds today, so the
-// production declaration must keep it; dropping it would reject the only
-// migrated bundle channel. `feishu` stays out until #1329 lands its
-// construction (that unit adds both the adapter and the key).
+// Every bundle key now has a native constructor (`weixin` since #1694,
+// `feishu` since #1329), so the production declaration must cover the whole
+// table: dropping a key would reject an enabled bundle channel the assembly
+// can in fact build, and adding one ahead of its construction would let a
+// config start with a channel that is never created.
 #[test]
-fn implemented_bundle_keys_are_exactly_the_assembled_weixin() {
+fn implemented_bundle_keys_are_exactly_the_assembled_bundle_keys() {
     crate::negative_assert_eq!(
         crate::native_process::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-        &["weixin"],
+        &["feishu", "weixin"],
         "#1763 assembly declares exactly the bundle keys it constructs"
     );
+    // The table equality (every `BUNDLE_CHANNEL_KEYS` entry has a constructor
+    // and nothing else is listed) lives with the assembly constant, in
+    // `native_process::channels_tests::bundle_keys_match_the_assembly`.
     crate::negative_assert!(
         !BUNDLE_CHANNEL_KEYS
             .iter()

@@ -705,22 +705,34 @@ async fn startup_rejection_reaches_stderr_in_the_debug_form() {
     );
 }
 
-// #1694 §7: `feishu` is a bundle key outside the unmigrated table with no
-// native implementation yet (#1329). Without the assembly's implementation
-// check it would be today's silent skip under a different key name.
+// #1694 §7 / #1329: `feishu` used to be a bundle key outside the unmigrated
+// table with no native implementation, so enabling it was rejected. The
+// constructor landed with #1329, so the same config must now start (a
+// credential-less channel logs a warning and stays inert). The gate itself
+// still exists — a bundle key listing without a constructor fails
+// `channel::tests::implemented_bundle_keys_are_exactly_the_assembled_bundle_keys`.
+// #1694 §7: the declaration is closed in both directions — every bundle key
+// has a constructor (an enabled key that is missing here is refused at
+// startup) and no constructor exists for a key the loader does not own. This
+// is the cell that kills dropping `feishu` from `BUNDLE_CHANNEL_KEYS`.
+#[test]
+fn bundle_keys_match_the_assembly() {
+    let mut implemented = crate::native_process::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS.to_vec();
+    implemented.sort_unstable();
+    let mut bundle = crate::channel::loader::BUNDLE_CHANNEL_KEYS.to_vec();
+    bundle.sort_unstable();
+    crate::negative_assert_eq!(
+        implemented,
+        bundle,
+        "#1763 the assembly constructs exactly the bundle keys the loader owns"
+    );
+}
+
 #[tokio::test]
-async fn startup_refuses_unimplemented_feishu() {
-    let error = startup_error(
+async fn startup_builds_the_enabled_feishu_channel() {
+    crate::test_negative_receipt::expect_ok(
         start_with_adapters("  feishu: {enabled: true}\n").await,
-        "#1763 enabled feishu must refuse native startup",
-    );
-    crate::negative_assert!(
-        error.contains("channel \"feishu\""),
-        "#1763 startup error names feishu"
-    );
-    crate::negative_assert!(
-        error.contains(UNMIGRATED_REJECTION_PHRASE),
-        "#1763 feishu startup error carries the unmigrated phrase"
+        "#1329 enabled feishu must start native assembly",
     );
 }
 

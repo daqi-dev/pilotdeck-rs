@@ -174,12 +174,11 @@ struct SeenEvents {
 }
 
 impl SeenEvents {
-    fn contains(&self, id: &str) -> bool {
-        self.set.contains(id)
-    }
-    fn remember(&mut self, id: String) {
+    /// Returns whether the id was new (`Set.add`'s boolean): the dedupe
+    /// decision and the registration share the caller's critical section.
+    fn remember(&mut self, id: String) -> bool {
         if !self.set.insert(id.clone()) {
-            return;
+            return false;
         }
         self.order.push_back(id);
         while self.order.len() > SEEN_EVENTS_MAX {
@@ -187,11 +186,17 @@ impl SeenEvents {
                 self.set.remove(&oldest);
             }
         }
+        true
     }
 }
 
 #[derive(Default)]
 struct Batch {
+    /// Identity of this queue instance. `/new` removes the entry and the next
+    /// message creates a fresh one; a drainer from the old instance must not
+    /// consume or remove the new one's messages (it only ever touches the id
+    /// it started with).
+    id: u64,
     messages: Vec<InboundMessage>,
     draining: bool,
     timer: Option<JoinHandle<()>>,
@@ -237,6 +242,8 @@ struct State {
     /// `permissionAnsweringChats` + `permissionAnsweringTokens`.
     permission_answering: HashMap<String, u64>,
     next_answering_token: u64,
+    /// Monotonic batch identity (see [`Batch::id`]).
+    next_batch_id: u64,
 }
 
 impl State {
@@ -252,6 +259,7 @@ impl State {
             permission_answering: HashMap::new(),
             // TS starts the counter at 1.
             next_answering_token: 1,
+            next_batch_id: 0,
         }
     }
 }
@@ -385,9 +393,7 @@ impl Runtime {
                 "feishu: appId/appSecret not configured; outbound replies will not be sent. \
                  Configure adapters.feishu.appId/appSecret in pilotdeck.yaml.",
             );
-            return Ok(Arc::new(NoopHandle));
-        }
-        if options.connection_mode == "stream" {
+        } else if options.connection_mode == "stream" {
             // The Lark WS SDK is not ported; this is the TS fallback line for
             // a WS start that did not come up.
             self.log(
@@ -463,13 +469,15 @@ impl Runtime {
             ),
             ParsedEvent::Ignore => (200, respond_json(vec![("ok", JsValue::Bool(true))])),
             ParsedEvent::Message(message) => {
-                if self
-                    .state
-                    .lock()
-                    .expect("#1329 state mutex")
-                    .seen
-                    .contains(&message.event_id)
-                {
+                // Lookup and registration are one critical section: two
+                // concurrent deliveries of the same `event_id` (Feishu retries
+                // on its own schedule) must not both enqueue. TS does the
+                // `has`/`add` pair synchronously on one event loop.
+                let already_seen = {
+                    let mut state = self.state.lock().expect("#1329 state mutex");
+                    !state.seen.remember(message.event_id.clone())
+                };
+                if already_seen {
                     return (
                         200,
                         respond_json(vec![
@@ -478,11 +486,6 @@ impl Runtime {
                         ]),
                     );
                 }
-                self.state
-                    .lock()
-                    .expect("#1329 state mutex")
-                    .seen
-                    .remember(message.event_id.clone());
                 self.enqueue_inbound(message);
                 (200, respond_json(vec![("ok", JsValue::Bool(true))]))
             }
@@ -501,14 +504,19 @@ impl Runtime {
         } else {
             0
         };
-        let runtime = self.clone();
-        let timer_chat = chat_id.clone();
-        let timer = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(delay)).await;
-            runtime.drain_inbound_batch(&timer_chat).await;
-        });
         let mut state = self.state.lock().expect("#1329 state mutex");
-        let batch = state.batches.entry(chat_id).or_default();
+        if !state.batches.contains_key(&chat_id) {
+            state.next_batch_id += 1;
+            let id = state.next_batch_id;
+            state.batches.insert(
+                chat_id.clone(),
+                Batch {
+                    id,
+                    ..Batch::default()
+                },
+            );
+        }
+        let batch = state.batches.get_mut(&chat_id).expect("#1329 batch entry");
         // `clearTimeout(batch.timer)`: a timer whose drain already started
         // cannot be stopped — the running drainer picks up the new message
         // in its re-read loop — so only a not-yet-fired timer is aborted.
@@ -520,7 +528,19 @@ impl Runtime {
             previous.abort();
         }
         batch.messages.push(input);
-        batch.timer = Some(timer);
+        // The timer is spawned only after the message is visible in `batches`,
+        // while the state lock is still held: a `delay == 0` task stolen by
+        // another worker between `spawn` and the push would find no entry in
+        // `drain_inbound_batch` and leave the message stranded behind an
+        // already-finished timer (TS `setTimeout` can never fire before the
+        // synchronous enqueue returns). `tokio::spawn` never awaits, so the
+        // lock is not held across a suspension point.
+        let runtime = self.clone();
+        let timer_chat = chat_id.clone();
+        batch.timer = Some(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            runtime.drain_inbound_batch(&timer_chat).await;
+        }));
     }
 
     /// `tryHandlePendingInteraction`: synchronous decision, detached answer.
@@ -543,20 +563,17 @@ impl Runtime {
             return true;
         }
         let pending = self.interaction.permission_pending(&chat_id);
-        let answering = self
-            .state
-            .lock()
-            .expect("#1329 state mutex")
-            .permission_answering
-            .contains_key(&chat_id);
-        if !pending && !answering {
-            return false;
-        }
-        if answering {
-            return true;
-        }
+        // The lookup and the reservation share one critical section: two
+        // concurrent webhook deliveries for the same chat must not both start
+        // an answer task (TS does this synchronously on one event loop).
         let token = {
             let mut state = self.state.lock().expect("#1329 state mutex");
+            if state.permission_answering.contains_key(&chat_id) {
+                return true;
+            }
+            if !pending {
+                return false;
+            }
             let token = state.next_answering_token;
             state.next_answering_token += 1;
             state.permission_answering.insert(chat_id.clone(), token);
@@ -637,7 +654,7 @@ impl Runtime {
     }
 
     async fn drain_inbound_batch(self: &Arc<Self>, chat_id: &str) {
-        {
+        let batch_id = {
             let mut state = self.state.lock().expect("#1329 state mutex");
             let Some(batch) = state.batches.get_mut(chat_id) else {
                 return;
@@ -646,13 +663,17 @@ impl Runtime {
                 return;
             }
             batch.draining = true;
-        }
+            batch.id
+        };
         loop {
             loop {
                 let messages = {
                     let mut state = self.state.lock().expect("#1329 state mutex");
                     match state.batches.get_mut(chat_id) {
-                        Some(batch) if !batch.messages.is_empty() => {
+                        // A batch replaced under us (`/new` removed the entry,
+                        // then a new message created a fresh one) belongs to
+                        // another drainer: stop, never take its messages.
+                        Some(batch) if batch.id == batch_id && !batch.messages.is_empty() => {
                             std::mem::take(&mut batch.messages)
                         }
                         _ => break,
@@ -672,9 +693,17 @@ impl Runtime {
             let done = state
                 .batches
                 .get(chat_id)
-                .is_none_or(|batch| batch.messages.is_empty());
+                .is_none_or(|batch| batch.id != batch_id || batch.messages.is_empty());
             if done {
-                state.batches.remove(chat_id);
+                // Only the instance this drainer started on may be removed;
+                // a replacement keeps its own `draining` flag for its drainer.
+                if state
+                    .batches
+                    .get(chat_id)
+                    .is_some_and(|batch| batch.id == batch_id)
+                {
+                    state.batches.remove(chat_id);
+                }
                 return;
             }
         }
@@ -751,12 +780,14 @@ impl Runtime {
                 self.send(&chat_id, "已创建新会话。").await;
                 return;
             }
-        }
-
-        // The system command registry is out of scope: the two commands the
-        // mapper recognizes are reported as handled (and dropped) rather than
-        // executed, while an unknown slash message still reaches the gateway.
-        if mapped.command.is_some() {
+            // `/new <text>` keeps going with the *new* session key: TS only
+            // returns when `!mapped.message`.
+        } else if mapped.command.is_some() {
+            // The system command registry is out of scope: `/projects` and
+            // `/switch-project` are reported as handled (and dropped) rather
+            // than executed, while an unknown slash message still reaches the
+            // gateway. `/new` is the one mapper command with a submit path
+            // (registered diff A8.3-CH-FEISHU-003).
             return;
         }
         if mapped.message.is_empty() {
@@ -771,24 +802,11 @@ impl Runtime {
             generation: self.generation(&chat_id),
         };
 
-        let active = self
-            .active_chats
-            .lock()
-            .expect("#1329 active chats mutex")
-            .contains(&chat_id);
-        if active {
-            let mut state = self.state.lock().expect("#1329 state mutex");
-            let entry = state.chats.entry(chat_id.clone()).or_default();
-            entry.queue.push_back(turn);
-            while entry.queue.len() > MAX_PENDING_TURNS_PER_CHAT {
-                entry.queue.pop_front();
-            }
-            self.log(
-                "info",
-                &format!("feishu: chat {chat_id} already active, queued message"),
-            );
-            return;
-        }
+        // No separate "is the chat active?" pre-check: the admission and the
+        // queue push have to be one decision (`run_queued_turns` takes the
+        // slot or queues under the state lock). A check made here, followed by
+        // a push made later, could observe a running drain that releases in
+        // between and leave the turn queued with nobody to drain it.
         self.run_queued_turns(&chat_id, turn).await;
     }
 
@@ -868,25 +886,75 @@ impl Runtime {
     }
 
     async fn run_queued_turns(self: &Arc<Self>, chat_id: &str, first: QueuedTurn) {
-        let _slot = match ActiveChat::admit(self.active_chats.clone(), chat_id.to_owned()) {
-            Some(slot) => slot,
-            None => {
-                // Lost the race with the running drain: the turn must still be
-                // queued, exactly like the `active` branch in `dispatch_turn`.
-                let mut state = self.state.lock().expect("#1329 state mutex");
-                let entry = state.chats.entry(chat_id.to_owned()).or_default();
-                entry.queue.push_back(first);
-                while entry.queue.len() > MAX_PENDING_TURNS_PER_CHAT {
-                    entry.queue.pop_front();
+        let mut pending = first;
+        loop {
+            let mut slot = match ActiveChat::admit(self.active_chats.clone(), chat_id.to_owned()) {
+                Some(slot) => slot,
+                None => {
+                    // Lost the race with the running drain: the turn must still
+                    // be queued, exactly like the `active` branch in
+                    // `dispatch_turn`. The push happens under the same state
+                    // lock the holder takes to decide "queue empty and release",
+                    // so exactly one of the two observes the other.
+                    let mut state = self.state.lock().expect("#1329 state mutex");
+                    let entry = state.chats.entry(chat_id.to_owned()).or_default();
+                    entry.queue.push_back(pending);
+                    while entry.queue.len() > MAX_PENDING_TURNS_PER_CHAT {
+                        entry.queue.pop_front();
+                    }
+                    let holder_active = self
+                        .active_chats
+                        .lock()
+                        .expect("#1329 active chats mutex")
+                        .contains(chat_id);
+                    drop(state);
+                    if holder_active {
+                        self.log(
+                            "info",
+                            &format!("feishu: chat {chat_id} already active, queued message"),
+                        );
+                        return;
+                    }
+                    // The holder released between our `admit` and our push:
+                    // take the turn back and become the drainer ourselves. If a
+                    // third racer already admitted and drained it, stop here.
+                    match self.shift_turn(chat_id) {
+                        Some(turn) => {
+                            pending = turn;
+                            continue;
+                        }
+                        None => return,
+                    }
                 }
-                return;
+            };
+            let mut next = Some(pending);
+            while let Some(turn) = next {
+                self.process_turn(chat_id, &turn).await;
+                next = self.take_next_or_release(chat_id, &mut slot);
             }
-        };
-        let mut next = Some(first);
-        while let Some(turn) = next {
-            self.process_turn(chat_id, &turn).await;
-            next = self.shift_turn(chat_id);
+            return;
         }
+    }
+
+    /// Take the next queued turn, or — with the queue lock still held — give
+    /// the admission back. Releasing inside that critical section is what
+    /// makes the hand-off atomic: a racer that lost `admit` and pushed while
+    /// we were finishing is either seen by the `pop_front` here or wakes up to
+    /// a free slot in its own `admit`.
+    fn take_next_or_release(
+        &self,
+        chat_id: &str,
+        slot: &mut ActiveChat<String>,
+    ) -> Option<QueuedTurn> {
+        let mut state = self.state.lock().expect("#1329 state mutex");
+        let next = state
+            .chats
+            .get_mut(chat_id)
+            .and_then(|entry| entry.queue.pop_front());
+        if next.is_none() {
+            slot.release();
+        }
+        next
     }
 
     async fn process_turn(self: &Arc<Self>, chat_id: &str, turn: &QueuedTurn) {
@@ -981,17 +1049,23 @@ impl Runtime {
                 }
             },
         }
-        if self.is_current(chat_id, turn.generation) {
+        // A turn that a `/new` (or a later turn) superseded while it was still
+        // streaming must not deliver anything to the chat: its buffered text —
+        // including the synthesized "Please retry." fragment — belongs to the
+        // session that no longer exists, and TS aborts that turn instead of
+        // flushing it. The reaction cleanup is gated the same way.
+        let current = self.is_current(chat_id, turn.generation);
+        if current {
             self.interaction.elicitation_clear(chat_id);
             self.interaction.permission_clear_after_turn(chat_id);
-        }
-        if !js_trim(&live.text).is_empty() {
-            self.send_final(chat_id, &live.text).await;
-        }
-        if let (Some(message_id), Some(reaction_id), Some(api)) =
-            (&turn.message_id, reaction_id, api)
-        {
-            api.remove_reaction(message_id, &reaction_id).await;
+            if !js_trim(&live.text).is_empty() {
+                self.send_final(chat_id, &live.text).await;
+            }
+            if let (Some(message_id), Some(reaction_id), Some(api)) =
+                (&turn.message_id, reaction_id, api)
+            {
+                api.remove_reaction(message_id, &reaction_id).await;
+            }
         }
         if self
             .active_run(chat_id)
@@ -1211,14 +1285,6 @@ impl ChannelAdapter for FeishuChannel {
             };
             deliver_chat_cron_result(&delivery, &key, send).await
         })
-    }
-}
-
-struct NoopHandle;
-
-impl ChannelHandle for NoopHandle {
-    fn stop(&self, _reason: &str) -> BoxFuture<Result<(), ChannelError>> {
-        Box::pin(async { Ok(()) })
     }
 }
 
