@@ -114,13 +114,16 @@ argparse 报错，该目录的旧 PASS 都已报废——「跳过帮助」等�
 不可删（如 `/dev/null`）不让后面显式点名的目录跳过失效（argparse 只有最后一个生效，但这条命令
 终究没跑完）。
 
-值 = `--output` 后面第一个**不是本解析器已知选项**的非空 token。**不镜像 argparse 的「选项样式」
-判定**：那套规则跨版本变过（3.12 的 `^-\d+$|^-\d*\.\d+$` 与 3.14 的 `-\.?\d` 对 `-1x` 结论
-相反，另有一条「含空格的 token 当值」），照抄任何一版都会在另一版上漏收，而漏收的方向是留旧 PASS
-冒充本轮。已知选项不当值，但要重新按 token 处理一遍——`--output --output=DIR` 的 DIR 仍被收集。
-代价是多失效一个「名字像选项、且真的存在并含本装置产物」的目录，比留下旧 PASS 便宜。空值
-（`--output=`）不失效且判参数错误 rc=2——`Path('')` 就是当前工作目录，否则会删掉调用者 CWD 里的
-`summary.json`。
+值 = **紧跟** `--output` 的那个 token；它若不是值，就算这次 `--output` 缺值、**不再向后找**
+（`--output --data DIR` 里的 DIR 属于 `--data`，argparse 在第一个 `--output` 上就报错）。三种
+token 不是值：① 本解析器认识的选项拼写（`allow_abbrev=False`，精确匹配）；② **3.12 与 3.14
+都判成选项**的形状——`-` 后面是 `-` 或字母、且不含空格（`-hh` / `-h=x` / `-x` / `--he` /
+`-e5` / `--1`），两版实测 `--output <token>` 都报 `expected one argument`，当值只会去失效一个
+同名目录；③ 空 token（见下）。两版**结论相反**的只有「`-` 后紧跟数字或点」这一小撮（`-1x` /
+`-1e3` / `-1_000`：3.12 当选项、3.14 当值），一律按值——漏收的方向是留旧 PASS 冒充本轮，误删
+只是少一份可复算的旧结果，代价不对称。已知选项不当值，但要重新按 token 处理一遍——
+`--output --output=DIR` 的 DIR 仍被收集。空值（`--output=`）不失效且判参数错误 rc=2——
+`Path('')` 就是当前工作目录，否则会删掉调用者 CWD 里的 `summary.json`。
 
 失效只碰本执行器自己的产物名（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：
 `summary.json.backup` 之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的
@@ -134,10 +137,12 @@ argparse 报错，该目录的旧 PASS 都已报废——「跳过帮助」等�
 一个**核实不存在**、名字带 16 位随机字节的目录（固定的 `.no-pycache-<pid>` 可预测，等于给
 unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于旧结果失效**。
 
-入口级失败一律 **rc=2**（输入不可用，不是判据 FAIL）：缺 `-I`、checker 缺失 / 不可读 /
+入口级失败一律 **rc=2**（输入或环境不可用，不是判据 FAIL）：缺 `-I`、checker 缺失 / 不可读 /
 **加载期任何异常**（含 `SyntaxError`：坏合并、半写入）、pycache 前缀候选耗尽、`emit` 写金样失败
-（`--oracle=`、不可写路径、目标是目录）。`raise SystemExit('消息')` 返回的是 **1**，会被下游当成
-「判据 FAIL」。
+（`--oracle=`、不可写路径、目标是目录）、**负控自己的写盘失败**（只读输出目录 / `N1` 已经是
+文件 / `summary.json` 已经是目录 / 父件不是目录）。`emit` 的 tmp 用 `tempfile.mkstemp` 取不可
+预测的名字（`<name>.<pid>.tmp` 在世界可写目录里可被预置符号链接），失败路径先删 tmp 再收口。
+`raise SystemExit('消息')` 返回的是 **1**，会被下游当成「判据 FAIL」。
 
 ## 为什么不在 `scripts/gateway-parity/`
 

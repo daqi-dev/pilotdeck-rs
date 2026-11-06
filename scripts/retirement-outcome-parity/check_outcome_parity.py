@@ -9,8 +9,10 @@ Rust retirement 轮登记（S1 判据提交，body 含 ``criteria-commit: yes``�
   emit  -- 从 TS 参考轮（k=5）重生成 / 复核金样 ts-oracle.json
   check -- 拿一轮或多轮 retirement 轮的 methods.json + frames.jsonl 对照金样
 
-退出码：0 PASS / 1 FAIL / 2 输入不可用（fail-closed：缺文件、JSON 解析失败、
-缺字段、金样条目数 != 101、金样与登记的 gated 集不符，一律绝不当 PASS）。
+退出码：0 PASS / 1 FAIL / 2 输入或环境不可用（fail-closed）。rc2 的完整成因清单见
+``README.md``「Rust retirement 轮怎么调用」与差异条目的「机器判据」——缺文件、JSON
+解析失败、缺字段、金样条目数 != 101、金样与登记的 gated 集不符、缺 ``-I``、
+``emit`` 写金样失败等，一律绝不当 PASS。
 """
 from __future__ import annotations
 
@@ -609,21 +611,32 @@ def run_emit(args):
                     for row in first['rows']],
     }
     target = Path(args.oracle)
+    digest = None
     # 写金样失败同样是「输入/环境不可用」（rc 2），不是判据 FAIL（rc 1）：`--oracle=`
     # （`Path('') == Path('.')`）、不可写路径、目标是目录都会抛 OSError / ValueError，
     # 不接住就是裸 traceback → rc1。
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。
-        tmp = target.with_name(f'{target.name}.{os.getpid()}.tmp')
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
-                       encoding='utf-8')
-        tmp.replace(target)
+        # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。tmp 名取
+        # 不可预测的（`<name>.<pid>.tmp` 在世界可写目录里可被预置符号链接，写入会
+        # 跟随它截断目标）；任何失败都先删 tmp，再按输入不可用收口（两家评审 r10）。
+        handle, tmp_name = tempfile.mkstemp(
+            dir=target.parent, prefix=target.name + '.', suffix='.tmp')
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+                stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+            os.replace(tmp, target)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。
+        digest = sha256_file(target)
     except (OSError, ValueError) as error:
         raise InputError(f'cannot write oracle {args.oracle!r}: {error}') from error
     print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),
                       'methods': len(payload['methods']),
-                      'sha256': sha256_file(target),
+                      'sha256': digest,
                       'rounds': stats}, ensure_ascii=False, indent=2))
     return EXIT_PASS
 
