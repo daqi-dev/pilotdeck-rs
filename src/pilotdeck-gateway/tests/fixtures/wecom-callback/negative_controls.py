@@ -133,6 +133,22 @@ MUTATIONS = [
      '"expectedCaseCount": 22,',
      '"expectedCaseCount": 21,',
      'channel_matches_real_ts', '#1336 oracle case count matches its declaration'),
+    # #1941: the POST body cap. With the limit disabled the oversize cell's
+    # read has to sit out the 64 MiB it declared but did not send, so it hits
+    # its own deadline instead of the cap and turns red.
+    ('wecom-body-cap-disabled', source / 'mod.rs',
+     'const MAX_BODY_BYTES: f64 = super::webhook::DEFAULT_MAX_BODY_BYTES;',
+     'const MAX_BODY_BYTES: f64 = f64::INFINITY;',
+     'oversize_post_closes_at_the_cap_with_zero_bytes',
+     '#1941 an oversize POST ends at the cap instead of waiting for the '
+     'declared body'),
+    # Answering instead of closing: A8.3-WECOM-CALLBACK-BODY-LIMIT-001 pins
+    # the ending as the webhook lane's zero-byte close, never a 413.
+    ('wecom-oversize-answers-413', source / 'mod.rs',
+     'Err(RouteError::PayloadTooLarge) => Err(io::Error::other("payload too large")),',
+     'Err(RouteError::PayloadTooLarge) => Ok(response(413, None, b"payload too large")),',
+     'oversize_post_closes_at_the_cap_with_zero_bytes',
+     '#1941 an oversize POST gets no response bytes (zero-byte close, not 413)'),
 ]
 
 
