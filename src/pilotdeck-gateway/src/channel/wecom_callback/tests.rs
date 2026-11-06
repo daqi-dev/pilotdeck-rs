@@ -1215,10 +1215,14 @@ async fn stop_after_stalled_request(
         .write_all(request)
         .await
         .expect("#1336 stalled write");
-    let mut buf = vec![0u8; 128];
+    let mut buf = Vec::new();
     // A stalled request answers nothing; only the `408` half reads a response.
-    let response = match timeout(Duration::from_secs(1), client.read(&mut buf)).await {
-        Ok(Ok(read)) if read > 0 => Some(buf[..read].to_vec()),
+    // Read to EOF rather than a single `read`: `connection: close` makes EOF
+    // the terminator, and one `read` that happens to stop on a segment
+    // boundary would let a response *with* a body slip past the "no body"
+    // assertion (`ends_with("\r\n\r\n")`) — a pin that can falsely pass.
+    let response = match timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await {
+        Ok(Ok(_)) if !buf.is_empty() => Some(buf),
         _ => None,
     };
     let drained = timeout(budget, listener.stop()).await.is_ok();
