@@ -141,6 +141,18 @@ impl LiveSessionAdapter {
         self
     }
 
+    /// #1457 seedReadState builds its tool context from the same
+    /// AgentRuntimeConfig the sidecar sees; the permission mode decides
+    /// workspace-path admission exactly like a read_file call.
+    pub fn permission_mode(&self) -> JsString {
+        self.agent_config
+            .as_ref()
+            .and_then(|config| config.get("permissionMode"))
+            .and_then(pilotdeck_protocol::JsValue::as_string)
+            .cloned()
+            .unwrap_or_else(|| "default".into())
+    }
+
     /// Use the same cleanup budget as the lazy HostClient's Limits.
     pub fn with_close_timeout(mut self, close_timeout: std::time::Duration) -> Self {
         self.close_timeout = close_timeout;
