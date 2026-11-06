@@ -1169,6 +1169,13 @@ fn assert_ts_capability_subset(expected: &[&str], include_disabled_states: bool)
 /// payload. Each published method therefore has to answer its own success
 /// shape; an unknown method is a failure, not a pass, so a new entry in
 /// `METHODS` cannot slip through the guard with a vacuous assertion.
+///
+/// Only the `resolve_settings` arm is reachable today: the production
+/// capability table publishes exactly that one settings method, so the other
+/// three arms are fail-closed placeholders that switch on when a later change
+/// (e.g. #1671) publishes them. They are assertions, not dead code — a wrong
+/// key name stays silent only until the method is published, and then the
+/// guard reds instead of passing hollowly.
 fn settings_success_shape(method: &str, value: &JsValue) -> bool {
     let array = |key: &str| matches!(value.get(key), Some(JsValue::Array(_)));
     let non_empty_array =
@@ -1210,7 +1217,9 @@ fn settings_success_shape(method: &str, value: &JsValue) -> bool {
 ///   `reload_extensions` 三项有真委托）：两个 reload 有委托但 TS 从不
 ///   公布它们，公布会违反 TS 子集口径。
 /// 守卫循环因此只跑 TS 公布的四项：交集必须经 `Requests::settings_request`
-/// 真的可服务（不得回答 CAPABILITY_UNAVAILABLE），差集必须回答
+/// 真的可服务（#1869 起还要回答该方法的成功形状，见
+/// `settings_success_shape`——只排 `CAPABILITY_UNAVAILABLE` 会被改名的分发臂
+/// 或空壳委托蒙混过去），差集必须回答
 /// CAPABILITY_UNAVAILABLE "<method> is unavailable."；两个 reload 在循环外
 /// 显式断言「真能服务且不在能力表」，证明不公布是有意的。settings 网关换成
 /// 生产组合（`services::native_settings_for_process`）——`stub_settings`

@@ -257,6 +257,37 @@ MARKERS = {
     'empty-top-level-hash': TOP_HASH_MARKER,
     'hollow-resolve-shape': SHAPE_MARKER,
 }
+# #1538/#1869 review: a denominator taken from the table in front of it shrinks
+# with the table — delete a row and the run still prints "{n}/{n} killed". Pin
+# the row count *and* the roster (order and repeats included) as literals, and
+# require MARKERS to cover exactly the roster, so a dropped, renamed or
+# duplicated mutation is refused before anything runs.
+EXPECTED_TOTAL = 12
+EXPECTED_NAMES = (
+    'miss-wire-reload-extensions',
+    'no-attach',
+    'error-code-rewrite',
+    'stale-generation',
+    'stale-generation',
+    'unbind-reload-config',
+    'unbind-reload-extensions',
+    'drop-source-path',
+    'empty-source-hash',
+    'empty-top-level-hash',
+    'hollow-resolve-shape',
+    'broadcast-before-dirty',
+)
+if len(mutations) != EXPECTED_TOTAL:
+    sys.exit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
+             f'found {len(mutations)}')
+if tuple(mutation[0] for mutation in mutations) != EXPECTED_NAMES:
+    sys.exit('#1538 registered mutation roster must equal the frozen list: '
+             f'expected={list(EXPECTED_NAMES)}, '
+             f'found={[mutation[0] for mutation in mutations]}')
+if set(MARKERS) != set(EXPECTED_NAMES):
+    sys.exit('#1538 marker table must cover exactly the registered mutations: '
+             f'missing={sorted(set(EXPECTED_NAMES) - set(MARKERS))}, '
+             f'extra={sorted(set(MARKERS) - set(EXPECTED_NAMES))}')
 
 
 class StaleAnchor(Exception):
