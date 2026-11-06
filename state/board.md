@@ -54,7 +54,7 @@ updated: 2026-11-06 16:10 · by Claude Code 执行者（**按 15:52 所有权审
 - #1406 | impl | doing | P2-跟进 #1220/#1253：abort-messages 负控未覆盖 abort 路径 + 增量投影残留：树 `wt-1406` @`dfaa8d2cc`（08:45，与 #1281 共用）+ 10 个未提交文件，**无 PR**；**最后写入 11:28，已 4.4 h 无活动、无进程——本轮结束前核进程是否已死**；重启前先 rebase（#1457 的 #1830 已动 `runtime/turn/live.rs`）；#589 前置之一
 - #1281 | impl | doing | P2-跟进 #1253 增量投影 r2 剩余 P2：与 #1406 **同树同批**（`wt-1406`），别分两单；#589 前置之一
 - #589 | impl | blocked | A7.2-pr6a LiveSession + Submit：产品代码已全在 main，macOS `live_e2e --ignored` 11/11 已过；前置 = **#1406 · #1281**（#1219 已 CLOSED、PR #1772 已合入）；两条清完即可收口
-- #1648 | impl | doing | P2-跟进 #1370 s3 见证 append 装置遗留：**PR #1814 已合入**（15:04 MERGED，fix-r2..r6 六提交）；树 `wt-1648` @`42188ca4f`；前置于 #1242 s3 收尾；**别另起树**
+- #1648 | impl | doing | P2-跟进 #1370 s3 见证 append 装置遗留：**PR #1814 已合入**（16:04 MERGED，fix-r2..r6 六提交）；树 `wt-1648` @`42188ca4f`；前置于 #1242 s3 收尾；**别另起树**
 - #1737 | impl | ready | P2-跟进 #1735：api_server 两处 submit 拒绝臂零覆盖（`stream_turn` / `buffered_turn`）：**前置已解**——#1738 的 PR #1799 已合入、#1738 已 CLOSED；可派（同改 `channel/api_server/server.rs` 与 `tests.rs`）
 - #1736 | impl | doing | P2-跟进 #1735：config watcher 的 debounce / poll_interval：**PR #1794 在合并队列 pos3**，树 `wt-1736` 同 head；与 #1739 同批
 - #1739 | impl | doing | P2-跟进 #1735：config watcher 每 tick 全文读的 fingerprint：**与 #1736 同批同 PR #1794（队列 pos3）**，别分两单
