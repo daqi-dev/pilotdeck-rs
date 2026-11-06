@@ -1,4 +1,4 @@
-# U7 settings 写与重载五方法金样（#1318）
+# U7 settings 写与重载金样（#1318）
 
 固定基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，Node v22.22.0 / ICU 78.2
 （生成器断言 `process.version === 'v22.22.0'` 与 `Intl.Collator` 解析为 `en-US`，
@@ -22,8 +22,12 @@ update-merges / rewrite-same-value / clear-value / noop 四行共用）。`updat
 闭包任何编辑都会改变 oracle 的 provenance。
 
 `oracle.json` 全由生成器输出，不手写期望：54 个 case 行（每行 `{id, method,
-params, setup, events, response, post}`）+ `assemblyCases.capability`（裸组装
-五方法的能力门答案）+ `setupKeys`。update 系行写真实 YAML（`agent` flow map
+params, setup, events, response, post}`）+ `assemblyCases.capability`（裸组装的
+能力门答案）+ `setupKeys`。金样的方法范围与产品自有方法集不是一回事：金样只覆盖
+生成器 `generate.mts` 实际驱动的 TS 侧方法（`assemblyCases.capability` 同范围），
+产品方法集的唯一来源是 `src/pilotdeck-gateway/src/runtime/settings/gateway.rs`
+的 `METHODS`；`METHODS` 里不在金样中的方法（如 `resolve_settings`）由 #1320 的
+native 路由覆盖，本文件不重复计数。update 系行写真实 YAML（`agent` flow map
 按 yaml 包规范空格形重排），事件含 `store-event:` / `log:` / `sdk-config-change:`
 / `broadcast:config_changed:` / `mark-*-dirty:` / `registry-reload`。无时钟 /
 PID / 路径进 oracle（scratch 路径不录制；changedPaths 与事件均为内容函数）。
@@ -66,16 +70,12 @@ CARGO_TARGET_DIR=… python3 \
   _tmp/20261026-issue-1318/negative-controls <可选变异名子集>
 ```
 
-每次仅临时改一处产品实现，要求被点名测试以自己的 `#1318` panic 消息失败
-（每变异绑定专属判杀标记：`case apply-busy`、
-`case update-merges-store-paths`、`the bare assembly must answer reload_config`、
-`dispatch must own the case's settings method`、`case apply-effort-low`、
-`#1318-r1 update-drop: dropping the future must detach the capture listener`、
-`#1318-r2 extensions-truthiness: a JS-falsy projectKey must take the
-all-runtimes branch`；前五个由 `settings_gateway_replays_the_real_ts_oracle`
-判杀，第六个由 `update_settings_detaches_the_capture_listener_when_dropped_mid_reload`
-判杀，最后一个由 `extensions_reload_branches_on_the_original_project_key_truthiness`
-判杀；`case <id>` 标记与金样行的绑定由脚本启动断言机检）；
+每次仅临时改一处产品实现，要求被点名测试以自己的 `#1318` panic 消息失败。
+变异与判杀标记的唯一来源是 `negative_controls.py`：`mutations` 表每行给出变异名、
+目标文件、锚点原文、变异体与判杀测试，`MARKERS` 表给出变异名到 panic 标记的映射；
+`case <id>` 形式的标记另由脚本启动断言钉到真实金样行。脚本启动时对两张表做双向
+覆盖、标记唯一性与分母 / 名册校验，所以本文件不复制清单，也不按插入顺序指代变异
+（要指某一个变异就写它的名字）。
 编译错误、信号退出、锚点过期（出现次数 ≠ 1）都不算杀死，直接报错退出。
 每轮 finally 恢复原始源码并核 SHA-256；输出每条补丁、原始日志、失败摘要，
 结束后应重跑正常测试和 fmt/clippy。
@@ -120,10 +120,14 @@ nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本�
 所有证据文件（`summary.json` / `baseline.json` / `baseline-replay.log` / 逐变异 `.patch` / `.log`）
 一律 `.tmp` + `rename` 原子发布。
 
-本组件未接线 `dispatch.rs` / `native_process`（归 #1320）；registry 的
-`applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` 与
-`updatePilotLocalSettings` 生产写盘件为镜像端口（`MirrorWriter` 保持同一
-allowlist / YAML 编辑语义），随接线单评估替换。已知未收敛差异：
+native 侧已接线（#1320）：`native_process/methods/settings.rs` 的家族表
+（`METHODS` 直接 re-export 本组件的常量）与 `Requests::settings_request`、
+`native_process/services.rs` 的 `native_settings` 组合都路由进本组件的 `dispatch`，
+金样回放见 `native_process/settings_tests.rs`；仍未接的是 `dispatch.rs` 的
+`LOCAL_METHODS` 一侧。registry 的 `applyFlagSettingsForSdk` /
+`reloadOutputStylesForSdk` 与 `updatePilotLocalSettings` 生产写盘件仍为镜像端口
+（`MirrorWriter` 保持同一 allowlist / YAML 编辑语义），随接线单评估替换。
+已知未收敛差异：
 `reload_extensions` 的 `projectKey` 分支按原值 JS 真值选择（fix-r2，
 `0` / `false` / `NaN` / `""` 与 TS 同走全量分支；实测
 `_tmp/20261026-issue-1318/fix-r2/probe-extensions-truthiness.out`，fix-r3
