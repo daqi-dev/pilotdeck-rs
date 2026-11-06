@@ -432,7 +432,18 @@ impl UploadStore {
     /// [`Self::list_in_project`] (whose strict errors stay for `create` and
     /// `find_idempotent`), every per-record failure here is a logged skip.
     fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
-        let root = project.join(".tmp/chat-uploads");
+        // `read_dir` and `remove_dir_all` follow intermediate symlinks, while a
+        // `symlink_metadata` on `root/<id>` does not: with a symlinked root the
+        // orphan branch below would delete directories outside the project.
+        // `read_at`'s containment check never sees those directories (no
+        // metadata.json), so gate the whole record sweep on a plain root.
+        let Some(root) = plain_uploads_root(project) else {
+            self.log_cleanup(format!(
+                "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                project.join(".tmp/chat-uploads").display()
+            ));
+            return;
+        };
         for id in names(&root).into_iter().filter(|id| safe_id(id)) {
             let dir = root.join(&id);
             let record = match self.read_at(project, &id) {
@@ -441,7 +452,7 @@ impl UploadStore {
                 // debris or a create that has not reached its metadata write
                 // yet. Age decides (see `reclaim_orphan`).
                 Ok(None) => {
-                    self.reclaim_orphan(&dir);
+                    self.reclaim_orphan(&root, &dir);
                     continue;
                 }
                 Err(e) => {
@@ -457,7 +468,10 @@ impl UploadStore {
                     continue;
                 }
             }
-            match remove_tree(&dir) {
+            match self
+                .fault("record-rm", &dir)
+                .and_then(|()| remove_tree(&dir))
+            {
                 Ok(()) => *count += 1,
                 Err(e) => self.skip_record(&dir, &e),
             }
@@ -471,10 +485,23 @@ impl UploadStore {
     /// crash debris, and the floor also keeps a just-created directory whose
     /// metadata write has not happened yet. Not counted in `cleanup_expired`'s
     /// return, which keeps its TS meaning (expired records removed).
-    fn reclaim_orphan(&self, dir: &Path) {
+    fn reclaim_orphan(&self, root: &Path, dir: &Path) {
+        // Only a real directory can be reclaimed: a symlinked entry must be
+        // left alone (removing the link is a different operation and is not
+        // this branch's job), and the canonical check keeps the recursive
+        // delete inside the root even if an entry is swapped mid-sweep.
         let Ok(info) = fs::symlink_metadata(dir) else {
             return;
         };
+        if !info.is_dir() {
+            return;
+        }
+        let (Ok(root_real), Ok(dir_real)) = (fs::canonicalize(root), fs::canonicalize(dir)) else {
+            return;
+        };
+        if dir_real == root_real || !dir_real.starts_with(&root_real) {
+            return;
+        }
         let Ok(modified) = info.modified() else {
             return;
         };
@@ -501,7 +528,12 @@ impl UploadStore {
     }
 
     fn log_cleanup(&self, line: String) {
-        eprintln!("{line}");
+        // A tolerant sweep must not reintroduce a round-wide abort through the
+        // log itself: `eprintln!` panics when stderr is unwritable (closed or
+        // full pipe), which would escape every `skip_record` caller (#1646
+        // review). A failed log line is dropped, exactly like the skipped
+        // record's own error.
+        let _ = writeln!(io::stderr(), "{line}");
         #[cfg(test)]
         self.cleanup_log.lock().unwrap().push(line);
     }
@@ -540,9 +572,11 @@ impl UploadStore {
         let result: Result<()> = (|| {
             let path = dir.join("lease.json");
             // Like `write` (metadata.json): the lease file only ever appears
-            // complete, so a concurrent `cleanup_expired_leases` never reads a
-            // half-written lease and deletes a live one (#1646). TS:404–413
-            // writes `lease.json` in place instead.
+            // complete, so a reader never parses a half-written lease. The
+            // window is narrower than "a live lease is never deleted": the
+            // reader treats a *missing* lease.json as expired (TS parity), and
+            // the directory exists from `make_dir` until the rename (#1646).
+            // TS:404–413 writes `lease.json` in place instead.
             let temp = path.with_file_name(format!(
                 "lease.json.{}.{}.tmp",
                 std::process::id(),
@@ -1316,6 +1350,22 @@ fn remove_tree(path: &Path) -> Result<()> {
         Err(e) => Err(UploadError::io(e, "rm", Some(path))),
     }
 }
+/// `<project>/.tmp/chat-uploads`, but only when both it and `<project>/.tmp`
+/// are plain directories. A symlinked component would make the sweep act on a
+/// tree outside the project (`read_dir`/`remove_dir_all` follow intermediate
+/// links), which is exactly what the orphan branch must never do.
+fn plain_uploads_root(project: &Path) -> Option<PathBuf> {
+    let dot_tmp = project.join(".tmp");
+    let root = dot_tmp.join("chat-uploads");
+    for dir in [&dot_tmp, &root] {
+        match fs::symlink_metadata(dir) {
+            Ok(m) if m.is_dir() => {}
+            _ => return None,
+        }
+    }
+    Some(root)
+}
+
 fn names(path: &Path) -> Vec<String> {
     // Node readdir is byte-sorted; read failures are deliberately swallowed.
     let mut names: Vec<_> = fs::read_dir(path)

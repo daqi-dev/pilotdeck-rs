@@ -71,6 +71,8 @@ SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
 ORPHAN = 'upload::tests::upload_cleanup_reclaims_expired_orphan_directories'
 FRESH = 'upload::tests::upload_cleanup_keeps_fresh_orphan_directories'
 LEASE_ATOMIC = 'upload::tests::upload_lease_atomic_rename_failure_keeps_valid_leases'
+SYMLINK_ROOT = 'upload::tests::upload_cleanup_never_deletes_through_a_symlinked_root'
+RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -319,14 +321,14 @@ mutations = [
      '#1494 the lease entry must be a regular file, never a link'),
     # #1646: sweep robustness — each mutation restores one TS-parity weakness.
     ('cleanup-bad-record-aborts', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&dir);
+                    self.reclaim_orphan(&root, &dir);
                     continue;
                 }
                 Err(e) => {
                     self.skip_record(&dir, &e);
                     continue;
                 }''', '''                Ok(None) => {
-                    self.reclaim_orphan(&dir);
+                    self.reclaim_orphan(&root, &dir);
                     continue;
                 }
                 Err(e) => {
@@ -334,7 +336,7 @@ mutations = [
                 }''', SWEEP,
      'bad record aborts the sweep'),
     ('cleanup-orphan-reclaim-removed', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&dir);
+                    self.reclaim_orphan(&root, &dir);
                     continue;
                 }''', '''                Ok(None) => {
                     continue;
@@ -346,9 +348,11 @@ mutations = [
      'a just-created orphan must survive its metadata write window'),
     ('lease-write-in-place', STORE, '''            let path = dir.join("lease.json");
             // Like `write` (metadata.json): the lease file only ever appears
-            // complete, so a concurrent `cleanup_expired_leases` never reads a
-            // half-written lease and deletes a live one (#1646). TS:404–413
-            // writes `lease.json` in place instead.
+            // complete, so a reader never parses a half-written lease. The
+            // window is narrower than "a live lease is never deleted": the
+            // reader treats a *missing* lease.json as expired (TS parity), and
+            // the directory exists from `make_dir` until the rename (#1646).
+            // TS:404–413 writes `lease.json` in place instead.
             let temp = path.with_file_name(format!(
                 "lease.json.{}.{}.tmp",
                 std::process::id(),
@@ -370,6 +374,29 @@ mutations = [
             file.sync_all()
                 .map_err(|e| UploadError::io(e, "fsync", None))?;''', LEASE_ATOMIC,
      'lease.json must appear only through an atomic rename'),
+    # #1646 review: the two guards added after the first round.
+    ('cleanup-symlink-root-swept', STORE, '''        let Some(root) = plain_uploads_root(project) else {
+            self.log_cleanup(format!(
+                "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                project.join(".tmp/chat-uploads").display()
+            ));
+            return;
+        };''', '''        let root = project.join(".tmp/chat-uploads");''', SYMLINK_ROOT,
+     'a symlinked uploads root must not be swept'),
+    ('cleanup-record-rm-aborts', STORE, '''            match self
+                .fault("record-rm", &dir)
+                .and_then(|()| remove_tree(&dir))
+            {
+                Ok(()) => *count += 1,
+                Err(e) => self.skip_record(&dir, &e),
+            }''', '''            match self
+                .fault("record-rm", &dir)
+                .and_then(|()| remove_tree(&dir))
+            {
+                Ok(()) => *count += 1,
+                Err(_) => return,
+            }''', RECORD_RM,
+     'a failed record removal does not stop the sweep'),
 ]
 
 if '--check' in sys.argv[1:]:
