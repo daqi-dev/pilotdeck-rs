@@ -9,6 +9,8 @@
 //! difference is recorded in the #1339 diffs ledger (A8.3-CH-SMS-004).
 pub mod elicitation;
 pub mod gateway;
+#[cfg(test)]
+mod head_timeout_tests;
 pub mod mapper;
 pub mod permission;
 pub mod render;
@@ -24,7 +26,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Request, Response};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use sha1::{Digest, Sha1};
 use tokio::net::TcpListener;
@@ -57,17 +59,27 @@ const MAX_BODY_BYTES: usize = 1_048_576;
 /// with Node's 51-byte `408 Request Timeout` + `Connection: close` once this
 /// deadline expires (#1901).
 ///
-/// Like the webhook channel's copy, it bounds the **body read only**. It does
-/// not cover the request head: this lane serves through a bare
-/// `http1::Builder`, and without a hyper `Timer` the crate silently disables
-/// its own header-read timeout (`hyper::common::time` turns the default
-/// `30 s` into `None`), so a half-written request head is bounded by nothing
-/// on this lane (#1955). The sibling `wecom_callback` lane already installs
-/// `.timer(TokioTimer::new()).header_read_timeout(..)` on the same shape
-/// (`wecom_callback/http.rs`), so this is a missing fix here, not an
-/// unavoidable runtime difference. A whole-handler deadline would also turn
-/// the TS `null`-body hang (`A8.3-CH-SMS-007`) into a Rust divergence.
+/// Like the webhook channel's copy, it bounds the **body read only**; the
+/// request head has its own deadline, [`DEFAULT_HEADERS_TIMEOUT`]. A
+/// whole-handler deadline would turn the TS `null`-body hang
+/// (`A8.3-CH-SMS-007`) into a Rust divergence.
 const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+/// Node v22.22.0 `http.Server`'s default `headersTimeout` (60 s): the bound on
+/// receiving a complete request head. TS `SmsChannel.ts` calls
+/// `createServer(...)` with no options, so the default applies; the probe in
+/// `_tmp/20261107-issue-1955/smoke/ts-half-head.out` reads it back from the
+/// live server. This lane serves through a bare `http1::Builder`, and without
+/// a hyper `Timer` the crate silently disables its own header-read timeout
+/// (`hyper::common::time` turns the built-in 30 s into `None`), so a client
+/// that wrote half a request head and stopped kept the detached connection
+/// task and the socket forever — unauthenticated connection exhaustion
+/// (#1955). The sibling `wecom_callback` lane installs the same
+/// `.timer(TokioTimer::new()).header_read_timeout(..)` pair on the same shape
+/// (`wecom_callback/http.rs`), and this lane follows it. hyper answers a head
+/// timeout by closing without a response: Node's 51-byte 408 and its landing
+/// on the 30 s connections-checker grid stay Rust/TS residuals, registered in
+/// `specs/gateway-parity/diffs/A8.3-CH-SMS-012.md`.
+const DEFAULT_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
 /// `process.env` read through an injected lookup (the TS start reads the real
@@ -96,6 +108,13 @@ pub struct SmsChannelOptions {
     /// zero or sub-millisecond values are not meaningful (tokio polls the
     /// inner future first, so whether a whole body is served or 408'd would
     /// hinge on that first poll) and no caller passes one.
+    ///
+    /// #1955: the same injection also shortens the request-head deadline
+    /// ([`DEFAULT_HEADERS_TIMEOUT`]) — the two Node server defaults are
+    /// injected together so the head bound is testable without a second
+    /// option field (adding one would touch every `SmsChannelOptions`
+    /// literal). Production never sets this, so the heads still get Node's
+    /// 60 s and the bodies Node's 300 s.
     pub request_timeout: Option<std::time::Duration>,
 }
 
@@ -215,6 +234,9 @@ struct SmsShared {
     /// Node's server `requestTimeout`, applied to the webhook body read
     /// (#1901). Immutable for the channel's lifetime, so no lock.
     request_timeout: std::time::Duration,
+    /// Node's server `headersTimeout`, applied to the request-head read
+    /// (#1955). Immutable for the channel's lifetime, so no lock.
+    headers_timeout: std::time::Duration,
 }
 
 impl SmsShared {
@@ -353,6 +375,9 @@ impl SmsChannel {
                 }),
                 permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
                 request_timeout: request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
+                // #1955: one injection knob for both Node server defaults; see
+                // `SmsChannelOptions::request_timeout`.
+                headers_timeout: request_timeout.unwrap_or(DEFAULT_HEADERS_TIMEOUT),
             }),
             inputs: StdMutex::new(SmsStartInputs {
                 extra,
@@ -555,13 +580,31 @@ impl ChannelAdapter for SmsChannel {
                             Ok((stream, _)) => {
                                 let shared = server_shared.clone();
                                 tokio::spawn(async move {
+                                    // Read before `shared` moves into the
+                                    // service closure below.
+                                    let headers_timeout = shared.headers_timeout;
                                     let service = hyper::service::service_fn(
                                         move |request: Request<Incoming>| {
                                             let shared = shared.clone();
                                             async move { handle_request(request, shared).await }
                                         },
                                     );
-                                    let _ = hyper::server::conn::http1::Builder::new()
+                                    // #1955: Node's `headersTimeout`. hyper only
+                                    // arms the head deadline when a `Timer` is
+                                    // installed; without one it silently turns the
+                                    // built-in 30 s default into `None`, and a
+                                    // half-written request head then pins this
+                                    // detached connection task and its socket
+                                    // forever (unauthenticated). The sibling
+                                    // `wecom_callback` lane installs the same pair.
+                                    let mut builder =
+                                        hyper::server::conn::http1::Builder::new();
+                                    if !crate::mutants::on("sms-header-read-no-timeout") {
+                                        builder
+                                            .timer(TokioTimer::new())
+                                            .header_read_timeout(headers_timeout);
+                                    }
+                                    let _ = builder
                                         .serve_connection(TokioIo::new(stream), service)
                                         .await;
                                 });
