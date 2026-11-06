@@ -85,6 +85,10 @@ switches = [
      '#1334 #1729 rejects body type drift'),
     ('webhook-oracle-recorded-mode', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_mode_rejects_wrong_type',
      '#1334 #1729 rejects mode type drift'),
+    # #1684: a recorded request version that is not a string must fail the
+    # golden `http10` replay instead of silently sending HTTP/1.1.
+    ('webhook-oracle-recorded-version', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_version_rejects_wrong_type',
+     '#1334 #1729 rejects version type drift'),
     ('webhook-oracle-recorded-count', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_count_rejects_wrong_type',
      '#1334 #1729 rejects count type drift'),
     ('webhook-oracle-recorded-pin', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'recorded_pin_rejects_wrong_type',
@@ -129,6 +133,16 @@ switches = [
     # that lost its whole recorded step list would still replay green.
     ('webhook-zero-step-whitelist', ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs', 'zero_step_cells_are_the_two_named_cells',
      '#1334 only the named cells may replay zero steps'),
+    # #1684: without the request-version finalize, an HTTP/1.0 keep-alive
+    # request draws a 1.1 response whose `Connection: close` hyper rewrites to
+    # `keep-alive` on an open socket, so the pinned cell turns red.
+    ('webhook-http10-finalize-off', SOURCE_WEBHOOK, 'http10_request_closes_the_connection',
+     '#1684 pin http10: the 1.0 response closes the connection like Node'),
+    # #1684: keeping hyper's known body size adds a `content-length` line to the
+    # 1.0 reply where Node is close-delimited, so the recorded header set no
+    # longer replays.
+    ('webhook-http10-framing-off', SOURCE_WEBHOOK, 'http10_request_closes_the_connection',
+     '#1684 pin http10: the 1.0 response replays Node\'s header set'),
 ]
 GUARDED = [SOURCE_WEBHOOK, SOURCE_HMAC, SOURCE_CRON,
     ROOT / 'src/pilotdeck-gateway/src/channel/webhook/tests.rs',

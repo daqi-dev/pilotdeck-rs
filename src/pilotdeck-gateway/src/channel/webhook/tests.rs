@@ -273,6 +273,37 @@ fn recorded_mode_panics_on_wrong_type() {
     recorded_mode(&json!({"mode": []}));
 }
 
+/// #1684: the recorded request version (`steps[].version`, absent means
+/// HTTP/1.1). The golden `http10` case is the only recording that sets it.
+fn recorded_version_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("version"),
+        "version",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-version"),
+    )
+}
+
+fn recorded_version(value: &Value) -> Option<&str> {
+    recorded_version_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_version_rejects_wrong_type() {
+    negative_assert!(
+        recorded_version_checked(&json!({"version": []})).is_err(),
+        "#1334 #1729 rejects version type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 version must be a string")]
+fn recorded_version_panics_on_wrong_type() {
+    recorded_version(&json!({"version": []}));
+}
+
 fn recorded_count_checked(value: &Value) -> Result<Option<u64>, String> {
     recorded_checked(
         value.get("count"),
@@ -1027,11 +1058,14 @@ fn install(channel: &WebhookChannel, gateway: Option<Arc<dyn TurnGateway>>, logg
 
 /// The recorder's `requestBytes`: Host first, the step's headers in order,
 /// then `Connection: close` for close mode, then the body's byte length.
+/// #1684: the request line's version comes from `steps[].version` (absent
+/// means HTTP/1.1), so the golden `http10` cell sends a real HTTP/1.0 request.
 fn request_bytes_checked(step: &Value) -> Result<String, String> {
     let mut lines = vec![format!(
-        "{} {} HTTP/1.1",
+        "{} {} {}",
         recorded_method_checked(step)?.unwrap_or_default(),
-        recorded_target_checked(step)?.unwrap_or_default()
+        recorded_target_checked(step)?.unwrap_or_default(),
+        recorded_version_checked(step)?.unwrap_or("HTTP/1.1")
     )];
     lines.push("Host: 127.0.0.1".to_owned());
     let headers = recorded_headers_checked(step)?.and_then(Value::as_object);
@@ -1150,6 +1184,11 @@ fn absent_recording_fields_keep_defaults() {
     assert!(
         recorded_mode(&json!({"mode":"value"})).is_some(),
         "#1334 valid mode"
+    );
+    assert!(recorded_version(&empty).is_none(), "#1334 absent version");
+    assert!(
+        recorded_version(&json!({"version":"HTTP/1.0"})).is_some(),
+        "#1334 valid version"
     );
     assert!(recorded_count(&empty).is_none(), "#1334 absent count");
     assert!(
@@ -1301,6 +1340,11 @@ fn recorded_request_modes_and_bytes_stay_legal() {
         recorded_port(&json!({"port":"<busy-port>"})).and_then(Value::as_str),
         Some("<busy-port>"),
         "#1334 busy-port sentinel"
+    );
+    assert!(
+        request_bytes(&json!({"method":"GET","target":"/health","version":"HTTP/1.0"}))
+            .starts_with("GET /health HTTP/1.0\r\n"),
+        "#1684 a recorded version lands on the request line"
     );
 }
 
@@ -1889,8 +1933,16 @@ replay_tests! {
     stop_and_restart => "stop-and-restart",
 }
 
-/// The replay list and the oracle describe the same case set; a scenario
-/// added to the oracle without a replay test (or vice versa) fails here.
+/// #1684: oracle cases with a dedicated direct test instead of a generic
+/// replay. `http10` records Node's `HTTP/1.1` status line for an HTTP/1.0
+/// request, but hyper writes its own `HTTP/1.0` line (the registered
+/// transport diff A8.4-NATIVE-HTTP-001), and the oracle's `closed` flag only
+/// records zero-byte closes, so the socket close is asserted directly too.
+const PINNED_CASE_NAMES: &[&str] = &["http10"];
+
+/// The replay list, the pinned list and the oracle describe the same case
+/// set; a scenario added to the oracle without a test (or vice versa) fails
+/// here.
 #[test]
 fn replay_cases_cover_exactly_the_oracle() {
     let recorded = oracle();
@@ -1899,10 +1951,10 @@ fn replay_cases_cover_exactly_the_oracle() {
         .expect("#1334 oracle cases array");
     negative_assert_eq!(
         recorded["expectedCaseCount"].as_u64(),
-        Some(19),
-        "#1334 oracle declares nineteen cases"
+        Some(20),
+        "#1334 oracle declares twenty cases"
     );
-    negative_assert_eq!(cases.len(), 19, "#1334 oracle carries nineteen cases");
+    negative_assert_eq!(cases.len(), 20, "#1334 oracle carries twenty cases");
     negative_assert_eq!(
         recorded["node"].as_str(),
         Some("v22.22.0"),
@@ -1919,11 +1971,87 @@ fn replay_cases_cover_exactly_the_oracle() {
         .collect();
     names.sort_unstable();
     let mut replayed: Vec<&str> = REPLAY_CASE_NAMES.to_vec();
+    replayed.extend_from_slice(PINNED_CASE_NAMES);
     replayed.sort_unstable();
     negative_assert_eq!(
         replayed,
         names,
         "#1334 replay case names and oracle case names are the same set"
+    );
+}
+
+/// #1684: an HTTP/1.0 request — even one asking for `Connection: keep-alive`
+/// — draws a close-delimited response and a closed socket, as Node does.
+/// Only the status line differs: Node echoes `HTTP/1.1`, hyper writes its own
+/// `HTTP/1.0` (the registered transport diff A8.4-NATIVE-HTTP-001, oracle
+/// case `http10` records Node's line), matching the other listeners
+/// (`src/native_http.rs`, `src/module_host.rs`, `src/module_host/approvals.rs`).
+#[tokio::test]
+async fn http10_request_closes_the_connection() {
+    let case = case("http10");
+    let steps = recorded_steps(&case).expect("#1334 oracle steps");
+    let request = request_bytes(
+        steps
+            .first()
+            .expect("#1684 the http10 case carries one request step"),
+    );
+    assert!(
+        request.starts_with("GET /health HTTP/1.0\r\n")
+            && request.contains("\r\nConnection: keep-alive\r\n"),
+        "#1684 pin http10: the oracle step stays an HTTP/1.0 keep-alive request: {request:?}"
+    );
+    let expected = recorded_expected(&case).expect("#1334 expected validated object");
+    // The recorded case's own options, not a hand-built twin: a regenerated
+    // cell that changes the route or port must fail here too.
+    let options = recorded_options(&case).expect("#1334 oracle options object");
+    let routes = parse_json(
+        &recorded_routes(options)
+            .expect("#1334 options.routes validated object")
+            .to_string(),
+    )
+    .expect("#1334 oracle routes JSON")
+    .as_object()
+    .expect("#1334 oracle routes object")
+    .clone();
+    let channel = WebhookChannel::new(WebhookChannelOptions {
+        port: recorded_port(options).and_then(Value::as_f64),
+        routes: Some(routes),
+        ..Default::default()
+    });
+    channel
+        .start(ChannelStartDeps::default())
+        .await
+        .expect("#1684 start for the http10 pin");
+    let port = channel
+        .bound_addr()
+        .expect("#1684 bound listener for the http10 pin")
+        .port();
+    let (raw, closed) = raw_until_close(port, &request).await;
+    let _ = channel.stop_with_reason(Some("1684")).await;
+
+    assert!(
+        raw.starts_with("HTTP/1.0 200 OK\r\n"),
+        "#1684 pin http10: hyper answers with its own 1.0 status line (Node's 1.1 line is the registered A8.4-NATIVE-HTTP-001 diff): {raw:?}"
+    );
+    assert!(
+        closed,
+        "#1684 pin http10: the 1.0 response closes the connection like Node: {raw:?}"
+    );
+    // Everything else replays: the close-delimited framing (no `content-length`,
+    // no chunking), the header set and the body, byte for byte after the usual
+    // normalization. The status line is left out because it is the one
+    // registered diff, pinned above as hyper's own 1.0 line.
+    let actual = normalize(&raw);
+    let recorded = &expected["responses"][0];
+    negative_assert_eq!(
+        actual["headers"],
+        recorded["headers"],
+        "#1684 pin http10: the 1.0 response replays Node's header set and close-delimited framing"
+    );
+    negative_assert_eq!(
+        actual["body"],
+        recorded["body"],
+        "#1684 pin http10: the 1.0 response replays Node's body"
     );
 }
 
@@ -2664,4 +2792,33 @@ async fn plain_null_body_disconnect_reclaims_the_connection() {
         resolved,
         "#1334 a plain null body reclaims the connection after the client FIN"
     );
+}
+
+/// #1684: one request answered with the raw bytes up to the peer's FIN, plus
+/// whether the peer actually closed (`true`) or the read deadline expired
+/// while the socket stayed open (`false`) — the oracle's `closed` flag only
+/// records zero-byte closes, so a close-delimited response cannot tell the
+/// two apart on its own.
+async fn raw_until_close(port: u16, request: &str) -> (String, bool) {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1684 connect for the http10 pin");
+    stream
+        .write_all(&latin1_bytes(request))
+        .await
+        .expect("#1684 write the http10 request");
+    let mut raw = String::new();
+    let mut chunk = [0u8; 8192];
+    let start = Instant::now();
+    loop {
+        let Some(wait) = DEADLINE.checked_sub(start.elapsed()) else {
+            return (raw, false);
+        };
+        match timeout(wait, stream.read(&mut chunk)).await {
+            Err(_elapsed) => return (raw, false),
+            Ok(Ok(0)) => return (raw, true),
+            Ok(Ok(read)) => raw.extend(chunk[..read].iter().map(|&byte| byte as char)),
+            Ok(Err(error)) => panic!("#1684 http10 read failed: {error}"),
+        }
+    }
 }

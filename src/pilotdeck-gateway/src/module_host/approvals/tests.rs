@@ -29,6 +29,108 @@ const DEADLINE: Duration = Duration::from_secs(10);
 const QUIET: Duration = Duration::from_millis(250);
 const TOKEN: &str = "fixture-token";
 
+/// Allocation ceiling for a fixture-supplied pad size (#1696). The largest
+/// pad the oracle legitimately records is the `budget-over` body's, which
+/// stays below the transport's budget; anything past `INPUT_BUDGET` is
+/// fixture drift and is refused *before* `"a".repeat(size)` can abort the
+/// whole test binary on allocation instead of failing one assertion — the
+/// failure mode #1606 fix-r1 removed on the api-server side with
+/// `REPLAY_BODY_BUDGET`. It is derived from the product budget on purpose: a
+/// fixture that stops tracking the budget is the drift this guard exists to
+/// catch.
+const REPLAY_PAD_BUDGET: usize = INPUT_BUDGET;
+
+/// Pin each budget cell's *expanded* body to the budget it exists to probe
+/// (#1696). The pad syntax was already fail-closed, but its size was
+/// unconstrained: `budget-exact` / `budget-over` answer a short body exactly
+/// as they answer the boundary body (a served snapshot / a zero-byte close),
+/// so an oracle edited to a tiny pad — or a generator that recorded the wrong
+/// size — would leave both cells green while proving nothing. The body must
+/// therefore be the length the cell claims to test, in the transport's own
+/// `INPUT_BUDGET` units.
+fn budget_body_len_checked(id: &str, request: &[u8]) -> Result<(), String> {
+    let expected = match id {
+        "budget-exact" => INPUT_BUDGET,
+        "budget-over" => INPUT_BUDGET + 1,
+        _ => return Ok(()),
+    };
+    let head = request
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| format!("#1350 cell {id} has no header terminator"))?
+        + 4;
+    let len = request.len() - head;
+    if len != expected && !crate::mutants::on("approvals-oracle-boundary-body-length") {
+        return Err(format!(
+            "#1350 cell {id}: the expanded body must be {expected} bytes (the transport \
+             INPUT_BUDGET), not {len}; the fixture and `INPUT_BUDGET` have drifted apart"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_budget_body_len(cell: &Cell) {
+    budget_body_len_checked(&cell.id, &cell.request).unwrap_or_else(|error| panic!("{error}"));
+}
+
+/// The recorded pad size, bounded before `"a".repeat(size)` can abort the
+/// whole test binary on a huge allocation (#1696).
+fn pad_size_checked(id: &str, entry: &Value) -> Result<usize, String> {
+    let size = entry["pad"]["size"]
+        .as_u64()
+        .ok_or_else(|| format!("#1350 cell {id} pad size must be a u64"))?;
+    let size = usize::try_from(size)
+        .map_err(|_| format!("#1350 cell {id} pad size {size} does not fit usize"))?;
+    // #1696: the ceiling is the point of the guard, so the mutation switch
+    // restores the old unbounded read rather than the field check.
+    if size > REPLAY_PAD_BUDGET && !crate::mutants::on("approvals-oracle-pad-size") {
+        return Err(format!(
+            "#1350 cell {id} pad size {size} is beyond the replay budget {REPLAY_PAD_BUDGET}"
+        ));
+    }
+    Ok(size)
+}
+
+fn pad_size(id: &str, entry: &Value) -> usize {
+    pad_size_checked(id, entry).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_pad_size_rejects_drift() {
+    crate::negative_assert!(
+        pad_size_checked(
+            "budget-exact",
+            &serde_json::json!({"pad":{"size": (REPLAY_PAD_BUDGET as u64) + 1}}),
+        )
+        .is_err(),
+        "#1350 #1696 rejects pad size drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "is beyond the replay budget")]
+fn recorded_pad_size_panics_on_drift() {
+    pad_size(
+        "budget-exact",
+        &serde_json::json!({"pad":{"size": u64::MAX}}),
+    );
+}
+
+#[test]
+fn recorded_budget_body_length_rejects_drift() {
+    crate::negative_assert!(
+        budget_body_len_checked("budget-exact", b"POST / HTTP/1.1\r\n\r\nshort").is_err(),
+        "#1350 #1696 rejects boundary body length drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "the expanded body must be")]
+fn recorded_budget_body_length_panics_on_drift() {
+    budget_body_len_checked("budget-exact", b"POST / HTTP/1.1\r\n\r\nshort")
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
 fn oracle() -> Value {
     test_baseline::oracle(ORACLE);
     serde_json::from_str(ORACLE).expect("#1350 oracle JSON")
@@ -56,7 +158,7 @@ fn cell(id: &str) -> Cell {
             // writes the real 'a' padding the recorder wrote.
             if let Some(pad) = entry.get("pad").filter(|pad| !pad.is_null()) {
                 let marker = pad["marker"].as_str().expect("#1350 oracle pad marker");
-                let size = pad["size"].as_u64().expect("#1350 oracle pad size") as usize;
+                let size = pad_size(id, entry);
                 assert!(
                     request.contains(marker),
                     "#1350 cell {id} pad marker missing from its request"
@@ -673,6 +775,8 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (Vec<u8>, bool) {
 /// wire bytes they map to 1:1.
 async fn replay(id: &str) {
     let cell = cell(id);
+    // No-op outside the budget cells; keeps their replay honest about length.
+    assert_budget_body_len(&cell);
     let setup = server_setup(&cell.server).await;
     let (raw, closed) =
         serve_and_capture(setup.approvals, &cell.request, &cell.id, cell.half_close).await;

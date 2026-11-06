@@ -506,6 +506,18 @@ async fn handle_request(
     request: hyper::Request<Incoming>,
     client_probe: Option<Arc<TcpStream>>,
 ) -> Result<hyper::Response<Body>, io::Error> {
+    let version = request.version();
+    Ok(finalize(
+        route_request(ctx, request, client_probe).await?,
+        version,
+    ))
+}
+
+async fn route_request(
+    ctx: Arc<Ctx>,
+    request: hyper::Request<Incoming>,
+    client_probe: Option<Arc<TcpStream>>,
+) -> Result<hyper::Response<Body>, io::Error> {
     if let Some(rejection) = native_http::node_parser_admission(&request)? {
         return Ok(rejection);
     }
@@ -546,6 +558,61 @@ async fn handle_request(
         Some("Not Found".to_owned()),
         keep_alive,
     ))
+}
+
+/// Node answers every HTTP/1.0 request with a `Connection: close` response on
+/// a closed socket, even one asking to keep alive; an explicit 1.0 response
+/// version keeps hyper's `fix_keep_alive` in its HTTP/1.0 branch — the same
+/// #1209 trick (whose hyper `HTTP/1.0` status line against Node's `HTTP/1.1`
+/// is the registered A8.4-NATIVE-HTTP-001 diff). Without it the channel's own
+/// `Connection: close` is rewritten to `keep-alive` (the response version is
+/// still 1.1) and the socket stays open — the #1684 probe's divergence.
+///
+/// The body is also made unsized: Node's HTTP/1.0 replies are close-delimited
+/// (no `content-length`, no chunking — the recorded `http10` cell), while
+/// hyper frames a known-length body with `content-length` on any version.
+/// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
+/// body and closes, matching Node's bytes.
+/// Sibling: the 1.0 version switch is kept in sync with `finalize` in
+/// `src/module_host.rs`, `src/module_host/approvals.rs`, `src/api_web.rs` and
+/// the 1.0 branch in `src/native_http.rs`. The unsized wrapper is webhook-only
+/// because this channel answers with `handler_response_with_length` bodies,
+/// while those paths stream an unknown-size body that a 1.0 connection already
+/// frames by closing.
+fn finalize(mut response: hyper::Response<Body>, version: hyper::Version) -> hyper::Response<Body> {
+    if version != hyper::Version::HTTP_10 || crate::mutants::on("webhook-http10-finalize-off") {
+        return response;
+    }
+    *response.version_mut() = hyper::Version::HTTP_10;
+    if !crate::mutants::on("webhook-http10-framing-off") {
+        let body = std::mem::replace(response.body_mut(), native_http::streamed(None));
+        *response.body_mut() = Unsized(body).boxed();
+    }
+    response
+}
+
+/// A body whose size hyper cannot know (#1684): everything else delegates, so
+/// the frames and the end-of-stream flag are unchanged.
+struct Unsized(Body);
+
+impl hyper::body::Body for Unsized {
+    type Data = bytes::Bytes;
+    type Error = crate::ProxyError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::default()
+    }
 }
 
 /// The response of `sendJson`: `JSON.stringify` under `application/json`.

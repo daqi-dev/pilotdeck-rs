@@ -104,7 +104,10 @@ function sign(body: string, secret: string) {
 function requestBytes(step: any): string {
   const headers: Record<string, string> = { Host: '127.0.0.1', ...(step.headers ?? {}) };
   if (step.mode === 'close' && !('Connection' in headers)) headers['Connection'] = 'close';
-  const lines = [`${step.method} ${step.target} HTTP/1.1`];
+  // #1684: every pre-existing step was an HTTP/1.1 client, so the version was
+  // implicit; the HTTP/1.0 cell records it explicitly instead of hardcoding
+  // 1.1 and silently recording a different client than it claims.
+  const lines = [`${step.method} ${step.target} ${step.version ?? 'HTTP/1.1'}`];
   for (const [name, value] of Object.entries(headers)) lines.push(`${name}: ${value}`);
   if (step.body !== undefined && step.body !== null && !('Content-Length' in headers)) {
     lines.push(`Content-Length: ${Buffer.byteLength(step.body)}`);
@@ -485,7 +488,30 @@ scenario(
   ],
 );
 
-const EXPECTED_CASE_COUNT = 19;
+// 18. http10: an HTTP/1.0 client asking to keep alive. Node answers its own
+// HTTP/1.1 status line with `Connection: close` on a closed socket; hyper
+// answers a 1.0 line (the registered A8.4-NATIVE-HTTP-001 diff) and, before
+// #1684, kept the socket open with `Connection: keep-alive`. The recorded
+// response is close-delimited (Node leaves off the content-length it uses for
+// 1.1), so the Rust side replays this cell in a pinned direct test that
+// substitutes only the registered status line.
+scenario(
+  'http10',
+  { port: 0, routes: { main: { secret: '__INSECURE_NO_AUTH__' } } },
+  [
+    {
+      op: 'request',
+      label: 'http10-keepalive',
+      method: 'GET',
+      target: '/health',
+      version: 'HTTP/1.0',
+      headers: { Connection: 'keep-alive' },
+      mode: 'close',
+    },
+  ],
+);
+
+const EXPECTED_CASE_COUNT = 20;
 assert.equal(cases.length, EXPECTED_CASE_COUNT, '#1334 generator case count');
 
 // The null-body cell rejects the voided handleRequest promise; keep the
