@@ -188,7 +188,7 @@ impl Drop for BarrierRelease {
         // barrier while this guard is already spinning has not written its
         // `block` receipt yet, and a one-shot sample would then skip the release
         // entirely — the leak this guard exists to stop.
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut deadline = Instant::now() + Duration::from_secs(2);
         loop {
             if receipt_seq(&self.control, self.site, "release", self.key).is_none()
                 && let Some(seq) = receipt_seq(&self.control, self.site, "block", self.key)
@@ -198,6 +198,10 @@ impl Drop for BarrierRelease {
                 if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }
+                // Fresh budget for the durable write this release unblocks: a
+                // barrier the worker only reaches late must not leave that write
+                // with whatever is left of the block-receipt wait.
+                deadline = Instant::now() + Duration::from_secs(2);
             }
             // The durable write behind the barrier lands after the release; wait
             // for its `complete` receipt so `Scratch` does not remove the
