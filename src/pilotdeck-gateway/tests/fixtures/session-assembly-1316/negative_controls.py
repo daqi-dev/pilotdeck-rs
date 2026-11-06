@@ -861,6 +861,20 @@ DISPATCH_PROBE_STUB = ('#!/bin/sh\n'
                        'exit 1\n')
 
 
+def _lock_snapshot(path):
+    """#1938 r1（Claude boundary P0/P1）：锁的 mtime_ns（不存在即 `None`），一次 `stat`。
+
+    `(path.exists(), path.stat().st_mtime_ns if path.exists() else None)` 有两个
+    窗口：两次 `exists` 之间文件被删、或者 `exists` 与 `stat` 之间被删，后者抛
+    `FileNotFoundError` 会让探针以回溯收场（假 FAIL）。这里只取一次 `stat`，
+    删掉了就当作「不存在」，比较照样能看出「本来有、现在没了」。
+    """
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
 def dispatch_probe():
     """#1692 r15-4 / #1938: every mode takes an exact argument list, end to end.
 
@@ -895,6 +909,13 @@ def dispatch_probe():
         # after the flag, which is what the `created` check below looks for.
         (['--made-up-mode', 'extra'], '--made-up-mode extra', 'unknown mode'),
     )
+    # #1938 r1（GLM boundary P1）：`mutations` / `gates` / `self_check_controls`
+    # 三张字面量表都有空表 fail-closed，唯独这张没有——清空它，下面的循环零次、
+    # `problems` 仍是空的，探针照样打印通过。行数另有静态钉子
+    # （`test_dispatch_case_table_cannot_shrink_silently`），这里管的是「整张表没了」。
+    if not invocations:
+        sys.exit('no dispatch cases defined: the probe would pass without '
+                 'driving the dispatcher')
     # `--self-check extra` is NOT driven here: with its arity guard removed that
     # child would simply start a full `--self-check`, i.e. spawn this probe again
     # and recurse. The static pin in `test_metadata_io_driver.py` owns that line
@@ -916,10 +937,12 @@ def dispatch_probe():
         child_env = {key: value for key, value in os.environ.items()
                      if key != 'CARGO_TARGET_DIR'}
         child_env[DISPATCH_PROBE_MARKER] = '1'
-        child_env['PATH'] = str(stub_dir) + os.pathsep + child_env.get('PATH', '')
+        # #1938 r1（Claude boundary P2）：父环境没有 PATH 时上一个写法留一个尾部
+        # 空项，空项按 cwd 解析；`os.defpath` 才是「没有 PATH 时的标准值」。
+        child_env['PATH'] = (str(stub_dir) + os.pathsep
+                             + (child_env.get('PATH') or os.defpath))
         lock = root / '.negative-source.lock'
-        lock_before = (lock.exists(),
-                       lock.stat().st_mtime_ns if lock.exists() else None)
+        lock_before = _lock_snapshot(lock)
         for arguments, label, needle in invocations:
             try:
                 result = run_owned([sys.executable, '-I', str(Path(__file__).resolve()),
@@ -949,7 +972,17 @@ def dispatch_probe():
             if result.returncode == 0 or 'dispatch probe: refused' not in text:
                 problems.append(f'dispatch marker: a probe child ran the main path: '
                                 f'{text[-200:]}')
-        created = sorted(entry.name for entry in directory.iterdir())
+        # #1938 r1（Claude boundary P0）：`iterdir` 与 `read_text` 都是「先看后读」，
+        # 中间被删就抛 `FileNotFoundError`，探针会以回溯收场而不是给出诊断——那是
+        # 假 FAIL。这个 tempdir 是本函数自己建的、自己从不删，消失就意味**没法核**，
+        # 所以照 fail-closed 报一条，而不是当成「什么都没建」。下面的桩调用记录
+        # 相反：文件不存在才是常态（桩被调用才写），读不到就是「没调过」。
+        try:
+            created = sorted(entry.name for entry in directory.iterdir())
+        except FileNotFoundError:
+            problems.append(f'dispatch: the probe output directory vanished before it '
+                            f'could be checked: {directory}')
+            created = []
         if created:
             problems.append(f'dispatch: an argument became an output path: {created}')
         # #1938: "the fall-through never reached this checkout" as a file the
@@ -957,14 +990,16 @@ def dispatch_probe():
         # mean real work started; `git` means `mutating_sources` got as far as
         # the tree lock (it takes the lock and only then runs the pristine
         # checks), so it is the one that covers a bare flock - a flock leaves no
-        # mtime trace. The mtime/existence check below still catches the case
-        # the stubs cannot: a fall-through in a tree where the lock file does
-        # not exist yet.
-        if calls.exists():
+        # mtime trace. The mtime check below still catches the case the stubs
+        # cannot: a fall-through in a tree where the lock file does not exist yet.
+        try:
+            stub_calls = calls.read_text()
+        except FileNotFoundError:
+            stub_calls = ''
+        if stub_calls:
             problems.append(f'dispatch: the probe started a stubbed cargo, rustc or '
-                            f'git: {calls.read_text().strip()[:200]}')
-        lock_after = (lock.exists(),
-                      lock.stat().st_mtime_ns if lock.exists() else None)
+                            f'git: {stub_calls.strip()[:200]}')
+        lock_after = _lock_snapshot(lock)
         if lock_after != lock_before:
             problems.append(f'dispatch: the probe touched the real tree lock: {lock} '
                             f'went from {lock_before} to {lock_after}')
@@ -1202,6 +1237,23 @@ def _empty_gates_table(text):
     end += len('    }\n')
     return text[:start] + '    gates = {}\n' + text[end:], 1
 
+
+# #1938 r1（GLM boundary P1）：`dispatch_probe` 的用例表同样要证明「清空它就红」。
+# 与 gates 一样按整表文本手术，不靠逐行锚点：表里的参数写法随时会变，锚行会漂。
+EMPTY_INVOCATIONS_TABLE = object()
+INVOCATIONS_TABLE_OPEN = '    invocations = (\n'
+INVOCATIONS_TABLE_END = '    )\n'
+
+
+def _empty_invocations_table(text):
+    """Replace the whole dispatch case table with `()`; returns (text, hits)."""
+    start = text.find(INVOCATIONS_TABLE_OPEN)
+    end = text.find(INVOCATIONS_TABLE_END, start if start >= 0 else 0)
+    if start < 0 or end < 0:
+        return text, 0
+    end += len(INVOCATIONS_TABLE_END)
+    return text[:start] + '    invocations = ()\n' + text[end:], 1
+
 self_check_controls = [
     # §1: without the refusal, `bounded` returns a cap and the probe really
     # spawns a subprocess on an expired budget.
@@ -1237,6 +1289,21 @@ self_check_controls = [
        ''),
       (REAL_GATE_ARG, STUB_GATE_ARG)],
      False, 'no slot guard cases defined', 0),
+    # #1938 r1（GLM boundary P1）：同一种洞在 `dispatch_probe` 的用例表上——清空
+    # `invocations`，循环零次、`problems` 仍空，探针照样打印通过。守卫在时必须红 ...
+    ('empty-dispatch-cases',
+     [(EMPTY_INVOCATIONS_TABLE, None)],
+     True, 'no dispatch cases defined', None),
+    # ... 守卫拿掉时必须绿（那张空表看起来和健康运行一模一样）。判据与
+    # `empty-gates-guard-removed` 相同：只说「消息不见了」是同义反复，因为该
+    # 变异删的正是打印它的那段文本，所以这里钉住 rc=0。
+    ('empty-dispatch-guard-removed',
+     [(EMPTY_INVOCATIONS_TABLE, None),
+      ('    if not invocations:\n'
+       "        sys.exit('no dispatch cases defined: the probe would pass without '\n"
+       "                 'driving the dispatcher')\n",
+       '')],
+     False, 'no dispatch cases defined', 0),
     # The tightened deadline parser is only load-bearing together with its
     # extended bad-value pair: reverting to a plain `int()` (which accepts
     # '1_000', ' 120 ', '+120', full-width digits and 86401) must turn the
@@ -1351,6 +1418,8 @@ def _self_check_variant(name, replacements, directory):
     for old, new in replacements:
         if old is EMPTY_GATES_TABLE:
             text, count = _empty_gates_table(text)
+        elif old is EMPTY_INVOCATIONS_TABLE:
+            text, count = _empty_invocations_table(text)
         else:
             count = text.count(old)
             if count == 1:
@@ -1383,6 +1452,10 @@ def self_check_controls_run():
         # absorbed by the marker's refusal.
         child_env = {key: value for key, value in os.environ.items()
                      if key != 'CARGO_TARGET_DIR'}
+        # #1938 r1（Claude boundary P2）：与 `dispatch_probe` 里同一处口径——
+        # 父环境没有 PATH 时写死标准值 `os.defpath`，不让「没有 PATH」这件事
+        # 悄悄变成子进程的默认搜索路径以外的行为。
+        child_env.setdefault('PATH', os.defpath)
         # Control of the control: an unmutated copy must still pass, otherwise
         # every "the copy went red" verdict below would be meaningless.
         # #1692 §9 r3 review (MiniMax boundary P1): these three exits carry the
