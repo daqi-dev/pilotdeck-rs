@@ -2295,7 +2295,8 @@ def _container_callee(func):
             base = base.args[0]
         return base.id if isinstance(base, ast.Name) else None
     if (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
-            and func.func.id in ('next', 'iter') and func.args):
+            and func.func.id in ('next', 'iter', 'list', 'tuple', 'sorted',
+                                 'reversed') and func.args):
         return func.args[0].id if isinstance(func.args[0], ast.Name) else None
     # #1953 fix-r1 round 4 (GLM boundary r2 P0): ``for h in hs.copy():`` hands
     # the same elements over; the call position already knew the wrapper on the
