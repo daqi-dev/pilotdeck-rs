@@ -32,17 +32,21 @@ cargo 经 `sigint_default.py` 包装、`run_owned` 进程组管理、`wait_for_s
 一失败意味着修复失效，因此 GREEN 只接受 **PASS**：任何失败（编译错、错 panic、金样
 sha 失败）一律 INVALID，绝不会被记成 KILLED。
 
-### GREEN 的竞争见证（`CONTENTION_FLOOR`）
+### GREEN 的竞争见证（测试自报等待时长）
 
-GREEN 不能只看「测试通过」——没等到 writer 也会通过。所以 GREEN 还要求：
+GREEN 不能只看「测试通过」——没等到 writer 也会通过；也不能拿 cargo 的总耗时当见证
+（里面含启动、`~/.cargo` 包缓存锁与重编译，既可能被无关等待刷大，也可能把真实但很短
+的等待判小）。所以见证来自测试自己：
 
-1. 预编译（`--no-run`）之后再跑测试，`cargo test --exact` 的启动开销是秒级；
-2. `run_owned` 内实测耗时 ≥ `CONTENTION_FLOOR`（5 s）。真等到租约的测试不可能早于
-   writer 放锁完成（窗口本身 60 s），低于下限即「从未竞争」，记 INVALID 并提示在
-   cargo 名额空闲时重跑。
+- `fixture_read_lease()` 在拿到共享锁时打一行 stderr：`#1662 read lease wait ms=<n>`
+  （取锁前后 `Instant` 实测）。
+- GREEN 用 `--nocapture` 跑常驻测试，解析这一行；没有该行 → INVALID（从未等过），
+  `max(等待) < MIN_LEASE_WAIT_MS`（500 ms）→ INVALID。
+- 只有「测试 PASS 且自报等待 ≥ 500 ms」才是 KILLED。
 
-这消除了「弱证据通过」：以前名额排队导致测试晚于窗口到达时会被记成 KILLED，现在记
-INVALID（fail-closed）。耗时只量 `run_owned`，`wait_for_slot` 的排队时间不计入。
+prewarm（`--no-run`）返回非 0 直接 INVALID：否则第二次运行会在计时窗口里重编译。
+起 writer 之前还会先 `_ensure_workspace_scanner()` 预热 #1166 工作区扫描器 —— 否则
+`mutating_sources` 在持锁体内构建它，冷 target 上会吃掉 writer 的入口预算。
 
 ### writer 的有界退出
 
@@ -50,11 +54,14 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 抢锁慢说明工作区忙，不是租约的证据，这个控制项也不该成为最长持锁者。
 
 停止 writer 分三级：先等它自己恢复完成（`WRITER_EXIT_BUDGET = 窗口 + 120 s`）；超时
-再发 `SIGTERM`，writer 的处理器抛 `SystemExit` 让 `mutating_sources.__exit__` 把每个
-guarded 文件恢复回去；再超时才 `_kill_group`（复用 `negative_process` 的实现）并
-`_collect` 有界收尾。只有真被 SIGKILL 才会留变异体，下一次 `mutating_sources` 会用
-HEAD 字节校验拒绝脏树，不会把变异体当基线。`finally` 里的停止错误会作为 INVALID
-原因上报，不覆盖主结果。
+再发 `SIGTERM` —— writer 的处理器**只在窗口期内生效**，抛 `SystemExit` 让
+`mutating_sources.__exit__` 把每个 guarded 文件恢复回去，窗口结束即解除武装，落在恢复
+过程中的信号不会打断 `write_bytes`；再超时才 `_kill_group`（复用 `negative_process`
+的实现）并 `_collect` 有界收尾。
+
+SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体；下一次 `mutating_sources`
+用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
+`finally` 里的停止错误与主错误都会进 INVALID 的 reason（有主错误时以主错误为准）。
 
 ## 运行（提交后；mutating_sources 拒绝脏树）
 
@@ -64,5 +71,5 @@ CARGO_TARGET_DIR=<target> python3 -I \
 ```
 
 GREEN 依赖 writer 窗口（默认 60 s）覆盖常驻测试从启动到取锁的耗时；若宿主 cargo
-名额排队导致测试晚于窗口到达，GREEN 记 INVALID（竞争下限未达标），不再记成 KILLED。
-RED 仍是决定性方向。
+名额排队导致测试晚于窗口到达，测试自报的等待为 0（或没有该行），GREEN 记 INVALID，
+不会记成 KILLED。RED 仍是决定性方向。
