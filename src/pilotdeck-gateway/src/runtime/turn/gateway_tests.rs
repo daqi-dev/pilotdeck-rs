@@ -1584,21 +1584,37 @@ fn a_hung_cleanup_does_not_hold_the_failure_report() {
 /// a slow owner shutdown cannot leave the cleanup with an expired deadline
 /// (which would let `cleanup_ran` suppress the embedding's own fallback while
 /// nothing actually disposed factory/project).
+///
+/// #1960: the argument is the value production actually passes.
+/// `start_with_cleanup_budget` adds [`super::INITIALIZATION_TEARDOWN_SLACK`]
+/// before it calls `initialization_teardown_bounds` (gateway.rs:362), so a
+/// declared 300 ms arrives here as 300 ms + SLACK. Feeding the raw declared
+/// budget instead made `cleanup_bound == declared` and
+/// `owner + cleanup <= declared + DEADLINE` hold for the wrong reason: on the
+/// real input they are `declared + SLACK` and exactly
+/// `declared + SLACK + DEADLINE`.
 #[test]
 fn a_slow_refused_owner_does_not_shrink_the_cleanup_bound() {
-    let teardown = std::time::Duration::from_millis(300);
-    let (owner_bound, cleanup_bound) = super::initialization_teardown_bounds(teardown);
-    assert!(
-        owner_bound <= super::INITIALIZATION_TEARDOWN_DEADLINE,
+    let declared = std::time::Duration::from_millis(300);
+    let passed = declared.saturating_add(super::INITIALIZATION_TEARDOWN_SLACK);
+    let (owner_bound, cleanup_bound) = super::initialization_teardown_bounds(passed);
+    assert_eq!(
+        super::INITIALIZATION_TEARDOWN_DEADLINE,
+        owner_bound,
         "#1746 the refused owner is the host's own resource and stays on the default bound"
     );
     assert_eq!(
-        teardown, cleanup_bound,
+        passed, cleanup_bound,
         "#1746 the cleanup keeps the full deadline its embedding declared"
     );
     assert!(
-        owner_bound + cleanup_bound <= teardown + super::INITIALIZATION_TEARDOWN_DEADLINE,
-        "#1746 the failure path stays bounded by the two bounds together"
+        cleanup_bound > declared,
+        "#1746 the cleanup keeps the slack on top of the declared budget, not the budget itself"
+    );
+    assert_eq!(
+        declared + super::INITIALIZATION_TEARDOWN_SLACK + super::INITIALIZATION_TEARDOWN_DEADLINE,
+        owner_bound + cleanup_bound,
+        "#1746 the failure path costs exactly the two bounds together"
     );
 }
 
