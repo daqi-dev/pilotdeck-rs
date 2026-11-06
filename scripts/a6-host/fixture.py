@@ -32,6 +32,13 @@ _GRANDCHILD_WATCH = (
 # `host/tests.rs`), which covers the whole spawn: at 5 s the host would give up
 # first and its generic "handshake timed out" would hide which descendant
 # check failed (#1779 review).
+# The budget that leaves is 5 s - 3 s = 2 s for everything else in the spawn:
+# the peer's own interpreter start plus the handshake round trips. Arming takes
+# ~0.1 s here (the probe in `preinstall_probe.py` prints the number), so 2 s is
+# a wide margin -- but it is a budget, not a guarantee: a worker loaded badly
+# enough to push two interpreter starts past it would see this guard fire on a
+# healthy descendant. The failure is loud and names the check ("never armed" /
+# "died right after arming"), which is what the margin buys (#1779 review).
 GRANDCHILD_ARM_LIMIT = 3.0
 GRANDCHILD_ALIVE_SETTLE = 0.05
 
