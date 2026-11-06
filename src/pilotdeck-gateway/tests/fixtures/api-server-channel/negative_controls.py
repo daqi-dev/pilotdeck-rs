@@ -38,6 +38,8 @@ PARTIAL_BODY = "channel::api_server::tests::partial_body_is_answered_at_the_body
 BODY_DEADLINE = "channel::api_server::tests::body_read_deadline_defaults_to_the_node_request_timeout"
 RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_names_match_ts"
 DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to_the_ts_default"
+STREAM_SUBMIT_ERR = "channel::api_server::tests::submit_error_stream_turn_emits_channel_submit_failed"
+BUFFERED_SUBMIT_ERR = "channel::api_server::tests::submit_error_buffered_turn_returns_submit_failed"
 
 mutations = [
     (
@@ -177,6 +179,32 @@ mutations = [
         "pub const DEFAULT_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);",
         BODY_DEADLINE,
         "#1620 the body-read deadline must stay at Node's default requestTimeout",
+    ),
+    (
+        # #1737: the stream_turn submit-reject arm is mutated into a success
+        # close (sse_chunk + sse_done instead of the channel_submit_failed
+        # frame), so the bound frame assertions turn red. `let _ = &body;`
+        # keeps the mutant warning-free (body stays constructed above).
+        "stream-submit-err-arm",
+        SERVER,
+        "            let _ = sender.send(sse_error(&body));\n            return;",
+        "            let _ = &body;\n"
+        "            let _ = sender.send(sse_chunk(&shared.model_name, &JsString::from(\"mutant\")));\n"
+        "            let _ = sender.send(sse_done(&shared.model_name));\n"
+        "            return;",
+        STREAM_SUBMIT_ERR,
+        "#1737 a rejected stream submit emits channel_submit_failed",
+    ),
+    (
+        # #1737: the buffered_turn submit-reject arm is mutated into a 200
+        # answer (submit_failed -> error_response with StatusCode::OK), so the
+        # bound status assertion turns red.
+        "buffered-submit-err-arm",
+        SERVER,
+        "return submit_failed(&error.to_string());",
+        "return error_response(StatusCode::OK, \"channel_submit_failed\", &error.to_string(), \"channel_submit_failed\", Some(\"server_error\"), \"PilotDeck failed before this API request could finish. Retry the request; if it repeats, check the API server and gateway logs.\", \"channel\");",
+        BUFFERED_SUBMIT_ERR,
+        "#1737 a rejected buffered submit answers 500",
     ),
 ]
 
