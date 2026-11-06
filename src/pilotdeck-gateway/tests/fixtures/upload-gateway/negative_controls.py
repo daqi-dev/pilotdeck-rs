@@ -304,8 +304,10 @@ mutations = [
     # #1494 (review deepseek boundary#1): the comparison must read the entry
     # that was actually linked. `fs::metadata` follows a symlink source, so a
     # source swapped for a link to the approved inode compares equal while the
-    # lease holds the *link* on Linux (`hard_link` does not follow there) —
-    # the named test swaps the source for exactly that link and must go red.
+    # lease holds the *link* itself — `std::fs::hard_link` goes through
+    # `linkat(..., 0)` and does not follow a symlink source on any shipping
+    # Unix (macOS measured 2026-11-06). The named test swaps the source for
+    # exactly that link and must go red.
     ('lease-link-follows-symlink-source', STORE,
      '    match (fs::symlink_metadata(destination), expected) {',
      '    match (fs::metadata(destination), expected) {',
