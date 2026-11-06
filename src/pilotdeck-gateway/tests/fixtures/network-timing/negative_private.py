@@ -113,7 +113,9 @@ try:
     # registered case's anchor is no longer unique in its source, and an
     # uncaught RuntimeError would land on exit 1 ("ran but not green").
     catalog(run_cases)
-except (ValueError, RuntimeError) as error:
+except (OSError, ValueError, RuntimeError) as error:
+    # OSError: `catalog` re-reads each registered source; an unreadable file is
+    # "never started", not a failed run.
     refuse(str(error))
 out = claim_dir(sys.argv[1])
 verdicts = []
