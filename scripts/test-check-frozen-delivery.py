@@ -3093,25 +3093,39 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         case("ui 报文指向两个根之外的绝对路径 → block",
              outside[0] == "block", f"{outside}")
 
-    # P1-C2：写范围 —— 子装置在被审仓的 git 记账里自建 worktree 必须被抓住。
+    # P1-C2：写范围 —— 子装置运行窗口内新增的 worktree 记账**无法归属**（git
+    # 不记录创建者，兄弟会话并发建树看起来一模一样），所以只报诊断 note，
+    # 不再假 BLOCK；读不出记账才是阻塞。
     with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as extra:
         target = Path(extra) / "sneaky"
         payload = {"status": "PASS", "failures": []}
-        leak = ("import subprocess, json\n"
+        leak = ("import subprocess\n"
                 f"subprocess.run(['git', 'worktree', 'add', '--detach', {str(target)!r},\n"
-                "                'HEAD'], capture_output=True)\n"
-                "print(json.dumps({'status': 'PASS', 'failures': []}))\n")
-        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + leak
-        proc = delivery(Path(td), "gateway-parity", payload,
-                        base_files=[("specs/gateway-parity/FROZEN.md",
-                                     "# fake FROZEN\n\n"
-                                     f"{sha(body)}  ../../scripts/gateway-parity/"
-                                     "check_frozen.py\n")],
-                        source=leak)
-        case("子装置在被审仓自建 worktree → BLOCKED（写范围之外）",
-             proc.returncode == 1
-             and "appeared in the audited repo while this apparatus ran" in proc.stdout,
+                "                'HEAD'], capture_output=True)\n")
+        # parity 夹具会自动把 ``PARITY_MANIFEST`` 追加到源尾，清单可解析、报文
+        # 只吐一份；FROZEN.md 由 ``fake_apparatus`` 按同一份 body 钉住。
+        proc = delivery(Path(td), "parity", payload, source=leak)
+        case("子装置窗口内新增 worktree → 诊断 note（无法归属，不假 BLOCK）",
+             proc.returncode == 0
+             and "appeared while an apparatus ran" in proc.stdout
+             and "cannot be attributed" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
+
+    # P1（codex r2b-3）：窗口采样读不出记账时不得静默跳过验证。
+    case("window_verdict：前后任一侧读不出 → block（不静默跳过）",
+         cfd.window_verdict(None, set())[0] is not None
+         and cfd.window_verdict({'/a'}, None)[0] is not None)
+    wblock, wnote = cfd.window_verdict({'/a'}, {'/a', '/sibling'})
+    case("window_verdict：无法归属的新增只记 note，不阻",
+         wblock is None and '/sibling' in (wnote or ''), f"{wblock} / {wnote}")
+    case("window_verdict：无变化 → 全 None",
+         cfd.window_verdict({'/a'}, {'/a'}) == (None, None))
+
+    # P1（codex r2b-1）：清理未真删净时 holder 必须留在登记里（atexit 可重试），
+    # 且主流程要把它当阻塞，而不是把残留降级成「别人的 note」。
+    case("holder_verdict：无残留 → None", cfd.holder_verdict([]) is None)
+    case("holder_verdict：仍有 holder → 阻塞消息点名路径",
+         "/kept" in (cfd.holder_verdict([(Path('/repo'), Path('/kept'))]) or ''))
 
     # P1-C2（续）：SIGTERM 落在快照存活期间也必须清干净（atexit + 信号转
     # SystemExit）。走真实入口 ``main()``：子装置故意 sleep 30 s，父进程看到
@@ -3326,6 +3340,67 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
             cfd._SNAPSHOT_HOLDERS.clear()
         case("drop_holder 被 SystemExit 打断 → holder 仍登记（atexit 可重试）",
              raised and kept and holder.exists(), f"raised={raised} kept={kept}")
+
+    # P1（codex r2b-1）：清理**报告成功但没真删净**（rmtree 静默失败）时，登记
+    # 不得摘除 —— 否则 atexit 无从重试，残留还被 scope_verdict 当成别人的 note。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        holder = Path(td) / "cfd-snapshot-y"
+        (holder / "tree").mkdir(parents=True)
+        real_git, real_rmtree = cfd.git, shutil.rmtree
+        cfd._SNAPSHOT_HOLDERS.append((root, holder))
+
+        def no_remove(_root, *args, **_kwargs):
+            if args[:2] == ("worktree", "remove"):
+                return 1, "", "no such worktree"
+            if args[:2] == ("rev-parse", "--git-common-dir"):
+                return 0, ".git\n", ""
+            return 0, "", ""
+        try:
+            cfd.git = no_remove
+            shutil.rmtree = lambda *_a, **_k: None      # 静默失败
+            cleaned = cfd.drop_holder(root, holder)
+            kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+        finally:
+            cfd.git, shutil.rmtree = real_git, real_rmtree
+            cfd._SNAPSHOT_HOLDERS.clear()
+        case("清理未真删净 → drop_holder 返回 False 且 holder 仍登记",
+             cleaned is False and kept and holder.exists(),
+             f"cleaned={cleaned} kept={kept}")
+
+    # P1（codex r2b-1）：``gitdir`` 与 target 是同一目录的等价拼写（符号链接，
+    # macOS 上 /tmp 与 /private/tmp 就是这种）时，本 holder 的记账仍要删掉。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        real = Path(td) / "real-snap"
+        real.mkdir()
+        link = Path(td) / "link-snap"
+        link.symlink_to(real)
+        entry = root / ".git" / "worktrees" / "tree"
+        entry.mkdir(parents=True)
+        (entry / "gitdir").write_text(str(link / "tree" / ".git") + "\n")
+        removed = cfd.drop_admin_entry(root, real / "tree")
+        case("drop_admin_entry：等价拼写的 gitdir 仍匹配并删掉本 holder 记账",
+             removed is True and not entry.exists(),
+             f"removed={removed} exists={entry.exists()}")
+
+    # P1（codex r2b-1）：common-dir 读不出时不得假装删干净。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        real_git = cfd.git
+        try:
+            cfd.git = lambda *_a, **_k: (1, "", "boom")
+            removed = cfd.drop_admin_entry(root, Path(td) / "snap")
+        finally:
+            cfd.git = real_git
+        case("drop_admin_entry：记账读不出 → 返回 False（不当作已清）",
+             removed is False, f"removed={removed}")
 
     # P1（codex）：两个根嵌套时取**最深**前缀，先命中被审树会把快照路径归一错。
     with tempfile.TemporaryDirectory() as td:
