@@ -707,6 +707,32 @@ fn sequence_less_append_joins_the_projection() {
 }
 
 #[test]
+fn restore_merging_a_read_prefix_keeps_sequence_less_entries() {
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1500 delivery entries");
+    let store = store();
+    append(&store, &entries[0]);
+    append(&store, &without_sequence(&entries[0]));
+    // A concurrent restore read the durable log before the sequence-less
+    // append committed, then merged the live suffix after it was published.
+    store
+        .cache
+        .restore(vec![entries[0].clone()])
+        .expect("#1500 restore merges the published suffix");
+    let live = lock(&store.projection.entries).clone();
+    assert_eq!(
+        live.len(),
+        2,
+        "#1500 restore merge keeps the sequence-less entry"
+    );
+    assert_eq!(
+        store.projection.snapshot().expect("#1500 merged snapshot"),
+        project(&live).expect("#1500 merged replay"),
+        "#1500 merged projection equals replay from the durable log"
+    );
+}
+
+#[test]
 fn restore_racing_completion_keeps_late_message() {
     let row = delivery();
     let entries = array(field(&row, "entries")).expect("#1253 racing delivery entries");
@@ -780,6 +806,53 @@ fn checkpoint_metadata_suffix_equals_replay() {
         &store,
         &expected(field(row, "expected")),
         "#1253 checkpoint metadata suffix equals TS replay",
+    );
+}
+
+#[test]
+fn checkpoint_keeps_replay_when_a_row_has_no_sequence() {
+    let fixture = oracle();
+    let row = field(&fixture, "checkpointMetadata");
+    let entries = array(field(row, "entries")).expect("#1253 checkpoint metadata entries");
+    let store = store();
+    let cache = ProjectionCache::new(
+        Arc::new(SuppliedCheckpoint(field(row, "envelope").clone())),
+        store.inner.clone(),
+        store.key.clone(),
+        store.projection.clone(),
+    );
+    // Both suffix loops place a row above the checkpoint watermark by ordinal.
+    // These two rows carry the same payloads but no `sequence`; they reach the
+    // projection through the live suffix, which is the only path a durable row
+    // without a positive sequence can take (`Recorder::restore` rejects one).
+    append(
+        &store,
+        &without_sequence(&js(
+            r#"{"sequence":7,"type":"session_metadata","turnId":"metadata","metadata":{"title":"sequence-less"},"sessionId":"session-1253","createdAt":"2026-11-01T00:00:00.000Z","entryId":"sequence-less-7","parentEntryId":"metadata-6"}"#,
+        )),
+    );
+    append(
+        &store,
+        &without_sequence(&js(
+            r#"{"sequence":8,"type":"turn_result","turnId":"metadata","result":{"type":"success","sessionId":"session-1253","turnId":"metadata","usage":{"inputTokens":9,"outputTokens":0},"permissionDenials":[],"turns":1,"startedAt":"2026-11-01T00:00:00.000Z","completedAt":"2026-11-01T00:00:00.000Z"},"sessionId":"session-1253","createdAt":"2026-11-01T00:00:00.000Z","entryId":"sequence-less-8","parentEntryId":"metadata-6"}"#,
+        )),
+    );
+    cache
+        .restore(entries.to_vec())
+        .expect("#1500 checkpoint restore with sequence-less rows");
+    let log = lock(&store.projection.entries).clone();
+    assert_eq!(
+        *lock(&cache.hydrated_rows),
+        0,
+        "#1500 a sequence-less row keeps the replayed checkpoint state"
+    );
+    assert_eq!(
+        store
+            .projection
+            .snapshot()
+            .expect("#1500 checkpoint snapshot"),
+        project(&log).expect("#1500 checkpoint replay"),
+        "#1500 checkpoint projection equals replay from the durable log"
     );
 }
 

@@ -98,14 +98,17 @@ mutations = [
     ('tail-collector-outside-owned-root', 'src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/generate.mts',
      "const workspace=path.join(runDir,'collector',c.name);", "const workspace=path.join(ROOT,'collector',c.name);",
      'tail_generator_cleans_only_owned_work', '#1253 foreign collector contains only its original file'),
-    ('duplicate-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(entry)) => existing >= entry,', '(Some(existing), Some(entry)) => existing > entry,', 'duplicate_sequence_append_is_idempotent', '#1253 duplicate sequence does not double count'),
-    ('stale-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(entry)) => existing >= entry,', '(Some(existing), Some(entry)) => existing == entry,', 'out_of_order_append_is_idempotent', '#1253 lower sequence does not double count'),
+    ('duplicate-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(ordinal)) => existing >= ordinal,', '(Some(existing), Some(entry)) => existing > entry,', 'duplicate_sequence_append_is_idempotent', '#1253 duplicate sequence does not double count'),
+    ('stale-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(ordinal)) => existing >= ordinal,', '(Some(existing), Some(entry)) => existing == entry,', 'out_of_order_append_is_idempotent', '#1253 lower sequence does not double count'),
     # #1500: the guard used to compare `Option<f64>` ordinals, so a `None`
     # sequence read as "already projected" (`Some(n) >= None` is always true)
     # and the entry never joined the live projection while `project()` replayed
     # it from disk. Treating a missing ordinal as already projected is exactly
-    # that mutant.
-    ('sequence-less-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '_ => false, // #1500: no comparable ordinal, and project() replays it too', '_ => true, // #1500: no comparable ordinal, and project() replays it too', 'sequence_less_append_joins_the_projection', '#1500 durable entry without a sequence is not silently skipped'),
+    # that mutant. A live row and an appended row are the only sources: the
+    # restore-side brother below drops a published suffix row instead.
+    ('sequence-less-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '_ => false,', '_ => true,', 'sequence_less_append_joins_the_projection', '#1500 durable entry without a sequence is not silently skipped'),
+    ('restore-merge-drops-sequence-less', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'None => true,', 'None => false,', 'restore_merging_a_read_prefix_keeps_sequence_less_entries', '#1500 restore merge keeps the sequence-less entry'),
+    ('checkpoint-hydrated-over-sequence-less', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'if let Some(checkpoint) = checkpoint.filter(|_| ordered) {', 'if let Some(checkpoint) = checkpoint {', 'checkpoint_keeps_replay_when_a_row_has_no_sequence', '#1500 a sequence-less row keeps the replayed checkpoint state'),
     ('racing-restore-index-lost', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', '*lock(&self.projection.completed_turns) = completed_turns(&entries);', '*lock(&self.projection.completed_turns) = completed_turns(&entries[..0]);', 'restore_racing_completion_keeps_late_message', '#1253 racing restore preserves completed turn late message'),
     ('racing-completion-recounted', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', 'if !already_projected {', 'if !already_projected || is(field(entry, "type"), "turn_result") {', 'restore_racing_completion_keeps_late_message', '#1253 racing restore counts completion once'),
     ('checkpoint-metadata-suffix-dropped', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'merge_metadata(&mut metadata, &next.metadata);', 'if sequence(entry) < 0.0 { merge_metadata(&mut metadata, &next.metadata); }', 'checkpoint_metadata_suffix_equals_replay', '#1253 checkpoint metadata suffix equals TS replay'),
