@@ -37,6 +37,11 @@ import sys
 # argparse 之后是跑、是 ``-h``、还是报错，那个目录的旧 PASS 都已报废。跳过帮助等于
 # 把「哪些形状算帮助」再猜一遍（``-hh`` / ``--help=x`` / 被带值选项吃掉），而猜错的
 # 方向都是留旧 PASS 冒充本轮（两家评审 P0）。
+#
+# 同理**不镜像 argparse 的「选项样式」判定**（负数正则跨版本变过、另有含空格当值的
+# 规则）：值 = ``--output`` 后第一个不是本解析器已知选项的非空 token，其余 ``-`` 开头
+# 的（``-1`` / ``-1x`` / ``-x y``）一律按值。多失效一个名字像选项的目录，比漏收后
+# 留下旧 PASS 便宜。所有显式目录**逐个都试一遍**再退出，前一个不可删不短路后面的。
 # ---------------------------------------------------------------------------
 
 VALUE_OPTIONS = ('--output', '--data', '--oracle')
@@ -112,43 +117,40 @@ def invalidate_stale_summary(out_root):
     return True
 
 
-def is_negative_number(token):
-    """``-1`` / ``-1.5`` / ``-.5``：argparse 的负数判定（本解析器无负数样式的选项）。
+def is_known_option(token):
+    """本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）。
 
-    argparse 在 ``_parse_optional`` 里先用负数正则把这类 token 从「选项」里摘出去，
-    所以 ``--output -1`` 的值是 ``-1`` 而不是「缺值」。这里不 import re（本段只许
-    依赖 ``os`` / ``sys``），手写等价判定：``^-\\d+$|^-\\d*\\.\\d+$``。
+    只回答一个问题：「``--output`` 后面的这个 token 会不会被 argparse 当成值」。
+    认识的选项一定不是值（argparse 报 ``expected one argument``）；其余 token——包括
+    ``-1``、``-1x``、``-x y``、``--bad`` 这类以 ``-`` 开头的——一律按值处理。
+
+    **不镜像 argparse 的「选项样式」判定**：那套规则跨版本变过（3.12 的
+    ``^-\\d+$|^-\\d*\\.\\d+$`` 与 3.14 的 ``-\\.?\\d`` 对 ``-1x`` 结论相反，另有一条
+    「含空格的 token 当值」），照抄任何一版都会在另一版上漏收，而漏收的方向是
+    **留旧 PASS 冒充本轮**（两家评审各给一条可达形状）。这里改成一侧判据：多失效
+    一个名字像选项、且真的存在并含本装置产物的目录，代价远小于留下旧 PASS。
     """
-    body = token[1:]
-    if not body:
-        return False
-    if '.' in body:
-        whole, dot, fraction = body.partition('.')
-        return dot == '.' and '.' not in fraction and (
-            fraction.isdecimal() and (whole == '' or whole.isdecimal()))
-    return body.isdecimal()
-
-
-def looks_like_option(token):
-    """argparse 眼里的「选项样式」token：``-`` 单字符不算（当值/位置参数）。"""
-    return len(token) > 1 and token.startswith('-') and not is_negative_number(token)
+    if token in ('-h', '--help'):
+        return True
+    return any(token == option or token.startswith(option + '=')
+               for option in VALUE_OPTIONS + ('--help',))
 
 
 def early_outputs(argv):
     """解析前从原始 argv 取**所有**显式写出的非空 ``--output`` 值。
 
-    只认两字不差的 ``--output`` / ``--output=``：不猜缩写、不猜位置参数、不猜未知
-    选项带不带值——那些猜测正是前几轮误删别人证据的来源（评审 P0）。
+    只认两字不差的 ``--output`` / ``--output=``：不猜缩写、不猜位置参数——那些猜测
+    正是前几轮误删别人证据的来源（评审 P0）。
 
-    值的接受规则照 argparse：下一个 token 只要不是选项样式的就是值；``-1`` /
-    ``-1.5`` 这类负数字面量也算值，``-`` 单字符也算值（argparse 不当它是选项）。
+    值 = ``--output`` 后面第一个**不是已知选项**的非空 token（``--`` 之后不再有选项）。
+    已知选项不当值，但要**重新按 token 处理一遍**：``--output --output=DIR`` 的 DIR
+    仍被收集（argparse 在第一个 ``--output`` 上报错，DIR 是这条命令行里显式点名的）。
     空值（``--output=`` / ``--output ''``）不收集——``Path('')`` 就是当前工作目录，
     绝不能把 CWD 当输出目录失效（两家评审：会删掉调用者目录里的 summary）；``main``
-    另行把它判成参数错误 rc2。``--`` 之后不再有选项（argparse 语义）。
+    另行把它判成参数错误 rc2。
 
-    重复写多次时**每个非空值都收集**：argparse 只有最后一个生效，但在这条命令里
-    被显式点名的目录都不该留旧 PASS——该命令终究没跑完，而多失效一个自己点过名的
-    目录，代价远小于把旧 PASS 留下当证据。
+    重复写多次时**每个非空值都收集**：argparse 只有最后一个生效，但这条命令终究没跑完，
+    被显式点名的目录都不该留旧 PASS。
     """
     values = []
     expecting = False
@@ -157,9 +159,10 @@ def early_outputs(argv):
             break
         if expecting:
             expecting = False
-            if token and not looks_like_option(token):
+            if token and not is_known_option(token):
                 values.append(token)
-            continue
+                continue
+            # 已知选项不是值：不收集，落下去按选项再处理这个 token。
         if token == '--output':
             expecting = True
         elif token.startswith('--output='):
@@ -172,10 +175,13 @@ def early_outputs(argv):
 # 只在作为脚本运行时失效：被 import 时不得拿宿主的 sys.argv 去删任何东西
 # （评审 P0：导入模块即删除调用者证据）。这段仍早于 ``-I`` 断言与
 # ``load_checker()``——那些启动依赖一失败就到不了失效，旧 PASS 会冒充本轮。
+# **逐个都试一遍再退出**：前一个目录不可删（如 ``/dev/null``）不能让后面显式点名的
+# 目录跳过失效（两家评审：短路会让后者旧 PASS 冒充本轮）。
 if __name__ == '__main__':
-    for _early in early_outputs(sys.argv[1:]):
-        if not invalidate_stale_summary(_early):
-            raise SystemExit(2)
+    _failures = [path for path in early_outputs(sys.argv[1:])
+                 if not invalidate_stale_summary(path)]
+    if _failures:
+        raise SystemExit(2)
 
 if not sys.flags.isolated:
     print(f'negative_controls: run with -I: python3 -I {__file__}', file=sys.stderr)
@@ -226,15 +232,16 @@ CHECK_TIMEOUT_SECONDS = 600
 def load_checker():
     """以显式路径加载判据实现（-I 隔离模式下 sys.path 不含脚本目录）。
 
-    checker 缺失 / 不可读 = 本执行器跑不了（rc 2），不是「判据 FAIL」（rc 1）：
-    裸 traceback 会被下游读成后者。
+    checker 缺失 / 不可读 / **加载期任何异常**（含 `SyntaxError`：坏合并、半写入、
+    手改出错）都等于本执行器跑不了（rc 2），不是「判据 FAIL」（rc 1）：裸 traceback
+    会被下游读成后者。`SystemExit` 不拦——checker 自己的 `-I` / pycache 断言就是 rc2。
     """
     spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
     module = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(module)
-    except (OSError, ImportError) as error:
-        print(f'negative_controls: cannot load checker {CHECKER}: {error}',
+    except Exception as error:
+        print(f'negative_controls: cannot load checker {CHECKER}: {error!r}',
               file=sys.stderr)
         raise SystemExit(2) from error
     if Path(module.__file__).resolve() != CHECKER:

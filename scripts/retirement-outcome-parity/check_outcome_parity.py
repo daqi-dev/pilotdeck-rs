@@ -609,12 +609,18 @@ def run_emit(args):
                     for row in first['rows']],
     }
     target = Path(args.oracle)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。
-    tmp = target.with_name(f'{target.name}.{os.getpid()}.tmp')
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
-                   encoding='utf-8')
-    tmp.replace(target)
+    # 写金样失败同样是「输入/环境不可用」（rc 2），不是判据 FAIL（rc 1）：`--oracle=`
+    # （`Path('') == Path('.')`）、不可写路径、目标是目录都会抛 OSError / ValueError，
+    # 不接住就是裸 traceback → rc1。
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。
+        tmp = target.with_name(f'{target.name}.{os.getpid()}.tmp')
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
+                       encoding='utf-8')
+        tmp.replace(target)
+    except (OSError, ValueError) as error:
+        raise InputError(f'cannot write oracle {args.oracle!r}: {error}') from error
     print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),
                       'methods': len(payload['methods']),
                       'sha256': sha256_file(target),
