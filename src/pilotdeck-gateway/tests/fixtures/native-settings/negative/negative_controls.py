@@ -4,7 +4,7 @@ must be killed by its named test's own assertion markers, then restore.
 
 Run with no other writers/builds in this worktree. Evidence goes in a new
 output folder; original source bytes and hashes are verified after every
-mutation. The nine mutants all target the U7 settings wiring:
+mutation. Every mutant targets the U7 settings wiring:
 
 * ``miss-wire-reload-extensions`` — the settings family no longer registers
   ``reload_extensions``; the #1305 registry inventory pins every wired wire
@@ -44,6 +44,13 @@ mutation. The nine mutants all target the U7 settings wiring:
   serializer: ``put_truthy`` drops empty strings, so emptying the hash one
   layer up would reach the guard as a *missing* field and trip the older
   string check instead of the non-empty one.
+* ``empty-top-level-hash`` (#1869) — the top-level projection empties only
+  ``contentHash``; all three sides then compare ``"" == ""``. The #1869
+  non-empty assertion must red instead of accepting any string.
+* ``hollow-resolve-shape`` (#1869) — the same emptied projection is a hollow
+  ``resolve_settings`` success on the wire; the capability guard's success
+  shape must red instead of accepting any non-``CAPABILITY_UNAVAILABLE``
+  answer.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -120,6 +127,16 @@ ANCHORS = 'native_process::services_tests::settings_store_anchors_at_pilot_home_
 DROP_PATH_MARKER = ('#1762 non-vacuous: resolved must carry at least one source '
                     'with a non-empty path')
 EMPTY_HASH_MARKER = '#1762 non-vacuous: source `contentHash` must be non-empty'
+# #1869 item 1: the top-level projection has its own non-empty guard; the
+# mutant below empties only that field, so the kill must name this marker
+# rather than `text_of`'s per-source one.
+TOP_HASH_MARKER = ('#1869 non-vacuous: resolved must carry a non-empty '
+                   'string contentHash')
+# #1869 item 3: the advertised-half shape guard; the emptied projection is a
+# hollow success, so this marker names the shape assertion, not the anchors
+# one.
+SHAPE_MARKER = ('#1869 advertised settings method resolve_settings must answer '
+                'its success shape')
 # Each row: (name, source path, original anchor text, mutant text, killed test).
 # Rows sharing a name are one mutant: every edit is applied together and the
 # group gets one compile gate, one kill run and one verdict ('stale-generation'
@@ -189,6 +206,32 @@ mutations = [
      '    }\n'
      '    // negative control: empty hash survives the truthiness filter\n'
      '    out.insert("contentHash".into(), "".into());', ANCHORS),
+    # #1869 item 1: the top-level `contentHash` guard used to accept any
+    # string, so emptying only that field on all three sides made the anchor
+    # comparison "" == "" pass. This mutant leaves the per-source hashes
+    # intact, which is what distinguishes it from `empty-source-hash`.
+    ('empty-top-level-hash', SETTINGS,
+     '    for key in ["schemaVersion", "version", "loadedAt", "contentHash"] {\n'
+     '        out.insert(key.into(), field(snapshot, key));\n'
+     '    }',
+     '    for key in ["schemaVersion", "version", "loadedAt", "contentHash"] {\n'
+     '        out.insert(key.into(), field(snapshot, key));\n'
+     '    }\n'
+     '    // negative control: empty top-level hash survives the projection\n'
+     '    out.insert("contentHash".into(), "".into());', ANCHORS),
+    # #1869 item 3: the advertised half now requires the full success shape,
+    # not just "not CAPABILITY_UNAVAILABLE". The same emptied projection is a
+    # hollow success on the wire, so the shape assertion must red on its own
+    # test/marker (a separate mutant because a kill is bound to one test).
+    ('hollow-resolve-shape', SETTINGS,
+     '    for key in ["schemaVersion", "version", "loadedAt", "contentHash"] {\n'
+     '        out.insert(key.into(), field(snapshot, key));\n'
+     '    }',
+     '    for key in ["schemaVersion", "version", "loadedAt", "contentHash"] {\n'
+     '        out.insert(key.into(), field(snapshot, key));\n'
+     '    }\n'
+     '    // negative control: hollow resolve_settings success shape\n'
+     '    out.insert("contentHash".into(), "".into());', CAPABILITIES),
     ('broadcast-before-dirty', REFRESH,
      '                if let Some(router) = router {\n'
      '                    router.mark_all_dirty("config_changed");\n'
@@ -211,6 +254,8 @@ MARKERS = {
     'unbind-reload-extensions': UNBIND_EXTENSIONS_MARKER,
     'drop-source-path': DROP_PATH_MARKER,
     'empty-source-hash': EMPTY_HASH_MARKER,
+    'empty-top-level-hash': TOP_HASH_MARKER,
+    'hollow-resolve-shape': SHAPE_MARKER,
 }
 
 

@@ -18,8 +18,8 @@
 //     node --disable-warning=ExperimentalWarning --import .../tsx/dist/loader.mjs \
 //       src/pilotdeck-gateway/tests/fixtures/settings-gateway/generate.mts <scratch>
 import { assertBaseline, baselineSourceHashes } from '../_shared/baseline.mts';
+import { createSettingsHarness } from '../_shared/settings-harness.mts';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
@@ -63,179 +63,23 @@ const { updatePilotLocalSettings } = await import(pathToFileURL(join(baseline, '
 const { DialogGatewayError } = await import(pathToFileURL(join(baseline, 'src/gateway/dialog/errors.ts')).href);
 
 const events: string[] = [];
-// The interaction coordinator is REPLACED on the prototype chain (the #1215
-// pattern): only the reason strings the methods pass are pinned here; the
-// coordinator layer itself is outside this component's parity scope.
-const realCoordinator = new GatewayInteractionCoordinator({});
-const coordinator = Object.create(realCoordinator);
-coordinator.closeSession = (sessionKey: string, reason: string) => {
-  events.push(`close-session:${sessionKey}:${reason}`);
-};
-
-// Real AgentHandle sessions; key `f` disposes with a real rejection, so the
-// apply close-fault cell fails through the real asAgentHandle path.
-const session = (key: string) => ({
-  sessionId: `sess-${key}`,
-  snapshot: () => ({ sessionId: `sess-${key}`, messages: [] }),
-  pendingTurns: () => [],
-  pendingTurnCount: 0,
-  discardQueuedTurns: async () => {},
-  abort: () => {},
-  dispose: async () => {
-    events.push(`dispose:${key}`);
-    if (key === 'f') throw new Error('fixture dispose failure');
-  },
-});
-const router = new SessionRouter({
-  createSession: async (context: any) => {
-    events.push(`create:${context.sessionKey}`);
-    return asAgentHandle(session(context.sessionKey));
-  },
-  onSessionEvict: (sessionKey: string, reason: string) => {
-    events.push(`evict:${sessionKey}:${reason}`);
-  },
-  idleSweepIntervalMs: 0,
-  idleSessionTimeoutMs: 60 * 60 * 1000,
-});
-
-// The registry prototype: the real applyFlagSettingsForSdk and
-// reloadOutputStylesForSdk bodies over real Map state; resolve returns a
-// per-project fake runtime (a real project runtime boots plugin processes).
+// #1748: the session/registry/bundle/tree/setup machinery below is the same
+// real-TS stack the native-settings golden uses; both fixtures share
+// `_shared/settings-harness.mts` instead of carrying drifted copies.
 const KEYS = ['a', 'a2', 'n', 'b', 'f', 'ghost', 'sx', 'sy', 'sz', 'sw'];
-let nextChanged = ['style-a'];
-const registry: any = Object.create(ProjectRuntimeRegistry.prototype);
-Object.assign(registry, {
-  sdkThinkingOverrides: new Map(),
-  _sessionOverrides: new Map(),
-  sdkSessionProjects: new Map(),
-  sdkSessionConfigs: new Map(),
-  resolve: (projectKey: any) => {
-    events.push(`resolve:${projectKey ?? 'null'}`);
-    return {
-      projectRoot: projectKey ?? '/pdrs-fixture/project',
-      pluginRuntime: {
-        reloadOutputStyles: async () => {
-          events.push('styles-reload');
-          return { changed: [...nextChanged] };
-        },
-      },
-    };
-  },
-});
-
-// --- the per-scenario local settings tree ----------------------------------
-// One `tree:<name>` setup creates a real store over a real scratch YAML
-// tree; `local` is the mutable binding the updateSettings closure and the
-// bundle's configStore delegate read at call time.
-type Tree = { name: string; store: any; writerPath: string; storePath: string };
-const trees = new Map<string, Tree>();
-let local: {
-  env: Record<string, string | undefined>;
-  projectRoot: string;
-  configStore: any;
-  organizationPolicy: any;
-} = { env: {}, projectRoot: '', configStore: undefined, organizationPolicy: undefined };
-
-const BASE = `schemaVersion: 1
-agent: {model: parity/deterministic}
-model:
-  providers:
-    parity:
-      protocol: openai
-      url: http://127.0.0.1:28794/v1
-      apiKey: mock-only
-      models:
-        deterministic: {}
-        other: {}
-`;
-const OTHER_MODEL = BASE.replace('agent: {model: parity/deterministic}', 'agent: {model: parity/other}');
-const BAD_SCHEMA = BASE.replace('schemaVersion: 1', 'schemaVersion: 2');
-const BROKEN_YAML = 'agent: {model: parity/deterministic\nmodel: [unclosed';
-
-async function makeTree(name: string, configPathOverride?: string) {
-  const root = join(output, 'scratch', name);
-  const home = join(root, 'home');
-  const project = join(root, 'project');
-  await mkdir(home, { recursive: true });
-  await mkdir(project, { recursive: true });
-  const writerPath = join(home, 'pilotdeck.yaml');
-  await writeFile(writerPath, BASE);
-  const env: Record<string, string | undefined> = { PILOT_HOME: home, HOME: home };
-  const storeEnv: Record<string, string | undefined> = configPathOverride
-    ? { ...env, PILOTDECK_CONFIG_PATH: configPathOverride }
-    : { ...env };
-  const store = createPilotConfigStoreSync({ projectRoot: project, env: storeEnv });
-  store.subscribe((event: any) => events.push(`store-event:${event.changedPaths.join(',')}`));
-  const tree: Tree = { name, store, writerPath, storePath: configPathOverride ?? writerPath };
-  trees.set(name, tree);
-  local = { env, projectRoot: project, configStore: store, organizationPolicy: undefined };
-  // The probe listener subscribes before the bundle rebinds, so the probe
-  // event always precedes the bundle's onConfigChange prefix.
-  rebindBundleStore();
-  return tree;
-}
-
-// --- the refresh bundle (recording collaborators, real class) --------------
-// The bundle's configStore delegate re-points every live subscription (the
-// bundle's own attach listener, reloadConfig's transient capture listener)
-// at the current tree's store, so the bundle follows the scenario trees the
-// way production's single store feeds it. The registry reload promise never
-// settles, so only onConfigChange's synchronous prefix (log + sdk dispatch +
-// registry.reload call) is pinned; the .then (markAllDirty + broadcast)
-// ordering versus the WS response would be microtask-race noise.
-const bundleListeners = new Map<any, () => void>();
-const storeDelegate = {
-  subscribe(listener: any) {
-    const unsubscribe = local.configStore.subscribe(listener);
-    bundleListeners.set(listener, unsubscribe);
-    return () => {
-      bundleListeners.delete(listener);
-      unsubscribe();
-    };
-  },
-  reload: (reason?: string) => local.configStore.reload(reason),
-};
-function rebindBundleStore() {
-  for (const listener of [...bundleListeners.keys()]) {
-    bundleListeners.get(listener)!();
-    bundleListeners.set(listener, local.configStore.subscribe(listener));
-  }
-}
-const bundle = new GatewayRuntimeRefreshBundle({
-  configStore: storeDelegate,
-  registry: {
-    reload: () => {
-      events.push('registry-reload');
-      return new Promise(() => {});
-    },
-    invalidate: (projectKey?: string) => {
-      events.push(`invalidate:${projectKey ?? 'null'}`);
-    },
-  },
-  memoryMaintenance: { schedule: () => {} },
-  getRouter: () => ({
-    markAllDirty: (reason: string) => {
-      events.push(`mark-all-dirty:${reason}`);
-      return 2;
-    },
-    markProjectDirty: (projectKey: string, reason: string) => {
-      events.push(`mark-project-dirty:${projectKey}:${reason}`);
-      return 1;
-    },
-    cachedSessionCount: () => 0,
-    snapshotSession: () => undefined,
-  }),
-  projectRoot: '/pdrs-fixture/project',
-  memoryDiagnosticsEnabled: false,
-  logMemoryDiagnostic: () => {},
-  summarizeMessages: () => ({}),
-  dispatchSdkConfigChange: (payload: any) =>
-    events.push(`sdk-config-change:${payload.changedPaths.join(',')}|${payload.changeClasses.join(',')}`),
-  log: (message: string) => events.push(`log:${message}`),
-});
-bundle.bindServer({
-  broadcastNotification: (name: string, payload: any) =>
-    events.push(`broadcast:${name}:${JSON.stringify(payload)}`),
+const { coordinator, session, router, registry, local, bundle, postState, runSetup } = createSettingsHarness({
+  output,
+  events,
+  keys: KEYS,
+  SessionRouter,
+  asAgentHandle,
+  ProjectRuntimeRegistry,
+  GatewayInteractionCoordinator,
+  GatewayRuntimeRefreshBundle,
+  createPilotConfigStoreSync,
+  registryReload: 'never',
+  rejectDisposeKeys: ['f'],
+  copyTreeEnv: true,
 });
 
 // The updateSettings closure, verbatim from createLocalGateway.ts:1384-1404
@@ -307,100 +151,6 @@ async function rawRequest(method: string, params: unknown): Promise<Record<strin
   const response: Record<string, unknown> = JSON.parse(await received);
   delete response.id;
   return response;
-}
-
-function postState() {
-  const read = (path: string) => {
-    try { return readFileSync(path, 'utf8'); } catch { return null; }
-  };
-  const post: {
-    turns: string[];
-    sessions: Record<string, boolean>;
-    overrides: Record<string, { effort: string | null; mode: string | null }>;
-    trees: Record<string, { version: number; storeYaml: string | null; writerYaml: string | null }>;
-  } = { turns: [], sessions: {}, overrides: {}, trees: {} };
-  post.turns = KEYS.filter((key) => router.hasActiveTurn(key));
-  for (const key of KEYS) {
-    post.sessions[key] = router.hasSession(key);
-    const thinking = registry.sdkThinkingOverrides.get(key);
-    const overrides = registry._sessionOverrides.get(key) ?? {};
-    post.overrides[key] = { effort: thinking ? thinking.mode : null, mode: overrides.permissionMode ?? null };
-  }
-  for (const [name, tree] of trees) {
-    post.trees[name] = {
-      version: tree.store.getSnapshot().version,
-      storeYaml: read(tree.storePath),
-      writerYaml: read(tree.writerPath),
-    };
-  }
-  return post;
-}
-
-async function runSetup(step: string) {
-  const parts = step.split(':');
-  const [action, arg] = parts;
-  switch (action) {
-    case 'ensure-session':
-      assert.ok(KEYS.includes(arg), `setup key ${arg} must be a scenario key`);
-      await router.getOrCreate({ sessionKey: arg, projectKey: '/p' } as any);
-      break;
-    case 'begin-turn':
-      assert.ok(KEYS.includes(parts[1]), `setup key ${parts[1]} must be a scenario key`);
-      router.beginTurn(parts[1], parts[2]);
-      break;
-    case 'styles-session':
-      assert.ok(KEYS.includes(parts[1]), `setup key ${parts[1]} must be a scenario key`);
-      registry.sdkSessionProjects.set(parts[1], parts[2]);
-      await router.getOrCreate({ sessionKey: parts[1], projectKey: '/p' } as any);
-      break;
-    case 'styles-config':
-      registry.sdkSessionConfigs.set(arg, { outputStyle: 'default' });
-      break;
-    case 'styles-changed':
-      nextChanged = arg.split(',');
-      break;
-    case 'tree':
-      await makeTree(arg);
-      break;
-    case 'tree-split': {
-      // The store reads a dedicated config file (PILOTDECK_CONFIG_PATH) the
-      // writer never touches: the only single-threaded composition where
-      // the write succeeds and the reload still fails.
-      const root = join(output, 'scratch', arg);
-      await mkdir(join(root, 'home'), { recursive: true });
-      await mkdir(join(root, 'project'), { recursive: true });
-      const alt = join(root, 'alt-config.yaml');
-      await writeFile(alt, BASE);
-      await makeTree(arg, alt);
-      break;
-    }
-    case 'break-yaml': {
-      const tree = trees.get(arg)!;
-      await writeFile(tree.storePath, BROKEN_YAML);
-      break;
-    }
-    case 'break-store-yaml': {
-      const tree = trees.get(arg)!;
-      await writeFile(tree.storePath, BAD_SCHEMA);
-      break;
-    }
-    case 'write-yaml': {
-      const tree = trees.get(parts[1])!;
-      await writeFile(tree.storePath, parts[2] === 'other' ? OTHER_MODEL : BASE);
-      break;
-    }
-    case 'deny-org':
-      local.organizationPolicy = { settings: { canUpdateLocalSettings: false } };
-      break;
-    case 'allow-org':
-      local.organizationPolicy = undefined;
-      break;
-    case 'attach-bundle':
-      bundle.attach();
-      break;
-    default:
-      assert.fail(`unknown setup action ${action}`);
-  }
 }
 
 const rows: any[] = [];

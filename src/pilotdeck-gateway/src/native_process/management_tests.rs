@@ -1163,6 +1163,41 @@ fn assert_ts_capability_subset(expected: &[&str], include_disabled_states: bool)
     }
 }
 
+/// #1869 item 3: the advertised half used to assert only "not
+/// `CAPABILITY_UNAVAILABLE`", which is also true for a renamed dispatch arm
+/// (`gateway_request_failed`) or a delegate that answers a degenerate
+/// payload. Each published method therefore has to answer its own success
+/// shape; an unknown method is a failure, not a pass, so a new entry in
+/// `METHODS` cannot slip through the guard with a vacuous assertion.
+fn settings_success_shape(method: &str, value: &JsValue) -> bool {
+    let array = |key: &str| matches!(value.get(key), Some(JsValue::Array(_)));
+    let non_empty_array =
+        |key: &str| matches!(value.get(key), Some(JsValue::Array(items)) if !items.is_empty());
+    let non_empty_string =
+        |key: &str| matches!(value.get(key), Some(JsValue::String(text)) if !text.is_empty());
+    let number = |key: &str| matches!(value.get(key), Some(JsValue::Number(_)));
+    match method {
+        // `toGatewayResolvedSettings`: the full redacted projection.
+        "resolve_settings" => {
+            number("schemaVersion")
+                && number("version")
+                && non_empty_string("loadedAt")
+                && non_empty_string("contentHash")
+                && matches!(value.get("config"), Some(JsValue::Object(_)))
+                && non_empty_array("sources")
+        }
+        // `{applied, cleared}`.
+        "apply_flag_settings" => array("applied") && array("cleared"),
+        // `{applied, cleared, changedPaths}`.
+        "update_settings" => array("applied") && array("cleared") && array("changedPaths"),
+        // `{reloaded: true, changed}`.
+        "reload_output_styles" => {
+            matches!(value.get("reloaded"), Some(JsValue::Bool(true))) && array("changed")
+        }
+        _ => false,
+    }
+}
+
 /// #1320「公布 ⟺ 真能服务」三口径，三者有意不同：
 /// - `已注册`（`methods/settings.rs::METHODS` 六项）：路由表会分发的
 ///   wire 名，能力守卫的完整输入域。
@@ -1255,10 +1290,23 @@ async fn settings_capabilities_match_served_delegates() {
             .settings_request(method.to_owned(), JsValue::Undefined)
             .await;
         if advertised.iter().any(|name| name == method) {
+            // #1869 item 3: a non-CAPABILITY_UNAVAILABLE answer is not proof
+            // the method was served — a renamed dispatch arm answers
+            // `gateway_request_failed`, and a hollow delegate answers an
+            // empty payload. Require the method's own success shape instead.
+            let value = match result {
+                Ok(value) => value,
+                Err(error) => panic!(
+                    "#1869 advertised settings method {method} must answer its success \
+                     shape, got {}: {}",
+                    error.code,
+                    String::from_utf16_lossy(error.message.units())
+                ),
+            };
             negative_assert!(
-                !matches!(&result, Err(error) if error.code == "CAPABILITY_UNAVAILABLE"),
-                "#1320 advertised settings method {method} must be served for real, not \
-                 CAPABILITY_UNAVAILABLE"
+                settings_success_shape(method, &value),
+                "#1869 advertised settings method {method} must answer its success shape, \
+                 not just any non-CAPABILITY_UNAVAILABLE payload, got: {value:?}"
             );
         } else {
             let error = match result {
