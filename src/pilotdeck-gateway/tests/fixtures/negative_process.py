@@ -48,6 +48,16 @@ CARGO_SLOTS_CALL_SECONDS = 300.0
 _RESTORE_DEPTH = 0
 _DEFERRED_SIGNAL = None
 
+# Signals the restore window shields itself.  SIGINT joins the two the fixture
+# handlers already install, because a Ctrl-C lands on the same write-back loop.
+_SHIELDED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
+
+
+def _record_signal(signum, _frame):
+    """Handler installed for the duration of ``restore_critical``."""
+    global _DEFERRED_SIGNAL
+    _DEFERRED_SIGNAL = signum
+
 
 def _kill_group(process):
     for attempt in range(2):
@@ -720,6 +730,43 @@ def published_module(name, path, source):
             sys.modules.pop(name, None)
 
 
+def _shield_signals():
+    """Swap in the recording handler; return what to put back."""
+    previous = {}
+    for name in _SHIELDED_SIGNALS:
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            current = signal.getsignal(signum)
+            if current is signal.SIG_IGN:
+                continue
+            signal.signal(signum, _record_signal)
+        except (ValueError, OSError):
+            # Not the main thread, or a platform without the signal: the
+            # consumer-side ``defer_signal_exit`` fallback still applies.
+            previous.pop(signum, None)
+            continue
+        previous[signum] = current
+    return previous
+
+
+def _unshield_signals(previous):
+    """Put the handlers back unless the window installed its own.
+
+    A handler registered *inside* the window is a deliberate later choice and
+    outranks the one the window swapped out; only the shield's own recorder is
+    reverted.
+    """
+    for signum, handler in previous.items():
+        try:
+            if signal.getsignal(signum) is not _record_signal:
+                continue
+            signal.signal(signum, handler)
+        except (ValueError, OSError):
+            continue
+
+
 @contextmanager
 def restore_critical():
     """Shield the source-restore window from the fixture's own SIGTERM exit.
@@ -732,13 +779,24 @@ def restore_critical():
     this section the handler only records the signal; ``take_deferred_signal``
     hands it back once the restore and its byte verification are complete, so
     the process still exits with 128+signum, just not mid-restore.
+
+    Recording is *not* delegated to the consumer: a fixture that installs its
+    own ``signal.signal`` handler for SIGTERM never calls
+    ``defer_signal_exit``, so the window has to swap the handlers itself for
+    every signal it can (SIGINT, SIGTERM, SIGHUP); otherwise one more
+    fixture -- or a Ctrl-C -- keeps killing the write-back mid-loop
+    (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  A handler that is
+    ``SIG_IGN`` stays ignored, and a non-main thread, where ``signal.signal``
+    is unavailable, keeps the old behaviour through ``defer_signal_exit``.
     """
     global _RESTORE_DEPTH
+    previous = _shield_signals()
     _RESTORE_DEPTH += 1
     try:
         yield
     finally:
         _RESTORE_DEPTH -= 1
+        _unshield_signals(previous)
 
 
 def defer_signal_exit(signum):

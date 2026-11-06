@@ -1486,5 +1486,100 @@ class OutputDirectoryRunnerTests(unittest.TestCase):
                              '#1060 spawn error must not invent a completed return code')
 
 
+RESTORE_WINDOW_CHILD = r"""
+import os, pathlib, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+from negative_process import restore_critical, take_deferred_signal
+sentinel = pathlib.Path(sys.argv[2])
+which = getattr(signal, sys.argv[3])
+disposition = sys.argv[4]
+if disposition == "default":
+    # A background-launched parent inherits SIGINT=SIG_IGN; reset it so the
+    # case exercises the shield and not the inherited disposition.
+    signal.signal(which, signal.SIG_DFL)
+elif disposition == "fixture":
+    def handler(signum, _frame):
+        raise SystemExit(128 + signum)
+    signal.signal(which, handler)
+elif disposition == "ignore":
+    signal.signal(which, signal.SIG_IGN)
+with restore_critical():
+    os.kill(os.getpid(), which)
+    time.sleep(0.05)
+    sentinel.write_text("restore finished\n", encoding="utf-8")
+pending = take_deferred_signal()
+if pending is not None:
+    raise SystemExit(128 + pending)
+"""
+
+
+class RestoreWindowSignals(unittest.TestCase):
+    """#892 r19: the restore window shields itself, not just one consumer.
+
+    ``restore_critical`` used to rely on ``terminate_cleanly`` calling
+    ``defer_signal_exit``, so every other fixture handler -- and a plain
+    Ctrl-C, for which no handler was installed at all -- still raised
+    ``SystemExit`` on an arbitrary bytecode boundary inside the write-back
+    loop and left a mutant behind (MiniMax sibling r18 P1-2 / GLM sibling r18
+    P1-3).
+    """
+
+    def _run(self, signame, disposition):
+        fixtures = str(Path(__file__).resolve().parent)
+        with tempfile.TemporaryDirectory(prefix="pdrs-restore-window-") as temp:
+            sentinel = Path(temp) / "sentinel"
+            cp = subprocess.run(
+                [sys.executable, "-I", "-c", RESTORE_WINDOW_CHILD, fixtures,
+                 str(sentinel), signame, disposition],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            return cp, sentinel.exists()
+
+    def test_sigterm_from_a_fixture_handler_still_finishes_the_restore(self):
+        cp, sentinel = self._run("SIGTERM", "fixture")
+        self.assertTrue(sentinel, "SIGTERM unwound inside the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGTERM)
+
+    def test_sigint_with_the_default_handler_still_finishes_the_restore(self):
+        cp, sentinel = self._run("SIGINT", "default")
+        self.assertTrue(sentinel, "SIGINT unwound inside the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGINT)
+
+    def test_sigint_from_a_fixture_handler_still_finishes_the_restore(self):
+        cp, sentinel = self._run("SIGINT", "fixture")
+        self.assertTrue(sentinel, "SIGINT unwound inside the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGINT)
+
+    def test_sighup_with_the_default_handler_still_finishes_the_restore(self):
+        cp, sentinel = self._run("SIGHUP", "default")
+        self.assertTrue(sentinel, "SIGHUP unwound inside the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGHUP)
+
+    def test_an_ignored_signal_stays_ignored(self):
+        cp, sentinel = self._run("SIGTERM", "ignore")
+        self.assertTrue(sentinel, "an ignored SIGTERM must not end the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 0)
+
+    def test_handlers_are_put_back_after_the_window(self):
+        previous = signal.getsignal(signal.SIGTERM)
+
+        def handler(signum, _frame):
+            pass
+
+        try:
+            signal.signal(signal.SIGTERM, handler)
+            with negative_process.restore_critical():
+                shielded = signal.getsignal(signal.SIGTERM)
+                self.assertTrue(callable(shielded), "the shield must install a handler")
+                self.assertIsNot(shielded, handler, "the consumer handler must be swapped out")
+            self.assertIs(signal.getsignal(signal.SIGTERM), handler,
+                          "the consumer handler must come back")
+            with negative_process.restore_critical():
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_IGN,
+                          "a handler installed inside the window must survive it")
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

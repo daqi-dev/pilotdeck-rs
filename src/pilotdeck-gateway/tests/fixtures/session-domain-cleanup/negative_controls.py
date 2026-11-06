@@ -1146,6 +1146,62 @@ def calibrate_builtins_setattr_status(rows):
         rows, "inline status/exit assignment builtins.setattr(report, 'status', 'PASS')")
 
 
+def _guard_failure(rows, needle, detail):
+    """The #892 *failure* of ``_guard.py:_failure`` that contains *needle*."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, reason = _point_failure(row, 'scripts/gateway-parity/_guard.py',
+                                '_failure', needle, 'guard-failure')
+    if not ok:
+        return ok, reason
+    return True, detail
+
+
+def calibrate_try_assign_alias(rows):
+    """#892 r19: ``try: bail = sys.exit`` at module level binds the same exit
+    as the unchecked assignment does (GLM boundary r18 P1-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: try-guarded module assignment alias enumerated, passed=False')
+
+
+def calibrate_attr_exit_code(rows):
+    """#892 r19: ``return status, helpers.EXIT_OK`` hands back an exit code
+    whose origin no local binding can prove (GLM boundary r18 P0-1)."""
+    return _guard_failure(
+        rows, 'inline exit code (attribute relay) helpers.EXIT_OK',
+        'aggregation-audit: attribute exit arm flagged, passed=False')
+
+
+def calibrate_subscript_exit_code(rows):
+    """#892 r19: ``return status, CODES[policy]`` reads the code out of a
+    container the pass never tracked (GLM boundary r18 P0-1)."""
+    return _guard_failure(
+        rows, 'inline exit code (subscript relay) CODES[policy]',
+        'aggregation-audit: subscript exit arm flagged, passed=False')
+
+
+def calibrate_attr_code_relay(rows):
+    """#892 r19: the same attribute code relayed through a local name is the
+    shape ``code = EXIT_OK; return code`` and may not pass where the direct
+    attribute arm fails (GLM boundary r18 P0-1)."""
+    return _guard_failure(
+        rows, 'inline exit code (attribute relay) code',
+        'aggregation-audit: attribute exit code relayed through a local, passed=False')
+
+
+def calibrate_try_else_completes(rows):
+    """#892 r19: a handler that falls off its own end completes the statement
+    whatever the ``else`` branch does (MiniMax boundary r18 P0-1)."""
+    return _guard_failure(
+        rows, 'inline exit code _code(policy, common)',
+        'aggregation-audit: completing try handler flagged, passed=False')
+
+
 def calibrate_operator_setitem_status(rows):
     """#892 r18: ``operator.setitem(report, 'status', ...)`` is the qualified
     unbound spelling (GLM sibling r17 P2-2)."""
@@ -1985,6 +2041,52 @@ MUTATIONS = [
     ('calibrate-operator-setitem-status', SOURCE,
      "                    report['status'] = overall\n",
      "                    operator.setitem(report, 'status', 'PASS')\n"),
+    # #892 fix-r19 (GLM boundary r18 P1-1): the module-level assignment pass
+    # walked direct children only, so an alias bound inside ``try:`` -- the
+    # shape ``_guard.py`` itself uses -- never reached ``_module_exit_aliases``.
+    ('calibrate-try-assign-alias', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "try:\n"
+     "    bail = sys.exit\n"
+     "except ImportError:\n"
+     "    bail = None\n\n"
+     "def publish(report):\n"
+     "    bail(0)\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r19 (GLM boundary r18 P0-1): the return arm had no branch for an
+    # exit code handed back as an attribute or read out of an untracked
+    # container, so the value was judged by no rule at all.
+    ('calibrate-attr-exit-code', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'attribute':\n"
+     "        return common.aggregate_status('BLOCKED'), helpers.EXIT_OK\n"
+     "    if policy == 'traceback':"),
+    ('calibrate-subscript-exit-code', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'subscript':\n"
+     "        return common.aggregate_status('BLOCKED'), CODES[policy]\n"
+     "    if policy == 'traceback':"),
+    ('calibrate-attr-code-relay', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'relay':\n"
+     "        code = helpers.EXIT_OK\n"
+     "        return common.aggregate_status('BLOCKED'), code\n"
+     "    if policy == 'traceback':"),
+    # #892 fix-r19 (MiniMax boundary r18 P0-1): ``else`` may not cancel a
+    # handler that completes on its own, and a ``finally`` that always returns
+    # means the statement never falls through.
+    ('calibrate-try-else-completes', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def _code(policy, common):\n"
+     "    try:\n"
+     "        raise ValueError(policy)\n"
+     "    except ValueError:\n"
+     "        pass\n"
+     "    else:\n"
+     "        return 2\n\n"
+     "def _failure(error, policy, common):\n"
+     "    if policy == 'code':\n"
+     "        return _code(policy, common)"),
 ]
 
 JUDGES = {
@@ -2280,6 +2382,16 @@ JUDGES = {
         'aggregation-audit', calibrate_builtins_setattr_status, False, ()),
     'calibrate-operator-setitem-status': (
         'aggregation-audit', calibrate_operator_setitem_status, False, ()),
+    'calibrate-try-assign-alias': (
+        'aggregation-audit', calibrate_try_assign_alias, False, ()),
+    'calibrate-attr-exit-code': (
+        'aggregation-audit', calibrate_attr_exit_code, False, ()),
+    'calibrate-subscript-exit-code': (
+        'aggregation-audit', calibrate_subscript_exit_code, False, ()),
+    'calibrate-attr-code-relay': (
+        'aggregation-audit', calibrate_attr_code_relay, False, ()),
+    'calibrate-try-else-completes': (
+        'aggregation-audit', calibrate_try_else_completes, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
