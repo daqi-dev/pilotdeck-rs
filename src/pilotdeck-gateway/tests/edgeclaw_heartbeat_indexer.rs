@@ -2841,6 +2841,94 @@ async fn clear_failing_before_l0_delete_keeps_generation_and_turn() {
     lab.server.close().await;
 }
 
+// #1298 (review sibling P2): the earliest abort seam — `BeforeRemoveData`, in
+// front of the very first removal. Nothing may have been touched yet when the
+// clear gives up: the session's files and its L0 row (still indexed) stay as
+// they were and the generation stays at the baseline, so the next heartbeat
+// sees an already-consistent state. Only a cell that injects at *this* seam
+// can see a swallowed error here: `clear_failing_before_l0_delete_keeps_
+// generation_and_turn` parks at `BeforeRemoveData` and returns `Ok`, so
+// dropping the `?` would leave it green.
+#[tokio::test]
+async fn clear_failing_before_remove_data_keeps_files_rows_and_generation() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-before-remove-data", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "kept by a clear that fails before removing anything",
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1298 the first heartbeat must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1298 the first heartbeat must index the turn and write its file"
+    );
+    lab.stores
+        .set_clear_session_hook(Arc::new(|stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#1298 the before-remove hook must fire on the target session"
+            );
+            if stage != ClearSessionStage::BeforeRemoveData {
+                return Ok(());
+            }
+            Err(FileMemoryError::Invalid(
+                "#1298 injected failure before the memory removal".into(),
+            ))
+        }));
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#1298 the clear must fail with the injected error");
+    assert!(
+        error
+            .to_string()
+            .contains("#1298 injected failure before the memory removal"),
+        "#1298 the clear must fail with the injected error, got {error}"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#1298 a clear that fails in front of the first removal must not advance the generation"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1298 the failed clear must leave the session's files untouched, got {paths:?}"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1298 list l0 rows after the failed clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1298 the failed clear must leave the session's L0 row in place"
+    );
+    assert!(
+        rows[0].indexed,
+        "#1298 the untouched row must keep its indexed flag: its file is still on disk"
+    );
+    lab.server.close().await;
+}
+
 // #1207 fix-r1 (review P1): a clear that aborts at the `L0IdsSelected` seam
 // has already removed the session's memory files; for an *indexed* row the
 // pre-fix state was silent loss — the row survives with indexed=1, so

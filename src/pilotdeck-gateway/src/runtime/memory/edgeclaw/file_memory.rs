@@ -768,8 +768,18 @@ impl EdgeClawFileStores {
             .clone();
         match observer {
             Some(observer) => observer(session, &message),
+            // #1298 r2 (review: codex P0, GLM boundary P3 — take the higher):
+            // `eprintln!` panics when stderr is unwritable (fd 2 closed,
+            // EPIPE), which would turn this best-effort record into a lost
+            // primary error on the very path that promises to preserve it.
+            // Ignore the write result: the record is best effort, the
+            // caller's `Err` is not.
             None => {
-                eprintln!("edgeclaw clearSession re-arm failed for session {session}: {message}")
+                use std::io::Write as _;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "edgeclaw clearSession re-arm failed for session {session}: {message}"
+                );
             }
         }
     }

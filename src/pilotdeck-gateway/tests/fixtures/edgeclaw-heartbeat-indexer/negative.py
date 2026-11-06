@@ -810,6 +810,34 @@ cases = [
 ''',
      'clear_failing_at_before_delete_l0_rearms_indexed_rows',
      '#1298 the clear must fail with the injected error'),
+    # #1298 (review sibling P2): the other two seams the clear reports through
+    # had no error-swallow row of their own — a swallow at either one turns
+    # the abort into a completed clear (rows deleted / generation bumped), so
+    # each needs its own bound cell. Same mutation shape as the row above.
+    ('before-remove-data-error-swallowed',
+     entries,
+     '''            if let Some(hook) = hook {
+                hook(ClearSessionStage::BeforeRemoveData, session)?;
+            }
+''',
+     '''            if let Some(hook) = hook {
+                let _ = hook(ClearSessionStage::BeforeRemoveData, session);
+            }
+''',
+     'clear_failing_before_remove_data_keeps_files_rows_and_generation',
+     '#1298 the clear must fail with the injected error'),
+    ('l0-ids-selected-error-swallowed',
+     entries,
+     '''        if let Some(hook) = hook {
+            hook(ClearSessionStage::L0IdsSelected, session)?;
+        }
+''',
+     '''        if let Some(hook) = hook {
+            let _ = hook(ClearSessionStage::L0IdsSelected, session);
+        }
+''',
+     'clear_failing_after_l0_ids_selected_rearms_indexed_rows',
+     '#1298 the clear must fail with the injected error'),
     # #1298: the pre-#1298 `?` restored — a re-arm that cannot run replaces
     # the error that aborted the clear, so the caller is told "database is not
     # open" instead of why the clear died, and the re-arm failure is recorded
