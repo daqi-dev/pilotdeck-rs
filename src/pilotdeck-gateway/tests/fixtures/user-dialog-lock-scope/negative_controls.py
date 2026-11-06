@@ -110,6 +110,14 @@ def wait_for_slot(name):
     (out / f'{name}.slots.log').write_text(slot.stdout + slot.stderr)
 
 
+def publish_summary():
+    # Atomic publication (specs/negative-controls/README.md): a run killed
+    # between mutations never leaves a half-written summary on disk.
+    tmp = out / 'summary.json.tmp'
+    tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+    os.replace(tmp, out / 'summary.json')
+
+
 with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations}),
                       baseline=baseline) as snapshots:
     def run(full):
@@ -179,8 +187,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         finally:
             path.write_bytes(original)
             assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-            (out / 'summary.json').write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+            publish_summary()
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
