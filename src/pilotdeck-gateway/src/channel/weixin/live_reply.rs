@@ -559,10 +559,12 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
             .collect();
         handles.extend(self.current_segment.handle.clone());
         for handle in handles {
-            if let Some(clear) = self.transport.clear.clone()
-                && let Err(error) = clear(handle.clone()).await
-            {
-                self.report_transport_error(&error, "clear");
+            // TS branches on which capability exists, not on the call result:
+            // `if (transport.clear) … else if (transport.delete) …`.
+            if let Some(clear) = self.transport.clear.clone() {
+                if let Err(error) = clear(handle.clone()).await {
+                    self.report_transport_error(&error, "clear");
+                }
             } else if let Some(delete) = self.transport.delete.clone()
                 && let Err(error) = delete(handle.clone()).await
             {
@@ -729,6 +731,14 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
         while !rest.is_empty() {
             let available = limit as isize - js_len(&self.current_segment.text) as isize;
             if available <= 0 {
+                // Parity note (TS `append`, ImLiveReplyController.ts:343-347):
+                // `flushSegment` only rotates the segment when it holds visible
+                // text, so a segment made purely of whitespace never frees the
+                // limit and this loop spins — **the TS controller spins the
+                // same way** (probe: `_tmp/20261106-issue-1821/probe/probe3-hang.mts`
+                // against the v22.22.0 baseline exits 124 with no output).
+                // Kept byte-for-byte faithful; tracked as a P2 follow-up rather
+                // than "fixed" into a divergence from the baseline.
                 self.flush_segment(true).await;
                 continue;
             }
@@ -798,6 +808,11 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
     fn live_text_limit(&self) -> Option<usize> {
         self.transport.edit.as_ref()?;
         let max = self.transport.max_message_length?;
+        // TS `if (!max) return undefined;` — a zero max means "no live text
+        // limit", not a limit of one.
+        if max == 0 {
+            return None;
+        }
         Some(max.saturating_sub(js_len(&self.options.cursor)).max(1))
     }
 
@@ -1381,7 +1396,10 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
             None => text.to_string(),
         };
         match self.transport.max_message_length {
-            Some(max) if js_len(&formatted) > max => js_prefix(&formatted, max).to_string(),
+            // TS `if (!max …)`: `0` is falsy, so it means "no limit".
+            Some(max) if max > 0 && js_len(&formatted) > max => {
+                js_prefix(&formatted, max).to_string()
+            }
             _ => formatted,
         }
     }
@@ -1396,7 +1414,9 @@ impl<H: Clone + Send + 'static> LiveReplyController<H> {
         let Some(max) = self.transport.max_message_length else {
             return vec![formatted];
         };
-        if js_len(&formatted) <= max {
+        // TS `if (!max …)`: `0` is falsy, so a zero max disables splitting
+        // (without this the loop below never shortens `rest`).
+        if max == 0 || js_len(&formatted) <= max {
             return vec![formatted];
         }
         let mut chunks = Vec::new();
@@ -2063,6 +2083,58 @@ mod tests {
                 "stopActivity".to_string(),
             ],
             "#1821 markAborted then clear follow the ts paths"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn clear_prefers_clear_over_delete_when_both_exist() {
+        // TS `if (transport.clear) … else if (transport.delete) …` branches on
+        // capability existence, so a successful `clear` must not also `delete`.
+        let shared = shared_mock();
+        let mut reply = controller(
+            &shared,
+            Caps {
+                clear: true,
+                delete: true,
+                ..Caps::default()
+            },
+            LiveReplyOptions::default(),
+        );
+        reply.handle_event(&event("turn_started")).await;
+        reply
+            .handle_event(&text_event("assistant_text_delta", "hi"))
+            .await;
+        reply.flush_final().await;
+        reply.clear().await;
+        crate::negative_assert_eq!(
+            recorded(&shared),
+            vec!["send:\"hi\"".to_string(), "clear:1".to_string()],
+            "#1821 clear must not fall through to delete after a successful clear"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn zero_max_message_length_disables_the_limit() {
+        // TS treats `maxMessageLength = 0` as falsy ("no limit") in
+        // `formatForTransport` / `splitForTransport` / `liveTextLimit`.
+        let shared = shared_mock();
+        let mut reply = controller(
+            &shared,
+            Caps {
+                max_message_length: Some(0),
+                ..Caps::default()
+            },
+            LiveReplyOptions::default(),
+        );
+        reply.handle_event(&event("turn_started")).await;
+        reply
+            .handle_event(&text_event("assistant_text_delta", "aaa bbb ccc"))
+            .await;
+        reply.flush_final().await;
+        crate::negative_assert_eq!(
+            recorded(&shared),
+            vec!["send:\"aaa bbb ccc\"".to_string()],
+            "#1821 a zero max message length must not split (TS `!max` path)"
         );
     }
 
