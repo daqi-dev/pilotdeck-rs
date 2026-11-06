@@ -40,9 +40,9 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `sweep_expired_records` L434-511：逐条容错。`read_at` Err / `expiresAt` 解析 Err /
   `remove_tree` Err → `skip_record`（`writeln!` 日志带记录路径，写失败丢弃）后继续。`list_in_project`
   的严格语义保留给 `create` / `find_idempotent` / `mutate` 等调用方，未放宽。
-- `plain_root` L1285-1305：`.tmp/<leaf>` 的三态闸（`Plain` / `Missing` / `Blocked`）。
+- `plain_root` L1305-1330：`.tmp/<leaf>` 的三态闸（`Plain` / `Missing` / `Blocked`）。
   两棵根都过它：记录半轮 `sweep_expired_records` L440 用 `chat-uploads`，
-  租约半轮 `cleanup_expired_leases` L887 用 `chat-upload-leases`。`.tmp` 与
+  租约半轮 `cleanup_expired_leases` L886 用 `chat-upload-leases`。`.tmp` 与
   `.<leaf>` 都是**真目录**才清扫；`Blocked`（符号链接 / 非目录）整轮跳过并记一行日志；
   `Missing`（从无上传 / 从无活租约，常态空态）静默返回，与旧 `names()` 吞错一致。
   动机：`read_dir` / `remove_dir_all` 跟随中间符号链接，而 `read_at` 的 containment
@@ -51,22 +51,29 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   判据是**等值**而非「在项目内」：`plain_root` 自己 `canonicalize` 并要求结果与
   `<project>/.tmp/<leaf>` 字面相同，不相等（含指向项目内另一目录的链接）即 `Blocked`。
   `Plain` 携带的就是这个已校验的解析路径，直接充当轮首快照，调用方不再各自锚定。
-- `inside_root` L1249-1254（doc L1242-1248）：全条唯一的 containment 判定，两半轮与
+  两次 stat 已确认「这里是目录」，因此这次解析的任何失败（含 `NotFound`）都按 `Blocked`
+  记日志，而不是当成「从无上传」的 `Missing` 静默掉——那是竞态，不是常态空态。
+- `inside_root` L1261-1263（doc L1252-1260）：全条唯一的 containment 判定，两半轮与
   `release` 共四类递归删除点共用——解析 `dir`，要求「≠ 根快照 且 以根快照为前缀」；
   解析失败按「不在根内」处理（= 不删）。抽成单点实现，避免各处写法漂移出不同判据。
 - `sweep_expired_records` L434-511：根来自 `plain_root` 后全程复用（`root_real`），
   之后的 containment 比对一律「现解析的条目 × 轮首快照」，**不再逐条重解析根**。
   逐条重解析会让换入的符号链接在等号两边同时生效，把闸变成 no-op 覆盖整轮剩余时间。
-- `sweep_expired_records` L491-503：到期记录的删除分支与孤儿分支同样过 `inside_root`，
+- `sweep_expired_records` L488-503：到期记录的删除分支与孤儿分支同样过 `inside_root`，
   未命中记 `[uploads] cleanup skipped <路径>: outside the uploads root` 并跳过该条。
   （r3 前这里没有守卫，轮中换链后本轮剩余每条到期记录都会删到项目外。）
 - `reclaim_orphan` L512-547：只回收**真目录**条目；年龄判据 `mtime >= now - retention_ms`
   保留，之后才做 containment（L537 `inside_root`），把检查到 `remove_dir_all` 之间的
-  窗口压到几条指令，而不是整轮。
-- `UploadArtifactLease::release` L1086-1110：同一棵租约树上的第三个删除点，`dir` 在
+  窗口压到几条指令，而不是整轮。删除同样走 `orphan-rm` fault 注入点（L540），
+  失败落 `skip_record` 并继续本轮剩余条目——与记录半轮的容错同一形状，
+  由 `upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep` 与
+  负控 `cleanup-orphan-rm-silent` 钉住。
+- `UploadArtifactLease::release` L1086-1122：同一棵租约树上的第三个删除点，`dir` 在
   acquire 时由纪录的 canonical 项目拼出，此后可存活很多轮。删除前要求根
-  `canonicalize` 回 `<project>/.tmp/chat-upload-leases` 字面（否则视为被换链，跳过），
-  再过 `inside_root(&root_real, &self.dir)`；未命中静默返回 `Ok(())`（重复 release 语义不变）。
+  `canonicalize` 回 `<project>/.tmp/chat-upload-leases` 字面（不等即视为被换链，跳过），
+  再用 `resolved_inside` 判条目；`NotFound` 静默 `Ok(())`（幂等语义不变），
+  **其它**解析失败继续以 `UploadError::io(.., "realpath", ..)` 传播——原实现的
+  `remove_tree` 也会把非 `NotFound` 错误抛出去，守卫不改变这一点，失败也不会被缓存成成功。
 - `spawn_cleanup` L1037-1042：调度循环的失败日志同样改 `writeln!` + 丢弃错误；`eprintln!`
   在 stderr 不可写时 panic，而这里的 panic 发生在被 detach 的任务里——清理调度会静默死亡，
   正是该测试要防的结局。
@@ -79,9 +86,9 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `cleanup_expired_leases` L880-927：删租约前新增 `lease-rm` fault 注入点（测试期模拟整轮失败，
   生产行为不变）。读侧语义不变：`lease.json` 缺失 / 不可解析仍按过期处理（TS L431-438 同病），
   本条只保证 Rust 自己的写者不再产生半截文件。根快照同样来自 `plain_root`（已核等值）；
-  L913-919 每份租约目录删除前过 `inside_root`，未命中记
+  L911-917 每份租约目录删除前过 `inside_root`，未命中记
   `[uploads] lease cleanup skipped <路径>: outside the leases root` 并跳过；
-  L923 清空后的 `<id>` 目录删除同样受 `inside_root` 约束。
+  L921 清空后的 `<id>` 目录删除同样受 `inside_root` 约束。
 
 ## 范围
 
@@ -122,10 +129,10 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `plain_root` 的两次 `symlink_metadata` 与紧随的 `canonicalize` 之间的换链窗口由等值判据
   兜住（解析结果必须字面等于 `<project>/.tmp/<leaf>`，换成任何链接都不等值）；但
   「快照取到正确路径、条目在检查后被换成链接」仍属上面的指令级窗口，同样要 dirfd 才能根除。
-- `release` 的守卫是「删除前再判一次」，不是「acquire 时的快照」：`dir` 本身没有保存
-  acquire 时的根快照，因此 release 时若根已不存在（canonicalize 失败）静默按已删处理。
-  语义上安全（不删即不越界），代价是「根被换链」时该租约目录留在原地，靠租约清扫在
-  到期后回收。
+- `release` 的守卫是「删除前再判一次」，不是「acquire 时的快照」：`dir` 本身没保存
+  acquire 时的根快照，所以根被换链时 release 直接跳过、返回 `Ok(())`。**跳过的租约目录
+  不会被自动回收**：租约清扫同样拒绝符号链接根，也不会去扫项目外的树；只有原树重新
+  出现在合法的根下才可能被扫到，否则要人工清理。这是「宁可不删」的取舍，登记于此。
 
 
 ## 机器判据
@@ -133,32 +140,44 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `src/pilotdeck-gateway/src/upload/tests.rs`（行号以本提交为准）：
   `upload_cleanup_bad_record_does_not_abort_the_sweep`（L1032）、
   `upload_cleanup_reclaims_expired_orphan_directories`（L1078）、
-  `upload_cleanup_keeps_fresh_orphan_directories`（L1107）、
-  `upload_cleanup_never_deletes_through_a_symlinked_root`（L1134）、
-  `store_swapping_tmp`（L1181，`now` 回调首次调用时换链并计数，三个换链测试共用）、
-  `upload_cleanup_does_not_follow_a_root_swapped_mid_round`（L1205）、
-  `upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round`（L1243）、
-  `upload_lease_cleanup_never_deletes_through_an_entry_symlink`（L1281）、
-  `upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round`（L1309）、
-  `upload_lease_cleanup_never_deletes_through_a_symlinked_root`（L1353）、
-  `upload_lease_release_does_not_follow_a_swapped_leases_root`（L1385）、
-  `upload_cleanup_record_removal_failure_does_not_stop_the_sweep`（L1416）、
-  `upload_lease_atomic_rename_failure_keeps_valid_leases`（L1446）、
-  `cleanup_failure_keeps_the_schedule_alive`（L1519，失败注入点改为 `lease-rm`）。
+  `upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep`（L1109，
+  孤儿半轮的 `orphan-rm` 失败只跳过该条：同轮后一个孤儿、到期记录、租约半轮照常）、
+  `upload_cleanup_keeps_fresh_orphan_directories`（L1161）、
+  `upload_cleanup_never_deletes_through_a_symlinked_root`（L1188）、
+  `plain_root_rejects_a_root_that_resolves_elsewhere`（L1231，直接钉等值判据：
+  指向项目内另一目录 / 指向项目外 / 真目录三格）、
+  `store_swapping_tmp`（L1277，`now` 回调首次调用时换链并计数，三个换链测试共用）、
+  `upload_cleanup_does_not_follow_a_root_swapped_mid_round`（L1301）、
+  `upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round`（L1339）、
+  `upload_lease_cleanup_never_deletes_through_an_entry_symlink`（L1377）、
+  `upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round`（L1405）、
+  `upload_lease_cleanup_never_deletes_through_a_symlinked_root`（L1449）、
+  `upload_lease_release_does_not_follow_a_swapped_leases_root`（L1481）、
+  `upload_cleanup_record_removal_failure_does_not_stop_the_sweep`（L1512）、
+  `upload_lease_atomic_rename_failure_keeps_valid_leases`（L1542）、
+  `cleanup_failure_keeps_the_schedule_alive`（L1615，失败注入点改为 `lease-rm`；
+  先等第二个 tick 真把租约清掉，再断言任务仍未结束——否则「失败后结束调度」的
+  变异与非变异只差几微秒的调度抖动）。
 - 负控 `src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py`：
   `cleanup-bad-record-aborts`、`cleanup-orphan-reclaim-removed`、
   `cleanup-orphan-fresh-deleted`、`lease-write-in-place`、
   `cleanup-symlink-root-swept`、`cleanup-record-rm-aborts`、
   `cleanup-orphan-root-recanonicalized`、`cleanup-lease-symlink-root-swept`、
   `cleanup-record-rm-follows-swapped-root`、`cleanup-lease-entry-symlink-swept`、
-  `cleanup-lease-root-recanonicalized`、`lease-release-symlink-root-swept`
-  （各绑上述具名测试与唯一失败文案，共 12 条；整份文件 34 条锚点）。
+  `cleanup-lease-root-recanonicalized`、`lease-release-symlink-root-swept`、
+  `plain-root-accepts-inside-project-link`、`cleanup-orphan-rm-silent`、
+  `cleanup-schedule-stop-on-failure`
+  （各绑上述具名测试与唯一失败文案，共 15 条；整份文件 37 条锚点）。
+  `plain-root-accepts-inside-project-link` 把等值判据改回「在项目内即可」
+  （`real.starts_with(project)`），钉 `plain_root_rejects_a_root_that_resolves_elsewhere`
+  的第一格；`cleanup-orphan-rm-silent` 把孤儿删除失败改成静默吞掉（不写 skip 日志）；
+  `cleanup-schedule-stop-on-failure` 让调度循环在失败后 `return`。
   其中 `cleanup-symlink-root-swept` / `cleanup-lease-symlink-root-swept` 的变异是
   「只 `canonicalize` 根、不加闸」的老写法：两层防护（`plain_root` 等值闸 + `inside_root`）
   一起失效，才真正复现穿链删除；只删一层时另一层仍挡住，负控会假绿。
 - 复算命令：
   `cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib upload`
-  （49 passed，含 `upload_oracle_replay_matches_ts_results` 与
+  （51 passed，含 `upload_oracle_replay_matches_ts_results` 与
   `upload_golden_bytes_match_ts_fixtures` 不改金样全绿）；
   `python3 -I src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py --check`；
   `python3 -I scripts/gateway-parity/check_frozen.py --base 5ab9485394f0`。
