@@ -74,6 +74,10 @@ switches = [
     # instead of aborting the test binary on a huge allocation.
     ('module-host-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_pad_size_rejects_drift',
      '#1349 #1696 rejects pad size drift'),
+    # #1696: the pad marker must be non-empty and appear exactly once, or the
+    # expanded request multiplies the padding instead of replacing it.
+    ('module-host-oracle-pad-marker', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_pad_marker_rejects_drift',
+     '#1349 #1696 rejects pad marker drift'),
     # #1696: the budget cells' expanded bodies must be the recorded boundary
     # lengths, so a tiny pad cannot leave `budget-exact`/`budget-over` green.
     ('module-host-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_budget_body_length_rejects_drift',
