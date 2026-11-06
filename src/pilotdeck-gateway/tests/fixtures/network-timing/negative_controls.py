@@ -209,7 +209,14 @@ failure_anchors = {
 }
 
 
-test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
+# #1922: an unreadable bound source (EACCES / ENOENT) is "never started" (2),
+# not a failed run (1). This read sits at module level, before any refuse guard,
+# so an uncaught OSError used to land on exit 1 with a traceback -- the same
+# shape `negative_private.py` already refuses through its startup try/except.
+try:
+    test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
+except OSError as error:
+    refuse(str(error))
 expected_passes = len(re.findall(r'^#\[(?:tokio::)?test(?:\([^\n]*\))?\]', test_source, re.M)) - len(re.findall(r'^#\[ignore(?: = [^\n]*)?\]', test_source, re.M))
 
 
