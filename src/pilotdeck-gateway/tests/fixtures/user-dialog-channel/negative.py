@@ -238,8 +238,8 @@ mutants = [
         "channel-cross-gateway-keeps-empty-reason",
         "channel.rs",
         """                let reason = reason.clone().filter(|reason| !reason.is_empty());
-                (entry.resolve)(DialogAnswer::Cancelled(reason));""",
-        """                (entry.resolve)(DialogAnswer::Cancelled(reason.clone()));""",
+                (consumed.entry.resolve)(DialogAnswer::Cancelled(reason));""",
+        """                (consumed.entry.resolve)(DialogAnswer::Cancelled(reason.clone()));""",
         "cross-gateway-cancelled-empty-reason",
     ),
     (
