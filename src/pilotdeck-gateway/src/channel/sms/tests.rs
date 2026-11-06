@@ -1292,6 +1292,20 @@ fn recorded_rpcs_count_panics_on_wrong_type() {
     recorded_rpcs_count(&json!({"count": []}));
 }
 
+#[test]
+fn recorded_rpcs_count_rejects_absence() {
+    crate::negative_assert!(
+        recorded_rpcs_count_checked(&json!({})).is_err(),
+        "#1339 #1813 wait-rpcs.count is a required recording field"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-rpcs.count must be a u64, got <missing>")]
+fn recorded_rpcs_count_panics_when_absent() {
+    recorded_rpcs_count(&json!({}));
+}
+
 fn recorded_stop_reason_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         value.get("reason"),
