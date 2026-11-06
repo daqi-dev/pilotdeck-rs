@@ -450,9 +450,19 @@ impl TranscriptStore for ProjectedStore {
         let mut entries = lock(&self.projection.entries);
         // A concurrent active restore may already have read this durable
         // entry before its publisher acquired the projection lock.
-        let already_projected = entries.last().is_some_and(|existing| {
-            field(existing, "sequence").as_number() >= field(entry, "sequence").as_number()
-        });
+        // #1500: only a pair of numeric ordinals can prove that. `Option<f64>`
+        // orders `None` below every number, so the old `Some(_) >= None` read
+        // a sequence-less entry as already projected and silently dropped it,
+        // while `project()` replays it from disk.
+        let already_projected = match (
+            entries
+                .last()
+                .and_then(|existing| field(existing, "sequence").as_number()),
+            field(entry, "sequence").as_number(),
+        ) {
+            (Some(existing), Some(entry)) => existing >= entry,
+            _ => false, // #1500: no comparable ordinal, and project() replays it too
+        };
         if !already_projected {
             entries.push(entry.clone());
             if is(field(entry, "type"), "turn_result")
