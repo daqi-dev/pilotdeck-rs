@@ -287,7 +287,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 92 mutants:
+`JUDGES`, keyed by the same names. The current table has 94 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -446,8 +446,13 @@ raises on one branch and falls off the end on the other,
 `calibrate-cross-module-name` defines a lookalike of a registered point's name
 in another module, `calibrate-exempt-callee-write` uses an exempted-but-unaudited
 callee as a slot source, and `calibrate-param-augassign-opaque` applies `|=` to
-a parameter with an opaque payload.  Two boundaries stay open and are recorded
-here so they are not re-reported as new: an augmented assignment on a
+a parameter with an opaque payload.  The two `fix-r14` mutants pin the
+r13-round gaps: `calibrate-quit-exit` exits through the other site builtin,
+`quit(0)`, which raises the same `SystemExit` as `exit(0)` and used to reach no
+rule at all, and `calibrate-partial-raise-point` registers a point that raises
+on one branch and falls off the end on the other — the point-level reachability
+rule is now the same one the helper arm uses.  Two boundaries stay open and are
+recorded here so they are not re-reported as new: an augmented assignment on a
 *parameter* is only judged by its own payload (a `|=` set-union of two
 parameters is not treated as an aggregation point), and a `{**payload}`
 expansion whose names all resolve locally is not followed into the payload's
