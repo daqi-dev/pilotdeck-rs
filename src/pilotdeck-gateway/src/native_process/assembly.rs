@@ -498,7 +498,13 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 )
             });
         if let Err(error) = rejected {
-            let _ = tokio::time::timeout(options.drain_budget, project.dispose()).await;
+            // Same teardown order as the failure branch below (#1328): the
+            // session factory first, then the project registry.
+            let _ = tokio::time::timeout(options.drain_budget, async {
+                let _ = factory.dispose().await;
+                project.dispose().await
+            })
+            .await;
             return Err(error.into());
         }
         Arc::new(super::channels::NativeChannels::new(
