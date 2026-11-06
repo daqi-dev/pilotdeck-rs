@@ -1541,20 +1541,43 @@ BASELINE_DEFAULTS = (
 )
 
 
+def baseline_scanned_files(root):
+    """#1890: the runner files the baseline-default scan actually reads.
+
+    Both runner families count: ``negative*.py`` at any depth and the
+    ``*_negative.py`` spelling used by ``turn-runner`` and its siblings
+    (``input_negative.py``, ``recording_negative.py``, ...). ``test_*.py`` is
+    excluded on purpose: the meta suite carries the probe strings below and
+    ``negative-restore/test_restore.py`` embeds a reverse-mutation payload, so
+    scanning them would report the scan itself.
+    """
+    return [path for path in sorted(Path(root).rglob('*negative*.py'))
+            if not path.name.startswith('test_')]
+
+
 def unpinned_baseline_reads(root):
     """#1890: report every runner that reads a baseline with a literal default.
 
-    ``os.environ.get(NAME, 'HEAD')`` keeps an exported-but-empty variable
-    verbatim, and ``git show ':path'`` resolves the empty revspec to the index:
-    a staged-but-uncommitted tree then becomes the guard's baseline and the
-    mutation run reports PASS against its own bytes. The positional
-    ``sys.argv[2] if len(sys.argv) > 2 else 'HEAD'`` spelling has the same hole
-    for an explicitly empty argument. ``get(NAME) or 'HEAD'`` (and the argv
-    form folded the same way) is the rule; this scan is what keeps the copies
-    from drifting apart again.
+    ``os.environ.get(NAME, 'HEAD')`` and ``sys.argv[2] … else 'HEAD'`` treat an
+    exported-but-empty variable as a real revision instead of "unset". What an
+    empty revspec then does was measured, not assumed: ``git show ':path'``
+    resolves it to the **index** (``git show ':src/.../lib.rs'`` prints the
+    staged blob), so a guard that read it would grade a staged tree against
+    itself. The sink refuses first — ``mutating_sources(..., baseline='')``
+    dies in ``_assert_workspace_sources`` with
+    ``git diff --name-only -z -- src …: fatal: bad revision ''`` — so the
+    current failure mode is a loud refusal, not a false PASS. ``get(NAME) or
+    'HEAD'`` (and the argv form folded the same way) keeps the documented
+    "unset or empty means HEAD" contract instead of turning an empty variable
+    into that refusal; this scan is what keeps the copies from drifting apart.
+
+    Deliberately out of scan scope: the argparse spelling
+    ``add_argument('--baseline', default='HEAD')``. That value is explicit
+    caller input rather than an ambient default, and an explicitly empty
+    ``--baseline ''`` reaches the same loud refusal above.
     """
     found = []
-    for path in sorted(Path(root).rglob('negative*.py')):
+    for path in baseline_scanned_files(root):
         for number, line in enumerate(path.read_text().splitlines(), 1):
             if any(pattern.search(line) for pattern in BASELINE_DEFAULTS):
                 found.append(f'{path.relative_to(root)}:{number}')
@@ -1576,10 +1599,40 @@ class BaselineDefaultTests(unittest.TestCase):
             argv_probe = Path(root) / 'argv-probe' / 'negative_controls.py'
             argv_probe.parent.mkdir()
             argv_probe.write_text("baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'\n")
+            # #1890 review: the `turn-runner` family is named `*_negative.py`, a
+            # spelling `negative*.py` never matches; the probe keeps the wider
+            # glob honest.
+            suffix_probe = Path(root) / 'turn-runner-probe' / 'input_negative.py'
+            suffix_probe.parent.mkdir()
+            suffix_probe.write_text("baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')\n")
+            # Metrics probes: the meta suite's own probe strings and the
+            # reverse-mutation payload in negative-restore must stay excluded,
+            # or the scan reports itself.
+            meta_probe = Path(root) / 'meta-probe' / 'test_negative_probe.py'
+            meta_probe.parent.mkdir()
+            meta_probe.write_text("baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')\n")
             self.assertEqual(
                 unpinned_baseline_reads(Path(root)),
-                ['argv-probe/negative_controls.py:1', 'edgeclaw-probe/negative.py:1'],
-                '#1890 the scan must see both literal HEAD default spellings')
+                ['argv-probe/negative_controls.py:1', 'edgeclaw-probe/negative.py:1',
+                 'turn-runner-probe/input_negative.py:1'],
+                '#1890 the scan must see all three literal HEAD default spellings')
+
+    def test_scan_covers_both_runner_families(self):
+        # #1890 review: an empty result is also what a scan that matches nothing
+        # returns, so pin the real denominator instead of only asserting `[]`.
+        root = Path(__file__).resolve().parent
+        scanned = {path.relative_to(root).as_posix()
+                   for path in baseline_scanned_files(root)}
+        for name in ('turn-runner/input_negative.py',
+                     'turn-runner/recording_negative.py',
+                     'turn-runner/runner_negative.py',
+                     'turn-runner/integrity_negative.py',
+                     'turn-runner/forward_negative.py',
+                     'turn-runner/live_negative.py',
+                     'session-factory/negative_controls.py',
+                     'negative_suite.py'):
+            self.assertIn(name, scanned, '#1890 the baseline scan must read ' + name)
+        self.assertGreater(len(scanned), 100, '#1890 the baseline scan must not be empty')
 
 
 if __name__ == '__main__':
