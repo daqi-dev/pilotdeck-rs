@@ -67,11 +67,13 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   reload，而 `fs.watch` 会给一次 identity reload；#327 起同周期 A→B→A 并回拨 mtime
   已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩「整个突发的 ctime
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
-  刷新的 ctime、inode）：元数据未变则不读内容（#1739）。元数据采样或内容读任一失败
-  （stat / `read_dir` / 打开或读取配置文件）算**不完整采样**：不提交 metadata 指纹，
-  下一 tick 继续重试，直到一次完整采样落地——读恢复后无需任何元数据变化即可补报
-  （#1792，`transient_read_failure_is_retried_until_the_content_is_seen`）；同一不可读
-  状态的全指纹一致，至多报一次变化，不会 reload 风暴。完整语义下漏检只有一格：改写后
+  刷新的 ctime、inode）：元数据未变则不读内容（#1739）。不完整采样不提交 metadata 指纹，
+  按「什么失败」分两档（#1792 r1）：条目或目录的 `NotFound` 是完整观测，缺失本身计入
+  指纹；打开或读取配置文件失败把该条目内容哈希成 `None`，按指纹差至多报一次（#1792，
+  `transient_read_failure_is_retried_until_the_content_is_seen`）；stat / `read_dir`
+  的其它失败算被遮蔽采样，折叠指纹照常提交但本轮不报，下一 tick 重试，读恢复后的首个
+  完整采样补报一次（identity reload，登记见 `A6.3-CONFIG-POLL-001-R1.md`），同一不可读
+  状态不会 reload 风暴。完整语义下漏检只有一格：改写后
   ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
   `src/config/store.rs` 模块文档。
   元数据变化后（或不完整采样重试时）才读被监视配置文件（含经父目录监视、后来出现的
@@ -90,8 +92,9 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 10 个
-源码变异，要求各绑定测试自身 panic 载荷携带 `#1736` / `#1739` / `#1792` 标记，
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 13 个
+源码变异，要求各绑定测试自身 panic 载荷携带其行绑定的 `#1736` / `#1739` / `#1792` /
+`#1794` 杀点标记（绑定测试内另含 `#1793` 的 `MAX_POLL_INTERVAL == 60 s` 字面钉），
 每个变异前跑正控、后跑恢复正控，源码逐字节恢复并复核。运行时要求：
 
 ```sh

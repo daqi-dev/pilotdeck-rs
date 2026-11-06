@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1736 / #1739 / #1792 / #1793 HEAD-only controls on the shared suite
+"""#1736 / #1739 / #1792 / #1794 HEAD-only controls on the shared suite
 runner (negative_suite.run_cases): each mutation must be killed by its named
 test's own panic marker, then the tree is restored and re-verified.
 
@@ -10,17 +10,19 @@ including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named test in ``config::store::tests`` (a lib
 test, run with ``--exact``); the kill evidence is that test's own panic
-payload carrying its ``#1736`` / ``#1739`` / ``#1792`` marker. Four rows pin
-the watcher bounds (the debounce ceiling through both the watcher-level test
-and the ledger's literal two-hour pin, the poll-interval ceiling, and the
-``checked_add`` overflow fallback in ``deadline_after``); three pin the
-metadata short-circuit (#1739: the skipped content read, the ctime bump that
-carries a same-length mtime-restored rewrite through it at both the watcher
-and the unit level); three pin the #1792 recovery contract (an incomplete
-sample must not commit the metadata fingerprint, at watch start and mid-run)
-plus the #1736 pair that must be restored together (debounce ceiling +
-unchecked deadline add — the double-restoration regression that kills the
-watcher task).
+payload carrying its ``#1736`` / ``#1739`` / ``#1792`` / ``#1794`` marker.
+Four rows pin the watcher bounds (the debounce ceiling through both the
+watcher-level test and the ledger's literal two-hour pin, the poll-interval
+ceiling, and the ``checked_add`` overflow fallback in ``deadline_after``);
+three pin the metadata short-circuit (#1739: the skipped content read, the
+ctime bump that carries a same-length mtime-restored rewrite through it at
+both the watcher and the unit level); five pin the #1792 recovery contract
+(an incomplete sample must not commit the metadata fingerprint, at watch
+start and mid-run; a ``NotFound`` stat or ``read_dir`` is a complete
+observation of absence at both the entry and the directory level; a failed
+startup probe must not drop the watched path) plus the #1736 pair that must
+be restored together (debounce ceiling + unchecked deadline add — the
+double-restoration regression that kills the watcher task).
 
 ``PDRS_NEGATIVE_BASELINE`` may name another commit object (the sandbox
 verification pass pins a ``git stash create`` commit of the reviewed tree,
@@ -143,17 +145,13 @@ mutations = [
     # #1739: the metadata short-circuit is removed, so every sample reads the
     # config file's content again and the read-count assertion fails.
     ('metadata-short-circuit-removed', source,
-     '        let (next_metadata, metadata_complete) =\n'
-     '            fingerprint(&self.path, self.directory, self.target.as_deref(), false);\n'
-     '        if metadata_complete && self.metadata_fingerprint == Some(next_metadata) {\n'
+     '        if metadata_status == SampleStatus::Complete\n'
+     '            && self.metadata_fingerprint == Some(next_metadata)\n'
+     '        {\n'
      '            return false;\n'
      '        }\n'
-     '        let (next, complete) =\n'
-     '            fingerprint(&self.path, self.directory, self.target.as_deref(), true);\n',
-     '        let (next_metadata, metadata_complete) =\n'
-     '            fingerprint(&self.path, self.directory, self.target.as_deref(), false);\n'
-     '        let (next, complete) =\n'
-     '            fingerprint(&self.path, self.directory, self.target.as_deref(), true);\n',
+     '        let (next, status) = fingerprint(&self.path, directory, self.target.as_deref(), true);\n',
+     '        let (next, status) = fingerprint(&self.path, directory, self.target.as_deref(), true);\n',
      TESTS + 'unchanged_metadata_skips_the_content_read',
      '#1739 50 metadata-identical samples must not read the config file content'),
     # #1739: ctime is dropped from the metadata tuple, so a same-length rewrite
@@ -165,7 +163,7 @@ mutations = [
      '            (meta.ino(), meta.dev()).hash(hasher);',
      TESTS + 'restored_mtime_rewrite_between_samples_is_seen',
      '#1739 a same-length rewrite with mtime restored is still seen (ctime)'),
-    ('ctime-dropped-from-metadata', source,
+    ('ctime-dropped-from-metadata-unit', source,
      '            (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);',
      '            (meta.ino(), meta.dev()).hash(hasher);',
      TESTS + 'restored_mtime_rewrite_still_reads_the_content',
@@ -175,11 +173,9 @@ mutations = [
     # failed is never retried and the recovery assertion (no metadata change,
     # change re-reported once reads recover) fails.
     ('incomplete-sample-committed', source,
-     '        self.metadata_fingerprint = if metadata_complete && complete {\n'
-     '            Some(next_metadata)\n'
-     '        } else {\n'
-     '            None\n'
-     '        };',
+     '        self.metadata_fingerprint = (metadata_status == SampleStatus::Complete\n'
+     '            && status == SampleStatus::Complete)\n'
+     '            .then_some(next_metadata);',
      '        self.metadata_fingerprint = Some(next_metadata);',
      TESTS + 'transient_read_failure_is_retried_until_the_content_is_seen',
      '#1792 the read is retried after recovery with no metadata change'),
@@ -187,10 +183,51 @@ mutations = [
     # content read failed, so the tick after recovery short-circuits before
     # ever reading the content the startup could not.
     ('startup-incomplete-committed', source,
-     '        let metadata_fingerprint = (metadata_complete && complete).then_some(metadata);',
+     '        let metadata_fingerprint = (metadata_status == SampleStatus::Complete\n'
+     '            && status == SampleStatus::Complete)\n'
+     '            .then_some(metadata);',
      '        let metadata_fingerprint = Some(metadata);',
      TESTS + 'startup_read_failure_is_retried_until_the_content_is_seen',
      '#1792 an incomplete startup sample commits no metadata fingerprint'),
+    # #1792 r1: any stat error — not just `NotFound` — counts as a complete
+    # observation, so an injected `PermissionDenied` stat failure during a
+    # watched file's sample commits the folded metadata fingerprint and
+    # reports the folded full fingerprint as a change; both halves of the
+    # bound assertion fail (the first at its tick-0 message).
+    ('stat-failure-counted-complete', source,
+     '            if error.kind() == std::io::ErrorKind::NotFound {\n'
+     '                SampleStatus::Complete\n'
+     '            } else {\n'
+     '                SampleStatus::Obscured\n'
+     '            }',
+     '            if true {\n'
+     '                SampleStatus::Complete\n'
+     '            } else {\n'
+     '                SampleStatus::Obscured\n'
+     '            }',
+     TESTS + 'stat_failure_leaves_the_metadata_fingerprint_uncommitted',
+     '#1792 a stat-failed sample 0 reports no change'),
+    # #1792 r1: any read_dir error counts as a complete observation of an
+    # empty directory, so an injected `PermissionDenied` read_dir failure
+    # commits the folded metadata fingerprint and reports the folded full
+    # fingerprint as a change.
+    ('read-dir-failure-counted-complete', source,
+     '                if error.kind() != std::io::ErrorKind::NotFound {\n'
+     '                    status = status.merge(SampleStatus::Obscured);\n'
+     '                }',
+     '                if false {\n'
+     '                    status = status.merge(SampleStatus::Obscured);\n'
+     '                }',
+     TESTS + 'read_dir_failure_leaves_the_metadata_fingerprint_uncommitted',
+     '#1792 a read_dir-failed sample 0 reports no change'),
+    # #1792 r1: a failed startup probe drops the watched path again (the
+    # pre-r1 `return None`), so `WatchedPath::new` yields `None` and the
+    # bound test's expect fails at its own message.
+    ('startup-probe-failure-dropped', source,
+     '        Err(_) => Some(Self::probing(path, None)),',
+     '        Err(_) => None,',
+     TESTS + 'startup_stat_failure_keeps_the_path_watched',
+     '#1792 a stat failure at startup must not drop the path'),
 ]
 
 
@@ -202,7 +239,7 @@ def check_anchor(row, original):
 def mutate(content, scope, replacements):
     for old, new in replacements:
         if content.count(old) != 1 or old == new:
-            raise RuntimeError('#1736/#1739/#1792 expired or ineffective mutation anchor')
+            raise RuntimeError('#1736/#1739/#1792/#1794 expired or ineffective mutation anchor')
         content = content.replace(old, new, 1)
     return content
 
@@ -211,19 +248,41 @@ def main():
     args = sys.argv[1:]
     if args == ['--check']:
         errors = []
+        names = [row[0] for row in mutations]
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            errors.append(f'duplicate row names (by-name selection needs unique names): {duplicates}')
         for row in mutations:
             try:
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#1736/#1739/#1792 {len(mutations)} rows / unique anchors checked')
-        return int(bool(errors))
+        if errors:
+            print('\n'.join(errors))
+            return 1
+        distinct = len({(str(row[1]), row[2]) for row in mutations})
+        print(f'#1736/#1739/#1792/#1794 {len(mutations)} rows / {distinct} distinct anchors checked')
+        return 0
     if not args:
         raise SystemExit('provide NEW_OUT and optional mutation names, or --check')
     names = args[1:]
-    selected = [row for row in mutations if not names or row[0] in names]
-    if not selected or (names and len(selected) != len(names)):
-        raise SystemExit('unknown or duplicate mutation')
+    if names:
+        # Requested names first: a duplicate request would silently run one
+        # row per name twice (or, with a duplicate row name, expand one name
+        # into several rows) — both refuse rather than misreport.
+        duplicates = sorted({name for name in names if names.count(name) > 1})
+        if duplicates:
+            raise SystemExit(f'duplicate mutation names requested: {duplicates}')
+        known = {row[0] for row in mutations}
+        unknown = [name for name in names if name not in known]
+        if unknown:
+            raise SystemExit(f'unknown mutation names: {unknown}')
+        wanted = set(names)
+        selected = [row for row in mutations if row[0] in wanted]
+        if len(selected) != len(wanted):
+            raise SystemExit('unknown or duplicate mutation')
+    else:
+        selected = list(mutations)
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
@@ -247,9 +306,9 @@ def main():
     if baseline_ref != 'HEAD':
         print(f'NON-HEAD BASELINE: {baseline_sha} via PDRS_NEGATIVE_BASELINE; '
               'the host gate only trusts HEAD evidence', flush=True)
-    cases = [Case(name, path, old, new, test, assertion)
-             for name, path, old, new, test, assertion in selected]
-    return run_cases(root, cases, out, env, mutate,
+    bound_cases = [Case(name, path, old, new, test, assertion)
+                   for name, path, old, new, test, assertion in selected]
+    return run_cases(root, bound_cases, out, env, mutate,
                      timeout=900, baseline=baseline_sha, script=__file__)
 
 
