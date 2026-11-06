@@ -680,12 +680,17 @@ fn recorded_scripts_panics_on_wrong_type() {
 }
 
 fn recorded_steps_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    // #1729 fix-r5: `steps` is a required recording field. An absent key must
+    // fail instead of silently becoming a zero-step replay. An *empty* array
+    // stays legal: `port-in-use` / `invalid-port` are recorded with zero steps
+    // on purpose (the case is driven by options alone), which is why the empty
+    // check the sms harness has is not mirrored here.
     recorded_checked(
         value.get("steps"),
         "steps",
         "an array",
         Value::as_array,
-        false,
+        true,
         crate::mutants::on("webhook-oracle-recorded-steps"),
     )
 }
@@ -706,6 +711,12 @@ fn recorded_steps_rejects_wrong_type() {
 #[should_panic(expected = "#1334 steps must be an array")]
 fn recorded_steps_panics_on_wrong_type() {
     recorded_steps(&json!({"steps": false}));
+}
+
+#[test]
+#[should_panic(expected = "#1334 steps must be an array, got <missing>")]
+fn recorded_steps_panics_when_absent() {
+    recorded_steps(&json!({}));
 }
 
 fn recorded_op_checked(value: &Value) -> Result<Option<&str>, String> {
@@ -1207,7 +1218,12 @@ fn absent_recording_fields_keep_defaults() {
         recorded_scripts(&json!({"scripts":[]})).is_some(),
         "#1334 valid scripts"
     );
-    assert!(recorded_steps(&empty).is_none(), "#1334 absent steps");
+    // #1729 fix-r5: `steps` is required (absent = recording drift), but an
+    // empty array is a legal recording for the zero-step cases.
+    assert!(
+        recorded_steps_checked(&empty).is_err(),
+        "#1334 steps is a required recording field"
+    );
     assert!(
         recorded_steps(&json!({"steps":[]})).is_some(),
         "#1334 valid steps"
