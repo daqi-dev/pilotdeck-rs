@@ -145,10 +145,14 @@ if mode in ('host-cancel-after-acceptance-hang', 'host-cancel-late-terminal'):
     methods.append(dict(name='cancel', enabled=True))
 if mode.startswith('grandchild-'):
     # Inherits the sidecar process group and stderr/stdout descriptors.
-    descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
     # #1779: a killed host never reaches its killpg, so the watchdog has to take
-    # this descendant down with it instead of leaving a 60 s orphan behind.
-    lifetime.track(descendant)
+    # this descendant down with it instead of leaving a 60 s orphan behind. The
+    # spawn and the registration share one `spawning()` block: the watchdog
+    # waits for it to finish before it reads the registry, so a host that dies
+    # inside this window still cannot leave the descendant behind.
+    with lifetime.spawning():
+        descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+        lifetime.track(descendant)
     assert receipt is not None
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
 if mode == 'no-streaming':

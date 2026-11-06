@@ -28,15 +28,21 @@ Three layers, cheapest first:
     ppid=1 process" sweep: that would hit processes this fixture does not own.
 
 What is *not* covered: a descendant nobody handed to ``track``. Every fixture
-mode that spawns one registers it, so today there is none; a future mode has to
-opt in. ``os.killpg(0, SIGKILL)`` is deliberately not used as a catch-all: the
-fixture is spawned as its own group leader (``connection.rs:65``), so a group
-kill would SIGKILL this process too, and the exit code (70/71) is part of the
-contract the tests assert.
+mode that spawns one registers it inside ``spawning()``, so today there is none;
+a future mode has to opt in. ``os.killpg(0, SIGKILL)`` is deliberately not used
+as a catch-all: the fixture is spawned as its own group leader
+(``connection.rs:65``), so a group kill would SIGKILL this process too, and the
+exit code is then no longer ours to choose.
+
+Exit codes: 71 is asserted in ``host/tests.rs`` (the test is the peer's parent
+there). 70 is *not* observable by the tests -- on the orphan path the parent is
+gone by definition -- so ``.orphan`` is the receipt that proves this path ran,
+and no test claims the number.
 
 Nothing here sends signals to processes this fixture does not own: the watchdog
 only kills itself, its registered descendants, and this process.
 """
+import contextlib
 import math
 import os
 import signal
@@ -65,18 +71,43 @@ EXIT_MAX_LIFETIME = 71
 # Descendants this fixture owns (see ``track``). Deliberately a registry, not a
 # process-table scan.
 _TRACKED = []
-# ``track`` and the watchdog's decision to give up share this lock, so a
-# descendant spawned microseconds before the watchdog fires cannot slip between
-# ``Popen`` and registration: it is either in ``_TRACKED`` already or it sees
-# ``_EXITING`` and is killed by ``track`` itself.
-_TRACK_LOCK = threading.Lock()
+# A lock alone does not close the fork -> ``track`` window: the watchdog can
+# publish ``_EXITING`` and reach ``os._exit`` before the spawning thread is
+# scheduled again. So a spawn is announced *before* ``Popen`` forks
+# (``spawning()``), and the watchdog waits for ``_SPAWNING`` to drain before it
+# snapshots the registry. A ``track`` that runs after the watchdog gave up still
+# kills its own process, which covers the spawn-after-exit case.
+_COND = threading.Condition()
+_SPAWNING = 0
 _EXITING = False
+# Bounded so a spawning thread that never returns cannot hang the exit; Popen
+# returns in milliseconds, so this only trips on a wedged interpreter.
+SPAWN_SETTLE_LIMIT = 1.0
+
+
+@contextlib.contextmanager
+def spawning():
+    """Announce that a descendant is about to be forked and registered.
+
+    Wrap both the ``Popen`` and the ``track`` call: the watchdog may fire while
+    this block runs, and it waits for the block to finish before killing, so the
+    descendant is always registered by the time the registry is read.
+    """
+    global _SPAWNING
+    with _COND:
+        _SPAWNING += 1
+    try:
+        yield
+    finally:
+        with _COND:
+            _SPAWNING -= 1
+            _COND.notify_all()
 
 
 def track(process):
     """Register a descendant so it dies with us on the orphan/lifetime paths."""
     global _EXITING
-    with _TRACK_LOCK:
+    with _COND:
         _TRACKED.append(process)
         exiting = _EXITING
     if exiting:
@@ -139,13 +170,14 @@ def _kill_tracked():
     table, which would reach processes this fixture does not own. Called from
     the watchdog thread; ``Popen.kill`` is safe there.
 
-    Also closes the fork -> ``track`` window: ``_EXITING`` is published under
-    the same lock ``track`` takes, so a ``track`` that runs after this returns
-    kills its own process instead of registering into a registry nobody reads.
+    Publishes ``_EXITING`` and first waits (bounded) for an in-flight
+    ``spawning()`` block to finish, so a descendant that was forked but not yet
+    registered is in the snapshot instead of being left behind.
     """
     global _EXITING
-    with _TRACK_LOCK:
+    with _COND:
         _EXITING = True
+        _COND.wait_for(lambda: _SPAWNING == 0, timeout=SPAWN_SETTLE_LIMIT)
         tracked = list(_TRACKED)
     for process in tracked:
         _kill_one(process)
