@@ -84,8 +84,15 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 `Ctrl-C` / `SystemExit` 同样会停掉 writer，不会留下持锁的孤儿子进程。
 
 停止本身若被中断（`communicate()` 期间 `Ctrl-C`），`force_stop()` 仍然先 `terminate()`
-走优雅恢复、等 `WRITER_EXIT_BUDGET`，只有超时才 `_kill_group`；被强杀时该行 reason 明
-写「source restoration is NOT confirmed」，不会假装恢复成功。
+走优雅恢复、等 `WRITER_EXIT_BUDGET`；只有**确认超时**（`TimeoutExpired`）或等满仍不退
+才 `_kill_group`，且 `_collect` 放在 `finally` 里一定会执行。writer 自行退出即算恢复成功
+（SIGTERM 处理器抛 `SystemExit`，退出码非零是设计如此，不按退出码判）；只有真被强杀时
+该行 reason 才明写「source restoration is NOT confirmed」。中断本身记在 `hard_interrupt`
+里，不会被改写后的 `stop_error` 顶掉，仍照原样重抛。
+
+**为什么 `start_ms ≤ blocked ≤ end_ms` 对边界毫秒也成立**：`end_ms` 是在
+`mutating_sources` 的 `with` **体内**、`__exit__` 恢复之前取的，所以真实放锁时刻必然
+晚于 `end_ms`；`blocked == end_ms` 这一刻本次 writer 仍持着排他锁，不可能是别人。
 
 SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体；下一次 `mutating_sources`
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
