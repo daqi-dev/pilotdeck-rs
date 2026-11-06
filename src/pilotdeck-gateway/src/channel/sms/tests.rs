@@ -1018,14 +1018,24 @@ fn recorded_env_map_panics_on_wrong_type() {
 }
 
 fn recorded_steps_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
-    recorded_checked(
+    let steps = recorded_checked(
         value.get("steps"),
         "steps",
         "an array",
         Value::as_array,
         true,
         crate::mutants::on("sms-oracle-recorded-steps"),
-    )
+    )?;
+    // #1729 fix-r3: an empty array is as blind as an absent one — the replay
+    // still runs the start/cleanup envelope and would compare that bare
+    // snapshot, so a case that lost its steps must fail here instead of
+    // shrinking to zero-coverage.
+    if matches!(steps, Some(steps) if steps.is_empty()) {
+        return Err(
+            "#1339 steps must not be empty (a zero-step replay proves nothing)".to_string(),
+        );
+    }
+    Ok(steps)
 }
 
 fn recorded_steps(value: &Value) -> Option<&Vec<Value>> {
@@ -1785,8 +1795,8 @@ fn absent_recording_fields_keep_defaults() {
         "#1339 missing steps"
     );
     assert!(
-        recorded_steps(&json!({"steps":[]})).is_some(),
-        "#1339 valid steps"
+        recorded_steps_checked(&json!({"steps":[]})).is_err(),
+        "#1339 empty steps cannot replay"
     );
     assert!(
         recorded_half_close(&empty).is_none(),
@@ -1911,6 +1921,12 @@ fn body_overflow_panics_before_allocation() {
 #[should_panic(expected = "#1339 steps must be an array, got <missing>")]
 fn missing_steps_cannot_be_zero_coverage() {
     recorded_steps(&json!({}));
+}
+
+#[test]
+#[should_panic(expected = "#1339 steps must not be empty")]
+fn empty_steps_cannot_be_zero_coverage() {
+    recorded_steps(&json!({"steps":[]}));
 }
 
 // ---------------------------------------------------------------------------
@@ -2313,9 +2329,7 @@ async fn replay_named(name: &str) {
     };
     crate::negative_assert_eq!(
         snapshot,
-        recorded_expected(&case)
-            .expect("#1339 expected validated object")
-            .clone(),
+        *recorded_expected(&case).expect("#1339 expected present"),
         "#1339 sms oracle: {name}"
     );
 }
