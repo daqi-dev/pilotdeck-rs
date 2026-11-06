@@ -40,20 +40,21 @@
 //!   (including the inode change time, which every write and `utimes` bump)
 //!   identical between two samples trigger no reload, where `fs.watch` would
 //!   produce an identity reload (version+1, empty `changedPaths`). With
-//!   change-time sampling this needs a burst that fits inside one ctime tick,
-//!   i.e. a granularity wide enough to hold it. Ledger: specs/gateway-parity/accepted-diffs.md
+//!   change-time sampling this needs every write in the burst to leave ctime
+//!   on the tick the sample already recorded. Ledger: specs/gateway-parity/accepted-diffs.md
 //!   A6.3-CONFIG-POLL-001 (unapproved).
 //!
 //! Each sample compares metadata first (#1739): unchanged metadata (length,
 //! mtime, ctime, inode) means the content cannot have changed *at the
 //! filesystem's change-time granularity*, so the content read is skipped.
-//! Every write and `utimes` bump ctime, but a rewrite that lands in the same
-//! ctime tick as the sample which recorded the fingerprint leaves the sample
-//! identical: the window is that tick's remainder, so its width is the
-//! filesystem's granularity (ns on APFS/ext4, 1 s on HFS+), not the sampling
-//! interval — the same caveat as (3) above. In that window a same-length
-//! rewrite that restores mtime leaves
-//! every hashed field identical and is *not* seen, where the pre-#1739
+//! Every write and `utimes` bump ctime, but ctime carries only a tick number:
+//! if the fingerprint recorded ctime `C`, any rewrite whose ctime is still `C`
+//! leaves the sample identical. The window runs from the sample that recorded
+//! `C` to the end of tick `C`, so it is at most one granularity wide (ns on
+//! APFS/ext4, 1 s on HFS+) and does not depend on the sampling interval — the
+//! same caveat as (3) above. A same-length rewrite that restores mtime and
+//! lands in that window leaves every hashed field identical and is *not*
+//! seen, where the pre-#1739
 //! per-tick content comparison did see it. Measured on HFS+ (1 s ctime
 //! granularity) in `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
 //! specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md
@@ -760,12 +761,12 @@ struct WatchedPath {
     fingerprint: u64,
     /// The last metadata-only sample (#1739): identical metadata between two
     /// samples means the content cannot have changed *at the filesystem's
-    /// ctime granularity* — every write and `utimes` bumps ctime, but a bump
-    /// that lands in the tick the sample was taken from leaves this sample
-    /// identical (window = the tick's remainder, bounded by the filesystem's
-    /// granularity, not by the sampling interval). The content read is
-    /// skipped on that basis; that gap is registered in
-    /// diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
+    /// ctime granularity* — every write and `utimes` bumps ctime, but ctime is
+    /// just a tick number: a write whose ctime still equals the stored tick
+    /// leaves this sample identical (window = from the sample to the end of
+    /// that tick, so at most one filesystem granularity wide, not the sampling
+    /// interval). The content read is skipped on that basis; that gap is
+    /// registered in diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
     metadata_fingerprint: u64,
 }
 
@@ -801,12 +802,13 @@ impl WatchedPath {
         // every 20 ms) the per-tick content read costs up to ~19% of a core
         // (measured: ~1.9 ms per 1 MiB read on cb8, page-cache hot; a
         // metadata-only sample is ~1 µs), and metadata equality implies
-        // content equality except when a rewrite lands in the same ctime tick
-        // as the sample that recorded this fingerprint (the window is the
-        // tick's remainder, so its width is the filesystem's ctime
-        // granularity — ns on APFS/ext4, 1 s on HFS+ — not the sampling
-        // interval; registered in diffs/A6.3-CONFIG-METADATA-SHORTCUT-001).
-        // Only a metadata change walks on to the content read.
+        // content equality except when a rewrite still carries the ctime tick
+        // this fingerprint recorded (ctime has only tick numbers, so a write
+        // whose ctime is unchanged is invisible; the window runs to the end of
+        // that tick — at most one filesystem granularity wide, ns on APFS/ext4
+        // and 1 s on HFS+, independent of the sampling interval; registered in
+        // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001). Only a metadata change
+        // walks on to the content read.
         let next_metadata = fingerprint(&self.path, self.directory, self.target.as_deref(), false);
         if next_metadata == self.metadata_fingerprint {
             return false;
@@ -826,12 +828,12 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
             meta.is_dir().hash(hasher);
             meta.modified().ok().hash(hasher);
             // Every write (and `utimes`) bumps ctime, so a same-length rewrite
-            // that restores mtime is still seen — unless it lands in the same
-            // ctime tick as the sample that last recorded this hash: the tick
-            // width is the filesystem's granularity (ns on APFS/ext4, 1 s on
-            // HFS+), independent of the sampling interval. A replacing rename
-            // changes the inode. See the module note and
-            // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
+            // that restores mtime is still seen — unless its ctime is still the
+            // tick this hash recorded: ctime holds only a tick number, so the
+            // window runs from the sample to the end of that tick, at most one
+            // granularity wide (ns on APFS/ext4, 1 s on HFS+), independent of
+            // the sampling interval. A replacing rename changes the inode. See
+            // the module note and diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
             (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
             if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
                 let mut content = Vec::new();
