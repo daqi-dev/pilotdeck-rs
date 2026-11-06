@@ -18,15 +18,20 @@ import sys
 
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
-# 同族装置口径：不落 .pyc（本目录会被负控以 spec_from_file_location 再加载一次，
-# 陈旧字节码会让「跑的是当前源码」不成立）。
-sys.dont_write_bytecode = True
 
 import argparse
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
+
+# 同族装置口径（scripts/gateway-parity/*、scripts/parity/* 均成对设置）：不写也
+# **不读**缓存字节码。只设 dont_write_bytecode 挡不住读取已有的
+# __pycache__/*.pyc（PEP 552 unchecked-hash 可直接执行），而本目录会被负控以
+# spec_from_file_location 再加载一次——陈旧字节码会让「跑的是当前源码」不成立。
+sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
 
@@ -57,13 +62,24 @@ class InputError(Exception):
     """输入不可用 —— fail-closed，退出码 2，绝不当 PASS。"""
 
 
-def error_object(response):
-    """response 携带的错误对象；``"error": null`` 等同「无 error」。
+def error_value(response):
+    """response 的 ``error`` 字段原值：缺省与 ``null`` 都等同「无 error」。
 
-    serde 未 skip 成功响应时常见显式 null；把它判成「携带 error 对象」会对合法
-    Rust 轮假 FAIL。判据只禁止**非 null** 的 error 对象。
+    serde 未 skip 成功响应时常见显式 null；把它判成「携带 error」会对合法
+    Rust 轮假 FAIL。但**只有 null / 缺省**才是无 error：字符串、数组、数字
+    （例如 ``error: String`` 的 ``"boom"`` 或 ``error: Vec`` 的 ``[]``）都是
+    线缆异常，不得被「不是 dict 就当没有」过滤成假 PASS。
     """
-    error = response.get('error')
+    return response.get('error')
+
+
+def error_object(response):
+    """response 携带的错误对象；非 dict 的 ``error`` 值返回 None。
+
+    调用方判「是否携带 error」必须用 :func:`error_value`（``is not None``），
+    不能只看本函数的返回值——否则非 dict 的非法值会静默通过。
+    """
+    error = error_value(response)
     return error if isinstance(error, dict) else None
 
 
@@ -281,17 +297,19 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         'P6-WIRE-CODE', round_name, method, 'missing response frame'))
                 else:
                     response = matching[0]
-                    error = response.get('error')
-                    error = error if isinstance(error, dict) else None
+                    raw_error = error_value(response)
+                    error = error_object(response)
                     wire_code = error.get('code') if error else None
                     if response.get('ok') is not False:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'response.ok is not false for an error outcome'))
                     if error is None:
+                        detail = ('response frame without an error object'
+                                  if raw_error is None else
+                                  f'response error must be an object (got {raw_error!r})')
                         violations.append(violation(
-                            'P6-WIRE-CODE', round_name, method,
-                            'response frame without an error object'))
+                            'P6-WIRE-CODE', round_name, method, detail))
                     else:
                         if wire_code != row.get('errorCode'):
                             violations.append(violation(
@@ -313,10 +331,11 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'stream ok with a response whose ok is not true'))
-                    if error_object(response) is not None:
+                    if error_value(response) is not None:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
-                            'stream ok with a response carrying an error object'))
+                            'stream ok with a response carrying a non-null error '
+                            f'({error_value(response)!r}); must be absent or null'))
                 if identifier not in finals:
                     violations.append(violation(
                         'P6-WIRE-CODE', round_name, method,
@@ -336,10 +355,11 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'response.ok is not true for an ok outcome'))
-                    if error_object(response) is not None:
+                    if error_value(response) is not None:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
-                            'ok response carries an error object'))
+                            'ok response carries a non-null error '
+                            f'({error_value(response)!r}); must be absent or null'))
     executed_names = {row['method'] for row in rows if row['outcome'] in KNOWN_OUTCOMES}
     for method in sorted(set(oracle_index) - executed_names):
         violations.append(violation(
