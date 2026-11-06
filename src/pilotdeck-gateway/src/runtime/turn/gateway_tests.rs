@@ -1419,3 +1419,47 @@ pub(crate) fn native_ws_fixture_with_disposal(
     )
     .expect("#749 fixture serial host")
 }
+
+/// #1746: a builder error must not skip the host teardown. The host owns the
+/// coordinator it created and the embedding cleanup it was handed; both settle
+/// on the host thread before `start_with_cleanup` reports the failure.
+#[test]
+fn a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let cleanup_ran = Arc::new(AtomicBool::new(false));
+    let host_thread = Arc::new(std::sync::Mutex::new(None));
+    let disposed = coordinator_disposed.clone();
+    let built_on = host_thread.clone();
+    let cleaned_on = host_thread.clone();
+    let cleaned = cleanup_ran.clone();
+    let error = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            *built_on.lock().unwrap() = Some(std::thread::current().id());
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            Err(std::io::Error::other("#1746 injected builder failure"))
+        },
+        async move {
+            assert_eq!(
+                Some(std::thread::current().id()),
+                *cleaned_on.lock().unwrap(),
+                "#1746 the embedding cleanup must run on the host thread"
+            );
+            cleaned.store(true, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .err()
+    .expect("#1746 a builder failure must fail the host");
+    assert_eq!("#1746 injected builder failure", error.to_string());
+    assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1746 a builder error must still dispose the coordinator"
+    );
+    assert!(
+        cleanup_ran.load(Ordering::SeqCst),
+        "#1746 a builder error must still poll the embedding cleanup"
+    );
+}
