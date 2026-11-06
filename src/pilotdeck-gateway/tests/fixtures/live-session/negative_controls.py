@@ -19,6 +19,7 @@ live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 hooks = root / 'src/pilotdeck-gateway/src/runtime/project/interaction_hooks.rs'
 handle = root / 'src/pilotdeck-gateway/src/runtime/session/handle.rs'
 steer = root / 'src/pilotdeck-gateway/src/runtime/project/interaction_steer.rs'
+mailbox = root / 'src/pilotdeck-gateway/src/runtime/steer.rs'
 writer = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 runner = root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs'
 cleanup = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
@@ -52,10 +53,11 @@ cases = [
     ('cleanup-task-loss-value-lost', cleanup, 'ModuleError::new("Interaction cleanup task was dropped or panicked before completion.")', 'ModuleError::new("lost cleanup task error")', session_tests+'lifecycle_close_completion_covers_error_panic_and_cancellation', '#743 completion reports panicked or cancelled cleanup'),
     ('ordinary-hook-error-rejects-session', shell, 'future.await.map(|_| ())', 'future.await.and_then(|result| if result.non_blocking_errors.is_empty() && result.blocking_errors.is_empty() { Ok(()) } else { Err(ModuleError::new("mutated hook error").into()) })', session_tests+'ordinary_hook_results_keep_session_tail', '#743 executor returned errors ignored'),
     ('drop-steer-unapplied', runner, '"steer_unapplied"', '"missing_steer_unapplied"', production, '#743 discarded steer emits unapplied once'),
+    ('steer-insert-after-close-accepted', mailbox, '                if !state.open || state.turn_id.as_ref() != Some(&turn_id) {', '                if state.turn_id.as_ref() != Some(&turn_id) {', production, '#743 steer in-flight insert rejected after close'),
 ]
 if __name__ == '__main__':
     raise SystemExit(matrix_main(root, __file__, '', cases, passed_count=1,
-        child_count=0, paths=[shell, live, hooks, handle, steer, writer, runner, cleanup,
+        child_count=0, paths=[shell, live, hooks, handle, steer, mailbox, writer, runner, cleanup,
         root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
         root / 'src/pilotdeck-gateway/src/runtime/turn/interaction.rs',
         root / 'src/pilotdeck-gateway/tests/fixtures/live-session/peer.py',
