@@ -16,9 +16,11 @@ CLAUDE_CONFIG_DIR 指向一次性空目录并只加载 user 设置源——用�
 执行层只读证明：解析 stream-json 的 init 事件，工具集合不是白名单子集 → 立即杀进程，记 TOOLS_VIOLATION。
 状态：PASS（有 final 且末行 VERDICT 合规）· PARTIAL（有 final 但缺 VERDICT/覆盖行）· TIMEOUT · ERROR · TOOLS_VIOLATION。
 只有 PASS 计入闸门；exit0 或 type=result 不等于完成评审（state/memory/20261016-review-bounds.md）。
-模型校验先认「API 错误响应」：响应 model 为 `<synthetic>`/空，或响应不是期望模型且正文含 `API Error:` 时，
+模型校验先认「API 错误响应」：响应 model 为 `<synthetic>`/空，或根本没有 assistant 事件时，
 不判「模型不符」，转按内嵌原文分类——额度 429（找人：升级套餐 / 换 key）· ECONNRESET / Connection dropped
-（查网络 / 代理，并自动重试一次；别的错误一律不重试，免得把额度 429 重试放大）。
+（查网络 / 代理，并自动重试一次；别的错误一律不重试，免得把额度 429 重试放大）。判错误响应只看 model
+占位符这硬证据，正文里出现 `API Error:` 不算：评审本仓 scripts 时正文天天引用这串字样，靠它翻案会放过真换模型。
+重试与首次共用 `--timeout` / `--budget-usd` 的每角色总额，不翻倍。
 
 通道并发闸：每个角色起进程前按 `--runner` 取全局 flock 名额（zai 6 / minimax 16 / deepseek 16 / anthropic 2，
 与 ops `scripts/fleet/fleet.py` 的 P4_CAP 同源），取不到打印 `[review-slot] waiting N/M` 排队；
@@ -263,21 +265,43 @@ def classify_api_error(text: str) -> str:
 
 
 def one_line(text: str, limit: int = 300) -> str:
-    """detail 会进 summary 表格（也会被贴进 PR 正文）：压成一行、限长，并拆掉能伪造闸门结果块的字样。
-    完整原文仍在 *.jsonl / *.err 里。"""
+    """压成一行并限长（detail 会变长，也不该整段堆着）。完整原文仍在 *.jsonl / *.err 里。
+    防伪造闸门结果块的处理不在这里：detail 有多个来源，统一在写 summary 的 `cell` 里做。"""
     flat = " ".join(text.split())
-    flat = flat.replace("<!--", "< !--").replace("-->", "-- >")
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
+def cell(text: str, limit: int = 300) -> str:
+    """summary 表格单元格的唯一出口：压行、转义竖线、拆掉能伪造 pr-gate 结果块的字样并限长。
+    所有 detail 都走这里，新加的 detail 来源不会漏掉防伪造。"""
+    flat = " ".join(text.split()).replace("<!--", "< !--").replace("-->", "-- >").replace("|", "\\|")
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def keep_error_text(result: dict, txt: str) -> None:
+    """把带 `API Error:` 的正文块收进 result["resp_texts"]：单块与条数都封顶，长流复读也堆不满内存。"""
+    kept = result.setdefault("resp_texts", [])
+    if len(kept) < MAX_ERROR_BLOCKS:
+        kept.append(txt[:MAX_ERROR_TEXT])
+
+
 def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: Path, timeout: int,
-             extra_env: dict[str, str] | None = None, model: str = "") -> dict:
-    """跑一个角色；连接断开（ECONNRESET / Connection dropped）自动重试一次，其它错误不重试。"""
+             extra_env: dict[str, str] | None = None, model: str = "", budget: float = 0.0) -> dict:
+    """跑一个角色；连接断开（ECONNRESET / Connection dropped）自动重试一次，其它错误不重试。
+    重试共用本角色的总额度与总时限（`--budget-usd` / `--timeout` 都是「每角色」），不翻倍。"""
     rec = run_role_once(role, prompt_path, out_dir, cmd, cwd, timeout, extra_env, model)
     if not rec.pop("retry_connection", False):
         return rec
     first = rec.get("api_error_text") or rec["detail"]
-    rec2 = run_role_once(role, prompt_path, out_dir, cmd, cwd, timeout, extra_env, model, suffix=".retry1")
+    spent = rec.get("cost_usd") if isinstance(rec.get("cost_usd"), (int, float)) else 0.0
+    left_seconds = timeout - int(rec.get("seconds") or 0)
+    left_budget = budget - spent
+    if left_seconds <= 0 or left_budget <= 0:
+        rec["retried"] = 0
+        rec["detail"] = f"{rec['detail']}（剩余时限 {max(left_seconds, 0)}s / 预算 {max(left_budget, 0.0):.2f} USD 不足，未重试）"
+        return rec
+    retry_cmd = [f"{left_budget:g}" if i and cmd[i - 1] == "--max-budget-usd" else tok for i, tok in enumerate(cmd)]
+    rec2 = run_role_once(role, prompt_path, out_dir, retry_cmd, cwd, left_seconds, extra_env, model, suffix=".retry1")
     rec2.pop("retry_connection", None)
     if rec2.get("api_error_kind") == ERR_CONN:
         rec2["detail"] = f"{ERR_CONN}（重试 1 次后仍失败）：{rec2.get('api_error_text') or '（无内嵌原文）'}"
@@ -346,9 +370,7 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
                                 if isinstance(blk, dict) and isinstance(blk.get("text"), str):
                                     txt = blk["text"]
                                     if API_ERROR_MARK in txt:
-                                        kept = result.setdefault("resp_texts", [])
-                                        if len(kept) < MAX_ERROR_BLOCKS:
-                                            kept.append(txt[:MAX_ERROR_TEXT])
+                                        keep_error_text(result, txt)
                                     else:
                                         result["last_text"] = txt[:MAX_ERROR_TEXT]
                     if ev.get("type") == "result":
@@ -387,22 +409,26 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     resp = result.get("resp_models") or set()
     usage = set((result.get("modelUsage") or {}).keys()) if isinstance(result.get("modelUsage"), dict) else set()
     expect = RESP_MODEL_ALIAS.get(model, model)
+    rec["cost_usd"] = result.get("total_cost_usd")  # 先取：下面每条早退分支都别再漏记花费（重试要合计两次）
     if model and result.get("init_model") != model:
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
     # 先认「API 错误响应」再判模型：额度 / 断连时网关回 model=<synthetic>、正文是 "API Error: ..."，
     # 若先比 model 就把真实原因（429 / ECONNRESET）误报成「模型不符」（历史 69 条 ERROR 即此）。
-    # 只有「响应不是期望模型」时才按错误响应处理：正常评审里引用 "API Error:" 字样不得被误判成失败。
+    # 判定只用 model 占位符「有 <synthetic>/空」这一条硬证据：正文里出现 "API Error:" 不算——评审本仓
+    # scripts 时正文天天引用这串字样，靠它翻案会把真换模型放过去，还会按正文里的 ECONNRESET 白重试一次。
     err_text = api_error_text(result)
     synthetic = any(m in (None, "", SYNTHETIC_MODEL) for m in resp)
     if model and not resp:  # 连 assistant 事件都没有：模型根本没用上，报「模型不符」同样是错怪实现方
         kind = classify_api_error(err_text)
-        rec["detail"] = f"{kind}：{one_line(err_text) or '通道没有返回任何模型响应（无 assistant 事件）'}（不是模型不符）"
+        # 这里没有 assistant 正文可引：只有确属 API 错误原文才写进 detail，别把 final 里的评审文字当错误
+        why = one_line(err_text) if API_ERROR_MARK in err_text else "通道没有返回任何模型响应（无 assistant 事件）"
+        rec["detail"] = f"{kind}：{why}（不是模型不符）"
         rec["api_error_kind"] = kind
         rec["api_error_text"] = one_line(err_text)
         rec["retry_connection"] = kind == ERR_CONN and any(mark in err_text for mark in RETRY_MARKS)
         return rec
-    if model and (synthetic or (API_ERROR_MARK in err_text and resp != {expect})):
+    if model and synthetic:
         kind = classify_api_error(err_text)
         rec["detail"] = f"{kind}：{one_line(err_text) or '（错误响应没有内嵌原文）'}"
         rec["api_error_kind"] = kind
@@ -412,7 +438,6 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     if model and (resp != {expect} or not usage or usage != {model}):
         rec["detail"] = f"模型不符：声明 {model!r}，init {result.get('init_model')!r}，响应 {sorted(map(str, resp))}，用量 {sorted(usage)}"
         return rec
-    rec["cost_usd"] = result.get("total_cost_usd")
     text = result.get("result") if isinstance(result.get("result"), str) else ""
     (out_dir / f"{role}.md").write_text(text or "", encoding="utf-8")
     if result.get("is_error") or result.get("subtype") not in (None, "success"):
@@ -437,8 +462,8 @@ def main() -> int:
     ap.add_argument("--model", default=None,
                     help="默认 zai→glm-5.3-mb，anthropic→claude-opus-5-5，minimax→MiniMax-M3.1-Flash，deepseek→deepseek-v4.1-flash-mb")
     ap.add_argument("--timeout", type=int, default=None,
-                    help="每角色秒数；默认 zai→600，anthropic→1200（实测 sonnet ~3min、opus ~6min），minimax/deepseek→600")
-    ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd（按 Anthropic 价目估算，zai 通道仅作上限）")
+                    help="每角色总秒数（含重试）；默认 zai→600，anthropic→1200（实测 sonnet ~3min、opus ~6min），minimax/deepseek→600")
+    ap.add_argument("--budget-usd", type=float, default=3.0, help="每角色 --max-budget-usd 总额（含重试；按 Anthropic 价目估算，zai 通道仅作上限）")
     ap.add_argument("--claude-bin", default="claude", help="测试时可换成假 CLI")
     ap.add_argument("--env-file", type=Path, default=None, help="取钥文件；默认本检出或主仓根的 .env.local（测试用隔离 fixture）")
     ap.add_argument("--dry-run", action="store_true", help="只渲染任务书与命令，不起进程")
@@ -529,7 +554,7 @@ def main() -> int:
             results[r] = {"role": r, "status": "ERROR", "detail": str(e), "counts": None}
             return
         try:
-            results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model)
+            results[r] = run_role(r, p, out, cmd, wt, a.timeout, extra_env, model, a.budget_usd)
         except Exception as e:  # noqa: BLE001 —— 线程异常不得让 results 缺键、summary 丢失
             results[r] = {"role": r, "status": "ERROR", "detail": f"运行器异常 {type(e).__name__}", "counts": None}
         finally:
@@ -560,7 +585,7 @@ def main() -> int:
     ]
     for r in roles:
         c = results[r]["counts"] or {}
-        detail = (results[r]["detail"] or "—").replace("|", "\\|").replace("\n", " ")
+        detail = cell(results[r]["detail"] or "—")
         lines.append(f"| {r} | {results[r]['status']} | {c.get('P0', '-')} | {c.get('P1', '-')} | {c.get('P2', '-')} | "
                      f"{c.get('P3', '-')} | {results[r].get('seconds')} | {detail} |")
     lines += ["", f"原件：`{out.relative_to(ROOT)}/`（<角色>.md 为结论，.jsonl/.err 为原始流）"]
