@@ -55,10 +55,15 @@ const MAX_BODY_BYTES: usize = 1_048_576;
 /// never overrides it (`SmsChannel.ts` has no `requestTimeout`/`setTimeout`),
 /// so a client that declares `Content-Length` and stops sending is answered
 /// with Node's 51-byte `408 Request Timeout` + `Connection: close` once this
-/// deadline expires (#1901). Like the webhook channel's copy, it bounds the
-/// body read only — the request head is already bounded by hyper's own
-/// header timeout, and a whole-handler deadline would turn the TS `null`-body
-/// hang (`A8.3-CH-SMS-007`) into a Rust divergence.
+/// deadline expires (#1901).
+///
+/// Like the webhook channel's copy, it bounds the **body read only**. It does
+/// not cover the request head: this lane serves through a bare
+/// `http1::Builder`, and without a hyper `Timer` the crate silently disables
+/// its own header-read timeout (`hyper::common::time` turns the default
+/// `30 s` into `None`), so a half-written request head is bounded by nothing
+/// on this lane (#1955). A whole-handler deadline would also turn the TS
+/// `null`-body hang (`A8.3-CH-SMS-007`) into a Rust divergence.
 const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
@@ -84,7 +89,10 @@ pub struct SmsChannelOptions {
     /// The body-read deadline, [`DEFAULT_REQUEST_TIMEOUT`] when unset. TS
     /// exposes no such option (it is Node's server default, not a channel
     /// option); the field is the Rust tests' injection point, like the
-    /// webhook channel's `request_timeout`.
+    /// webhook channel's `request_timeout`. Tests inject a short deadline;
+    /// zero or sub-millisecond values are not meaningful (tokio polls the
+    /// inner future first, so whether a whole body is served or 408'd would
+    /// hinge on that first poll) and no caller passes one.
     pub request_timeout: Option<std::time::Duration>,
 }
 

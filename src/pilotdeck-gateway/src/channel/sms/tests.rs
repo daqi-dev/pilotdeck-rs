@@ -2258,27 +2258,31 @@ fn assert_responses_so_far(responses: &[Value], case: &Value, name: &str) {
     crate::negative_assert_eq!(responses, &expected[..], "#1339 sms oracle: {name}");
 }
 
-/// The wire bytes of the `body-read-timeout` answer: Node v22.22.0's raw
-/// 51-byte `408 Request Timeout` ([`crate::user_dialog::NODE_408_RESPONSE`],
+/// The comparison basis for the `body-read-timeout` answer: Node v22.22.0's
+/// raw 51-byte `408 Request Timeout` ([`crate::user_dialog::NODE_408_RESPONSE`],
 /// measured on the pinned Node in
 /// `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`) with hyper's
-/// chunked framing for an unknown-length empty body. The framing residual is
-/// the registered A8.3-CH-WEBHOOK-001 class — the sms lane returns the same
-/// shared builder (`webhook::node_request_timeout_response`), so the two
-/// cannot drift apart.
+/// chunked framing for an unknown-length empty body. This is not the literal
+/// wire bytes — the sms lane's bare builder writes lowercase header names and
+/// an implicit `date`; see [`normalize_wire`]. The framing residual is
+/// registered for this lane in
+/// `specs/gateway-parity/diffs/A8.3-CH-SMS-010.md`; the sms lane returns the
+/// same shared builder as the webhook lane
+/// (`webhook::node_request_timeout_response`), so the two cannot drift apart.
 const REQUEST_TIMEOUT_408: &[u8] =
     b"HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
 
 /// The comparison form of an HTTP/1.1 response's wire bytes: header names are
-/// case-folded, the `date` line is dropped and chunk sizes are case-folded —
-/// exactly the presentation dimensions registered as accepted in
-/// `specs/gateway-parity/diffs/A8.4-NATIVE-HTTP-001.md`. The sms lane serves
-/// through a bare `http1::Builder`, so unlike the webhook lane's
-/// `title_case_headers(true)` + `auto_date_header(false)` it writes lowercase
-/// header names and hyper's implicit `date`; Node's canned
-/// `requestTimeoutResponse` carries no `Date` at all. Everything else — status
-/// line, the `Connection: close` value, the chunked framing — is compared
-/// verbatim, so a missing close or a changed status still fails.
+/// case-folded and the `date` line is dropped — the two presentation
+/// dimensions registered for this lane in
+/// `specs/gateway-parity/diffs/A8.3-CH-SMS-002.md` (unapproved) and pinned for
+/// this cell in `A8.3-CH-SMS-010.md`. The sms lane serves through a bare
+/// `http1::Builder`, so unlike the webhook lane's `title_case_headers(true)` +
+/// `auto_date_header(false)` it writes lowercase header names and hyper's
+/// implicit `date`; Node's canned `requestTimeoutResponse` carries no `Date`
+/// at all. Everything else — status line, the `Connection: close` value, the
+/// chunk framing (`0\r\n\r\n` verbatim, not case-folded) — is compared
+/// exactly, so a missing close or a changed status still fails.
 ///
 /// Panics on anything that is not a complete HTTP/1.1 head plus body: a
 /// truncated or non-response wire must not normalize into a passing string.
@@ -2351,13 +2355,23 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
     // The recorded request really stalls: the generator's `REQUEST()` writes
     // `Content-Length: <byteLength(body)>` from the whole body while
     // `truncate` keeps the tail off the wire, so the server waits for the
-    // rest of a body it was promised.
+    // rest of a body it was promised. The generator only takes this shape
+    // when the definition sets `stall: true` (its own read deadline instead
+    // of the 3 s default), so the flag is pinned here rather than left as an
+    // unread recorded field.
     let steps = recorded_steps(case).expect("#1901 steps");
     let step = &steps[0];
+    crate::negative_assert_eq!(
+        step.get("stall").and_then(Value::as_bool),
+        Some(true),
+        "#1901 body-read-timeout: the cell must be recorded with the stalled \
+         request shape"
+    );
     let declared = recorded_body(step).len();
-    let sent = declared
-        - usize::try_from(recorded_truncate(step).unwrap_or_default())
-            .expect("#1901 truncate fits usize");
+    let sent = declared.saturating_sub(
+        usize::try_from(recorded_truncate(step).unwrap_or_default())
+            .expect("#1901 truncate fits usize"),
+    );
     crate::negative_assert!(
         sent < declared,
         "#1901 body-read-timeout: the request must stall before its declared \
@@ -2373,20 +2387,24 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
         record_unhandled: None,
         request_timeout: Some(INJECTED_DEADLINE),
     });
-    let handle = channel
-        .start(ChannelStartDeps {
+    let handle = bounded(
+        "body-read-timeout start",
+        channel.start(ChannelStartDeps {
             config: None,
             report_status: None,
             log: None,
             turn_gateway: None,
-        })
-        .await
-        .expect("#1901 start");
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .await
-        .expect("#1901 connect to the sms listener");
-    stream
-        .write_all(&build_raw(step))
+        }),
+    )
+    .await
+    .expect("#1901 start");
+    let mut stream = bounded(
+        "body-read-timeout connect",
+        TcpStream::connect(("127.0.0.1", port)),
+    )
+    .await
+    .expect("#1901 connect to the sms listener");
+    bounded("body-read-timeout send", stream.write_all(&build_raw(step)))
         .await
         .expect("#1901 send the stalled request");
     let mut response = Vec::new();
@@ -2394,22 +2412,26 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
         .await
         .expect("#1901 a stalled body is answered at the sms body-read deadline")
         .expect("#1901 read the stalled-body response bytes");
-    handle
-        .stop("body-read-timeout")
+    bounded("body-read-timeout stop", handle.stop("body-read-timeout"))
         .await
         .expect("#1901 stop after the body-read deadline");
+    // Only the answer is compared here. The cell also records the stop logs,
+    // but this replay deliberately stops with the `body-read-timeout` reason
+    // while the oracle recorded `no reason`, so the log envelope cannot be
+    // compared without normalizing the reason string; the shutdown log path is
+    // covered by the other cells' `stop()` steps.
     crate::negative_assert_eq!(
         normalize_wire(&response),
         normalize_wire(REQUEST_TIMEOUT_408),
         "#1901 the sms body-read deadline answers Node's 408 in hyper's \
          chunked framing and closes the connection (normalized only for the \
-         registered A8.4-NATIVE-HTTP-001 header case / date presentation)"
+         A8.3-CH-SMS-002 / -010 header case and date presentation)"
     );
 }
 
 /// The pinned 408 bytes are Node's raw 51 bytes minus their terminating CRLF
-/// plus hyper's chunked framing: a presentation residual of the
-/// A8.3-CH-WEBHOOK-001 class, not "the Node 408" byte for byte.
+/// plus hyper's chunked framing: the presentation residual registered for this
+/// lane in `A8.3-CH-SMS-010`, not "the Node 408" byte for byte.
 #[test]
 fn sms_408_is_node_bytes_plus_hyper_framing() {
     let node = crate::user_dialog::NODE_408_RESPONSE;

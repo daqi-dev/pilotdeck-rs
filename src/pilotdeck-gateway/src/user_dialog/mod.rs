@@ -28,8 +28,9 @@ pub use http_store::{
     HttpStoreTransportResponse, HttpStoreValidationError, LiveGatewayUserDialogStore,
     create_gateway_user_dialog_store_http_handler, start_gateway_user_dialog_store_http_server,
 };
-// Internal use only (the webhook lane's 408 framing check); not public API.
-// Test-gated so a non-test build never carries an unused re-export.
+// Internal use only (the 408 framing checks of the webhook, api_server and sms
+// lanes); not public API. Test-gated so a non-test build never carries an
+// unused re-export.
 #[cfg(test)]
 pub(crate) use http_store::NODE_408_RESPONSE;
 pub use journal::{
