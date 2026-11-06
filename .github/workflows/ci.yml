@@ -230,6 +230,11 @@ jobs:
       - name: 装置守卫自检（六项）
         run: |
           python3 -I scripts/retirement-outcome-parity/self_check.py
+      # ⑤ 接线守卫自身的变异自检：把本文件按「删行/注释掉/禁用 step」三种方式变异，
+      #    每种都必须被 check_wiring 判红。少了这一步，接线守卫退化成常量比对也没人知道。
+      - name: 接线守卫变异自检
+        run: |
+          python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
       # 红了才最需要逐条证据（summary.json 里每条 KILLED / SURVIVED / INVALID + 原因）。
       - name: 上传负控证据
         if: ${{ always() }}
