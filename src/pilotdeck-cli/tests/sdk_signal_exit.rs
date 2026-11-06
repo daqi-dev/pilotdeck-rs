@@ -26,6 +26,10 @@ const NEGATIVE_CONTROLS: u64 = 73;
 /// #1662 upper bound for waiting out one committed-mode negative control that
 /// holds the tree lock; far above the Python side's 900 s acquisition budget.
 const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
+/// One stderr line per lease acquisition: the measured wait (ms). The paired
+/// GREEN control in `sdk-signal-read-lease/` reads it as its contention
+/// witness, so both sides must agree on this exact spelling.
+const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
 
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
@@ -58,9 +62,17 @@ fn fixture_read_lease() -> fs::File {
         .open(&path)
         .expect("#1662 negative source lock file must open");
     let deadline = Instant::now() + READ_LEASE_WAIT;
+    let started = Instant::now();
     loop {
         match file.try_lock_shared() {
-            Ok(()) => return file,
+            Ok(()) => {
+                // The measured wait is the only honest evidence that a reader
+                // really met a writer: elapsed cargo time also counts startup,
+                // the package-cache lock and rebuilds. The paired GREEN control
+                // parses this line (cargo test only shows it with --nocapture).
+                eprintln!("{READ_LEASE_MARKER}{}", started.elapsed().as_millis());
+                return file;
+            }
             Err(std::fs::TryLockError::WouldBlock) => {
                 assert!(
                     Instant::now() < deadline,
@@ -479,6 +491,10 @@ fn signal_abort_state_rejects_provenance_and_denominator_drift() {
 #[test]
 #[ignore = "requires Node v22.22.0; adversarial capture-data validation"]
 fn signal_capture_rejects_invalid_evidence() {
+    // The Node control reads source.json / cases.json / capture.py from disk
+    // and re-validates their golden sha256, so it is a resident disk reader
+    // like its Rust siblings (#1662).
+    let _lease = fixture_read_lease();
     let scratch = Scratch::new();
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sdk-signals/negative_controls.mjs");

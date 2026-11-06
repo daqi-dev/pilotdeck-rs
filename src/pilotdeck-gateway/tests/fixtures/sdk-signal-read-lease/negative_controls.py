@@ -12,15 +12,16 @@ reads only restored bytes. Both verdicts are published after every source was
 restored and re-verified; any non-KILLED row exits non-zero.
 
 The two directions use separate judges. In RED a golden-sha failure is the
-mutant being killed; in GREEN only a *pass* counts, and the pass must have cost
-at least ``CONTENTION_FLOOR`` seconds inside cargo -- otherwise the resident
-test never met the writer and proves nothing. GREEN failures of any kind are
-INVALID, never KILLED.
+mutant being killed; in GREEN only a *pass* counts, and the pass must carry the
+resident test's own measured lease wait (``#1662 read lease wait ms=``) at or
+above ``MIN_LEASE_WAIT_MS`` -- a pass without it never met the writer and
+proves nothing. GREEN failures of any kind are INVALID, never KILLED.
 
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -32,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from negative_process import (
     _collect,
+    _ensure_workspace_scanner,
     _kill_group,
     exclusive_write,
     mutating_sources,
@@ -63,11 +65,14 @@ WRITER_LOCK_TIMEOUT = 300
 WRITER_ENTRY_BUDGET = WRITER_LOCK_TIMEOUT + 300
 # Writer finish after the reader returns: the rest of the window plus restore.
 WRITER_EXIT_BUDGET = WINDOW_SECONDS + 120
-# A prewarmed `cargo test --exact` binary starts in ~1-2 s. A resident test
-# that really waited on the lease cannot finish before the writer released it,
-# which is WINDOW_SECONDS after the window opened, so any pass faster than this
-# floor never contended and is not evidence for the fix (#1662 review P0).
-CONTENTION_FLOOR = 5.0
+# The resident test reports its own lease wait on stderr (cargo test only shows
+# it under --nocapture). That measurement is the contention witness: elapsed
+# cargo time also covers startup, the package-cache lock and rebuilds, so it can
+# be large without any lease contention (and small after a real, short wait).
+# Any wait at all proves the reader met the writer; 500 ms is far above the
+# 50 ms poll granularity and far below a window-scale wait.
+LEASE_MARKER = '#1662 read lease wait ms='
+MIN_LEASE_WAIT_MS = 500
 CARGO_TIMEOUT = 1800
 
 
@@ -80,15 +85,22 @@ def cargo_argv(suffix):
 def run_cargo(out, label, suffix):
     """Run one cargo invocation; return ``(result, seconds spent inside it)``.
 
-    The elapsed time is measured around ``run_owned`` only: waiting for a cargo
-    slot is a scheduling delay, not lease contention, and must not be counted
-    as evidence that the resident test blocked on the writer.
+    The elapsed time is reported for the evidence trail only; it is not a
+    contention witness (see ``MIN_LEASE_WAIT_MS``). Waiting for a cargo slot is
+    excluded either way: it is a scheduling delay, not lease contention.
     """
     slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
     exclusive_write(out / f'{label}.slots.log', slot.stdout + slot.stderr)
     started = time.monotonic()
-    result = run_owned(cargo_argv(suffix), cwd=root, env=os.environ.copy(),
-                       timeout=CARGO_TIMEOUT)
+    try:
+        result = run_owned(cargo_argv(suffix), cwd=root, env=os.environ.copy(),
+                           timeout=CARGO_TIMEOUT)
+    except subprocess.TimeoutExpired as error:
+        # Keep whatever was observed: an audit must be able to tell "never
+        # started" from "started and was killed at the bound".
+        exclusive_write(out / f'{label}.timeout.stdout', error.stdout or '')
+        exclusive_write(out / f'{label}.timeout.stderr', error.stderr or '')
+        raise
     elapsed = time.monotonic() - started
     exclusive_write(out / f'{label}.stdout', result.stdout)
     exclusive_write(out / f'{label}.stderr', result.stderr)
@@ -98,13 +110,19 @@ def run_cargo(out, label, suffix):
 def writer(out, window):
     """Independent committed-mode writer: hold the tree lock over one mutant.
 
-    SIGTERM unwinds through ``mutating_sources`` so every guarded byte is
-    restored before the process exits. A SIGKILL leaves the mutant on disk;
-    the next ``mutating_sources`` run then refuses the dirty tree instead of
-    silently mutating a mutated baseline (#1662 review P1).
+    SIGTERM is acted on only while the mutation window is open: raising
+    ``SystemExit`` there unwinds through ``mutating_sources``, which restores
+    every guarded byte. Once the sleep is over the handler is disarmed so a
+    signal that lands during restoration cannot interrupt ``write_bytes``. A
+    SIGKILL (or a failing restore) can still leave the mutant on disk; the next
+    ``mutating_sources`` run then refuses the dirty tree instead of silently
+    mutating a mutated baseline (#1662 review P1).
     """
+    armed = [True]
+
     def stop(_signum, _frame):
-        raise SystemExit('#1662 writer stopped before its window closed')
+        if armed[0]:
+            raise SystemExit('#1662 writer stopped before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
     with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
@@ -115,6 +133,7 @@ def writer(out, window):
         temporary.write_text('open\n')
         temporary.replace(out / 'writer-window-open')
         time.sleep(window)
+        armed[0] = False
     return 0
 
 
@@ -148,20 +167,34 @@ def judge(result):
     return 'INVALID', 'missing bound runtime failure (build error, wrong panic, or missing test)'
 
 
+def observations(log):
+    """Lease waits (ms) the resident test reported, in order."""
+    return [int(value) for value in re.findall(re.escape(LEASE_MARKER) + r'(\d+)', log)]
+
+
 def green(out):
     """Fixed test under the writer protocol: wait for the lease, read restored bytes.
 
     GREEN has its own verdicts on purpose. ``judge()`` is the RED direction: a
     golden-sha failure there means the mutant killed the test. Here the same
     failure means the fix stopped working, so reusing ``judge()`` would report
-    a broken lease as a passing control (#1662 review P0). Only a pass counts.
+    a broken lease as a passing control (#1662 review P0). Only a pass counts,
+    and only when the test itself reports a lease wait.
     """
-    run_cargo(out, 'prewarm-compile', ['--no-run'])
+    prewarm, _elapsed = run_cargo(out, 'prewarm-compile', ['--no-run'])
+    if prewarm.returncode != 0:
+        return 'INVALID', (f'prewarm compile failed (rc={prewarm.returncode}); the '
+                           f'timed run would rebuild and its timing means nothing')
+    # Build the #1166 workspace scanner outside the writer's budget: otherwise
+    # mutating_sources builds it inside WRITER_ENTRY_BUDGET on a cold target.
+    _ensure_workspace_scanner()
     process = subprocess.Popen(
         [sys.executable, '-I', str(Path(__file__).resolve()), '--writer', str(out),
          str(WINDOW_SECONDS)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         start_new_session=True)
+    failure = None
+    result = None
     try:
         deadline = time.monotonic() + WRITER_ENTRY_BUDGET
         while not (out / 'writer-window-open').is_file():
@@ -170,22 +203,32 @@ def green(out):
             if time.monotonic() > deadline:
                 raise TimeoutError('#1662 writer never opened its mutation window')
             time.sleep(0.5)
-        result, elapsed = run_cargo(out, 'fixed-test-survives-writer-window',
-                                    [RESIDENT_TEST, '--', '--exact'])
-    finally:
+        result, _elapsed = run_cargo(out, 'fixed-test-survives-writer-window',
+                                     [RESIDENT_TEST, '--', '--exact', '--nocapture'])
+    except Exception as error:
+        failure = error
+    try:
         stop_writer(process, out)
+    except Exception as error:
+        # Keep the original failure as the reason when there is one; the stop
+        # error still turns an otherwise-passing row into INVALID.
+        failure = failure or error
+    if failure is not None:
+        return 'INVALID', f'{type(failure).__name__}: {failure}'
+    log = result.stdout + result.stderr
     if not passed(result, RESIDENT_TEST):
-        log = result.stdout + result.stderr
         return 'INVALID', (
             f'fixed test did not survive the writer window (rc={result.returncode}, '
             f'golden-sha failure={SHA_MARKER in panic_evidence(log, RESIDENT_TEST)}); '
             f'GREEN only accepts the lease wait followed by a pass')
-    if elapsed < CONTENTION_FLOOR:
-        return 'INVALID', (
-            f'resident test passed in {elapsed:.1f}s, under the {CONTENTION_FLOOR:.0f}s '
-            f'contention floor: it never waited on the writer lease, so this row is '
-            f'no evidence for the fix (rerun when cargo slots are free)')
-    return 'KILLED', f'resident test waited {elapsed:.1f}s on the writer and passed'
+    waits = observations(log)
+    if not waits:
+        return 'INVALID', (f'resident test reported no "{LEASE_MARKER}" line, so it never '
+                           f'waited on the writer lease; this row is no evidence for the fix')
+    if max(waits) < MIN_LEASE_WAIT_MS:
+        return 'INVALID', (f'resident test waited {max(waits)} ms, under the '
+                           f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
+    return 'KILLED', f'resident test waited {max(waits)} ms on the writer and passed'
 
 
 def red(out):
