@@ -243,13 +243,33 @@ fn every_replay_option_key_is_mapped_into_the_channel_options() {
     );
 
     let parsed = options(&recorded, None);
-    assert_eq!(parsed.api_key.as_deref(), Some("key-from-fixture"));
-    assert_eq!(parsed.model_name.as_deref(), Some("model-from-fixture"));
-    assert_eq!(
-        parsed.cors_origins,
-        Some(js_string_array(&[json!("https://fixture.test")])),
-        "#1759: `corsOrigins` must reach the channel options"
-    );
+    // The roster drives the assertions rather than a hand-written list next to
+    // it: a fourth key added to `REPLAY_OPTION_KEYS` (and to this test's json)
+    // must also gain a mapping assertion here, or this loop panics instead of
+    // letting the new setting slide through unproven (r3 boundary P2).
+    for key in REPLAY_OPTION_KEYS {
+        match key {
+            "apiKey" => assert_eq!(
+                parsed.api_key.as_deref(),
+                Some("key-from-fixture"),
+                "#1759: `apiKey` must reach the channel options"
+            ),
+            "modelName" => assert_eq!(
+                parsed.model_name.as_deref(),
+                Some("model-from-fixture"),
+                "#1759: `modelName` must reach the channel options"
+            ),
+            "corsOrigins" => assert_eq!(
+                parsed.cors_origins,
+                Some(js_string_array(&[json!("https://fixture.test")])),
+                "#1759: `corsOrigins` must reach the channel options"
+            ),
+            other => panic!(
+                "#1759: {other:?} is on REPLAY_OPTION_KEYS but this test has no mapping \
+                 assertion for it; teach `options()` and this test before recording it"
+            ),
+        }
+    }
 }
 
 #[test]
