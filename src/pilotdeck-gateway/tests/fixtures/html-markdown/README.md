@@ -168,10 +168,11 @@ factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它
 （`scaling_band_caps_the_slack_on_short_samples` 钉住）。没有这个封顶时，同一个
 150 ms 打在 CPU 采样的 23 ms 小样本上就是 6.5x——比 factor 2 的整个 1.17x 差距还大，
 真二次实现会被直接放过；封顶后任何样本长度下判据都还能分辨。余量是固定的 150 ms、
-带宽是比值，所以「封顶生不生效」只取决于小样本时长，与用墙钟还是 CPU 秒无关：
-1.45 s 这种长样本（deep-frame 迁移前的墙钟实测，也是负控变异体下的 4 MiB CPU 时间）
-折算 0.10x，低于 0.117x 的封顶，**带宽不变**（2.83x + 0.10x = 2.93x，
-`large_shallow` 5.8 s 同理）；现役的 deep-frame 与 `large_shallow` 都已改成 CPU 采样
+带宽是比值，所以在**同一输入倍数**下「封顶生不生效」只取决于小样本时长，与用墙钟还是
+CPU 秒无关（倍数小时差距本身也小，封顶值随之变小）。factor 2 的 1.45 s 这种长样本
+（deep-frame 迁移前的墙钟实测，也是负控变异体下的 4 MiB CPU 时间）折算 0.10x，
+低于 0.117x 的封顶，**带宽不变**（2.83x + 0.10x = 2.93x；`large_shallow` 的 5.8 s
+为 2.86x，同样不封顶）；现役的 deep-frame 与 `large_shallow` 都已改成 CPU 采样
 （cb8 release：deep-frame 23 ms、`large_shallow` paragraphs 107 ms），
 **封顶生效**，带宽从 9.35x / 4.23x 收到 2.95x，真二次 4.0x 重新可拦。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
