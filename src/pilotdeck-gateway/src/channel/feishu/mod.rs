@@ -773,8 +773,10 @@ impl Runtime {
                 on_state_change(snapshot);
             }
             // No `abortTurn` on the A7 port: the previous run keeps going
-            // (registered diff), but the generation bump below already stops
-            // its events from reaching this chat.
+            // (registered diff). The generation bump below makes the event loop
+            // and the flush skip this chat's output once the generation has
+            // moved; a segment whose check already passed — in flight or not
+            // yet sent — is outside this gate.
             self.reset_chat_interaction_state(&chat_id);
             if mapped.message.is_empty() {
                 self.send(&chat_id, "已创建新会话。").await;
@@ -890,8 +892,9 @@ impl Runtime {
                 Some(slot) => slot,
                 None => {
                     // Lost the race with the running drain: the turn must still
-                    // be queued, exactly like the `active` branch in
-                    // `dispatch_turn`. The push, the "is someone still holding
+                    // be queued, exactly like the admission-failure path that
+                    // `process_inbound_messages` reaches through this same
+                    // function. The push, the "is someone still holding
                     // the slot" check and the take-back all happen under the one
                     // state lock the holder takes to decide "queue empty and
                     // release", so the two sides cannot both conclude "the other
@@ -1052,8 +1055,7 @@ impl Runtime {
                                 // The attachment itself is out of scope; the
                                 // controller still flushes the text it has.
                                 if !js_trim(&live.text).is_empty() {
-                                    self.send_final(chat_id, turn.generation, &live.text)
-                                        .await;
+                                    self.send_final(chat_id, turn.generation, &live.text).await;
                                 }
                                 live.text.clear();
                             }
@@ -1064,10 +1066,11 @@ impl Runtime {
             },
         }
         // A turn that a `/new` (or a later turn) superseded while it was still
-        // streaming must not deliver anything to the chat: its buffered text —
-        // including the synthesized "Please retry." fragment — belongs to the
-        // session that no longer exists, and TS aborts that turn instead of
-        // flushing it.
+        // streaming: the buffered text — including the synthesized
+        // "Please retry." fragment — belongs to a session that no longer
+        // exists, so this side skips the flush when generation has moved.
+        // TS asks the gateway to abort the run there (`abortTurn`, best effort)
+        // but still calls `flushFinal()` unconditionally.
         if self.is_current(chat_id, turn.generation) {
             self.interaction.elicitation_clear(chat_id);
             self.interaction.permission_clear_after_turn(chat_id);
@@ -1104,10 +1107,13 @@ impl Runtime {
             return;
         };
         for chunk in live_chunks(text, live_text_limit(MAX_TEXT_MESSAGE_LENGTH)) {
-            // A segment send is an await point: `/new` can bump the generation
-            // while the previous segment is in flight, and TS has already
-            // aborted the turn by then. Re-check before every segment so the
-            // rest of a superseded turn never reaches the chat.
+            // Re-check before every segment: if the generation has already
+            // changed by the time we look, this segment does not start. This is
+            // a narrowing, not a guarantee — a bump landing between the check
+            // and the send, or while a segment is already inside `send_post`
+            // (token fetch + POST) or its `send_raw` fallback, still lets that
+            // segment land, exactly like TS's best-effort `abortTurn` for a
+            // send already dispatched.
             if !self.is_current(chat_id, generation) {
                 return;
             }
