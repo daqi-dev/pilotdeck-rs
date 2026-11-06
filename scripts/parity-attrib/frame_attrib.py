@@ -37,9 +37,11 @@ C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_
 
 退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定。
 退出码（`--negctl-out`）：0 全部按期望命中 · 1 证据目录不可用（已存在不覆盖 / 无法创建，
-不覆盖证据）· 3 基线不可用（无有效轮次 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
-4 判据被证伪 · 8 有负控未判定（4 优先于 8）· 9 装置自身崩溃（已删半成品证据目录；与 `1`
-区分开，免得把崩溃读成「目录名已占用」）。完整语义见 README「退出码」。
+不覆盖证据）· 3 基线不可用（无有效轮次 / 轮次目录名不合规 / 基线缺本装置要改的变异点，
+**数据问题，不下判据结论**）· 4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的
+退出码）· 9 装置自身崩溃（已删半成品证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
+进程被 SIGTERM 打断时也会删掉半成品证据目录（入口即装 handler + atexit 兜底）。
+完整语义见 README「退出码」。
 """
 import argparse
 import atexit
@@ -118,6 +120,42 @@ def is_identity(rec):
 
 
 _G03_TMPDIR = None
+# 已建好、还没跑完的 `--negctl-out` 证据目录：进程被 SIGTERM 打断时由 atexit 删掉，
+# 免得留下形貌与完整证据无异、却没跑完的残缺目录（r2 concurrency 评审 P2）。
+_PENDING_OUTDIRS = set()
+
+
+def install_sigterm():
+    """把 SIGTERM 转成 `SystemExit`，让 `atexit` / `finally` 的清理有机会运行。
+
+    CPython 默认对 SIGTERM 走 SIG_DFL（进程直接终止，atexit 不跑）：CI 用 `timeout` 包装置时
+    正好是 SIGTERM。只在主线程装（非主线程会抛 ValueError，退回「异常终止则每进程残留」）。
+    独立成函数是为了**在入口就装**：懒装在第一次 spawn 比较器时才生效，那之前被打断的窗口
+    里 atexit 也拦不住。
+    """
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    except (ValueError, OSError):
+        pass
+
+
+def _drop_pending_outdir(outdir):
+    """删掉半成品证据目录并销账。清理期间屏蔽 SIGTERM：删到一半再被信号打断会留半删残骸。"""
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    except (ValueError, OSError):
+        pass
+    _PENDING_OUTDIRS.discard(outdir)
+    shutil.rmtree(outdir, ignore_errors=True)
+
+
+def _cleanup_pending_outdirs():
+    """atexit：删掉本轮没跑完的证据目录（崩溃 / 被信号打断都不会走到显式清理）。"""
+    for d in list(_PENDING_OUTDIRS):
+        _drop_pending_outdir(d)
+
+
+atexit.register(_cleanup_pending_outdirs)
 
 
 def g03_tmpdir():
@@ -131,13 +169,8 @@ def g03_tmpdir():
     if _G03_TMPDIR is None:
         _G03_TMPDIR = tempfile.mkdtemp(prefix='frame-attrib-g03-')
         atexit.register(shutil.rmtree, _G03_TMPDIR, True)
-        # atexit 不覆盖 SIGTERM（CPython 默认走 SIG_DFL，进程直接终止）：CI 用 `timeout`
-        # 包装置时正好是 SIGTERM，那棵 TMPDIR 会残留。转成 SystemExit 让 atexit 得以运行
-        # （只在主线程装；非主线程会抛 ValueError，此时退回「异常终止每进程残留 1 棵」）。
-        try:
-            signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-        except (ValueError, OSError):
-            pass
+        # atexit 不覆盖 SIGTERM：那棵 TMPDIR 会残留，转成 SystemExit 让 atexit 得以运行。
+        install_sigterm()
     return _G03_TMPDIR
 
 
@@ -423,6 +456,13 @@ def collect_rounds(root, side, trace):
     return good, bad
 
 
+def print_bad_rounds(ts_bad, ru_bad, file=None):
+    """逐条列出无效轮次的原因（`run()` 走 stderr、`negctl()` 走 stdout，故 `file` 可传）。"""
+    for side, bad in (('ts', ts_bad), ('rust', ru_bad)):
+        for name, why in bad:
+            print(f'   {side}/{name}: {why}', file=file)
+
+
 def verdict_exit(npass, n6, not6, invalid_rounds, unjudged=0):
     """把计数折成退出码（纯函数，自测可覆盖）。
 
@@ -451,9 +491,7 @@ def run(root, scenario):
     if not ts_all or not ru_all:
         print(f'## 失败：有效轮次不足（ts {len(ts_all)} 轮 / rust {len(ru_all)} 轮），无法归因：{root}',
               file=sys.stderr)
-        for side, bad in (('ts', ts_bad), ('rust', ru_bad)):
-            for name, why in bad:
-                print(f'   {side}/{name}: {why}', file=sys.stderr)
+        print_bad_rounds(ts_bad, ru_bad, file=sys.stderr)
         return 5
     print(f'# 场景 {scenario}')
     print(f'# rounds = {root}')
@@ -558,9 +596,6 @@ def need_index(recs, pred, what, valid):
     raise BaselineUnusable(f'negctl 变异点不存在：{what}（{valid}）')
 
 
-def need(recs, pred, what, valid):
-    return recs[need_index(recs, pred, what, valid)]
-
 
 def case_mark(got, want, cause=()):
     """负控结果归类（纯函数，自测可覆盖）。
@@ -596,6 +631,7 @@ def write_trace(path, recs):
             fh.write(payload)
             fh.flush()
             os.fsync(fh.fileno())
+        os.chmod(tmp, 0o644)  # mkstemp 默认 0600；证据要能被别的账号复核（r2 评审 P3）
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
@@ -614,7 +650,10 @@ def build_cases(base_ts, base_ru):
     # A 基线：原样 → 应判 ATTRIB_6
     cases.append(('A-baseline-attrib6', base_ts, base_ru, 'ATTRIB_6', None))
     # B 换成别的 event 名 → NOT_6
+    #   与 E/H 同一类：基线没有 gsf 时旧写法循环空转，ru_b ≡ 基线，B 退化成第二个 A
+    #   → 实得 ATTRIB_6 vs 期望 NOT_6 → 假 MISMATCH → rc=4（r2 simplify 评审 P2）。
     ru_b = clone(base_ru)
+    need_index(ru_b, is_gsf, 'gsf 帧', '需要含 gsf 的 FAIL 基线')
     for r in ru_b:
         if is_gsf(r):
             r['event'] = 'gateway_submit_aborted'
@@ -647,6 +686,7 @@ def build_cases(base_ts, base_ru):
     cases.append(('F-scenario-out-of-scope', base_ts, base_ru, 'NOT_6', 'sidecar_budget_limit'))
     # G 载荷篡改：event 名对但 text 换成别的话 → NOT_6
     ru_g = clone(base_ru)
+    need_index(ru_g, is_gsf, 'gsf 帧', '需要含 gsf 的 FAIL 基线')  # 同上：缺 gsf 时是空操作
     for r in ru_g:
         if is_gsf(r):
             r['text'] = 'AgentLoop terminal outcome is result_unknown.'
@@ -700,8 +740,8 @@ def build_cases(base_ts, base_ru):
     # N identity 自证被改 → G03 追加 trace_identity → UNKNOWN
     def break_identity(recs):
         out = clone(recs)
-        proof = need(out, is_identity, 'ts 侧 sidecar_identity 帧',
-                     'G03 允许「TS 捕获早于 identity 包装」，但本用例需要一帧可改')
+        proof = out[need_index(out, is_identity, 'ts 侧 sidecar_identity 帧',
+                               'G03 允许「TS 捕获早于 identity 包装」，但本用例需要一帧可改')]
         proof['sha256'] = '0' * 64
         return out
 
@@ -722,18 +762,41 @@ def build_cases(base_ts, base_ru):
     return cases
 
 
+def _report_crash(exc, outdir):
+    """rc=9 的收尾输出。管道已断（`… | head -1`）或磁盘满时输出本身会抛 OSError：
+    那时**绝不能**让异常逃出 except 块把 rc 改写成 1（又撞回「目录已存在」的码）。"""
+    try:
+        traceback.print_exc()
+        print(f'## negctl 中断：{exc!r}；已删除半成品证据目录 {outdir}（rc=9，非「目录已存在」rc=1）')
+        return
+    except OSError:
+        pass
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except OSError:
+        pass
+
+
 def negctl(root, scenario, outdir):
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
     # 基线必须过**轮次有效性闸门**（与 run() 同一把）：拿被 BLOCKED / 只跑半截的轮次当基线，
     # A-baseline 会实得 NOT_6 → 记 MISMATCH → rc=4「判据被证伪」，而同一批数据 run() 明明
     # 会 rc=5 硬失败。装置故障不得报成判据被证伪（#1968 P1）。
-    ts_dirs, ts_bad = collect_rounds(root, 'ts', trace)
-    ru_dirs, ru_bad = collect_rounds(root, 'rust', trace)
+    install_sigterm()
+    try:
+        ts_dirs, ts_bad = collect_rounds(root, 'ts', trace)
+        ru_dirs, ru_bad = collect_rounds(root, 'rust', trace)
+    except SystemExit as exc:
+        # `rounds()` 对不合规目录名 `raise SystemExit(...)`（stdlib 语义 → 进程退 1），与 README
+        # 登记的「证据目录不可用」撞码：按 rc 判停的 #1157 复查会读成「目录名已占用」而换名重跑，
+        # 撞同一个数据问题。数据不合格 = 基线不可用，归 rc=3（r2 sibling 评审 P2）。
+        print(f'negctl 基线不可用：{exc}（rc=3，不判 MISMATCH）')
+        return 3
     if not ts_dirs or not ru_dirs:
         print(f'negctl 基线不可用：{root} 下有效轮次 ts={len(ts_dirs)} rust={len(ru_dirs)}（rc=3，不判 MISMATCH）')
-        for side, bad in (('ts', ts_bad), ('rust', ru_bad)):
-            for name, why in bad:
-                print(f'   {side}/{name}: {why}')
+        print_bad_rounds(ts_bad, ru_bad)
         return 3
     if ts_bad or ru_bad:
         print(f'# 注意：{len(ts_bad) + len(ru_bad)} 个无效轮次已排除，基线与 A/B/C… 一律取首个有效轮')
@@ -763,6 +826,8 @@ def negctl(root, scenario, outdir):
     except OSError as exc:
         why = '已存在（不覆盖证据）' if isinstance(exc, FileExistsError) else f'无法创建：{exc}'
         raise SystemExit(f'--negctl-out 必须是可独占新建的目录：{outdir} {why}')
+    # 从这一刻到跑完，目录归本进程所有：中途被打断就由 atexit 删掉（不留残缺证据）。
+    _PENDING_OUTDIRS.add(outdir)
 
     def write_case(name, ts_recs, ru_recs):
         d = os.path.join(outdir, name)
@@ -787,26 +852,31 @@ def negctl(root, scenario, outdir):
             print(f'negctl {name:32s} 期望={want:9s} 实得={got:9s} {mark}  {ev[0][:110]}')
     except (KeyboardInterrupt, SystemExit):
         # 半成品证据不许留下：独占新建保证 outdir 归本进程所有，删掉是安全的。
-        shutil.rmtree(outdir, ignore_errors=True)
+        _drop_pending_outdir(outdir)
         raise
     except BaseException as exc:
         # 循环中途崩溃（ENOSPC / EIO / 意外形状）若以 traceback 退 1，会与本 README 登记为
         # 「证据目录已存在」的 rc=1 撞码：按 rc 判停的复查会把它读成命名冲突换名重跑，还可能
         # 把上一次崩溃留下的残缺目录（形貌与完整证据无异）当成已完成结果。因此独立 rc=9，
         # 并删掉半成品（#1969 r1 concurrency 评审 P2）。
-        shutil.rmtree(outdir, ignore_errors=True)
-        traceback.print_exc()
-        print(f'## negctl 中断：{exc!r}；已删除半成品证据目录 {outdir}（rc=9，非「目录已存在」rc=1）')
+        _drop_pending_outdir(outdir)
+        _report_crash(exc, outdir)
         return 9
+    _PENDING_OUTDIRS.discard(outdir)
     # 未判定的汇总必须无条件打印：MISMATCH 优先只影响退出码，不该把「其中若干条其实是装置
-    # 故障」这条信息吞掉（#1969 评审 P3）。
-    if unjudged:
-        print(f'## 未判定：{unjudged} 条负控因装置/比较器故障未判定（rc=8），不构成 MISMATCH')
+    # 故障」这条信息吞掉（#1969 评审 P3）。行内 rc 必须报**真正的**退出码：MISMATCH 与未判定
+    # 并存时进程退 4，写成 rc=8 会让只读日志的审计者把「判据被证伪」读成「装置故障」
+    # （r2 boundary 评审 P2）。
     if not ok:
-        return 4
+        rc = 4
+    elif unjudged:
+        rc = 8
+    else:
+        rc = 0
     if unjudged:
-        return 8
-    return 0
+        tail = 'rc=4：另有判据被证伪，优先于未判定' if rc == 4 else 'rc=8'
+        print(f'## 未判定：{unjudged} 条负控因装置/比较器故障未判定（{tail}），不构成 MISMATCH')
+    return rc
 
 
 def main():

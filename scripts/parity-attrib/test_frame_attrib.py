@@ -8,8 +8,9 @@
 requestEvidence 比较、C4 的 identity_ok、`rounds()` 的目录校验、`round_problem()` 轮次闸门、
 `judge()` 的 C0–C6 编排（注入 G03 桩，不跑冻结比较器）、`verdict_exit()` 退出码折叠、
 `case_mark()` 负控归类、`write_trace()` 原子写、`build_cases()` 的基线前置守卫、
-`negctl()` 的端到端接线（0 / 3 / 4 / 8 四个退出码），以及装置自身的 sha256 pin。
-15 条负控在**真实数据**上的判定不在这里，见 README「验证记录」。
+`negctl()` 的端到端接线（0 / 3 / 4 / 8 / 9 五个退出码，含 BaselineUnusable→rc=3 与
+轮次目录名不合规→rc=3）、清理兜底（atexit 删半成品证据目录）与断管道下 rc 不被改写，
+以及装置自身的 sha256 pin。15 条负控在**真实数据**上的判定不在这里，见 README「验证记录」。
 """
 import contextlib
 import hashlib
@@ -148,7 +149,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '4a95a33075e416776a77396dc44c83ccdf1ce4c591d51fe59990da0e566300df'
+PINNED_DEVICE_SHA256 = '9a85db9328696476a22dc3ec464105c737442b5628c88a49a79c4b06178a97ae'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -549,8 +550,13 @@ with tempfile.TemporaryDirectory() as tdir:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             rc = fa.negctl(rounds_dir, 'deadline', os.path.join(tdir, 'out-mismatch'))
+        text4 = out.getvalue()
         check('negctl MISMATCH + 未判定 → rc=4 且未判定汇总仍打印（信息不丢）',
-              rc == 4 and '未判定：1 条' in out.getvalue(), f'rc={rc}')
+              rc == 4 and '未判定：1 条' in text4, f'rc={rc}')
+        # 汇总行内的 rc 必须是**真正的**退出码：写成 rc=8 会让只读日志的审计者把
+        # 「判据被证伪」读成「装置故障」（r2 boundary 评审 P2）。
+        check('negctl MISMATCH + 未判定 → 汇总行报 rc=4（不硬编码 rc=8）',
+              '（rc=4：' in text4 and '（rc=8）' not in text4, f'out={text4[-200:]!r}')
 
         # ⑥ 循环中途崩溃 → rc=9 且删掉半成品证据目录（不与「目录已存在」rc=1 撞码）
         def _boom(*a):
@@ -635,6 +641,80 @@ with tempfile.TemporaryDirectory() as tdir:
         sys.argv = _argv
     check('--negctl-out "" → 显式报错，不静默落进 run()',
           isinstance(got, str) and '可独占新建' in got, f'got={got!r}')
+
+# ---- r2 评审的增量：BaselineUnusable→rc=3 端到端、目录名不合规、清理与断管道 ----
+with tempfile.TemporaryDirectory() as tdir:
+    # ① 基线缺变异点（rust 侧无 side_effect.state）→ build_cases 抛 BaselineUnusable
+    #    → negctl 折叠成 rc=3，**不是** rc=9 traceback、也不是 rc=4 假 MISMATCH。
+    rounds_dir = os.path.join(tdir, 'rounds')
+    for side, recs in (('ts', _rich_ts),
+                       ('rust', [r for r in _rich_ru if r.get('kind') != 'side_effect.state'])):
+        d = os.path.join(rounds_dir, f'{side}-r1')
+        os.makedirs(os.path.join(d, 'artifacts'))
+        with open(os.path.join(d, 'run.json'), 'w') as fh:
+            json.dump({'side': side, 'valid_round': True, 'identity_ok': True,
+                       'started_wall': 1762000000.0}, fh)
+        with open(os.path.join(d, 'artifacts', 'summary.json'), 'w') as fh:
+            json.dump({'blocked': []}, fh)
+        fa.write_trace(os.path.join(d, 'artifacts',
+                                    'deadline.pilotdeck-current-sidecar.jsonl'), recs)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = fa.negctl(rounds_dir, 'deadline', os.path.join(tdir, 'out-unusable'))
+    check('negctl 基线缺变异点 → rc=3 且目录未创建（BaselineUnusable 接线）',
+          rc == 3 and '基线不可用' in out.getvalue()
+          and not os.path.exists(os.path.join(tdir, 'out-unusable')), f'rc={rc}')
+
+    # ② 轮次目录名不合规：`rounds()` 抛 SystemExit(str)（stdlib 语义 → 进程退 1），
+    #    negctl 必须把它折成 rc=3（数据不可用），否则与「证据目录已存在」rc=1 撞码。
+    os.makedirs(os.path.join(rounds_dir, 'ts-rX', 'artifacts'))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = fa.negctl(rounds_dir, 'deadline', os.path.join(tdir, 'out-badname'))
+    check('negctl 轮次目录名不合规 → rc=3（不是 rc=1「目录已存在」）',
+          rc == 3 and '基线不可用' in out.getvalue(), f'rc={rc}')
+
+# ③ write_trace 发布后的权限：mkstemp 默认 0600，归档后换账号复核会读不到 → G03 假「未判定」。
+with tempfile.TemporaryDirectory() as tdir:
+    p = os.path.join(tdir, 'trace.jsonl')
+    fa.write_trace(p, [{'kind': 'a'}])
+    mode = os.stat(p).st_mode & 0o777
+    check('write_trace 发布后权限含组/其他可读（0644，换账号复核可读）',
+          mode == 0o644, f'mode={oct(mode)}')
+
+# ④ atexit 兜底：建好目录、没跑完就被信号打断（SystemExit 绕过显式清理）时也要删干净。
+with tempfile.TemporaryDirectory() as tdir:
+    d = os.path.join(tdir, 'pending')
+    os.makedirs(d)
+    fa._PENDING_OUTDIRS.add(d)
+    fa._cleanup_pending_outdirs()
+    check('atexit 清理：未跑完的证据目录被删掉且销账',
+          not os.path.exists(d) and d not in fa._PENDING_OUTDIRS)
+
+# ⑤ rc=9 的收尾输出遇断管道（`… | head -1`）：不得抛出，否则异常逃出 except 块把 rc 改成 1。
+class _BrokenOut:
+    def write(self, _s):
+        raise BrokenPipeError('broken pipe')
+
+    def flush(self):
+        raise BrokenPipeError('broken pipe')
+
+    def fileno(self):
+        raise OSError('no fileno')
+
+
+_saved_out = sys.stdout
+try:
+    sys.stdout = _BrokenOut()
+    fa._report_crash(RuntimeError('模拟崩溃'), '/nonexistent/pdrs-1968')
+    broke_ok = True
+except BaseException as exc:  # noqa: BLE001 —— 这里就是要它「什么都不抛」
+    broke_ok = False
+    broke_detail = repr(exc)
+finally:
+    sys.stdout = _saved_out
+check('rc=9 收尾输出遇断管道不抛出（rc 不被改写成 1）',
+      broke_ok, '' if broke_ok else broke_detail)
 
 print()
 if FAILS:
