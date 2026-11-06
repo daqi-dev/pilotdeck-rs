@@ -616,45 +616,55 @@ fn large_shallow_pages_match_real_ts_bytes_and_stay_fast() {
             "#978 {name}: halved recipe is {halved_ratio:.3}x the full bytes; \
              the doubling premise of the scaling ratio no longer holds"
         );
-        // #978: judge the scaling on the CPU seconds of isolated worker
-        // processes, not on this process's wall clock — a loaded host
-        // preempted the full-size samples and reddened the ratio (4.78 s vs
-        // 3x · 1.42 s + 0.15 s on the CI runner). Sample count, the
-        // interleaving, the 3x + 150 ms band and the per-sample cap are
-        // unchanged; the byte assertions moved into the worker, which the
-        // sampler only accepts after exactly one green test.
-        let (half_cpu, full_cpu) = timing::fastest_scaling(name, samples, |full| {
-            timing::cpu_time_isolated(
-                "large_shallow_cpu_worker",
-                &[
-                    ("PDRS_HTML_CPU_CASE", index.to_string()),
-                    (
-                        "PDRS_HTML_CPU_SIZE",
-                        if full { "full" } else { "half" }.to_string(),
-                    ),
-                ],
-            )
-        });
+        // #978 r3: judge the median of the paired per-round ratios, not the
+        // fastest half against the fastest full. The CPU worker already took
+        // the wall clock out of the sample, but GitHub's shared runners still
+        // preempted whole rounds: half 1.360 / 2.106 / 2.297 s against full
+        // 4.518 / 4.605 / 4.480 s, so the fastest-of-three pair read 3.29x
+        // against a 3x band although two paired rounds were linear (3.32x,
+        // 2.19x, 1.95x -> median 2.19x). Pairing cancels a host-wide stall
+        // inside one round and the median drops the minority of contaminated
+        // rounds; a quadratic implementation (about 4x in every round) still
+        // reds the 2^1.5 = 2.83x band for a doubling, and the per-sample cap
+        // still catches a constant-factor regression. The byte oracle moved
+        // into the worker, which the sampler only accepts after exactly one
+        // green test.
+        let sampled =
+            timing::fastest_scaling_ratio(name, "half CPU", "full CPU", samples, |full| {
+                timing::cpu_time_isolated(
+                    "large_shallow_cpu_worker",
+                    &[
+                        ("PDRS_HTML_CPU_CASE", index.to_string()),
+                        (
+                            "PDRS_HTML_CPU_SIZE",
+                            if full { "full" } else { "half" }.to_string(),
+                        ),
+                    ],
+                )
+            });
         eprintln!(
-            "{name}: {} HTML bytes, fastest of {samples}: full CPU {full_cpu:?}, half CPU {half_cpu:?}",
-            html.len()
+            "{name}: {} HTML bytes, median of {samples} paired ratios {:.2}x: full CPU {:?}, half CPU {:?}",
+            html.len(),
+            sampled.median_ratio,
+            sampled.large,
+            sampled.small
         );
         // ~2.1 million DOM nodes at 10 MiB. Doubling the input doubles linear
         // conversion work; a quadratic implementation needs about 4x.
         // Both timing guards below are dedicated to this issue: a quadratic
-        // join can land inside the 3x ratio band at this size (the host
-        // measured 33.96 s / 12.41 s = 2.74x) and be stopped by the per-sample
-        // cap instead, so either failure line must be recognisable as #978.
-        timing::assert_within_linear_band(
-            &format!("#978 {name}: full page"),
-            half_cpu,
-            full_cpu,
-            samples,
-        );
+        // join can land inside the ratio band at this size (the host measured
+        // 33.96 s / 12.41 s = 2.74x against the 2.83x band) and be stopped by
+        // the per-sample cap instead, so either failure line must be
+        // recognisable as #978.
+        timing::assert_within_scaling_band(&format!("#978 {name}: full page"), &sampled, 2.0);
         // Constant-factor backstop: the pre-4fbb5f78b moved-subtree rewalk
         // scaled linearly at ~36x the cost per byte, invisible to the ratio;
         // see timing::assert_within_per_sample_cap.
-        timing::assert_within_per_sample_cap(&format!("#978 {name}: full page"), full_cpu, samples);
+        timing::assert_within_per_sample_cap(
+            &format!("#978 {name}: full page"),
+            sampled.large,
+            samples,
+        );
     }
 }
 

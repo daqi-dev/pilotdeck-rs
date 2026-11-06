@@ -648,6 +648,17 @@ async fn complete_large_requests_share_aggregate_budget() {
     .await;
     drop(first);
     drop(contender);
+    // #978: stop only after both closed sockets have released their
+    // connection slots. The 30 ms drain budget is a leak backstop, so
+    // waiting on the real progress signal keeps a loaded host from turning
+    // scheduling delay into "native WS drain deadline exceeded" (4/48
+    // loaded copies). A genuine connection leak still reds here.
+    remaining(
+        &running.connections,
+        3,
+        "#1079 closed sockets release connection slots before stop",
+    )
+    .await;
     finish(running).await;
 }
 

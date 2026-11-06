@@ -1755,6 +1755,15 @@ mod cwd_tests;
 mod tests {
     use super::*;
 
+    /// #978: watchdog for the bounded (200 ms) spill/media wait, not an
+    /// assertion about it — a working bound returns in ~200 ms, but a host
+    /// running eight concurrent lib suites starved the wait past the old 5 s
+    /// margin in 8/48 loaded copies. The retry's contract (the explicit
+    /// expired-attempt error and the untouched half-written file) is still
+    /// checked; only the liveness margin grew.
+    #[cfg(unix)]
+    const BOUNDED_WAIT_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(60);
+
     #[cfg(unix)]
     pub(super) struct ResetSpillHook;
     #[cfg(unix)]
@@ -2494,7 +2503,7 @@ mod tests {
         // still-writing error inside the watchdog, not a reference and not a
         // hang.
         let retried = tokio::time::timeout(
-            Duration::from_secs(5),
+            BOUNDED_WAIT_WATCHDOG,
             budget.apply_to_message(&message, None),
         )
         .await
@@ -2743,7 +2752,7 @@ expired attempt was returned; the expired attempt is isolated",
         // explicit expired-attempt error inside the watchdog — not a
         // `media_reference` and not a hang.
         let first = tokio::time::timeout(
-            Duration::from_secs(5),
+            BOUNDED_WAIT_WATCHDOG,
             budget.apply_to_message(&message, None),
         )
         .await
