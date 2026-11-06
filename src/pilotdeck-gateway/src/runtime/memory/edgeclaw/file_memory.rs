@@ -556,13 +556,18 @@ impl SessionClears {
     /// while the `sessions` map is locked, so the stamps written below are
     /// ordered with the map state every reader observes. It no longer relies
     /// on the caller's invariant that two bumps of one store cannot overlap:
-    /// `clearSession` holds `operation_scope()` for its whole run
-    /// (`file_memory.rs:353-365`) and this `SessionClears` is a per-store
-    /// field, never shared, so a reordered `fetch_add` was unreachable — but
-    /// that was the *caller's* lock, not this type's. The atomic stays (it is
-    /// read through the map, so a plain `u64` would work today); moving it
-    /// under the map lock removes an implicit cross-module dependency at zero
-    /// runtime cost.
+    /// `clear_session_memory_data` holds the store's operation scopes for its
+    /// whole run (`snapshot_operation` → `snapshot_operation_scope`,
+    /// `storage/snapshots.rs`), the `execute` entry additionally holds the
+    /// provider-wide set (`file_memory.rs:353`), those guards are real
+    /// `std::sync::Mutex`es so they serialize threads — including the
+    /// provider-level `clear_session` in `factory.rs`, which reaches the
+    /// clear without `execute` but still through `snapshot_operation` — and
+    /// this `SessionClears` is a per-store field, never shared. A reordered
+    /// `fetch_add` was therefore unreachable, but that was the *caller's*
+    /// lock, not this type's. The atomic stays (it is read through the map,
+    /// so a plain `u64` would work today); moving it under the map lock
+    /// removes an implicit cross-module dependency at zero runtime cost.
     pub(crate) fn bump(&self, session: &str, removed: &[String]) {
         let mut sessions = self
             .sessions
