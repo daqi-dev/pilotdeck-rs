@@ -390,6 +390,190 @@ async fn zero_poll_interval_is_clamped_instead_of_panicking() {
     );
 }
 
+/// #1736: an over-ceiling but representable `debounce` is clamped to
+/// [`MAX_DEBOUNCE`] — the ceiling twin of #1650's floor — so the reload
+/// still lands inside the bound instead of at the multi-hour value the
+/// caller asked for. Pre-fix this also panics the detached watcher task
+/// once the value stops being representable (see
+/// `overflowing_debounce_does_not_kill_the_watcher`).
+#[tokio::test(start_paused = true)]
+async fn overlong_debounce_is_clamped_and_reloads_within_the_bound() {
+    // A 60 s poll keeps the virtual tick count of the one-hour walk at
+    // sixty; the debounce arm under test does not depend on the cadence.
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let watch = store
+        .start_watching(WatchOptions {
+            debounce: 2 * MAX_DEBOUNCE,
+            poll_interval: MAX_POLL_INTERVAL,
+        })
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    watch.notify_change();
+    settle().await;
+    tokio::time::advance(MAX_DEBOUNCE - Duration::from_millis(1)).await;
+    settle().await;
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1736 no reload before the clamped bound"
+    );
+    tokio::time::advance(Duration::from_millis(2)).await;
+    settle().await;
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        2,
+        "#1736 an overlong debounce lands on MAX_DEBOUNCE, not on the requested value"
+    );
+    watch.stop().await;
+    // The ceiling is a clamp, not a special case for the unrepresentable
+    // extreme: every over-ceiling value lands on it, and the default is
+    // untouched. Kept after the behavioural half, like #1650's pins.
+    assert_eq!(
+        effective_debounce(&WatchOptions {
+            debounce: 2 * MAX_DEBOUNCE,
+            ..WatchOptions::default()
+        }),
+        MAX_DEBOUNCE,
+        "#1736 a representable over-ceiling debounce must land on the ceiling"
+    );
+    assert_eq!(
+        effective_debounce(&WatchOptions {
+            debounce: Duration::MAX,
+            ..WatchOptions::default()
+        }),
+        MAX_DEBOUNCE,
+        "#1736 an unrepresentable debounce must land on the ceiling"
+    );
+    assert_eq!(
+        effective_debounce(&WatchOptions::default()),
+        Duration::from_millis(250),
+        "#1736 the default debounce is not clamped"
+    );
+}
+
+/// #1736: `Instant + Duration` panics once `debounce` stops being
+/// representable, and the panic happens inside the detached watcher task —
+/// `WatchHandle::stop` swallows the `JoinError` and `Drop` only aborts, so
+/// hot reload dies with the handle still "alive" (the same silent death as
+/// #1650's zero period). The clamp keeps the deadline representable, and
+/// `deadline_after` is the second line of defence.
+#[tokio::test(start_paused = true)]
+async fn overflowing_debounce_does_not_kill_the_watcher() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let watch = store
+        .start_watching(WatchOptions {
+            debounce: Duration::MAX,
+            poll_interval: MAX_POLL_INTERVAL,
+        })
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    watch.notify_change();
+    settle().await;
+    tokio::time::advance(MAX_DEBOUNCE + Duration::from_millis(1)).await;
+    settle().await;
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1736 watcher task")
+            .is_finished(),
+        "#1736 the watcher task must survive an unrepresentable debounce"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        2,
+        "#1736 an unrepresentable debounce is clamped and still reloads"
+    );
+    watch.stop().await;
+}
+
+/// #1736: `tokio::time::interval` maps an overflowing period to
+/// `Instant::far_future` (tokio 1.48 `Interval::poll_tick`), so an
+/// over-long `poll_interval` buys one sample and then a ticker that never
+/// fires again — no panic, no error, the handle still "alive". The ceiling
+/// keeps the watcher sampling.
+#[tokio::test(start_paused = true)]
+async fn huge_poll_interval_is_clamped_and_keeps_sampling() {
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    let events = recorder(&store);
+    let watch = store
+        .start_watching(WatchOptions {
+            poll_interval: Duration::MAX,
+            ..WatchOptions::default()
+        })
+        .expect("#879 healthy watcher paths");
+    settle().await;
+    root.write(&other_model());
+    // Well past the clamped ceiling: the change must have been sampled and
+    // reloaded (the first tick alone — the far_future trap — cannot see a
+    // change written after the watcher started).
+    tokio::time::sleep(2 * MAX_POLL_INTERVAL).await;
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        2,
+        "#1736 a huge poll interval is clamped and the change is still sampled"
+    );
+    assert_eq!(*lock(&events), vec![(1.0, 2.0)]);
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1736 watcher task")
+            .is_finished(),
+        "#1736 the watcher task keeps sampling past the ceiling"
+    );
+    watch.stop().await;
+    // The ceiling is a clamp, not a zero-style special case; #1650's pins
+    // below the floor stay in its own test.
+    assert_eq!(
+        effective_poll_interval(&WatchOptions {
+            poll_interval: Duration::MAX,
+            ..WatchOptions::default()
+        }),
+        MAX_POLL_INTERVAL,
+        "#1736 an unrepresentable poll interval must land on the ceiling"
+    );
+    assert_eq!(
+        effective_poll_interval(&WatchOptions {
+            poll_interval: 2 * MAX_POLL_INTERVAL,
+            ..WatchOptions::default()
+        }),
+        MAX_POLL_INTERVAL,
+        "#1736 a representable over-ceiling poll interval must land on the ceiling"
+    );
+}
+
+/// #1736: the overflow fallback itself must be panic-free and deterministic.
+#[test]
+fn deadline_after_handles_unrepresentable_durations() {
+    let now = Instant::now();
+    let fallback = now
+        .checked_add(MAX_DEBOUNCE)
+        .expect("#1736 now + MAX_DEBOUNCE must be representable");
+    let deadline = std::panic::catch_unwind(|| deadline_after(now, Duration::MAX))
+        .expect("#1736 deadline_after must not panic on an unrepresentable duration");
+    assert_eq!(
+        deadline, fallback,
+        "#1736 an unrepresentable duration falls back to the ceiling"
+    );
+    assert_eq!(
+        deadline_after(now, Duration::ZERO),
+        now,
+        "#1736 a representable duration is used as-is (zero)"
+    );
+    assert_eq!(
+        deadline_after(now, Duration::from_secs(1)),
+        now + Duration::from_secs(1),
+        "#1736 a representable duration is used as-is"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn stop_cancels_pending_reload_and_leaves_no_task() {
     let root = Root::new();
