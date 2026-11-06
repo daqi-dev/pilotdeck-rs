@@ -1142,11 +1142,22 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 
 /// #1494: the lease hard link must pin the inode the integrity check
 /// approved, not whatever the source path names after that check.
+///
+/// The check must look at what actually got linked, so it uses
+/// `symlink_metadata`: `hard_link` does not follow a symlink source on Linux
+/// (`linkat(..., 0)`), and a source swapped for a link would then put the
+/// *link* into the lease. `metadata` would follow it and compare the target's
+/// identity — exactly the alibi the swap needs (review deepseek boundary#1).
+/// macOS `link()` does follow, so the entry there is a hard link of the
+/// approved inode and passes; either way the invariant is "the lease entry is
+/// the approved regular file", which is what this compares.
 #[cfg(unix)]
 fn lease_link_matches(destination: &Path, expected: Option<AttachmentIdentity>) -> bool {
     use std::os::unix::fs::MetadataExt;
-    match (fs::metadata(destination), expected) {
-        (Ok(linked), Some((dev, ino))) => linked.dev() == dev && linked.ino() == ino,
+    match (fs::symlink_metadata(destination), expected) {
+        (Ok(linked), Some((dev, ino))) => {
+            linked.file_type().is_file() && linked.dev() == dev && linked.ino() == ino
+        }
         _ => false,
     }
 }

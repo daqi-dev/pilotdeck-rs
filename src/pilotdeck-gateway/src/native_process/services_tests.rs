@@ -1760,6 +1760,58 @@ fn upload_store_root_outside_the_project_is_not_a_home() {
     std::fs::remove_dir_all(&outside).ok();
 }
 
+/// #1468 (review GLM sibling#1): the lease root is the other legitimate home
+/// and had drifted from the store guard — a `.tmp/chat-upload-leases` that is
+/// a link into the project keeps its lexical spelling but makes every path
+/// under the link target a lease home. The target here is inside the project,
+/// so the containment term alone accepts it: only the leaf-link term in
+/// `canonical_home` keeps the composer from inlining and registering it.
+/// End-to-end on purpose — a unit test of the helper would not notice the
+/// composer going back to a bare `canonicalize` (mutation row
+/// `lease-root-link-accepted` covers exactly that call site).
+#[cfg(unix)]
+#[test]
+fn lease_root_link_is_not_a_home() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let lease_root = scratch.0.join(".tmp").join("chat-upload-leases");
+    let elsewhere = scratch.0.join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("u1")).expect("#1468 in-project link target");
+    std::fs::write(elsewhere.join("u1").join("linked.png"), [1u8, 2, 3, 4])
+        .expect("#1468 link target file");
+    // `Scratch` pre-creates the real lease root, so drop it before swapping in
+    // a link at the same spelling.
+    std::fs::remove_dir_all(&lease_root).expect("#1468 drop the scratch lease root");
+    symlink(&elsewhere, &lease_root).expect("#1468 swap the lease root for an in-project link");
+    let path = scratch.lease("linked.png");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1468 a lease root that is a link into the project must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Image attachment not found: {path} (attachment lease root is unavailable)."
+        )),
+        "#1468 a lease root that is a link into the project must not become a home"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1468 a lease root that is a link into the project must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1468 a lease root that is a link into the project must never register allowedReadFiles"
+    );
+}
+
 /// #1468 (review deepseek boundary#1 / concurrency#1,#2): the identity the
 /// open is bound to must be the object the containment check validated, not
 /// whatever the path points at after that check. A leaf swapped for an

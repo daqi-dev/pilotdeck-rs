@@ -1173,6 +1173,78 @@ fn upload_lease_link_of_a_swapped_attachment_is_rejected() {
     );
 }
 
+/// #1494 (review deepseek boundary#1): the swap window can also put a
+/// *symlink* at the source spelling. `hard_link` does not follow a symlink
+/// source on Linux (`linkat(..., 0)`), so the lease entry there would be the
+/// link itself; `fs::metadata` followed it and compared the target's identity,
+/// which is the swap's alibi. The invariant asserted here is what matters on
+/// every Unix: whatever sits at the lease path is the approved regular file —
+/// a link is refused, and a platform whose `link()` follows (macOS) ends up
+/// with a hard link of the same inode, which passes.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_never_pins_a_symlink_source() {
+    use std::os::unix::fs::MetadataExt;
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let verified = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .unwrap();
+    let source = PathBuf::from(string(&verified[0], "path").unwrap());
+    let approved = fs::metadata(&source).unwrap();
+    let approved_identity = (approved.dev(), approved.ino());
+    let moved = project.join("moved-approved.bin");
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        let source = source.clone();
+        let moved = moved.clone();
+        move |path: &Path| {
+            assert_eq!(path, source.as_path());
+            fs::rename(&source, &moved).unwrap();
+            std::os::unix::fs::symlink(&moved, &source).unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(
+        swap_test_hook::SwapWindow::BetweenVerifiedAndLeaseLink,
+        swap,
+    );
+    let result = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None);
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the attachment swap hook must fire between verification and the lease link"
+    );
+    match result {
+        Err(error) => assert_eq!(
+            (error.code.as_str(), error.message_string().as_str()),
+            (
+                "ATTACHMENT_TAMPERED",
+                "Attachment artifact changed between verification and lease acquisition."
+            )
+        ),
+        Ok(lease) => {
+            let pinned = PathBuf::from(string(&lease.attachments[0], "path").unwrap());
+            let meta = fs::symlink_metadata(&pinned).unwrap();
+            assert!(
+                meta.file_type().is_file(),
+                "#1494 the lease entry must be a regular file, never a link"
+            );
+            assert_eq!(
+                (meta.dev(), meta.ino()),
+                approved_identity,
+                "#1494 the lease entry must be the approved inode"
+            );
+        }
+    }
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();

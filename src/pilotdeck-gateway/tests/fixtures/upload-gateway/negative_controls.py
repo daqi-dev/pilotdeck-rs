@@ -291,6 +291,16 @@ mutations = [
      '                if false {',
      LEASE_LINK,
      '#1494 a swapped attachment must never be pinned into the lease'),
+    # #1494 (review deepseek boundary#1): the comparison must read the entry
+    # that was actually linked. `fs::metadata` follows a symlink source, so a
+    # source swapped for a link to the approved inode compares equal while the
+    # lease holds the *link* on Linux (`hard_link` does not follow there) —
+    # the named test swaps the source for exactly that link and must go red.
+    ('lease-link-follows-symlink-source', STORE,
+     '    match (fs::symlink_metadata(destination), expected) {',
+     '    match (fs::metadata(destination), expected) {',
+     'upload::tests::upload_lease_link_never_pins_a_symlink_source',
+     '#1494 the lease entry must be a regular file, never a link'),
 ]
 
 if '--check' in sys.argv[1:]:

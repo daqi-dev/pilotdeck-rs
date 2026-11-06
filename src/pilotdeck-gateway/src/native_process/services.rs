@@ -562,20 +562,38 @@ pub(super) fn handle_bound_to_upload_areas(
 /// tested (and mutation-killed) without a live handle path; its unit test is
 /// `upload_store_root_outside_the_project_is_not_a_home`.
 pub(super) fn canonical_upload_store(project_canon: &Path) -> Option<PathBuf> {
-    let store = project_canon.join(".tmp").join("chat-uploads");
-    // Review boundary P2: a `.tmp/chat-uploads` that is itself a symlink — even
-    // to the project root or any in-project subtree — would make that subtree
-    // an accepted home, while `read_at`'s lexical prefix check rejects the same
-    // layout. A store root that is a link is never a home. (An *ancestor*
-    // swapped to a link is a different residual: the canonical spelling then
-    // re-resolves through it, and only the containment term below sees the
-    // final location.)
-    match fs::symlink_metadata(&store) {
+    canonical_home(
+        &project_canon.join(".tmp").join("chat-uploads"),
+        project_canon,
+    )
+}
+
+/// #1468: the one guard both legitimate homes share — the lease root and the
+/// upload store. A root that is itself a symlink, even one pointing back into
+/// the project, is never a home: the lexical spelling stays accepted while
+/// every path under the link target becomes resolvable, which is the exact
+/// shape `read_at`'s lexical prefix check rejects. `symlink_metadata` answers
+/// for the leaf while the canonical containment term below answers for
+/// ancestors (a `.tmp` swapped for a link re-resolves the canonical spelling;
+/// only containment sees where it landed).
+///
+/// Residual (review deepseek boundary#2, not introduced by this change): the
+/// link check and the canonicalization are two syscalls, so a leaf can be
+/// exchanged between them. That race can still admit a root this guard means
+/// to refuse, but it is strictly narrower than the pre-guard behaviour (which
+/// accepted every such root unconditionally); closing it would need
+/// `O_NOFOLLOW` plus a handle-derived path, as `handle_path` does.
+///
+/// The guard lives in one function so both roots are exercised by the same
+/// unit tests and mutation rows (`upload_store_root_outside_the_project_is_not_a_home`,
+/// `lease_root_link_is_not_a_home`).
+pub(super) fn canonical_home(root: &Path, project_canon: &Path) -> Option<PathBuf> {
+    match fs::symlink_metadata(root) {
         Ok(metadata) if metadata.file_type().is_symlink() => return None,
         Ok(_) => {}
         Err(_) => return None,
     }
-    match fs::canonicalize(&store) {
+    match fs::canonicalize(root) {
         Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
         _ => None,
     }
@@ -713,10 +731,12 @@ pub(super) fn compose_attachment_turn(
     // not-found diagnostic), so the root failure softens to `None` exactly
     // like a missing root — every lease path then takes the not-found branch
     // (zero reads, zero registrations).
-    let lease_canon = match fs::canonicalize(&lease_lexical) {
-        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
-        _ => None,
-    };
+    // The same guard as the upload store (review GLM sibling#1: the two roots
+    // had drifted — the store refused a symlinked leaf while the lease root
+    // accepted one, so a `.tmp/chat-upload-leases` swapped for a link into the
+    // project turned that subtree into a lease home behind an unchanged
+    // lexical spelling).
+    let lease_canon = canonical_home(&lease_lexical, &project_canon);
     // #1468: the second legitimate home of a lease object. Every lease file
     // is a hard link of the upload-store file (`acquire_attachment_lease`),
     // and the platform's handle-path lookup may answer with either name of
