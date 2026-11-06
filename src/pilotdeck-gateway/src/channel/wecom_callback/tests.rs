@@ -8,7 +8,7 @@
 
 use super::super::protocol::{TurnEventStream, TurnGateway, TurnRequest};
 use super::crypto::sha1_hex;
-use super::interaction::{NoInteraction, PermissionAnswer};
+use crate::channel::im_interaction::{self as interaction, NoInteraction, PermissionAnswer};
 use super::*;
 use crate::test_baseline;
 use bytes::Bytes;

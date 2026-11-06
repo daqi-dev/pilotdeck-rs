@@ -650,6 +650,7 @@ async fn exchange(server: &str, request: &[u8], id: &str, half_close: bool) -> (
         token: "fixture-token".into(),
         loopback: true,
         static_root: None,
+        ..Default::default()
     };
     serve_and_capture(module_config, native_config, request, id, half_close).await
 }
@@ -1348,6 +1349,7 @@ async fn empty_token_admits_no_bare_bearer() {
         token: "fixture-token".into(),
         loopback: true,
         static_root: None,
+        ..Default::default()
     };
     for authorization in ["Bearer ", "Bearer", "Bearer  ", " Bearer "] {
         let request = format!(
@@ -1429,6 +1431,7 @@ async fn describe_and_call_spawn_no_children() {
         token: "fixture-token".into(),
         loopback: true,
         static_root: None,
+        ..Default::default()
     };
     // The window opens with the sampler's first sweep: the "before" set and the
     // start of sampling are one observation, and the sampler keeps every pid it

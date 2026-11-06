@@ -74,25 +74,90 @@ const CONTENT_TYPES: [(&str, &str); 5] = [
     (".svg", "image/svg+xml"),
 ];
 
+/// What one `/feishu/webhook` request body produced: the status and the JSON
+/// text `respondJson` writes.
+pub(crate) type WebhookReply = (u16, String);
+
+/// A live webhook channel's body entry — TS
+/// `activeFeishu.handleWebhook(request, response, body)` minus the HTTP write.
+pub(crate) type WebhookHandler = std::sync::Arc<
+    dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = WebhookReply> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Per-request lookup of that entry. Resolving per request (rather than
+/// capturing one handler) is the TS `activeFeishu?.handleWebhook(…) ?? false`
+/// read: a reload replaces the channel, and `stop` clears it, so the route
+/// must see the channel that is active *now*. `None` falls through to the
+/// rest of the router.
+pub(crate) type WebhookResolver =
+    std::sync::Arc<dyn Fn() -> Option<WebhookHandler> + Send + Sync>;
+
 /// Routing inputs for one non-upgrade request. `loopback` mirrors the TS
 /// bind-host check (`127.0.0.1` or `localhost`); `static_root` mirrors
 /// `staticAssetsPath`. The production native listener is always loopback
 /// and serves no static root, so those cells replay through the router.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct Config {
     pub token: String,
     pub loopback: bool,
     pub static_root: Option<PathBuf>,
+    /// `options.feishuWebhook` (GatewayServer). The `ANY /feishu/webhook`
+    /// route reads the whole request body before dispatching, exactly
+    /// `readBody(request)` + `await options.feishuWebhook(...)`.
+    pub webhook: Option<WebhookResolver>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
-/// Only method, version, headers, and URI are consulted, never the body.
+/// Only method, version, headers, and URI are consulted, never the body; the
+/// body-carrying entry is [`serve_with_body`], which only the listener uses.
 pub(crate) async fn serve<B>(
     request: &hyper::Request<B>,
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
-    let mut response = route(request, config).await?;
-    if request.version() == hyper::Version::HTTP_10 {
+    finish(request.version(), route(request, config, None).await?)
+}
+
+/// Route one request whose body may belong to `/feishu/webhook`, collecting
+/// it only when that route is live. Every other path is served exactly like
+/// [`serve`] and its body is never read — the streaming request body stays
+/// untouched for the routes that do not look at it.
+pub(crate) async fn serve_with_body(
+    request: hyper::Request<hyper::body::Incoming>,
+    config: &Config,
+) -> Result<hyper::Response<Body>, io::Error> {
+    let version = request.version();
+    let wants_body = config.webhook.is_some() && request_path(&request) == FEISHU_WEBHOOK_PATH;
+    if !wants_body {
+        return serve(&request, config).await;
+    }
+    // A request the parser rejects never reaches the handler, so its stream is
+    // not drained either (llhttp decides before any body byte is read).
+    if let Some(rejection) = node_parser_admission(&request)? {
+        return finish(version, rejection);
+    }
+    let (parts, body) = request.into_parts();
+    let mut body = body;
+    let mut bytes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(|error| io::Error::other(format!("request body: {error}")))?;
+        if let Ok(data) = frame.into_data() {
+            bytes.extend_from_slice(&data);
+        }
+    }
+    // `Buffer.concat(chunks).toString("utf8")`: invalid sequences become U+FFFD.
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let head = hyper::Request::from_parts(parts, ());
+    finish(version, route(&head, config, Some(&text)).await?)
+}
+
+/// The HTTP/1.0 close framing every native response lane shares.
+fn finish(
+    version: hyper::Version,
+    mut response: hyper::Response<Body>,
+) -> Result<hyper::Response<Body>, io::Error> {
+    if version == hyper::Version::HTTP_10 {
         // Node v22.22.0 answers every HTTP/1.0 request with `Connection:
         // close` and a closed socket, even one asking to keep alive (probe
         // `probe-fixr1.out` A). An explicit 1.0 response version keeps hyper's
@@ -182,28 +247,39 @@ pub(crate) fn node_keep_alive<B>(request: &hyper::Request<B>) -> bool {
         && !request_wants_close(request)
 }
 
+/// `/feishu/webhook`, the one path whose body the router reads
+/// (`GatewayServer.ts`).
+pub(crate) const FEISHU_WEBHOOK_PATH: &str = "/feishu/webhook";
+
+/// The WHATWG pathname of the request target — `new URL(request.url ??
+/// "/", "http://127.0.0.1").pathname`.
+fn request_path<B>(request: &hyper::Request<B>) -> String {
+    if crate::mutants::on("native-http-normalization-off") {
+        return request.uri().path().to_owned();
+    }
+    if request.uri().scheme().is_some() {
+        // Absolute-form: `new URL(request.url)` sees the full target, whose
+        // `//` paths are not the scheme-relative collapse the bare
+        // path-and-query would resolve to.
+        return whatwg_path(&request.uri().to_string());
+    }
+    let target = request
+        .uri()
+        .path_and_query()
+        .map_or("", |value| value.as_str());
+    whatwg_path(target)
+}
+
 async fn route<B>(
     request: &hyper::Request<B>,
     config: &Config,
+    webhook_body: Option<&str>,
 ) -> Result<hyper::Response<Body>, io::Error> {
     if let Some(rejection) = node_parser_admission(request)? {
         return Ok(rejection);
     }
     let keep_alive = node_keep_alive(request);
-    let path = if crate::mutants::on("native-http-normalization-off") {
-        request.uri().path().to_owned()
-    } else if request.uri().scheme().is_some() {
-        // Absolute-form: `new URL(request.url)` sees the full target, whose
-        // `//` paths are not the scheme-relative collapse the bare
-        // path-and-query would resolve to.
-        whatwg_path(&request.uri().to_string())
-    } else {
-        let target = request
-            .uri()
-            .path_and_query()
-            .map_or("", |value| value.as_str());
-        whatwg_path(target)
-    };
+    let path = request_path(request);
     if path == "/health" {
         return Ok(handler_response(
             hyper::StatusCode::OK,
@@ -222,6 +298,26 @@ async fn route<B>(
             ));
         }
         return Ok(not_found(keep_alive));
+    }
+    // `if (url.pathname === "/feishu/webhook" && options.feishuWebhook)`:
+    // the body was collected before the path was known to match, so a request
+    // without one (the plain `serve` entry) never invokes the channel and
+    // falls through instead of being served as an empty body.
+    if path == FEISHU_WEBHOOK_PATH
+        && let (Some(resolve), Some(body)) = (&config.webhook, webhook_body)
+        && let Some(handler) = resolve()
+    {
+        let (status, text) = handler(body.to_owned()).await;
+        // `respondJson` is `res.writeHead(status, {content-type:
+        // "application/json"}); res.end(JSON.stringify(body))` — a whole
+        // reply Node sizes up front, so the body is not chunked.
+        return Ok(handler_response_with_length(
+            hyper::StatusCode::from_u16(status)
+                .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR),
+            "application/json",
+            text,
+            keep_alive,
+        ));
     }
     // A7.4's user-dialog HTTP store entry is not yet open on this listener: TS
     // never mounts HttpGatewayUserDialogStore on the gateway port either, but

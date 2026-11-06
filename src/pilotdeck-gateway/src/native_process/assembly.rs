@@ -174,6 +174,49 @@ pub(super) async fn start_observed_with_upload_cleanup(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
+    start_impl(
+        options,
+        env,
+        upload_cleanup_interval,
+        cleanup_observer,
+        cleanup_diagnostic,
+        None,
+    )
+    .await
+}
+
+/// Production entry: the host plus the `/feishu/webhook` resolver the native
+/// listener mounts (`activeFeishu`, resolved per request so a stop or reload
+/// changes the answer).
+pub(super) async fn start_with_webhook(
+    options: Options,
+    env: Env,
+) -> Result<(TurnGateway, crate::native_http::WebhookResolver), ProxyError> {
+    let slot = Arc::new(std::sync::OnceLock::new());
+    let host = start_impl(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        Some(slot.clone()),
+    )
+    .await?;
+    let slot = slot.get().cloned().ok_or_else(|| {
+        ProxyError::from("feishu webhook slot was not constructed during assembly")
+    })?;
+    Ok((host, crate::channel::feishu::FeishuWebhookSlot::resolver(&slot)))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_impl(
+    options: Options,
+    env: Env,
+    upload_cleanup_interval: Duration,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+    webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
+) -> Result<TurnGateway, ProxyError> {
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
     if let Some(dir) = &stimulus_switch {
@@ -596,20 +639,24 @@ pub(super) async fn start_observed_with_upload_cleanup(
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
         let cron_section = config.get("cron").cloned();
-        (
-            Arc::new(super::channels::NativeChannels::new(
-                super::channels::NativeChannelsOptions {
-                    pilot_home: options.home.clone(),
-                    config: Arc::new(config),
-                    weixin: crate::channel::weixin::WeixinChannelOptions::default(),
-                    weixin_maker: None,
-                    log: None,
-                    report_status: None,
-                    close_host: None,
-                },
-            )),
-            cron_section,
-        )
+        let channel_assembly = Arc::new(super::channels::NativeChannels::new(
+            super::channels::NativeChannelsOptions {
+                pilot_home: options.home.clone(),
+                config: Arc::new(config),
+                weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+                weixin_maker: None,
+                feishu: crate::channel::feishu::FeishuOptions::default(),
+                log: None,
+                report_status: None,
+                close_host: None,
+            },
+        ));
+        // #1329: hand the listener the slot before any adapter starts, so the
+        // route is mounted with the process rather than with the channel.
+        if let Some(slot) = webhook_slot {
+            let _ = slot.set(channel_assembly.feishu_webhook_slot());
+        }
+        (channel_assembly, cron_section)
     };
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
@@ -759,6 +806,14 @@ pub(super) async fn start_observed_with_upload_cleanup(
                     "weixin gateway port already published",
                 ));
             }
+            // #1329: the same submitter answers `/feishu/webhook` turns; the
+            // adapter holds the handle from construction, so this only fills
+            // the slot behind it.
+            if !build_channels.set_turn_submitter(submitter.clone()) {
+                return Err(std::io::Error::other(
+                    "feishu turn gateway already published",
+                ));
+            }
             Ok(GatewayServices {
                 interactions,
                 requests,
@@ -836,8 +891,15 @@ pub(super) async fn start_observed_with_upload_cleanup(
         Ok(host) => {
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
             // once the builder has published the gateway port.
+            let mut startup = Vec::new();
+            if let Some(feishu) = channel_assembly.create_startup_feishu().await {
+                startup.push(feishu);
+            }
             if let Some(weixin) = channel_assembly.create_startup_weixin().await {
-                channel_assembly.server().start_channels(vec![weixin]);
+                startup.push(weixin);
+            }
+            if !startup.is_empty() {
+                channel_assembly.server().start_channels(startup);
             }
             Ok(host)
         }

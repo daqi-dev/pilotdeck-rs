@@ -1,21 +1,24 @@
-//! A8.3 channel assembly for the native process (#1328): the weixin subset of
-//! `cli/ChannelAdapterBundle.ts` (the `adapters.weixin.enabled` gate, durable
-//! mapper state, `hotStartWeixin`, `reload`, `flush`) on the #1327
-//! `ChannelServer` lifecycle host, plus the CLI `prepareWeixinLogin` callback
-//! (`pilotdeck.ts:240-247`). The other bundle channels (feishu/qq/wecom and
-//! the loader-table ones) land with their own A8.3-ch-* units; the native
-//! process reconciles only the weixin key today, so `managedChannelKeys`
-//! carries exactly that one key.
+//! A8.3 channel assembly for the native process (#1328): the weixin and
+//! feishu subsets of `cli/ChannelAdapterBundle.ts` (the `adapters.<key>.enabled`
+//! gate, durable mapper state, `hotStart<Key>`, `reload`, `flush`) on the
+//! #1327 `ChannelServer` lifecycle host, plus the CLI `prepareWeixinLogin`
+//! callback (`pilotdeck.ts:240-247`) and the `/feishu/webhook` slot the native
+//! HTTP listener mounts. The other bundle channels (qq/wecom and the
+//! loader-table ones) land with their own A8.3-ch-* units; the native process
+//! reconciles only the keys it constructs, so `managedChannelKeys` carries
+//! exactly those.
 use crate::channel::{
+    feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot, no_interaction},
     protocol::{
         ChannelAdapter, ChannelError, ChannelKey, ChannelLog, ChannelStartDeps, ChannelState,
-        ChannelStatus, CloseHost, ReconcileInput, ReconcileResult, StatusReporter,
+        ChannelStatus, CloseHost, ReconcileInput, ReconcileResult, StatusReporter, TurnGateway,
     },
     runtime_status::{
         ChannelRuntimeStatusReporter, ChannelRuntimeStatusUpdate,
         create_channel_runtime_status_reporter,
     },
     server::ChannelServer,
+    turn_submitter::SubmitterTurnGateway,
     weixin::{
         ChannelStatePersistence, WeixinChannel, WeixinChannelOptions, WeixinChannelStatus,
         WeixinGatewayPort, WeixinSessionMapper, WeixinStateChange,
@@ -28,20 +31,22 @@ use std::{
 };
 
 use super::methods::PrepareWeixinLogin;
+use crate::runtime::turn::submit::TurnSubmitter;
 
-/// The channel key this assembly manages (TS `managedChannelKeys` weixin
-/// entry; the sibling keys land with their own units).
+/// The channel keys this assembly manages (TS `managedChannelKeys` subset).
 fn weixin_key() -> ChannelKey {
     ChannelKey::new("weixin")
 }
+fn feishu_key() -> ChannelKey {
+    ChannelKey::new("feishu")
+}
 
 /// The `ChannelAdapterBundle` keys this assembly actually constructs (#1694
-/// §7): exactly the managed weixin key today. `crate::channel::loader::
-/// reject_unimplemented_bundle_channels` refuses any *other* enabled bundle
-/// key — `feishu` until #1329 lands — instead of letting the native process
-/// start with a channel that would never be built. An A8.3 bundle unit adds
-/// its key here in the same change that adds its construction.
-pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];
+/// §7). `crate::channel::loader::reject_unimplemented_bundle_channels` refuses
+/// any *other* enabled bundle key instead of letting the native process start
+/// with a channel that would never be built. An A8.3 bundle unit adds its key
+/// here in the same change that adds its construction.
+pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["feishu", "weixin"];
 
 /// A satisfied close host: the native embedding drains its WS server before
 /// the host cleanup closes the channel server, so there is no gateway-WS
@@ -74,6 +79,10 @@ pub struct NativeChannelsOptions {
     /// TS `createWeixin` seam: builds the adapter from its options. Tests
     /// swap in a controlled channel to observe the lifecycle.
     pub weixin_maker: Option<WeixinChannelMaker>,
+    /// The feishu construction seams (app id/secret, encrypt key, verify
+    /// token, connection mode, domain). Production passes the defaults; tests
+    /// point `base_url` at a loopback Lark mock.
+    pub feishu: FeishuOptions,
     /// Test seam over the console channel log.
     pub log: Option<ChannelLog>,
     /// Test seam over the runtime-status sink (default: the
@@ -89,7 +98,64 @@ pub struct NativeChannels {
     weixin: WeixinChannelOptions,
     weixin_maker: WeixinChannelMaker,
     gateway: OnceLock<Arc<dyn WeixinGatewayPort>>,
+    feishu: FeishuOptions,
+    /// `activeFeishu`: the `/feishu/webhook` slot. Published at construction
+    /// by every feishu adapter this assembly builds.
+    feishu_slot: Arc<FeishuWebhookSlot>,
+    /// The A7 port each feishu adapter receives through `ChannelStartDeps`.
+    /// The submitter only exists after the host builder ran, so the adapter
+    /// gets this handle and waits for `set_turn_submitter`.
+    feishu_gateway: Arc<FeishuTurnGateway>,
     config: Arc<JsValue>,
+}
+
+/// The `ChannelStartDeps.turn_gateway` the feishu adapter is constructed with.
+/// It forwards to a [`SubmitterTurnGateway`] once the assembly publishes the
+/// native submitter; until then `submit` fails with the same
+/// "not started" shape as a missing gateway.
+struct FeishuTurnGateway {
+    submitter: OnceLock<Arc<TurnSubmitter>>,
+    channel_key: ChannelKey,
+}
+
+impl FeishuTurnGateway {
+    fn new() -> Self {
+        Self {
+            submitter: OnceLock::new(),
+            channel_key: feishu_key(),
+        }
+    }
+
+    fn set(&self, submitter: Arc<TurnSubmitter>) -> bool {
+        self.submitter.set(submitter).is_ok()
+    }
+
+    fn inner(&self) -> Option<SubmitterTurnGateway> {
+        self.submitter
+            .get()
+            .map(|submitter| SubmitterTurnGateway::new(submitter.clone(), self.channel_key.clone()))
+    }
+}
+
+impl TurnGateway for FeishuTurnGateway {
+    fn submit(
+        &self,
+        request: crate::channel::protocol::TurnRequest,
+    ) -> crate::channel::protocol::BoxFuture<
+        Result<
+            Box<dyn crate::channel::protocol::TurnEventStream>,
+            crate::channel::protocol::ChannelError,
+        >,
+    > {
+        match self.inner() {
+            Some(gateway) => gateway.submit(request),
+            None => Box::pin(async {
+                Err(crate::channel::protocol::ChannelError::error(
+                    "Gateway not ready",
+                ))
+            }),
+        }
+    }
 }
 
 impl NativeChannels {
@@ -109,17 +175,19 @@ impl NativeChannels {
             weixin_runtime(weixin_key().as_js(), &weixin_update(&status));
         }));
         let state = ChannelStatePersistence::new(options.pilot_home.join("channels"));
+        let feishu_gateway = Arc::new(FeishuTurnGateway::new());
+        let turn_gateway: Arc<dyn TurnGateway> = feishu_gateway.clone();
         Self {
             server: ChannelServer::new(
                 ChannelStartDeps {
                     config: Some(options.config.clone()),
                     report_status: Some(report_status),
                     log: options.log,
-                    // The weixin adapter submits turns through its own
-                    // `WeixinChannelOptions.gateway` port (set by
-                    // `set_gateway_port`), not through the channel-server
-                    // `turn_gateway` the webhook/api-server adapters use.
-                    turn_gateway: None,
+                    // weixin submits through its own `WeixinChannelOptions.gateway`
+                    // port (`set_gateway_port`); feishu uses the shared
+                    // channel-server port, which the `FeishuTurnGateway` handle
+                    // fills in once the native submitter exists.
+                    turn_gateway: Some(turn_gateway),
                 },
                 options.close_host.unwrap_or_else(noop_close_host),
             ),
@@ -127,12 +195,27 @@ impl NativeChannels {
             weixin,
             weixin_maker: options.weixin_maker.unwrap_or_else(default_weixin_maker),
             gateway: OnceLock::new(),
+            feishu: options.feishu,
+            feishu_slot: Arc::new(FeishuWebhookSlot::new()),
+            feishu_gateway,
             config: options.config,
         }
     }
 
     pub fn server(&self) -> &ChannelServer {
         &self.server
+    }
+
+    /// The `activeFeishu` slot the native HTTP listener mounts at
+    /// `/feishu/webhook`. Stable for the life of the assembly, so the listener
+    /// can hold the resolver while the adapter comes and goes.
+    pub fn feishu_webhook_slot(&self) -> Arc<FeishuWebhookSlot> {
+        self.feishu_slot.clone()
+    }
+
+    /// Publish the A7 submitter the feishu adapter submits through.
+    pub fn set_turn_submitter(&self, submitter: Arc<TurnSubmitter>) -> bool {
+        self.feishu_gateway.set(submitter)
     }
 
     /// Publish the gateway port the channel submits through. The assembly
@@ -178,6 +261,61 @@ impl NativeChannels {
         self.server.hot_start_channel(channel).await
     }
 
+    /// ChannelAdapterBundle.makeFeishu: mapper from the persisted state,
+    /// `onStateChange` persisting back through the debounce, and the active
+    /// slot published at construction (TS assigns `activeFeishu` before
+    /// `start`).
+    async fn make_feishu(&self) -> Arc<dyn ChannelAdapter> {
+        let saved = self.state.load(feishu_key().as_js()).await;
+        let state = self.state.clone();
+        let on_state_change =
+            Arc::new(move |value: JsValue| state.save(feishu_key().as_js(), value));
+        Arc::new(FeishuChannel::for_assembly(
+            self.configured_feishu_options(),
+            no_interaction(),
+            self.feishu_slot.clone(),
+            saved.as_ref(),
+            Some(on_state_change),
+        ))
+    }
+
+    /// `createFeishu`'s constructor argument: the `adapters.feishu` settings
+    /// (an absent field stays `undefined` → the constructor's default). The
+    /// assembly-level options supply the loopback `base_url` seam tests need;
+    /// a real config keeps the origin its `domainName` selects.
+    fn configured_feishu_options(&self) -> FeishuOptions {
+        let Some(settings) = self
+            .config
+            .get("adapters")
+            .and_then(|adapters| adapters.get("feishu"))
+            .and_then(JsValue::as_object)
+        else {
+            return self.feishu.clone();
+        };
+        let mut options = FeishuOptions::from_object(settings);
+        if self.feishu.base_url != crate::channel::feishu::FEISHU_BASE_URL
+            && self.feishu.base_url != crate::channel::feishu::LARK_BASE_URL
+        {
+            options.base_url = self.feishu.base_url.clone();
+        }
+        options
+    }
+
+    /// ChannelAdapterBundle.createFeishu: `adapters.feishu.enabled === true`.
+    pub async fn create_startup_feishu(&self) -> Option<Arc<dyn ChannelAdapter>> {
+        if feishu_enabled(&self.config) {
+            Some(self.make_feishu().await)
+        } else {
+            None
+        }
+    }
+
+    /// ChannelAdapterBundle.hotStartFeishu.
+    pub async fn hot_start_feishu(&self) -> Result<(), ChannelError> {
+        let channel = self.make_feishu().await;
+        self.server.hot_start_channel(channel).await
+    }
+
     /// ChannelAdapterBundle.reload: reconcile the desired set against the
     /// managed keys (an enabled weixin replaces, a disabled one stops with
     /// `config-disabled`). No caller in the native process yet — the config
@@ -186,9 +324,12 @@ impl NativeChannels {
     #[allow(dead_code)]
     pub async fn reload(&self, config: &JsValue) -> Result<ReconcileResult, ChannelError> {
         let mut input = ReconcileInput {
-            managed_channel_keys: vec![weixin_key()],
+            managed_channel_keys: vec![feishu_key(), weixin_key()],
             channels: Vec::new(),
         };
+        if feishu_enabled(config) {
+            input.channels.push(self.make_feishu().await);
+        }
         if weixin_enabled(config) {
             input.channels.push(self.make_weixin().await);
         }
@@ -237,6 +378,15 @@ fn weixin_enabled(config: &JsValue) -> bool {
         .get("adapters")
         .and_then(|adapters| adapters.get("weixin"))
         .and_then(|weixin| weixin.get("enabled"))
+        == Some(&JsValue::Bool(true))
+}
+
+/// `config.adapters?.feishu?.enabled === true`.
+fn feishu_enabled(config: &JsValue) -> bool {
+    config
+        .get("adapters")
+        .and_then(|adapters| adapters.get("feishu"))
+        .and_then(|feishu| feishu.get("enabled"))
         == Some(&JsValue::Bool(true))
 }
 

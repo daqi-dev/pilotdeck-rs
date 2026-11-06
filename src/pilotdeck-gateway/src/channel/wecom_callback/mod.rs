@@ -9,9 +9,7 @@
 
 mod crypto;
 mod http;
-mod interaction;
 mod mapper;
-mod outbound;
 mod render;
 #[cfg(test)]
 mod tests;
@@ -32,6 +30,8 @@ use url::Url;
 
 use super::{
     im_cron::{CronResultDelivery, deliver_chat_cron_result},
+    http_client::{HttpClient, encode_uri_component},
+    im_interaction::{InteractionPort, NoInteraction},
     loader::ChannelAdapterConstructor,
     protocol::{
         BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
@@ -43,9 +43,7 @@ use crate::{
     channel::wecom_callback::{
         crypto::{decrypt_wx_message, verify_msg_signature},
         http::Listener,
-        interaction::{InteractionPort, NoInteraction},
         mapper::{Resolved, SessionMapper},
-        outbound::{HttpClient, encode_uri_component},
         render::render_event,
         xml::{extract_encrypt_from_xml, xml_tag},
     },
