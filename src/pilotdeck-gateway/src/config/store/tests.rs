@@ -221,6 +221,46 @@ async fn reload_in_the_done_window_reads_the_file_again() {
     assert!(id.equals_str("parity/other"), "fresh content: {id:?}");
 }
 
+/// #1946: the baseline claims the in-flight slot synchronously and starts the
+/// load on a microtask (`Promise.resolve().then`), so the claiming poll must
+/// not run the load inline — a peer that lands between the claim and the load
+/// joins this flight instead of starting a second load, and a same-tick
+/// snapshot read still sees the previous generation. `Flight::run_or_wait`
+/// opens exactly that window with one scheduler hop; this pins it without a
+/// scheduler race: the future is polled once by hand, so "the claim happened,
+/// the load did not".
+#[tokio::test]
+async fn the_join_window_defers_the_load_past_the_claiming_poll() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    let root = Root::new();
+    root.write(BASE);
+    let (store, loads) = store(&root);
+    root.write(&other_model());
+    let reload = store.reload("manual");
+    tokio::pin!(reload);
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(
+        matches!(reload.as_mut().poll(&mut cx), Poll::Pending),
+        "#1946 the claiming poll must hop instead of loading inline — the \
+         baseline starts the load on a microtask"
+    );
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        1,
+        "#1946 the claim alone must not load; only the initial load has run"
+    );
+    assert_eq!(
+        version(&store.snapshot()),
+        1.0,
+        "#1946 a same-tick snapshot read still sees the previous generation"
+    );
+    let next = reload.await.expect("reload");
+    assert_eq!(version(&next), 2.0);
+    assert_eq!(loads.load(Ordering::SeqCst), 2);
+}
+
 #[tokio::test]
 async fn failures_keep_snapshot_version_and_only_config_error_diagnostics() {
     let root = Root::new();

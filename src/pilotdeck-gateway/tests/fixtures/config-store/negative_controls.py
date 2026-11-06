@@ -440,6 +440,22 @@ mutations = [
      '                let mut changed = false;',
      TESTS + 'dropping_the_handle_or_the_store_ends_the_task',
      '#1899 dropping the store must stop the watcher cleanly'),
+    # #1946: the join window. The baseline claims the in-flight slot
+    # synchronously but starts the load on a microtask
+    # (`Promise.resolve().then`), so `run_or_wait` hops once before the first
+    # claim loads: a peer that lands in that window joins this flight instead
+    # of starting a second load, and a same-tick snapshot read still sees the
+    # previous generation. Removing the hop loads inline in the claiming poll;
+    # the pinning test's first assertion reds (the poll comes back Ready).
+    ('join-window-hop-removed', source,
+     '                    FlightState::Pending if first && !inner.settled_in_turn() => hop = true,',
+     '                    FlightState::Pending if first && !inner.settled_in_turn() => {\n'
+     '                        *state = FlightState::Running(std::thread::current().id());\n'
+     '                        drop(state);\n'
+     '                        return self.execute(inner);\n'
+     '                    }',
+     TESTS + 'the_join_window_defers_the_load_past_the_claiming_poll',
+     '#1946 the claiming poll must hop instead of loading inline'),
 ]
 
 
