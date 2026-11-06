@@ -4031,6 +4031,61 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-for-target-after-loop', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-slice', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs[:]:\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs.copy():\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-result-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _g = [_h for _h in (md,)]\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4683,6 +4738,40 @@ def calibrate_for_wrapped_container(rows):
     return _not_shared(
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-for-wrapped-container flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_after_loop(rows):
+    """#1953 fix-r1 r4 (GLM boundary r2 P0): the loop target outlives the
+    loop, so using it as a handle after the ``for`` still writes ``md``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-after-loop flagged, '
+        'passed=False')
+
+
+def calibrate_for_slice(rows):
+    """#1953 fix-r1 r4: ``for h in hs[:]`` copies the container but hands out
+    the same handles."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-slice flagged, passed=False')
+
+
+def calibrate_for_copy(rows):
+    """#1953 fix-r1 r4: ``for h in hs.copy()`` hands out the same handles."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-copy flagged, passed=False')
+
+
+def calibrate_comp_result_receiver(rows):
+    """#1953 fix-r1 r4 (GLM boundary r2 P1): a comprehension that only relays
+    its target builds a container of the receiver, so taking an element out of
+    the result and writing it writes ``md``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-result-receiver flagged, '
         'passed=False')
 
 
@@ -5372,6 +5461,14 @@ JUDGES = {
         'aggregation-audit', calibrate_getattribute_name_spelling, False, ()),
     'calibrate-for-wrapped-container': (
         'aggregation-audit', calibrate_for_wrapped_container, False, ()),
+    'calibrate-for-target-after-loop': (
+        'aggregation-audit', calibrate_for_target_after_loop, False, ()),
+    'calibrate-for-slice': (
+        'aggregation-audit', calibrate_for_slice, False, ()),
+    'calibrate-for-copy': (
+        'aggregation-audit', calibrate_for_copy, False, ()),
+    'calibrate-comp-result-receiver': (
+        'aggregation-audit', calibrate_comp_result_receiver, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
