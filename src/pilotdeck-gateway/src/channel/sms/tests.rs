@@ -1960,6 +1960,23 @@ fn absent_recording_fields_keep_defaults() {
         !recorded_half_close(&null_step).unwrap_or(false),
         "#1339 #1879 null halfClose derives false, same as an absent key"
     );
+    // #1879: null `headers` / `stop.reason` reach the real replay paths too,
+    // not just the `_checked` helpers. `build_raw` builds the request bytes via
+    // `recorded_headers`, and the recorded step's `headers` is the
+    // `effectiveHeaders` output (`generate.mts:335` `{ ...(step.headers ?? {}) }`
+    // at `:350`), which `REQUEST` consumes as-is (`generate.mts:887`). The stop
+    // arm replays `recorded_stop_reason(step).unwrap_or("no reason")`, the same
+    // default TS `handle.stop` applies to `reason ?? "no reason"`.
+    assert_eq!(
+        build_raw(&json!({"body": "abc", "headers": null})),
+        build_raw(&json!({"body": "abc"})),
+        "#1339 #1879 null headers sends the same bytes as an absent key"
+    );
+    assert_eq!(
+        recorded_stop_reason(&json!({"reason": null})).unwrap_or("no reason"),
+        "no reason",
+        "#1339 #1879 null stop.reason replays as the default reason"
+    );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`
     // silently compares nothing) is gone; absence now panics — covered by
