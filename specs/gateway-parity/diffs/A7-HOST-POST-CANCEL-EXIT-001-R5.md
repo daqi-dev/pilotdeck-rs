@@ -13,7 +13,7 @@ original: A7-HOST-POST-CANCEL-EXIT-001
 
 ## Rust 行为
 
-同 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的「Rust 行为」（`POST_CANCEL_EXIT_TIMEOUT` 5 s，到点 fail-closed；R4 只改批准状态），本更正不改该行为。
+同 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的「Rust 行为」（`POST_CANCEL_EXIT_TIMEOUT` 5 s，到点 fail-closed），本更正不改该行为。
 
 ## 范围
 
@@ -23,8 +23,7 @@ original: A7-HOST-POST-CANCEL-EXIT-001
 
 - 该偏离描述的是 **Rust 宿主**取消后的 5 s 墙钟期限，因此只在宿主为 Rust 的格里成立：格③ Rust 宿主 × TS sidecar、格④ Rust 宿主 × Rust sidecar。
 - 宿主为 TS 的格① TS × TS、格② TS × Rust **不适用**。尤其格②里 `cancel_during_tool`、`stream_interruption`、`sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission` 的差异，是「TS 宿主眼里观测到的 sidecar 侧差异」，不落在本条范围内，仍按 sidecar 侧信号记（四格账本②的 sidecar 侧信号为 23 条，不因本条降为 19–21；19–21 只是宽读对照，
-且**不是封闭端点**——R3 原文没有枚举「涉及取消」的边界，22 条名单里的 `deadline_during_tool` 是否算第五条候选
-没有裁决，计入则宽读下限更低，见账本 §六.8 第 8 条）。
+且**不是封闭端点**——推导见账本 §六.8 第 8 条，本条不展开）。
 - ③④ 的 fixture（`model-stream` / `provider-error` / `provider-unconfigured` / `token-saver-judge`）不含取消场景，未被触发；④ 的 72 case 全部 `NOT_RUN`，也判不到。
 
 不改产品代码、不改任何既有冻结文件；本条只新增本文件，登记口径见 #590 四格账本 §六.8。
