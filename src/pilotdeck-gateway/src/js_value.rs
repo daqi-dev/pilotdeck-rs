@@ -137,6 +137,33 @@ pub(crate) fn to_string_units_checked(value: &JsValue) -> Result<Vec<u16>, ToStr
     to_string_units(value).map_err(|_| ToStringError::StackOverflow)
 }
 
+/// Validation-only twin of [`to_string_units_checked`] for callers that only
+/// need "would `String(value)` throw?": same two throw surfaces and the same
+/// element order, but no joined text is materialized, so a wide array costs
+/// no copy of its own stringification. Recursion is bounded by
+/// [`MAX_ARRAY_DEPTH`] (the frame count is capped at 2000), which keeps
+/// pathological transcripts from aborting the process.
+pub(crate) fn string_coercible_checked(value: &JsValue) -> Result<(), ToStringError> {
+    fn walk(value: &JsValue, depth: usize) -> Result<(), ToStringError> {
+        match value {
+            JsValue::Array(items) => {
+                if depth >= MAX_ARRAY_DEPTH {
+                    return Err(ToStringError::StackOverflow);
+                }
+                for item in items {
+                    walk(item, depth + 1)?;
+                }
+                Ok(())
+            }
+            JsValue::Object(object) if object.get_property("toString").is_some() => {
+                Err(ToStringError::NotPrimitive)
+            }
+            _ => Ok(()),
+        }
+    }
+    walk(value, 0)
+}
+
 /// `String(value)` as UTF-16 units (lone surrogates kept). Inside arrays,
 /// `null`/`undefined` elements join as empty strings. Objects always become
 /// `[object Object]`; use [`to_string_units_checked`] where an own

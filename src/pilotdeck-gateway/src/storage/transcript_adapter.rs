@@ -1499,14 +1499,16 @@ fn snapshot_block_valid(block: &JsValue) -> AdapterResult<bool> {
 }
 /// The `String(...)` coercion inside isContentBlock throws for an object
 /// carrying a `toString` property (same convention as replay.rs and js_value
-/// `NotPrimitive`), and throws `RangeError` once the array join nesting passes
-/// the engine bound; a plain object just stringifies and fails the membership
-/// check, which the caller reports as an invalid block. The walk must be the
-/// iterative checked one (#1550 P0): the recursive truthiness helper aborts
-/// the process on a deeply nested transcript line, while V8 raises a catchable
-/// `RangeError` that these callers surface as `AdapterError::Range`.
+/// `NotPrimitive`), and throws `RangeError` once the array nesting passes the
+/// shared 2000-container bound (V8's own limit is higher and stack-dependent;
+/// that band is the human-approved A6-JSVALUE-DEPTH-001 divergence); a plain
+/// object just stringifies and fails the membership check, which the caller
+/// reports as an invalid block. The walk must be the bounded one (#1550 P0):
+/// the recursive truthiness helper aborts the process on a deeply nested
+/// transcript line, while V8 raises a catchable `RangeError` that these
+/// callers surface as `AdapterError::Range`.
 fn checked_string(value: &JsValue) -> AdapterResult<()> {
-    match js_value::to_string_units_checked(value) {
+    match js_value::string_coercible_checked(value) {
         Ok(_) => Ok(()),
         Err(error) => Err(match error {
             js_value::ToStringError::NotPrimitive => {
@@ -1974,14 +1976,30 @@ mod coercion_depth_tests {
     /// stack; the port must report that catchable error instead of recursing
     /// until the Rust stack aborts the process. JSON parsing has no nesting
     /// bound (`codec::parse` is iterative), so a few hundred kilobytes of
-    /// `[` reach this check from disk.
+    /// `[` reach this check from disk. The shared bound is
+    /// `js_value::MAX_ARRAY_DEPTH` (2000), so the test pins both sides of it
+    /// rather than one pathological depth.
     #[test]
     fn deep_snapshot_block_type_is_a_range_error_not_a_stack_overflow() {
-        let mut deep = JsValue::from("text");
-        for _ in 0..1_000_000 {
-            deep = JsValue::Array(vec![deep]);
+        let entry = |depth: usize| {
+            let mut deep = JsValue::from("text");
+            for _ in 0..depth {
+                deep = JsValue::Array(vec![deep]);
+            }
+            deep_entry(deep)
+        };
+        match projection_supported(&entry(js_value::MAX_ARRAY_DEPTH + 1)) {
+            Err(AdapterError::Range(message)) => {
+                assert_eq!(message, js_value::StackOverflow::MESSAGE);
+            }
+            other => panic!("expected a RangeError, got {other:?}"),
         }
-        let entry = object([
+        // At the bound the coercion still succeeds, so the block is merely an
+        // unknown type and the snapshot degrades like any other invalid one.
+        assert!(projection_supported(&entry(js_value::MAX_ARRAY_DEPTH)).is_ok());
+    }
+    fn deep_entry(deep: JsValue) -> JsValue {
+        object([
             ("type", JsValue::from("control_boundary")),
             (
                 "boundary",
@@ -2017,12 +2035,6 @@ mod coercion_depth_tests {
                     ),
                 ]),
             ),
-        ]);
-        match projection_supported(&entry) {
-            Err(AdapterError::Range(message)) => {
-                assert_eq!(message, js_value::StackOverflow::MESSAGE);
-            }
-            other => panic!("expected a RangeError, got {other:?}"),
-        }
+        ])
     }
 }
