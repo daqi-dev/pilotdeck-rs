@@ -112,10 +112,17 @@ const TOO_LARGE = 'HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: c
 const cells: Array<{id: string, request: string, tracked: number}> = [
   {id: 'upgrade-16383', request: upgradeHead(16290), tracked: 16383},
   {id: 'upgrade-16384', request: upgradeHead(16291), tracked: 16384},
+  // One past the inclusive boundary and a 20 KiB far-over cell (#1351
+  // 2026-11-06 round probe `probe.out`: 16385 and 20480 are the same canned
+  // 431 + close as 16384 on the upgrade lane, exactly like the plain lane).
+  {id: 'upgrade-16385', request: upgradeHead(16292), tracked: 16385},
+  {id: 'upgrade-20480', request: upgradeHead(20387), tracked: 20480},
   // b4-U1.out's far-over shape (17 020 tracked) on the same head template.
   {id: 'upgrade-17020', request: upgradeHead(16927), tracked: 17020},
   {id: 'plain-16383', request: plainHead(16360), tracked: 16383},
   {id: 'plain-16384', request: plainHead(16361), tracked: 16384},
+  {id: 'plain-16385', request: plainHead(16362), tracked: 16385},
+  {id: 'plain-20480', request: plainHead(20457), tracked: 20480},
 ];
 
 const observations: any[] = [];

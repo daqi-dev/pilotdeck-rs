@@ -435,7 +435,11 @@ async fn upgrade_head_respects_span_budget() {
 /// against the native listener from the committed `native-ws-upgrade-budget`
 /// fixture (recorded on the TS baseline with Node v22.22.0): upgrade-lane
 /// and non-upgrade-lane heads at tracked 16383 (still served) and 16384
-/// (Node's canned 431 + close), plus `b4-U1.out`'s far-over shape. The
+/// (Node's canned 431 + close), plus the 16385 and 20 KiB (20480) far-over
+/// cells of the 2026-11-06 round's raw-socket probe
+/// (`_tmp/20261106-issue-1351/probe.out`: both lanes share the inclusive
+/// 16384 boundary and answer the identical canned 431 + close on every
+/// over-budget cell), plus `b4-U1.out`'s far-over shape. The
 /// replay writes the recorded request bytes and captures with the same
 /// 250 ms quiet window the TS recorder used, so the whole head — status
 /// line, every header, and the close decision — is pinned, not just the
@@ -585,8 +589,8 @@ async fn upgrade_budget_boundary_matches_ts() {
             .as_array()
             .expect("#1351 oracle cells")
             .len(),
-        5,
-        "#1351 the fixture records all five boundary cells"
+        9,
+        "#1351 the fixture records all nine boundary cells"
     );
     let (address, stop, task) = start(Arc::default(), DEADLINE).await;
     for cell in expected["cells"].as_array().expect("#1351 oracle cells") {
@@ -622,6 +626,84 @@ async fn upgrade_budget_boundary_matches_ts() {
             "#1351 every boundary cell closes exactly when the TS recorder saw a close"
         );
     }
+    finish(stop, task).await;
+}
+/// One upgrade-lane budget cell of the same head shape as
+/// `upgrade_head_respects_span_budget` (tracked 93 + n): writes the head,
+/// asserts the canned 431 and its `Connection: close`, then requires the
+/// connection to close (the read reaching EOF — the same two-step
+/// `expect_ok` the boundary test uses).
+async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str) {
+    let mut socket = TcpStream::connect(address)
+        .await
+        .unwrap_or_else(|error| panic!("#1351 {what} connect: {error}"));
+    let head = format!(
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\nx-p: {}\r\n\r\n",
+        "a".repeat(n)
+    );
+    socket
+        .write_all(head.as_bytes())
+        .await
+        .unwrap_or_else(|error| panic!("#1351 {what} send: {error}"));
+    let mut header = vec![];
+    timeout(DEADLINE, async {
+        while !header.ends_with(b"\r\n\r\n") {
+            header.push(
+                socket
+                    .read_u8()
+                    .await
+                    .unwrap_or_else(|error| panic!("#1351 {what} response byte: {error}")),
+            );
+        }
+    })
+    .await
+    .unwrap_or_else(|elapsed| panic!("#1351 {what} response deadline: {elapsed}"));
+    let response = String::from_utf8_lossy(&header).to_string();
+    negative_assert!(
+        response.starts_with("HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "#1351 {what} is the same 431 as the non-upgrade lane"
+    );
+    negative_assert!(
+        response.contains("Connection: close\r\n"),
+        "#1351 {what} is told to close like the non-upgrade lane"
+    );
+    let close = format!("#1351 {what} closes the connection like the non-upgrade lane");
+    let mut rest = vec![];
+    crate::test_negative_receipt::expect_ok(
+        crate::test_negative_receipt::expect_ok(
+            timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+            &close,
+        ),
+        &close,
+    );
+}
+
+/// #1351 (2026-11-06 round): the one-past-the-boundary upgrade cell — tracked
+/// 16385 (n = 16292) is the same canned 431 + close as the 16384 boundary
+/// cell, recorded on the TS baseline by this round's raw-socket probe
+/// (`_tmp/20261106-issue-1351/probe.out`, Node v22.22.0) and golden-replayed
+/// byte-exactly by `upgrade_budget_boundary_matches_ts`. Kept in its own test
+/// like #1209's `header_budget_deep_oversize_431s_like_ts`: under the
+/// `native-http-upgrade-budget-off` mutant the boundary cell's panic must not
+/// mask this cell's anchor.
+#[tokio::test]
+async fn upgrade_budget_16385_cell_431s_like_ts() {
+    let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+    upgrade_budget_cell(address, 16292, "the 16385 upgrade cell").await;
+    finish(stop, task).await;
+}
+
+/// #1351 (2026-11-06 round): the 20 KiB far-over upgrade cell — tracked 20480
+/// (n = 20387) is the same canned 431 + close, recorded on the TS baseline by
+/// this round's raw-socket probe (`_tmp/20261106-issue-1351/probe.out`, Node
+/// v22.22.0) and golden-replayed byte-exactly by
+/// `upgrade_budget_boundary_matches_ts`. A test of its own so the 16385
+/// cell's panic cannot mask this cell's anchor under the
+/// `native-http-upgrade-budget-off` mutant.
+#[tokio::test]
+async fn upgrade_budget_20kib_cell_431s_like_ts() {
+    let (address, stop, task) = start(Arc::default(), DEADLINE).await;
+    upgrade_budget_cell(address, 20387, "the 20 KiB upgrade cell").await;
     finish(stop, task).await;
 }
 #[tokio::test]

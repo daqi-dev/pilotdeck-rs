@@ -6,9 +6,15 @@
 |---|---|---|---|---|
 | upgrade-16383 | `/ws` 升级 | 16383 | 101 Switching Protocols | false |
 | upgrade-16384 | `/ws` 升级 | 16384 | 罐头 431 + close | true |
+| upgrade-16385 | `/ws` 升级 | 16385 | 罐头 431 + close | true |
+| upgrade-20480 | `/ws` 升级 | 20480 | 罐头 431 + close（20 KiB 远超格） | true |
 | upgrade-17020 | `/ws` 升级 | 17020 | 罐头 431 + close（桥接 #1292 `b4-U1.out`） | true |
 | plain-16383 | `/health` | 16383 | 200 chunked `{"ok":true}` | false |
 | plain-16384 | `/health` | 16384 | 罐头 431 + close | true |
+| plain-16385 | `/health` | 16385 | 罐头 431 + close | true |
+| plain-20480 | `/health` | 20480 | 罐头 431 + close（20 KiB 远超格） | true |
+
+16385 / 20480 格为 2026-11-06 轮独立原始 socket 探针（`_tmp/20261106-issue-1351/probe.out`）先行实测后并入金样：两车道在含 16384 的边界上逐字节同口径，越界格均为同一罐头 431 + close。
 
 口径：升级头 = 3+13+17+16+41+3+n = 93+n，非升级头 = 23+n；`trackedSpan` 从请求字节自算并逐格断言，算术不靠注释信任。捕获语义与 `native-http-basic` 一致：250ms 静默窗、EOF/复位即关闭、date 记录时掩码（latin1 记账）。`x-p` 头携带 'a' 填充；nonce 为 RFC6455 §1.3 公开样例（`tests/common/native_ws_sample.rs` 同值）。
 
