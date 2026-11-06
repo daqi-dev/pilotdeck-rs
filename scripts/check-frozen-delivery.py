@@ -3940,26 +3940,22 @@ def _admin_match(recorded, wanted):
     """Classify one readable ``gitdir`` against this holder's ``<tree>/.git``.
 
     ``ours`` / ``other`` / ``torn``.  A recorded path that is a *strict
-    ancestor* of ``wanted`` is either another worktree registered above this
-    run's fresh holder (its gitdir is a file, e.g. ``TMPDIR`` inside another
-    worktree of the same repository) or a truncated write of our own path (a
-    directory such as the repository's ``.git``, or nothing on disk).  Only
-    the second kind is ``torn``; reading it as "proven not ours" would
-    deregister the holder and call a leftover entry clean.
+    ancestor* of ``wanted`` is unprovable and therefore ``torn``: a real
+    linked worktree is registered at its own root, so its gitdir
+    (``<wt>/.git``, a file) is never a prefix of a holder that lives inside a
+    *directory* (``TMPDIR=<wt>/tmp`` yields ``<wt>/tmp/...``, not
+    ``<wt>/.git/...``).  The shapes that can be a prefix -- the repository's
+    own ``.git`` directory, a bare gitdir, a path that is gone -- are exactly
+    what a truncated write of our own path leaves behind, and calling that
+    "proven not ours" would deregister the holder and call a leftover entry
+    clean.  Reading a *file* ancestor as another worktree was tried and
+    dropped: a torn write that lands on a file is not distinguishable from it
+    (two reviewers, one P1), and the layout it was meant to protect does not
+    produce an ancestor relationship at all.
     """
     if recorded == wanted:
         return 'ours'
-    prefix = recorded.rstrip('/') + '/'
-    if wanted.startswith(prefix):
-        # A linked worktree's recorded gitdir is a *file* (``gitdir: ...``).
-        # A strict ancestor that is such a file is a real worktree registered
-        # above this run's holder -- e.g. ``TMPDIR`` inside another worktree
-        # of the same repository -- and must not be called a torn write, or
-        # every run there would block forever.  A directory (the repository's
-        # own ``.git``) or a path that is not there is what a truncation
-        # leaves behind.
-        if os.path.isfile(recorded):
-            return 'other'
+    if wanted.startswith(recorded.rstrip('/') + '/'):
         return 'torn'
     return 'other'
 
@@ -4007,12 +4003,16 @@ def admin_entry_present(root, target):
         if admin is None:
             return None
         wanted = _real_path(target / '.git')
+        seen = []
         for attempt in range(3):
             try:
                 state, seen = _scan_admin(admin, wanted)
             except FileNotFoundError:
                 return False      # no ``.git/worktrees`` directory at all
             except OSError:
+                # Name what earlier passes already saw: this answer is still
+                # None ("not proven clean"), and the verdict should say why.
+                _UNVERIFIED_ADMIN_ENTRIES.update(seen)
                 return None       # the directory itself cannot be read
             if state is not None:
                 return state
