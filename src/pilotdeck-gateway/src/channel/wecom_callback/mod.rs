@@ -31,8 +31,8 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use url::Url;
 
 use super::{
-    loader::ChannelAdapterConstructor,
     im_cron::{CronResultDelivery, deliver_chat_cron_result},
+    loader::ChannelAdapterConstructor,
     protocol::{
         BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
         ChannelStartDeps, TurnGateway, TurnRequest,
@@ -329,7 +329,7 @@ impl Runtime {
         if js_trim(&content).is_empty() {
             return;
         }
-        let has_gateway = self.inbound.is_some();
+        let has_gateway = self.gateway().is_some();
 
         // TS evaluates `hasPending(chatId) && this.gateway`: the helper call
         // happens even without a gateway.
@@ -450,48 +450,42 @@ impl Runtime {
             .await
         {
             Err(error) => failure = Some(error),
-            Ok(mut events) => {
-                loop {
-                    match events.next().await {
-                        Ok(None) => break,
-                        Err(error) => {
-                            failure = Some(error);
-                            break;
-                        }
-                        Ok(Some(event)) => {
-                            let event_type = event
-                                .get("type")
-                                .and_then(JsValue::as_string)
-                                .map(|value| String::from_utf16_lossy(value.units()))
-                                .unwrap_or_default();
-                            if event_type == "elicitation_request" {
-                                let question = self.interaction.elicitation_capture(
+            Ok(mut events) => loop {
+                match events.next().await {
+                    Ok(None) => break,
+                    Err(error) => {
+                        failure = Some(error);
+                        break;
+                    }
+                    Ok(Some(event)) => {
+                        let event_type = event
+                            .get("type")
+                            .and_then(JsValue::as_string)
+                            .map(|value| String::from_utf16_lossy(value.units()))
+                            .unwrap_or_default();
+                        if event_type == "elicitation_request" {
+                            let question =
+                                self.interaction
+                                    .elicitation_capture(chat_id, session_key, &event);
+                            let _ = self.send_reply(chat_id, &question).await;
+                        } else if event_type == "permission_request" {
+                            let question =
+                                self.interaction
+                                    .permission_capture(chat_id, session_key, &event);
+                            if let Some(question) = question {
+                                let delivered = self.send_reply(chat_id, &question).await;
+                                self.interaction.permission_confirm_initial(
                                     chat_id,
-                                    session_key,
-                                    &event,
+                                    delivered,
+                                    request_id(&event).as_deref(),
                                 );
-                                let _ = self.send_reply(chat_id, &question).await;
-                            } else if event_type == "permission_request" {
-                                let question = self.interaction.permission_capture(
-                                    chat_id,
-                                    session_key,
-                                    &event,
-                                );
-                                if let Some(question) = question {
-                                    let delivered = self.send_reply(chat_id, &question).await;
-                                    self.interaction.permission_confirm_initial(
-                                        chat_id,
-                                        delivered,
-                                        request_id(&event).as_deref(),
-                                    );
-                                }
-                            } else if let Some(fragment) = render_event(&event) {
-                                reply_text.push_str(&fragment);
                             }
+                        } else if let Some(fragment) = render_event(&event) {
+                            reply_text.push_str(&fragment);
                         }
                     }
                 }
-            }
+            },
         }
         if let Some(error) = failure {
             self.log(
@@ -745,7 +739,10 @@ impl WeComCallbackChannel {
         interaction: Arc<dyn InteractionPort>,
         qyapi: &str,
     ) -> Self {
-        Self::new(WeComCallbackOptions::from_object(options, qyapi), interaction)
+        Self::new(
+            WeComCallbackOptions::from_object(options, qyapi),
+            interaction,
+        )
     }
 
     /// `ChannelLoaderMounts` mount for `wecomCallback`. Assembly supplies the
@@ -793,7 +790,8 @@ impl ChannelAdapter for WeComCallbackChannel {
                     let runtime = runtime.clone();
                     let chat_id = String::from_utf16_lossy(chat_id.units());
                     let text = String::from_utf16_lossy(text.units());
-                    Box::pin(async move { runtime.send_reply(&chat_id, &text).await }) as BoxFuture<bool>
+                    Box::pin(async move { runtime.send_reply(&chat_id, &text).await })
+                        as BoxFuture<bool>
                 }
             };
             deliver_chat_cron_result(&delivery, &key, send).await

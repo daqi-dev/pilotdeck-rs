@@ -33,6 +33,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 ```
 
 忽略测试 `wecom_callback_regenerates_identically` 必须在具备固定基线的宿主显式运行。
-生成器 `expectedCaseCount=22`，Rust 重放做非空/固定基数/声明三重校验。差异登记见
-`specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-001.md`：stop 期间再 start 的监听让位
-语义、`deliverChatCronResult` 桩未移植等按面登记。
+生成器 `expectedCaseCount=22`，Rust 重放做非空/固定基数/声明三重校验。本单元暂无
+已登记差异：`deliverCronResult` 随 #1334 落地的
+`ChannelAdapter::deliver_cron_result` + `im_cron::deliver_chat_cron_result` 一并实现，
+由 `deliver_cron_result_follows_the_shared_helper` 钉住（金样不含 cron 场景）。
