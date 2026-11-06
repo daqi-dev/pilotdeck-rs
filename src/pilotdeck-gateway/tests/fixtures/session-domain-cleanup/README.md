@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 251 mutants:
+`JUDGES`, keyed by the same names. The current table has 252 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -435,7 +435,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-comprehension-filter-write`,
 `calibrate-match-capture-receiver`,
 `calibrate-match-capture-setattr-receiver`,
-`calibrate-getattribute-attr-spelling`, `calibrate-for-wrapped-container`.
+`calibrate-getattribute-attr-spelling`,
+`calibrate-getattribute-name-spelling`, `calibrate-for-wrapped-container`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1125,6 +1126,18 @@ mutant and was measured `rc=0` before the change, `rc=1` after.
 | **`match` capture as receiver**: `match md: case h: h.common = <stub>` (and `setattr(h, ...)`). The capture table existed for the *helper* rules but not for the table the receiver rules read; a comprehension target bound to a literal element (`[h for h in (md,)]`) had the same gap. | `calibrate-match-capture-receiver`, `calibrate-match-capture-setattr-receiver` |
 | **`__getattribute__` attribute spelling**: `md.__getattribute__('__dict__')['common'] = <stub>` reaches the same mapping as `getattr(md, '__getattribute__')('__dict__')`, which `namespace_dict_roots` already decoded. | `calibrate-getattribute-attr-spelling` |
 | **Wrapped iteration**: `for h in list(hs): h(...)` -- the call position decoded `list`/`tuple`/`sorted`/`iter`/`reversed` wrappers, the iteration position only took a bare name. | `calibrate-for-wrapped-container` |
+
+### Closed by `fix-r1` round 4 (codex r2)
+
+The third head left one false PASS and carried two false FAILs the earlier
+rounds had introduced.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Non-literal `__getattribute__` name**: `_key = '__dict__'; md.__getattribute__(_key)['common'] = <stub>` -- the attribute spelling only decoded a literal argument, so the hand-over under a name stayed trusted. An attribute name that is not provably a pure read now fails closed, matching r35's rule for non-literal names. | `calibrate-getattribute-name-spelling` |
+| **Comprehension target scope (false FAIL)**: `h = object(); [h for h in (md,)]; h.common = <stub>` -- a comprehension target is local to its comprehension, so it must not enter the enclosing alias table. The write *inside* the comprehension is judged against the literal elements instead, so `[setattr(h, 'common', <stub>) for h in (md,)]` is still caught. | self-tests `comp_receiver_probe` / `comp_receiver_scope_probe` |
+| **Iterated container, pure read (false FAIL)**: `for h in hs: print(h)` -- iterating only hands the elements to the loop target; withdrawing on the iteration itself made clean code fail. The loop target's own call / store sites decide now. | self-test `iterated_read_probe` |
+| Non-literal `__getattribute__` name (positive side) | self-test `getattribute_name_probe` |
 
 Also measured at the same head, tracked in #1954 rather than accepted here (they
 are P2-level and narrower than the constructs above): `from operator import attrgetter as _ag;
