@@ -1228,7 +1228,11 @@ async fn handle_incoming(
         Skip,
         NewChat,
         EmptyMessage,
-        Dispatch(MappedSession),
+        /// The admitted turn carries its own `Drop` guard: the slot is taken
+        /// and guarded in one synchronous section, so nothing between the
+        /// `insert` and the guard (the already-active log, the match dispatch)
+        /// can panic with the chat left marked active.
+        Dispatch(MappedSession, super::ActiveChat<JsString>),
     }
     /// The mapper→outcome mapping both lock shapes share (#1589 issue #1 kept
     /// it one function so the switch branch cannot drift from the fused path).
@@ -1246,12 +1250,16 @@ async fn handle_incoming(
         } else {
             // #1738: the set itself keeps a std mutex (never held across an
             // await) so the synchronous `Drop` guard can release the slot.
-            runtime
-                .active_chats
+            // The guard is built in the same section as the `insert`: the
+            // caller's already-active log runs before the match arm, and a
+            // panic there would otherwise leak the admission.
+            let active = runtime.active_chats.clone();
+            active
                 .lock()
                 .expect("#1738 sms active chats mutex")
                 .insert(chat_id.clone());
-            ActiveOutcome::Dispatch(mapped)
+            let guard = super::ActiveChat::new(active, chat_id.clone());
+            ActiveOutcome::Dispatch(mapped, guard)
         }
     }
     // #1589 (issue #1): same two-section restoration — `contains` in one lock
@@ -1259,7 +1267,7 @@ async fn handle_incoming(
     // the negative control's observable (`sms_active_insert_split`). The
     // dedupe switch is read once here so both shapes share it.
     let dedupe_off = crate::mutants::on("sms-active-dedupe-off");
-    let (already_active, outcome, active_chats) = if crate::mutants::on("sms-active-insert-split") {
+    let (already_active, outcome) = if crate::mutants::on("sms-active-insert-split") {
         let already_active = {
             let runtime = shared.runtime.lock().await;
             runtime
@@ -1275,7 +1283,7 @@ async fn handle_incoming(
         } else {
             dispatch_outcome(&mut runtime, &chat_id, &text)
         };
-        (already_active, outcome, runtime.active_chats.clone())
+        (already_active, outcome)
     } else {
         // #1339 fix-r1: `activeChats.has` → `sessionMapper.resolve` → `add` in
         // one lock section — TS runs the same stretch synchronously; separate
@@ -1293,7 +1301,7 @@ async fn handle_incoming(
         } else {
             dispatch_outcome(&mut runtime, &chat_id, &text)
         };
-        (already_active, outcome, runtime.active_chats.clone())
+        (already_active, outcome)
     };
     if already_active {
         shared.log(
@@ -1311,13 +1319,13 @@ async fn handle_incoming(
             Ok(())
         }
         ActiveOutcome::EmptyMessage => Ok(()),
-        ActiveOutcome::Dispatch(mapped) => {
-            // #1738: the `Drop` guard replaces the paired insert/remove so a
-            // panic in `process_message` (spawned fire-and-forget, so only the
-            // task dies) still releases the slot — the TS `finally { delete }`.
-            // Constructed only on the dispatch path: a non-dispatch outcome
-            // never admitted, so its drop must not release another turn's slot.
-            let _guard = super::ActiveChat::new(active_chats, chat_id.clone());
+        // #1738: the `Drop` guard replaces the paired insert/remove so a panic
+        // in `process_message` (spawned fire-and-forget, so only the task dies)
+        // still releases the slot — the TS `finally { delete }`. It was built
+        // by `dispatch_outcome` on the dispatch path only: a non-dispatch
+        // outcome never admitted, so its drop must not release another turn's
+        // slot. Bound here so it outlives the `.await`.
+        ActiveOutcome::Dispatch(mapped, _guard) => {
             process_message(shared, &chat_id, &mapped.session_key, &mapped.message).await
         }
     }

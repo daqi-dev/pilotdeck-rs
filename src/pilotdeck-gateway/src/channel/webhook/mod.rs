@@ -1096,11 +1096,27 @@ async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), C
     // `process_message` (spawned fire-and-forget, so only the task dies) still
     // releases the slot — the TS `finally { delete }` both baselines have. The
     // guard must outlive the `.await` below, hence the named binding.
-    active_chats
+    //
+    // Admission is the `insert` return value, not the `contains` above: the
+    // check and the add are two lock sections with the mapper `/new` reply in
+    // between, so two concurrent turns of one chat can both pass the check —
+    // and the first to finish would then drop the slot the other still holds.
+    // TS cannot race here (one event loop). Same shape as api_server's
+    // `admit_chat`.
+    let chat_key = chat_id.to_owned();
+    let admitted = active_chats
         .lock()
         .expect("#1738 webhook active chats mutex")
-        .insert(chat_id.to_owned());
-    let _guard = super::ActiveChat::new(active_chats, chat_id.to_owned());
+        .insert(chat_key.clone());
+    if !admitted {
+        log(
+            ctx,
+            "info",
+            &format!("webhook: chat {chat_id} already active, skipping"),
+        );
+        return Ok(());
+    }
+    let _guard = super::ActiveChat::new(active_chats, chat_key);
     process_message(ctx, chat_id, &mapped.session_key, &mapped.message).await
 }
 
