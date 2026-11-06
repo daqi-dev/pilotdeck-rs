@@ -260,6 +260,10 @@ impl ModelExecution for RouterModelPort {
             fallback_models: self.options.fallback_models.clone(),
             managed_model_policy: self.options.managed_model_policy.clone(),
             project_path: self.options.project_path.clone(),
+            // The router reads the turn flag directly so a cancel is visible
+            // in the aborting call stack; `abort` below is only the per-stream
+            // interrupt the forwarder fills in one task hop later.
+            turn_abort: input.abort.clone(),
             stream_options: crate::runtime::model::http::StreamOptions {
                 abort: Some(abort.clone()),
                 yield_gate: Some(gate.clone()),

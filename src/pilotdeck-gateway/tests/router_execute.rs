@@ -461,6 +461,9 @@ async fn replay_execute_case(case: &JsValue) -> Result<(), String> {
             .collect(),
         managed_model_policy: policy,
         project_path: None,
+        // The spec's caller abort *is* the turn's `abortSignal`, so the same
+        // flag fills both halves of the router's view.
+        turn_abort: Some(abort.clone()),
         stream_options: StreamOptions {
             abort: Some(abort.clone()),
             random: Arc::new(|| 0.5),

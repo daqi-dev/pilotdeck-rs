@@ -19,6 +19,13 @@ pub struct RouterExecuteContext {
     pub managed_model_policy: Option<ManagedModelPolicy>,
     /// `RouterExecuteContext.projectPath`; persisted on stats records.
     pub project_path: Option<JsString>,
+    /// The turn's own abort flag — `context.abortSignal` handed to
+    /// `router.execute`. TS reads `abortSignal.aborted` in the aborting call
+    /// stack (`RouterRuntime.ts:1187-1189`), so the router has to observe a
+    /// turn cancel synchronously. `stream_options.abort` is a *child* of it
+    /// that the port fills one task hop later, and reading only that made
+    /// "drop the event after abort" depend on scheduling (#1785).
+    pub turn_abort: Option<AbortFlag>,
     /// Includes the turn abort signal and provider HTTP timeout options.
     pub stream_options: StreamOptions,
 }
@@ -79,11 +86,18 @@ impl Outcome {
             })
     }
 }
+/// A cancelled turn. Both flags count: the stream flag cancels one provider
+/// request (the consumer dropped the stream), the turn flag is
+/// `context.abortSignal`. The turn half is read synchronously on purpose —
+/// TS's `abortSignal.aborted` is already true in the aborting call stack, so
+/// an event produced after the cancel must be dropped by that same call, not
+/// by whichever task the forwarding happens to run in (#1785).
 fn aborted(ctx: &RouterExecuteContext) -> bool {
     ctx.stream_options
         .abort
         .as_ref()
         .is_some_and(AbortFlag::is_aborted)
+        || ctx.turn_abort.as_ref().is_some_and(AbortFlag::is_aborted)
 }
 /// One candidate attempt. `reference` is the property-key form the
 /// policy/health/media faces index their configs by (`` `${provider}/*` ``
