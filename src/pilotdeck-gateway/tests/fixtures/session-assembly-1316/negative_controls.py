@@ -118,6 +118,28 @@ mutations = [
      '                _ => "Always-On abort is not configured on this gateway.",',
      'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
      '#1316 always_on_apply message'),
+    # #1476: the two honesty claims themselves, not just their message text.
+    # Neither row is covered by the message mutants above, because each leaves
+    # the other half of the assertion intact. The code row keeps the family
+    # message and swaps only the wire code, so it isolates the code half; the
+    # describe row advertises one deferred method, which is the cheapest false
+    # capability claim (`assert_ts_capability_subset` only bounds the set from
+    # above, so an over-claim has to be killed here).
+    ('always-on-code-not-capability-unavailable',
+     'native_process/methods/always_on.rs',
+     '        code: "CAPABILITY_UNAVAILABLE".into(),',
+     '        code: "NOT_CONFIGURED".into(),',
+     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
+     '#1316 always_on_apply code'),
+    ('describe-advertises-always-on-apply',
+     'native_process/requests.rs',
+     '                            "delete_session",\n'
+     '                        ]\n',
+     '                            "delete_session",\n'
+     '                            "always_on_apply",\n'
+     '                        ]\n',
+     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
+     '#1316 always_on_apply must not be advertised in describe'),
     ('describe-drops-async-hook-result',
      'native_process/requests.rs',
      '                            "async_hook_result",\n'
