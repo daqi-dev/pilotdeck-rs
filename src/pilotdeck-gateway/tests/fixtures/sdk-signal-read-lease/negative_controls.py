@@ -195,18 +195,34 @@ def force_stop(process, out):
     Graceful first (the writer's SIGTERM handler unwinds ``mutating_sources``,
     which restores every guarded byte), then a bounded wait, and only then a
     kill -- a kill during restoration can leave a mutant or a truncated file on
-    disk (#1662 review r5 P0). Returns True when the writer exited cleanly.
+    disk (#1662 review r5/r6). Returns True when the writer exited on its own,
+    which is what makes the restoration claim true (the SIGTERM path exits with
+    a non-zero status by design, so the exit *status* is not the question).
     """
     if process.poll() is not None:
-        return process.returncode == 0
+        return True
     try:
         process.terminate()
         process.communicate(timeout=WRITER_EXIT_BUDGET)
-        return process.returncode == 0
-    except Exception:
+        # It exited: the handler either restored or had already disarmed. Any
+        # exit status is fine here -- SystemExit from the handler is non-zero.
+        return True
+    except subprocess.TimeoutExpired:
         pass
-    _kill_group(process)
-    _collect(process, 30)
+    except Exception:
+        # Something other than a timeout (an IPC error, a closed pipe). The
+        # writer may still be restoring, so give it the same bound instead of
+        # killing it outright.
+        try:
+            process.wait(timeout=WRITER_EXIT_BUDGET)
+            return True
+        except Exception:
+            pass
+    try:
+        _kill_group(process)
+    finally:
+        # Always reap, even when the kill itself fails.
+        _collect(process, 30)
     return False
 
 
@@ -286,6 +302,7 @@ def green(out):
         start_new_session=True)
     failure = None
     stop_error = None
+    hard_interrupt = None
     result = None
     try:
         deadline = time.monotonic() + WRITER_ENTRY_BUDGET
@@ -308,15 +325,18 @@ def green(out):
             stop_writer(process, out)
         except BaseException as error:
             stop_error = error
+            # Keep the interrupt itself: rewriting ``stop_error`` below must not
+            # turn a Ctrl-C into a plain INVALID row (#1662 review r6).
+            if not isinstance(error, Exception):
+                hard_interrupt = error
             # The stop itself can be interrupted (SIGINT during communicate).
             # Recover gracefully and only kill as a last resort; ``restored``
             # records whether we can still claim the sources were restored.
-            restored = force_stop(process, out)
-            if not restored:
+            if not force_stop(process, out):
                 stop_error = RuntimeError(
                     f'{type(error).__name__}: {error}; writer had to be killed, '
                     f'source restoration is NOT confirmed')
-    for interrupt in (failure, stop_error):
+    for interrupt in (failure, hard_interrupt):
         if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
             # Interrupts still abort the run; the writer is already stopped above.
             raise interrupt
