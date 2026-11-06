@@ -4,7 +4,6 @@
 //! Methods: `usage_snapshot`, `model_usage_snapshot`, `mcp_server_status`,
 //! `rewind_files`, `background_task_stop` (unix), `background_tasks` (unix).
 use super::super::requests::Requests;
-use super::string;
 use crate::{
     runtime::{
         connection::{Call, RequestError},
@@ -50,18 +49,21 @@ fn session_error(code: &'static str, message: &'static str) -> RequestError {
     }
 }
 
-/// Trim-validated required string — aligns with TS `?.trim()` checks.
+/// Trim-validated required string for the `!input.<field>?.trim()` gates of
+/// this family.
+///
+/// #1604: delegates to the family-shared guard. The old shape here —
+/// `string()` followed by Rust `str::trim` — diverged from TS in two ways: a
+/// non-string answered `"<field> must be a string."` instead of the optional
+/// chain's `input.<field>?.trim is not a function` TypeError, and a
+/// U+FEFF-only value counted as non-blank although JS trim strips it.
 fn required_trimmed(
     params: &JsValue,
     field: &str,
     code: &'static str,
     message: &'static str,
 ) -> Result<JsString, RequestError> {
-    let s = string(params, field)?;
-    if s.to_utf8().map(|u| u.trim().is_empty()).unwrap_or(false) {
-        return Err(session_error(code, message));
-    }
-    Ok(s)
+    super::require_text(params, field, code, message)
 }
 
 #[cfg(unix)]
@@ -267,4 +269,65 @@ fn optional_session_key(params: &JsValue) -> Option<JsString> {
         .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
         .and_then(JsValue::as_string)
         .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_params(value: JsValue) -> JsValue {
+        crate::metadata::object([("sessionKey", value)])
+    }
+
+    fn message(error: &RequestError) -> String {
+        error
+            .message
+            .to_utf8()
+            .expect("#1604 the guard's message is UTF-8")
+    }
+
+    /// #1604: TS `!input.sessionKey?.trim()` on a number does not
+    /// short-circuit at `?.`; `.trim` is not a function and the boundary
+    /// serialises the TypeError. The old `string()` shape answered
+    /// `sessionKey must be a string.` instead.
+    #[test]
+    fn a_non_string_session_key_throws_the_optional_chain_type_error() {
+        let error = required_trimmed(
+            &session_params(JsValue::Number(7.0)),
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )
+        .expect_err("#1604 a number is not a trimmable string");
+        assert_eq!("gateway_request_failed", error.code);
+        assert_eq!("input.sessionKey?.trim is not a function", message(&error));
+    }
+
+    /// #1604: U+FEFF is WhiteSpace to JS trim but not to Rust `str::trim`,
+    /// so a BOM-only key is blank to TS and must fail the domain gate.
+    #[test]
+    fn a_bom_only_session_key_is_blank() {
+        let error = required_trimmed(
+            &session_params(JsValue::from("\u{feff}")),
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )
+        .expect_err("#1604 a BOM-only key is blank after JS trim");
+        assert_eq!("INVALID_SESSION_KEY", error.code);
+        assert_eq!("sessionKey is required.", message(&error));
+    }
+
+    /// Control: an ordinary key still passes and keeps its UTF-16 units.
+    #[test]
+    fn a_real_session_key_passes_through() {
+        let key = required_trimmed(
+            &session_params(JsValue::from("a8/session")),
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )
+        .expect("#1604 a non-blank string passes the guard");
+        assert_eq!("a8/session", key.to_utf8().expect("#1604 key is UTF-8"));
+    }
 }
