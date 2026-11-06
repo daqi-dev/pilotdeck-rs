@@ -1209,6 +1209,58 @@ def calibrate_operator_setitem_status(rows):
         rows, "inline status/exit assignment operator.setitem(report, 'status', 'PASS')")
 
 
+def calibrate_exit_call_attribute(rows):
+    """#892 r20: ``sys.exit(helpers.EXIT_OK)`` hands the process an exit code
+    whose origin no local binding proves; the r19 attribute rule reached the
+    return arm only (GLM sibling r19 P1 / MiniMax boundary r19 P0)."""
+    return _guard_failure(
+        rows, 'inline exit code helpers.EXIT_OK',
+        'aggregation-audit: attribute exit-call argument flagged, passed=False')
+
+
+def calibrate_exit_call_subscript(rows):
+    """#892 r20: ``raise SystemExit(CODES[policy])`` reads the code out of a
+    container the pass never tracked (MiniMax boundary r19 P0)."""
+    return _guard_failure(
+        rows, 'inline exit code CODES[policy]',
+        'aggregation-audit: subscript exit-call argument flagged, passed=False')
+
+
+def calibrate_shadowed_common(rows):
+    """#892 r20: a module that rebinds ``common`` to a stub makes every call
+    spelled ``common.aggregate_status`` a local function again, so the file is
+    not auditable (GLM boundary r19 P1-1)."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    needle = 'rebinds the shared aggregator module'
+    if not any(needle in failure for failure in (row.get('failures') or [])):
+        return False, (f'failures={row.get("failures")!r}, want the {needle!r} '
+                       'failure')
+    return True, 'aggregation-audit: shadowed common binding flagged, passed=False'
+
+
+def calibrate_computed_status_write(rows):
+    """#892 r20: ``report['status'] = 'PA' + 'SS'`` writes the clean literal
+    without ever being a ``Constant`` node (GLM boundary r19 P1-2)."""
+    return _guard_failure(
+        rows, "inline status/exit assignment 'PA' + 'SS'",
+        'aggregation-audit: computed clean status write flagged, passed=False')
+
+
+def calibrate_local_exit_alias_chain(rows):
+    """#892 r20: ``bail = sys.exit; other = bail; other(0)`` is the same exit
+    call one hop further out; the function-level alias pass resolved the chain
+    only when the source order happened to be favourable (MiniMax boundary r19
+    P1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: two-hop local exit alias enumerated, passed=False')
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -2087,6 +2139,41 @@ MUTATIONS = [
      "def _failure(error, policy, common):\n"
      "    if policy == 'code':\n"
      "        return _code(policy, common)"),
+    # #892 fix-r20 (GLM sibling r19 P1 / MiniMax boundary r19 P0): the r19
+    # attribute/subscript rule reached the return arm only; the exit-call
+    # argument is judged by ``_exit_provenance``, which had no such branch.
+    ('calibrate-exit-call-attribute', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'exit-attribute':\n"
+     "        sys.exit(helpers.EXIT_OK)\n"
+     "    if policy == 'traceback':"),
+    ('calibrate-exit-call-subscript', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'exit-subscript':\n"
+     "        raise SystemExit(CODES[policy])\n"
+     "    if policy == 'traceback':"),
+    # #892 fix-r20 (GLM boundary r19 P1-1): the spelling ``common.X`` was
+    # trusted without asking whether ``common`` is still the shared module.
+    ('calibrate-shadowed-common', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "common = SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r20 (GLM boundary r19 P1-2): a clean status assembled out of
+    # constants is the same literal to the interpreter, but not a Constant node.
+    ('calibrate-computed-status-write', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'computed':\n"
+     "        report = {'status': 'PA' + 'SS'}\n"
+     "        return report, 0\n"
+     "    if policy == 'traceback':"),
+    # #892 fix-r20 (MiniMax boundary r19 P1): a two-hop local exit alias.
+    ('calibrate-local-exit-alias-chain', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def publish(report):\n"
+     "    bail = sys.exit\n"
+     "    other = bail\n"
+     "    other(0)\n\n\n"
+     "def _failure(error, policy, common):"),
 ]
 
 JUDGES = {
@@ -2392,6 +2479,16 @@ JUDGES = {
         'aggregation-audit', calibrate_attr_code_relay, False, ()),
     'calibrate-try-else-completes': (
         'aggregation-audit', calibrate_try_else_completes, False, ()),
+    'calibrate-exit-call-attribute': (
+        'aggregation-audit', calibrate_exit_call_attribute, False, ()),
+    'calibrate-exit-call-subscript': (
+        'aggregation-audit', calibrate_exit_call_subscript, False, ()),
+    'calibrate-shadowed-common': (
+        'aggregation-audit', calibrate_shadowed_common, False, ()),
+    'calibrate-computed-status-write': (
+        'aggregation-audit', calibrate_computed_status_write, False, ()),
+    'calibrate-local-exit-alias-chain': (
+        'aggregation-audit', calibrate_local_exit_alias_chain, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (

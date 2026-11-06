@@ -382,12 +382,26 @@ def tree_lock(root, **kwargs):
     return TreeLock(Path(root) / ".negative-source.lock", **kwargs)
 
 
+GIT_TIMEOUT = 120
+
+
 def _git(root, *args):
     # Popen, not subprocess.run: runner meta-controls patch subprocess.run to
     # catch cargo launched outside run_owned, and git is not such a launch.
+    # The call runs inside the restore window, where SIGINT/SIGTERM are
+    # swallowed until the window closes; a git that blocked forever would hold
+    # that window open with no way to interrupt it, so it gets its own session
+    # and a hard timeout (MiniMax concurrency r19 P1).
     process = subprocess.Popen(["git", "-C", str(root), *args],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+        raise RuntimeError(f"git {' '.join(args)}: timed out after "
+                           f"{GIT_TIMEOUT}s")
     if process.returncode != 0:
         detail = stderr.decode("utf-8", "replace").strip() or "git failed"
         raise RuntimeError(f"git {' '.join(args)}: {detail}")
