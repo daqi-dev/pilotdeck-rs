@@ -15,6 +15,10 @@ mod families;
 mod management;
 mod methods;
 pub use methods::registered_methods;
+// #1320 fix-r2 F10: re-exported one hop up so the runtime-side single-source
+// binding test (`runtime/settings/gateway_tests`) can see the family table.
+#[cfg(test)]
+pub(crate) use methods::METHODS as SETTINGS_FAMILY_METHODS;
 #[cfg(test)]
 mod channels_tests;
 #[cfg(test)]

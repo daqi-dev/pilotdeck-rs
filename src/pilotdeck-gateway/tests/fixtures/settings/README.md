@@ -5,8 +5,9 @@
 （`resolveSettings: async () => toGatewayResolvedSettings(configStore.getSnapshot())`），
 生成器 import 真实 `createLocalGateway`，逐用例独立临时 home/project 树上
 boot 完整网关后调用 `gateway.resolveSettings()`，响应逐字录制；不复制任何
-基线函数体。Rust 侧对应 `config/settings.rs` 的 `resolved_settings`（未开启
-原生组件，默认 dispatch 仍走 TS 宿主）。
+基线函数体。Rust 侧对应 `config/settings.rs` 的 `resolved_settings`：#1320 起
+原生进程已把它绑定为 `resolve_settings` 委托（`native_process::services`），
+A4 代理 dispatch 仍走 TS 宿主，见 `config/settings.rs` 的模块抬头。
 
 ## 目录与条数
 

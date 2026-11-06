@@ -29,14 +29,10 @@ use crate::runtime::{
 };
 use pilotdeck_protocol::{JsString, JsValue};
 
-pub(super) const METHODS: &[&str] = &[
-    "apply_flag_settings",
-    "update_settings",
-    "resolve_settings",
-    "reload_output_styles",
-    "reload_config",
-    "reload_extensions",
-];
+// The single source is the component's list (`runtime/settings/gateway.rs`);
+// #1320 fix-r2 F10: re-export instead of hand-copying, so the registry table
+// and the dispatch arms cannot drift apart.
+pub(crate) const METHODS: &[&str] = crate::runtime::settings::METHODS;
 
 pub(super) const HANDLER: super::Handler =
     super::Handler::AfterAdmission(Requests::settings_request);

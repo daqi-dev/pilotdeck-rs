@@ -81,6 +81,13 @@ cmp /tmp/1320-golden-1/oracle.json \
 Rust 侧：`src/pilotdeck-gateway/src/native_process/settings_tests.rs` 的
 `#[ignore]` 守卫 `native_settings_fixture_regenerates_identically_from_ts`
 （`PDRS_BASELINE` 下实跑一次，逐字节比对）；同文件的 S4 重放逐行执行同一
-setup 词表，经 `Requests::settings_request` 驱动的生产路由重建 WS 帧，比对
-response / before / after / 再读 / post 五格。负控（`negative/`，S4 落盘）
+setup 词表，经 `Requests::settings_request` 驱动——那是 **settings 网关层**
+（#1305 registry 查表选中 settings 家族之后、AfterAdmission handler 的那一层），
+**不是** `Requests::request` 的完整路由层——重建 WS 帧，比对
+response / before / after / 再读 / post 五格；隔离准入门与 registry 查表由
+同文件的路由级用例 `settings_methods_route_through_the_native_request_gate`
+覆盖。含外来 / 非字符串 `projectKey` 的金样行（`styles-closes-matching` 的
+`"/proj-A"`、`extensions-project` 的 `"/p"`、登记差异
+`extensions-project-key-number` 的 `5`）因此只对网关层成立：完整路由会先被
+隔离准入门拒掉，答案与金样不同。负控（`negative/`，S4 落盘）
 由 `neg-for-diff` 装置按点名测试判杀。

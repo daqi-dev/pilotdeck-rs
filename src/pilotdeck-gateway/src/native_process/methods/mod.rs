@@ -15,6 +15,10 @@ mod permission;
 mod runs;
 mod session_dir;
 mod settings;
+// #1320 fix-r2 F10: crate-visible for the runtime-side single-source binding
+// test; the value is `crate::runtime::settings::METHODS` verbatim.
+#[cfg(test)]
+pub(crate) use settings::METHODS;
 mod sop;
 mod steer;
 mod tools;

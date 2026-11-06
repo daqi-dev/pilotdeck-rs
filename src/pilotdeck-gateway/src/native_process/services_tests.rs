@@ -1990,8 +1990,11 @@ async fn native_settings_production_binds_no_notification_server() {
 /// #1320 fix-r1 F3: the settings store anchors at PILOT_HOME from the
 /// environment — the same `resolvePilotHome` every other config read of the
 /// process uses (`NativeConfigSource`) — with `--home` only as the fallback
-/// homedir, so a PILOT_HOME pointing elsewhere must not be silently
-/// overridden. Two configs differing by anchor comment: the resolved
+/// homedir. This is a unit property of `resolve_pilot_home`: the synthetic
+/// env (`PILOT_HOME=ph` while `--home=flag_home`) is unreachable in
+/// production, where `Options::environment` overwrites PILOT_HOME with
+/// `--home` unconditionally, so the production anchor is always `--home`.
+/// Two configs differing by anchor comment: the resolved
 /// `contentHash`/`sources` must come from the PILOT_HOME copy, never from
 /// the `--home` copy.
 #[tokio::test]

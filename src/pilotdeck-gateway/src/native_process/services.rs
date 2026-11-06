@@ -1584,8 +1584,12 @@ pub fn native_settings_for_process(
 ) -> std::io::Result<NativeSettings> {
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
-    // against the served project, `--home` only as the fallback homedir —
-    // a PILOT_HOME pointing elsewhere must not be silently overridden.
+    // against the served project, `--home` only as the fallback homedir for
+    // `~` / `~/` prefixes. In production the env arrives from
+    // `Options::environment`, which has already overwritten PILOT_HOME with
+    // `--home`, so the resolved anchor is always `--home` there; the explicit
+    // `Some(home)` keeps direct callers (tests and future non-CLI
+    // assemblies) anchored exactly like the CLI path.
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
     let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
