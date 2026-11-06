@@ -180,11 +180,13 @@ def _interrupted(signum, frame):
     # release(lock, mine)。先判再记，第一次信号的 RECEIVED 不被第二次覆盖。
     if isinstance(sys.exception(), KeyboardInterrupt):
         # 诊断行本身绝不能在展开期抛异常：stderr 管道已关闭时 print 会抛
-        # OSError/ValueError，那会替代在飞异常，重现本守卫要防的截断。
+        # OSError/ValueError；第一次信号的清理正在写同一个缓冲流时，重入
+        # 还会抛 RuntimeError（_io.BufferedWriter 的 reentrant call）——两者
+        # 都会替代在飞异常、重现本守卫要防的截断，故一律吞掉。
         try:
             print(f'#1194 second signal {signum} ignored during cleanup',
                   file=sys.stderr, flush=True)
-        except (OSError, ValueError):
+        except Exception:
             pass
         return
     RECEIVED = signum
