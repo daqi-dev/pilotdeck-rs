@@ -583,11 +583,14 @@ impl Drop for AnswerGuard {
     }
 }
 
-/// #1790: [`ImPermissionHelper::take_next_prompt`] sets `prompt_delivering`
-/// before the prompt send. A panic or cancellation during that send would,
-/// pre-fix, leave the flag set — `take_next_prompt` then refuses forever and
-/// `begin_answer` silently drops every later message. `release_answer` is the
-/// reentrant-safe recovery (retry the prompt, or settle the answer).
+/// #1790: the post-decision tail holds the answer lock across two sends — the
+/// confirmation (flag: `answering`, set by `begin_answer` and kept by
+/// `finish_answer`) and, when one is queued, the next prompt (flag:
+/// `prompt_delivering`, set by `take_next_prompt`). A panic or cancellation
+/// during either would, pre-fix, leave the flag set — `take_next_prompt` then
+/// refuses forever and `begin_answer` silently drops every later message.
+/// `release_answer` is the reentrant-safe recovery (retry the prompt, or
+/// settle the answer).
 pub struct PromptGuard {
     state: PermissionState,
     chat_id: JsString,
