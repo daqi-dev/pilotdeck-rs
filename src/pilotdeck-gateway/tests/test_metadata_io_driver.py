@@ -777,51 +777,121 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 12,
                          '#1632 dropping a row must change the pinned count')
 
-    def self_check_appends(self, source):
-        """`self_check()` 里每一处 `problems.append(...)` 的参数源码，按出现顺序（#1843 C）。"""
+    PROBLEM_FUNCTIONS = ('self_check', 'slot_timeout_probe', 'restore_probe',
+                         'dispatch_probe', 'deadline_probe')
+
+    def problem_sites(self, source, function):
+        """某个函数里每一处 `problems.append(...)` 的参数源码，按出现顺序。"""
         for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.FunctionDef) and node.name == 'self_check':
-                function = node
+            if isinstance(node, ast.FunctionDef) and node.name == function:
                 break
         else:
-            self.fail('#1843 the fixture must define self_check()')
-        sites = [node for node in ast.walk(function)
+            self.fail(f'#1843 C the fixture must define {function}()')
+        sites = [node for node in ast.walk(node)
                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                  and node.func.attr == 'append'
                  and isinstance(node.func.value, ast.Name)
                  and node.func.value.id == 'problems' and len(node.args) == 1]
+        # 原文（不归一空白）：变异时要在源码里逐字替换，归一后多行参数就找不到了。
         return [ast.get_source_segment(source, node.args[0])
                 for node in sorted(sites, key=lambda node: (node.lineno, node.col_offset))]
+
+    def self_check_appends(self, source):
+        """五个自检函数里的全部见证，按函数分组、组内按出现顺序（#1843 C）。"""
+        return {function: self.problem_sites(source, function)
+                for function in self.PROBLEM_FUNCTIONS}
 
     def test_self_check_every_problem_is_pinned(self):
         # #1843 C（GLM r2 sibling P2）：r14 只钉了 gates 循环那三处；tree-lock 段与
         # real-gate 段后来新增的每一条诊断都是「删掉仍绿」——见证没了，自检照常打印通过。
-        # 这里把 `self_check()` 里**每一条** `problems.append` 的参数源码钉死，并逐条做内存内
-        # 变异（换成 `None`）证明删改任何一条都会红；总数一并钉住，防止新增一条却不钉。
+        # 这里把自检链上**每一条** `problems.append` 的参数源码钉死，并逐条做内存内变异
+        # （换成 `None`）证明删改任何一条都会红；总数一并钉住，防止新增一条却不钉。
+        # r1 评审（MiniMax sibling P2）：只钉 `self_check()` 不够——本 PR 新加的
+        # `slot_timeout_probe` / `restore_probe` / `dispatch_probe` 里的见证同样是
+        # 「删掉仍绿」，`deadline_probe` 也一并纳入。
         source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
                   'negative_controls.py').read_text()
-        sites = self.self_check_appends(source)
-        pinned = [' '.join(site.split()) for site in sites]
-        self.assertEqual(pinned, [
-            "f'{label}: the slot guard never returned within {wall}s'",
-            "f'{label}: expected rc={expected}, ' f'got rc={result.returncode}'",
-            "f'{label}: exit did not report {needle!r}'",
-            "f'{label}: took {elapsed:.1f}s for a {timeout}s deadline'",
-            "'tree-lock case: the tree lock was not actually held'",
-            "f'tree-lock case: the guard never returned within {wall}s'",
-            "'tree-lock case: the guard was not bounded while the tree ' "
-            "f'lock was held (rc={result.returncode})'",
-            "f'tree-lock case: took {elapsed:.1f}s for a {timeout}s ' "
-            "'deadline while holding the tree lock'",
-            "f'real gate: never returned within {wall}s'",
-            "'real gate: rc=0 without the guard reporting a slot'",
-            "f'real gate: rc=0 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
-            "'real gate: rc=1 without the bounded-busy verdict ' "
-            "'(gate broken rather than busy)'",
-            "f'real gate: rc=1 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
-            "'real gate: expected a bounded 0/1 verdict, ' f'got rc={result.returncode}'",
-        ], '#1843 C every self_check() witness is pinned, in order')
-        self.assertEqual(len(sites), 14, '#1843 C the pinned witness count')
+        raw = self.self_check_appends(source)
+        pinned = {function: [' '.join(site.split()) for site in rows]
+                  for function, rows in raw.items()}
+        self.assertEqual(pinned, {
+            'self_check': [
+                "f'{label}: the slot guard never returned within {wall}s'",
+                "f'{label}: expected rc={expected}, ' f'got rc={result.returncode}'",
+                "f'{label}: exit did not report {needle!r}'",
+                "f'{label}: took {elapsed:.1f}s for a {timeout}s deadline'",
+                "'tree-lock case: the tree lock was not actually held'",
+                "f'tree-lock case: the guard never returned within {wall}s'",
+                "'tree-lock case: the guard was not bounded while the tree ' "
+                "f'lock was held (rc={result.returncode})'",
+                "f'tree-lock case: took {elapsed:.1f}s for a {timeout}s ' "
+                "'deadline while holding the tree lock'",
+                "f'real gate: never returned within {wall}s'",
+                "'real gate: rc=0 without the guard reporting a slot'",
+                "f'real gate: rc=0 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
+                "'real gate: rc=1 without the bounded-busy verdict ' "
+                "'(gate broken rather than busy)'",
+                "f'real gate: rc=1 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
+                "'real gate: expected a bounded 0/1 verdict, ' f'got rc={result.returncode}'",
+            ],
+            'slot_timeout_probe': [
+                "f'slot timeout {bad!r}: exited without the refusal ' f'message: {error}'",
+                "f'slot timeout {bad!r}: {type(error).__name__} instead of ' "
+                "'the explicit sys.exit'",
+                "f'slot timeout {bad!r} was not refused'",
+                "f'slot timeout: a refused budget still reached the slot wait: ' f'{seen!r}'",
+                "'slot timeout: a finite positive budget did not reach the ' "
+                "f'shared helper unchanged: {seen!r}'",
+            ],
+            'restore_probe': [
+                "'restore window: the helper thread never sent the signal'",
+                "'restore window: the signal missed the masked window ' "
+                "f'(sent at +{sent - mask_start:.2f}s of a 0.8 s restore)'",
+                "'restore window: the stop signal interrupted the restore (' "
+                'f"{record[\'interrupted\']})"',
+                "'restore window: the simulated restore did not run to ' "
+                'f"completion ({record.get(\'elapsed\')!r}s)"',
+                "'stop signal: the handler did not raise RunTerminated'",
+                "'stop signal: a second delivery would raise again inside ' "
+                "f'the restore ({\", \".join(still_armed)} still handled)'",
+                "f'restore watchdog: fired after {elapsed:.1f}s for a ' '0.3 s bound'",
+                "'restore watchdog: a stalled restore was not cut off ' "
+                "f'after {time.monotonic() - started:.1f}s'",
+                "'restore watchdog: exited without the fail-closed ' f'diagnostic: {error}'",
+                "'restore watchdog: left via ' f'{type(error).__name__} instead of the "
+                "fail-closed exit'",
+                "'restore watchdog: a stalled restore returned normally'",
+            ],
+            'dispatch_probe': [
+                "f'dispatch {label}: fell through to the main path ' 'instead of refusing'",
+                "f'dispatch {label}: exited 0'",
+                "f'dispatch {label}: no usage diagnostic: {text[-200:]}'",
+                "f'dispatch: an argument became an output path: {created}'",
+            ],
+            'deadline_probe': [
+                "f'{label}: {error}'",
+                "f'{label}: exited instead of refusing: {error}'",
+                "f'{label}: an expired deadline did not refuse'",
+                "f'{len(spawned)} subprocess start(s) slipped past the deadline'",
+                "'log probe: an expired deadline did not raise'",
+                "'log probe: no log was written before the deadline raised'",
+                "'log probe: the collected output was not written before ' "
+                "'the deadline raised'",
+                "'slot-guard exit: exited instead of reporting TIMEOUT: ' f'{error}'",
+                "'slot-guard exit: neither TIMEOUT nor exit'",
+                "'progress.jsonl: the appended record was not readable at once'",
+                "'summary.json: a deadline published no TIMEOUT row'",
+                "'summary.json.tmp: the summary was not renamed atomically'",
+                "f'{DEADLINE_ENV}={bad!r} was not refused'",
+                "f'{DEADLINE_ENV} did not parse whole seconds'",
+                "f'{DEADLINE_ENV} refused its own upper bound'",
+            ],
+        }, '#1843 C every witness on the self-check chain is pinned, in order')
+        sites = [site for function in self.PROBLEM_FUNCTIONS for site in raw[function]]
+        self.assertEqual({function: len(rows) for function, rows in pinned.items()},
+                         {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
+                          'dispatch_probe': 4, 'deadline_probe': 15},
+                         '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
                          '#1843 C each witness is one uniquely anchored site')
         for index, site in enumerate(sites):
@@ -830,7 +900,8 @@ class EnvironmentControls(unittest.TestCase):
             with self.assertRaises(AssertionError,
                                    msg=f'#1843 C dropping witness {index} must be caught'):
                 self.assertEqual(
-                    [' '.join(changed.split()) for changed in self.self_check_appends(mutant)],
+                    {function: [' '.join(site.split()) for site in rows]
+                     for function, rows in self.self_check_appends(mutant).items()},
                     pinned)
             print(f'#1843 C self-check witness {index}: KILLED', flush=True)
 
@@ -851,8 +922,8 @@ class EnvironmentControls(unittest.TestCase):
                   'negative_controls.py').read_text()
         rows = self.self_check_controls_rows(source)
         names = [ast.literal_eval(row.elts[0]) for row in rows]
-        self.assertEqual(len(rows), 14,
-                         '#1843 D fourteen meta controls cover the self-check guards')
+        self.assertEqual(len(rows), 15,
+                         '#1843 D fifteen meta controls cover the self-check guards')
         self.assertEqual(names, [
             'deadline-refusal-removed',
             'progress-flush-removed',
@@ -868,7 +939,8 @@ class EnvironmentControls(unittest.TestCase):
             'restore-watchdog-removed',
             'restore-failclosed-removed',
             'unknown-mode-guard-removed',
-        ], '#1843 D the meta controls are exactly these, not merely fourteen rows')
+            'bare-invocation-guard-removed',
+        ], '#1843 D the meta controls are exactly these, not merely fifteen rows')
         # 只钉行数等于允许「换掉一条真负控、行数不变」：名字逐一钉死后，换名同样会红。
         dropped = ast.get_source_segment(source, rows[-1])
         mutant = source.replace(dropped + ',', '', 1)
@@ -892,15 +964,15 @@ class EnvironmentControls(unittest.TestCase):
                 return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
         self.fail('#1692 §9 the fixture must define write_source_atomic()')
 
-    def test_mutation_source_writes_are_published_atomically(self):
-        # #1692 §9：变异写入与还原都是截断式原地写（`write_text` / `write_bytes` 先截断再写）。
-        # 一次 SIGKILL 落在两者之间，源码文件就只剩空/半截——下一次 `mutating_sources` 的
-        # pristine 检查读到「基线不符」，而且直到有人手工修树为止，每次运行都会这样。
-        # 正确形态是同目录 tmp + fsync + 一次 rename：读者只会看到旧字节或新字节。
-        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
-                  'negative_controls.py').read_text()
+    def publish_guards(self, source):
+        """#1692 §9：原子发布的三条形态 + 残留的落点。
+
+        独立成函数，是为了让每条变异都跑**全部**钉子，而不是各挑一条——
+        与 `slot_guard_cases` 同一个用法。
+        """
         body = self.write_source_atomic_body(source)
-        self.assertIn("open('wb')", body, '#1692 §9 the publish writes a same-directory temp')
+        self.assertIn("open('wb')", body,
+                      '#1692 §9 the publish writes the bytes to a temp file first')
         self.assertIn('os.fsync(stream.fileno())', body,
                       '#1692 §9 the bytes are flushed to disk before the rename')
         self.assertIn('os.replace(temporary, path)', body,
@@ -908,7 +980,37 @@ class EnvironmentControls(unittest.TestCase):
         self.assertLess(body.index('os.fsync(stream.fileno())'), body.index('os.replace('),
                         '#1692 §9 the rename happens only after the fsync')
         self.assertIn('temporary.unlink(missing_ok=True)', body,
-                      '#1692 §9 a failed publish leaves no untracked temp behind')
+                      '#1692 §9 a failed publish leaves no temp behind')
+        # 权限位也是钉子（r1 评审 GLM boundary P3）：`os.replace` 发布的是**临时文件**的
+        # inode 与它自己的 mode（0666 & ~umask），源文件的 mode 会被丢掉。`core.filemode=true`
+        # 下换一个 umask 跑一次夹具就会在 `src/…` 上留下只有 mode 差异的 `git diff`，下一次
+        # preflight 同样整棵拒跑。先 chmod 再 rename，且 mode 取自源文件。
+        self.assertIn('mode = path.stat().st_mode & 0o7777', body,
+                      '#1692 §9 the published mode is taken from the source file')
+        self.assertIn('os.chmod(temporary, mode)', body,
+                      '#1692 §9 the temp gets the source mode before the rename')
+        self.assertLess(body.index('os.chmod(temporary, mode)'), body.index('os.replace('),
+                        '#1692 §9 the chmod happens before the publish, not after it')
+        # 落点也是钉子（#1843 r1 MiniMax boundary P1）：SIGKILL 不执行 `finally`，
+        # 所以「临时文件总会被删」恰好在唯一要紧的那条路径上是假的。放在被变异源旁边
+        # 就是放进 `src/`，而 `negative_process._assert_input_areas` 用
+        # `git ls-files --others`（故意包含被忽略的文件）扫 `src`，下一次运行会以
+        # 「untracked build input」拒跑——正是 §9 要消灭的那种锁死。放到仓库根、
+        # 落进 `.gitignore` 的 `.negctl-*` 命名空间，两个隐患同时消失，且仍在同一个
+        # 文件系统上，`os.replace` 依旧是一次原子 rename。
+        self.assertEqual(source.count("PUBLISH_DIR = root / '.negctl-publish'"), 1,
+                         '#1692 §9 the publish scratch dir is one root-level constant')
+        self.assertIn("PUBLISH_DIR / f'.negctl-{path.name}.tmp'", body,
+                      '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
+        self.assertIn('PUBLISH_DIR.mkdir(parents=True, exist_ok=True)', body,
+                      '#1692 §9 the scratch dir exists before the first publish')
+        repo = Path(__file__).resolve().parents[3]
+        ignored = subprocess.run(
+            ['git', 'check-ignore', '-q', str(repo/'.negctl-publish'/'sample.tmp')],
+            cwd=repo, capture_output=True)
+        self.assertEqual(ignored.returncode, 0,
+                         '#1692 §9 .gitignore really covers the scratch dir '
+                         '(.negctl-*), so a SIGKILL residue is not "untracked"')
         # 两个调用点都必须走它：写入变异体一条、还原一条。
         self.assertEqual(source.count('write_source_atomic(path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
@@ -919,30 +1021,64 @@ class EnvironmentControls(unittest.TestCase):
                          '#1692 §9 no truncating in-place write of a mutated source')
         self.assertEqual(re.findall(r'(?<![\w.])path\.write_bytes\(', source), [],
                          '#1692 §9 no truncating in-place restore of a source')
-        for label, old, new, fragment in (
-                ('atomic-publish-loses-fsync', '            os.fsync(stream.fileno())\n', '',
-                 'os.fsync(stream.fileno())'),
+
+    def test_mutation_source_writes_are_published_atomically(self):
+        # #1692 §9：变异写入与还原都是截断式原地写（`write_text` / `write_bytes` 先截断再写）。
+        # 一次 SIGKILL 落在两者之间，源码文件就只剩空/半截——下一次 `mutating_sources` 的
+        # pristine 检查读到「基线不符」，而且直到有人手工修树为止，每次运行都会这样。
+        # 正确形态是 tmp + fsync + 一次 rename：读者只会看到旧字节或新字节。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+        self.publish_guards(source)
+        for label, old, new in (
+                ('atomic-publish-loses-fsync', '            os.fsync(stream.fileno())\n', ''),
                 ('atomic-publish-copies-instead-of-renaming', 'os.replace(temporary, path)',
-                 'shutil.copyfile(temporary, path)', 'os.replace(temporary, path)'),
+                 'shutil.copyfile(temporary, path)'),
                 ('atomic-publish-keeps-the-temp',
-                 '        temporary.unlink(missing_ok=True)\n', '        pass\n',
-                 'temporary.unlink(missing_ok=True)'),
+                 '        temporary.unlink(missing_ok=True)\n', '        pass\n'),
+                # 权限位漂移：丢掉 chmod，发布出来的就是 temp 自己的 0666 & ~umask。
+                ('atomic-publish-loses-the-source-mode',
+                 '        os.chmod(temporary, mode)\n', ''),
+                ('atomic-publish-chmods-drops-the-special-bits',
+                 'mode = path.stat().st_mode & 0o7777', 'mode = 0o644'),
                 ('mutant-write-back-to-truncating',
-                 'write_source_atomic(path, changed.encode())', 'path.write_text(changed)',
-                 'path.write_text('),
+                 'write_source_atomic(path, changed.encode())', 'path.write_text(changed)'),
                 ('restore-write-back-to-truncating',
-                 'write_source_atomic(path, original)', 'path.write_bytes(original)',
-                 'path.write_bytes(')):
+                 'write_source_atomic(path, original)', 'path.write_bytes(original)'),
+                # 残留落回被变异源旁边 = 下一次 preflight 拒跑。
+                ('atomic-publish-leaves-residue-in-src',
+                 "    temporary = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+                 "    temporary = path.with_name(f'.negctl-{path.name}.tmp')"),
+                # 有 scratch 目录但名字不在 `.gitignore` 覆盖范围内。
+                ('atomic-publish-scratch-dir-not-ignored',
+                 "PUBLISH_DIR = root / '.negctl-publish'", "PUBLISH_DIR = root / 'negctl-publish'")):
             self.assertEqual(source.count(old), 1, f'#1692 §9 unique anchor: {label}')
-            mutant = source.replace(old, new, 1)
             with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
-                if fragment.startswith('path.write'):
-                    self.assertEqual(
-                        re.findall(r'(?<![\w.])' + re.escape(fragment.rstrip('(')) + r'\(', mutant),
-                        [], '#1692 §9 no truncating in-place write of a source')
-                else:
-                    self.assertIn(fragment, self.write_source_atomic_body(mutant))
+                self.publish_guards(source.replace(old, new, 1))
             print(f'#1692 §9 atomic-publish mutant {label}: KILLED', flush=True)
+
+    def test_shared_restore_write_is_a_known_gap(self):
+        """#1903：共享守卫的还原写仍是截断式，#1692 §9 只覆盖夹具自己那一处。
+
+        这条钉的是**已知缺口**，不是正确行为：`negative_process.py` 正被 #892 /
+        PR #1634 改同一个 `restore_critical` 块，本单按协调约束不碰它（同文件同函数
+        串行）。修好后这里会红，那就是提醒：把 §9 的断言扩到共享写入点、关掉 #1903。
+        没有这条，`test_mutation_source_writes_are_published_atomically` 会被读成
+        「被变异源已经全部原子发布」——那正是评审判的假 PASS。
+        """
+        source = (Path(__file__).resolve().parent/'fixtures/negative_process.py').read_text()
+        pattern = r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)'
+        self.assertEqual(re.findall(pattern, source), ['path.write_bytes(snapshot[path])'],
+                         '#1903 the shared restore write is still truncating; when it becomes '
+                         'atomic, extend test_mutation_source_writes_are_published_atomically '
+                         'to the shared guard and close #1903')
+        fixed = source.replace('path.write_bytes(snapshot[path])',
+                               'write_source_atomic(path, snapshot[path])', 1)
+        with self.assertRaises(AssertionError,
+                               msg='#1903 an atomic shared restore must flip this tripwire'):
+            self.assertEqual(re.findall(pattern, fixed), ['path.write_bytes(snapshot[path])'],
+                             '#1903 the shared restore write is still truncating')
+        print('#1903 shared-restore tripwire mutant atomic-shared-restore: KILLED', flush=True)
 
     def documented_exit_codes(self, script):
         """脚本头部「退出码…」那张表的码集（#1556 后是多行表，续行不算新码）。"""
@@ -975,8 +1111,19 @@ class EnvironmentControls(unittest.TestCase):
         return codes
 
     def used_exit_codes(self, script):
-        """脚本里真正写出来的非 0 `exit N`（不是文档，是可执行字节）。"""
-        return {int(code) for code in re.findall(r'\bexit (\d+)', script)} - {0}
+        """脚本里真正写出来的非 0 `exit N`（不是文档，是可执行字节）。
+
+        逐行跳过注释（与 `script_guards` 同口径——r1 评审 GLM boundary P3 / MiniMax
+        boundary P2）：`scripts/cargo-slots.sh` 头注释里有 `#     → exit 4 → 消费方当硬错`，
+        整篇 findall 会把注释读成可执行码。今天 4 本就在 used 里，集合恰好不变；但注释里
+        一旦出现 2 或任何未用的码，`reserved == {2}` 就会在脚本零改动时假红。
+        """
+        used = set()
+        for line in script.splitlines():
+            if line.lstrip().startswith('#'):
+                continue
+            used.update(int(code) for code in re.findall(r'\bexit (\d+)', line))
+        return used - {0}
 
     def script_guards(self, script):
         """每一条真实的 `exit N` 守卫：诊断（echo / printf）+ 紧随其后的 `exit N`（#1692 §10）。
@@ -1095,7 +1242,12 @@ class EnvironmentControls(unittest.TestCase):
                 "    if arguments:\n"
                 "        sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')",
                 '        sys.exit(self_check())',
-                "if mode is not None and mode.startswith('--'):\n"
+                # 零参数与单横线首参各有一条守卫（r1 评审 GLM boundary P3 /
+                # MiniMax boundary P2）：旧规则只封 `--*`，`-x` 会滑到主路径被当成
+                # 输出目录建出来，裸跑直接 IndexError。
+                "if mode is None:\n"
+                "    sys.exit(USAGE)",
+                "if mode.startswith('-'):\n"
                 "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')"):
             self.assertEqual(source.count(fragment), 1,
                              f'#1692 r15-4 the single dispatch rule keeps: {fragment}')
@@ -1147,6 +1299,20 @@ class EnvironmentControls(unittest.TestCase):
                   'negative_controls.py').read_text()
         script = (Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh').read_text()
         cases = self.slot_guard_cases(source, script)
+        # 「跳过注释」这一口径也要能红（r1 评审 GLM boundary P3 / MiniMax boundary P2）：
+        # 头注释里本来就有 `#     → exit 4 → 消费方当硬错`，而 4 恰好在 used 里，于是整篇
+        # findall 与逐行跳过注释给出**同一个**集合——差异平时不可见，规则被改回去也没人看得出。
+        # 往脚本尾部追加一行只存在于注释里的 `exit 5`：整篇读会把它当成「抛出的码」，
+        # 逐行口径必须不受影响。（放在这里而不是 slot_guard_cases 里：后者被下面每条变异
+        # 各调一次，放进去会把同一行打印 20 遍。）
+        used = self.used_exit_codes(script)
+        commented = script + '\n# → exit 5 → 只出现在注释里的码\n'
+        naive = {int(code) for code in re.findall(r'\bexit (\d+)', commented)} - {0}
+        self.assertIn(5, naive,
+                      '#1692 §10 the mutant comment is visible to a whole-text read')
+        self.assertEqual(self.used_exit_codes(commented), used,
+                         '#1692 §10 a code that only appears in a comment is not "raised"')
+        print('#1692 §10 exit-code mutant comment-only-code: KILLED', flush=True)
         # #1843 F：真闸探针的宿主条件（见 self_check_ci_gate 的说明），三种失效形态。
         self.self_check_ci_gate(source)
         for label, old, new in (
@@ -1241,8 +1407,19 @@ class EnvironmentControls(unittest.TestCase):
                  "        sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')\n",
                  '    if False:\n        pass\n'),
                 ('script-unknown-mode-becomes-main-path',
-                 "if mode is not None and mode.startswith('--'):\n"
+                 "if mode is None:\n"
+                 "    sys.exit(USAGE)\n"
+                 "if mode.startswith('-'):\n"
                  "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n",
+                 "if False:\n    pass\nif False:\n    pass\n"),
+                # 旧规则（只封 `--*`）的回归形态：`-x` 与裸跑重新滑到主路径。
+                ('script-single-dash-becomes-main-path',
+                 "if mode.startswith('-'):\n"
+                 "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n",
+                 'if mode.startswith("--"):\n'
+                 "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n"),
+                ('script-bare-invocation-crashes',
+                 "if mode is None:\n    sys.exit(USAGE)\n",
                  'if False:\n    pass\n'),
                 ('script-slot-probe-matches-by-prefix',
                  "if mode == '--slot-guard-probe':",
