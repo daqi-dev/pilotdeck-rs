@@ -411,24 +411,46 @@ def append_progress(**fields):
     os.fsync(progress.fileno())
 
 
+PUBLISH_DIR = root / '.negctl-publish'
+
+
 def write_source_atomic(path, data):
     """Publish source bytes in one rename, never a truncating in-place write.
 
     #1692 §9: `path.write_text` / `write_bytes` truncate first, so a SIGKILL in
     the middle of the write leaves an empty or half-written source. The next
     `mutating_sources` preflight reads that as "differs from HEAD" and refuses
-    every later run until a human repairs the tree. The temp file lives in the
-    same directory, so `os.replace` is one atomic rename and a reader only ever
-    sees the old or the new bytes (the pattern `native-config/negative_controls.py`
-    already uses). The temp name is removed on every failure path so it cannot
-    become an untracked build input.
+    every later run until a human repairs the tree.
+
+    The temp file goes to `PUBLISH_DIR` (the repository root), not next to the
+    target, and that placement is the point (MiniMax boundary r1 P1,
+    #1843 follow-up): a SIGKILL does not run `finally`, so "the temp is always
+    removed" is false on the one path that matters. Beside the target it would
+    land in `src/`, which `negative_process._assert_input_areas` scans with
+    `git ls-files --others` (ignored files included on purpose), and the next
+    run would die with "untracked build input" - the same lockout §9 exists to
+    remove. At the root it is both outside the scanned areas (`src`, `.cargo`,
+    `rust-toolchain*`) and inside the `.gitignore`d `.negctl-*` namespace.
+    Same filesystem, so `os.replace` is still ONE atomic rename: a reader sees
+    the old bytes or the new ones, never a half-written file.
     """
-    temporary = path.with_name(path.name + '.negctl.tmp')
+    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = PUBLISH_DIR / f'.negctl-{path.name}.tmp'
+    # The temp is a NEW inode, so the rename would publish the temp's own mode
+    # (0666 & ~umask) instead of the source's. With `core.filemode=true` a
+    # checkout made under one umask and a fixture run under another would then
+    # show a mode-only `git diff` on `src/...`, and the next preflight refuses
+    # the whole tree - the same lockout §9 removes (r1 GLM boundary P3).
+    mode = path.stat().st_mode & 0o7777
     try:
         with temporary.open('wb') as stream:
             stream.write(data)
             stream.flush()
+            # SIGKILL is the threat here, not power loss: the page cache
+            # outlives the process, so the flush above is enough; the rename
+            # itself needs no directory fsync for that.
             os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -677,17 +699,20 @@ def slot_timeout_probe():
     return problems
 
 
-def _send_signals_after(signals):
+def _send_signals_after(signals, record):
     """Send process-directed signals from a helper thread, main thread delivery.
 
     `pthread_sigmask` is per thread: the helper blocks the stop signals in
     itself so the kernel delivers them to the main thread, which is the thread
-    the fixture's handlers run on.
+    the fixture's handlers run on. The monotonic send time goes into `record`,
+    so the caller can prove the signal actually landed inside the window it
+    means to exercise instead of trusting a sleep.
     """
     def run():
         signal.pthread_sigmask(signal.SIG_BLOCK, STOP_SIGNALS)
         for sig, delay in signals:
             time.sleep(delay)
+            record['sent_at'] = time.monotonic()
             os.kill(os.getpid(), sig)
     return threading.Thread(target=run, daemon=True)
 
@@ -732,12 +757,25 @@ def restore_probe():
             record = {}
             signal.signal(signal.SIGTERM, _stop_on_signal)
             signal.signal(signal.SIGINT, _stop_on_signal)
-            sender = _send_signals_after([(signal.SIGTERM, 0.3)])
+            mask_start = time.monotonic()
+            sender = _send_signals_after([(signal.SIGTERM, 0.3)], record)
             sender.start()
             with stop_run(), simulated_restore(0.8, record), restore_window(timeout=10):
                 pass
             sender.join(timeout=5)
-            if 'interrupted' in record:
+            # A green result only means something if the signal really landed
+            # INSIDE the masked window (r1 GLM boundary P2 / MiniMax concurrency
+            # P2): a sender starved past the 0.8 s restore would otherwise make
+            # "the restore was not interrupted" true by never sending, and the
+            # `restore-mask-removed` control would look SURVIVED for the same
+            # reason. Three waypoints are checked instead of trusted.
+            sent = record.get('sent_at')
+            if sent is None:
+                problems.append('restore window: the helper thread never sent the signal')
+            elif not mask_start <= sent <= mask_start + 0.7:
+                problems.append('restore window: the signal missed the masked window '
+                                f'(sent at +{sent - mask_start:.2f}s of a 0.8 s restore)')
+            elif 'interrupted' in record:
                 problems.append('restore window: the stop signal interrupted the restore ('
                                 f"{record['interrupted']})")
             elif record.get('elapsed', 0) < 0.7:
@@ -823,19 +861,23 @@ def dispatch_probe():
     """
     problems = []
     invocations = (
-        (['--slot-guard-probe', 'only-one'], 'takes exactly 2 arguments'),
-        (['--slot-guard-probe', '/bin/true', 'not-a-timeout'], 'not a timeout'),
+        ([], '(no arguments)', 'usage: negative_controls.py'),
+        (['-x'], '-x', 'unknown mode'),
+        (['--slot-guard-probe', 'only-one'], '--slot-guard-probe only-one',
+         'takes exactly 2 arguments'),
+        (['--slot-guard-probe', '/bin/true', 'not-a-timeout'],
+         '--slot-guard-probe /bin/true not-a-timeout', 'not a timeout'),
         # A name that is not a mutation either, so a fall-through fails fast
-        # instead of starting the whole mutation suite.
-        (['--made-up-mode', 'extra'], 'unknown mode'),
+        # instead of starting the whole mutation suite - and creates a path named
+        # after the flag, which is what the `created` check below looks for.
+        (['--made-up-mode', 'extra'], '--made-up-mode extra', 'unknown mode'),
     )
     # `--self-check extra` is NOT driven here: with its arity guard removed that
     # child would simply start a full `--self-check`, i.e. spawn this probe again
     # and recurse. The static pin in `test_metadata_io_driver.py` owns that line
     # (and the manual invocation in the PR body shows the verdict).
     with tempfile.TemporaryDirectory(prefix='negctl-1316-dispatch-') as directory:
-        for arguments, needle in invocations:
-            label = ' '.join(arguments)
+        for arguments, label, needle in invocations:
             try:
                 result = run_owned([sys.executable, '-I', str(Path(__file__).resolve()),
                                     *arguments], cwd=directory, timeout=60)
@@ -1195,10 +1237,14 @@ self_check_controls = [
     # #1692 r15-4: without the unknown-mode guard a `--flag` becomes a main-path
     # argument instead of a usage error.
     ('unknown-mode-guard-removed',
-     [("if mode is not None and mode.startswith('--'):\n"
+     [("if mode.startswith('-'):\n"
        "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n",
        'if False:\n    pass\n')],
      True, 'dispatch --made-up-mode extra: no usage diagnostic', None),
+    # 零参数（裸跑）同样必须是用法错误，而不是主路径上的 IndexError。
+    ('bare-invocation-guard-removed',
+     [('if mode is None:\n    sys.exit(USAGE)\n', 'if False:\n    pass\n')],
+     True, 'dispatch (no arguments): no usage diagnostic', None),
 ]
 
 if not self_check_controls:
@@ -1321,10 +1367,15 @@ if mode in ('--self-check', '--self-check-controls'):
     for problem in control_problems:
         print('self-check control FAILED: ' + problem, file=sys.stderr)
     sys.exit(1 if control_problems else 0)
-if mode is not None and mode.startswith('--'):
+# 任何以 `-` 开头的首参都是模式位，不是输出目录：单横线（`-x`）与零参数（裸跑）此前都会
+# 滑到主路径——`-x` 被当成目录名建出来、裸跑直接 IndexError 回溯。两种都不是「用法错误」
+# 该有的样子，所以在这里一并封住（r1 评审 GLM boundary P3 / MiniMax boundary P2）。
+if mode is None:
+    sys.exit(USAGE)
+if mode.startswith('-'):
     sys.exit(f'unknown mode: {mode}\n{USAGE}')
 
-selected = sys.argv[2:]
+selected = arguments
 if selected:
     mutations = [mutation for mutation in mutations if mutation[0] in selected]
     # Explicit exit, not an assert: `python3 -O` strips asserts and the unknown
