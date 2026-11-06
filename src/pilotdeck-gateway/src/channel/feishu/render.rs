@@ -304,31 +304,13 @@ const VISIBLE_FAILURE_STATUS_EVENTS: &[&str] = &[
     "unknown_finish_reason",
 ];
 
-const WARNING_STATUS_EVENTS: &[&str] = &[
-    "model_empty_response_exhausted",
-    "max_turns_reached",
-    "max_output_recovery_exhausted",
-    "model_request_failed",
-    "tool_call_recovery_exhausted",
-    "tool_error_loop",
-    "lifecycle_blocked",
-    "turn_failed",
-    "turn_timeout",
-    "gateway_submit_failed",
-    "session_busy",
-    "gateway_bridge_error",
-    "gateway_stream_ended_without_completion",
-    "web_http_request_failed",
-    "project_unavailable",
-    "config_invalid",
-    "gateway_unavailable",
-    "channel_submit_failed",
-    "subagent_failed",
-    "content_filter_stop",
-    "unknown_finish_reason",
-    "structured_output_completed",
-    "turn_aborted",
-];
+/// `ImLiveReplyController.ts:102-106`: `WARNING_STATUS_EVENTS` is the
+/// visible-failure list plus two entries, so the two can never drift
+/// (`channel/weixin/live_reply.rs` keeps the same shape).
+const WARNING_STATUS_EVENTS_EXTRA: &[&str] = &["structured_output_completed", "turn_aborted"];
+fn is_warning_status_event(name: &str) -> bool {
+    VISIBLE_FAILURE_STATUS_EVENTS.contains(&name) || WARNING_STATUS_EVENTS_EXTRA.contains(&name)
+}
 
 /// `isVisibleFailureStatusDetail`: `detail.visible !== false && severity === "error"`.
 fn is_visible_failure_detail(detail: Option<&JsValue>) -> bool {
@@ -446,8 +428,7 @@ impl LiveReplyBuffer {
                 })
             )),
             _ => {
-                if (WARNING_STATUS_EVENTS.contains(&name.as_str())
-                    || is_visible_failure_detail(detail))
+                if (is_warning_status_event(&name) || is_visible_failure_detail(detail))
                     && let Some(message) = detail_message
                 {
                     self.text.push_str(&format!("\n⚠️ {message}\n"));

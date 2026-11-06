@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """#1763 production-assembly controls: the unmigrated-channel refusal must stay
-wired into `native_process::assembly::start`, not merely exist as a seam.
+wired into `native_process::assembly::start_impl` (reached by `start` and by
+`start_with_webhook`), not merely exist as a seam.
 
 OUT [mutation ...], --compile-only OUT, --check (also --check-anchors).
 The shared runner owns source restoration, offline cargo, nonce receipts,
