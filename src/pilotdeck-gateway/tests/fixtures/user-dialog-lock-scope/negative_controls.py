@@ -93,10 +93,31 @@ SETTLE_EVENTS_ASSERTION = ('#1599 a failing settle hook still delivers the lease
 REPLACED_POLL_TEST = ('user_dialog::channel_tests::'
                      'a_replaced_dialog_keeps_its_own_cross_gateway_poll')
 REPLACED_POLL_ASSERTION = '#1599 a replaced dialog keeps its own cross-gateway poll'
-REENTRANT_INSTALL_TEST = ('user_dialog::channel_tests::a_poll_entry_installed_after_a_'
-                          'reentrant_replacement_follows_the_replacement')
-REENTRANT_INSTALL_ASSERTION = ('#1599 a poll entry re-installed by a superseded '
-                               'registration follows the replacement')
+STORE_WRITE_TEST = ('user_dialog::channel_tests::'
+                    'a_registration_replaced_during_its_store_write_ends_without_'
+                    'publishing_a_bus_entry')
+STORE_WRITE_ASSERTION = ('#1599 a registration replaced during its store write '
+                         'must end with the replacement error')
+OBSERVER_REPLACE_TEST = ('user_dialog::channel_tests::'
+                         'a_registration_replaced_by_the_change_observer_ends_'
+                         'without_installing_a_poll')
+OBSERVER_REPLACE_ASSERTION = ('#1599 a registration replaced by the change '
+                              'observer must end with the replacement error')
+ABORT_REPLACE_TEST = ('user_dialog::channel_tests::'
+                      'an_abort_from_a_superseded_registration_leaves_the_'
+                      'replacement_pending')
+ABORT_REPLACE_ASSERTION = ('#1599 an abort from a superseded registration must '
+                           'not cancel the replacement')
+SETTLE_RELEASE_TEST = ('user_dialog::channel_tests::'
+                       'a_settle_that_releases_into_a_replacement_keeps_the_'
+                       'replacement_rows')
+SETTLE_RELEASE_ASSERTION = ("#1599 a superseded settle must not delete the "
+                            "replacement's store row")
+SETTLE_JOURNAL_TEST = ('user_dialog::channel_tests::'
+                       'a_settle_that_removes_its_journal_into_a_replacement_'
+                       'keeps_the_replacement_rows')
+SETTLE_JOURNAL_ASSERTION = ("#1599 a superseded settle must not delete the "
+                            "replacement's store row")
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -116,7 +137,11 @@ DECLARED = (
     'restore-drops-the-replaced-waiter',
     'settle-failure-drops-pre-consume-events',
     'replaced-dialog-loses-its-poll',
-    'superseded-install-overwrites-the-replacement-poll',
+    'superseded-registration-publishes-a-bus-entry',
+    'superseded-registration-installs-its-poll',
+    'superseded-abort-cancels-the-replacement',
+    'settle-release-deletes-the-replacement-row',
+    'settle-journal-deletes-the-replacement-row',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -287,16 +312,53 @@ mutations = [
     # channel.poll: the old request's stop deletes a same-id replacement's
     # poll entry again (TS keeps one timer per request).
     ('replaced-dialog-loses-its-poll', 'user_dialog/channel.rs',
-     '.is_some_and(|entry| entry.generation == generation)',
-     '.is_some_and(|entry| entry.generation >= generation)',
+     '.is_some_and(|entry| entry.registration == registration)',
+     '.is_some_and(|entry| entry.registration >= registration)',
      REPLACED_POLL_TEST, REPLACED_POLL_ASSERTION),
-    # channel.begin: a late install from a superseded registration overwrites
-    # the replacement's poll entry with its own generation, so the replacement
-    # stops polling (TS keeps one timer per request).
-    ('superseded-install-overwrites-the-replacement-poll', 'user_dialog/channel.rs',
-     'current.is_none_or(|current| current < generation)',
-     'current.is_none_or(|current| current > generation)',
-     REENTRANT_INSTALL_TEST, REENTRANT_INSTALL_ASSERTION),
+    # channel.begin: a registration replaced by a reentrant store write still
+    # publishes its bus entry, taking the bucket back from the replacement.
+    ('superseded-registration-publishes-a-bus-entry', 'user_dialog/channel.rs',
+     'if self.end_if_superseded(&state, "store write") {',
+     'if false && self.end_if_superseded(&state, "store write") {',
+     STORE_WRITE_TEST, STORE_WRITE_ASSERTION),
+    # channel.begin: a registration replaced by the change observer installs
+    # its poll anyway, so its waiter never ends and no bus entry can answer it.
+    ('superseded-registration-installs-its-poll', 'user_dialog/channel.rs',
+     'if self.end_if_superseded(&state, "timer read") {',
+     'if false && self.end_if_superseded(&state, "timer read") {',
+     OBSERVER_REPLACE_TEST, OBSERVER_REPLACE_ASSERTION),
+    # channel.cancel_owned: the abort callback cancels by request id again, so
+    # one superseded registration consumes the replacement's bus entry.
+    ('superseded-abort-cancels-the-replacement', 'user_dialog/channel.rs',
+     '    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {\n'
+     '        if self.superseded(state) {\n'
+     '            return;\n'
+     '        }',
+     '    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {\n'
+     '        if false && self.superseded(state) {\n'
+     '            return;\n'
+     '        }',
+     ABORT_REPLACE_TEST, ABORT_REPLACE_ASSERTION),
+    # settle: the re-check after `release` is dropped, so the superseded
+    # request deletes the rows the replacement wrote under the same id.
+    ('settle-release-deletes-the-replacement-row', 'user_dialog/channel.rs',
+     '        // `release` is host code; a reentrant callback may have registered the\n'
+     '        // same id and written its own journal/store rows. Stop before deleting\n'
+     '        // the replacement\'s records (#1599).\n'
+     '        if superseded_by_registration(inner, state) {\n'
+     '            return Ok(());\n'
+     '        }',
+     '',
+     SETTLE_RELEASE_TEST, SETTLE_RELEASE_ASSERTION),
+    # settle: the same re-check after `journal.remove`.
+    ('settle-journal-deletes-the-replacement-row', 'user_dialog/channel.rs',
+     '        journal.remove(&state.request_id)?;\n'
+     '        // Same window as above, one destructive step later.\n'
+     '        if superseded_by_registration(inner, state) {\n'
+     '            return Ok(());\n'
+     '        }',
+     '        journal.remove(&state.request_id)?;',
+     SETTLE_JOURNAL_TEST, SETTLE_JOURNAL_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]
