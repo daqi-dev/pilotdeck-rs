@@ -126,22 +126,28 @@ fn count_receipts(dir: &Path, site: &str, phase: &str, key: &str) -> usize {
         .filter(|receipt| matches(receipt, site, phase, key))
         .count()
 }
-/// The lowest sequence number of a `phase` receipt for `key`, if any.
+/// The lowest sequence number of a `phase` receipt for `site`/`key`, if any.
 /// Deliberately non-panicking (`BarrierRelease::drop` calls it while a failed
 /// assertion is unwinding, where a second panic aborts the process) and
 /// order-independent: `read_dir` returns entries in no defined order, so the
-/// caller must pick by sequence, never by the first match.
-fn receipt_seq(dir: &Path, phase: &str, key: &str) -> Option<u64> {
+/// caller must pick by sequence, never by the first match. Filters by the same
+/// `.json` extension `receipts()` uses, so a `*.json.tmp` write in flight (or
+/// any other sidecar) is never counted as a receipt.
+fn receipt_seq(dir: &Path, site: &str, phase: &str, key: &str) -> Option<u64> {
     let entries = fs::read_dir(dir.join("witness")).ok()?;
     let mut seqs: Vec<u64> = Vec::new();
     for entry in entries.flatten() {
-        let Ok(text) = fs::read_to_string(entry.path()) else {
+        let path = entry.path();
+        if !path.extension().is_some_and(|e| e == "json") {
+            continue;
+        }
+        let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
         let Ok(receipt) = parse_json(&text) else {
             continue;
         };
-        if matches(&receipt, "registry", phase, key)
+        if matches(&receipt, site, phase, key)
             && let Some(seq) = field(&receipt, "seq").as_number()
         {
             seqs.push(seq as u64);
@@ -159,23 +165,27 @@ fn receipt_seq(dir: &Path, phase: &str, key: &str) -> Option<u64> {
 /// exists once the barrier has been consumed and written its `block` receipt,
 /// so a failure between `arm` and that receipt still leaves the window B3
 /// describes. From the block receipt on, this guard covers every later
-/// assertion, including the ones before the test's own `release` call.
+/// assertion, including the ones before the test's own `release` call. `site`
+/// is a parameter because the writer barrier and the two-site case hold
+/// barriers on the writer track as well as the registry one.
 struct BarrierRelease {
     control: PathBuf,
+    site: &'static str,
     key: &'static str,
 }
 impl BarrierRelease {
-    fn new(control: &Path, key: &'static str) -> Self {
+    fn new(control: &Path, site: &'static str, key: &'static str) -> Self {
         Self {
             control: control.to_path_buf(),
+            site,
             key,
         }
     }
 }
 impl Drop for BarrierRelease {
     fn drop(&mut self) {
-        if receipt_seq(&self.control, "release", self.key).is_none()
-            && let Some(seq) = receipt_seq(&self.control, "block", self.key)
+        if receipt_seq(&self.control, self.site, "release", self.key).is_none()
+            && let Some(seq) = receipt_seq(&self.control, self.site, "block", self.key)
         {
             // Non-panicking release: a `.unwrap()` here could abort during unwind.
             let temporary = self.control.join("release.json.tmp");
@@ -184,7 +194,7 @@ impl Drop for BarrierRelease {
             }
             let deadline = Instant::now() + Duration::from_secs(2);
             while Instant::now() < deadline
-                && receipt_seq(&self.control, "release", self.key).is_none()
+                && receipt_seq(&self.control, self.site, "release", self.key).is_none()
             {
                 thread::sleep(POLL);
             }
@@ -194,7 +204,7 @@ impl Drop for BarrierRelease {
         // race the worker into re-creating it) before that write finishes.
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline
-            && receipt_seq(&self.control, "complete", self.key).is_none()
+            && receipt_seq(&self.control, self.site, "complete", self.key).is_none()
         {
             thread::sleep(POLL);
         }
@@ -346,6 +356,7 @@ fn writer_barrier_blocks_underlying_append() {
             HELD_BOUND_MS,
         )]),
     );
+    let _release_guard = BarrierRelease::new(&control, "writer", "turn_timeout");
     let (writer, path) = writer_fixture(&scratch.0, Some(armed(&control)));
     let blocked = {
         let writer = writer.clone();
@@ -524,6 +535,7 @@ fn barrier_and_fault_ids_are_single_shot() {
             HELD_BOUND_MS,
         )]),
     );
+    let _release_guard = BarrierRelease::new(&control, "writer", "session_metadata");
     let blocked = {
         let writer = writer.clone();
         thread::spawn(move || {
@@ -632,6 +644,10 @@ fn registry_barrier_holds_chain_lock() {
             HELD_BOUND_MS,
         )]),
     );
+    // Bound by `registry-barrier-outside-lock`, so this case takes the failure
+    // path on every negative-control run: without the guard the blocked thread
+    // outlives `Scratch` and re-creates `/tmp/pdrs-stimulus-*`.
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let blocked = {
         let registry = registry.clone();
         thread::spawn(move || {
@@ -693,7 +709,7 @@ fn registry_barrier_holds_chain_lock() {
 async fn registry_port_appends_queue_with_witness_receipts() {
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let port = Arc::new(
         crate::runtime::turn::publish::FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -795,7 +811,7 @@ async fn publication_queued_receipt_survives_predecessor_serialization() {
     use crate::runtime::turn::publish::{FileRegistry, TurnPublisher, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let registry = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -869,7 +885,7 @@ async fn failed_queued_witness_fails_the_append_before_the_worker() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -993,7 +1009,7 @@ async fn witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -1110,7 +1126,7 @@ async fn withheld_witnessed_future_does_not_park_the_registry_worker() {
     use crate::runtime::turn::publish::{FileRegistry, TurnRunRegistry};
     let scratch = Scratch::new();
     let control = scratch.control();
-    let _release_guard = BarrierRelease::new(&control, "agent_status:turn_timeout");
+    let _release_guard = BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let port = Arc::new(
         FileRegistry::new(
             FileRunRegistry::open_with_stimulus(scratch.0.join("runs.json"), Some(armed(&control)))
@@ -1230,6 +1246,9 @@ fn two_site_barriers_release_by_sequence() {
             barrier_fragment("registry", "r1", "agent_status:turn_timeout", HELD_BOUND_MS),
         ]),
     );
+    let _writer_release_guard = BarrierRelease::new(&control, "writer", "session_metadata");
+    let _registry_release_guard =
+        BarrierRelease::new(&control, "registry", "agent_status:turn_timeout");
     let (writer, path) = writer_fixture(&scratch.0, Some(stimulus));
     let writer_blocked = {
         let writer = writer.clone();
