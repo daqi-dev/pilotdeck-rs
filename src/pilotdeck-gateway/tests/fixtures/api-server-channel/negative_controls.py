@@ -35,6 +35,7 @@ DUPLICATE = "channel::api_server::tests::duplicate_chat_is_busy_then_free"
 OVERSIZED = "channel::api_server::tests::oversized_body_closes_without_response"
 EXACT_LIMIT = "channel::api_server::tests::body_at_the_exact_limit_is_read_then_rejected_as_json"
 PARTIAL_BODY = "channel::api_server::tests::partial_body_is_answered_at_the_body_read_deadline"
+BODY_DEADLINE = "channel::api_server::tests::body_read_deadline_defaults_to_the_node_request_timeout"
 RENDER_VISIBLE = "channel::api_server::tests::render_visible_failure_status_names_match_ts"
 DEFAULT_PORT_TEST = "channel::api_server::tests::unconfigured_port_falls_back_to_the_ts_default"
 
@@ -165,6 +166,17 @@ mutations = [
         "return Ok(finish(crate::channel::webhook::node_request_timeout_response(), keep_alive));",
         PARTIAL_BODY,
         "#1333 the requestTimeout 408 must not gain a Date header",
+    ),
+    (
+        # #1620: shorten the default deadline. Every other check injects its own
+        # 200 ms deadline or skips the cell, so without this row the constant
+        # could drift from Node's 300 s default with the suite still green.
+        "api-server-body-read-default-timeout",
+        MOD,
+        "pub const DEFAULT_BODY_READ_TIMEOUT: Duration = Duration::from_secs(300);",
+        "pub const DEFAULT_BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);",
+        BODY_DEADLINE,
+        "#1620 the body-read deadline must stay at Node's default requestTimeout",
     ),
 ]
 
