@@ -105,20 +105,701 @@ fn case(name: &str) -> Value {
         .unwrap_or_else(|| panic!("#1334 oracle case {name} is missing"))
 }
 
+// #1729: distinguish omitted recording fields from present values of the
+// wrong type. Each switch restores only its own field's old fail-open read.
+fn recorded_checked<'a, T>(
+    value: Option<&'a Value>,
+    field: &str,
+    kind: &str,
+    parse: impl FnOnce(&'a Value) -> Option<T>,
+    required: bool,
+    fail_open: bool,
+) -> Result<Option<T>, String> {
+    match value {
+        None if required && !fail_open => {
+            Err(format!("#1334 {field} must be {kind}, got <missing>"))
+        }
+        None => Ok(None),
+        Some(value) => match parse(value) {
+            Some(parsed) => Ok(Some(parsed)),
+            None if fail_open => Ok(None),
+            None => Err(format!("#1334 {field} must be {kind}, got {value}")),
+        },
+    }
+}
+
+fn recorded_method_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("method"),
+        "method",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-method"),
+    )
+}
+
+fn recorded_method(value: &Value) -> Option<&str> {
+    recorded_method_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_method_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_method_checked(&json!({"method": []})).is_err(),
+        "#1334 #1729 rejects method type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 method must be a string")]
+fn recorded_method_panics_on_wrong_type() {
+    recorded_method(&json!({"method": []}));
+}
+
+fn recorded_target_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("target"),
+        "target",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-target"),
+    )
+}
+
+fn recorded_target(value: &Value) -> Option<&str> {
+    recorded_target_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_target_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_target_checked(&json!({"target": []})).is_err(),
+        "#1334 #1729 rejects target type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 target must be a string")]
+fn recorded_target_panics_on_wrong_type() {
+    recorded_target(&json!({"target": []}));
+}
+
+fn recorded_headers_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("headers"),
+        "headers",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("webhook-oracle-recorded-headers"),
+    )
+}
+
+fn recorded_headers(value: &Value) -> Option<&Value> {
+    recorded_headers_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_headers_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_headers_checked(&json!({"headers": []})).is_err(),
+        "#1334 #1729 rejects headers type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 headers must be an object")]
+fn recorded_headers_panics_on_wrong_type() {
+    recorded_headers(&json!({"headers": []}));
+}
+
+fn recorded_body_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("body"),
+        "body",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-body"),
+    )
+}
+
+fn recorded_body(value: &Value) -> Option<&str> {
+    recorded_body_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_body_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_body_checked(&json!({"body": []})).is_err(),
+        "#1334 #1729 rejects body type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 body must be a string")]
+fn recorded_body_panics_on_wrong_type() {
+    recorded_body(&json!({"body": []}));
+}
+
+fn recorded_mode_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("mode"),
+        "mode",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-mode"),
+    )
+}
+
+fn recorded_mode(value: &Value) -> Option<&str> {
+    recorded_mode_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_mode_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_mode_checked(&json!({"mode": []})).is_err(),
+        "#1334 #1729 rejects mode type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 mode must be a string")]
+fn recorded_mode_panics_on_wrong_type() {
+    recorded_mode(&json!({"mode": []}));
+}
+
+fn recorded_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("count"),
+        "count",
+        "a u64",
+        Value::as_u64,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-count"),
+    )
+}
+
+fn recorded_count(value: &Value) -> Option<u64> {
+    recorded_count_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_count_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_count_checked(&json!({"count": []})).is_err(),
+        "#1334 #1729 rejects count type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 count must be a u64")]
+fn recorded_count_panics_on_wrong_type() {
+    recorded_count(&json!({"count": []}));
+}
+
+fn recorded_pin_checked(value: &Value) -> Result<Option<bool>, String> {
+    recorded_checked(
+        value.get("pin"),
+        "pin",
+        "a boolean",
+        Value::as_bool,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-pin"),
+    )
+}
+
+fn recorded_pin(value: &Value) -> Option<bool> {
+    recorded_pin_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_pin_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_pin_checked(&json!({"pin": []})).is_err(),
+        "#1334 #1729 rejects pin type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 pin must be a boolean")]
+fn recorded_pin_panics_on_wrong_type() {
+    recorded_pin(&json!({"pin": []}));
+}
+
+fn recorded_cron_session_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("sessionKey"),
+        "cron.sessionKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-cron-session"),
+    )
+}
+
+fn recorded_cron_session(value: &Value) -> Option<&str> {
+    recorded_cron_session_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_session_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_session_checked(&json!({"sessionKey": []})).is_err(),
+        "#1334 #1729 rejects cron.sessionKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 cron.sessionKey must be a string")]
+fn recorded_cron_session_panics_on_wrong_type() {
+    recorded_cron_session(&json!({"sessionKey": []}));
+}
+
+fn recorded_cron_text_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("text"),
+        "cron.text",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-cron-text"),
+    )
+}
+
+fn recorded_cron_text(value: &Value) -> Option<&str> {
+    recorded_cron_text_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_text_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_text_checked(&json!({"text": []})).is_err(),
+        "#1334 #1729 rejects cron.text type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 cron.text must be a string")]
+fn recorded_cron_text_panics_on_wrong_type() {
+    recorded_cron_text(&json!({"text": []}));
+}
+
+fn recorded_cron_origin_session_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("originSessionKey"),
+        "cron.originSessionKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-cron-origin-session"),
+    )
+}
+
+fn recorded_cron_origin_session(value: &Value) -> Option<&str> {
+    recorded_cron_origin_session_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_origin_session_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_origin_session_checked(&json!({"originSessionKey": []})).is_err(),
+        "#1334 #1729 rejects cron.originSessionKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 cron.originSessionKey must be a string")]
+fn recorded_cron_origin_session_panics_on_wrong_type() {
+    recorded_cron_origin_session(&json!({"originSessionKey": []}));
+}
+
+fn recorded_cron_origin_channel_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("originChannelKey"),
+        "cron.originChannelKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-cron-origin-channel"),
+    )
+}
+
+fn recorded_cron_origin_channel(value: &Value) -> Option<&str> {
+    recorded_cron_origin_channel_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_origin_channel_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_origin_channel_checked(&json!({"originChannelKey": []})).is_err(),
+        "#1334 #1729 rejects cron.originChannelKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 cron.originChannelKey must be a string")]
+fn recorded_cron_origin_channel_panics_on_wrong_type() {
+    recorded_cron_origin_channel(&json!({"originChannelKey": []}));
+}
+
+fn recorded_options_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("options"),
+        "options",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("webhook-oracle-recorded-options"),
+    )
+}
+
+fn recorded_options(value: &Value) -> Option<&Value> {
+    recorded_options_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_options_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_options_checked(&json!({"options": []})).is_err(),
+        "#1334 #1729 rejects options type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options must be an object")]
+fn recorded_options_panics_on_wrong_type() {
+    recorded_options(&json!({"options": []}));
+}
+
+fn recorded_port_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("port"),
+        "options.port",
+        "a number or <busy-port>",
+        |value| (value.is_number() || value.as_str() == Some("<busy-port>")).then_some(value),
+        false,
+        crate::mutants::on("webhook-oracle-recorded-port"),
+    )
+}
+
+fn recorded_port(value: &Value) -> Option<&Value> {
+    recorded_port_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_port_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_port_checked(&json!({"port": []})).is_err(),
+        "#1334 #1729 rejects options.port type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.port must be a number or <busy-port>")]
+fn recorded_port_panics_on_wrong_type() {
+    recorded_port(&json!({"port": []}));
+}
+
+fn recorded_routes_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("routes"),
+        "options.routes",
+        "an object",
+        |value| value.is_object().then_some(value),
+        true,
+        crate::mutants::on("webhook-oracle-recorded-routes"),
+    )
+}
+
+fn recorded_routes(value: &Value) -> Option<&Value> {
+    recorded_routes_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_routes_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_routes_checked(&json!({"routes": []})).is_err(),
+        "#1334 #1729 rejects options.routes type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.routes must be an object")]
+fn recorded_routes_panics_on_wrong_type() {
+    recorded_routes(&json!({"routes": []}));
+}
+
+fn recorded_secret_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("secret"),
+        "options.secret",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-secret"),
+    )
+}
+
+fn recorded_secret(value: &Value) -> Option<&str> {
+    recorded_secret_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_secret_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_secret_checked(&json!({"secret": []})).is_err(),
+        "#1334 #1729 rejects options.secret type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.secret must be a string")]
+fn recorded_secret_panics_on_wrong_type() {
+    recorded_secret(&json!({"secret": []}));
+}
+
+fn recorded_rate_limit_checked(value: &Value) -> Result<Option<f64>, String> {
+    recorded_checked(
+        value.get("rateLimit"),
+        "options.rateLimit",
+        "a number",
+        Value::as_f64,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-rate-limit"),
+    )
+}
+
+fn recorded_rate_limit(value: &Value) -> Option<f64> {
+    recorded_rate_limit_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_rate_limit_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_rate_limit_checked(&json!({"rateLimit": []})).is_err(),
+        "#1334 #1729 rejects options.rateLimit type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.rateLimit must be a number")]
+fn recorded_rate_limit_panics_on_wrong_type() {
+    recorded_rate_limit(&json!({"rateLimit": []}));
+}
+
+fn recorded_max_body_checked(value: &Value) -> Result<Option<f64>, String> {
+    recorded_checked(
+        value.get("maxBodyBytes"),
+        "options.maxBodyBytes",
+        "a number",
+        Value::as_f64,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-max-body"),
+    )
+}
+
+fn recorded_max_body(value: &Value) -> Option<f64> {
+    recorded_max_body_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_max_body_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_max_body_checked(&json!({"maxBodyBytes": []})).is_err(),
+        "#1334 #1729 rejects options.maxBodyBytes type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.maxBodyBytes must be a number")]
+fn recorded_max_body_panics_on_wrong_type() {
+    recorded_max_body(&json!({"maxBodyBytes": []}));
+}
+
+fn recorded_mapper_uuid_checked(value: &Value) -> Result<Option<bool>, String> {
+    recorded_checked(
+        value.get("mapperFixedUuid"),
+        "options.mapperFixedUuid",
+        "a boolean",
+        Value::as_bool,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-mapper-uuid"),
+    )
+}
+
+fn recorded_mapper_uuid(value: &Value) -> Option<bool> {
+    recorded_mapper_uuid_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_mapper_uuid_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_mapper_uuid_checked(&json!({"mapperFixedUuid": []})).is_err(),
+        "#1334 #1729 rejects options.mapperFixedUuid type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 options.mapperFixedUuid must be a boolean")]
+fn recorded_mapper_uuid_panics_on_wrong_type() {
+    recorded_mapper_uuid(&json!({"mapperFixedUuid": []}));
+}
+
+fn recorded_scripts_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("scripts"),
+        "scripts",
+        "an array",
+        Value::as_array,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-scripts"),
+    )
+}
+
+fn recorded_scripts(value: &Value) -> Option<&Vec<Value>> {
+    recorded_scripts_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_scripts_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_scripts_checked(&json!({"scripts": false})).is_err(),
+        "#1334 #1729 rejects scripts type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 scripts must be an array")]
+fn recorded_scripts_panics_on_wrong_type() {
+    recorded_scripts(&json!({"scripts": false}));
+}
+
+fn recorded_steps_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("steps"),
+        "steps",
+        "an array",
+        Value::as_array,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-steps"),
+    )
+}
+
+fn recorded_steps(value: &Value) -> Option<&Vec<Value>> {
+    recorded_steps_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_steps_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_steps_checked(&json!({"steps": false})).is_err(),
+        "#1334 #1729 rejects steps type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 steps must be an array")]
+fn recorded_steps_panics_on_wrong_type() {
+    recorded_steps(&json!({"steps": false}));
+}
+
+fn recorded_op_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("op"),
+        "op",
+        "a string",
+        Value::as_str,
+        true,
+        crate::mutants::on("webhook-oracle-recorded-op"),
+    )
+}
+
+fn recorded_op(value: &Value) -> Option<&str> {
+    recorded_op_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_op_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_op_checked(&json!({"op": []})).is_err(),
+        "#1334 #1729 rejects op type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 op must be a string")]
+fn recorded_op_panics_on_wrong_type() {
+    recorded_op(&json!({"op": []}));
+}
+
+fn recorded_stop_reason_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("reason"),
+        "stop.reason",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("webhook-oracle-recorded-stop-reason"),
+    )
+}
+
+fn recorded_stop_reason(value: &Value) -> Option<&str> {
+    recorded_stop_reason_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_stop_reason_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_stop_reason_checked(&json!({"reason": []})).is_err(),
+        "#1334 #1729 rejects stop.reason type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 stop.reason must be a string")]
+fn recorded_stop_reason_panics_on_wrong_type() {
+    recorded_stop_reason(&json!({"reason": []}));
+}
+
 /// The generator's gateway mock: every `submitTurn` records its input and
 /// replays one scripted event list; the string `"<throw>"` rejects the
 /// iterator with `Error: gateway exploded`.
 struct MockGateway {
     calls: Arc<Mutex<Vec<Value>>>,
-    scripts: Mutex<VecDeque<Value>>,
+    scripts: Mutex<VecDeque<Vec<Value>>>,
 }
 
 impl MockGateway {
-    fn from_scripts(scripts: &[Value]) -> Self {
-        Self {
+    fn from_scripts_checked(scripts: &[Value]) -> Result<Self, String> {
+        let scripts = scripts
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                recorded_checked(
+                    Some(value),
+                    &format!("scripts[{index}]"),
+                    "an array",
+                    Value::as_array,
+                    false,
+                    crate::mutants::on("webhook-oracle-script-entry"),
+                )
+                .map(|events| events.cloned().unwrap_or_default())
+            })
+            .collect::<Result<VecDeque<_>, _>>()?;
+        Ok(Self {
             calls: Arc::new(Mutex::new(Vec::new())),
-            scripts: Mutex::new(scripts.iter().cloned().collect()),
-        }
+            scripts: Mutex::new(scripts),
+        })
+    }
+
+    fn from_scripts(scripts: &[Value]) -> Self {
+        // Validate before a detached submit task can hide a malformed script.
+        Self::from_scripts_checked(scripts).unwrap_or_else(|error| panic!("{error}"))
     }
 
     fn calls_snapshot(&self) -> Vec<Value> {
@@ -143,7 +824,7 @@ impl TurnGateway for MockGateway {
             .pop_front()
             .unwrap_or_default();
         let (sender, receiver) = mpsc::unbounded_channel();
-        for step in script.as_array().cloned().unwrap_or_default() {
+        for step in script {
             if step.as_str() == Some("<throw>") {
                 let _ = sender.send(Err(ChannelError::error("gateway exploded")));
             } else {
@@ -335,32 +1016,276 @@ fn install(channel: &WebhookChannel, gateway: Option<Arc<dyn TurnGateway>>, logg
 
 /// The recorder's `requestBytes`: Host first, the step's headers in order,
 /// then `Connection: close` for close mode, then the body's byte length.
-fn request_bytes(step: &Value) -> String {
+fn request_bytes_checked(step: &Value) -> Result<String, String> {
     let mut lines = vec![format!(
         "{} {} HTTP/1.1",
-        step["method"].as_str().unwrap_or_default(),
-        step["target"].as_str().unwrap_or_default()
+        recorded_method_checked(step)?.unwrap_or_default(),
+        recorded_target_checked(step)?.unwrap_or_default()
     )];
     lines.push("Host: 127.0.0.1".to_owned());
-    let headers = step["headers"].as_object();
+    let headers = recorded_headers_checked(step)?.and_then(Value::as_object);
     let has = |name: &str| headers.is_some_and(|map| map.contains_key(name));
     if let Some(map) = headers {
         for (name, value) in map {
-            lines.push(format!("{name}: {}", value.as_str().unwrap_or_default()));
+            let text = recorded_checked(
+                Some(value),
+                &format!("headers.{name}"),
+                "a string",
+                Value::as_str,
+                false,
+                crate::mutants::on("webhook-oracle-header-value"),
+            )?
+            .unwrap_or_default();
+            lines.push(format!("{name}: {text}"));
         }
     }
-    let mode = step["mode"].as_str().unwrap_or("close");
+    let mode = recorded_mode_checked(step)?.unwrap_or("close");
     if mode == "close" && !has("Connection") {
         lines.push("Connection: close".to_owned());
     }
-    let body = step.get("body").and_then(Value::as_str);
-    if body.is_some() && !has("Content-Length") {
-        lines.push(format!(
-            "Content-Length: {}",
-            body.unwrap_or_default().len()
-        ));
+    let body = recorded_body_checked(step)?;
+    if let Some(body) = body.filter(|_| !has("Content-Length")) {
+        lines.push(format!("Content-Length: {}", body.len()));
     }
-    format!("{}\r\n\r\n{}", lines.join("\r\n"), body.unwrap_or_default())
+    Ok(format!(
+        "{}\r\n\r\n{}",
+        lines.join("\r\n"),
+        body.unwrap_or_default()
+    ))
+}
+
+fn request_bytes(step: &Value) -> String {
+    request_bytes_checked(step).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_header_value_rejects_drift() {
+    negative_assert!(
+        request_bytes_checked(&json!({"headers":{"x-test":7}})).is_err(),
+        "#1334 #1729 rejects header value type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 headers.x-test must be a string")]
+fn recorded_header_value_panics_on_drift() {
+    request_bytes(&json!({"headers":{"x-test":7}}));
+}
+
+#[test]
+fn recorded_script_entry_rejects_drift() {
+    negative_assert!(
+        MockGateway::from_scripts_checked(&[Value::Null]).is_err(),
+        "#1334 #1729 rejects script entry type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1334 scripts[0] must be an array")]
+fn recorded_script_entry_panics_on_drift() {
+    MockGateway::from_scripts(&[Value::Null]);
+}
+
+#[test]
+fn absent_recording_fields_keep_defaults() {
+    let empty = json!({});
+    assert_eq!(
+        request_bytes(&empty),
+        "  HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        "#1334 absent request fields"
+    );
+    let delivery = delivery_from_step(&empty);
+    assert!(
+        delivery.session_key.equals_str(""),
+        "#1334 absent cron session"
+    );
+    assert!(
+        delivery.text.equals_str("cron text"),
+        "#1334 absent cron text"
+    );
+    assert!(
+        delivery.origin_session_key.is_none() && delivery.origin_channel_key.is_none(),
+        "#1334 absent cron origins"
+    );
+    assert!(
+        MockGateway::from_scripts_checked(&[]).is_ok(),
+        "#1334 absent scripts"
+    );
+    assert!(
+        MockGateway::from_scripts_checked(&[json!([])]).is_ok(),
+        "#1334 empty script is legal"
+    );
+    assert!(recorded_method(&empty).is_none(), "#1334 absent method");
+    assert!(
+        recorded_method(&json!({"method":"value"})).is_some(),
+        "#1334 valid method"
+    );
+    assert!(recorded_target(&empty).is_none(), "#1334 absent target");
+    assert!(
+        recorded_target(&json!({"target":"value"})).is_some(),
+        "#1334 valid target"
+    );
+    assert!(recorded_headers(&empty).is_none(), "#1334 absent headers");
+    assert!(
+        recorded_headers(&json!({"headers":{}})).is_some(),
+        "#1334 valid headers"
+    );
+    assert!(recorded_body(&empty).is_none(), "#1334 absent body");
+    assert!(
+        recorded_body(&json!({"body":"value"})).is_some(),
+        "#1334 valid body"
+    );
+    assert!(recorded_mode(&empty).is_none(), "#1334 absent mode");
+    assert!(
+        recorded_mode(&json!({"mode":"value"})).is_some(),
+        "#1334 valid mode"
+    );
+    assert!(recorded_count(&empty).is_none(), "#1334 absent count");
+    assert!(
+        recorded_count(&json!({"count":1})).is_some(),
+        "#1334 valid count"
+    );
+    assert!(recorded_pin(&empty).is_none(), "#1334 absent pin");
+    assert!(
+        recorded_pin(&json!({"pin":true})).is_some(),
+        "#1334 valid pin"
+    );
+    assert!(
+        recorded_cron_session(&empty).is_none(),
+        "#1334 absent cron.sessionKey"
+    );
+    assert!(
+        recorded_cron_session(&json!({"sessionKey":"value"})).is_some(),
+        "#1334 valid cron.sessionKey"
+    );
+    assert!(
+        recorded_cron_text(&empty).is_none(),
+        "#1334 absent cron.text"
+    );
+    assert!(
+        recorded_cron_text(&json!({"text":"value"})).is_some(),
+        "#1334 valid cron.text"
+    );
+    assert!(
+        recorded_cron_origin_session(&empty).is_none(),
+        "#1334 absent cron.originSessionKey"
+    );
+    assert!(
+        recorded_cron_origin_session(&json!({"originSessionKey":"value"})).is_some(),
+        "#1334 valid cron.originSessionKey"
+    );
+    assert!(
+        recorded_cron_origin_channel(&empty).is_none(),
+        "#1334 absent cron.originChannelKey"
+    );
+    assert!(
+        recorded_cron_origin_channel(&json!({"originChannelKey":"value"})).is_some(),
+        "#1334 valid cron.originChannelKey"
+    );
+    assert!(recorded_options(&empty).is_none(), "#1334 absent options");
+    assert!(
+        recorded_options(&json!({"options":{}})).is_some(),
+        "#1334 valid options"
+    );
+    assert!(recorded_port(&empty).is_none(), "#1334 absent options.port");
+    assert!(
+        recorded_port(&json!({"port":0})).is_some(),
+        "#1334 valid options.port"
+    );
+    assert!(
+        recorded_routes_checked(&empty).is_err(),
+        "#1334 missing options.routes"
+    );
+    assert!(
+        recorded_routes(&json!({"routes":{}})).is_some(),
+        "#1334 valid options.routes"
+    );
+    assert!(
+        recorded_secret(&empty).is_none(),
+        "#1334 absent options.secret"
+    );
+    assert!(
+        recorded_secret(&json!({"secret":"value"})).is_some(),
+        "#1334 valid options.secret"
+    );
+    assert!(
+        recorded_rate_limit(&empty).is_none(),
+        "#1334 absent options.rateLimit"
+    );
+    assert!(
+        recorded_rate_limit(&json!({"rateLimit":1.5})).is_some(),
+        "#1334 valid options.rateLimit"
+    );
+    assert!(
+        recorded_max_body(&empty).is_none(),
+        "#1334 absent options.maxBodyBytes"
+    );
+    assert!(
+        recorded_max_body(&json!({"maxBodyBytes":1.5})).is_some(),
+        "#1334 valid options.maxBodyBytes"
+    );
+    assert!(
+        recorded_mapper_uuid(&empty).is_none(),
+        "#1334 absent options.mapperFixedUuid"
+    );
+    assert!(
+        recorded_mapper_uuid(&json!({"mapperFixedUuid":true})).is_some(),
+        "#1334 valid options.mapperFixedUuid"
+    );
+    assert!(recorded_scripts(&empty).is_none(), "#1334 absent scripts");
+    assert!(
+        recorded_scripts(&json!({"scripts":[]})).is_some(),
+        "#1334 valid scripts"
+    );
+    assert!(recorded_steps(&empty).is_none(), "#1334 absent steps");
+    assert!(
+        recorded_steps(&json!({"steps":[]})).is_some(),
+        "#1334 valid steps"
+    );
+    assert!(recorded_op_checked(&empty).is_err(), "#1334 missing op");
+    assert!(
+        recorded_op(&json!({"op":"value"})).is_some(),
+        "#1334 valid op"
+    );
+    assert!(
+        recorded_stop_reason(&empty).is_none(),
+        "#1334 absent stop.reason"
+    );
+    assert!(
+        recorded_stop_reason(&json!({"reason":"value"})).is_some(),
+        "#1334 valid stop.reason"
+    );
+}
+
+#[test]
+fn recorded_request_modes_and_bytes_stay_legal() {
+    for mode in ["close", "keepalive", "none"] {
+        let step = json!({"method":"POST","target":"/webhooks/main","mode":mode,"body":"é","headers":{"x-test":"yes"}});
+        let wire = request_bytes(&step);
+        assert_eq!(
+            wire.contains("Connection: close"),
+            mode == "close",
+            "#1334 close header matches recorded mode"
+        );
+        assert!(
+            wire.ends_with("Content-Length: 2\r\n\r\né"),
+            "#1334 recorded UTF-8 body length"
+        );
+    }
+    assert_eq!(
+        request_bytes(
+            &json!({"headers":{"Connection":"keep-alive","Content-Length":"0"},"body":""})
+        )
+        .matches("Connection:")
+        .count(),
+        1,
+        "#1334 explicit headers preserved"
+    );
+    assert_eq!(
+        recorded_port(&json!({"port":"<busy-port>"})).and_then(Value::as_str),
+        Some("<busy-port>"),
+        "#1334 busy-port sentinel"
+    );
 }
 
 /// One direct-test delivery: the same shape the recorder's `post()` built.
@@ -599,9 +1524,13 @@ fn pin(raw: &str) -> String {
 /// outcome, keep-alive counts included.
 async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value>) {
     let label = step["label"].as_str().expect("#1334 oracle step label");
-    let mode = step["mode"].as_str().unwrap_or("close");
+    let mode = recorded_mode(step).unwrap_or("close");
+    // Validate even when close mode or a failed exchange will not consume
+    // these fields. Otherwise malformed recordings can still replay green.
+    let recorded_count = recorded_count(step).unwrap_or(1);
+    let pin_response = recorded_pin(step).unwrap_or(false);
     let count = if mode == "keepalive" {
-        step["count"].as_u64().unwrap_or(1) as usize
+        usize::try_from(recorded_count).expect("#1334 count must fit usize")
     } else {
         1
     };
@@ -616,7 +1545,7 @@ async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value
                 let mut entry = normalize(&one);
                 entry["label"] = json!(label);
                 responses.push(entry);
-                if step["pin"].as_bool() == Some(true) {
+                if pin_response {
                     responses.push(json!({"label": format!("{label}-pin"), "raw": pin(&one)}));
                 }
             } else {
@@ -628,6 +1557,23 @@ async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value
             }
         }
     }
+}
+
+#[tokio::test]
+#[should_panic(expected = "#1334 count must be a u64")]
+async fn request_count_is_validated_in_close_mode() {
+    run_request(
+        &None,
+        &json!({"label":"bad","mode":"close","count":[]}),
+        &mut Vec::new(),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "#1334 pin must be a boolean")]
+async fn request_pin_is_validated_before_a_failed_exchange() {
+    run_request(&None, &json!({"label":"bad","pin":[]}), &mut Vec::new()).await;
 }
 
 /// The recorder's failed-start mask: the bind error tail carries errno
@@ -644,11 +1590,11 @@ fn delivery_from_step(step: &Value) -> CronResultDelivery {
     CronResultDelivery {
         task_id: JsString::from("t"),
         run_id: JsString::from("r"),
-        session_key: JsString::from(step["sessionKey"].as_str().unwrap_or_default()),
+        session_key: JsString::from(recorded_cron_session(step).unwrap_or_default()),
         channel_key: ChannelKey::new("webhook"),
-        origin_session_key: step["originSessionKey"].as_str().map(JsString::from),
-        origin_channel_key: step["originChannelKey"].as_str().map(ChannelKey::new),
-        text: JsString::from(step["text"].as_str().unwrap_or("cron text")),
+        origin_session_key: recorded_cron_origin_session(step).map(JsString::from),
+        origin_channel_key: recorded_cron_origin_channel(step).map(ChannelKey::new),
+        text: JsString::from(recorded_cron_text(step).unwrap_or("cron text")),
     }
 }
 
@@ -657,9 +1603,10 @@ fn delivery_from_step(step: &Value) -> CronResultDelivery {
 /// the step DSL against the real listener, then capture after the same
 /// quiet wait the recorder used.
 async fn run_case(case: &Value) -> Value {
-    let options = &case["options"];
+    let options = recorded_options(case).unwrap_or(&Value::Null);
+    let steps = recorded_steps(case).cloned().unwrap_or_default();
     let mut blocker = None;
-    let port_option = match options["port"].as_str() {
+    let port_option = match recorded_port(options).and_then(Value::as_str) {
         Some("<busy-port>") => {
             let listener = std::net::TcpListener::bind("127.0.0.1:0")
                 .expect("#1334 bind the busy-port blocker");
@@ -670,15 +1617,21 @@ async fn run_case(case: &Value) -> Value {
             blocker = Some(listener);
             Some(port as f64)
         }
-        _ => options["port"].as_f64(),
+        _ => recorded_port(options).and_then(Value::as_f64),
     };
-    let routes = parse_json(&options["routes"].to_string())
-        .expect("#1334 oracle routes JSON")
-        .as_object()
-        .expect("#1334 oracle routes object")
-        .clone();
+    let routes = parse_json(
+        &recorded_routes(options)
+            .expect("#1334 options.routes validated object")
+            .to_string(),
+    )
+    .expect("#1334 oracle routes JSON")
+    .as_object()
+    .expect("#1334 oracle routes object")
+    .clone();
     let gateway = Arc::new(MockGateway::from_scripts(
-        &case["scripts"].as_array().cloned().unwrap_or_default(),
+        recorded_scripts(case)
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
     ));
     let logs: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
     let cron: Arc<Mutex<Vec<bool>>> = Arc::new(Mutex::new(Vec::new()));
@@ -693,14 +1646,12 @@ async fn run_case(case: &Value) -> Value {
     let channel = WebhookChannel::new(WebhookChannelOptions {
         port: port_option,
         host: None,
-        secret: options
-            .get("secret")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        secret: recorded_secret(options).map(str::to_owned),
         routes: Some(routes),
-        rate_limit: options.get("rateLimit").and_then(Value::as_f64),
-        max_body_bytes: options.get("maxBodyBytes").and_then(Value::as_f64),
-        mapper: (options["mapperFixedUuid"].as_bool() == Some(true))
+        rate_limit: recorded_rate_limit(options),
+        max_body_bytes: recorded_max_body(options),
+        mapper: recorded_mapper_uuid(options)
+            .unwrap_or(false)
             .then(|| WebhookSessionMapper::new(Arc::new(|| JsString::from(FIXED_UUID)))),
         now: None,
         request_timeout: None,
@@ -718,12 +1669,12 @@ async fn run_case(case: &Value) -> Value {
         .expect("#1334 channel start");
     let mut port = channel.bound_addr().map(|address| address.port());
     let mut responses: Vec<Value> = Vec::new();
-    for step in case["steps"].as_array().cloned().unwrap_or_default() {
-        match step["op"].as_str().unwrap_or_default() {
+    for step in steps {
+        match recorded_op(&step).expect("#1334 op validated string") {
             "request" => run_request(&port, &step, &mut responses).await,
             "stop" => {
                 channel
-                    .stop_with_reason(step["reason"].as_str())
+                    .stop_with_reason(recorded_stop_reason(&step))
                     .await
                     .expect("#1334 oracle stop step");
             }

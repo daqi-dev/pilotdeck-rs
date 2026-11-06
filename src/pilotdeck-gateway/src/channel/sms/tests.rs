@@ -200,14 +200,11 @@ impl SmsSender for MockSender {
                 }));
                 record.sends.len()
             };
-            if case["sendBlockAt"].as_u64() == Some(count as u64) {
+            if recorded_send_block(&case) == Some(count as u64) {
                 released(gate(&gates, "send-block")).await;
             }
-            if case["sendFailAt"]
-                .as_array()
-                .is_some_and(|list| list.iter().any(|at| at.as_u64() == Some(count as u64)))
-            {
-                let message = case["sendError"].as_str().unwrap_or("mock send failure");
+            if recorded_send_fail_at(&case).contains(&(count as u64)) {
+                let message = recorded_send_error(&case).unwrap_or("mock send failure");
                 return Err(ChannelError::Error(message.to_owned()));
             }
             Ok(())
@@ -237,20 +234,19 @@ impl SmsGateway for MockGateway {
                     "request": js_to_json(&JsValue::Object(request.to_js())),
                 }));
             }
-            let turn = &case["turn"];
-            if let Some(gate_name) = turn["gate"].as_str() {
+            let turn = recorded_turn(&case).unwrap_or(&Value::Null);
+            if let Some(gate_name) = recorded_turn_gate(turn) {
                 released(gate(&gates, gate_name)).await;
             }
-            if let Some(error) = turn["error"].as_str() {
+            if let Some(error) = recorded_turn_error(turn) {
                 return Err(ChannelError::Error(error.to_owned()));
             }
-            let events: VecDeque<JsValue> = turn["events"]
-                .as_array()
+            let events: VecDeque<JsValue> = recorded_turn_events(turn)
                 .map(|events| events.iter().map(to_js).collect())
                 .unwrap_or_default();
-            let hold = turn["holdAfter"].as_str().map(str::to_owned);
-            let await_error_settled = turn["holdAfter"].as_str() == Some("decide")
-                && case["permissionError"].as_str().is_some();
+            let hold = recorded_turn_hold(turn).map(str::to_owned);
+            let await_error_settled = recorded_turn_hold(turn) == Some("decide")
+                && recorded_permission_error(&case).is_some();
             Ok(Box::new(MockTurnStream {
                 events,
                 hold,
@@ -297,7 +293,7 @@ impl SmsGateway for MockGateway {
                     "decision": js_to_json(&JsValue::Object(decision.to_js())),
                 }));
             }
-            if let Some(gate_name) = case["permissionGate"].as_str() {
+            if let Some(gate_name) = recorded_permission_gate(&case) {
                 released(gate(&gates, gate_name)).await;
             }
             // The `await setImmediate` boundary before the release, then one
@@ -306,11 +302,11 @@ impl SmsGateway for MockGateway {
             tokio::task::yield_now().await;
             release_if_exists(&gates, "decided");
             tokio::task::yield_now().await;
-            if let Some(error) = case["permissionError"].as_str() {
+            if let Some(error) = recorded_permission_error(&case) {
                 return Err(ChannelError::Error(error.to_owned()));
             }
             Ok(PermissionDecisionOutcome {
-                delivered: case["permissionDelivered"].as_bool().unwrap_or(true),
+                delivered: recorded_permission_delivered(&case).unwrap_or(true),
             })
         })
     }
@@ -358,32 +354,1078 @@ impl TurnEventStream for MockTurnStream {
 /// URL. #1339 fix-r1 (P1 #1): the harness replays those recorded bytes
 /// instead of re-signing with the port's own HMAC, so the oracle pins the
 /// signature algorithm through the generator's implementation.
+// #1729: distinguish omitted recording fields from present values of the
+// wrong type. Each switch restores only its own field's old fail-open read.
+fn recorded_checked<'a, T>(
+    value: Option<&'a Value>,
+    field: &str,
+    kind: &str,
+    parse: impl FnOnce(&'a Value) -> Option<T>,
+    required: bool,
+    fail_open: bool,
+) -> Result<Option<T>, String> {
+    match value {
+        None if required && !fail_open => {
+            Err(format!("#1339 {field} must be {kind}, got <missing>"))
+        }
+        None => Ok(None),
+        Some(value) => match parse(value) {
+            Some(parsed) => Ok(Some(parsed)),
+            None if fail_open => Ok(None),
+            None => Err(format!("#1339 {field} must be {kind}, got {value}")),
+        },
+    }
+}
+
+fn recorded_header_map_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("headers"),
+        "headers",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-header-map"),
+    )
+}
+
+fn recorded_header_map(value: &Value) -> Option<&Value> {
+    recorded_header_map_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_header_map_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_header_map_checked(&json!({"headers": []})).is_err(),
+        "#1339 #1729 rejects headers type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 headers must be an object")]
+fn recorded_header_map_panics_on_wrong_type() {
+    recorded_header_map(&json!({"headers": []}));
+}
+
+fn recorded_method_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("method"),
+        "method",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-method"),
+    )
+}
+
+fn recorded_method(value: &Value) -> Option<&str> {
+    recorded_method_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_method_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_method_checked(&json!({"method": []})).is_err(),
+        "#1339 #1729 rejects method type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 method must be a string")]
+fn recorded_method_panics_on_wrong_type() {
+    recorded_method(&json!({"method": []}));
+}
+
+fn recorded_path_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("path"),
+        "path",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-path"),
+    )
+}
+
+fn recorded_path(value: &Value) -> Option<&str> {
+    recorded_path_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_path_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_path_checked(&json!({"path": []})).is_err(),
+        "#1339 #1729 rejects path type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 path must be a string")]
+fn recorded_path_panics_on_wrong_type() {
+    recorded_path(&json!({"path": []}));
+}
+
+fn recorded_body_repeat_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("repeat"),
+        "body.repeat",
+        "a nonempty string",
+        |value| value.as_str().filter(|text| !text.is_empty()),
+        true,
+        crate::mutants::on("sms-oracle-recorded-body-repeat"),
+    )
+}
+
+fn recorded_body_repeat(value: &Value) -> Option<&str> {
+    recorded_body_repeat_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_body_repeat_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_body_repeat_checked(&json!({"repeat": []})).is_err(),
+        "#1339 #1729 rejects body.repeat type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 body.repeat must be a nonempty string")]
+fn recorded_body_repeat_panics_on_wrong_type() {
+    recorded_body_repeat(&json!({"repeat": []}));
+}
+
+fn recorded_body_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("count"),
+        "body.count",
+        "a u64",
+        Value::as_u64,
+        true,
+        crate::mutants::on("sms-oracle-recorded-body-count"),
+    )
+}
+
+fn recorded_body_count(value: &Value) -> Option<u64> {
+    recorded_body_count_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_body_count_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_body_count_checked(&json!({"count": []})).is_err(),
+        "#1339 #1729 rejects body.count type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 body.count must be a u64")]
+fn recorded_body_count_panics_on_wrong_type() {
+    recorded_body_count(&json!({"count": []}));
+}
+
+fn recorded_truncate_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("truncate"),
+        "truncate",
+        "a u64",
+        Value::as_u64,
+        false,
+        crate::mutants::on("sms-oracle-recorded-truncate"),
+    )
+}
+
+fn recorded_truncate(value: &Value) -> Option<u64> {
+    recorded_truncate_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_truncate_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_truncate_checked(&json!({"truncate": []})).is_err(),
+        "#1339 #1729 rejects truncate type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 truncate must be a u64")]
+fn recorded_truncate_panics_on_wrong_type() {
+    recorded_truncate(&json!({"truncate": []}));
+}
+
+fn recorded_delivery_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("delivery"),
+        "delivery",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-delivery"),
+    )
+}
+
+fn recorded_delivery(value: &Value) -> Option<&Value> {
+    recorded_delivery_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_delivery_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_delivery_checked(&json!({"delivery": []})).is_err(),
+        "#1339 #1729 rejects delivery type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 delivery must be an object")]
+fn recorded_delivery_panics_on_wrong_type() {
+    recorded_delivery(&json!({"delivery": []}));
+}
+
+fn recorded_cron_session_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("sessionKey"),
+        "delivery.sessionKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-cron-session"),
+    )
+}
+
+fn recorded_cron_session(value: &Value) -> Option<&str> {
+    recorded_cron_session_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_session_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_session_checked(&json!({"sessionKey": []})).is_err(),
+        "#1339 #1729 rejects delivery.sessionKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 delivery.sessionKey must be a string")]
+fn recorded_cron_session_panics_on_wrong_type() {
+    recorded_cron_session(&json!({"sessionKey": []}));
+}
+
+fn recorded_cron_origin_session_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("originSessionKey"),
+        "delivery.originSessionKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-cron-origin-session"),
+    )
+}
+
+fn recorded_cron_origin_session(value: &Value) -> Option<&str> {
+    recorded_cron_origin_session_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_origin_session_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_origin_session_checked(&json!({"originSessionKey": []})).is_err(),
+        "#1339 #1729 rejects delivery.originSessionKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 delivery.originSessionKey must be a string")]
+fn recorded_cron_origin_session_panics_on_wrong_type() {
+    recorded_cron_origin_session(&json!({"originSessionKey": []}));
+}
+
+fn recorded_cron_origin_channel_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("originChannelKey"),
+        "delivery.originChannelKey",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-cron-origin-channel"),
+    )
+}
+
+fn recorded_cron_origin_channel(value: &Value) -> Option<&str> {
+    recorded_cron_origin_channel_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_origin_channel_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_origin_channel_checked(&json!({"originChannelKey": []})).is_err(),
+        "#1339 #1729 rejects delivery.originChannelKey type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 delivery.originChannelKey must be a string")]
+fn recorded_cron_origin_channel_panics_on_wrong_type() {
+    recorded_cron_origin_channel(&json!({"originChannelKey": []}));
+}
+
+fn recorded_cron_text_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("text"),
+        "delivery.text",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-cron-text"),
+    )
+}
+
+fn recorded_cron_text(value: &Value) -> Option<&str> {
+    recorded_cron_text_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_cron_text_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_cron_text_checked(&json!({"text": []})).is_err(),
+        "#1339 #1729 rejects delivery.text type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 delivery.text must be a string")]
+fn recorded_cron_text_panics_on_wrong_type() {
+    recorded_cron_text(&json!({"text": []}));
+}
+
+fn recorded_turn_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("turn").filter(|value| !value.is_null()),
+        "turn",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-turn"),
+    )
+}
+
+fn recorded_turn(value: &Value) -> Option<&Value> {
+    recorded_turn_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_turn_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_turn_checked(&json!({"turn": []})).is_err(),
+        "#1339 #1729 rejects turn type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 turn must be an object")]
+fn recorded_turn_panics_on_wrong_type() {
+    recorded_turn(&json!({"turn": []}));
+}
+
+fn recorded_turn_gate_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("gate"),
+        "turn.gate",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-turn-gate"),
+    )
+}
+
+fn recorded_turn_gate(value: &Value) -> Option<&str> {
+    recorded_turn_gate_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_turn_gate_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_turn_gate_checked(&json!({"gate": []})).is_err(),
+        "#1339 #1729 rejects turn.gate type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 turn.gate must be a string")]
+fn recorded_turn_gate_panics_on_wrong_type() {
+    recorded_turn_gate(&json!({"gate": []}));
+}
+
+fn recorded_turn_error_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("error"),
+        "turn.error",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-turn-error"),
+    )
+}
+
+fn recorded_turn_error(value: &Value) -> Option<&str> {
+    recorded_turn_error_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_turn_error_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_turn_error_checked(&json!({"error": []})).is_err(),
+        "#1339 #1729 rejects turn.error type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 turn.error must be a string")]
+fn recorded_turn_error_panics_on_wrong_type() {
+    recorded_turn_error(&json!({"error": []}));
+}
+
+fn recorded_turn_events_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("events"),
+        "turn.events",
+        "an array",
+        Value::as_array,
+        false,
+        crate::mutants::on("sms-oracle-recorded-turn-events"),
+    )
+}
+
+fn recorded_turn_events(value: &Value) -> Option<&Vec<Value>> {
+    recorded_turn_events_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_turn_events_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_turn_events_checked(&json!({"events": false})).is_err(),
+        "#1339 #1729 rejects turn.events type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 turn.events must be an array")]
+fn recorded_turn_events_panics_on_wrong_type() {
+    recorded_turn_events(&json!({"events": false}));
+}
+
+fn recorded_turn_hold_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("holdAfter"),
+        "turn.holdAfter",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-turn-hold"),
+    )
+}
+
+fn recorded_turn_hold(value: &Value) -> Option<&str> {
+    recorded_turn_hold_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_turn_hold_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_turn_hold_checked(&json!({"holdAfter": []})).is_err(),
+        "#1339 #1729 rejects turn.holdAfter type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 turn.holdAfter must be a string")]
+fn recorded_turn_hold_panics_on_wrong_type() {
+    recorded_turn_hold(&json!({"holdAfter": []}));
+}
+
+fn recorded_permission_error_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value
+            .get("permissionError")
+            .filter(|value| !value.is_null()),
+        "permissionError",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-permission-error"),
+    )
+}
+
+fn recorded_permission_error(value: &Value) -> Option<&str> {
+    recorded_permission_error_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_permission_error_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_permission_error_checked(&json!({"permissionError": []})).is_err(),
+        "#1339 #1729 rejects permissionError type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 permissionError must be a string")]
+fn recorded_permission_error_panics_on_wrong_type() {
+    recorded_permission_error(&json!({"permissionError": []}));
+}
+
+fn recorded_permission_gate_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("permissionGate").filter(|value| !value.is_null()),
+        "permissionGate",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-permission-gate"),
+    )
+}
+
+fn recorded_permission_gate(value: &Value) -> Option<&str> {
+    recorded_permission_gate_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_permission_gate_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_permission_gate_checked(&json!({"permissionGate": []})).is_err(),
+        "#1339 #1729 rejects permissionGate type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 permissionGate must be a string")]
+fn recorded_permission_gate_panics_on_wrong_type() {
+    recorded_permission_gate(&json!({"permissionGate": []}));
+}
+
+fn recorded_permission_delivered_checked(value: &Value) -> Result<Option<bool>, String> {
+    recorded_checked(
+        value.get("permissionDelivered"),
+        "permissionDelivered",
+        "a boolean",
+        Value::as_bool,
+        false,
+        crate::mutants::on("sms-oracle-recorded-permission-delivered"),
+    )
+}
+
+fn recorded_permission_delivered(value: &Value) -> Option<bool> {
+    recorded_permission_delivered_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_permission_delivered_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_permission_delivered_checked(&json!({"permissionDelivered": []})).is_err(),
+        "#1339 #1729 rejects permissionDelivered type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 permissionDelivered must be a boolean")]
+fn recorded_permission_delivered_panics_on_wrong_type() {
+    recorded_permission_delivered(&json!({"permissionDelivered": []}));
+}
+
+fn recorded_expected_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("expected"),
+        "expected",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-expected"),
+    )
+}
+
+fn recorded_expected(value: &Value) -> Option<&Value> {
+    recorded_expected_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_expected_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_expected_checked(&json!({"expected": []})).is_err(),
+        "#1339 #1729 rejects expected type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 expected must be an object")]
+fn recorded_expected_panics_on_wrong_type() {
+    recorded_expected(&json!({"expected": []}));
+}
+
+fn recorded_responses_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("responses"),
+        "expected.responses",
+        "an array",
+        Value::as_array,
+        false,
+        crate::mutants::on("sms-oracle-recorded-responses"),
+    )
+}
+
+fn recorded_responses(value: &Value) -> Option<&Vec<Value>> {
+    recorded_responses_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_responses_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_responses_checked(&json!({"responses": false})).is_err(),
+        "#1339 #1729 rejects expected.responses type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 expected.responses must be an array")]
+fn recorded_responses_panics_on_wrong_type() {
+    recorded_responses(&json!({"responses": false}));
+}
+
+fn recorded_env_map_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("env"),
+        "env",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-env-map"),
+    )
+}
+
+fn recorded_env_map(value: &Value) -> Option<&Value> {
+    recorded_env_map_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_env_map_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_env_map_checked(&json!({"env": []})).is_err(),
+        "#1339 #1729 rejects env type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 env must be an object")]
+fn recorded_env_map_panics_on_wrong_type() {
+    recorded_env_map(&json!({"env": []}));
+}
+
+fn recorded_steps_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("steps"),
+        "steps",
+        "an array",
+        Value::as_array,
+        true,
+        crate::mutants::on("sms-oracle-recorded-steps"),
+    )
+}
+
+fn recorded_steps(value: &Value) -> Option<&Vec<Value>> {
+    recorded_steps_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_steps_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_steps_checked(&json!({"steps": false})).is_err(),
+        "#1339 #1729 rejects steps type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 steps must be an array")]
+fn recorded_steps_panics_on_wrong_type() {
+    recorded_steps(&json!({"steps": false}));
+}
+
+fn recorded_half_close_checked(value: &Value) -> Result<Option<bool>, String> {
+    recorded_checked(
+        value.get("halfClose"),
+        "halfClose",
+        "a boolean",
+        Value::as_bool,
+        false,
+        crate::mutants::on("sms-oracle-recorded-half-close"),
+    )
+}
+
+fn recorded_half_close(value: &Value) -> Option<bool> {
+    recorded_half_close_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_half_close_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_half_close_checked(&json!({"halfClose": []})).is_err(),
+        "#1339 #1729 rejects halfClose type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 halfClose must be a boolean")]
+fn recorded_half_close_panics_on_wrong_type() {
+    recorded_half_close(&json!({"halfClose": []}));
+}
+
+fn recorded_log_level_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("level"),
+        "wait-log.level",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-log-level"),
+    )
+}
+
+fn recorded_log_level(value: &Value) -> Option<&str> {
+    recorded_log_level_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_log_level_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_log_level_checked(&json!({"level": []})).is_err(),
+        "#1339 #1729 rejects wait-log.level type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-log.level must be a string")]
+fn recorded_log_level_panics_on_wrong_type() {
+    recorded_log_level(&json!({"level": []}));
+}
+
+fn recorded_log_text_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("text"),
+        "wait-log.text",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-log-text"),
+    )
+}
+
+fn recorded_log_text(value: &Value) -> Option<&str> {
+    recorded_log_text_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_log_text_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_log_text_checked(&json!({"text": []})).is_err(),
+        "#1339 #1729 rejects wait-log.text type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-log.text must be a string")]
+fn recorded_log_text_panics_on_wrong_type() {
+    recorded_log_text(&json!({"text": []}));
+}
+
+fn recorded_sends_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("count"),
+        "wait-sends.count",
+        "a u64",
+        Value::as_u64,
+        false,
+        crate::mutants::on("sms-oracle-recorded-sends-count"),
+    )
+}
+
+fn recorded_sends_count(value: &Value) -> Option<u64> {
+    recorded_sends_count_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_sends_count_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_sends_count_checked(&json!({"count": []})).is_err(),
+        "#1339 #1729 rejects wait-sends.count type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-sends.count must be a u64")]
+fn recorded_sends_count_panics_on_wrong_type() {
+    recorded_sends_count(&json!({"count": []}));
+}
+
+fn recorded_rpcs_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("count"),
+        "wait-rpcs.count",
+        "a u64",
+        Value::as_u64,
+        false,
+        crate::mutants::on("sms-oracle-recorded-rpcs-count"),
+    )
+}
+
+fn recorded_rpcs_count(value: &Value) -> Option<u64> {
+    recorded_rpcs_count_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_rpcs_count_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_rpcs_count_checked(&json!({"count": []})).is_err(),
+        "#1339 #1729 rejects wait-rpcs.count type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-rpcs.count must be a u64")]
+fn recorded_rpcs_count_panics_on_wrong_type() {
+    recorded_rpcs_count(&json!({"count": []}));
+}
+
+fn recorded_stop_reason_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("reason"),
+        "stop.reason",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-stop-reason"),
+    )
+}
+
+fn recorded_stop_reason(value: &Value) -> Option<&str> {
+    recorded_stop_reason_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_stop_reason_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_stop_reason_checked(&json!({"reason": []})).is_err(),
+        "#1339 #1729 rejects stop.reason type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 stop.reason must be a string")]
+fn recorded_stop_reason_panics_on_wrong_type() {
+    recorded_stop_reason(&json!({"reason": []}));
+}
+
+fn recorded_send_block_checked(value: &Value) -> Result<Option<u64>, String> {
+    recorded_checked(
+        value.get("sendBlockAt").filter(|value| !value.is_null()),
+        "sendBlockAt",
+        "a u64",
+        Value::as_u64,
+        false,
+        crate::mutants::on("sms-oracle-recorded-send-block"),
+    )
+}
+
+fn recorded_send_block(value: &Value) -> Option<u64> {
+    recorded_send_block_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_send_block_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_send_block_checked(&json!({"sendBlockAt": []})).is_err(),
+        "#1339 #1729 rejects sendBlockAt type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 sendBlockAt must be a u64")]
+fn recorded_send_block_panics_on_wrong_type() {
+    recorded_send_block(&json!({"sendBlockAt": []}));
+}
+
+fn recorded_send_fail_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
+    recorded_checked(
+        value.get("sendFailAt"),
+        "sendFailAt",
+        "an array",
+        Value::as_array,
+        false,
+        crate::mutants::on("sms-oracle-recorded-send-fail"),
+    )
+}
+
+fn recorded_send_fail(value: &Value) -> Option<&Vec<Value>> {
+    recorded_send_fail_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_send_fail_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_send_fail_checked(&json!({"sendFailAt": false})).is_err(),
+        "#1339 #1729 rejects sendFailAt type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 sendFailAt must be an array")]
+fn recorded_send_fail_panics_on_wrong_type() {
+    recorded_send_fail(&json!({"sendFailAt": false}));
+}
+
+fn recorded_send_error_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("sendError").filter(|value| !value.is_null()),
+        "sendError",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-send-error"),
+    )
+}
+
+fn recorded_send_error(value: &Value) -> Option<&str> {
+    recorded_send_error_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_send_error_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_send_error_checked(&json!({"sendError": []})).is_err(),
+        "#1339 #1729 rejects sendError type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 sendError must be a string")]
+fn recorded_send_error_panics_on_wrong_type() {
+    recorded_send_error(&json!({"sendError": []}));
+}
+
+fn recorded_extra_checked(value: &Value) -> Result<Option<&Value>, String> {
+    recorded_checked(
+        value.get("extra"),
+        "extra",
+        "an object",
+        |value| value.is_object().then_some(value),
+        false,
+        crate::mutants::on("sms-oracle-recorded-extra"),
+    )
+}
+
+fn recorded_extra(value: &Value) -> Option<&Value> {
+    recorded_extra_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_extra_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_extra_checked(&json!({"extra": []})).is_err(),
+        "#1339 #1729 rejects extra type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 extra must be an object")]
+fn recorded_extra_panics_on_wrong_type() {
+    recorded_extra(&json!({"extra": []}));
+}
+
+fn recorded_headers_checked(step: &Value) -> Result<Vec<(String, String)>, String> {
+    let mut headers = Vec::new();
+    if let Some(object) = recorded_header_map_checked(step)?.and_then(Value::as_object) {
+        for (key, value) in object {
+            let text = recorded_checked(
+                Some(value),
+                &format!("headers.{key}"),
+                "a string",
+                Value::as_str,
+                false,
+                crate::mutants::on("sms-oracle-header-value"),
+            )?
+            .unwrap_or_default();
+            headers.push((key.clone(), text.to_owned()));
+        }
+    }
+    Ok(headers)
+}
+
 fn recorded_headers(step: &Value) -> Vec<(String, String)> {
-    step["headers"]
-        .as_object()
-        .map(|object| {
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
-                .collect()
-        })
-        .unwrap_or_default()
+    recorded_headers_checked(step).unwrap_or_else(|error| panic!("{error}"))
+}
+
+const REPLAY_BODY_BUDGET: usize = MAX_BODY_BYTES + 1;
+
+fn recorded_body_checked(step: &Value) -> Result<Vec<u8>, String> {
+    let (text, count) = match step.get("body") {
+        None => return Ok(Vec::new()),
+        Some(Value::String(text)) => (text.as_str(), 1),
+        Some(spec @ Value::Object(_)) => (
+            recorded_body_repeat_checked(spec)?.unwrap_or_default(),
+            recorded_body_count_checked(spec)?.unwrap_or_default(),
+        ),
+        Some(value) => {
+            if crate::mutants::on("sms-oracle-body-type") {
+                return Ok(Vec::new());
+            }
+            return Err(format!(
+                "#1339 body must be a string or repeat object, got {value}"
+            ));
+        }
+    };
+    // Validate UTF-8 bytes and multiplication before either cloning or repeating.
+    let count = usize::try_from(count)
+        .map_err(|_| format!("#1339 body.count does not fit usize, got {count}"))?;
+    let length = text.len().checked_mul(count).ok_or_else(|| {
+        format!("#1339 body byte length overflow: repeat={text:?}, count={count}")
+    })?;
+    if length > REPLAY_BODY_BUDGET && !crate::mutants::on("sms-oracle-body-budget") {
+        return Err(format!(
+            "#1339 body exceeds replay budget {REPLAY_BODY_BUDGET}: repeat={text:?}, count={count}, bytes={length}"
+        ));
+    }
+    Ok(text.repeat(count).into_bytes())
+}
+
+fn recorded_body(step: &Value) -> Vec<u8> {
+    recorded_body_checked(step).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn assert_boundary_body_len_checked(name: &str, case: &Value) -> Result<(), String> {
+    let expected = match name {
+        "payload-exactly-1mib" => MAX_BODY_BYTES,
+        "payload-too-large" => MAX_BODY_BYTES + 1,
+        _ => return Ok(()),
+    };
+    let lengths = recorded_steps_checked(case)?
+        .into_iter()
+        .flatten()
+        .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
+        .map(|step| recorded_body_checked(step).map(|body| body.len()))
+        .collect::<Result<Vec<_>, _>>()?;
+    if lengths != [expected] && !crate::mutants::on("sms-oracle-boundary-body-length") {
+        return Err(format!(
+            "#1339 {name} body boundary must be [{expected}], got {lengths:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn assert_boundary_body_len(name: &str, case: &Value) {
+    assert_boundary_body_len_checked(name, case).unwrap_or_else(|error| panic!("{error}"));
 }
 
 fn build_raw(step: &Value) -> Vec<u8> {
-    let body: Vec<u8> = match &step["body"] {
-        Value::String(text) => text.clone().into_bytes(),
-        Value::Object(spec) => spec["repeat"]
-            .as_str()
-            .unwrap_or_default()
-            .repeat(spec["count"].as_u64().unwrap_or_default() as usize)
-            .into_bytes(),
-        _ => Vec::new(),
-    };
+    let body = recorded_body(step);
     let mut raw = format!(
         "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n",
-        step["method"].as_str().unwrap_or("POST"),
-        step["path"].as_str().unwrap_or("/sms/incoming"),
+        recorded_method(step).unwrap_or("POST"),
+        recorded_path(step).unwrap_or("/sms/incoming"),
     )
     .into_bytes();
     for (key, value) in recorded_headers(step) {
@@ -392,24 +1434,483 @@ fn build_raw(step: &Value) -> Vec<u8> {
     raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
     let head_len = raw.len();
     raw.extend_from_slice(&body);
-    // The generator's `truncate`: Content-Length keeps declaring the full
-    // body while the wire stops short; the `halfClose` step flag then
-    // finishes the request. #1339 fix-r2 (P2): the cut applies to the body
-    // only — the generator slices the body bytes and clamps at zero
-    // (`Math.max(0, bytes.length - truncate)`), so a cut longer than the body
-    // leaves the headers intact instead of eating them.
-    let truncate = step["truncate"].as_u64().unwrap_or_default() as usize;
+    // Truncate body bytes only, preserving the recorded Content-Length.
+    let truncate =
+        usize::try_from(recorded_truncate(step).unwrap_or_default()).unwrap_or(usize::MAX);
     raw.truncate(head_len + body.len().saturating_sub(truncate));
     raw
 }
 
 fn cron_delivery(value: &Value) -> CronResultDelivery {
     CronResultDelivery {
-        session_key: value["sessionKey"].as_str().map(JsString::from),
-        origin_session_key: value["originSessionKey"].as_str().map(JsString::from),
-        text: JsString::from(value["text"].as_str().unwrap_or_default()),
-        origin_channel_key: value["originChannelKey"].as_str().map(JsString::from),
+        session_key: recorded_cron_session(value).map(JsString::from),
+        origin_session_key: recorded_cron_origin_session(value).map(JsString::from),
+        text: JsString::from(recorded_cron_text(value).unwrap_or_default()),
+        origin_channel_key: recorded_cron_origin_channel(value).map(JsString::from),
     }
+}
+
+fn recorded_env_checked(case: &Value) -> Result<HashMap<String, String>, String> {
+    let mut env = HashMap::new();
+    if let Some(object) = recorded_env_map_checked(case)?.and_then(Value::as_object) {
+        for (key, value) in object {
+            let text = recorded_checked(
+                Some(value),
+                &format!("env.{key}"),
+                "a string",
+                Value::as_str,
+                false,
+                crate::mutants::on("sms-oracle-env-value"),
+            )?
+            .unwrap_or_default();
+            env.insert(key.clone(), text.to_owned());
+        }
+    }
+    Ok(env)
+}
+
+fn recorded_env(case: &Value) -> HashMap<String, String> {
+    recorded_env_checked(case).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn recorded_send_fail_at_checked(case: &Value) -> Result<Vec<u64>, String> {
+    recorded_send_fail_checked(case)?
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(index, value)| {
+            recorded_checked(
+                Some(value),
+                &format!("sendFailAt[{index}]"),
+                "a u64",
+                Value::as_u64,
+                false,
+                crate::mutants::on("sms-oracle-send-fail-entry"),
+            )
+            .map(|at| at.unwrap_or_default())
+        })
+        .collect()
+}
+
+fn recorded_send_fail_at(case: &Value) -> Vec<u64> {
+    recorded_send_fail_at_checked(case).unwrap_or_else(|error| panic!("{error}"))
+}
+
+// Validate mock configuration before spawning channel tasks: a malformed
+// recording must fail this test, not only panic in a detached mock future.
+fn validate_mock_recording(case: &Value) {
+    let turn = recorded_turn(case).unwrap_or(&Value::Null);
+    recorded_turn_gate(turn);
+    recorded_turn_error(turn);
+    recorded_turn_events(turn);
+    recorded_turn_hold(turn);
+    recorded_permission_error(case);
+    recorded_permission_gate(case);
+    recorded_permission_delivered(case);
+    recorded_send_block(case);
+    recorded_send_fail_at(case);
+    recorded_send_error(case);
+}
+
+#[test]
+fn recorded_header_value_rejects_drift() {
+    crate::negative_assert!(
+        recorded_headers_checked(&json!({"headers":{"x-test":7}})).is_err(),
+        "#1339 #1729 rejects header_value drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 headers.x-test must be a string")]
+fn recorded_header_value_panics_on_drift() {
+    recorded_headers(&json!({"headers":{"x-test":7}}));
+}
+
+#[test]
+fn recorded_body_type_rejects_drift() {
+    crate::negative_assert!(
+        recorded_body_checked(&json!({"body":null})).is_err(),
+        "#1339 #1729 rejects body_type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 body must be a string or repeat object")]
+fn recorded_body_type_panics_on_drift() {
+    recorded_body(&json!({"body":null}));
+}
+
+#[test]
+fn recorded_body_budget_rejects_drift() {
+    crate::negative_assert!(
+        recorded_body_checked(&json!({"body":{"repeat":"x","count":REPLAY_BODY_BUDGET+1}}))
+            .is_err(),
+        "#1339 #1729 rejects body_budget drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 body exceeds replay budget")]
+fn recorded_body_budget_panics_on_drift() {
+    recorded_body(&json!({"body":{"repeat":"x","count":REPLAY_BODY_BUDGET+1}}));
+}
+
+#[test]
+fn recorded_boundary_body_length_rejects_drift() {
+    crate::negative_assert!(
+        assert_boundary_body_len_checked(
+            "payload-exactly-1mib",
+            &json!({"steps":[{"op":"request","body":"x"}]})
+        )
+        .is_err(),
+        "#1339 #1729 rejects boundary_body_length drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 payload-exactly-1mib body boundary")]
+fn recorded_boundary_body_length_panics_on_drift() {
+    assert_boundary_body_len(
+        "payload-exactly-1mib",
+        &json!({"steps":[{"op":"request","body":"x"}]}),
+    );
+}
+
+#[test]
+fn recorded_env_value_rejects_drift() {
+    crate::negative_assert!(
+        recorded_env_checked(&json!({"env":{"TOKEN":7}})).is_err(),
+        "#1339 #1729 rejects env_value drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 env.TOKEN must be a string")]
+fn recorded_env_value_panics_on_drift() {
+    recorded_env(&json!({"env":{"TOKEN":7}}));
+}
+
+#[test]
+fn recorded_send_fail_entry_rejects_drift() {
+    crate::negative_assert!(
+        recorded_send_fail_at_checked(&json!({"sendFailAt":[null]})).is_err(),
+        "#1339 #1729 rejects send_fail_entry drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 sendFailAt[0] must be a u64")]
+fn recorded_send_fail_entry_panics_on_drift() {
+    recorded_send_fail_at(&json!({"sendFailAt":[null]}));
+}
+
+#[test]
+fn absent_recording_fields_keep_defaults() {
+    let empty = json!({});
+    assert!(recorded_headers(&empty).is_empty(), "#1339 absent headers");
+    assert!(recorded_env(&empty).is_empty(), "#1339 absent env");
+    assert!(recorded_body(&empty).is_empty(), "#1339 absent body");
+    assert_eq!(build_raw(&empty), b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", "#1339 absent request fields");
+    validate_mock_recording(&empty);
+    // These five nulls are explicit absence sentinels emitted by generate.mts.
+    validate_mock_recording(
+        &json!({"turn":null,"permissionError":null,"permissionGate":null,"sendBlockAt":null,"sendError":null}),
+    );
+    assert_responses_so_far(&[], &empty, "absent expected");
+    let delivery = cron_delivery(&empty);
+    assert!(
+        delivery.session_key.is_none()
+            && delivery.origin_session_key.is_none()
+            && delivery.origin_channel_key.is_none(),
+        "#1339 absent cron keys"
+    );
+    assert!(delivery.text.equals_str(""), "#1339 absent cron text");
+    assert!(
+        recorded_header_map(&empty).is_none(),
+        "#1339 absent headers"
+    );
+    assert!(
+        recorded_header_map(&json!({"headers":{}})).is_some(),
+        "#1339 valid headers"
+    );
+    assert!(recorded_method(&empty).is_none(), "#1339 absent method");
+    assert!(
+        recorded_method(&json!({"method":"value"})).is_some(),
+        "#1339 valid method"
+    );
+    assert!(recorded_path(&empty).is_none(), "#1339 absent path");
+    assert!(
+        recorded_path(&json!({"path":"value"})).is_some(),
+        "#1339 valid path"
+    );
+    assert!(
+        recorded_body_repeat_checked(&empty).is_err(),
+        "#1339 missing body.repeat"
+    );
+    assert!(
+        recorded_body_repeat(&json!({"repeat":"x"})).is_some(),
+        "#1339 valid body.repeat"
+    );
+    assert!(
+        recorded_body_count_checked(&empty).is_err(),
+        "#1339 missing body.count"
+    );
+    assert!(
+        recorded_body_count(&json!({"count":1})).is_some(),
+        "#1339 valid body.count"
+    );
+    assert!(recorded_truncate(&empty).is_none(), "#1339 absent truncate");
+    assert!(
+        recorded_truncate(&json!({"truncate":1})).is_some(),
+        "#1339 valid truncate"
+    );
+    assert!(recorded_delivery(&empty).is_none(), "#1339 absent delivery");
+    assert!(
+        recorded_delivery(&json!({"delivery":{}})).is_some(),
+        "#1339 valid delivery"
+    );
+    assert!(
+        recorded_cron_session(&empty).is_none(),
+        "#1339 absent delivery.sessionKey"
+    );
+    assert!(
+        recorded_cron_session(&json!({"sessionKey":"value"})).is_some(),
+        "#1339 valid delivery.sessionKey"
+    );
+    assert!(
+        recorded_cron_origin_session(&empty).is_none(),
+        "#1339 absent delivery.originSessionKey"
+    );
+    assert!(
+        recorded_cron_origin_session(&json!({"originSessionKey":"value"})).is_some(),
+        "#1339 valid delivery.originSessionKey"
+    );
+    assert!(
+        recorded_cron_origin_channel(&empty).is_none(),
+        "#1339 absent delivery.originChannelKey"
+    );
+    assert!(
+        recorded_cron_origin_channel(&json!({"originChannelKey":"value"})).is_some(),
+        "#1339 valid delivery.originChannelKey"
+    );
+    assert!(
+        recorded_cron_text(&empty).is_none(),
+        "#1339 absent delivery.text"
+    );
+    assert!(
+        recorded_cron_text(&json!({"text":"value"})).is_some(),
+        "#1339 valid delivery.text"
+    );
+    assert!(recorded_turn(&empty).is_none(), "#1339 absent turn");
+    assert!(
+        recorded_turn(&json!({"turn":{}})).is_some(),
+        "#1339 valid turn"
+    );
+    assert!(
+        recorded_turn_gate(&empty).is_none(),
+        "#1339 absent turn.gate"
+    );
+    assert!(
+        recorded_turn_gate(&json!({"gate":"value"})).is_some(),
+        "#1339 valid turn.gate"
+    );
+    assert!(
+        recorded_turn_error(&empty).is_none(),
+        "#1339 absent turn.error"
+    );
+    assert!(
+        recorded_turn_error(&json!({"error":"value"})).is_some(),
+        "#1339 valid turn.error"
+    );
+    assert!(
+        recorded_turn_events(&empty).is_none(),
+        "#1339 absent turn.events"
+    );
+    assert!(
+        recorded_turn_events(&json!({"events":[]})).is_some(),
+        "#1339 valid turn.events"
+    );
+    assert!(
+        recorded_turn_hold(&empty).is_none(),
+        "#1339 absent turn.holdAfter"
+    );
+    assert!(
+        recorded_turn_hold(&json!({"holdAfter":"value"})).is_some(),
+        "#1339 valid turn.holdAfter"
+    );
+    assert!(
+        recorded_permission_error(&empty).is_none(),
+        "#1339 absent permissionError"
+    );
+    assert!(
+        recorded_permission_error(&json!({"permissionError":"value"})).is_some(),
+        "#1339 valid permissionError"
+    );
+    assert!(
+        recorded_permission_gate(&empty).is_none(),
+        "#1339 absent permissionGate"
+    );
+    assert!(
+        recorded_permission_gate(&json!({"permissionGate":"value"})).is_some(),
+        "#1339 valid permissionGate"
+    );
+    assert!(
+        recorded_permission_delivered(&empty).is_none(),
+        "#1339 absent permissionDelivered"
+    );
+    assert!(
+        recorded_permission_delivered(&json!({"permissionDelivered":true})).is_some(),
+        "#1339 valid permissionDelivered"
+    );
+    assert!(recorded_expected(&empty).is_none(), "#1339 absent expected");
+    assert!(
+        recorded_expected(&json!({"expected":{}})).is_some(),
+        "#1339 valid expected"
+    );
+    assert!(
+        recorded_responses(&empty).is_none(),
+        "#1339 absent expected.responses"
+    );
+    assert!(
+        recorded_responses(&json!({"responses":[]})).is_some(),
+        "#1339 valid expected.responses"
+    );
+    assert!(recorded_env_map(&empty).is_none(), "#1339 absent env");
+    assert!(
+        recorded_env_map(&json!({"env":{}})).is_some(),
+        "#1339 valid env"
+    );
+    assert!(
+        recorded_steps_checked(&empty).is_err(),
+        "#1339 missing steps"
+    );
+    assert!(
+        recorded_steps(&json!({"steps":[]})).is_some(),
+        "#1339 valid steps"
+    );
+    assert!(
+        recorded_half_close(&empty).is_none(),
+        "#1339 absent halfClose"
+    );
+    assert!(
+        recorded_half_close(&json!({"halfClose":true})).is_some(),
+        "#1339 valid halfClose"
+    );
+    assert!(
+        recorded_log_level(&empty).is_none(),
+        "#1339 absent wait-log.level"
+    );
+    assert!(
+        recorded_log_level(&json!({"level":"value"})).is_some(),
+        "#1339 valid wait-log.level"
+    );
+    assert!(
+        recorded_log_text(&empty).is_none(),
+        "#1339 absent wait-log.text"
+    );
+    assert!(
+        recorded_log_text(&json!({"text":"value"})).is_some(),
+        "#1339 valid wait-log.text"
+    );
+    assert!(
+        recorded_sends_count(&empty).is_none(),
+        "#1339 absent wait-sends.count"
+    );
+    assert!(
+        recorded_sends_count(&json!({"count":1})).is_some(),
+        "#1339 valid wait-sends.count"
+    );
+    assert!(
+        recorded_rpcs_count(&empty).is_none(),
+        "#1339 absent wait-rpcs.count"
+    );
+    assert!(
+        recorded_rpcs_count(&json!({"count":1})).is_some(),
+        "#1339 valid wait-rpcs.count"
+    );
+    assert!(
+        recorded_stop_reason(&empty).is_none(),
+        "#1339 absent stop.reason"
+    );
+    assert!(
+        recorded_stop_reason(&json!({"reason":"value"})).is_some(),
+        "#1339 valid stop.reason"
+    );
+    assert!(
+        recorded_send_block(&empty).is_none(),
+        "#1339 absent sendBlockAt"
+    );
+    assert!(
+        recorded_send_block(&json!({"sendBlockAt":1})).is_some(),
+        "#1339 valid sendBlockAt"
+    );
+    assert!(
+        recorded_send_fail(&empty).is_none(),
+        "#1339 absent sendFailAt"
+    );
+    assert!(
+        recorded_send_fail(&json!({"sendFailAt":[]})).is_some(),
+        "#1339 valid sendFailAt"
+    );
+    assert!(
+        recorded_send_error(&empty).is_none(),
+        "#1339 absent sendError"
+    );
+    assert!(
+        recorded_send_error(&json!({"sendError":"value"})).is_some(),
+        "#1339 valid sendError"
+    );
+    assert!(recorded_extra(&empty).is_none(), "#1339 absent extra");
+    assert!(
+        recorded_extra(&json!({"extra":{}})).is_some(),
+        "#1339 valid extra"
+    );
+}
+
+#[test]
+fn body_expansion_pins_bytes_and_fixture_boundaries() {
+    assert_eq!(
+        recorded_body(&json!({"body":{"repeat":"é","count":2}})),
+        "éé".as_bytes(),
+        "#1339 repeat counts UTF-8 bytes"
+    );
+    assert_eq!(
+        recorded_body(&json!({"body":{"repeat":"x","count":0}})),
+        b"",
+        "#1339 zero repeat count is legal"
+    );
+    assert!(
+        recorded_body_checked(&json!({"body":{"repeat":"é","count":REPLAY_BODY_BUDGET}})).is_err(),
+        "#1339 multibyte repeat budget"
+    );
+    assert!(
+        recorded_body_checked(&json!({"body":{"repeat":"xx","count":u64::MAX}})).is_err(),
+        "#1339 multiplication overflow before allocation"
+    );
+    assert!(
+        recorded_body_checked(&json!({"body":{"repeat":"","count":1}})).is_err(),
+        "#1339 empty repeat rejected"
+    );
+    assert!(
+        recorded_body_checked(&json!({"body":{"repeat":"x"}})).is_err(),
+        "#1339 missing repeat count rejected"
+    );
+    for name in ["payload-exactly-1mib", "payload-too-large"] {
+        assert_boundary_body_len(name, &case_by_name(name));
+    }
+    assert_eq!(build_raw(&json!({"body":"abc","truncate":100})), b"POST /sms/incoming HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: 3\r\n\r\n", "#1339 truncation preserves headers");
+}
+
+#[test]
+#[should_panic(expected = "#1339 body byte length overflow")]
+fn body_overflow_panics_before_allocation() {
+    recorded_body(&json!({"body":{"repeat":"xx","count":u64::MAX}}));
+}
+
+#[test]
+#[should_panic(expected = "#1339 steps must be an array, got <missing>")]
+fn missing_steps_cannot_be_zero_coverage() {
+    recorded_steps(&json!({}));
 }
 
 // ---------------------------------------------------------------------------
@@ -609,8 +2110,7 @@ fn means_no_ipv6_accepts_only_address_family_errors() {
 /// an unnamed panic header that the negative-control contract rejects
 /// (`tests/common/baseline.rs`), which turns a KILLED back into an INVALID.
 fn assert_responses_so_far(responses: &[Value], case: &Value, name: &str) {
-    let expected = case["expected"]["responses"]
-        .as_array()
+    let expected = recorded_responses(recorded_expected(case).unwrap_or(&Value::Null))
         .map(|values| values[..values.len().min(responses.len())].to_vec())
         .unwrap_or_default();
     crate::negative_assert_eq!(responses, &expected[..], "#1339 sms oracle: {name}");
@@ -618,6 +2118,9 @@ fn assert_responses_so_far(responses: &[Value], case: &Value, name: &str) {
 
 async fn replay_named(name: &str) {
     let case = case_by_name(name);
+    validate_mock_recording(&case);
+    let steps = recorded_steps(&case).expect("#1339 steps validated array");
+    assert_boundary_body_len(name, &case);
     let port = case["port"].as_u64().expect("#1339 case port") as u16;
     ensure_replay_port_free(port).await;
     let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
@@ -640,15 +2143,7 @@ async fn replay_named(name: &str) {
             release_if_exists(&log_gates, "decide-error-settled");
         }
     });
-    let env_map: HashMap<String, String> = case["env"]
-        .as_object()
-        .map(|object| {
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), value.as_str().unwrap_or_default().to_owned()))
-                .collect()
-        })
-        .unwrap_or_default();
+    let env_map = recorded_env(&case);
     let env: EnvLookup = Arc::new(move |name| env_map.get(name).cloned().map(JsString::from));
     let unhandled_record = record.clone();
     let record_unhandled: UnhandledRecorder = Arc::new(move |message| {
@@ -691,7 +2186,7 @@ async fn replay_named(name: &str) {
         }) as Arc<dyn SmsSender>)
     });
     let channel = SmsChannel::new(SmsChannelOptions {
-        extra: Some(to_js_object(&case["extra"])),
+        extra: Some(to_js_object(recorded_extra(&case).unwrap_or(&Value::Null))),
         mapper: Some(SmsSessionMapper::new(
             SmsSessionMapperState::default(),
             Box::new(|| JsString::from(MAPPER_UUID)),
@@ -711,11 +2206,11 @@ async fn replay_named(name: &str) {
         .await
         .expect("#1339 start");
 
-    for step in case["steps"].as_array().cloned().unwrap_or_default() {
+    for step in steps {
         match step["op"].as_str().expect("#1339 step op") {
             "request" => {
-                let raw = build_raw(&step);
-                let half_close = step["halfClose"].as_bool().unwrap_or(false);
+                let raw = build_raw(step);
+                let half_close = recorded_half_close(step).unwrap_or(false);
                 let outcome = bounded("probe response", raw_request(port, &raw, half_close)).await;
                 let seen = {
                     let mut record = record.lock().expect("#1339 record mutex");
@@ -741,8 +2236,8 @@ async fn replay_named(name: &str) {
                 assert_responses_so_far(&seen, &case, name);
             }
             "wait-log" => {
-                let level = step["level"].as_str().unwrap_or_default().to_owned();
-                let text = step["text"].as_str().unwrap_or_default().to_owned();
+                let level = recorded_log_level(step).unwrap_or_default().to_owned();
+                let text = recorded_log_text(step).unwrap_or_default().to_owned();
                 let label = format!("log {text}");
                 until(&label, || {
                     record
@@ -755,16 +2250,16 @@ async fn replay_named(name: &str) {
                 .await;
             }
             "wait-sends" => {
-                let count = step["count"].as_u64().unwrap_or_default() as usize;
+                let count = recorded_sends_count(step).unwrap_or_default();
                 until(&format!("sends {count}"), || {
-                    record.lock().expect("#1339 record mutex").sends.len() >= count
+                    record.lock().expect("#1339 record mutex").sends.len() as u64 >= count
                 })
                 .await;
             }
             "wait-rpcs" => {
-                let count = step["count"].as_u64().unwrap_or_default() as usize;
+                let count = recorded_rpcs_count(step).unwrap_or_default();
                 until(&format!("rpcs {count}"), || {
-                    record.lock().expect("#1339 record mutex").rpcs.len() >= count
+                    record.lock().expect("#1339 record mutex").rpcs.len() as u64 >= count
                 })
                 .await;
             }
@@ -774,13 +2269,13 @@ async fn replay_named(name: &str) {
             "settle" => settle().await,
             "stop" => {
                 // TS `handle.stop(reason)` — an absent reason logs "no reason".
-                let reason = step["reason"].as_str().unwrap_or("no reason");
+                let reason = recorded_stop_reason(step).unwrap_or("no reason");
                 bounded("stop", handle.stop(reason))
                     .await
                     .expect("#1339 stop");
             }
             "cron" => {
-                let delivery = cron_delivery(&step["delivery"]);
+                let delivery = cron_delivery(recorded_delivery(step).unwrap_or(&Value::Null));
                 let delivered = bounded("cron delivery", channel.deliver_cron_result(&delivery))
                     .await
                     .expect("#1339 cron delivery");
