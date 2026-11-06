@@ -34,13 +34,13 @@
 ## 体积（`du -sk` 原始值，2026-11-07 实测）
 
 ```
-1540    scripts/retirement-outcome-parity/fixtures
+1548    scripts/retirement-outcome-parity/fixtures
  296    .../round-01/driver/frames.jsonl     (300624 B)
   12    .../round-01/driver/methods.json     (10914 B)
 （round-02..05 同）
 ```
 
-单文件最大 300624 B（约 294 KiB，上限 1 MiB），总量 1540 KiB（上限 5 MiB）。
+单文件最大 300624 B（约 294 KiB，上限 1 MiB），总量 1548 KiB（上限 5 MiB）。
 预算由 `../self_check.py --budget` 机检，超限即红。
 
 ## 原始 ↔ 切片 sha256（审计链）

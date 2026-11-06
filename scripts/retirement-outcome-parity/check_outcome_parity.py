@@ -132,6 +132,14 @@ def output_lock(root):
     except OSError as error:
         raise InputError(f'cannot open lock {root / LOCK_BASENAME}: {error}') from error
     try:
+        # 创建时的 `0o644` 会被 umask 折损（`umask 077` 得 0600），跨账号共享临时目录里
+        # 后来者再 `O_RDONLY` 打开就 `EACCES`。显式 `fchmod` 一次，让注释里「共享目录
+        # 也能等锁」的承诺真正成立。`fchmod` 失败不改变互斥语义（同账号场景照常工作），
+        # 因此只吞掉，不把「能锁但改不了权限」误判成输入不可用。
+        try:
+            os.fchmod(fd, 0o644)
+        except OSError:  # pragma: no cover - 极少数 FS 不支持 fchmod
+            pass
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -141,6 +149,10 @@ def output_lock(root):
                 fcntl.flock(fd, fcntl.LOCK_EX)
             except OSError as error:
                 raise InputError(f'cannot take lock {path}: {error}') from error
+        except OSError as error:
+            # `ENOLCK` / `EOPNOTSUPP`（异构 FS 上 flock 不可用）与「缺 fcntl」「缺
+            # O_NOFOLLOW」同一口径：rc2「跑不了」，不是裸 traceback 冒充判据 FAIL。
+            raise InputError(f'cannot take lock {path}: {error}') from error
         yield path
     finally:
         # 显式解锁后关闭：异常路径也不会把锁留给后续进程。
@@ -698,8 +710,10 @@ def run_emit(args):
             except BaseException:
                 tmp.unlink(missing_ok=True)
                 raise
-        # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。
-        digest = sha256_file(target)
+            # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。必须在**锁内**
+            # 算——出了锁再读，排队的下一个 `emit` 可能已 `os.replace` 成自己的产物，
+            # 报告的 `sha256` 就会归因到别人的写入。
+            digest = sha256_file(target)
     except (OSError, ValueError) as error:
         raise InputError(f'cannot write oracle {args.oracle!r}: {error}') from error
     print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),

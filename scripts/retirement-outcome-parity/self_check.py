@@ -3,7 +3,7 @@
 
 把「装置自己还能不能用」变成可机检的一条命令，供 CI 与本地共用：
 
-  budget   切片夹具的体积预算（单文件 < 1 MiB、总量 < 5 MiB，铁律 8 的入库上限）
+  budget   切片夹具的体积预算（单文件 ≤ 1 MiB、总量 ≤ 5 MiB，铁律 8 的入库上限）
   emit     `emit` 从入库夹具复算金样，必须与已提交的 `ts-oracle.json` **逐字节**相同
   check    `check` 5 轮全 PASS，且 `p7Evaluated` 为真（跨轮稳定性真的核过）
   negctl   负控 N1–N17 全 KILLED（任一 SURVIVED / INVALID 即红）
@@ -31,11 +31,33 @@ if not sys.flags.isolated:
 import argparse
 import json
 import os
+import re
+import select
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
+
+# 同族装置口径（scripts/gateway-parity/*、scripts/parity/* 均成对设置）：不写也**不读**
+# 缓存字节码。本文件自己的 `check_lock` 会用 `spec_from_file_location` 把
+# `check_outcome_parity.py` 在子进程里再加载一次（本目录的第三个再加载点），子进程
+# 的守卫见 LOCK_HOLDER；`-I` 只是 isolated，**不等于** `-B`，所以入口这一侧也要设。
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    base = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        candidate = os.path.join(
+            base, f'.no-pycache-{os.getpid()}-{os.urandom(8).hex()}')
+        if not os.path.lexists(candidate):
+            break
+    else:
+        print('self_check: cannot reserve a fresh pycache prefix', file=sys.stderr)
+        raise SystemExit(2)
+    sys.pycache_prefix = candidate
+sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
@@ -50,31 +72,37 @@ FIXTURE_FILE_LIMIT_BYTES = 1 << 20          # 1 MiB
 FIXTURE_TOTAL_LIMIT_BYTES = 5 << 20         # 5 MiB
 EXPECTED_CONTROLS = 17
 EXPECTED_ROUNDS = 5
-LOCK_PROBE_HOLD_SECONDS = 2.0
-LOCK_PROBE_MIN_WAIT_SECONDS = 1.0
+# 持锁方**等释放信号**（不是睡固定秒数），因此这里只是「父进程失联」时的兜底上限，
+# 不参与任何判定；判定用的事件是第二个进程打出「等锁」提示。
+LOCK_PROBE_HOLD_SECONDS = 60.0
+LOCK_PROBE_WAIT_TIMEOUT_SECONDS = 60.0
 
 # 子进程里持有输出目录锁的最小驱动（与 negative_controls 用**同一个** output_lock）。
 LOCK_HOLDER = r'''
-import importlib.util, sys, time
+import importlib.util, os, select, sys, tempfile
+# 同族口径：加载 checker **之前**先把字节码缓存关掉。`-I` 不等于 `-B`，
+# `spec_from_file_location` 在 exec 前会读本目录的 __pycache__/*.pyc——
+# 预置的 unchecked-hash pyc 可以只打印 LOCKED 而不真持锁，锁守卫就假 PASS 了。
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    print('lock holder: cannot reserve a fresh pycache prefix', file=sys.stderr)
+    raise SystemExit(2)
+sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('check_outcome_parity', sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 with module.output_lock(sys.argv[2]):
     print('LOCKED', flush=True)
-    time.sleep(float(sys.argv[3]))
+    # 持到父进程写一行（或 stdin 关闭返回 EOF）为止；argv[3] 只是兜底上限。
+    readable, _, _ = select.select([sys.stdin], [], [], float(sys.argv[3]))
+    if readable:
+        sys.stdin.readline()
 '''
 
 
 class CheckFailure(Exception):
     """一条检查不通过（rc 1）。"""
-
-
-def load_checker():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 # —— 各检查 ——
@@ -174,62 +202,156 @@ def check_negctl():
     return f'{counts["KILLED"]}/{EXPECTED_CONTROLS} KILLED, 0 SURVIVED/INVALID'
 
 
-def _spawn_lock_holder(root, hold_seconds):
+def _spawn_lock_holder(root, hold_seconds, stdin):
     return subprocess.Popen(
         [sys.executable, '-I', '-c', LOCK_HOLDER, str(CHECKER), str(root),
          str(hold_seconds)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def _read_until(stream, marker, timeout, label):
+    """在子进程输出上等到 ``marker`` 出现，超时即 CheckFailure。
+
+    用 ``select`` + ``os.read`` 而不是 ``readline()``：子进程若在 exec / 取锁前挂死，
+    裸 ``readline()`` 会把整个自检无限挂起（只能靠 CI job 的 20 min 收红）。
+    """
+    descriptor = stream.fileno()
+    deadline = time.monotonic() + timeout
+    data = b''
+    while marker not in data:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CheckFailure(f'{label}: timed out after {timeout:.0f}s waiting for '
+                               f'{marker!r}; got {data[-400:]!r}')
+        ready, _, _ = select.select([descriptor], [], [], remaining)
+        if not ready:
+            continue
+        chunk = os.read(descriptor, 4096)
+        if not chunk:  # EOF：不再等，由调用方按 marker 是否出现判断
+            break
+        data += chunk
+    return data
 
 
 def check_lock():
-    """两个进程抢同一输出目录：第二个必须等（不是静默并行写）。"""
+    """两个进程抢同一输出目录：第二个必须等（不是静默并行写）。
+
+    时序**事件驱动**，不靠固定秒数：第一个取锁后停在那里等释放信号，第二个启动后
+    必须打出「等锁」提示——那行只有在第一个真的抱着锁时才可能出现——父进程看到它
+    才放开第一个。因此慢机、冷启动、runner 抖动都不会把这个守卫推成假红。
+    """
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-lock-') as tmp:
         root = Path(tmp) / 'out'
-        first = _spawn_lock_holder(root, LOCK_PROBE_HOLD_SECONDS)
+        first = _spawn_lock_holder(root, LOCK_PROBE_HOLD_SECONDS, subprocess.PIPE)
+        second = None
         try:
-            line = first.stdout.readline().strip()
-            if line != 'LOCKED':
-                raise CheckFailure(f'first lock holder did not report LOCKED: {line!r} '
-                                   f'{first.stderr.read()[:400]}')
+            _read_until(first.stdout, b'LOCKED', LOCK_PROBE_WAIT_TIMEOUT_SECONDS,
+                        'first lock holder')
             started = time.monotonic()
-            second = subprocess.run(
-                [sys.executable, '-I', '-c', LOCK_HOLDER, str(CHECKER), str(root), '0'],
-                capture_output=True, text=True, timeout=60, check=False)
+            second = _spawn_lock_holder(root, 0.0, subprocess.DEVNULL)
+            seen = _read_until(second.stderr, b'waiting for output lock',
+                               LOCK_PROBE_WAIT_TIMEOUT_SECONDS, 'second lock holder')
             waited = time.monotonic() - started
+            if b'waiting for output lock' not in seen:
+                raise CheckFailure(
+                    'second holder never reported waiting: the output directory is '
+                    f'not actually mutually exclusive (got {seen[-400:]!r})')
+            # 看到「等锁」才放开第一个：第二个随后取到锁、读 stdin 见 EOF 退出。
+            first.stdin.write(b'\n')
+            first.stdin.flush()
+            first.stdin.close()
+            first_rc = first.wait(timeout=LOCK_PROBE_WAIT_TIMEOUT_SECONDS)
+            second_rc = second.wait(timeout=LOCK_PROBE_WAIT_TIMEOUT_SECONDS)
         finally:
-            first.wait(timeout=60)
-        if second.returncode != 0:
-            raise CheckFailure(f'second lock holder rc={second.returncode}: '
-                               f'{second.stderr.strip()[:400]}')
-        if 'waiting for output lock' not in second.stderr:
-            raise CheckFailure('second holder never reported waiting: the output '
-                               'directory is not actually mutually exclusive')
-        if waited < LOCK_PROBE_MIN_WAIT_SECONDS:
-            raise CheckFailure(f'second holder returned after {waited:.2f}s '
-                               f'(< {LOCK_PROBE_MIN_WAIT_SECONDS}s): it did not wait')
+            for process in (first, second):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=30)
+        if first_rc != 0:
+            raise CheckFailure(f'first lock holder rc={first_rc}: '
+                               f'{first.stderr.read()[:400]!r}')
+        if second_rc != 0:
+            raise CheckFailure(f'second lock holder rc={second_rc}: '
+                               f'{second.stderr.read()[:400]!r}')
     return f'second waited {waited:.2f}s for the output lock'
 
 
+JOB_HEADER = re.compile(r'^  ([\w-]+):\s*$')
+STEP_ITEM = re.compile(r'^      - +(\S.*)$')
+STEP_IF = re.compile(r'^        if:\s*(.*)$')
+RETIREMENT_JOB = 'retirement-outcome-parity'
+
+
+def _live_lines(text):
+    """去掉整行注释后的行。YAML 的 `#` 注释里的文本不是活的配置。
+
+    不做子串匹配就分不清「活的 YAML」与「被注释/禁用掉的文本」：把整个 job 连同
+    `needs:` 条目和 Require 步骤一起注释掉，needle 仍作为子串存在，接线守卫会假 PASS
+    而闸门已被静默拆掉。
+    """
+    return [line for line in text.splitlines()
+            if not line.lstrip().startswith('#')]
+
+
+def _job_block(lines, name):
+    start = next((index for index, line in enumerate(lines)
+                  if (match := JOB_HEADER.match(line)) and match[1] == name), None)
+    if start is None:
+        raise CheckFailure(f'no `{name}:` job in the workflow')
+    end = next((index for index in range(start + 1, len(lines))
+                if JOB_HEADER.match(lines[index])), len(lines))
+    return lines[start:end]
+
+
+def _steps(block):
+    """把 job 块切成 step 列表（每项含该 step 的全部行）。"""
+    starts = [index for index, line in enumerate(block) if STEP_ITEM.match(line)]
+    return [block[start:(starts[position + 1] if position + 1 < len(starts)
+                      else len(block))]
+            for position, start in enumerate(starts)]
+
+
 def check_wiring(workflow=None):
-    """CI 里这几件事必须真的接着：job 存在、三步都在、`check` 依赖它。"""
+    """CI 里这几件事必须真的接着：job 存在、三步都在、`check` 依赖它。
+
+    只认**活配置**：整行注释先剥掉；再核 retirement job 的 step 没有被 `if:` 挡掉
+    （`if: false` 会让 step 全跳过而 job 结果仍是 success，聚合闸门就放行了）。
+    """
     path = Path(workflow or WORKFLOW)
     try:
         text = path.read_text(encoding='utf-8')
     except OSError as error:
         raise CheckFailure(f'cannot read {path}: {error}') from error
+    lines = _live_lines(text)
+    live = '\n'.join(lines)
     required = (
-        ('job', 'retirement-outcome-parity:'),
+        ('job', f'{RETIREMENT_JOB}:'),
         ('emit step', 'check_outcome_parity.py emit'),
         ('check step', 'check_outcome_parity.py check'),
         ('negative controls step', 'retirement-outcome-parity/negative_controls.py'),
         ('self-check step', 'retirement-outcome-parity/self_check.py'),
-        ('aggregate needs', 'negative-controls, retirement-outcome-parity]'),
+        ('aggregate needs', f'negative-controls, {RETIREMENT_JOB}]'),
         ('aggregate require step', 'Require retirement outcome-parity success'),
     )
-    missing = [label for label, needle in required if needle not in text]
+    missing = [label for label, needle in required if needle not in live]
     if missing:
         raise CheckFailure(f'{path} is missing the retirement gate: {missing}')
-    return f'{len(required)} wiring anchors present in {path.name}'
+    steps = _steps(_job_block(lines, RETIREMENT_JOB))
+    if not steps:
+        raise CheckFailure(f'{path}: `{RETIREMENT_JOB}` has no steps')
+    for step in steps:
+        labels = [match[1] for match in (STEP_IF.match(line) for line in step) if match]
+        if not labels:
+            continue
+        guarded = any('emit' in line or 'check_outcome_parity.py check' in line
+                      or 'negative_controls.py' in line or 'self_check.py' in line
+                      for line in step)
+        if guarded:
+            raise CheckFailure(
+                f'{path}: a retirement gate step is guarded by `if: {labels[0]}`; '
+                'a skipped step still leaves the job success, so the gate would be '
+                'silently disabled')
+    return f'{len(required)} wiring anchors live in {path.name}'
 
 
 CHECKS = {
@@ -289,27 +411,72 @@ def control_budget():
 
 
 def control_lock():
-    """两个持锁进程必须串行；守卫被拆掉时第二个不再等待，本控件即红。"""
+    """两个持锁进程必须串行；守卫被拆掉时第二个不再等待，本控件即红。
+
+    与另两个控件不同，这里**没有独立的违反样本**：把 `output_lock` 里的 flock 删掉，
+    `check_lock` 行为上就会红（第二个不再打「等锁」），所以重跑正向检查就是变异
+    证据。另两个控件造的是真违反样本（超限文件 / 被剥的 workflow），本控件靠行为。
+    """
     detail = check_lock()
     return detail
 
 
 def control_wiring():
-    """把 CI 里的 retirement 步骤删掉：接线守卫必须报红。"""
+    """三种拆法都必须让接线守卫变红：删行、整段注释、给闸门 step 加 `if: false`。"""
     text = WORKFLOW.read_text(encoding='utf-8')
     original = text.splitlines(keepends=True)
-    lines = [line for line in original if 'outcome-parity' not in line.lower()]
-    if len(lines) == len(original):
+    samples = []
+
+    stripped = [line for line in original if 'outcome-parity' not in line.lower()]
+    if len(stripped) == len(original):
         raise CheckFailure('CI workflow has no retirement anchor to remove')
+    samples.append(('removed', ''.join(stripped)))
+
+    # 整段注释：job 块连同聚合 `needs` 条目与 Require 步骤一起注掉，needle 仍作为
+    # 子串躺在文本里——只有「注释不算活配置」才能抓到。
+    raw = text.splitlines(keepends=True)
+    job_start = next((index for index, line in enumerate(raw)
+                      if line.rstrip('\n') == f'  {RETIREMENT_JOB}:'), None)
+    if job_start is None:
+        raise CheckFailure('CI workflow has no retirement job to comment out')
+    job_end = next((index for index in range(job_start + 1, len(raw))
+                    if JOB_HEADER.match(raw[index].rstrip('\n'))), len(raw))
+    dead = set(range(job_start, job_end))
+    require_start = next((index for index, line in enumerate(raw)
+                          if 'Require retirement outcome-parity success' in line), None)
+    if require_start is None:
+        raise CheckFailure('CI workflow has no Require step to comment out')
+    require_end = next((index for index in range(require_start + 1, len(raw))
+                        if STEP_ITEM.match(raw[index])
+                        or JOB_HEADER.match(raw[index].rstrip('\n'))), len(raw))
+    dead |= set(range(require_start, require_end))
+    dead |= {index for index, line in enumerate(raw)
+             if f'{RETIREMENT_JOB}]' in line}
+    commented = ['# ' + line if index in dead else line
+                 for index, line in enumerate(raw)]
+    samples.append(('commented-out', ''.join(commented)))
+
+    # step 级 `if: false`：step 全跳过，job 结果仍是 success → 聚合闸门放行。
+    anchor = '      - name: check 5 轮\n'
+    if text.count(anchor) != 1:
+        raise CheckFailure(f'CI workflow has no unique anchor to disable: {anchor!r}')
+    samples.append(('disabled-step',
+                    text.replace(anchor, anchor + '        if: false\n', 1)))
+
+    survived = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
-        stripped = Path(tmp) / 'ci.yml'
-        stripped.write_text(''.join(lines), encoding='utf-8')
-        try:
-            check_wiring(stripped)
-        except CheckFailure:
-            return 'stripped workflow is rejected'
-    raise CheckFailure('wiring guard did not reject a workflow with the '
-                       'retirement steps removed')
+        for label, mutated in samples:
+            candidate = Path(tmp) / f'ci-{label}.yml'
+            candidate.write_text(mutated, encoding='utf-8')
+            try:
+                check_wiring(candidate)
+            except CheckFailure:
+                continue
+            survived.append(label)
+    if survived:
+        raise CheckFailure('wiring guard did not reject: '
+                           f'{survived} (the CI wiring check was weakened)')
+    return f'{len(samples)} mutated workflows ({", ".join(s for s, _ in samples)}) rejected'
 
 
 CONTROLS_FOR_CHECK = {

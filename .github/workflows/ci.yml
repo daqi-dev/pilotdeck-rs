@@ -182,12 +182,13 @@ jobs:
         run: |
           python3 -I scripts/retirement-outcome-parity/negative_controls.py \
             --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"
-      # ④ 守卫自检：夹具体积预算、输出目录互斥、CI 接线。这几条都是「守卫本身还在不在」，
-      #    拆掉任一处（删体积上限 / 删 flock / 删上面的步骤）本步即红。
-      - name: 装置守卫自检（体积预算 / 输出目录锁 / CI 接线）
+      # ④ 装置守卫自检：六项全跑（体积预算 / emit 复算 / 5 轮判据 / 负控 / 输出目录锁 /
+      #    CI 接线）。前四项与 ①–③ 重叠是**有意**的：那三条分支只有在 self_check 里被
+      #    真正执行过才算数（否则它们只是没人跑的死代码），整套约 5 s。后两项是「守卫本身
+      #    还在不在」——拆掉任一处（删体积上限 / 删 flock / 删上面的步骤）本步即红。
+      - name: 装置守卫自检（六项）
         run: |
-          python3 -I scripts/retirement-outcome-parity/self_check.py \
-            --only budget --only lock --only wiring
+          python3 -I scripts/retirement-outcome-parity/self_check.py
       # 红了才最需要逐条证据（summary.json 里每条 KILLED / SURVIVED / INVALID + 原因）。
       - name: 上传负控证据
         if: ${{ always() }}
