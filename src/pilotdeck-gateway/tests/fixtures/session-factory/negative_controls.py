@@ -408,12 +408,21 @@ def audit():
             # #[path] declarations). Searching one concatenation of all three
             # files let a row pass on a test that only exists in an unrelated
             # module, so the audit could stay CHECKED on a wrong binding.
-            module = next((file for module_prefix, file in audited_modules
-                           if test.startswith(module_prefix)), None)
+            module = None
+            matched_prefix = None
+            for module_prefix, file in audited_modules:
+                if test.startswith(module_prefix):
+                    module, matched_prefix = file, module_prefix
+                    break
             if module is None:
                 raise ValueError('bound test module not audited: ' + test)
+            if '::' in test[len(matched_prefix):]:
+                # #1281 review: a known prefix followed by an extra module level
+                # would still find its short name in the same file; the binding
+                # is only exact when the test name sits directly under it.
+                raise ValueError('bound test has an extra module level: ' + test)
             source = factory.with_name(module).read_text()
-            test_name = test.rsplit('::', 1)[-1]
+            test_name = test[len(matched_prefix):]
             compact = ''.join(source.split())
             if 'fn' + test_name + '(' not in compact and test_name + '=>' not in compact:
                 raise ValueError('bound full test not found: ' + test)

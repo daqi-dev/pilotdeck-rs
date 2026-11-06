@@ -189,11 +189,20 @@ def main():
             (root / 'src/pilotdeck-gateway/src/runtime/session' / file).read_text().split())
             for file in modules.values()}
         for _name, _filename, _old, _new, test, _assertion in mutations:
-            file = next((name for module, name in modules.items()
-                         if test.startswith(module)), None)
+            file = None
+            matched = None
+            for module, name in modules.items():
+                if test.startswith(module):
+                    file, matched = name, module
+                    break
             if file is None:
                 raise SystemExit(f'#1210 bound test module not audited: {test}')
-            short = test.rsplit('::', 1)[-1]
+            short = test[len(matched):]
+            if '::' in short:
+                # #1281 review: an extra module level under a known prefix would
+                # still find its short name in the same file; only a direct
+                # child of the module is an exact binding.
+                raise SystemExit(f'#1210 bound test has an extra module level: {test}')
             if 'fn' + short + '(' not in compacts[file] and short + '=>"' not in compacts[file]:
                 raise SystemExit(f'#1210 bound test not found for {short}: {test}')
         print('PASS: #1011 projection cache mutation anchors (static only)')

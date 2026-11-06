@@ -556,10 +556,13 @@ class SessionFactoryTests(unittest.TestCase):
                 self.assertEqual(actual_root, root, '#1037 session guard must own temporary root')
                 self.assertEqual(paths, [source], '#1037 session guard must own only temporary source')
                 # #1281: the session runner now names its baseline explicitly so
-                # an uncommitted candidate can be guarded; with no override in
-                # the environment that has to stay HEAD.
-                self.assertEqual(kwargs.get('baseline'), 'HEAD',
-                                 '#1037 session guard must default to HEAD')
+                # an uncommitted candidate can be guarded. Pin a sentinel value
+                # instead of the default: the assertion stays deterministic when
+                # the ambient environment sets PDRS_NEGATIVE_BASELINE (as this
+                # very meta suite does), and it proves the override reaches the
+                # guard unchanged.
+                self.assertEqual(kwargs.get('baseline'), 'sentinel-1281',
+                                 '#1037 session guard must pass through PDRS_NEGATIVE_BASELINE')
                 yield {source: b'dirty: false,'}
                 self.assertEqual(source.read_text(), 'dirty: false,', '#1037 session restores before guard exit')
                 raise RuntimeError('#1037 session guard exit failure')
@@ -572,7 +575,8 @@ class SessionFactoryTests(unittest.TestCase):
             with patch.object(negative_process, 'mutating_sources', guard), \
                     patch.object(negative_process, 'run_owned', run), \
                     patch.object(negative_process, 'wait_for_slot', return_value=subprocess.CompletedProcess([], 0, '', '')), \
-                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'unused'), 'PDRS_BASELINE': str(root / 'unused-ts')}), \
+                    patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'unused'), 'PDRS_BASELINE': str(root / 'unused-ts'),
+                                            'PDRS_NEGATIVE_BASELINE': 'sentinel-1281'}), \
                     patch.object(sys, 'argv', ['negative_controls.py', '--compile', str(output), 'same-key-concurrent']), \
                     patch.object(sys, 'path', [str(FIXTURES / 'turn-runner'), *sys.path]), \
                     contextlib.redirect_stdout(io.StringIO()):
