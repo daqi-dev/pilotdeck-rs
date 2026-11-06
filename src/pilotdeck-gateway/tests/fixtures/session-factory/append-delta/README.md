@@ -31,6 +31,8 @@ PR #1175 的“去掉 8 次一致性重试”不符合当前实现，应更正�
 
 `turn-runner-tail/generate.mts` 原本创建 `run-*` 而不清理，同时将 collector 临时数据写在 OUT/collector。本单把 collector 纳入本次 mkdtemp 根，并在 finally 中只清理该根，保留 raw 报告与 oracle。raw 报告内已有 transcript 原字节与 SHA256；其中记录的工作路径是历史路径。正控覆盖成功和 oracle 独占创建冲突两种退出、外来 run-* 与 collector 保留；负控覆盖漏清理、宽泛删目录及 collector 写回 OUT。`session-factory/file-snapshot-test.mts` 同样在 finally 中清理自己的 snapshot-contract 根；`probe.mts` 独立运行时自清理，完整 factory 生成器则预先分配并持有各 probe 根，等 `check.py` 的物理库存/字节审计结束后统一 finally 清理。父子不按目录前缀批量删除，外来目录与 raw/oracle 保留。正控覆盖独立 probe 成功/输出冲突、snapshot 探针、完整生成器成功/输出冲突，并比较 factory 与 tail oracle 原字节。
 
+#1281 补齐失败路径：`file-snapshot-test.mts` 提供 `PDRS_1253_SNAPSHOT_FAIL=1` 失败 hook（body 在 mkdtemp 后抛错），`generate.mts` 的子进程 probe 经预置 `raw/index.json` 与 index 写入冲突而失败，两格均断言 owned 根清空、外来目录保留；负控覆盖「snapshot 清理仅在成功时执行」与「probe 根清理仅在子进程成功时执行」。`projection-cache/generate.mts` 的 `work` 清理从文件末尾移入 finally，`generator_cleans_owned_work` 扩为成功 + `oracle.json` 冲突两格（断言两格均无 `work-*`、外来 oracle 保留），负控覆盖「work 清理仅在成功退出执行」。
+
 原始 phase2 RESULT 不在本树引用资料中，问题归因依据为当前行号与 `73c9d952` 的 #1011 同类清理修复，未伪称读到原件。
 
 ## 复现

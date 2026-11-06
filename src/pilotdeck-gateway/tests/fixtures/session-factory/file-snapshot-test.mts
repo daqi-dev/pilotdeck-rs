@@ -10,6 +10,9 @@ export async function verifyFileSnapshot(base:string, output:string) {
  const {JsonFileSessionProjectionCheckpointStore}=await import(`${base}/src/session/projection/checkpoint/JsonFileSessionProjectionCheckpointStore.ts`);
  const root=fs.mkdtempSync(path.join(output,'snapshot-contract-'));
  try {
+ // #1281 failure hook: only the cleanup test sets this, making the body throw
+ // after mkdtemp so the finally below must still remove the owned root.
+ if(process.env.PDRS_1253_SNAPSHOT_FAIL==='1')throw Error('#1253 snapshot body failure after mkdtemp');
  const checkpoint=path.join(root,'session.jsonl.projections.json');
  const transcript=path.join(root,'session.jsonl');
  const envelope={format:'pilotdeck.session-projections',version:1,sessionId:'session-745',asOfSequence:-1,anchor:null,projections:{}};
