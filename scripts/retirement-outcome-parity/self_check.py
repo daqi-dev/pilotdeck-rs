@@ -262,13 +262,23 @@ def run_checks(names):
 # —— 变异自检：证明守卫被拆掉时检查会红 ——
 
 def control_budget():
-    """给夹具造一个超大文件：体积守卫必须报红。"""
+    """给夹具造一个超大文件：体积守卫必须报红。
+
+    这里用**字面**上限（1 MiB / 5 MiB，来自任务书与铁律 8），不读
+    `FIXTURE_*_LIMIT_BYTES`——否则把常量调大时控件会跟着变宽，守卫被悄悄放开
+    也测不出来（变异的正是那个常量）。
+    """
+    if FIXTURE_FILE_LIMIT_BYTES > (1 << 20) or FIXTURE_TOTAL_LIMIT_BYTES > (5 << 20):
+        raise CheckFailure(
+            'configured fixture budget exceeds the registered 1 MiB/file, '
+            f'5 MiB/total (got {FIXTURE_FILE_LIMIT_BYTES} / '
+            f'{FIXTURE_TOTAL_LIMIT_BYTES})')
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-budget-') as tmp:
         root = Path(tmp) / 'fixtures'
         shutil.copytree(FIXTURES, root)
         oversized = root / 'round-01' / 'driver' / 'oversized.bin'
         with open(oversized, 'wb') as handle:
-            handle.seek(FIXTURE_FILE_LIMIT_BYTES)  # 空心情景下 seek 后写入 1 字节
+            handle.seek(1 << 20)  # 稀疏文件：长度 1 MiB + 1 B
             handle.write(b'\0')
         try:
             check_budget(root)
