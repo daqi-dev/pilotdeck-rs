@@ -14,10 +14,14 @@ Rust retirement 轮登记（S1 判据提交，body 含 ``criteria-commit: yes``�
 """
 from __future__ import annotations
 
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
 import argparse
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
@@ -79,6 +83,17 @@ def load_rows(round_dir):
             value = row.get(field)
             if not isinstance(value, str) or not value:
                 raise InputError(f'{path}: row {index} lacks string field {field}')
+        # errorCode 进 P7 的稳定性集合，非哈希类型会在 analyze_stability 里
+        # 抛 TypeError（rc1 traceback）；events 走 ``>= 1``，JSON true 会被
+        # 当成 1。两者都在入口 fail-closed 成 rc2。
+        code = row.get('errorCode')
+        if code is not None and (not isinstance(code, str) or not code):
+            raise InputError(
+                f'{path}: row {index} has a non-string errorCode {code!r}')
+        events = row.get('events')
+        if events is not None and (not isinstance(events, int) or isinstance(events, bool)):
+            raise InputError(
+                f'{path}: row {index} has a non-integer events {events!r}')
         rows.append(row)
     return rows, path
 
@@ -109,7 +124,11 @@ def load_frames(round_dir):
 
 
 def index_wire(frames, path):
-    """线缆索引：方法 → send id、id → response 帧、final:true 事件帧 id 集。"""
+    """线缆索引：方法 → send id、id → response 帧列表、final:true 事件帧 id 集。
+
+    响应按列表保留：同 id 出现多条 response 是线缆异常（重放/重试重复落盘），
+    由 P6 判 FAIL；dict 的 last-wins 会让「先错码后对码」的形状假 PASS。
+    """
     send_ids = {}
     responses = {}
     finals = set()
@@ -127,7 +146,7 @@ def index_wire(frames, path):
             identifier = wire.get('id')
             if not isinstance(identifier, str):
                 raise InputError(f'{path}: response frame without id')
-            responses[identifier] = wire
+            responses.setdefault(identifier, []).append(wire)
         elif direction == 'receive' and kind == 'event' and wire.get('final') is True:
             identifier = wire.get('id')
             if not isinstance(identifier, str):
@@ -156,6 +175,12 @@ def analyze_round(round_name, rows, wire, oracle_index):
             violations.append(violation(
                 'P1-COVERAGE', round_name, method,
                 'timeout outcome does not count as executed and is itself FAIL'))
+            golden = oracle_index.get(method)
+            if golden is not None and golden['outcome'] != outcome:
+                violations.append(violation(
+                    'P3-OUTCOME', round_name, method,
+                    f'outcome {outcome!r} != golden {golden["outcome"]!r} '
+                    '(a timeout is never an accepted outcome)'))
             continue
         if outcome not in KNOWN_OUTCOMES:
             violations.append(violation(
@@ -207,12 +232,20 @@ def analyze_round(round_name, rows, wire, oracle_index):
                 f'{len(identifiers)} send frames for one method'))
         else:
             identifier = identifiers[0]
-            if outcome == 'error':
-                response = responses.get(identifier)
-                if response is None:
+            matching = responses.get(identifier, [])
+            if len(matching) > 1:
+                # 与 send 侧对称：一个请求只允许一条 response。重放/重试重复
+                # 落盘会让 last-wins 掩盖「先错码后对码」的线缆不一致。
+                violations.append(violation(
+                    'P6-WIRE-CODE', round_name, method,
+                    f'{len(matching)} response frames for one id (duplicate or '
+                    'replayed response; each request must receive exactly one)'))
+            elif outcome == 'error':
+                if not matching:
                     violations.append(violation(
                         'P6-WIRE-CODE', round_name, method, 'missing response frame'))
                 else:
+                    response = matching[0]
                     error = response.get('error')
                     error = error if isinstance(error, dict) else None
                     wire_code = error.get('code') if error else None
@@ -246,11 +279,11 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         'P6-WIRE-CODE', round_name, method,
                         f'stream ok with events < 1 (got {events!r})'))
             else:
-                response = responses.get(identifier)
-                if response is None:
+                if not matching:
                     violations.append(violation(
                         'P6-WIRE-CODE', round_name, method, 'missing response frame'))
                 else:
+                    response = matching[0]
                     if response.get('ok') is not True:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
@@ -309,7 +342,7 @@ def load_oracle(path):
     if not isinstance(rounds, dict):
         raise InputError(f'{path}: missing rounds metadata')
     k = rounds.get('k')
-    if not isinstance(k, int) or k < 1:
+    if not isinstance(k, int) or isinstance(k, bool) or k < 1:
         raise InputError(f'{path}: rounds.k must be a positive integer')
     if not isinstance(rounds.get('dirs'), list) or len(rounds['dirs']) != k:
         raise InputError(f'{path}: rounds.dirs must list k round names')
@@ -371,6 +404,16 @@ def load_round_bundle(round_dir):
             'frames_sha256': sha256_file(frames_path)}
 
 
+def ensure_unique_round_names(bundles):
+    """P7 以轮次目录名为键：重名轮次会静默合并，跨轮漂移检测被架空。"""
+    names = [bundle['dir'].name for bundle in bundles]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise InputError(
+            f'duplicate round directory names {duplicates}: rounds are keyed by '
+            'directory name in P7; pass distinct round directories')
+
+
 def stability_values(bundles):
     values = {}
     for bundle in bundles:
@@ -390,6 +433,7 @@ def run_emit(args):
     bundles = [load_round_bundle(path) for path in args.round]
     if len(bundles) < 1:
         raise InputError('emit needs at least one --round')
+    ensure_unique_round_names(bundles)
     # 用第一轮自身做自洽金样，跑全套单轮判分（P1/P5/P6/重复行 + 未知值）。
     self_index = {row['method']: {'shape': row['shape'], 'outcome': row['outcome'],
                                   'errorCode': row.get('errorCode')}
@@ -420,7 +464,8 @@ def run_emit(args):
         method = row['method']
         identifier = send_ids[method][0]
         if row['outcome'] == 'error':
-            error = responses[identifier].get('error')
+            # 单帧已在 analyze_round 里强制（重复 response 即 FAIL），此处取唯一一帧。
+            error = responses[identifier][0].get('error')
             wire_codes[method] = error.get('code') if isinstance(error, dict) else None
         else:
             wire_codes[method] = None
@@ -443,8 +488,11 @@ def run_emit(args):
     }
     target = Path(args.oracle)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
-                      encoding='utf-8')
+    # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。
+    tmp = target.with_name(target.name + '.tmp')
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
+                   encoding='utf-8')
+    tmp.replace(target)
     print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),
                       'methods': len(payload['methods']),
                       'sha256': sha256_file(target),
@@ -455,6 +503,7 @@ def run_emit(args):
 def run_check(args):
     _, oracle_index = load_oracle(args.oracle)
     bundles = [load_round_bundle(path) for path in args.round]
+    ensure_unique_round_names(bundles)
     violations = []
     stats = []
     for bundle in bundles:
