@@ -15,6 +15,7 @@
 | 2026-11-07 | `#1968`（P1）+ `#1969`（P2 批）清残留：negctl 基线改走轮次闸门（不可用退 rc=3）、独占新建改 `os.makedirs`（原子）、基线变异点缺失改 `BaselineUnusable`（不再 traceback）、证据 trace 原子写、N/O 负控校验成因、G03 子进程 `TMPDIR` 隔离 |
 | 2026-11-07 | 第二轮修复轮（r2 评审：GLM/zai 四角色 + Claude 三角色）：B/G 的 gsf 循环补变异点守卫（与 E/H 同源的空操作假 `MISMATCH`）、`rounds()` 的目录名校验在 negctl 折成 rc=3（不再与「目录已存在」rc=1 撞码）、未判定汇总行报**真正的**退出码、SIGTERM handler 提前到入口 + atexit 删半成品证据目录、rc=9 收尾输出遇断管道不改写 rc、`write_trace` 发布 0644、`need()` 内联 |
 | 2026-11-07 | 上述改动的**评审修复轮**（GLM/zai 四角色）：E/H 两条用例补变异点守卫（此前是静默空操作 → 假 `MISMATCH`）、N/O 成因改**结构化集合**（正文子串匹配会被进程级证据行里的 G03 stderr 污染）、`negctl` 循环中途崩溃独立 rc=9 并删半成品、`--negctl-out` 创建失败捕 `OSError`、空串不再静默落进 `run()`、G03 起不来按「未判定」而非崩溃、`g03_tmpdir` 接 SIGTERM |
+| 2026-11-07 | 第三轮修复轮（r3 评审 boundary P2）：stdout 统一套 `_PipeSafe` —— 输出接 `\| head -1` 这类短读者时，退出码此前会被改写成 **120**（缓冲，解释器退出 flush 失败）或 **1**（`-u` 无缓冲，`BrokenPipeError` 未捕获），两者都会盖掉真实 rc；现在一律保留真实 rc（实测见下「管道与退出码」） |
 
 入仓理由：`#1157` 的常驻复查条件写着「用同一份 `frame_attrib.py` 重跑」，而 `_tmp/` 是可回收目录。
 放 `scripts/parity-attrib/` 而**不是** `scripts/parity/`：后者在冻结检查（`check_frozen.py`）扫描范围内。
@@ -50,6 +51,21 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 影响，且未判定条数照常在 `4` 的输出里打印，不吞。不存在 rc=2/6/7 的含义。
 **不在本表内的 `1`**：`_repo_root()` 找不到仓库根、非 `-I` 运行（`sys.flags.isolated` 检查）——这两条是
 **用法错误**，发生在任何子命令之前，与「证据目录不可用」同码但消息可辨；按 rc 判停的复查请一并看 stderr。
+
+### 管道与退出码（`| head` 之类短读者）
+
+`main()` 进场就把 `sys.stdout` 套上 `_PipeSafe`：读者提前退出时 write/flush 抛的 `OSError` 被吞掉，
+fd 1 改接 `/dev/null`，**退出码仍是真实 rc**。不加这层会退成两个假码（2000 个无效轮次、输出 240 KB、
+`… | head -1` 实测）：
+
+| 情形 | 改前 | 改后 |
+|---|---|---|
+| 默认缓冲 | `120`（解释器退出 flush 失败，CPython 改出口） | 真实 `rc=3` |
+| `-u` / `PYTHONUNBUFFERED` | `1`（`BrokenPipeError` 逃出 → traceback，撞「证据目录不可用」码） | 真实 `rc=3` |
+
+两个假码都会让按 rc 判停的 `#1157` 复查读错：`1` 会被读成「目录名已占用 → 换名重跑」，`120` 不在表内、
+看起来像装置故障。同一层保护对 `run()` 同样生效（它的 `| head -3` 以前照样退 120）。
+自测里有两条端到端断言（默认缓冲 / `-u` 各一条，真起进程、读一行就关管道）。
 
 脚本内 `_repo_root()` 从自身位置向上找含 `scripts/parity/g03_compare.py` 的仓库根，因此 `_tmp/` 里的
 历史副本与本目录的入仓副本都能跑；**找不到就报错退出**，绝不回退到硬编码的机器路径（否则被审树与
@@ -173,7 +189,7 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M/N/O 亦符合期望（15/15 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 115 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+- 自测 `test_frame_attrib.py` 现有 118 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
   `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
   BLOCKED / 超大整数 started_wall）、`verdict_exit()` 退出码折叠（含未判定）、`judge()` 的 C1–C6
   编排与 `UNKNOWN`（注入 G03 桩，不跑冻结比较器）、C0 的进程内自报（`trace_input` /
@@ -187,7 +203,9 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
   摘要照常打印且**报真正的 rc** / rc=3 无效基线轮次 / rc=3 基线缺变异点（`BaselineUnusable` 接线） /
   rc=3 轮次目录名不合规 / **rc=9 循环崩溃且半成品目录已删** / atexit 删未跑完的证据目录 /
   rc=9 收尾输出遇断管道不抛出）、`--negctl-out` 悬空符号链接拒绝与空串显式报错、`write_trace` 发布
-  0644、B/G 的 gsf 变异点守卫、`judge()` 的第三个返回值（结构化成因）在自报 / 进程级两条路径上的取值。
+  0644、B/G 的 gsf 变异点守卫、`judge()` 的第三个返回值（结构化成因）在自报 / 进程级两条路径上的取值、
+  `_PipeSafe` 吞掉断管道错误并静音 fd 1，以及**真起进程**的短读者端到端两条（默认缓冲 / `-u`
+  各一条：读一行就关管道，rc 必须是真实值而不是 120 / 1）。
   每条闸门断言都带判别力：缺 summary 的用例会把 summary 恢复后再测 started_wall，
   原因串必须点名 `started_wall`（否则删掉闸门也照样绿）。
 

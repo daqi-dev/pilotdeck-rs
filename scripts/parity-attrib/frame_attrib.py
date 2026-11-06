@@ -41,6 +41,8 @@ C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_
 **数据问题，不下判据结论**）· 4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的
 退出码）· 9 装置自身崩溃（已删半成品证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
 进程被 SIGTERM 打断时也会删掉半成品证据目录（入口即装 handler + atexit 兜底）。
+stdout 统一套 `_PipeSafe`：输出接 `| head` 这类短读者时退 120（缓冲）或 1（`-u`）的老毛病不再出现，
+上表里的真实 rc 照旧。
 完整语义见 README「退出码」。
 """
 import argparse
@@ -762,6 +764,47 @@ def build_cases(base_ts, base_ru):
     return cases
 
 
+def _silence_stdout():
+    """把 fd 1 接到 /dev/null：读者已退出（`… | head -1`）后继续往断管道写只会重复抛错。"""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except OSError:
+        pass
+
+
+class _PipeSafe:
+    """stdout 包装：读者提前退出时不改写退出码。
+
+    只靠 Python 层的 `print` 会在两处翻车，都会把真实 rc（0/2/3/4/8）盖掉 —— 而 #1157 的常驻
+    复查是按 rc 判停的：`| head` 读错 rc 会被读成「换名重跑」，甚至把完整证据当没跑完：
+      · 无缓冲（`python3 -u` / `PYTHONUNBUFFERED`）时 write 抛 BrokenPipeError，未捕获 →
+        traceback → **rc=1**，与 README 登记的「证据目录不可用」撞码；
+      · 有缓冲时异常留到解释器退出 flush，CPython 把出口改写成 **120**（实测见 README）。
+    实测（2000 个无效轮次，`… | head -1`）：包装前 120 / `-u` 下 1，包装后一律是真实 rc。
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def write(self, s):
+        try:
+            return self._inner.write(s)
+        except OSError:
+            _silence_stdout()
+            return len(s)
+
+    def flush(self):
+        try:
+            self._inner.flush()
+        except OSError:
+            _silence_stdout()
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
 def _report_crash(exc, outdir):
     """rc=9 的收尾输出。管道已断（`… | head -1`）或磁盘满时输出本身会抛 OSError：
     那时**绝不能**让异常逃出 except 块把 rc 改写成 1（又撞回「目录已存在」的码）。"""
@@ -771,12 +814,7 @@ def _report_crash(exc, outdir):
         return
     except OSError:
         pass
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull, sys.stdout.fileno())
-        os.close(devnull)
-    except OSError:
-        pass
+    _silence_stdout()
 
 
 def negctl(root, scenario, outdir):
@@ -880,6 +918,9 @@ def negctl(root, scenario, outdir):
 
 
 def main():
+    # 输出接 `| head` 之类的短读者时，退出码必须是真实 rc：不加这层，缓冲/无缓冲两条路径分别
+    # 退 120 / 1（实测见 README），按 rc 判停的复查会读错结论。run() 与 negctl() 都由它兜住。
+    sys.stdout = _PipeSafe(sys.stdout)
     ap = argparse.ArgumentParser()
     ap.add_argument('root')
     ap.add_argument('scenario')
