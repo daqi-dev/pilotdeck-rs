@@ -19,7 +19,7 @@
 ## 用法（必须 `-I`）
 
 ```bash
-# 1) 逐 pair 归因；rc=0 全部可归因或 PASS，rc=2 有 NOT_6
+# 1) 逐 pair 归因；rc=0 才有「#6 已归因」的验收含义（见下方退出码）
 python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景>
 #    <场景> ∈ {deadline, deadline_during_tool}
 #    <rounds 目录> 下同时含 ts-r1..ts-rN 与 rust-r1..rust-rN（parity-full 落盘布局）
@@ -31,9 +31,10 @@ python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景> --negc
 python3 -I scripts/parity-attrib/test_frame_attrib.py
 ```
 
-退出码：`0` 全归因/PASS · `2` 有 `NOT_6`（反证命中）· `3` negctl 基线不可用 · `4` negctl 有
-`MISMATCH` · `5` 有效轮次不足（空对拍，**拒绝给结论**）· `6` 有轮次无效因而只覆盖部分批次
-（结论不算验收证据）。
+退出码：`0` 确有 FAIL 且全部归因为 #6（无 `NOT_6`、批次完整）· `2` 有 `NOT_6`（反证命中）·
+`3` negctl 基线不可用 · `4` negctl 有 `MISMATCH` · `5` 有效轮次不足（空对拍，**拒绝给结论**）·
+`6` 有轮次无效因而只覆盖部分批次（结论不算验收证据）· `7` 本批次**没有任何 FAIL**（全 PASS）
+→ 不能作为 #6 归因证据。
 
 脚本内 `_repo_root()` 从自身位置向上找含 `scripts/parity/g03_compare.py` 的仓库根，因此 `_tmp/` 里的
 历史副本与本目录的入仓副本都能跑；**找不到就报错退出**，绝不回退到硬编码的机器路径（否则被审树与
@@ -42,9 +43,10 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 ### 输入前置条件：轮次必须有效
 
 进判定前逐轮校验（与冻结 `scripts/parity/score.py:146-158` 同口径）：`run.json` 的 `side` 对、
-`valid_round is true`、`identity_ok is true`，且 `artifacts/summary.json` 的 `blocked` 为空；
-`artifacts/<场景>*.jsonl` 必须存在且可解析。无效轮次**逐条列原因并排除**，不再参与 pair；
-若排除后仍能判定，rc=`6`；若一侧一轮都不剩，rc=`5`。
+`valid_round is true`、`identity_ok is true`、`started_wall` 为有限数值，且
+`artifacts/summary.json` **必须存在**（缺失即无效——「blocked 未知」不能当成「未 blocked」）、其
+`blocked` 必须为空；`artifacts/<场景>*.jsonl` 必须存在且可解析。无效轮次**逐条列原因并排除**，
+不再参与 pair；若排除后仍能判定，rc=`6`；若一侧一轮都不剩，rc=`5`。
 没有这道闸门时，被 BLOCKED / 只跑半截的轮次会被 G03 追加 `trace_identity` 规则，从而把
 「轮次无效」误报成「不是 #6」，或直接因 trace 缺失/截断崩掉整个分析。
 
@@ -120,15 +122,17 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 | 修订前（仅抹 invocationId/sequence） | 80 | 10 | 10 |
 | 修订后（C5 豁免 + C6） | 80 | **20** | **0** |
 
-- 复算原始输出：`_tmp/20261107-issue-1926/recompute-20261106T163102Z/`
-  （`00-selftest.txt` / `01-recompute.txt` / `02-negctl.txt` / `03-g03-ev-probe.json` / `04-g03-ev-both-sides.json`）；
-  修复轮前的首轮复算留在 `recompute-20261106T1611Z/` 与 `recompute-20261106T162801Z/`（后者是字段集口径的中间态，已作废）。
+- 复算原始输出：`_tmp/20261107-issue-1926/recompute-20261106T164138Z/`
+  （`00-selftest.txt` / `01-recompute.txt` / `02-negctl.txt`；口径实测探针在
+  `recompute-20261106T163102Z/03-g03-ev-probe.json` 与 `04-g03-ev-both-sides.json`）；
+  修复轮前的复算留在 `recompute-20261106T1611Z/` 与 `recompute-20261106T162801Z/`（后者是字段集口径的中间态，已作废）。
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M 亦符合期望（13/13 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 50 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
-  `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门、`judge()` 的 C1–C6 编排
-  （注入 G03 桩，不跑冻结比较器）、空 root 硬失败，以及**装置自身 sha256 pin**。
+- 自测 `test_frame_attrib.py` 现有 56 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+  `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
+  BLOCKED）、`verdict_exit()` 退出码折叠、`judge()` 的 C1–C6 编排（注入 G03 桩，不跑冻结比较器）、
+  空 root 硬失败，以及**装置自身 sha256 pin**。
 
 ## 维护规则
 
