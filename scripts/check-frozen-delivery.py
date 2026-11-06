@@ -63,9 +63,13 @@ uncommitted changes.
 Read-only with a verifiable write scope.  It never runs ``--write`` and never
 writes into the audited worktree: every child apparatus runs in a throwaway
 checkout of the pinned commit (``git worktree add --detach``), so neither a
-moving ``HEAD`` nor a file edit in the audited tree can reach it.  The audited
-tree's ``git status`` (tracked and untracked) is compared before and after the
-run, and any difference is blocking.  The only writes outside temporary
+moving ``HEAD`` nor a file edit in the audited tree can reach it.  The scope is
+*observed* on two channels, not asserted in general: the audited tree's ``git
+status`` (tracked and untracked) is compared before and after the run, and the
+git worktree bookkeeping is sampled around each child.  A difference on either
+is blocking.  Writes a child makes elsewhere (``$HOME``, some other ``$TMPDIR``
+path) are outside what a wrapper can see; the promise is about the audited
+tree and this repo's worktree records.  The only writes outside temporary
 directories are git's own worktree bookkeeping under ``.git/worktrees``, which
 is removed again before the tool exits.
 
@@ -92,6 +96,7 @@ import ast
 import atexit
 import hashlib
 import json
+import os
 import re
 import shutil
 import signal
@@ -237,7 +242,9 @@ def base_digest(root, kind, mb, path):
 # gateway/ui rows are exactly 64 hex + two spaces + a path (``manifest_row``);
 # parity's table is the one place 16-64 hex is legal, and only with its
 # ``…``/``...`` ellipsis and the trailing cells the real fullmatch demands.
-ROW_BARE = re.compile(r'[0-9a-f]{64}  ([\w./-]+)')
+# ``re.ASCII`` on ROW_BARE: the real ``manifest_row`` readers compile on *bytes*,
+# where ``\w`` is ASCII-only, so a CJK row name must read as prose here too.
+ROW_BARE = re.compile(r'[0-9a-f]{64}  ([\w./-]+)', re.ASCII)
 ROW_TABLE = re.compile(r'\| `([^`]+)` \| `[0-9a-f]{16,64}(?:…|\.\.\.)?` \|[^\r\n]*\|')
 _ROW_CACHE = {}
 _SOURCE_CACHE = {}
@@ -308,47 +315,42 @@ def registered_at(root, kind, path, commit):
 
 
 # ------------------------------------------------------------ discovery
-def discover(root, commit=None):
+def discover(root, commit):
     """Apparatuses are discovered from the tree at ``commit``: specs/<kind>/FROZEN.md.
 
-    ``commit`` is the SHA pinned at start-up.  Reading ``specs/`` from the
-    *working tree* let a checkout A -> B -> A inside the discovery window shrink
-    the set: everything after this point is pinned to A, so an apparatus that is
-    missing from B would never run and the run could report READY for a tree A
-    the real gate refuses.  Both halves (the apparatus set and the entry file)
-    therefore come from the pinned commit, not from the filesystem.
+    ``commit`` is the SHA pinned at start-up and is **required**: reading
+    ``specs/`` from the *working tree* let a checkout A -> B -> A inside the
+    discovery window shrink the set -- everything after this point is pinned to
+    A, so an apparatus missing from B would never run and the run could report
+    READY for a tree A the real gate refuses.  There is deliberately no
+    filesystem fallback: a caller with no SHA to pin to must fail closed, not
+    silently revive the pre-fix semantics.
 
     Returns ``[(kind, entry_path_or_None)]``, or ``None`` when the tree cannot
     be listed at ``commit`` (callers fail closed).  A FROZEN.md without an entry
     is still reported (as blocking) instead of being silently skipped.
     """
-    if commit is None:
-        # Filesystem fallback for callers with no commit to pin to; the tool
-        # itself always passes the pinned SHA.
-        specs = root / 'specs'
-        found = []
-        if not specs.is_dir():
-            return found
-        for folder in sorted(specs.iterdir()):
-            if not folder.is_dir() or not (folder / 'FROZEN.md').is_file():
-                continue
-            entry = root / 'scripts' / folder.name / 'check_frozen.py'
-            found.append((folder.name, entry if entry.is_file() else None))
-        return found
     # ``specs/`` (not ``specs``): the bare pathspec lists the ``specs`` tree
     # entry itself and hides everything one level down.
-    code, out, err = git(root, 'ls-tree', '-z', commit, '--', 'specs/')
+    #
+    # Parsed as *bytes*: a path git can store but UTF-8 cannot represent (or a
+    # C locale turning every non-ASCII name into U+FFFD under ``text=True``)
+    # would make ``exists_at`` ask for a name that never existed, and the
+    # apparatus would be silently skipped -- the real gate, which discovers via
+    # the filesystem, would still judge it.  ``os.fsdecode`` keeps the original
+    # bytes through the surrogateescape round trip.
+    code, out, err = git_bytes(root, 'ls-tree', '-z', commit, '--', 'specs/')
     if code != 0:
         return None
     found = []
-    for entry in filter(None, out.split('\0')):
-        meta, _, name = entry.partition('\t')
+    for entry in filter(None, out.split(b'\0')):
+        meta, sep, name = entry.partition(b'\t')
         parts = meta.split()
-        if len(parts) != 3 or parts[1] != 'tree':
+        if not sep or len(parts) != 3 or parts[1] != b'tree':
             continue
-        if not name.startswith('specs/') or name.count('/') != 1:
+        if not name.startswith(b'specs/') or name.count(b'/') != 1:
             continue
-        kind = name.split('/', 1)[1]
+        kind = os.fsdecode(name.split(b'/', 1)[1])
         frozen = exists_at(root, commit, f'specs/{kind}/FROZEN.md')
         if frozen is None:
             return None
@@ -616,11 +618,28 @@ def repo_relative_any(ctx, name):
     even though every decision is made in repo-relative terms.  Resolving only
     against the audited worktree returned ``None`` and turned ui-server's
     legitimate "unexpected registered file" into a false BLOCK.
+
+    When one root is nested inside the other, the *deepest* prefix wins: taking
+    the first match would make a snapshot path inside the audited tree resolve
+    to ``tmp/cfd-snapshot-.../tree/...`` instead of the repo-relative path the
+    apparatus names.
     """
-    relative = repo_relative(ctx['root'], name)
-    if relative is None and ctx.get('snapshot') is not None:
-        relative = repo_relative(ctx['snapshot'], name)
-    return relative
+    if not Path(name).is_absolute():
+        return strip_reported(name)
+    best, best_depth = None, -1
+    for root in (ctx['root'], ctx.get('snapshot')):
+        if root is None:
+            continue
+        relative = repo_relative(root, name)
+        if relative is None:
+            continue
+        try:
+            depth = len(Path(root).resolve().parts)
+        except OSError:
+            continue
+        if depth > best_depth:
+            best, best_depth = relative, depth
+    return best
 
 
 def spec_path(root, kind, name):
@@ -3445,7 +3464,9 @@ def classify(ctx, item):
         # comma is therefore not this message: classify it as unknown and block
         # rather than let ``not unbacked`` read as reducible.
         names = [name.strip() for name in match.group(1).split(',')]
-        if not names or any(not BARE_PATH.fullmatch(name) for name in names):
+        # ``split`` always yields at least one element, so an empty entry /
+        # trailing comma shows up as a name ``BARE_PATH`` rejects.
+        if any(not BARE_PATH.fullmatch(name) for name in names):
             return 'block', 'blocking (malformed A2 hash list)', None
         unbacked = []
         for name in names:
@@ -3544,12 +3565,30 @@ def run_apparatus(root, kind, entry, base, mb, snapshot=None):
                                                    'committed at the pinned snapshot', None))
             return result
         cwd = snapshot
+    # Sample the git worktree bookkeeping around the child only: a concurrent
+    # coordinator creating a sibling worktree is indistinguishable from a child
+    # reaching out of its snapshot, so the window is narrowed to the child's own
+    # runtime instead of the whole run (the run-level sample below then only
+    # has to catch entries that belong to *this* precheck).
+    entries_before = worktree_entries(root)
     try:
         proc = subprocess.run([sys.executable, '-I', str(child), '--base', base],
                               capture_output=True, text=True, errors='replace',
                               cwd=str(cwd), timeout=CHECK_TIMEOUT)
+        run_error = None
     except (OSError, subprocess.SubprocessError) as error:
-        result['blocking'].append(('blocking', f'cannot run {child}: {error}', None))
+        proc, run_error = None, error
+    entries_after = worktree_entries(root)
+    if entries_before is not None and entries_after is not None:
+        appeared = sorted(entries_after - entries_before)
+        if appeared:
+            result['blocking'].append(('blocking',
+                                       'a git worktree entry appeared in the audited repo '
+                                       'while this apparatus ran and is not part of the '
+                                       'precheck\'s write scope: '
+                                       + '; '.join(appeared[:5]), None))
+    if run_error is not None:
+        result['blocking'].append(('blocking', f'cannot run {child}: {run_error}', None))
         return result
     try:
         report = json.loads(proc.stdout)
@@ -3731,17 +3770,57 @@ def create_snapshot(root, commit):
     return target, None
 
 
+def drop_admin_entry(root, target):
+    """Remove the ``.git/worktrees/<id>`` entry git made for ``target``; never raise.
+
+    ``git worktree prune`` would be repo-wide: it also drops *other* sessions'
+    stale bookkeeping, which this run's write scope does not cover -- and the
+    before/after ``worktree_entries`` comparison only sees additions, so the
+    tool would never notice its own prune.  Matching on the entry's ``gitdir``
+    file names exactly the target git registered for this holder.
+    """
+    try:
+        code, out, _ = git(root, 'rev-parse', '--git-common-dir')
+        if code != 0 or not out.strip():
+            return
+        common = Path(out.strip())
+        if not common.is_absolute():
+            common = root / common
+        admin = common / 'worktrees'
+        if not admin.is_dir():
+            return
+        wanted = str(target / '.git')
+        for entry in admin.iterdir():
+            try:
+                recorded = (entry / 'gitdir').read_text(encoding='utf-8',
+                                                        errors='replace').strip()
+            except OSError:
+                continue
+            if recorded == wanted:
+                shutil.rmtree(entry, ignore_errors=True)
+    except OSError:
+        pass
+
+
 def drop_holder(root, holder):
-    """Remove one snapshot holder and its git bookkeeping; never raise."""
+    """Remove one snapshot holder and its git bookkeeping; never raise.
+
+    The holder stays in ``_SNAPSHOT_HOLDERS`` until it is actually gone.  A
+    SIGTERM landing inside the removal raises out of here (the ``SystemExit``
+    the handler installed), and the ``atexit`` cleanup must still see the
+    record to retry: dropping it first, as this used to, made an interrupted
+    holder invisible and leaked it for good.
+    """
+    target = holder / 'tree'
+    try:
+        code, _, _ = git(root, 'worktree', 'remove', '--force', str(target))
+        if code:
+            drop_admin_entry(root, target)
+        shutil.rmtree(holder, ignore_errors=True)
+    except Exception:  # noqa: BLE001 -- cleanup must not mask the exit path
+        return
     if (root, holder) in _SNAPSHOT_HOLDERS:
         _SNAPSHOT_HOLDERS.remove((root, holder))
-    target = holder / 'tree'
-    code, _, _ = git(root, 'worktree', 'remove', '--force', str(target))
-    shutil.rmtree(holder, ignore_errors=True)
-    if code:
-        # Scoped to this holder: the entry git wrote for *our* target is what
-        # must not survive; ``prune`` is only reached when ``remove`` failed.
-        git(root, 'worktree', 'prune')
 
 
 def remove_snapshot(root, snapshot):
@@ -3749,6 +3828,43 @@ def remove_snapshot(root, snapshot):
     if snapshot is None:
         return
     drop_holder(root, snapshot.parent)
+
+
+def scope_verdict(before, after, snapshot):
+    """``(block, note)`` for the run-level worktree comparison; either may be None.
+
+    Only an entry this precheck created (the snapshot) surviving is blocking:
+    the run cannot tell a concurrent sibling's ``git worktree add`` from a
+    child reaching out, and a delivery must not be refused for the former.  A
+    child's own addition is caught inside its run window by ``run_apparatus``.
+    """
+    if before is None or after is None:
+        return ('cannot verify the precheck\'s write scope: git worktree list is '
+                'unreadable, so a leftover snapshot or a child-created worktree '
+                'could still be on disk'), None
+    leaked = sorted(after - before)
+    ours = str(snapshot) if snapshot is not None else None
+    # Compare resolved paths: ``$TMPDIR`` on macOS is a symlink (``/var`` ->
+    # ``/private/var``), and git may echo either spelling back.  A textual
+    # mismatch would silently demote *our own* leftover to a note -- the one
+    # direction that must stay blocking.
+    def same(path, other):
+        try:
+            return os.path.realpath(path) == os.path.realpath(other)
+        except OSError:
+            return path == other
+    own = [path for path in leaked if ours is not None and same(path, ours)]
+    block = None
+    if own:
+        block = ('the pinned snapshot\'s git bookkeeping was not removed '
+                 f'({own[0]}): the precheck left a .git/worktrees entry behind')
+        leaked = [path for path in leaked if path not in own]
+    note = None
+    if leaked:
+        note = ('a git worktree entry this precheck did not create appeared during '
+                'the run; it is outside the write-scope comparison and is not '
+                'counted as a leak: ' + '; '.join(leaked[:5]))
+    return block, note
 
 
 def cleanup_snapshots():
@@ -3759,11 +3875,7 @@ def cleanup_snapshots():
     ``cfd-snapshot-*`` directory and no ``.git/worktrees`` entry behind.
     """
     for root, holder in list(_SNAPSHOT_HOLDERS):
-        try:
-            drop_holder(root, holder)
-        except Exception:  # noqa: BLE001 -- cleanup must not mask the exit path
-            if (root, holder) in _SNAPSHOT_HOLDERS:
-                _SNAPSHOT_HOLDERS.remove((root, holder))
+        drop_holder(root, holder)
     restore_sigterm()
 
 
@@ -3886,9 +3998,10 @@ def main(argv=None):
 
     # The tool's own write scope, sampled before anything of ours exists: a
     # temporary snapshot under ``$TMPDIR`` and the ``.git/worktrees`` entry git
-    # creates for it, both removed again before this process exits.  Anything
-    # else that shows up here came from a child apparatus reaching out of its
-    # snapshot, which no status fingerprint would see.
+    # creates for it, both removed again before this process exits.  This is the
+    # whole run; per-child sampling inside ``run_apparatus`` narrows the window
+    # for attributing a new entry to a child, and only an entry that is *ours*
+    # surviving blocks here.
     atexit.register(cleanup_snapshots)
     install_sigterm_cleanup()
     worktrees_before = worktree_entries(root)
@@ -3926,25 +4039,14 @@ def main(argv=None):
         issues, added, _ = event_chain_issues(root, mb, kinds, mb=mb)
 
     # Write-scope proof (P1: the read-only promise must be verifiable, not
-    # asserted).  The audited tree never hosts a child, so the only records this
-    # run may add are the snapshot's own -- and those must be gone by now.
+    # asserted).  The audited tree never hosts a child, so the only record this
+    # run may leave behind is the snapshot's own -- and it must be gone by now.
+    # Entries created by someone else after the last apparatus exited are a
+    # note, not a block: refusing the delivery because a sibling coordinator
+    # created a worktree in the same repo would be a false BLOCK, and a child's
+    # own addition is caught inside that child's run window instead.
     worktrees_after = worktree_entries(root)
-    scope_block = None
-    if worktrees_before is None or worktrees_after is None:
-        scope_block = ('cannot verify the precheck\'s write scope: git worktree list is '
-                       'unreadable, so a leftover snapshot or a child-created worktree '
-                       'could still be on disk')
-    else:
-        leaked = sorted(worktrees_after - worktrees_before)
-        if leaked:
-            ours = str(snapshot) if snapshot is not None else None
-            if ours in leaked:
-                scope_block = ('the pinned snapshot\'s git bookkeeping was not removed '
-                               f'({ours}): the precheck left a .git/worktrees entry behind')
-            else:
-                scope_block = ('a git worktree entry appeared while the apparatuses ran and '
-                               'is not part of this precheck\'s write scope: '
-                               + '; '.join(leaked[:5]))
+    scope_block, scope_note = scope_verdict(worktrees_before, worktrees_after, snapshot)
     if scope_block:
         results.insert(0, {'kind': 'worktree',
                            'blocking': [('blocking', scope_block, None)],
@@ -4014,6 +4116,9 @@ def main(argv=None):
         if args.show_reducible:
             for item in result['reducible']:
                 print(f'  reducible  {item}')
+
+    if scope_note:
+        print(f'  note: {scope_note}')
 
     print('=== event files added vs merge-base ===')
     if added:
