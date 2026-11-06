@@ -5,14 +5,18 @@
 //! in the replacement coordinator's transcript-write reservation
 //! (InProcessGateway.ts:2193,2203) and append the `model-selection` /
 //! `model-selection-clear` transcript entries through the session storage
-//! (NativeSessionModelSelectionPort.write/clear). The permission-mode,
-//! thinking and output-style selections live in the process-global store
-//! below — the counterpart of the per-gateway maps a TS createLocalGateway
-//! owns (`sessionOverrides`, `sdkThinkingOverrides`,
-//! `sdkSessionConfigs.outputStyle`) — and every mutation closes the live
-//! session through the owner, like the TS callbacks' `router.close` /
-//! `closeSession`. `seed_read_state` routes through the owner's maintenance
-//! fence onto the live session's tool checkpoint.
+//! (NativeSessionModelSelectionPort.write/clear). `output_styles_list` reads
+//! the project runtime's plugin styles. The three selection methods
+//! (`set_permission_mode`, `set_session_thinking`, `set_output_style`) keep
+//! the TS gate order and payload validation verbatim, then answer
+//! `CAPABILITY_UNAVAILABLE`: their TS callbacks write the per-gateway
+//! `registry` (`sessionOverrides`, `sdkThinkingOverrides`,
+//! `sdkSessionConfigs.outputStyle`), a registry the native process never
+//! instantiates, so a local store here would be write-only and every
+//! `applied: true` a false positive (#1457 fix-r1 P1; deviation registered as
+//! A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R4). `seed_read_state` routes
+//! through the owner's maintenance fence onto the live session's tool
+//! checkpoint.
 use super::super::requests::Requests;
 use crate::{
     config::{self, Env},
@@ -25,11 +29,7 @@ use crate::{
     storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, SessionStorageInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{path::PathBuf, sync::Arc};
 
 // Wire names from the gateway frames registry. All 7 pass through admission
 // as ordinary session requests.
@@ -165,22 +165,19 @@ fn native_metadata(home: &std::path::Path) -> Metadata<crate::metadata::NativeFi
     }
 }
 
-/// Process-global session configuration state — the counterpart of the
-/// per-gateway maps a TS createLocalGateway owns: `sessionOverrides`
-/// (via the ported [`SessionConfigOverrides`]), `sdkThinkingOverrides`, and
-/// the `outputStyle` field of `sdkSessionConfigs`.
-struct SessionConfigState {
-    overrides: crate::config::session_overrides::SessionConfigOverrides,
-    thinking: HashMap<JsString, JsValue>,
-    output_styles: HashMap<JsString, JsString>,
+/// #1457 fix-r1 (P1): the TS callbacks store their selection on the
+/// per-gateway `registry` (`sessionOverrides` / `sdkThinkingOverrides` /
+/// `sdkSessionConfigs.outputStyle`) and the next session reads it back. The
+/// native process has no such registry instance — `SdkSessionRegistry` is a
+/// ported module with no production binding — so a store here would be
+/// written and never read. A validated request answers honestly instead of
+/// claiming `applied: true`.
+fn session_config_unavailable(method: &str) -> RequestError {
+    gateway_error(
+        "CAPABILITY_UNAVAILABLE",
+        format!("Native gateway method {method} is not configured."),
+    )
 }
-static SESSION_CONFIG: LazyLock<Mutex<SessionConfigState>> = LazyLock::new(|| {
-    Mutex::new(SessionConfigState {
-        overrides: crate::config::session_overrides::SessionConfigOverrides::new(),
-        thinking: HashMap::new(),
-        output_styles: HashMap::new(),
-    })
-});
 
 impl Requests {
     pub(in crate::native_process) fn session_config_request(
@@ -302,6 +299,16 @@ impl Requests {
         selection: Option<&JsValue>,
         project_root: &str,
     ) -> Result<(), RequestError> {
+        // #1457 fix-r1: one writer at a time per session — the rename/tag path
+        // numbers its append from the tail it just read, so two concurrent
+        // writers would both claim `sequence + 1` and brick the transcript.
+        let write_fence = super::transcript_locks::acquire(project_root, session_key).await;
+        // Retire a live writer while the fence is held: its in-memory sequence
+        // would otherwise replay `sequence + 1` from the tail we are about to
+        // extend (`session_record_status` takes the same fence before appending,
+        // so an in-flight live append either finished before us or sees a closed
+        // recorder). Closing first keeps the tail we restore authoritative.
+        self.owner.close(session_key).await.map_err(runtime_error)?;
         let home = self.options.home.clone();
         let key = session_key.clone();
         let mut metadata = pilotdeck_protocol::JsObject::new();
@@ -323,6 +330,10 @@ impl Requests {
         };
         let project_root: PathBuf = project_root.into();
         tokio::task::spawn_blocking(move || {
+            // The fence outlives a cancelled request: dropping this future does
+            // not stop a blocking closure that already started, so the guard
+            // travels with the write instead of dropping at the await.
+            let _write = write_fence;
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new()),
@@ -359,8 +370,9 @@ impl Requests {
 
     /// InProcessGateway.ts:2321-2329 + createLocalGateway.ts:1371-1382: the
     /// mode gate, then the busy gate on the raw key (a blank key can hold a
-    /// reserved turn), then the callback's sessionKey gate and the
-    /// sessionOverrides spread.
+    /// reserved turn), then the callback's sessionKey gate. The
+    /// sessionOverrides spread has no native counterpart
+    /// ([`session_config_unavailable`]).
     async fn set_permission_mode(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let mode = params.get("mode").unwrap_or(&UNDEFINED);
         let mode_ok = mode.as_string().is_some_and(|m| {
@@ -383,20 +395,14 @@ impl Requests {
                 "Cannot change permission mode during an active turn.",
             ));
         }
-        let session_key = require_session_key(params)?;
-        let mut state = SESSION_CONFIG.lock().unwrap();
-        let existing = state
-            .overrides
-            .get(&session_key)
-            .unwrap_or_else(crate::config::session_value::SessionValue::object);
-        existing.set("permissionMode", mode.clone());
-        state.overrides.set(&session_key, &existing);
-        Ok(object([("applied", JsValue::Bool(true))]))
+        require_session_key(params)?;
+        Err(session_config_unavailable("set_permission_mode"))
     }
 
     /// InProcessGateway.ts:2364-2372: sessionKey → busy →
-    /// validateThinkingConfig, then the callback stores the override and
-    /// closes the session.
+    /// validateThinkingConfig. The callback's thinking override lives on the
+    /// native-absent registry ([`session_config_unavailable`]), so the store
+    /// and the `close` stop here.
     async fn set_session_thinking(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = require_session_key(params)?;
         if self.owner.has_active_turn(&session_key) {
@@ -406,23 +412,7 @@ impl Requests {
             ));
         }
         validate_thinking(params.get("thinking").unwrap_or(&UNDEFINED))?;
-        match params.get("thinking") {
-            None | Some(JsValue::Undefined) => {
-                SESSION_CONFIG.lock().unwrap().thinking.remove(&session_key);
-            }
-            Some(thinking) => {
-                SESSION_CONFIG
-                    .lock()
-                    .unwrap()
-                    .thinking
-                    .insert(session_key.clone(), thinking.clone());
-            }
-        }
-        self.owner
-            .close(&session_key)
-            .await
-            .map_err(runtime_error)?;
-        Ok(object([("applied", JsValue::Bool(true))]))
+        Err(session_config_unavailable("set_session_thinking"))
     }
 
     /// InProcessGateway.ts:2374-2377 has no params gate;
@@ -452,16 +442,9 @@ impl Requests {
         }
         let mut result = pilotdeck_protocol::JsObject::new();
         result.insert("styles".into(), JsValue::Array(style_values));
-        if let Some(session_key) = params.get("sessionKey").and_then(JsValue::as_string)
-            && !session_key.is_empty()
-            && let Some(selected) = SESSION_CONFIG
-                .lock()
-                .unwrap()
-                .output_styles
-                .get(session_key)
-        {
-            result.insert("selected".into(), JsValue::String(selected.clone()));
-        }
+        // No `selected`: the only writer (`set_output_style`) answers
+        // [`session_config_unavailable`], so the project view is the whole
+        // answer here.
         Ok(JsValue::Object(result))
     }
 
@@ -513,34 +496,7 @@ impl Requests {
                 ));
             }
         }
-        match &name {
-            Some(name) => {
-                SESSION_CONFIG
-                    .lock()
-                    .unwrap()
-                    .output_styles
-                    .insert(session_key.clone(), name.clone());
-            }
-            None => {
-                SESSION_CONFIG
-                    .lock()
-                    .unwrap()
-                    .output_styles
-                    .remove(&session_key);
-            }
-        }
-        self.owner
-            .close(&session_key)
-            .await
-            .map_err(runtime_error)?;
-        self.interactions
-            .close_session(&session_key, &"sdk_output_style_changed".into());
-        let mut result = pilotdeck_protocol::JsObject::new();
-        result.insert("applied".into(), JsValue::Bool(true));
-        if let Some(name) = name {
-            result.insert("selected".into(), JsValue::String(name));
-        }
-        Ok(JsValue::Object(result))
+        Err(session_config_unavailable("set_output_style"))
     }
 
     /// The plugin runtime's output styles, after the refresh the TS callback
@@ -1172,22 +1128,12 @@ mod tests {
     // ─────────────────────────────────────────────── set_permission_mode
 
     #[tokio::test]
-    async fn set_permission_mode_applies_and_validates() {
+    async fn set_permission_mode_validates_then_reports_unavailable() {
         let (_scratch, r) = setup_fixture();
-        let applied = r
-            .session_config_request(
-                "set_permission_mode".into(),
-                object([("sessionKey", "cfg-pm-1".into()), ("mode", "plan".into())]),
-            )
-            .await
-            .expect("#1457 set_permission_mode applies");
-        negative_assert_eq!(
-            applied.get("applied"),
-            Some(&JsValue::Bool(true)),
-            "#1457 set_permission_mode applied"
-        );
+        // fix-r1 P1: every TS mode passes the wire gates, then the request
+        // answers honestly — nothing reads a local override (#1457-R4).
         for mode in crate::runtime::permission::PERMISSION_MODES {
-            let applied = r
+            let error = r
                 .session_config_request(
                     "set_permission_mode".into(),
                     object([
@@ -1196,11 +1142,16 @@ mod tests {
                     ]),
                 )
                 .await
-                .expect("#1457 set_permission_mode accepts every TS mode");
+                .expect_err("#1457 set_permission_mode is not wired");
             negative_assert_eq!(
-                applied.get("applied"),
-                Some(&JsValue::Bool(true)),
-                "#1457 set_permission_mode applied for every TS mode"
+                error.code.as_str(),
+                "CAPABILITY_UNAVAILABLE",
+                "#1457 set_permission_mode unavailable code"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "Native gateway method set_permission_mode is not configured.",
+                "#1457 set_permission_mode unavailable message"
             );
         }
         for (label, params, code, message) in [
@@ -1271,41 +1222,35 @@ mod tests {
     // ─────────────────────────────────────────────── set_session_thinking
 
     #[tokio::test]
-    async fn set_session_thinking_applies_and_validates() {
+    async fn set_session_thinking_validates_then_reports_unavailable() {
         let (_scratch, r) = setup_fixture();
-        let applied = r
-            .session_config_request(
-                "set_session_thinking".into(),
-                object([
-                    ("sessionKey", "cfg-th-1".into()),
-                    (
-                        "thinking",
-                        object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
-                    ),
-                ]),
-            )
-            .await
-            .expect("#1457 set_session_thinking applies");
-        negative_assert_eq!(
-            applied.get("applied"),
-            Some(&JsValue::Bool(true)),
-            "#1457 set_session_thinking applied"
-        );
-        let nulled = r
-            .session_config_request(
-                "set_session_thinking".into(),
-                object([
-                    ("sessionKey", "cfg-th-1".into()),
-                    ("thinking", JsValue::Null),
-                ]),
-            )
-            .await
-            .expect("#1457 thinking null is valid");
-        negative_assert_eq!(
-            nulled.get("applied"),
-            Some(&JsValue::Bool(true)),
-            "#1457 thinking null applies"
-        );
+        // fix-r1 P1: valid payloads (including the explicit null) pass
+        // validate_thinking, then answer honestly (#1457-R4).
+        for (label, thinking) in [
+            (
+                "mode object",
+                object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+            ),
+            ("explicit null", JsValue::Null),
+        ] {
+            let error = r
+                .session_config_request(
+                    "set_session_thinking".into(),
+                    object([("sessionKey", "cfg-th-1".into()), ("thinking", thinking)]),
+                )
+                .await
+                .expect_err("#1457 set_session_thinking is not wired");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "CAPABILITY_UNAVAILABLE",
+                "#1457 thinking unavailable code for {label}"
+            );
+            negative_assert_eq!(
+                error_text(&error),
+                "Native gateway method set_session_thinking is not configured.",
+                "#1457 thinking unavailable message for {label}"
+            );
+        }
         for (label, params, code, message) in [
             (
                 "non-object thinking",
@@ -1399,7 +1344,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn output_styles_list_and_set_roundtrip() {
+    async fn output_styles_list_reports_project_styles() {
         let (_scratch, r) = setup_fixture();
         let key: JsString = "cfg-style-1".into();
         let before = r
@@ -1415,7 +1360,9 @@ mod tests {
             "#1457 the probe style is absent before the plugin exists"
         );
         write_probe_plugin(&r);
-        let applied = r
+        // fix-r1 P1: a style the project really contributes passes the name
+        // gate, then the request answers honestly (#1457-R4).
+        let error = r
             .session_config_request(
                 "set_output_style".into(),
                 object([
@@ -1424,16 +1371,16 @@ mod tests {
                 ]),
             )
             .await
-            .expect("#1457 set_output_style applies the project style");
+            .expect_err("#1457 set_output_style is not wired");
         negative_assert_eq!(
-            applied.get("applied"),
-            Some(&JsValue::Bool(true)),
-            "#1457 set_output_style applied"
+            error.code.as_str(),
+            "CAPABILITY_UNAVAILABLE",
+            "#1457 set_output_style unavailable code"
         );
         negative_assert_eq!(
-            applied.get("selected").and_then(JsValue::as_string),
-            Some(&JsString::from("probe:compact")),
-            "#1457 set_output_style echoes the selection"
+            error_text(&error),
+            "Native gateway method set_output_style is not configured.",
+            "#1457 set_output_style unavailable message"
         );
         let listed = r
             .session_config_request(
@@ -1465,41 +1412,9 @@ mod tests {
             "#1457 style source is the project tree"
         );
         negative_assert_eq!(
-            listed.get("selected").and_then(JsValue::as_string),
-            Some(&JsString::from("probe:compact")),
-            "#1457 list reports the stored selection"
-        );
-        let cleared = r
-            .session_config_request(
-                "set_output_style".into(),
-                object([
-                    ("sessionKey", JsValue::String(key.clone())),
-                    ("name", JsValue::Null),
-                ]),
-            )
-            .await
-            .expect("#1457 set_output_style null clears");
-        negative_assert_eq!(
-            cleared.get("applied"),
-            Some(&JsValue::Bool(true)),
-            "#1457 null clear applies"
-        );
-        negative_assert_eq!(
-            cleared.get("selected"),
-            None,
-            "#1457 null clear omits selected"
-        );
-        let listed = r
-            .session_config_request(
-                "output_styles_list".into(),
-                object([("sessionKey", JsValue::String(key))]),
-            )
-            .await
-            .expect("#1457 output_styles_list after the clear");
-        negative_assert_eq!(
             listed.get("selected"),
             None,
-            "#1457 list drops selected after the clear"
+            "#1457 no selection can be stored, so the list omits selected"
         );
         teardown(&r).await;
     }
@@ -1763,6 +1678,75 @@ mod tests {
         );
         r.owner
             .end_turn(&session.into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    // ─────────────────────────────────────── transcript write serialization
+
+    /// #1457 fix-r1 (P0): `session_model_set` and `rename_session` each build a
+    /// fresh `JsonlTranscriptStore`, restore the tail, and append
+    /// `sequence + 1`. Racing them on one session must still leave a log the
+    /// next `restore()` accepts: strictly increasing sequences, no duplicate.
+    #[tokio::test]
+    async fn concurrent_transcript_writers_keep_the_chain_loadable() {
+        let (_scratch, r) = setup_fixture();
+        let session = "cfg-race-1";
+        // Eight rounds: a single unlucky ordering must not be able to make the
+        // race invisible, and the fences must hold for the whole run.
+        for round in 0..8 {
+            let set_params = object([
+                ("sessionKey", session.into()),
+                ("selection", selection("model", "test", "test")),
+            ]);
+            let rename_params = object([
+                ("sessionKey", session.into()),
+                ("value", JsValue::String(format!("round-{round}").into())),
+            ]);
+            let (written, renamed) = tokio::join!(
+                r.session_config_request("session_model_set".into(), set_params),
+                r.session_dir_request("rename_session".into(), rename_params),
+            );
+            written.expect("#1457 session_model_set succeeds");
+            renamed.expect("#1457 rename_session succeeds");
+        }
+        let entries = transcript_entries(&r, session);
+        let sequences: Vec<f64> = entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("sequence")
+                    .and_then(serde_json::Value::as_f64)
+                    .expect("#1457 every transcript entry carries a sequence")
+            })
+            .collect();
+        negative_assert!(
+            sequences.windows(2).all(|pair| pair[0] < pair[1]),
+            "#1457 transcript sequences strictly increase, got {sequences:?}"
+        );
+        negative_assert_eq!(
+            sequences.len(),
+            16,
+            "#1457 every concurrent write landed exactly once"
+        );
+        // The real invariant: a fresh reader must still be able to load it.
+        let home = r.options.home.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: r.options.project.clone(),
+                pilot_home: r.options.home.clone(),
+                session_id: session.into(),
+                now: None,
+            })
+            .expect("#1457 storage");
+        storage
+            .restore()
+            .expect("#1457 the concurrently written transcript still loads");
         teardown(&r).await;
     }
 }
