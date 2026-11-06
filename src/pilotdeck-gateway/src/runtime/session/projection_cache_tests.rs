@@ -625,10 +625,20 @@ fn generator_deadline_cleans_owned_work() {
     // branch is the only thing that removes the owned work root on that path.
     // The generator holds inside the matrix so a forced 1 s deadline is
     // guaranteed to expire while that root exists.
-    let scratch = std::env::temp_dir().join(format!("pdrs-1011-deadline-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&scratch).expect("#1011 deadline scratch");
+    // #1890 review: drop the scratch tree on the failure paths too. The bound
+    // negative control makes these assertions panic, and a plain trailing
+    // `remove_dir_all` would then never run, leaving work-* behind in /tmp.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("pdrs-1011-deadline-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir_all(&scratch.0).expect("#1011 deadline scratch");
     // Foreign work directories must survive: only the generator's own root is removable.
-    std::fs::create_dir(scratch.join("work-foreign")).expect("#1011 foreign work sentinel");
+    std::fs::create_dir(scratch.0.join("work-foreign")).expect("#1011 foreign work sentinel");
     let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
     let mut command = std::process::Command::new("node");
     command
@@ -639,9 +649,12 @@ fn generator_deadline_cleans_owned_work() {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
         )
-        .arg(&scratch)
+        .arg(&scratch.0)
         .env("PDRS_1011_DEADLINE_MS", "1000")
-        .env("PDRS_1011_DEADLINE_HOLD_MS", "60000");
+        .env("PDRS_1011_DEADLINE_HOLD_MS", "60000")
+        // #1890 review: the injection switch must never leak in from the host,
+        // or this clean-path test would silently skip the removal it checks.
+        .env_remove("PDRS_1011_DEADLINE_CLEANUP_FAIL");
     let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
         &mut command,
         "session-factory/projection-cache",
@@ -668,7 +681,7 @@ fn generator_deadline_cleans_owned_work() {
         !output.contains("#1011 generator deadline cleanup failed"),
         "#1011 generator deadline cleanup reports no failure: {output}"
     );
-    let mut names: Vec<_> = std::fs::read_dir(&scratch)
+    let mut names: Vec<_> = std::fs::read_dir(&scratch.0)
         .expect("#1011 inspect deadline OUT")
         .map(|entry| {
             entry
@@ -684,7 +697,6 @@ fn generator_deadline_cleans_owned_work() {
         [".generation-owner", "work-foreign"],
         "#1011 deadline exit leaves no work-* behind"
     );
-    std::fs::remove_dir_all(scratch).expect("#1011 remove deadline scratch");
 }
 
 #[test]
@@ -694,9 +706,19 @@ fn generator_deadline_reports_cleanup_failure() {
     // exit, otherwise the caller only sees "timed out" and cannot tell that an
     // owned work root was left behind. A recursive force remove does not fail
     // on a writable filesystem, so the generator arms an injected throw.
-    let scratch =
-        std::env::temp_dir().join(format!("pdrs-1011-deadline-fail-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&scratch).expect("#1011 deadline failure scratch");
+    // #1890 review: drop the scratch tree on the failure paths too. The bound
+    // negative control makes these assertions panic, and a plain trailing
+    // `remove_dir_all` would then never run, leaving work-* behind in /tmp.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("pdrs-1011-deadline-fail-{}", uuid::Uuid::new_v4())),
+    );
+    std::fs::create_dir_all(&scratch.0).expect("#1011 deadline failure scratch");
     let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
     let mut command = std::process::Command::new("node");
     command
@@ -707,7 +729,7 @@ fn generator_deadline_reports_cleanup_failure() {
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
         )
-        .arg(&scratch)
+        .arg(&scratch.0)
         .env("PDRS_1011_DEADLINE_MS", "1000")
         .env("PDRS_1011_DEADLINE_HOLD_MS", "60000")
         .env("PDRS_1011_DEADLINE_CLEANUP_FAIL", "1");
@@ -726,12 +748,15 @@ fn generator_deadline_reports_cleanup_failure() {
         !status.success(),
         "#1011 generator deadline failure exits non-zero: {output}"
     );
+    // #1890 review: the report has to reach *stderr* synchronously; asserting on
+    // the merged streams would also accept a stdout write, which is not what
+    // survives `process.exit`.
+    let errors = String::from_utf8_lossy(&stderr);
     assert!(
-        output.contains("#1011 generator deadline cleanup failed for")
-            && output.contains("injected cleanup failure"),
-        "#1011 generator deadline names the cleanup failure: {output}"
+        errors.contains("#1011 generator deadline cleanup failed for")
+            && errors.contains("injected cleanup failure"),
+        "#1011 generator deadline names the cleanup failure on stderr: {errors}"
     );
-    std::fs::remove_dir_all(scratch).expect("#1011 remove deadline failure scratch");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
