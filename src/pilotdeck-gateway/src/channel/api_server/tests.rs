@@ -1659,7 +1659,7 @@ async fn partial_body_is_answered_at_the_body_read_deadline() {
     // without this the whole `BodyReadTimeout` marker could be simplified away
     // and every test would stay green while the header regressed.
     assert!(
-        headers.get("date").is_none(),
+        !headers.contains_key("date"),
         "#1333 the requestTimeout 408 must not gain a Date header, got {:?}",
         headers
     );
