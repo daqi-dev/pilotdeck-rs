@@ -18,6 +18,10 @@
 //! without a byte. That presentation and timing difference is registered in
 //! `specs/gateway-parity/diffs/A8.3-CH-SMS-012.md`; the assertions below pin
 //! the bounded-close shape, not the TS bytes.
+//!
+//! These cases live here rather than in `sms/tests.rs` because that file (and
+//! `tests/fixtures/channel-sms/`) is owned by the in-flight PR #1958. That is
+//! also why `NullSender` is duplicated from there instead of shared.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,11 +33,12 @@ use tokio::net::TcpStream;
 use super::super::protocol::ChannelStartDeps;
 use super::*;
 
-/// Ports not used by the gold-master cases (18800–18854, 18901) or the
-/// WeCom lane (18994–18998).
+/// Ports not used by the gold-master cases (18800–18855, 18929, 18941) or the
+/// WeCom lane (18993–18998).
 const PORT_HALF_HEAD: u16 = 18971;
 const PORT_POSITIVE: u16 = 18972;
-const PORT_DEFAULT_DEADLINE: u16 = 18973;
+const PORT_DEFAULT_WIRING: u16 = 18973;
+const PORT_DEFAULT_DEADLINE: u16 = 18974;
 
 /// The injected deadline for the fast cases. Far above scheduler jitter (the
 /// complete head is already in the socket buffer before the server polls) and
@@ -74,7 +79,21 @@ fn options(port: u16, injected: Option<Duration>) -> SmsChannelOptions {
 
 /// Start the channel on `port` and return the handle plus the shared state
 /// (the leak check compares the `Arc` strong count against a baseline).
+///
+/// `webhookPort` cannot be 0, so the module uses fixed ports like every other
+/// listener test in this crate. A port already taken by another worktree would
+/// make `SmsChannel::start` log and return a no-op handle instead of failing,
+/// and the test would then measure somebody else's listener — a false PASS. The
+/// probe below turns that case into a named failure; the single-shot `connect`
+/// covers the other half (our own bind failed, so nothing is listening).
 async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>, Arc<SmsShared>) {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(probe) => drop(probe),
+        Err(error) => panic!(
+            "#1955 port {port} is already in use ({error}); another worktree is \
+             running this suite — re-run when it is done"
+        ),
+    }
     let channel = SmsChannel::new(options(port, injected));
     let shared = channel.shared.clone();
     let handle = channel
@@ -89,18 +108,14 @@ async fn start(port: u16, injected: Option<Duration>) -> (Arc<dyn ChannelHandle>
     (handle, shared)
 }
 
+/// `start()` awaits the bind, so one connection attempt is enough: a retry loop
+/// would only paper over a failed bind by waiting for somebody else's listener.
 async fn connect(port: u16) -> TcpStream {
-    let mut last = None;
-    for _ in 0..100 {
-        match TcpStream::connect(("127.0.0.1", port)).await {
-            Ok(stream) => return stream,
-            Err(error) => {
-                last = Some(error);
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        }
-    }
-    panic!("#1955 cannot connect to the sms listener: {last:?}");
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap_or_else(|error| {
+            panic!("#1955 cannot connect to the sms listener on {port}: {error}")
+        })
 }
 
 /// Read until the server closes (EOF) or `limit`, returning the bytes seen
@@ -110,7 +125,8 @@ async fn connect(port: u16) -> TcpStream {
 /// bytes-only or `Arc`-count-only assertion passes with the deadline removed.
 /// Only `closed == true` inside the limit proves the head timer fired. (The
 /// mutation switch `sms-header-read-no-timeout` is what pins this: without it
-/// the read times out instead of seeing EOF.)
+/// the read times out instead of seeing EOF.) A reset counts as closed: that is
+/// still the server ending the connection.
 async fn read_until_close(socket: &mut TcpStream, limit: Duration) -> (Vec<u8>, bool) {
     let mut bytes = Vec::new();
     let mut buffer = [0u8; 512];
@@ -119,6 +135,7 @@ async fn read_until_close(socket: &mut TcpStream, limit: Duration) -> (Vec<u8>, 
             match socket.read(&mut buffer).await {
                 Ok(0) => break true,
                 Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break true,
                 Err(_) => break false,
             }
         }
@@ -148,9 +165,10 @@ async fn wait_for_task_release(shared: &Arc<SmsShared>, baseline: usize) -> usiz
     }
 }
 
-/// #1955 negative/positive pair: a half-sent head is closed at the deadline
-/// (zero bytes, so it is the head timer and not a served response), and the
-/// detached connection task that served it does not survive the close.
+/// #1955 negative/positive pair: a half-sent head — and a connection that never
+/// sends a byte at all — is closed at the deadline (zero bytes, so it is the
+/// head timer and not a served response), and the detached connection task that
+/// served it does not survive the close.
 #[tokio::test]
 async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
     let (handle, shared) = start(PORT_HALF_HEAD, Some(INJECTED)).await;
@@ -159,20 +177,27 @@ async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
     let baseline = Arc::strong_count(&shared);
     let half_head = b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n";
 
+    // (socket, when its head timer started) — the timer arms at accept, which
+    // is right after `connect`, and the write lands immediately after that.
     let mut sockets = Vec::new();
-    for _ in 0..8 {
+    for index in 0..10 {
         let mut socket = connect(PORT_HALF_HEAD).await;
-        socket
-            .write_all(half_head)
-            .await
-            .expect("#1955 write the half head");
+        let armed = tokio::time::Instant::now();
+        if index < 8 {
+            socket
+                .write_all(half_head)
+                .await
+                .expect("#1955 write the half head");
+        }
         // Keep the write side open: this is the stall that used to pin the
-        // connection forever.
-        sockets.push(socket);
+        // connection forever. The last two send nothing at all, so the
+        // zero-byte first head is bounded by the same deadline.
+        sockets.push((socket, armed));
     }
 
-    for mut socket in sockets {
+    for (mut socket, armed) in sockets {
         let (bytes, closed) = read_until_eof(&mut socket).await;
+        let elapsed = armed.elapsed();
         assert!(
             closed,
             "#1955 the server retired the stalled head at the deadline; without \
@@ -183,6 +208,13 @@ async fn half_sent_head_is_closed_at_the_deadline_and_leaves_no_task() {
             Vec::<u8>::new(),
             "#1955 a head timeout closes without a response byte \
              (the TS 408 residual is A8.3-CH-SMS-012)"
+        );
+        // A close that lands in the same instant as the write would mean the
+        // deadline was effectively zero (e.g. an accidental `Duration::ZERO`
+        // injection), not the injected 300 ms.
+        assert!(
+            elapsed >= INJECTED / 2,
+            "#1955 the close came from the injected {INJECTED:?} deadline, took {elapsed:?}"
         );
     }
 
@@ -224,9 +256,29 @@ async fn a_complete_request_head_is_served_before_the_deadline() {
     handle.stop("test").await.expect("#1955 stop");
 }
 
-/// #1955 production default: the un-injected deadline is Node's 60 s
-/// `headersTimeout`, not the test's injected value. Ignored from the normal
-/// suite because it cannot finish faster than a minute; run explicitly with
+/// #1955 production wiring, without the wall clock: an un-injected option still
+/// means Node's `headersTimeout`, both as the constant and as the value the
+/// channel actually serves with. (The 60 s close itself is the ignored case
+/// below; this one keeps the wrong-constant regression cheap to catch.)
+#[tokio::test]
+async fn the_uninjected_head_deadline_is_nodes_sixty_seconds() {
+    assert_eq!(
+        DEFAULT_HEADERS_TIMEOUT,
+        Duration::from_secs(60),
+        "#1955 the default is Node v22.22.0's headersTimeout"
+    );
+    let (handle, shared) = start(PORT_DEFAULT_WIRING, None).await;
+    assert_eq!(
+        shared.headers_timeout,
+        Duration::from_secs(60),
+        "#1955 production never sets the injection, so the served deadline is the default"
+    );
+    handle.stop("test").await.expect("#1955 stop");
+}
+
+/// #1955 production default: the un-injected deadline closes a stalled head at
+/// Node's 60 s, not at the test's injected value. Ignored from the normal suite
+/// because it cannot finish faster than a minute; run explicitly with
 /// `cargo test -p pilotdeck-gateway --lib -- --ignored
 /// channel::sms::head_timeout_tests` to reproduce the measured close.
 #[ignore = "60 s wall-clock: the production default head deadline"]
