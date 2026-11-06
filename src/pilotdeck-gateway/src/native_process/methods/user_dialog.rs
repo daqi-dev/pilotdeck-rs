@@ -396,6 +396,18 @@ impl Requests {
                     outbox.deliver();
 
                     let answered = answer.to_value().get("behavior") == Some(&"answered".into());
+                    if answered && snapshot.is_none() {
+                        // TS validates on the peeked entry and delivers
+                        // nothing when there is none (InProcessGateway.ts:2668-2674).
+                        // Falling through with no snapshot would consume and
+                        // deliver to whatever a host callback registered under
+                        // the same request id since the peek, unvalidated
+                        // (#1599).
+                        return Ok(crate::metadata::object([(
+                            "delivered",
+                            JsValue::Bool(false),
+                        )]));
+                    }
                     if answered && let Some(snapshot) = &snapshot {
                         let value = result_val
                             .get("value")
@@ -432,11 +444,7 @@ impl Requests {
                             // Only an answered response was validated against
                             // the snapshot; a cancel removes whatever is
                             // pending, like TS (#1599).
-                            if answered {
-                                snapshot.as_ref().map(|snapshot| &snapshot.accepts)
-                            } else {
-                                None
-                            },
+                            if answered { snapshot.as_ref() } else { None },
                         );
                         let outbox = bus.drain_events();
                         (consumed, outbox)

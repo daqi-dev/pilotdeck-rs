@@ -1649,8 +1649,11 @@ fn cross_gateway_answer_is_not_delivered_to_a_dialog_replaced_during_the_take() 
         bus.lock().unwrap().pending_count(&"session".into()) == 1,
         "#1599 the replacement dialog must still be pending after the stale answer is dropped"
     );
-    assert!(
-        request.try_result().is_none(),
-        "the stale answer must not settle the original request either"
-    );
+    match request.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("replaced while its stored answer was taken"),
+            "#1599 the replaced request must fail with the replacement reason, got {message}"
+        ),
+        other => panic!("the replaced request must end with an explicit error, got {other:?}"),
+    }
 }
