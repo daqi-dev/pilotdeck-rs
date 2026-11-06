@@ -1362,8 +1362,9 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
     // sends below (the confirmation and, when queued, the next prompt), and
     // this branch never reaches `clear_after_turn`. One guard covers the whole
     // tail: a panic, cancellation or timeout retries the queued prompt or
-    // settles the answer (`release_answer`) instead of leaving `answering` set
-    // forever — which drops every later message as `BeginAnswer::None`.
+    // settles the answer (`release_answer` + the queued-head promotion in
+    // `recover_answer`) instead of leaving `answering` set forever — which
+    // drops every later message as `BeginAnswer::None`.
     let mut guard = PromptGuard::new(
         shared.permissions.clone(),
         chat_id.clone(),
@@ -1372,9 +1373,15 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
     if let Some(text) = answer.text.clone() {
         let delivered = send_reply(shared, chat_id, text).await;
         if !delivered {
+            // Same recovery as the guard: an undelivered confirmation with a
+            // permission captured meanwhile is queued in `pending` with no
+            // prompt, and the bare `release_answer` would bail on the non-empty
+            // queue and leave `answering` set for good. With an empty queue the
+            // two calls are identical, so the TS-mirrored bytes of this branch
+            // are unchanged (`permission-confirmation-send-fail`).
             shared
                 .lock_permissions()
-                .release_answer(chat_id, answer.answer_token);
+                .recover_answer(chat_id, answer.answer_token);
             guard.settle();
             return;
         }
@@ -1456,13 +1463,7 @@ async fn process_message(
                 // by then. Convert first (`capture` performs the same conversion
                 // on the same value), so no fallible statement sits between the
                 // flags and the guard.
-                let expected = event
-                    .get("requestId")
-                    .cloned()
-                    .and_then(|value| match value {
-                        JsValue::Undefined | JsValue::Null => None,
-                        value => Some(js_string_of(&value)),
-                    });
+                let expected = event.get("requestId").and_then(permission::optional_string);
                 let question = shared
                     .lock_permissions()
                     .capture(chat_id, session_key, &event);

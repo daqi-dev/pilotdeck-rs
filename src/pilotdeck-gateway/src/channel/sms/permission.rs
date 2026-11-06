@@ -259,6 +259,44 @@ impl ImPermissionHelper {
         }
     }
 
+    /// #1790: the guard's recovery path. [`Self::release_answer`] alone can
+    /// leave `answering` set: a permission captured while the confirmation was
+    /// in flight is queued in `pending` with no prompt of its own (`capture`
+    /// returns `None` when `answering` is set), and `confirm_answer` then bails
+    /// on the non-empty queue — the chat would drop every later message, which
+    /// is exactly the wedge this guard exists to prevent. Promote the queued
+    /// head to a retry prompt so the next message re-sends it (the same
+    /// mechanism `take_next_prompt` uses). Only the abnormal exits (the guard's
+    /// panic/cancel/timeout and `deliver_answer`'s `!delivered` branch) run
+    /// this; with an empty queue it is `release_answer` byte for byte, so the
+    /// TS-mirrored normal paths are unchanged.
+    pub fn recover_answer(&mut self, chat_id: &JsString, answer_token: Option<u32>) {
+        self.release_answer(chat_id, answer_token);
+        if !token_matches(&self.answer_tokens, chat_id, answer_token) {
+            return;
+        }
+        if !self.answering.contains(chat_id)
+            || self.in_flight.contains(chat_id)
+            || self.initial_prompt_pending.contains(chat_id)
+            || self.prompt_delivering.contains(chat_id)
+            || self.next_prompts.contains_key(chat_id)
+        {
+            return;
+        }
+        let Some(entries) = self
+            .pending
+            .get(chat_id)
+            .filter(|entries| !entries.is_empty())
+        else {
+            return;
+        };
+        let text = format_permission_prompt(&entries[0]);
+        let request_id = entries[0].request_id.clone();
+        self.next_prompts
+            .insert(chat_id.clone(), PendingPrompt { text, request_id });
+        self.retry_prompt_pending.insert(chat_id.clone());
+    }
+
     /// Mark the confirmation message as delivered and release the final answer lock.
     pub fn confirm_answer(&mut self, chat_id: &JsString, answer_token: Option<u32>) {
         if !token_matches(&self.answer_tokens, chat_id, answer_token) {
@@ -589,8 +627,9 @@ impl Drop for AnswerGuard {
 /// `prompt_delivering`, set by `take_next_prompt`). A panic or cancellation
 /// during either would, pre-fix, leave the flag set — `take_next_prompt` then
 /// refuses forever and `begin_answer` silently drops every later message.
-/// `release_answer` is the reentrant-safe recovery (retry the prompt, or
-/// settle the answer).
+/// [`ImPermissionHelper::recover_answer`] is the reentrant-safe recovery (retry
+/// the queued prompt — including one captured while this send was in flight —
+/// or settle the answer).
 pub struct PromptGuard {
     state: PermissionState,
     chat_id: JsString,
@@ -619,7 +658,7 @@ impl Drop for PromptGuard {
         if self.settled || crate::mutants::on("sms-permission-prompt-guard-off") {
             return;
         }
-        lock_state(&self.state).release_answer(&self.chat_id, self.answer_token);
+        lock_state(&self.state).recover_answer(&self.chat_id, self.answer_token);
     }
 }
 
