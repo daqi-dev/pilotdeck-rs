@@ -72,6 +72,10 @@ fn executable_native_loop_stimulus() {
             "#1371 executable unset real text",
         ),
         (
+            "#1371 unset keeps the title request",
+            "#1371 executable unset title request",
+        ),
+        (
             "#1371 stimulus receipt on stderr",
             "#1371 executable armed receipt",
         ),
@@ -164,7 +168,7 @@ fn executable_native_loop_stimulus() {
             "#1371 executable after-complete red",
         ),
         (
-            "#1371 after-complete fence.complete before the late unknown",
+            "#1371 after-complete fence completes before the late unknown",
             "#1371 executable after-complete fence",
         ),
         (

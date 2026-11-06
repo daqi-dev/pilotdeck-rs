@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
-import {mkdir, readFile, writeFile, readdir, rename} from 'node:fs/promises';
+import {mkdir, readFile, writeFile, readdir, rename, stat} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRequire} from 'node:module';
@@ -113,19 +113,25 @@ const arm = async (control: string, plan: any) => writeAtomic(join(control, 'loo
 const release = async (control: string, plan: any, stage: string, outcome?: string) =>
   writeAtomic(join(control, 'release.json'), JSON.stringify({id: plan.id, stage, ...(outcome ? {outcome} : {})}));
 const finished = (files: string[]) => files.filter(name => name.endsWith('.json'));
-const witness = async (control: string, site: string, phase: string, key: string, ms = 15000) => {
+// The file itself is needed for cells that order two receipts across
+// processes: their `seq` counters are independent, so only the write time is
+// comparable.
+const witnessPath = async (control: string, site: string, phase: string, key: string, ms = 15000) => {
   const dir = join(control, 'witness');
   const deadline = Math.min(Date.now() + ms, overallDeadline);
   for (;;) {
     const files = finished((await readdir(dir).catch(() => [] as string[])).sort());
     for (const name of files) {
-      const receipt = JSON.parse(await readFile(join(dir, name), 'utf8'));
-      if (receipt.site === site && receipt.phase === phase && receipt.key === key) return receipt;
+      const path = join(dir, name);
+      const receipt = JSON.parse(await readFile(path, 'utf8'));
+      if (receipt.site === site && receipt.phase === phase && receipt.key === key) return path;
     }
     if (Date.now() > deadline) assert.ok(false, `#1371 no ${site} ${phase} receipt for key ${key}`);
     await sleep(10);
   }
 };
+const witness = async (control: string, site: string, phase: string, key: string, ms = 15000) =>
+  JSON.parse(await readFile(await witnessPath(control, site, phase, key, ms), 'utf8'));
 const hasWitness = (control: string, site: string, phase: string, key: string) =>
   witness(control, site, phase, key, 200).then(() => true, () => false);
 const exists = async (path: string) => readdir(path).then(() => true, () => false);
@@ -159,6 +165,7 @@ const stop = async (process: any, label: string) => {
 try {
   // Unset: the production default. No receipt, no control reads, the real loop.
   {
+    const titlesBefore = titleRequests;
     const process = await launch('loop-unset');
     assert.ok(!process.stderr().includes('native loop stimulus on'), '#1371 unset keeps no stimulus receipt');
     const {ws, next} = await client(process.address);
@@ -169,7 +176,14 @@ try {
     // own string must arrive as an event text payload.
     const texts = events.filter((e: any) => typeof e.text === 'string' && e.text.length > 0);
     assert.ok(texts.some((e: any) => e.text.includes('native loop stimulus text')), '#1371 unset real model text');
-    rows.push({scenario: 'unset', eventTypes: [...new Set(events.map((e: any) => e.type))]});
+    // The title request is asynchronous and `titleRequests` is one run-wide
+    // counter: settle this scenario's own request before the next scenario
+    // takes its snapshot, or a late arrival would be credited to that
+    // scenario and could mask a suppressed title there.
+    const unsetTitleDeadline = Date.now() + 10000;
+    while (titleRequests === titlesBefore && Date.now() < unsetTitleDeadline) await sleep(25);
+    assert.ok(titleRequests > titlesBefore, '#1371 unset keeps the title request');
+    rows.push({scenario: 'unset', eventTypes: [...new Set(events.map((e: any) => e.type))], titles: titleRequests - titlesBefore});
     ws.terminate(); await stop(process, 'unset');
   }
   // Armed with an existing control directory that carries no plan: the entry
@@ -188,8 +202,10 @@ try {
     assert.ok(inertTexts.some((e: any) => e.text.includes('native loop stimulus text')), '#1371 inert turn real model text');
     // Inert keeps the production behaviour byte for byte, the automatic title
     // request included; suppressing it for an entry that never drives the
-    // loop would still be a behaviour difference.
-    const titleDeadline = Date.now() + 3000;
+    // loop would still be a behaviour difference. The window matches the unset
+    // scenario's: the request is asynchronous and a short window would turn a
+    // slow but correct production path into a red cell.
+    const titleDeadline = Date.now() + 10000;
     while (titleRequests === titlesBefore && Date.now() < titleDeadline) await sleep(25);
     assert.ok(titleRequests > titlesBefore, '#1371 inert turn keeps the title request');
     rows.push({scenario: 'armed-empty', eventTypes: [...new Set(events.map((e: any) => e.type))]});
@@ -350,15 +366,15 @@ try {
     // cell measures the loop/fence ordering: the turn ends red and bounded,
     // and the outer fence has already completed before the late unknown.
     assert.equal(terminal.type, 'error', '#1371 after-complete ends red');
-    // The ordering is measured when the receipt appears, not by comparing
-    // sequence numbers: the gateway and the sidecar number their receipts
-    // independently. At this moment the loop is still held (no release is
-    // written), so a fence completion that only happened after the late
-    // unknown would leave that loop receipt behind and fail here.
-    await witness(control, 'fence', 'complete', 'loop-after-complete-run');
-    assert.equal(await hasWitness(control, 'loop', 'final', 'result_unknown'), false, '#1371 after-complete fence.complete before the late unknown');
+    // The ordering is measured on the receipt files themselves, not by
+    // comparing sequence numbers: the gateway and the sidecar number their
+    // receipts independently. Capture the fence receipt path now, then let
+    // the late unknown land, and require the fence file to be older.
+    const fenceReceipt = await witnessPath(control, 'fence', 'complete', 'loop-after-complete-run');
     await release(control, plan, 'outcome', 'unknown');
-    await witness(control, 'loop', 'final', 'result_unknown');
+    const unknownReceipt = await witnessPath(control, 'loop', 'final', 'result_unknown');
+    const [fenceAt, unknownAt] = await Promise.all([stat(fenceReceipt), stat(unknownReceipt)]);
+    assert.ok(fenceAt.mtimeMs < unknownAt.mtimeMs, '#1371 after-complete fence completes before the late unknown');
     ws.terminate(); await stop(process, 'after-complete');
   }
   // Cell 5 (K-P): the loop yielded completed but its return is still held, and
@@ -387,6 +403,10 @@ try {
     await release(control, plan, 'return');
     await witness(control, 'loop', 'return', 'release');
     assert.equal(await hasWitness(control, 'loop', 'bound', 'return'), false, '#1371 return-pending released inside the bound');
+    // The buffered completed must not surface as a live success after the
+    // timeout terminal: it is recorded, not re-delivered. The transport still
+    // accepts the emission here (a deadline is not a retirement), so this cell
+    // says nothing about the suppressed branch; the next cell measures it.
     // The buffered completed must not surface as a live success after the
     // timeout terminal: it is recorded, not re-delivered.
     await sleep(300);
@@ -429,6 +449,7 @@ try {
       '#1371 unset keeps no stimulus receipt',
       '#1371 unset turn completes',
       '#1371 unset real model text',
+      '#1371 unset keeps the title request',
       '#1371 stimulus receipt on stderr',
       '#1371 armed inert turn completes',
       '#1371 inert turn real model text',
@@ -452,7 +473,7 @@ try {
       '#1371 known-final-first completes',
       '#1371 known-final-first timer cleared',
       '#1371 after-complete ends red',
-      '#1371 after-complete fence.complete before the late unknown',
+      '#1371 after-complete fence completes before the late unknown',
       '#1371 no fence complete receipt for key loop-after-complete-run',
       '#1371 return-pending completed stays buffered',
       '#1371 return-pending completed is not published before the release',

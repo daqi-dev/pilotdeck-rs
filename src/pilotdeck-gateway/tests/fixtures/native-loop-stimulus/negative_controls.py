@@ -87,6 +87,39 @@ mutations = [
      '        pilotdeck_transport::loop_stimulus::witness_fence("complete", run_id.as_str());',
      '        let _ = run_id;',
      EXECUTABLE, '#1371 executable after-complete fence missing'),
+    # A release without an id belongs to no plan. Turning the id test into a
+    # wildcard lets any unnamed file release a waiting loop, which the
+    # missing-id assertion forbids.
+    ('release-missing-id-wildcard', LOOP,
+     '''let matches_id = value
+                            .get("id")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|id| id.equals_str(&plan.id));''',
+     '''let matches_id = value
+                            .get("id")
+                            .and_then(JsValue::as_string)
+                            .is_none_or(|id| id.equals_str(&plan.id));''',
+     'loop_stimulus::tests::release_matches_id_and_stage', '#1371 releases without an id are ignored'),
+    # The stage is part of the release identity: a return release must not
+    # satisfy an outcome wait.
+    ('release-ignores-stage', LOOP,
+     '''                                .is_some_and(|value| value.equals_str(stage))''',
+     '''                                .is_some_and(|_| true)''',
+     'loop_stimulus::tests::release_matches_id_and_stage', '#1371 foreign stages are ignored'),
+    # A bound must be a whole number of milliseconds: silently rounding a
+    # fractional claim would record the cell under a bound nobody asked for.
+    ('bound-fraction-accepted', LOOP,
+     ' && ms.fract() == 0.0',
+     '',
+     'loop_stimulus::tests::malformed_plan_fails_closed', '#1371 unsupported bound fails closed'),
+    # Only a resolved plan may suppress the automatic title request; arming a
+    # directory that carries no plan is inert, and an inert entry must keep the
+    # production title request (`#1371 inert turn keeps the title request`).
+    ('title-suppressed-when-armed', ASSEMBLY,
+     '''    let loop_planned = pilotdeck_transport::loop_stimulus::LoopStimulus::global()
+        .is_some_and(|stimulus| stimulus.is_planned());''',
+     '''    let loop_planned = loop_switch.is_some();''',
+     EXECUTABLE, '#1371 executable inert title request'),
 ]
 
 
@@ -190,6 +223,12 @@ def main():
     env = dict(os.environ)
     for key in ['PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT']:
         env.pop(key, None)
+    # The sidecar sha proofs below compare a mutant build and a restored build
+    # against one baseline build. Incremental compilation makes otherwise
+    # identical sources produce different binaries, which would turn both
+    # comparisons into noise; a fresh codegen unit per build keeps them
+    # meaningful.
+    env['CARGO_INCREMENTAL'] = '0'
     guarded = [LOOP, CONTROLLED, COMPLETION, ASSEMBLY, PROCESS_TEST, PROCESS,
                Path(__file__).resolve()]
     results = []
@@ -211,38 +250,48 @@ def main():
         (output / f'{label}.log').write_text(result.stdout + result.stderr)
         return result
 
+    def build_sidecar(label):
+        """Rebuild the sidecar from the current source bytes under a cargo slot.
+
+        Returns the binary's sha256 so the caller can state which bytes the
+        executable round actually observed instead of assuming the rebuild
+        landed.
+        """
+        slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=1800)
+        (output / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
+        command = ['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
+                   '-p', 'pilotdeck-transport', '--bin', 'pilotdeck-agent-loop-sidecar']
+        (output / f'{label}.command.json').write_text(json.dumps(command) + '\n')
+        built = run_owned(command, cwd=ROOT, env=env, timeout=900)
+        (output / f'{label}.log').write_text(built.stdout + built.stderr)
+        if built.returncode:
+            raise RuntimeError(f'{label}: sidecar build failed')
+        sidecar = Path(env['CARGO_TARGET_DIR']) / 'debug/pilotdeck-agent-loop-sidecar'
+        return hashlib.sha256(sidecar.read_bytes()).hexdigest()
+
     try:
         with mutating_sources(ROOT, guarded) as originals:
             guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
             if any(row[4] == EXECUTABLE for row in selected):
-                slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=1800)
-                (output / 'sidecar-build.slots.log').write_text(slot.stdout + slot.stderr)
-                command = ['cargo', 'build', '--offline', '--manifest-path', 'src/Cargo.toml',
-                           '-p', 'pilotdeck-transport', '--bin', 'pilotdeck-agent-loop-sidecar']
-                (output / 'sidecar-build.command.json').write_text(json.dumps(command) + '\n')
-                built = run_owned(command, cwd=ROOT, env=env, timeout=900)
-                (output / 'sidecar-build.log').write_text(built.stdout + built.stderr)
-                if built.returncode:
-                    raise RuntimeError('#1371 current-source sidecar build failed')
-                sidecar = Path(env['CARGO_TARGET_DIR']) / 'debug/pilotdeck-agent-loop-sidecar'
-                sidecar_sha256 = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+                sidecar_sha256 = build_sidecar('sidecar-build')
             for name, path, old, new, test, assertion in selected:
                 item = dict(name=name, test=test, assertion=assertion,
                             status='INVALID', reason='not run', compiled=False)
+                rebuilt_sidecar = False
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
                     path.write_text(originals[path].decode().replace(old, new, 1))
-                    if test == EXECUTABLE:
+                    if test == EXECUTABLE and path in (LOOP, CONTROLLED):
                         # The sidecar must be rebuilt from the mutated source,
                         # or the executable observes the pristine transport.
-                        rebuilt = run_owned(['cargo', 'build', '--offline', '--manifest-path',
-                                             'src/Cargo.toml', '-p', 'pilotdeck-transport',
-                                             '--bin', 'pilotdeck-agent-loop-sidecar'],
-                                            cwd=ROOT, env=env, timeout=900)
-                        (output / f'{name}-sidecar.log').write_text(rebuilt.stdout + rebuilt.stderr)
-                        if rebuilt.returncode:
-                            raise RuntimeError('mutant sidecar did not compile; not a runtime kill')
+                        # The sha proves the mutant binary differs from the
+                        # baseline, so a no-op rebuild cannot pass as a kill.
+                        mutant_sha256 = build_sidecar(name + '-sidecar')
+                        item['mutantSidecar'] = mutant_sha256
+                        if mutant_sha256 == sidecar_sha256:
+                            raise RuntimeError('mutant sidecar bytes are unchanged')
+                        rebuilt_sidecar = True
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -258,19 +307,16 @@ def main():
                     path.write_bytes(originals[path])
                 try:
                     if not args.compile_only:
-                        if test == EXECUTABLE:
+                        if test == EXECUTABLE and rebuilt_sidecar:
                             # The restored round must observe the pristine
                             # sidecar: an unchecked rebuild would leave the
                             # mutant binary in place and make `restoredPass`
                             # evidence for the wrong bytes.
-                            rebuilt = run_owned(['cargo', 'build', '--offline', '--manifest-path',
-                                                 'src/Cargo.toml', '-p', 'pilotdeck-transport',
-                                                 '--bin', 'pilotdeck-agent-loop-sidecar'],
-                                                cwd=ROOT, env=env, timeout=900)
-                            (output / f'{name}-restored-sidecar.log').write_text(
-                                rebuilt.stdout + rebuilt.stderr)
-                            if rebuilt.returncode:
-                                raise RuntimeError('restored sidecar did not rebuild')
+                            restored_sha256 = build_sidecar(name + '-restored-sidecar')
+                            item['restoredSidecar'] = restored_sha256
+                            if restored_sha256 != sidecar_sha256:
+                                raise RuntimeError(
+                                    'restored sidecar bytes differ from the baseline build')
                         if not passed(run(name + '-restored', env, test), test):
                             raise RuntimeError('restored bound test failed')
                         item['restoredPass'] = True

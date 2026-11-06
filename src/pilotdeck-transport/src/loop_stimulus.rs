@@ -14,6 +14,10 @@
 //! - `<dir>/loop.json` is the per-process plan written by the collector before
 //!   launch: `{"id","phase":"model"|"tool","order":<order>,"boundMs"?}`. A
 //!   missing file leaves the entry *inert*: turns keep their real behaviour.
+//!   The gateway resolves it at its own startup and the sidecar again when it
+//!   starts, so "before launch" means before the *gateway* is launched:
+//!   writing it later would let the gateway keep the automatic title request
+//!   while the sidecar runs a controlled turn.
 //! - `<dir>/release.json` is the collector's release, written atomically:
 //!   `{"id","stage":"outcome"|"return","outcome":"unknown"|"known"}`.
 //! - `<dir>/witness/<pid>-<seq>.json` are the product's receipts, published
@@ -21,9 +25,11 @@
 //!   finished receipt. Both processes share one directory; the pid prefix
 //!   keeps their monotonic sequences from colliding.
 //!
-//! Every wait is bounded (`boundMs`, default 30 s, cap 120 s). A lost
-//! collector yields a `loop.bound` receipt and a failed turn, never a hung
-//! process: "never completes" must be red, not stuck.
+//! Every wait is bounded (`boundMs`, default 30 s). A present `boundMs` must
+//! be a whole number of milliseconds inside `1..=120000`: anything else is a
+//! claim the loop cannot honour and fails closed. A lost collector yields a
+//! `loop.bound` receipt and a failed turn, never a hung process: "never
+//! completes" must be red, not stuck.
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
     fs, io,
@@ -152,17 +158,20 @@ impl Plan {
             None => DEFAULT_BOUND,
             Some(raw) => {
                 // A present bound is a claim: half of one is not "the
-                // default" and not a zero-millisecond bound, so anything but
-                // a positive whole number of milliseconds fails closed.
+                // default", not a zero-millisecond bound, and one above the
+                // cap is not the cap either, so anything but a whole number
+                // of milliseconds inside `1..=MAX_BOUND` fails closed.
+                let cap = MAX_BOUND.as_millis() as f64;
                 let ms = raw
                     .as_number()
-                    .filter(|ms| ms.is_finite() && *ms >= 1.0 && ms.fract() == 0.0)
+                    .filter(|ms| ms.is_finite() && *ms >= 1.0 && *ms <= cap && ms.fract() == 0.0)
                     .ok_or_else(|| {
-                        "native loop stimulus: loop.json boundMs must be a positive whole \
-                         number of milliseconds"
-                            .to_string()
+                        format!(
+                            "native loop stimulus: loop.json boundMs must be a whole number of \
+                             milliseconds between 1 and {cap}"
+                        )
                     })?;
-                Duration::from_millis(ms.min(MAX_BOUND.as_millis() as f64) as u64)
+                Duration::from_millis(ms as u64)
             }
         };
         Ok(Some(Self {
@@ -260,6 +269,14 @@ impl LoopStimulus {
             State::Planned(plan) => Ok(Some(plan)),
             State::Invalid(message) => Err(message),
         }
+    }
+
+    /// A resolved plan is the one decision that replaces the turn, suppresses
+    /// the automatic title request and publishes fence receipts. Callers must
+    /// ask this question rather than re-deriving it from `plan()`, so the
+    /// three sites cannot drift apart.
+    pub fn is_planned(&self) -> bool {
+        matches!(self.plan(), Ok(Some(_)))
     }
 
     /// Publish one receipt atomically. Evidence only: a failed receipt must
@@ -370,7 +387,7 @@ impl LoopStimulus {
 /// planned stimulus is armed.
 pub fn witness_fence(phase: &str, key: &str) {
     if let Some(stimulus) = LoopStimulus::global()
-        && matches!(stimulus.plan(), Ok(Some(_)))
+        && stimulus.is_planned()
     {
         stimulus.fence(phase, key);
     }
@@ -445,11 +462,15 @@ mod tests {
             validate_value(dir.to_str().expect("#1371 utf8 path")).is_err(),
             "#1371 startup validation rejects a malformed plan"
         );
-        // A bound that is present but not a positive whole number of
-        // milliseconds is a claim the loop cannot honour: silently using the
-        // default (or truncating 0.4 ms to zero) would record a cell under a
-        // bound nobody asked for.
-        for bound in ["0", "-5", "0.4", "\"400\""] {
+        // A bound that is present but not a whole number of milliseconds
+        // inside the documented range is a claim the loop cannot honour:
+        // silently using the default, truncating 0.4 ms to zero or capping
+        // 200 s to the 120 s limit would all record a cell under a bound
+        // nobody asked for. `null` is a present-but-unusable claim too.
+        // A fractional value inside the range isolates the whole-millisecond
+        // rule from the range rule: 1500.5 is neither below 1 nor above the
+        // cap, so only the fraction check can reject it.
+        for bound in ["0", "-5", "0.4", "1500.5", "\"400\"", "200000", "null"] {
             write(
                 &dir,
                 "loop.json",
@@ -459,7 +480,7 @@ mod tests {
             );
             assert!(
                 LoopStimulus::control(&dir).plan().is_err(),
-                "#1371 unsupported bound fails closed: {bound}"
+                "#1371 unsupported bound fails closed"
             );
         }
         let _ = fs::remove_dir_all(dir);
@@ -506,7 +527,7 @@ mod tests {
         write(&dir, "release.json", r#"{"stage":"outcome"}"#);
         assert!(
             stimulus.await_release("outcome").is_none(),
-            "#1371 foreign releases are ignored"
+            "#1371 releases without an id are ignored"
         );
         write(&dir, "release.json", r#"{"id":"p1","stage":"return"}"#);
         assert!(
