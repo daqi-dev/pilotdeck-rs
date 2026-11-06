@@ -1234,6 +1234,43 @@ fn upload_lease_link_never_pins_a_symlink_source() {
     }
 }
 
+/// #1887: the read side of the shared "home" question. A `.tmp` swapped for a
+/// link to another subtree of the same project keeps the canonical spelling
+/// inside the project, so a canonical-containment check alone would accept the
+/// record; the lexical prefix check refuses it. The attachment-composition
+/// side (`native_process/services_tests.rs::lease_root_under_a_linked_tmp_ancestor_is_not_a_home`)
+/// is the pair of this test — the two assertion strings are deliberately
+/// different, so a negative control proves which side lost its guard.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_rejects_a_linked_tmp_ancestor() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let record = fs::read(project.join(".tmp/chat-uploads/upload-1/metadata.json")).unwrap();
+    // The store's own bytes move under the link target, so the canonical
+    // spelling of the record now resolves to `<project>/src/...`.
+    let moved = project.join("src/chat-uploads/upload-1");
+    fs::create_dir_all(&moved).unwrap();
+    fs::write(moved.join("metadata.json"), &record).unwrap();
+    fs::remove_dir_all(project.join(".tmp")).unwrap();
+    std::os::unix::fs::symlink(project.join("src"), project.join(".tmp"))
+        .expect("#1887 swap .tmp for an in-project link");
+    let error =
+        h.store.get("upload-1").err().expect(
+            "#1887 a .tmp ancestor that is a link into the project must not be read through",
+        );
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata symlink leaves the upload directory."
+        ),
+        "#1887 the read side must keep its lexical prefix check"
+    );
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();

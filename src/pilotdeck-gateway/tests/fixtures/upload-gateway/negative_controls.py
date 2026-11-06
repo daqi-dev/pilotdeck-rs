@@ -68,6 +68,7 @@ READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
+READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
 ORPHAN = 'upload::tests::upload_cleanup_reclaims_expired_orphan_directories'
 FRESH = 'upload::tests::upload_cleanup_keeps_fresh_orphan_directories'
@@ -329,6 +330,17 @@ mutations = [
      '    match (fs::metadata(destination), expected) {',
      LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
+    # #1887: `read_at` holds a record to the upload root by lexical spelling,
+    # so a `.tmp` that is a link to another subtree of the same project is
+    # refused there. Dropping that prefix check leaves only the handle check,
+    # which refuses the same layout with a *different* message — the named
+    # test pins the read-side answer, and its composer-side sibling
+    # (`attach-followups-a`: `lease-ancestor-link-accepted`) pins the other.
+    ('read-at-upload-root-prefix-dropped', STORE,
+     '        if !canonical_path.starts_with(&upload_root) {',
+     '        if false {',
+     READ_AT_LINKED_ANCESTOR,
+     '#1887 the read side must keep its lexical prefix check'),
     # #1646: sweep robustness — each mutation restores one TS-parity weakness.
     ('cleanup-bad-record-aborts', STORE, '''                Ok(None) => {
                     self.reclaim_orphan(&root_real, &dir);
