@@ -17,7 +17,9 @@ original: A7-HOST-POST-CANCEL-EXIT-001
 
 ## 范围
 
-同 R3「范围」。R3 末句的适用口径按 **2026-11-06 人批「按窄读」**（#1716）确定：
+同 R3「范围」。R3 末句的适用口径按 **2026-11-06T02:58:40Z 人批「按窄读」**
+（决策单 #1716 评论 https://github.com/daqi-dev/pilotdeck-rs/issues/1716#issuecomment-6675645168 ，
+正文仅「按窄读」两字；仓内留档 `state/decisions-20261106-narrow-read-1716.md`）确定：
 
 - 该偏离描述的是 **Rust 宿主**取消后的 5 s 墙钟期限，因此只在宿主为 Rust 的格里成立：格③ Rust 宿主 × TS sidecar、格④ Rust 宿主 × Rust sidecar。
 - 宿主为 TS 的格① TS × TS、格② TS × Rust **不适用**。尤其格②里 `cancel_during_tool`、`stream_interruption`、`sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission` 的差异，是「TS 宿主眼里观测到的 sidecar 侧差异」，不落在本条范围内，仍按 sidecar 侧信号记（四格账本②的 sidecar 侧信号为 23 条，不因本条降为 19–21）。

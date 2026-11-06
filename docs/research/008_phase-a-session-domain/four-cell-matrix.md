@@ -247,8 +247,9 @@ EXIT=3
 合计 `MAX_TOTAL_OUTPUT_TOKENS = MAX_REQUESTS × 每请求`（派生值）。
 
 **本页不抄具体数字**（#1722 第 5 条）：脚本常量一变，抄进文档的值会与实际测的三处同时静默过期。
-核对时以当次 `run-<id>/report.json` 的 `limits.declared` / `limits.actual` 为准（脚本每次运行把同名字段写进
-report，probe 也把每请求上限与内层超时经 argv 回显，report 不引第二份数字）；原始记录另存 `run-<id>/limits.json`。
+核对时以当次 `run-<id>/report.json` 的**扁平 `limits`** 为准（`maxRequests` / `violations` / `usageMissing` 等
+直接挂在 `limits` 下）；`declared` / `actual` 那层嵌套只在同目录的 `run-<id>/limits.json` 里，两者不要混引
+（脚本每次运行把同名字段写进 report，probe 也把每请求上限与内层超时经 argv 回显，report 不引第二份数字）。
 
 **本轮已实测（AI 已实测，待人签字）**：2026-11-05T22:50:13Z 起跑，`exitCode=0`、`finalPass=true`、`capsVerified=true`：
 
@@ -258,8 +259,8 @@ report，probe 也把每请求上限与内层超时经 argv 回显，report 不�
 | `model_runtime_stream_cancel`（stream-cancel） | **PASS** | 1 | 不适用 | 首个 stream delta 后即中止，Anthropic Messages 的 usage 块在流尾，结构性缺席（`limits.usageNotApplicable` 有记录） |
 | `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
 
-合计 **3 次请求 / 49 输出 token**（是否超限只看 `limits.actual.violations=[]`，不在此复述上限数字），
-`limits.violations=[]`、`usageMissing=[]`、`echoMissing=[]`；
+合计 **3 次请求 / 49 输出 token**（是否超限只看 `report.json` 的 `limits.violations=[]`，不在此复述上限数字），
+`usageMissing=[]`、`echoMissing=[]`；
 `secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
 provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key 只从 `/Users/da/ws/pilotdeck-rs/.env.local` 读，
 证据目录独占（`fcntl.flock`，`evidenceLock.holder.pid=67214`），跑前 `cargo-slots` 为「在跑 1 / 上限 2」。
@@ -290,7 +291,7 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
 5. **72 case 全部 NOT_RUN**，前置于 **#1242**（受控入口与目标边界见证）。
 6. E1 calibrate 仍是 `DRAFT_AWAITING_A5_4` / `acceptanceStatus=NOT_RUN`，不可当已冻结尺子引用。
 7. 本账本未改任何冻结件：`specs/gateway-parity/{accepted-diffs.md,README.md,FROZEN.md}` 未触碰。
-8. **取消类已批偏离 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的适用性**（正本 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md` 自述
+8. **取消类已批偏离 `A7-HOST-POST-CANCEL-EXIT-001`（最新 R5：机制承 R3，适用口径取 R5）的适用性**（正本 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md` 自述
    「四格矩阵（#590）中涉及取消的场景按本偏离判定」，出处 `state/decisions-20261025.md`「#643 取消退出到点后的有界收尾：选 A」）：
    - 该偏离描述的是 **Rust 宿主** `host/execution.rs` 取消后的 5 s 墙钟期限。①② 的宿主是 TS 基线 native ⇒ **不适用**；
      ② 里 `cancel_during_tool`、`stream_interruption` 等取消场景的差异是**宿主为 TS 时观测到的 sidecar 侧差异**，
@@ -302,7 +303,9 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
      R5 只补 R3 末句的适用口径、不改行为与判分语义；R4 自述「范围同 R3、只改批准状态」。
      上面引用的机制描述以 R3 原文为准，**适用口径以 R5 为准**。
    - **那句「四格矩阵中涉及取消的场景按本偏离判定」的适用范围**（窄读=只管 Rust 宿主格；广读=四格全管）
-     已由人于 2026-11-06 批「**按窄读**」（决策单 #1716 评论）：② 的
+     已由人于 2026-11-06T02:58:40Z 批「**按窄读**」（决策单 #1716 评论
+     https://github.com/daqi-dev/pilotdeck-rs/issues/1716#issuecomment-6675645168 ，正文仅两字「按窄读」；
+     仓内留档见 `state/decisions-20261106-narrow-read-1716.md`）：② 的
      `cancel_during_tool`、`stream_interruption`、`sidecar_one_shot_parent_abort_after_admission`、
      `sidecar_one_shot_parent_close_after_admission` 四条取消场景是「TS 宿主眼里观测到的 sidecar 侧差异」，
      **仍按 sidecar 侧信号记 —— ② 的 sidecar 侧信号为 23 条，不降**。
@@ -377,6 +380,9 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
    `native-topology/run.py` 两次**顶层**命令的退出码没有留痕——①② 只有内层 `run.py` 的 `run_py_exit`，
    ③④ 只有 report 级 `status`。因此 §二 各格的①②③④ 结论**只依据 `run.json` / `report.json` 的 status**，
    不引用、也不推断这两个顶层退出码；复跑时按上面的写法补齐。
+   **补齐 ③④ 时注意它的退出码语义**：`native-topology/run.py` 的 `main` 是
+   `return 1 if report['status'] == 'FAIL' else 2`——**没有 0**，四案全过也 exit 2。所以那个 2
+   **不是 BLOCKED**（与 `collect.py` / `session_domain.py` 的 exit 2 含义不同），只能用来区分 1 / 2。
 3. **采集与判分之间不要重建 ELF**：`capture/prelaunch.json` 记的是二进制绝对路径 + sha256（本单 gateway
    sha256 `f2ad413665f3ac12127260d17db78d4648ff063d41826847278ebb408f280679`），判分侧按原路径复核字节。
    中途 `cargo build` 换掉二进制 ⇒ 判分 `BLOCKED / APPARATUS_IMPORTS`。
