@@ -1193,13 +1193,17 @@ async fn turn_cancel_interrupts_waiting_stream_next() {
 }
 
 /// #1804: the deterministic guard for the port → router `turn_abort` wiring
-/// (`model_port.rs:266`). The invoker below aborts the *turn's own* flag and
-/// then hands back one more provider event in the same call stack, so only
+/// (the `RouterExecuteContext` literal in `RouterModelPort::stream`). The
+/// invoker below aborts the *turn's own* flag and then hands back one more
+/// provider event in the same call stack, so only
 /// `RouterExecuteContext::turn_abort` can drop it: `stream_options.abort` is
-/// the per-stream child the forwarder fills one task hop later. Dropping the
-/// wiring line must turn this red on any executor schedule — unlike the
-/// `sync-abort-mid-stream` replay case, which only reds when the multi-thread
-/// scheduler happens to run the forwarder first (#1785).
+/// the per-stream child the forwarder fills one task hop later. This test is
+/// pinned to the single-thread flavour on purpose: there the forwarder task
+/// cannot run between the abort and the emit inside one poll, so dropping the
+/// wiring line turns this red deterministically. On a multi-thread scheduler
+/// the same mutant can still escape when the forwarder runs in that gap — the
+/// `sync-abort-mid-stream` replay case's flakiness (#1785). Keep it single
+/// threaded; moving it to `multi_thread` gives up the guarantee.
 #[tokio::test(flavor = "current_thread")]
 async fn a_turn_abort_in_the_provider_call_stack_drops_the_event_at_the_port() {
     /// Aborts the turn and then emits one provider event with no `await` in

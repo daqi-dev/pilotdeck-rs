@@ -57,6 +57,8 @@ fn session_error(code: &'static str, message: &'static str) -> RequestError {
 /// non-string answered `"<field> must be a string."` instead of the optional
 /// chain's `input.<field>?.trim is not a function` TypeError, and a
 /// U+FEFF-only value counted as non-blank although JS trim strips it.
+/// It stays a named one-line seam on purpose: the five call sites pass their
+/// own domain codes, and the divergence note belongs where they read it.
 fn required_trimmed(
     params: &JsValue,
     field: &str,

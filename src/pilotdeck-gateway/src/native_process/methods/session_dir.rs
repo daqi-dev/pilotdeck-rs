@@ -64,7 +64,8 @@ fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, Requ
 /// Delegates to the family-shared guard (#1604) so the blank test is JS trim
 /// (U+FEFF and the other WhiteSpace code points count as blank) and a
 /// non-string produces the bare `input.sessionKey?.trim is not a function`
-/// TypeError instead of a `must be a string.` message. The blank check stays
+/// TypeError instead of the `INVALID_SESSION_KEY` domain error this file used
+/// to answer. The blank check stays
 /// lossy: TS accepts a lone surrogate in the key (`?.trim()` leaves it intact,
 /// #1455 probe4), so a `to_utf8` filter here would reject a key TS accepts.
 /// Callers that need UTF-8 bytes convert lossily at the point of use, like
@@ -421,19 +422,29 @@ impl Requests {
 
     /// `InProcessGateway.closeProjectSessions` → resume or close all project sessions.
     async fn session_close_project(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let project_key_str = params
-            .get("projectKey")
-            .and_then(JsValue::as_string)
-            .and_then(|s| s.to_utf8().ok())
-            .filter(|s| !crate::metadata::js_trim(s).is_empty())
-            .ok_or_else(|| RequestError::new("projectKey is required."))?;
+        // #1604: `!input.projectKey?.trim()` — same guard family as
+        // `require_session_key`, so a non-string projectKey throws the bare
+        // optional-chain TypeError instead of folding into the domain error.
+        // The missing/blank branch keeps the plain `Error` shape TS produces
+        // (`gateway_request_failed` + "projectKey is required.").
+        let project_key = super::require_text(
+            params,
+            "projectKey",
+            "gateway_request_failed",
+            "projectKey is required.",
+        )?;
+        // A key that is not valid UTF-8 is still a missing key here: it can
+        // never name a project directory (`from_utf16_lossy` would silently
+        // rename it). Same answer as before #1604.
+        let project_key_str = project_key
+            .to_utf8()
+            .map_err(|_| RequestError::new("projectKey is required."))?;
         if !self.options.serves_project(&project_key_str) {
             return Err(gateway_error(
                 "CAPABILITY_UNAVAILABLE",
                 "The isolated native process serves only its configured project.",
             ));
         }
-        let project_key: JsString = project_key_str.into();
         if params.get("resume") == Some(&JsValue::Bool(true)) {
             self.owner.resume_project(&project_key);
             return Ok(object([("sessionKeys", JsValue::Array(vec![]))]));
@@ -851,8 +862,11 @@ mod tests {
     }
 
     // #1604: the sessionKey gate is the family-shared `?.trim()` guard, so
-    // every session_dir method answers a non-string the way the TS optional
-    // chain does, and treats JS WhiteSpace (U+FEFF included) as blank.
+    // every method that goes through `require_session_key` answers a
+    // non-string the way the TS optional chain does, and treats JS WhiteSpace
+    // (U+FEFF included) as blank. `session_record_status` /
+    // `session_new` keep their own `must be a string.` gate on purpose (TS has
+    // no `?.trim()` there — A7.8-INTERACTION-NONSTRING-OWNER-001-R1).
     fn require_key(value: JsValue) -> Result<JsString, RequestError> {
         require_session_key(&object([("sessionKey", value)]))
     }
@@ -875,6 +889,19 @@ mod tests {
         );
     }
 
+    // #1604: with a null params object TS throws reading `sessionKey` off
+    // null, so the guard must not fold that into the domain error either.
+    #[test]
+    fn a_null_params_object_reports_the_optional_chain_read_error() {
+        let error =
+            require_session_key(&JsValue::Null).expect_err("#1604 null params cannot be read");
+        assert_eq!("gateway_request_failed", error.code);
+        assert_eq!(
+            "Cannot read properties of null (reading 'sessionKey')",
+            key_message(&error)
+        );
+    }
+
     #[test]
     fn a_bom_only_session_key_is_blank() {
         let error = require_key(JsValue::from("\u{feff}"))
@@ -888,5 +915,29 @@ mod tests {
         let key = require_key(JsValue::from("a8/session"))
             .expect("#1604 a non-blank string passes the gate");
         assert_eq!("a8/session", key.to_utf8().expect("#1604 key is UTF-8"));
+    }
+
+    // #1604: `close_project_sessions` gates `projectKey` with the same
+    // `?.trim()` shape (A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R2 lists
+    // it as this issue's second item), so a non-string must surface the
+    // optional-chain TypeError instead of the `projectKey is required.`
+    // domain error. The gate runs before any owner call, so the fixture is
+    // only there to reach the request entry point.
+    #[tokio::test]
+    async fn close_project_sessions_non_string_project_key_throws_the_type_error() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let params = object([("projectKey", JsValue::Number(7.0))]);
+        let error = r
+            .session_dir_request("close_project_sessions".into(), params)
+            .await
+            .expect_err("#1604 a number is not a trimmable projectKey");
+        assert_eq!("gateway_request_failed", error.code);
+        assert_eq!(
+            "input.projectKey?.trim is not a function",
+            key_message(&error)
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 }

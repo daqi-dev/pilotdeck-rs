@@ -60,9 +60,9 @@ fn gateway_error(code: &str, message: impl Into<JsString>) -> RequestError {
 /// 2427). Lone surrogates survive the TS check, so the conversion is lossy:
 /// `to_utf8` would reject a key that TS accepts (#1455 probe4, PilotDeck
 /// cc7c4e65: `{"label":"thinking-lone-surrogate-key","value":{"applied":"callback"}}`).
-/// Session configuration and session directory share this one implementation
-/// (#1455 G7); it lives here rather than in `methods/mod.rs` because the
-/// sibling #1465/#1316 PRs are rewriting that file's declaration block.
+/// Session configuration is the only caller left (#1455 G7): the session
+/// directory moved to the shared `require_text` guard in #1604, so this is no
+/// longer a cross-family helper.
 pub(super) fn trimmed_string_is_non_empty(value: &JsString) -> bool {
     !crate::metadata::js_trim(&String::from_utf16_lossy(value.units())).is_empty()
 }
