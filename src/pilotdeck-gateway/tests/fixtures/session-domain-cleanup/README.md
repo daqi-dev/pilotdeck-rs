@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 129 mutants:
+`JUDGES`, keyed by the same names. The current table has 136 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -370,7 +370,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-shadowed-common-local`, `calibrate-shadowed-receiver-local`,
 `calibrate-shadowed-common-global`, `calibrate-shadowed-receiver-global`,
 `calibrate-shadowed-receiver-poison-fn`,
-`calibrate-shadowed-receiver-same-fn`, `calibrate-redefined-loader`.
+`calibrate-shadowed-receiver-same-fn`, `calibrate-redefined-loader`,
+`calibrate-conditional-def`, `calibrate-decorated-source`,
+`calibrate-nested-def-rebind`, `calibrate-walrus-rebind`,
+`calibrate-dynamic-globals-write`, `calibrate-sys-modules-poison`,
+`calibrate-shadowed-global-loader`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
