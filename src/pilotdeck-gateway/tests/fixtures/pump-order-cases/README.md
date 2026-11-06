@@ -43,6 +43,11 @@ Rust 的取消终态仍按 **未批准** 差异 `specs/gateway-parity/diffs/A7.2
   `#1219 [cancel]: pre-cancel must append exactly one durable turn_result` 判杀
   （#1219 / `diffs/A7.2-TURN-ABORT-001-R1.md`）。
 
+- `open-skip-complete`：同一终态分支的镜像变异，只认 aborted 终态，使
+  `reject` / `open` 两格不再写 durable `turn_result`；由
+  `gates_pump_open_pins_the_start_order` 的
+  `#1219 [open]: a completed turn appends exactly one durable turn_result` 判杀。
+
 运行复用 `negative_suite.py`：每个绑定用完整测试名和 `--exact` 独立执行
 positive → mutant → restored；`gate-order` 的三个场景分别判杀。只有点名测试
 确实失败且含指定语义断言才是 KILLED，未变红为 SURVIVED，编译错误、错误 panic、

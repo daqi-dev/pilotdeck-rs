@@ -168,6 +168,14 @@ cases = [
      'if self.attempts.load(Ordering::SeqCst) <= self.fail {',
      'if false && self.attempts.load(Ordering::SeqCst) <= self.fail {',
      None, test_prefix + 'forward_status_fail_drop', '#1219 [status-fail-drop]: the failing write must not reach the transcript'),
+    # #1219 r3: the same counters must guard the R1 cells too. Appending a
+    # turn_result from the blocked worker on the *successful* drop path must
+    # die on the new durable-count assertion instead of vanishing into the
+    # worker's unawaited JoinHandle.
+    ('status-drop-completes', base / 'runner.rs',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
+     'let result = write(&recorder, &session, &turn);\n            let _ = recorder.writer().record_turn_result(&session, &turn, crate::metadata::object([("type", JsValue::String("error".into()))]));\n            drop(owner);\n            drop(lease);\n            result',
+     None, test_prefix + 'forward_status_drop', '#1219 [status-drop/cancel]: durable turn_result count follows the consumer'),
 ]
 
 def audit():

@@ -753,6 +753,21 @@ async fn status_pending(drop_owner: bool) {
         1,
         "#741h status no replay after cancelled waiter"
     );
+    // #1219: the counters introduced for the same-tick failure must also cover
+    // these R1 cells. A durable turn_result appended from the blocked worker
+    // would otherwise stay invisible: its ordering panic lands in a JoinHandle
+    // nobody awaits. Dropping the stream cancels the transition (0 appends);
+    // resuming it lets the successful write finish the turn (exactly 1).
+    assert_eq!(
+        f.store.completes.load(Ordering::SeqCst),
+        usize::from(!drop_owner),
+        "#1219 [status-drop/cancel]: durable turn_result count follows the consumer"
+    );
+    assert_eq!(
+        f.store.order_violations.load(Ordering::SeqCst),
+        0,
+        "#1219 [status-drop/cancel]: no out-of-order turn_result from the blocked worker"
+    );
 }
 #[tokio::test]
 async fn forward_status_cancel() {
@@ -798,7 +813,10 @@ async fn forward_status_fail_drop() {
         );
     }
     let mut pending = f.turn.next();
-    timeout(Duration::from_secs(5), async {
+    // The fixture's own gate wait is 10 seconds, so entry must be allowed at
+    // least that long; a tighter bound turns a loaded host into an
+    // undiagnosable "#1219 status writer must enter gate" failure.
+    timeout(Duration::from_secs(15), async {
         tokio::select! {result=&mut pending=>panic!("#1219 status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#1219 forward fixture invariant")}
     })
     .await
@@ -1145,5 +1163,22 @@ async fn forward_real_status_write_error() {
     );
     let child = children.lock().expect("#741h forward fixture invariant")[0];
     assert_reaped(child).await;
+    // #1219: this case is the failure-without-drop ordering. The catch path
+    // still completes the turn here, so the durable count is one -- the
+    // registered boundary (Rust 0 / TS 1) only covers dropping the stream
+    // while the failing write is still in flight.
+    assert_eq!(
+        store.completes.load(Ordering::SeqCst),
+        1,
+        "#1219 [status-write-error]: the catch path still appends one durable turn_result"
+    );
+    // This case shares `OrderedStore`, so an out-of-order turn_result from its
+    // blocking worker must be observable here too, not only in the dedicated
+    // failure case.
+    assert_eq!(
+        store.order_violations.load(Ordering::SeqCst),
+        0,
+        "#1219 [status-write-error]: no out-of-order turn_result from the worker"
+    );
     std::fs::remove_dir_all(root).expect("#741h forward fixture invariant");
 }
