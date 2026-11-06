@@ -128,6 +128,10 @@ STICKY_REPLACED_TEST = ('user_dialog::channel_tests::a_registration_whose_'
                         'replacement_finished_still_sees_the_supersession')
 STICKY_REPLACED_ASSERTION = ('#1599 a registration replaced by a finished '
                              'replacement must end with an error')
+CLOCK_HOOK_TEST = ('user_dialog::channel_tests::a_registration_replaced_by_the_'
+                   'clock_hook_never_writes_over_the_replacement')
+CLOCK_HOOK_ASSERTION = ('#1599 a registration replaced before its persist must '
+                        'end with the replacement error')
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -155,6 +159,7 @@ DECLARED = (
     'superseded-registration-overwrites-the-journal-row',
     'superseded-registration-claims-the-replacement-lease',
     'supersession-flag-forgets-a-finished-replacement',
+    'replacement-before-persist-overwrites-the-rows',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -398,6 +403,15 @@ mutations = [
      '            }\n',
      '',
      STICKY_REPLACED_TEST, STICKY_REPLACED_ASSERTION),
+    # persist: the pre-write check is dropped, so a replacement registered by a
+    # host callback before `persist` (here the `now_ms` clock hook) has its rows
+    # overwritten by the original before the later checks notice.
+    ('replacement-before-persist-overwrites-the-rows', 'user_dialog/channel.rs',
+     '        if replaced(&self.inner, state) {\n'
+     '            return Err(DialogError::Invalid(replaced_during("registration")));\n'
+     '        }\n',
+     '',
+     CLOCK_HOOK_TEST, CLOCK_HOOK_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]

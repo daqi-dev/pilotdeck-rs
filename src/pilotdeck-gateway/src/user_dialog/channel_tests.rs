@@ -2116,6 +2116,112 @@ fn a_registration_whose_replacement_finished_still_sees_the_supersession() {
 }
 
 #[test]
+fn a_registration_replaced_by_the_clock_hook_never_writes_over_the_replacement() {
+    use crate::negative_assert;
+
+    // #1599: `now_ms` is host code and runs before `persist`. A clock hook that
+    // reenters and registers the same request id owns the journal/store rows
+    // now; the original must stop before its first write instead of
+    // overwriting the replacement's rows and only noticing afterwards.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-clock-hook",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let store = Arc::new(ReentrantStore::default());
+    let journal = Arc::new(ReentrantJournal::default());
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    options.journal = Some(journal.clone() as Arc<dyn UserDialogJournal>);
+    // Only the original's first clock read reenters; the replacement's own
+    // `now_ms` call must return normally.
+    let armed = Arc::new(AtomicBool::new(true));
+    options.now_ms = {
+        let clock = clock.clone();
+        let armed = armed.clone();
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        Arc::new(move || {
+            if armed.swap(false, Ordering::SeqCst) {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first clock read");
+                replacement
+                    .lock()
+                    .unwrap()
+                    .replace(replacement_dialog(&channel));
+            }
+            clock.load(Ordering::SeqCst)
+        })
+    };
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded by the clock hook".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("registration"),
+            "#1599 a registration replaced before its persist must end with the replacement error"
+        ),
+        other => panic!(
+            "#1599 a registration replaced before its persist must end with an error, got {other:?}"
+        ),
+    }
+    {
+        let events = journal.events.lock().unwrap();
+        negative_assert!(
+            events.len() == 1,
+            "#1599 the original must not append a journal row after its replacement published"
+        );
+        negative_assert!(
+            events[0]
+                .get("toolCallId")
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| *id == JsString::from("call-replacement")),
+            "#1599 only the replacement may own the journal row"
+        );
+    }
+    {
+        let dialogs = store.dialogs.lock().unwrap();
+        negative_assert!(
+            dialogs.len() == 1,
+            "#1599 only the replacement may own the stored dialog row"
+        );
+        negative_assert!(
+            dialogs[0]
+                .1
+                .request
+                .get("toolCallId")
+                .and_then(JsValue::as_string)
+                .is_some_and(|id| *id == JsString::from("call-replacement")),
+            "#1599 the original must not overwrite the replacement's stored row"
+        );
+    }
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the replacement was registered from the clock hook");
+    negative_assert!(
+        next.try_result().is_none(),
+        "#1599 the replacement must stay pending after the original ends"
+    );
+}
+
+#[test]
 fn a_registration_replaced_by_the_change_observer_ends_without_installing_a_poll() {
     use crate::negative_assert;
 
