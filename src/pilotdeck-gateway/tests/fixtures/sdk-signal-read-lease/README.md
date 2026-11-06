@@ -94,6 +94,11 @@ writer 的 `mutating_sources` 用 `lock_timeout=WRITER_LOCK_TIMEOUT`（300 s）�
 `mutating_sources` 的 `with` **体内**、`__exit__` 恢复之前取的，所以真实放锁时刻必然
 晚于 `end_ms`；`blocked == end_ms` 这一刻本次 writer 仍持着排他锁，不可能是别人。
 
+这一点不靠论证：writer 在 `with` 之外的 `finally` 里（`__exit__` 已恢复并放锁）原子
+发布 `writer-released.json`（`released_ms`，SIGTERM 展开路径同样发布），GREEN 要求
+`released_ms > end_ms`，否则 INVALID（区间不保守），KILLED 的 reason 里也带上该时刻。
+每次运行因此都留下「公布区间严格落在真实持锁区间内」的实测记录，而不是注释里的推断。
+
 SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体；下一次 `mutating_sources`
 用 HEAD 字节校验拒绝脏树，不会把变异体当基线，但源文件需要人工恢复。
 主错误与停止错误**都**写进 INVALID 的 reason（`主错误; stop failed: …`），互不遮盖。

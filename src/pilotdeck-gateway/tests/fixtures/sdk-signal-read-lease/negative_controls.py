@@ -145,6 +145,14 @@ def read_hold(out):
     return int(hold['start_ms']), hold['end_ms'] and int(hold['end_ms'])
 
 
+def read_released(out):
+    """Instants after the real release, or None when the writer never got that far."""
+    path = out / 'writer-released.json'
+    if not path.is_file():
+        return None
+    return int(json.loads(path.read_text())['released_ms'])
+
+
 def writer(out, hold):
     """Independent committed-mode writer: hold the tree lock over one mutant.
 
@@ -170,22 +178,32 @@ def writer(out, hold):
             raise SystemExit('#1662 writer stopped before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
-    with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
-        try:
-            capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
-            # Publish the window atomically: a reader that sees the file must also
-            # see the mutant bytes (#166 tmp-and-rename).
-            opened = epoch_ms()
-            publish_hold(out, opened, None)
-            publish(out / 'writer-window-open', 'open\n')
-            time.sleep(hold)
-            # Recorded while the lock is still held: the reader can only acquire
-            # it after this instant (plus the restore, covered by the tolerance).
-            publish_hold(out, opened, epoch_ms())
-        finally:
-            # Disarm on every path out of the window, including an exception:
-            # restoration must never run with the handler still armed.
-            armed[0] = False
+    try:
+        with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
+            try:
+                capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
+                # Publish the window atomically: a reader that sees the file must
+                # also see the mutant bytes (#166 tmp-and-rename).
+                opened = epoch_ms()
+                publish_hold(out, opened, None)
+                publish(out / 'writer-window-open', 'open\n')
+                time.sleep(hold)
+                # Recorded while the lock is still held: the reader can only
+                # acquire it after this instant.
+                publish_hold(out, opened, epoch_ms())
+            finally:
+                # Disarm on every path out of the window, including an exception:
+                # restoration must never run with the handler still armed.
+                armed[0] = False
+    finally:
+        # ``mutating_sources.__exit__`` has restored every guarded byte and
+        # released the lock by now, so this instant is the earliest another
+        # process can acquire it. Published on the normal path *and* on the
+        # SIGTERM unwind, so each run can show, rather than argue, that the
+        # recorded ``end_ms`` lies strictly inside the real hold
+        # (#1662 review r7 arbitration evidence).
+        publish(out / 'writer-released.json',
+                json.dumps({'released_ms': epoch_ms()}) + '\n')
     return 0
 
 
@@ -376,13 +394,21 @@ def green(out):
     if not (start_ms <= blocked <= end_ms):
         return 'INVALID', (f'resident test was refused at {blocked} ms, outside the writer '
                            f'hold [{start_ms}, {end_ms}]: that refusal was not this writer')
+    released = read_released(out)
+    if released is not None and released <= end_ms:
+        # Would mean the writer released the lock at or before the instant it
+        # recorded as inside its hold; the whole boundary argument rests on this
+        # being false, so refuse to publish a verdict if it ever is not.
+        return 'INVALID', (f'writer recorded end_ms={end_ms} but released at '
+                           f'{released} ms; the hold interval is not conservative')
     if not first <= blocked <= at:
         return 'INVALID', (f'inconsistent marker: first={first} blocked={blocked} at={at}')
     if waited < MIN_LEASE_WAIT_MS:
         return 'INVALID', (f'resident test waited {waited} ms, under the '
                            f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
     return 'KILLED', (f'resident test was refused inside the writer hold '
-                      f'[{start_ms}, {end_ms}], waited {waited} ms and then passed')
+                      f'[{start_ms}, {end_ms}], waited {waited} ms and then passed'
+                      f'{"" if released is None else f" (lock released at {released} ms)"}')
 
 
 def red(out):
