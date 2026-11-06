@@ -31,17 +31,36 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 ## 锁被保留时怎么解
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
-1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并在本次输出目录里找残留 pgid：
-   本装置看 `round.json`/`isolation.json` 的 `audit.remaining`；`scripts/parity/round.py` 看 `run.json` 的
-   `cleanup.remaining` 与 `ownedGroupsRemaining`；gateway 侧装置（`session_domain.py` / `collect.py` /
-   `native-topology/run.py`）看 `owner.json` 的 `cleanupPending` 列表（未证实停止的组会写在这里）。
+1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
+   - **`cleanupPending: true` 不等于「无残留」**：它是获取时先发布的占位，意思是「残留清单还没发布」；
+     只有正常释放且仍有存活组时才会被改写成 pgid 列表。看到 `true` 或看不到列表，要按 `pid` 查进程树。
+   - 本装置（`run_round.py` 等，`scripts/cli-parity/common.py:368`）的 `owner.json` **没有** `cleanupPending` 键，
+     残留只能看本次输出目录 `round.json` / `isolation.json` 的 `audit.remaining`。
+   - `scripts/parity/round.py` 看 `run.json` 的 `cleanup.remaining` 与 `ownedGroupsRemaining`；
+     被 SIGKILL 时 `run.json` 停在启动快照、这两个键可能根本没有。
+   - gateway 侧装置（`session_domain.py` / `collect.py` / `native-topology/run.py`）看 `owner.json` 的
+     `cleanupPending` 列表（未证实停止的组会写在这里）。
 2. 确认这些 pgid 已不存在：`ps -o pid,pgid,command -g <pgid>`；仍在就由人判断后 `kill -KILL -<pgid>`（只杀 owner 记录里本装置启动的组，绝不碰用户 PilotDeck）。
+   **列表缺失或形态不可解析不等于无残留**：先 `ls -la /tmp/pdrs-parity.lock` 看实际内容——`owner.json.tmp.*`
+   残留、0 字节或截断的 `owner.json` 都出现过（`scripts/parity/round.py:100-104` 是 tmp+replace，
+   `scripts/gateway-parity/common.py:75-77` 的 `save` 是直接覆写，SIGKILL 可留半截），此时按 `owner.json` 的
+   `pid` 查进程树；仍然拿不准就**保留锁、先别删**，继续独立工作（同 `scripts/gateway-parity/README.md:169`
+   的「证据不足则保留」）。注意损坏的已发布 `owner.json`（存在但解析不了）**永远不会被自动接管**，只能人工回收；
+   目录里没有 `owner.json` 的陈年空锁才会在 `MAX_AGE` 后按 mtime 自愈。
 3. **持 guard 互斥后再删**：用 `flock(1)` 或任意 `fcntl.flock(LOCK_EX)` 包装在 `/tmp/pdrs-parity.lock.guard` 上取独占锁
    （macOS 无 `flock(1)` 时用后者；装置自身的建锁、接管、释放都在同一 guard 下：`scripts/parity/round.py:199-207`、
    `scripts/gateway-parity/common.py:594-600`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
    确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
-   删完才放开 guard。**不持 guard 直接删会与自动接管竞态**：人的 `rm` 若落在接管之后，会抹掉新 owner 的标记，
-   那次运行释放时读不到 owner 而不删目录 ⇒ 锁永久留存、之后全部排队。运行器自身从不抢锁或自动接管。
+   删完才放开 guard。**只删 `owner.json` 与锁目录本身，不要删、不要替换 `/tmp/pdrs-parity.lock.guard`**
+   （更别用 `rm -rf /tmp/pdrs-parity.lock*`）：各装置以 `open('a')` 打开该路径，重建即换 inode，
+   正持锁者的 flock 会静默失效。
+   **不持 guard 直接删会与自动接管竞态，真实后果是「双持锁」而不是「排队卡死」**：人的 `rm` 若落在接管之后，
+   抹掉的是**新 owner（仍在运行）**的标记；接着 `rmdir` 会成功（锁目录里只有 `owner.json`，`.guard` 是目录外的
+   同名兄弟文件）⇒ 活 owner 手里的锁目录被整个删掉，下一个等待者看到锁不存在就立刻建锁发布，**两个运行同时进入
+   持锁段**，互斥失效（它们会争同一批 witness 端口与 /tmp 共享状态，污染在跑的校准证据，可能造成假 PASS / 假 FAIL）。
+   反过来，若只 `rm owner.json` 没 `rmdir`、留下无标记目录，它会在 `MAX_AGE`（2400 s）后按超龄被自动接管，
+   **不会「永久」留存**；真正永不自愈的只有带真值 `cleanupPending` 的已发布 owner（见下一节）。
+   所以别把「有人在排队」当成唯一症状——看到锁被异常改动，先按本节持 guard 核 owner 再动手。运行器自身从不抢锁或自动接管。
 
 ### 四台装置的锁等待差异
 
@@ -54,6 +73,14 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 | `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `:182` |
 | `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `:2952` |
 | `src/pilotdeck-gateway/tests/fixtures/native-topology/run.py`（4 案 × 5 轮） | **默认 600 s**（`common.parity_lock` 默认值） | `TimeoutError` 未被 main 捕获 → **traceback / exit 1** | `:609` |
+| `scripts/ui-server-parity/calibrate.sh`（UI↔server 定标） | **0**（抢不到立即拒绝，不排队、不接管） | `FileExistsError` → 直接报错退出 | `:76-88` |
 
-`2400 s` 只是 `MAX_AGE` 上限，**已发布的 owner 不会因年龄被自动接管**：`owner.json` 必带 `cleanupPending`（真值），
-接管条件要求它是假。所以一次被 SIGKILL 的运行会留下「永不自愈」的锁，按上一节人工回收。
+`2400 s` 只是 `MAX_AGE` 上限，**已发布且带 `cleanupPending` 的 owner 不会因年龄被自动接管**：接管条件要求
+`cleanupPending` 为假。gateway 侧装置（`parity/round.py`、`gateway-parity/*`、`native-topology/run.py`、
+`ui-server-parity/calibrate.sh`）获取时必发 `cleanupPending: true`，所以一次被 SIGKILL 的运行会留下
+「永不自愈」的锁，按上一节人工回收。**`scripts/cli-parity` 自己的装置是例外**：它的 `owner.json` 没有该键，
+锁不会被这条规则保住，人工回收前务必先按上一节第 1 步看 `round.json` / `isolation.json` 的残留。
+
+另：`scripts/gateway-parity/README.md:169` 的人工回收段写于本节的 guard 规则之前，只要求「核实 owner 已停止」，
+**按旧口径操作会撞上一节所述的竞态**；该文件在冻结装置目录内（`DATA_FILES` 白名单），改动要走冻结程序，
+本节不代改。两份说明冲突时以本节为准。
