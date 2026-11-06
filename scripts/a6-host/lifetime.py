@@ -17,17 +17,24 @@ and every unbounded wait additionally gets a ceiling.
 
 Three layers, cheapest first:
   * ``install`` -- a daemon thread polls ``os.getppid()``. Reparenting means the
-    host is gone: write ``.orphan``, say why on stderr, exit non-zero. Covers
-    the mbp2 scenario within one poll interval.
+    host is gone: write ``.orphan``, say why on stderr, take the process group
+    (and so the ``grandchild-*`` descendants) down, exit 70. Covers the mbp2
+    scenario within one poll interval.
   * ``bounded_close_wait`` -- the `close-*` waits get a hard ceiling after EOF
     instead of an unbounded ``signal.pause()``.
-  * ``MAX_LIFETIME`` -- a backstop for anything the two above miss (e.g. a
-    parent that dies before ``install`` runs). Deliberately not a "kill every
+  * the lifetime ceiling (``PDRS_A6_FIXTURE_MAX_LIFETIME``) -- a backstop for
+    anything the two above miss (e.g. a parent that dies before ``install``
+    runs): write ``.lifetime`` and exit 71. Deliberately not a "kill every
     ppid=1 process" sweep: that would hit processes this fixture does not own.
 
-Nothing here sends signals to other processes; every exit is the fixture
-terminating itself.
+What is *not* covered: a descendant nobody handed to ``track``. Every fixture
+mode that spawns one registers it, so today there is none; a future mode has to
+opt in.
+
+Nothing here sends signals to processes this fixture does not own: the watchdog
+only kills itself, its registered descendants, and this process.
 """
+import math
 import os
 import signal
 import sys
@@ -51,26 +58,76 @@ CLOSE_WAIT_LIMIT = 30.0
 
 EXIT_PARENT_DIED = 70
 EXIT_MAX_LIFETIME = 71
-EXIT_CLOSE_WAIT = 72
+
+# Descendants this fixture owns (see ``track``). Deliberately a registry, not a
+# process-table scan.
+_TRACKED = []
+
+
+def track(process):
+    """Register a descendant so it dies with us on the orphan/lifetime paths."""
+    _TRACKED.append(process)
+
+
+def _knob(name, default):
+    """Read a ceiling from the environment without ever disabling it.
+
+    A blank, NaN, zero or negative override must not turn a bounded wait back
+    into an unbounded one: ``setitimer(ITIMER_REAL, 0)`` *cancels* the timer
+    and ``elapsed > nan`` is always false. Anything unusable keeps the default
+    rather than silently removing the ceiling this module exists to add.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if not math.isfinite(value) or value <= 0:
+        return default
+    return value
 
 
 def _report(receipt, suffix, message):
     """Record why we are giving up: stderr for the host ring buffer, a receipt
-    file for the test, so a timeout can never look like a quiet success."""
-    sys.stderr.write(message + '\n')
-    sys.stderr.flush()
+    file for the test, so a timeout can never look like a quiet success.
+
+    Never raises. The host owns our stderr pipe (``connection.rs:71``
+    ``Stdio::piped()``), so by the time a dead host is detected that pipe has
+    no reader and ``sys.stderr.write`` raises ``BrokenPipeError``. Letting that
+    escape would kill the watchdog thread before it exits the process -- the
+    failure would be silent, which is the one outcome this module forbids.
+    """
+    try:
+        sys.stderr.write(message + '\n')
+        sys.stderr.flush()
+    except Exception:
+        pass
     if receipt is not None:
         try:
             receipt.with_suffix(suffix).write_text(message + '\n')
-        except OSError:
+        except Exception:
             pass
 
 
-def install(receipt, mode, max_lifetime=None):
+def _kill_tracked():
+    """Kill the descendants this fixture owns, so 父死子死 covers them too.
+
+    Only pids handed to ``track`` are touched -- never a scan of the process
+    table, which would reach processes this fixture does not own. Called from
+    the watchdog thread; ``Popen.kill`` is safe there.
+    """
+    for process in list(_TRACKED):
+        try:
+            process.kill()
+        except Exception:
+            pass
+
+
+def install(receipt, mode):
     """Start the watchdog. Call once, as early as possible, in every mode."""
-    if max_lifetime is None:
-        max_lifetime = float(os.environ.get('PDRS_A6_FIXTURE_MAX_LIFETIME',
-                                            DEFAULT_MAX_LIFETIME))
+    max_lifetime = _knob('PDRS_A6_FIXTURE_MAX_LIFETIME', DEFAULT_MAX_LIFETIME)
     parent = os.getppid()
     started = time.monotonic()
 
@@ -83,33 +140,38 @@ def install(receipt, mode, max_lifetime=None):
                         '{}: parent {} is gone (reparented to {}); exiting instead of '
                         'waiting for a signal that will never come (#1779)'
                         .format(mode, parent, now))
+                _kill_tracked()
                 os._exit(EXIT_PARENT_DIED)
             if time.monotonic() - started > max_lifetime:
                 _report(receipt, '.lifetime',
                         '{}: lifetime exceeded {:.0f}s; exiting (#1779)'
                         .format(mode, max_lifetime))
+                _kill_tracked()
                 os._exit(EXIT_MAX_LIFETIME)
 
     threading.Thread(target=watch, name='a6-parent-watch', daemon=True).start()
 
 
-def bounded_close_wait(receipt, mode, seconds=None):
-    """Block for a terminating signal, but never longer than `seconds`.
+def bounded_close_wait(receipt, mode):
+    """Block for a terminating signal, but never longer than the ceiling.
 
     Used by the modes whose contract *is* "stay alive after stdin EOF until the
     host signals". The SIGTERM handler installed by those modes still exits
     first in every healthy run; this only bounds the broken-host case, and it
     fails loudly (AssertionError, non-zero exit) rather than returning quietly.
     """
-    if seconds is None:
-        seconds = float(os.environ.get('PDRS_A6_CLOSE_WAIT_LIMIT', CLOSE_WAIT_LIMIT))
+    seconds = _knob('PDRS_A6_CLOSE_WAIT_LIMIT', CLOSE_WAIT_LIMIT)
 
     def on_timeout(_signum, _frame):
+        # close-hang keeps running after SIGTERM on purpose, so the missing
+        # step there is the SIGKILL escalation, not the SIGTERM itself.
+        if receipt is not None and receipt.with_suffix('.term').exists():
+            why = 'SIGTERM arrived but no SIGKILL within {:.0f}s'.format(seconds)
+        else:
+            why = 'no terminating signal within {:.0f}s after stdin EOF'.format(seconds)
         _report(receipt, '.timeout',
-                '{}: no terminating signal within {:.0f}s after stdin EOF; '
-                'the host never escalated to SIGTERM (#1779)'.format(mode, seconds))
-        raise AssertionError(
-            '{}: no terminating signal within {:.0f}s after stdin EOF'.format(mode, seconds))
+                '{}: {}; the host stopped driving the close (#1779)'.format(mode, why))
+        raise AssertionError('{}: {}'.format(mode, why))
 
     signal.signal(signal.SIGALRM, on_timeout)
     signal.setitimer(signal.ITIMER_REAL, seconds)

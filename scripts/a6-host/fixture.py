@@ -146,6 +146,9 @@ if mode in ('host-cancel-after-acceptance-hang', 'host-cancel-late-terminal'):
 if mode.startswith('grandchild-'):
     # Inherits the sidecar process group and stderr/stdout descriptors.
     descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    # #1779: a killed host never reaches its killpg, so the watchdog has to take
+    # this descendant down with it instead of leaving a 60 s orphan behind.
+    lifetime.track(descendant)
     assert receipt is not None
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
 if mode == 'no-streaming':
