@@ -28,6 +28,10 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
+# #1604: `require_text` / `trim_guard` — the guard the session directory now
+# delegates to. Two mutants below target it; the bound tests stay the
+# session-directory ones.
+METHODS_MOD = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 # #1864: the read side of the three selectors — the compose step in the
 # session factory and the per-turn permission-mode source on the live
 # adapter. Both are mutated below so "stored but never read" cannot come back.
@@ -213,11 +217,19 @@ mutations = [
      '!String::from_utf16_lossy(value.units()).is_empty()',
      CFG + 'set_output_style_validates_names_and_key',
      '#1457 blank name code'),
-    ('session-dir-blank-gate-removed', SESSION_DIR, '        .filter(super::config::trimmed_string_is_non_empty)', '        .filter(|_| true)',
+    # #1604: the session directory now delegates to the shared `require_text`
+    # guard instead of keeping its own `?.trim()` chain, so these two mutants
+    # move to the guard they are meant to kill. Bound tests are unchanged.
+    ('session-dir-blank-gate-removed', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {\n'
+     '                Ok(TrimGuard::Missing)',
+     '            if false {\n'
+     '                Ok(TrimGuard::Missing)',
      DIR + 'resume_session_rejects_blank_session_key',
      '#1455 resume_session rejects the blank key'),
-    ('session-dir-surrogate-rejected', SESSION_DIR, '        .filter(super::config::trimmed_string_is_non_empty)',
-     '        .filter(|s| s.to_utf8().is_ok())',
+    ('session-dir-surrogate-rejected', METHODS_MOD,
+     '            if crate::metadata::js_trim(&text).is_empty() {',
+     '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
      DIR + 'resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
     # ── #1864: the three selectors now have a reader. Each write site

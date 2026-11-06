@@ -1587,7 +1587,7 @@ fn a_hung_cleanup_does_not_hold_the_failure_report() {
 ///
 /// #1960: the argument is the value production actually passes.
 /// `start_with_cleanup_budget` adds [`super::INITIALIZATION_TEARDOWN_SLACK`]
-/// before it calls `initialization_teardown_bounds` (gateway.rs:362), so a
+/// before it calls `initialization_teardown_bounds`, so a
 /// declared 300 ms arrives here as 300 ms + SLACK. Feeding the raw declared
 /// budget instead made `cleanup_bound == declared` and
 /// `owner + cleanup <= declared + DEADLINE` hold for the wrong reason: on the
@@ -1612,7 +1612,7 @@ fn a_slow_refused_owner_does_not_shrink_the_cleanup_bound() {
         "#1746 the cleanup keeps the slack on top of the declared budget, not the budget itself"
     );
     assert_eq!(
-        declared + super::INITIALIZATION_TEARDOWN_SLACK + super::INITIALIZATION_TEARDOWN_DEADLINE,
+        passed.saturating_add(super::INITIALIZATION_TEARDOWN_DEADLINE),
         owner_bound + cleanup_bound,
         "#1746 the failure path costs exactly the two bounds together"
     );
