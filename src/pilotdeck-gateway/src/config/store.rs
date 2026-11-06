@@ -36,13 +36,14 @@
 //!   merge — two changes whose sampled times fall within one debounce window
 //!   yield one reload although their real spacing was slightly over 250 ms
 //!   (with 20 ms polling, spacings in roughly 250–270 ms depending on tick
-//!   phase); (3) net-zero bursts — changes that leave content *and* metadata
-//!   (including the inode change time, which every write and `utimes` bump)
-//!   identical between two samples trigger no reload, where `fs.watch` would
-//!   produce an identity reload (version+1, empty `changedPaths`). With
-//!   change-time sampling this needs every write in the burst to leave ctime
-//!   on the tick the sample already recorded. Ledger: specs/gateway-parity/accepted-diffs.md
-//!   A6.3-CONFIG-POLL-001 (unapproved).
+//!   phase); (3) net-zero bursts — changes that leave both the content and
+//!   the sampled metadata identical between two samples trigger no reload,
+//!   where `fs.watch` would produce an identity reload (version+1, empty
+//!   `changedPaths`). A burst whose content differs but whose metadata does
+//!   not is the separate cell registered in
+//!   `diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`, not this one. Ledger:
+//!   `accepted-diffs.md` A6.3-CONFIG-POLL-001, corrected by
+//!   `diffs/A6.3-CONFIG-POLL-001-R1.md` (both unapproved).
 //!
 //! Each sample compares metadata first (#1739): when the whole metadata
 //! fingerprint — length, mtime, ctime, inode, device, plus, for a parent
@@ -62,18 +63,30 @@
 //! reads — the watched config file, and only when it is a regular file of at
 //! most [`CONTENT_SAMPLE_LIMIT`] bytes — a rewrite meeting all of those
 //! conditions and landing in the window is *not* seen, where the pre-#1739
-//! per-tick content comparison did see it, provided both reads succeed and
-//! return different bytes (a failed read hashes as absent in both versions;
-//! see #1792). Larger files and the other entries of a watched directory
-//! were metadata-only before #1739 too, so this cell adds nothing for them.
-//! Measured on HFS+ (1 s ctime granularity) in
-//! `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
-//! specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md
-//! (unapproved). Only when
-//! metadata changed is up to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched
-//! config file read (the file itself, or the missing config file's name
-//! inside a watched parent directory); larger files and other directory
-//! entries are sampled by metadata only.
+//! per-tick content comparison did see it whenever the two content hashes
+//! differ (a read that failed on one side only hashes as absent and differs
+//! from present bytes, so the old comparison caught that too). Larger files
+//! and the other entries of a watched directory were metadata-only before
+//! #1739 too, so this cell adds nothing for them. Measured on HFS+ (1 s
+//! ctime granularity) in `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
+//! `diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md` (corrected by
+//! `diffs/A6.3-CONFIG-METADATA-SHORTCUT-001-R1.md`, unapproved).
+//!
+//! A sample that fails any read — a `stat`, a `read_dir`, or the content
+//! read of the watched config file — is *incomplete* and commits no metadata
+//! fingerprint (#1792): the next tick re-samples until a complete one
+//! lands, so a transient read failure (EMFILE and friends) delays detection
+//! to the first tick after the reads recover, without needing any metadata
+//! change. The startup sample of [`WatchedPath::new`] follows the same rule,
+//! so a file that was unreadable when watching started becomes visible once
+//! reads recover. While a path stays unreadable, the same full fingerprint
+//! is reported at most once (the content read is retried every tick, not
+//! the reload), so a persistently unreadable path is not a reload storm.
+//! Only when metadata changed — or the last sample was incomplete — is up
+//! to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched config file read (the
+//! file itself, or the missing config file's name inside a watched parent
+//! directory); larger files and other directory entries are sampled by
+//! metadata only.
 use super::{
     Env, Error,
     changes::{ChangeClass, classify_config_changes, diff_config_snapshots},
@@ -182,8 +195,10 @@ impl Default for WatchOptions {
 /// config hot reload without a trace.
 ///
 /// Half the 20 ms default rather than the 1 ms floors elsewhere in the tree:
-/// every tick re-reads and hashes the watched paths (`fingerprint`, up to 2
-/// MiB), so the floor is also the worst-case sampling bill a typo can buy.
+/// every tick stats the watched paths, and only a metadata change (or an
+/// incomplete sample, #1792) walks on to the content read (`fingerprint`,
+/// up to 2 MiB), so the floor is also the worst-case sampling bill a typo
+/// can buy.
 /// `upload`'s `MIN_CLEANUP_INTERVAL` is a full second for the same reason,
 /// while `user_dialog::channel`'s 1 ms is an in-memory map lookup that costs
 /// nothing — neither precedent transfers to a file-hashing poll loop. At this
@@ -261,7 +276,12 @@ fn effective_debounce(options: &WatchOptions) -> Duration {
 /// `now + duration` falls back to the ceiling — or to `now` itself if even
 /// that overflows, an `Instant` within one hour of the clock's maximum —
 /// never panics (#1736). With [`effective_debounce`] in front this is the
-/// second line of defence, not the first.
+/// second line of defence, not the first; its own inner fallback
+/// (`checked_add(MAX_DEBOUNCE).unwrap_or(now)`) is unreachable from the
+/// watcher path, where every duration arrives already clamped to ≤ 1 h with
+/// `now` far below the clock's maximum — it only guards a direct call with
+/// an unclamped `Duration::MAX` (the negative control `deadline-add-unchecked`
+/// binds that direct-call test), so do not read it as a hot-path defence.
 fn deadline_after(now: Instant, duration: Duration) -> Instant {
     now.checked_add(duration)
         .unwrap_or_else(|| now.checked_add(MAX_DEBOUNCE).unwrap_or(now))
@@ -744,7 +764,12 @@ impl Drop for WatchHandle {
 }
 
 /// Content bytes hashed per sample of one watched config file; beyond this a
-/// file is sampled by metadata (length, mtime, ctime, inode) only.
+/// file is sampled by metadata (length, mtime, ctime, inode, device) only.
+/// The bound exists for the same reason as [`MIN_POLL_INTERVAL`]: the content
+/// read is only paid when metadata changed (or the previous sample was
+/// incomplete, #1792), and one MiB keeps that worst case a fraction of the
+/// 20 ms default cadence even when it is paid on every tick of a flapping
+/// path.
 pub const CONTENT_SAMPLE_LIMIT: u64 = 1024 * 1024;
 
 /// #1739 test hook: content bytes actually read, keyed by path. The tests
@@ -754,12 +779,60 @@ pub const CONTENT_SAMPLE_LIMIT: u64 = 1024 * 1024;
 #[cfg(test)]
 static CONTENT_READS: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> = Mutex::new(None);
 
+/// #1792 test hook: the next N content reads of each path fail, emulating a
+/// transient EMFILE-style failure without touching the file (no chmod, no
+/// mtime rewrite — those change metadata and would mask the bug). Keyed by
+/// path for the same parallel-test isolation as [`CONTENT_READS`]; only
+/// present in test builds.
+#[cfg(test)]
+static CONTENT_READ_FAILURES: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> =
+    Mutex::new(None);
+
 #[cfg(test)]
 fn content_reads(path: &Path) -> usize {
     lock(&CONTENT_READS)
         .as_ref()
         .and_then(|reads| reads.get(path).copied())
         .unwrap_or(0)
+}
+
+/// Whether this content read is one of the N armed failures (#1792 test hook).
+#[cfg(test)]
+fn content_read_should_fail(path: &Path) -> bool {
+    match lock(&CONTENT_READ_FAILURES)
+        .as_mut()
+        .and_then(|failures| failures.get_mut(path))
+    {
+        Some(remaining) if *remaining > 0 => {
+            *remaining -= 1;
+            true
+        }
+        _ => false,
+    }
+}
+
+#[cfg(not(test))]
+fn content_read_should_fail(_path: &Path) -> bool {
+    false
+}
+
+/// Arms the next `failures` content reads of `path` to fail (#1792 test hook).
+#[cfg(test)]
+fn arm_content_read_failures(path: &Path, failures: usize) {
+    lock(&CONTENT_READ_FAILURES)
+        .get_or_insert_with(Default::default)
+        .insert(path.to_path_buf(), failures);
+}
+
+/// Disarms any leftover failures for `path` only (#1792 test hook). Scoped to
+/// one path on purpose: the hook is process-global while libtest runs tests in
+/// parallel, so a whole-map `= None` here would wipe a sibling test's armed
+/// failures between its arm and its read and turn that test flaky.
+#[cfg(test)]
+fn clear_content_read_failures(path: &Path) {
+    if let Some(failures) = lock(&CONTENT_READ_FAILURES).as_mut() {
+        failures.remove(path);
+    }
 }
 
 struct WatchedPath {
@@ -770,12 +843,14 @@ struct WatchedPath {
     target: Option<std::ffi::OsString>,
     /// The last full sample (content included for the watched config file).
     fingerprint: u64,
-    /// The last metadata-only sample (#1739): identical metadata skips the
-    /// content read. The one gap — a write that leaves every hashed field,
-    /// ctime included, on the values already sampled, because ctime only
-    /// records a tick — is spelled out in the module note and
-    /// diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-    metadata_fingerprint: u64,
+    /// The last complete metadata-only sample (#1739): identical metadata
+    /// skips the content read. `None` means the last sample was incomplete
+    /// (#1792) — a read that failed — and the next tick must re-sample
+    /// instead of short-circuiting on stale metadata. The one gap — a write
+    /// that leaves every hashed field, ctime included, on the values already
+    /// sampled, because ctime only records a tick — is spelled out in the
+    /// module note and diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
+    metadata_fingerprint: Option<u64>,
 }
 
 impl WatchedPath {
@@ -794,8 +869,18 @@ impl WatchedPath {
         // An existing directory (e.g. an empty config path resolving to cwd)
         // is fingerprinted by its entries, like `fs.watch` on a directory.
         let directory = path.is_dir();
-        let metadata_fingerprint = fingerprint(&path, directory, target.as_deref(), false);
-        let fingerprint = fingerprint(&path, directory, target.as_deref(), true);
+        // #1819: the same metadata is stat-ed twice here (once for the
+        // metadata-only sample, once inside the full sample); reusing it
+        // would mean threading a `Metadata` value through `hash_entry`'s
+        // signature — not worth it for a one-off startup cost per watched
+        // path.
+        let (metadata, metadata_complete) = fingerprint(&path, directory, target.as_deref(), false);
+        let (fingerprint, complete) = fingerprint(&path, directory, target.as_deref(), true);
+        // #1792: an incomplete startup sample (any stat, `read_dir`, or
+        // content read that failed) commits no metadata fingerprint either;
+        // `None` keeps the next tick re-sampling, so a file that was
+        // unreadable when watching started is still seen once reads recover.
+        let metadata_fingerprint = (metadata_complete && complete).then_some(metadata);
         Some(Self {
             path,
             directory,
@@ -809,21 +894,41 @@ impl WatchedPath {
         // #1739: metadata first. At the default cadence (two watched paths
         // every 20 ms) the per-tick content read costs up to ~19% of a core
         // (measured: ~1.9 ms per 1 MiB read on cb8, page-cache hot; a
-        // metadata-only sample is ~1 µs). Only a metadata change walks on to
-        // the content read; the single gap — a write that leaves every hashed
-        // field, ctime included, on the values already sampled — is spelled
-        // out in the module note and diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-        let next_metadata = fingerprint(&self.path, self.directory, self.target.as_deref(), false);
-        if next_metadata == self.metadata_fingerprint {
+        // metadata-only sample is ~1 µs). Only a metadata change — or an
+        // incomplete sample, #1792 — walks on to the content read; the single
+        // gap — a write that leaves every hashed field, ctime included, on
+        // the values already sampled — is spelled out in the module note and
+        // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
+        let (next_metadata, metadata_complete) =
+            fingerprint(&self.path, self.directory, self.target.as_deref(), false);
+        if metadata_complete && self.metadata_fingerprint == Some(next_metadata) {
             return false;
         }
-        let next = fingerprint(&self.path, self.directory, self.target.as_deref(), true);
-        self.metadata_fingerprint = next_metadata;
+        let (next, complete) =
+            fingerprint(&self.path, self.directory, self.target.as_deref(), true);
+        // #1792: an incomplete sample — any stat, `read_dir`, or content read
+        // that failed — commits no metadata fingerprint: committing anyway
+        // closed the recovery path for good (identical metadata then
+        // short-circuited every later sample, so the read that failed was
+        // never retried and the change was invisible until the next metadata
+        // change). `None` keeps every later tick re-sampling until a complete
+        // one lands. The full `fingerprint` is committed regardless, so while
+        // a path stays unreadable the same fingerprint reports at most once —
+        // the content read is retried every tick, not the reload.
+        self.metadata_fingerprint = if metadata_complete && complete {
+            Some(next_metadata)
+        } else {
+            None
+        };
         std::mem::replace(&mut self.fingerprint, next) != next
     }
 }
 
-fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
+/// Hashes one path's metadata (and, when asked, content) into `hasher`.
+/// Returns whether every read in this entry's sample succeeded; a `false`
+/// return makes the whole sample incomplete, which [`WatchedPath::changed`]
+/// turns into a next-tick retry (#1792) instead of a committed fingerprint.
+fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> bool {
     use std::{io::Read, os::unix::fs::MetadataExt};
     match std::fs::metadata(path) {
         Ok(meta) => {
@@ -839,10 +944,16 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
             (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
             if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
                 let mut content = Vec::new();
-                let read = std::fs::File::open(path)
-                    .and_then(|file| file.take(CONTENT_SAMPLE_LIMIT).read_to_end(&mut content))
-                    .ok()
-                    .map(|_| content);
+                let read = if content_read_should_fail(path) {
+                    // #1792 test hook: emulate a transient read failure
+                    // without touching the file's metadata.
+                    None
+                } else {
+                    std::fs::File::open(path)
+                        .and_then(|file| file.take(CONTENT_SAMPLE_LIMIT).read_to_end(&mut content))
+                        .ok()
+                        .map(|_| content)
+                };
                 #[cfg(test)]
                 {
                     if read.is_some() {
@@ -853,40 +964,56 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
                             .or_insert(1);
                     }
                 }
+                let read_complete = read.is_some();
                 read.hash(hasher);
+                return read_complete;
             }
+            true
         }
-        Err(_) => false.hash(hasher),
+        Err(_) => {
+            false.hash(hasher);
+            false
+        }
     }
 }
 
+/// One sample of a watched path. Returns the fingerprint and whether the
+/// sample was complete — every `stat`, `read_dir`, and content read
+/// succeeded; an incomplete sample must not commit a metadata fingerprint
+/// (#1792).
 fn fingerprint(
     path: &Path,
     directory: bool,
     target: Option<&std::ffi::OsStr>,
     sample_content: bool,
-) -> u64 {
+) -> (u64, bool) {
     let mut hasher = DefaultHasher::new();
+    let mut complete = true;
     if directory {
         // The directory's own metadata changes on every entry create/delete.
-        hash_entry(path, &mut hasher, false);
-        let mut names = std::fs::read_dir(path)
-            .map(|entries| {
-                entries
-                    .filter_map(|entry| entry.ok().map(|entry| entry.file_name()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        complete &= hash_entry(path, &mut hasher, false);
+        let mut names = Vec::new();
+        match std::fs::read_dir(path) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(entry) => names.push(entry.file_name()),
+                        Err(_) => complete = false,
+                    }
+                }
+            }
+            Err(_) => complete = false,
+        }
         names.sort();
         for name in names {
             name.hash(&mut hasher);
             let read_content = sample_content && target == Some(name.as_os_str());
-            hash_entry(&path.join(&name), &mut hasher, read_content);
+            complete &= hash_entry(&path.join(&name), &mut hasher, read_content);
         }
     } else {
-        hash_entry(path, &mut hasher, sample_content);
+        complete &= hash_entry(path, &mut hasher, sample_content);
     }
-    hasher.finish()
+    (hasher.finish(), complete)
 }
 
 async fn watch_loop(
@@ -904,6 +1031,7 @@ async fn watch_loop(
     let mut ticker = tokio::time::interval(effective_poll_interval(&options));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await;
+    let debounce = effective_debounce(&options);
     let mut deadline: Option<Instant> = None;
     loop {
         let timer = async {
@@ -915,7 +1043,7 @@ async fn watch_loop(
         tokio::select! {
             biased;
             Some(()) = changes.recv() => {
-                deadline = Some(deadline_after(Instant::now(), effective_debounce(&options)));
+                deadline = Some(deadline_after(Instant::now(), debounce));
             }
             _ = ticker.tick() => {
                 if inner.strong_count() == 0 {
@@ -926,7 +1054,7 @@ async fn watch_loop(
                     changed |= path.changed();
                 }
                 if changed {
-                    deadline = Some(deadline_after(Instant::now(), effective_debounce(&options)));
+                    deadline = Some(deadline_after(Instant::now(), debounce));
                 }
             }
             _ = timer => {
