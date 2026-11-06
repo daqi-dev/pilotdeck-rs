@@ -802,6 +802,80 @@ def calibrate_augassign_unregistered(rows):
     return True, 'aggregation-audit: augmented |= enumeration flagged, passed=False'
 
 
+def calibrate_opaque_clean_write(rows):
+    """#892 r12: ``report['status'] = _clean()`` writes a clean verdict through
+    a helper the audit never sees; every call used to count as a proven slot
+    source, so the write stayed green (MiniMax boundary r11 P0-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'inline status/exit assignment _clean()', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: opaque clean-status write flagged, passed=False'
+
+
+def calibrate_opaque_update_payload(rows):
+    """#892 r12: the same hole through ``report.update(_payload(report))``: an
+    opaque call used to be a proven slot source as well (MiniMax boundary r11
+    P0-1)."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        'report.update(_payload(report))', 'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, 'aggregation-audit: opaque update payload flagged, passed=False'
+
+
+def calibrate_param_augassign(rows):
+    """#892 r12: ``def publish(report): report |= {'status': 'PASS'}`` writes a
+    summary handed in as a parameter; the receiver gate only knew names bound to
+    a dict literal, so the function was never enumerated (GLM boundary r11
+    P1-1)."""
+    ok, detail = _unregistered_publish(rows)
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: parameter-receiver |= enumeration '
+                  'flagged, passed=False')
+
+
+def calibrate_param_update(rows):
+    """#892 r12: ``report.update(payload)`` on a parameter receiver, same
+    enumeration hole as the ``|=`` spelling (GLM boundary r11 P1-1)."""
+    ok, detail = _unregistered_publish(rows)
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: parameter-receiver update enumeration '
+                  'flagged, passed=False')
+
+
+def _unregistered_publish(rows):
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('unregistered aggregation point' in failure
+               and failure.rstrip().endswith(":publish markers=['write-status']")
+               for failure in failures):
+        return False, (f'failures={failures!r}, want the unregistered publish '
+                       "point with markers=['write-status']")
+    return True, 'ok'
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1463,6 +1537,25 @@ MUTATIONS = [
      "    report |= {'status': 'PASS'}\n"
      "    return report\n"
      "def run_all(output, source=None):"),
+    # #892 fix-r12: the r11-round P0/P1 shapes.
+    ('calibrate-opaque-clean-write', SOURCE,
+     "            report['status'] = overall\n",
+     "            report['status'] = _clean()\n"),
+    ('calibrate-opaque-update-payload', SOURCE,
+     "                    report.update(deadline_report(args.native_capture))\n",
+     "                    report.update(_payload(report))\n"),
+    ('calibrate-param-augassign', CONTROLS_SOURCE,
+     "def run_all(output, source=None):",
+     "def publish(report):\n"
+     "    report |= {'status': 'PASS'}\n"
+     "    return report\n"
+     "def run_all(output, source=None):"),
+    ('calibrate-param-update', CONTROLS_SOURCE,
+     "def run_all(output, source=None):",
+     "def publish(report, payload):\n"
+     "    report.update(payload)\n"
+     "    return report\n"
+     "def run_all(output, source=None):"),
 ]
 
 JUDGES = {
@@ -1700,6 +1793,14 @@ JUDGES = {
         'aggregation-audit', calibrate_no_exit_path, False, ()),
     'calibrate-delegated-attribute': (
         'aggregation-audit', calibrate_delegated_attribute, False, ()),
+    'calibrate-opaque-clean-write': (
+        'aggregation-audit', calibrate_opaque_clean_write, False, ()),
+    'calibrate-opaque-update-payload': (
+        'aggregation-audit', calibrate_opaque_update_payload, False, ()),
+    'calibrate-param-augassign': (
+        'aggregation-audit', calibrate_param_augassign, False, ()),
+    'calibrate-param-update': (
+        'aggregation-audit', calibrate_param_update, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
@@ -1756,24 +1857,31 @@ def read_summary(case):
 # The batch holds the host-wide parity lease (``mutating_sources`` takes it for
 # any ``scripts/gateway-parity`` source) from the first mutation to the restored
 # positive.  Before ``fix-r9`` that hold had no bound at all: a 78-mutant batch
-# at the per-check ceiling is 78 * 180 s, far past the 2400 s stale-lease age,
-# so a second apparatus could take the lease over and rewrite the same sources
-# and a parity round could wait without any bound (MiniMax concurrency r7 P1-1).
-# The budget below bounds the *whole* hold, restored positive and the kill
-# grace included.  It does not remove the pre-existing race with a concurrent
-# suite that is already running: such a suite asks for the lease with its own
-# 30 s deadline and still times out while the batch holds it.  That needs the
-# lease to shrink to the source-rewrite window -- a shared
+# at the per-check ceiling is 78 * 180 s, far past any deadline a concurrent
+# suite sets for itself, so a parity round could wait without any bound
+# (MiniMax concurrency r7 P1-1).  The budget below bounds the *whole* hold,
+# restored positive and the kill grace included.  It does not remove the
+# pre-existing race with a suite that is already running: such a suite asks for
+# the lease with its own 30 s deadline and still times out while the batch holds
+# it.  That needs the lease to shrink to the source-rewrite window -- a shared
 # ``negative_process.mutating_sources`` change, tracked in #1719.
+#
+# The bound is *not* a stale-lease backstop: ``common.parity_lock`` publishes
+# ``cleanupPending`` when it takes the lease and refuses to take over an owner
+# that carries the flag (``scripts/gateway-parity/common.py`` takeover guard;
+# ``scripts/gateway-parity/README.md`` "dead_pid/expired" section), so a
+# SIGKILLed batch leaves a lease only the coordinator can remove by hand.  What
+# the budget buys is that this apparatus is not the one that creates that
+# residue, and that concurrent suites never wait past one bounded hold.
 # Measured full batch: 160 s.
 LEASE_BUDGET_SECONDS = 900
 CHECK_TIMEOUT_SECONDS = 180
 KILL_GRACE_SECONDS = 10  # negative_process.KILL_TIMEOUT
-# Per-check overhead the reserve has to absorb besides the two timeouts: the
-# kill grace is charged twice by ``negative_process._collect`` (communicate +
-# collect) and the restore/digest of the source is charged once more, so a
-# reserve of exactly ``2 * (timeout + grace)`` undershot the real hold
-# (MiniMax concurrency r10 P2-2).
+# Per-check overhead the reserve has to absorb besides the timeout: the kill
+# grace is charged twice by ``negative_process._collect`` (``communicate`` then
+# ``wait``), so one check can hold the lease for ``timeout + 2 * grace``; the
+# restore/digest of the sources is charged once more on top (MiniMax concurrency
+# r10 P2-2 / r11 P2-4).
 TAIL_OVERHEAD_SECONDS = 20
 
 
@@ -1783,9 +1891,11 @@ def lease_budget_left(started, now):
     Two checks' worth stay reserved: the one that is about to start and the
     restored positive that always runs at the end.  Without that reserve the
     last mutation could start at the edge of the budget and push the hold past
-    ``LEASE_BUDGET_SECONDS`` (GLM boundary r9 P1-1).
+    ``LEASE_BUDGET_SECONDS`` (GLM boundary r9 P1-1).  Each reserved check is
+    charged at its real worst case, ``timeout + 2 * grace`` (MiniMax boundary
+    r11 P2-4).
     """
-    reserve = 2 * (CHECK_TIMEOUT_SECONDS + KILL_GRACE_SECONDS) + TAIL_OVERHEAD_SECONDS
+    reserve = 2 * (CHECK_TIMEOUT_SECONDS + 2 * KILL_GRACE_SECONDS) + TAIL_OVERHEAD_SECONDS
     return LEASE_BUDGET_SECONDS - (now - started) - reserve
 
 
@@ -1795,8 +1905,11 @@ def terminate_cleanly(signum, _frame):
     The default handler kills the interpreter on the spot: the mutated frozen
     source stays in the tree and the host-wide parity lease is never released,
     so the next suite waits out its own deadline and the tree is left dirty
-    (MiniMax concurrency r10 P1-1).  SIGKILL cannot be caught -- that residue
-    is bounded by ``parity_lock``'s stale-lease age and tracked in #1719.
+    (MiniMax concurrency r10 P1-1).  SIGKILL cannot be caught, and the residue
+    it leaves is *not* aged out: ``common.parity_lock`` marks the lease
+    ``cleanupPending`` and refuses to take over such an owner, so the lock has
+    to be removed by hand (``scripts/gateway-parity/README.md``); #1719 tracks
+    the recovery steps (MiniMax concurrency r11 P1-1 / GLM concurrency r11 P1-1).
     """
     raise SystemExit(128 + signum)
 
@@ -1893,13 +2006,18 @@ def main():
                               lock_timeout=LEASE_BUDGET_SECONDS) as originals:
             # Import only after every source, including the verdict table, is pristine.
             common = load_pristine_common()
-            # The budget is only a promise while it stays below the age at
-            # which another apparatus may take the lease over: a drift in
-            # either constant would silently break it, so the two are checked
-            # against each other here (MiniMax boundary r10 P2-3).
-            assert LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < common.MAX_AGE, (
-                f'LEASE_BUDGET_SECONDS {LEASE_BUDGET_SECONDS}s + overhead must stay '
-                f'below common.MAX_AGE {common.MAX_AGE}s')
+            # The budget has to stay below the age at which a *different*
+            # apparatus gives up on this lease, so a drift in either constant
+            # would silently break the promise; the two are checked against each
+            # other here.  An explicit raise, not an ``assert``: ``python -O``
+            # would strip the guard and leave only the comment (GLM concurrency
+            # r11 P3-4 / MiniMax boundary r11 P3-5).
+            if not (LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < common.MAX_AGE):
+                print(f'negative-controls: LEASE_BUDGET_SECONDS '
+                      f'{LEASE_BUDGET_SECONDS}s + overhead {TAIL_OVERHEAD_SECONDS}s '
+                      f'must stay below common.MAX_AGE {common.MAX_AGE}s',
+                      file=sys.stderr)
+                raise SystemExit(common.aggregate_status('BLOCKED')[1])
             # INVALID remains BLOCKED, never a killed mutant or a passing batch.
             MUTATION_STATUS = common.MUTATION_STATUS
             digests = {source: hashlib.sha256(originals[source]).hexdigest()

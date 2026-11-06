@@ -893,6 +893,8 @@ NON_AGGREGATION_POINTS = {
         'per-case scoring rows for one capture, not a batch summary',
     ('scripts/gateway-parity/session_domain.py', 'validate_calibration'):
         'one calibration report face; the batch status is aggregated by main',
+    ('scripts/gateway-parity/session_domain.py', 'deadline_report'):
+        'public wrapper returning _deadline_report(...); the single point _deadline_report audits the slots',
     ('scripts/gateway-parity/session_domain.py', '_retirement_controls'):
         'per-round control verdict recorder; the batch status is aggregated by _retirement_report',
     ('scripts/gateway-parity/session_domain.py', 'record'):
@@ -1106,6 +1108,12 @@ def _calls_aggregate(node):
 _CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS',
                                     'PASS_WITH_CLEANUP_UNVERIFIED'})
 _FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
+
+# A call is only a proven slot source when its callee's own return path is
+# audited -- i.e. the callee is one of the registered points above.  Any other
+# call is opaque and fails closed (MiniMax boundary r11 P0-1).
+AUDITED_CALLEE_NAMES = frozenset(key[1] for key in AGGREGATION_POINTS) | \
+    frozenset(key[1] for key in NON_AGGREGATION_POINTS)
 
 
 def _relays_status(node, bindings, seen=None):
@@ -1454,11 +1462,17 @@ def _assigns_clean_status(value, bindings, seen=None):
             # (GLM boundary P1-2: the write family had no subscript branch at
             # all, so an unproven base walked through).
             return True
-        if isinstance(arm, ast.Call) and not _calls_aggregate(arm) \
-                and _status_literals(arm):
+        if isinstance(arm, ast.Call) and not _proven_callee(arm, bindings) and (
+                _status_literals(arm) or isinstance(arm.func, ast.Name)):
             # ``report['status'] = report.get('status', 'PASS')`` hides the
             # clean literal one call deep; the write family treated every call
-            # as a proven source (GLM boundary r9 P2-3).
+            # as a proven source (GLM boundary r9 P2-3).  An opaque call to a
+            # helper the audit never sees is the same bypass one level further
+            # out: ``report['status'] = _clean()`` with ``_clean()`` returning
+            # 'PASS' left every rule green (MiniMax boundary r11 P0-1).  The
+            # bare-name head is what separates a local helper from an imported
+            # module call such as ``verdict = json.loads(proc.stdout)``, which
+            # stays legal.
             return True
         if isinstance(arm, ast.Name):
             if _name_assigns_clean(arm.id, bindings, seen):
@@ -1732,6 +1746,7 @@ def _helper_exits_zero(target, lookup, seen):
     (GLM boundary r10 P1-2).
     """
     hands_back = False
+    raises_plain = False
     for item in ast.walk(target):
         if isinstance(item, ast.Return):
             hands_back = True
@@ -1744,7 +1759,15 @@ def _helper_exits_zero(target, lookup, seen):
                 return True
             if _delegated_exit(item.value, lookup, seen):
                 return True
-        elif isinstance(item, ast.Raise) and _is_system_exit_raise(item):
+        elif isinstance(item, ast.Raise):
+            if not _is_system_exit_raise(item):
+                # ``raise ValueError(...)`` leaves the process non-zero, which
+                # is not an optimistic exit: the point-level rule accepts any
+                # ``raise`` as an exit path, so the delegation family may not
+                # call the same helper "exits 0" (GLM boundary r11 P3-3 /
+                # MiniMax boundary r11 P1-2).
+                raises_plain = True
+                continue
             hands_back = True
             argument = item.exc.args[0] if item.exc.args else None
             if argument is None or _constant_exit_zero(argument):
@@ -1754,7 +1777,7 @@ def _helper_exits_zero(target, lookup, seen):
             argument = item.args[0] if item.args else None
             if argument is None or _constant_exit_zero(argument):
                 return True
-    return not hands_back
+    return not hands_back and not raises_plain
 
 
 def _callee_names(call, bindings):
@@ -1973,20 +1996,34 @@ def _is_exit_call(call):
 def _proven_summary_source(value, bindings):
     """True when the audit can see which slots *value* carries.
 
-    A dict literal (or an arm of one), a call whose own return path is audited
-    where its function is registered, and a name this function bound to either
-    are visible; a parameter, a module global or an attribute is not.  Reading
-    the slots is what the bypass rule depends on, so an opaque operand must
-    fail closed instead of passing silently (GLM r6 boundary P1-2, r7 P1-2).
+    A dict literal (or an arm of one), a call to an audited point, and a name
+    this function bound to either are visible; a parameter, a module global or
+    an attribute is not.  Reading the slots is what the bypass rule depends on,
+    so an opaque operand must fail closed instead of passing silently (GLM r6
+    boundary P1-2, r7 P1-2).  Every call used to count as proven, contradicting
+    the sentence above: ``report.update(_clean())`` with an unregistered
+    ``_clean()`` returning ``'PASS'`` wrote a clean status nobody audited
+    (MiniMax boundary r11 P0-1).  A callee now counts only when it is one of
+    the registered points (its own return path is audited there) or when the
+    call itself routes through the shared function.
     """
     if _returned_summary_dicts(value):
         return True
     if isinstance(value, ast.Call):
-        return True
+        return _proven_callee(value, bindings)
     if isinstance(value, ast.Name):
-        return any(_returned_summary_dicts(item) or isinstance(item, ast.Call)
+        return any(_returned_summary_dicts(item)
+                   or (isinstance(item, ast.Call) and _proven_callee(item, {}))
                    for _lineno, item in bindings.get(value.id, ()))
     return False
+
+
+def _proven_callee(call, bindings):
+    """True when *call*'s result has a slot source the audit can see (r11)."""
+    if _calls_aggregate(call):
+        return True
+    return any(name in AUDITED_CALLEE_NAMES
+               for name in _callee_names(call, bindings or {}))
 
 
 def _unproven_expansion(call, bindings):
@@ -2253,24 +2290,43 @@ def unshared_status_slots(function, point=None, module=None):
     return violations
 
 
-def _unproven_update_on_summary(call, bound, bindings):
+def _parameter_names(function):
+    """Every parameter name of *function* (positional, keyword, ``*``/``**``).
+
+    A report handed in as a parameter is still a summary being written:
+    ``def publish(report): report |= {'status': 'PASS'}`` was invisible because
+    the receiver gate only knew names bound to a dict literal inside the
+    function (GLM boundary r11 P1-1).
+    """
+    arguments = function.args
+    names = {arg.arg for arg in (*arguments.posonlyargs, *arguments.args,
+                                 *arguments.kwonlyargs)}
+    for extra in (arguments.vararg, arguments.kwarg):
+        if extra is not None:
+            names.add(extra.arg)
+    return frozenset(names)
+
+
+def _unproven_update_on_summary(call, bound, bindings, parameters=frozenset()):
     """``report.update(payload)`` whose slots this function never built.
 
     On the write side the payload is judged fail-closed by
     ``_unproven_expansion`` -- but only for a point that is already registered.
     The enumeration keyed on ``_call_written_values``, which sees nothing in an
     opaque payload, so an *unregistered* function writing its status this way
-    was never enumerated at all (MiniMax boundary r9 P2-3).
+    was never enumerated at all (MiniMax boundary r9 P2-3).  A receiver that is
+    a parameter counts the same as one bound to a dict literal (GLM boundary
+    r11 P1-1).
     """
     receiver = call.func.value
     if not isinstance(receiver, ast.Name):
         return False
-    if receiver.id not in bound:
+    if receiver.id not in bound and receiver.id not in parameters:
         return False
     return _unproven_expansion(call, bindings)
 
 
-def _augassign_on_summary(node, bound, bindings):
+def _augassign_on_summary(node, bound, bindings, parameters=frozenset()):
     """``report |= payload``: a status write the ``Assign`` family cannot see.
 
     ``ast.AugAssign`` is a sibling of ``ast.Assign``, not a subclass, so the
@@ -2278,14 +2334,20 @@ def _augassign_on_summary(node, bound, bindings):
     evidence was ``report |= {'status': 'PASS'}`` became no aggregation point at
     all, was therefore never reported as unregistered and never audited, while
     the slot layer's augmented-write rule only runs on points that are already
-    registered (MiniMax boundary r10 P0-1).
+    registered (MiniMax boundary r10 P0-1).  A parameter receiver takes the
+    same rule, but only with status evidence in the payload: ``owned |=
+    children`` on a set parameter is a union, not a summary write (GLM boundary
+    r11 P1-1).
     """
     if not (isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name)):
         return False
-    if node.target.id not in bound:
+    known = node.target.id in bound
+    if not known and node.target.id not in parameters:
         return False
     if isinstance(node.value, ast.Dict):
         return _dict_has_status(node.value)
+    if not known:
+        return bool(_status_literals(node.value))
     return not _proven_summary_source(node.value, bindings)
 
 
@@ -2317,6 +2379,7 @@ def aggregation_markers(function):
     dict_names = set(bound) | {name for name, items in bindings.items()
                                if any(isinstance(value, ast.Dict)
                                       for _lineno, value in items)}
+    parameters = _parameter_names(function)
     for node in ast.walk(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -2354,13 +2417,13 @@ def aggregation_markers(function):
               and isinstance(node.value.func, ast.Attribute)
               and (_call_written_values(node.value)
                    or _unproven_update_on_summary(node.value, dict_names,
-                                                  bindings))):
+                                                  bindings, parameters))):
             # ``report.update({'status': ...})`` / ``setdefault`` without any
             # other marker: the only status evidence is the incremental write, so
             # the function must still be enumerated and registered (MiniMax
             # sibling P1-1).
             markers.add('write-status')
-        elif _augassign_on_summary(node, dict_names, bindings):
+        elif _augassign_on_summary(node, dict_names, bindings, parameters):
             # ``report |= {'status': 'PASS'}`` carries the same evidence as the
             # ``update()`` spelling above and must enumerate the function too
             # (MiniMax boundary r10 P0-1).

@@ -96,15 +96,27 @@ judged like the direct call.  An augmented `report |= {'status': 'PASS'}`
 enumerates the function even when it is the only status evidence
 (`fix-r11`), and a point that ends in an ordinary `raise` has an exit path —
 a propagating error is not an optimistic exit, so it is not reported as
-`no return or exit path` (`fix-r11`).  A non-zero exit literal on its own
+`no return or exit path` (`fix-r11`).  `fix-r12` closes the two holes the r11
+reviews opened in that family: the receiver of `|=` / `update()` may be a
+*parameter* (a report handed in is still a summary being written), and an
+`|=` on a parameter only counts when the payload carries status evidence, so a
+set union (`owned |= children`) stays a normal statement.  A call is a proven
+slot source only when its callee is one of the registered points (its own
+return path is audited there) or routes through the shared call itself; every
+other call — `report['status'] = _clean()`, `report.update(_payload(report))` —
+fails closed (`fix-r12`).  A helper whose only exit is a plain `raise` is not
+an optimistic exit either, so the delegation family no longer reports it as
+`inline exit code` (`fix-r12`).  A non-zero exit literal on its own
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) is not an optimistic exit and
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests seventy-one probe functions; `probe892` in `check_cleanup.py` is
-the authoritative list (the seven helpers it defines — `_exit_code`, `_exit_a`,
-`_exit_b`, `_decoy_code`, `_exit_bare`, `_exit_statement`, `_raising_only` — are leaves reached
-through a probe, not probes themselves).  Every rule below has a flagged probe and, where the shape is legal,
+(`fix-r6` pins both sides).  The audit self-tests seventy-one probe functions: seventy inside `probe892` in
+`check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
+function.  `probe892` is the authoritative list for the seventy (the six helpers
+it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_decoy_code`, `_exit_bare`,
+`_exit_statement` — are leaves reached through a probe, not probes themselves;
+`_raising_only` is asserted directly, not through a leaf).  Every rule below has a flagged probe and, where the shape is legal,
 an accepted one: the original twenty-two covered the direct summary, the inline
 `0 if ... else 1` branch, the legal shared pair, a summary returned through a local
 name, a bare `return 0` / `return`, an optimistic conditional arm, a status slot
@@ -167,9 +179,11 @@ a duplicate `status` key inside one summary dict is judged by every value, a
 another dict is read where the summary is returned or passed on.  Known
 boundaries, not covered by this check: the module-level `raise
 SystemExit(main())` that no function contains, a status key built by
-`dict(**kwargs)`, by a comprehension, or through a non-constant subscript
-(`key = 'status'; report[key] = 'PASS'` — the write family matches a
-``Constant`` slice only), a third top-level summary spelling
+`dict(**kwargs)`, by a comprehension, by a bare splat of an opaque name
+(`return {**payload}` — `_dict_has_status` only reads `Constant` keys), or
+through a non-constant subscript (`key = 'status'; report[key] = 'PASS'` — the
+write family matches a ``Constant`` slice only), a third top-level summary
+spelling
 (`overall`, `outcome`) — the key family is exactly the two spellings in
 `_STATUS_KEYS`, so an unrecognised top-level key yields no marker, no
 aggregation point and no failure until the spelling is added there, and one assignment shape that a static
@@ -272,7 +286,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 81 mutants:
+`JUDGES`, keyed by the same names. The current table has 85 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -308,9 +322,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-tuple-verdict`, `calibrate-cleanup-word`,
 `calibrate-unbound-exit-relay`, `calibrate-no-exit-path`,
 `calibrate-delegated-attribute`, `calibrate-update-unregistered`,
-`calibrate-walrus-exit`, `calibrate-status-update-kwarg`,
+`calibrate-walrus-exit`,
 `calibrate-helper-bare-return`, `calibrate-helper-exit-call`,
-`calibrate-augassign-unregistered`.
+`calibrate-augassign-unregistered`, `calibrate-opaque-clean-write`,
+`calibrate-opaque-update-payload`, `calibrate-param-augassign`,
+`calibrate-param-update`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
