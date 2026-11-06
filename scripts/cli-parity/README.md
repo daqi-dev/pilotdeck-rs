@@ -31,6 +31,29 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 ## 锁被保留时怎么解
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
-1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token，并在本次输出目录的 `round.json`/`isolation.json` 里找 `audit.remaining`（未停的 pgid）。
+1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并在本次输出目录里找残留 pgid：
+   本装置看 `round.json`/`isolation.json` 的 `audit.remaining`；`scripts/parity/round.py` 看 `run.json` 的
+   `cleanup.remaining` 与 `ownedGroupsRemaining`；gateway 侧装置（`session_domain.py` / `collect.py` /
+   `native-topology/run.py`）看 `owner.json` 的 `cleanupPending` 列表（未证实停止的组会写在这里）。
 2. 确认这些 pgid 已不存在：`ps -o pid,pgid,command -g <pgid>`；仍在就由人判断后 `kill -KILL -<pgid>`（只杀 owner 记录里本装置启动的组，绝不碰用户 PilotDeck）。
-3. 确认无残留后，人工删除 `/tmp/pdrs-parity.lock/owner.json` 再 `rmdir /tmp/pdrs-parity.lock`。运行器自身从不抢锁或自动接管。
+3. **持 guard 互斥后再删**：用 `flock(1)` 或任意 `fcntl.flock(LOCK_EX)` 包装在 `/tmp/pdrs-parity.lock.guard` 上取独占锁
+   （macOS 无 `flock(1)` 时用后者；装置自身的建锁、接管、释放都在同一 guard 下：`scripts/parity/round.py:199-207`、
+   `scripts/gateway-parity/common.py:594-600`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
+   确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
+   删完才放开 guard。**不持 guard 直接删会与自动接管竞态**：人的 `rm` 若落在接管之后，会抹掉新 owner 的标记，
+   那次运行释放时读不到 owner 而不删目录 ⇒ 锁永久留存、之后全部排队。运行器自身从不抢锁或自动接管。
+
+### 四台装置的锁等待差异
+
+锁契约相同（`/tmp/pdrs-parity.lock` 目录租约 + `.guard` flock + `owner.json`），但**等待上限与失败形态不同**
+（2026-11-06 从 #590 四格账本 §七上移，源码行号为当时 HEAD）：
+
+| 装置 | 等待上限 | 抢不到锁的形态 | 源码 |
+|---|---|---|---|
+| `scripts/parity/round.py`（宿主 vs sidecar，53 场景） | **无限等**（`sleep 2` 轮询，没有 timeout 形参） | 不超时、不写 `run.json`，只在 stderr 打 `waiting for /tmp/pdrs-parity.lock`；看到这行是它在等，**别当死锁去删锁** | `:211-267` |
+| `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `:182` |
+| `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `:2952` |
+| `src/pilotdeck-gateway/tests/fixtures/native-topology/run.py`（4 案 × 5 轮） | **默认 600 s**（`common.parity_lock` 默认值） | `TimeoutError` 未被 main 捕获 → **traceback / exit 1** | `:609` |
+
+`2400 s` 只是 `MAX_AGE` 上限，**已发布的 owner 不会因年龄被自动接管**：`owner.json` 必带 `cleanupPending`（真值），
+接管条件要求它是假。所以一次被 SIGKILL 的运行会留下「永不自愈」的锁，按上一节人工回收。
