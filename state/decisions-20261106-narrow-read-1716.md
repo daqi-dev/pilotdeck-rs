@@ -22,12 +22,10 @@
 ## 按此裁决的口径
 
 1. `A7-HOST-POST-CANCEL-EXIT-001` 只覆盖**宿主为 Rust** 的格：③ Rust 宿主 × TS sidecar、④ Rust 宿主 × Rust sidecar。
-2. 格① TS/TS、格② TS/Rust **不适用**。格②里 `cancel_during_tool`、`stream_interruption`、
-   `sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission` 四条取消场景，
-   是「TS 宿主眼里观测到的 sidecar 侧差异」，仍按 sidecar 侧信号记。
-3. 因此 #590 格②的 sidecar 侧信号为 **23 条（22 条纯换位 + `deadline` 契约不符），不因本条降低**。
-   作为对照的广读数字（19–21）只写在 `A7-HOST-POST-CANCEL-EXIT-001-R5` 与本账本 §六.8 的对照句里，
-   不作为本账本的计数。
+2. 格① TS/TS、格② TS/Rust **不适用**；格②里那几条取消场景仍是「TS 宿主眼里观测到的 sidecar 侧差异」，
+   按 sidecar 侧信号记（逐条名称与推导见 R5「范围」节，本卡不复制）。
+3. 因此 #590 格②的 sidecar 侧信号为 **23 条（22 条纯换位 + `deadline` 契约不符），不因本条降低**；
+   作为对照的广读数字 19–21 不改变这个计数。
 4. 记录落点：`specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R5.md`（更正条目，`original` 指向 R3）、
    `docs/research/008_phase-a-session-domain/four-cell-matrix.md` §六.8。
 
