@@ -45,8 +45,17 @@
 //!   A6.3-CONFIG-POLL-001 (unapproved).
 //!
 //! Each sample compares metadata first (#1739): unchanged metadata (length,
-//! mtime, ctime, inode — every write and `utimes` bumps ctime) proves the
-//! content cannot have changed, so the content read is skipped. Only when
+//! mtime, ctime, inode) means the content cannot have changed *at the
+//! filesystem's change-time granularity*, so the content read is skipped.
+//! Every write and `utimes` bump ctime, but on a filesystem whose ctime
+//! granularity is coarser than the interval between the previous sample and
+//! the write — the same caveat as (3) above — the bump can land in the same
+//! ctime tick, and then a same-length rewrite that restores mtime leaves
+//! every hashed field identical and is *not* seen, where the pre-#1739
+//! per-tick content comparison did see it. Measured on HFS+ (1 s ctime
+//! granularity) in `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
+//! specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md
+//! (unapproved). Only when
 //! metadata changed is up to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched
 //! config file read (the file itself, or the missing config file's name
 //! inside a watched parent directory); larger files and other directory
@@ -182,6 +191,12 @@ const MIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// inside one sitting; at a day, "watching" would be indistinguishable
 /// from "not watching". The bound sits far below `Instant`'s range, so
 /// [`deadline_after`] stays a second line of defence, not the only one.
+///
+/// Because the clamp changes a delay the baseline honours verbatim — two
+/// hours is well under Node's `2^31 - 1` ms overflow point and is a real
+/// timer there — it is a registered deviation, not an arithmetic guard:
+/// `specs/gateway-parity/diffs/A6.3-CONFIG-DEBOUNCE-CEILING-001.md`
+/// (unapproved).
 const MAX_DEBOUNCE: Duration = Duration::from_secs(60 * 60);
 
 /// The ceiling [`watch_loop`] clamps `poll_interval` to (#1736).
@@ -671,8 +686,11 @@ struct WatchedPath {
     /// The last full sample (content included for the watched config file).
     fingerprint: u64,
     /// The last metadata-only sample (#1739): identical metadata between two
-    /// samples proves the content cannot have changed — every write and
-    /// `utimes` bumps ctime — so the content read is skipped.
+    /// samples means the content cannot have changed *at the filesystem's
+    /// ctime granularity* — every write and `utimes` bumps ctime, but a bump
+    /// that lands in the same coarse tick leaves this sample identical. The
+    /// content read is skipped on that basis; the coarser-granularity gap is
+    /// registered in diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
     metadata_fingerprint: u64,
 }
 
@@ -710,8 +728,9 @@ impl WatchedPath {
         // metadata-only sample is ~1 µs), and metadata equality already
         // implies content equality on every filesystem where ctime
         // granularity is finer than the burst (the same granularity the
-        // net-zero case below already leans on). Only a metadata change
-        // walks on to the content read.
+        // net-zero case below already leans on; coarser ones are the
+        // registered gap in diffs/A6.3-CONFIG-METADATA-SHORTCUT-001). Only a
+        // metadata change walks on to the content read.
         let next_metadata = fingerprint(&self.path, self.directory, self.target.as_deref(), false);
         if next_metadata == self.metadata_fingerprint {
             return false;
@@ -731,8 +750,11 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
             meta.is_dir().hash(hasher);
             meta.modified().ok().hash(hasher);
             // Every write (and `utimes`) bumps ctime, so a same-length rewrite
-            // that restores mtime is still seen; a replacing rename changes
-            // the inode.
+            // that restores mtime is still seen wherever the ctime granularity
+            // is finer than the interval between samples; a replacing rename
+            // changes the inode. Where it is coarser (HFS+ ticks once a
+            // second) the bump can be invisible — see the module note and
+            // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
             (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
             if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
                 let mut content = Vec::new();

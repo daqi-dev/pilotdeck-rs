@@ -453,6 +453,38 @@ async fn overlong_debounce_is_clamped_and_reloads_within_the_bound() {
     );
 }
 
+/// #1794 P1-2: the clamp is observable, not an arithmetic rescue. The
+/// baseline honours a two-hour `debounceMs` verbatim — `setTimeout` accepts
+/// anything below `2^31 - 1` ms and runs it as a real timer (measured on
+/// Node v22.22.0: `_tmp/20261106-issue-1736/r2/evidence/settimeout-2h-probe.log`
+/// for the timer itself and `ts-baseline-debounce-2h-probe.log` for the real
+/// `startWatching` handing 7200000 to `setTimeout`) — so Rust returning one
+/// hour where Node waits two is a registered deviation from the baseline,
+/// not a fix for an unrepresentable value:
+/// `specs/gateway-parity/diffs/A6.3-CONFIG-DEBOUNCE-CEILING-001.md`.
+///
+/// Pinned on the literal value the ledger negotiates rather than on
+/// `2 * MAX_DEBOUNCE`, so raising the ceiling to Node's own limit (the
+/// convergence path the entry lists) is caught as the semantic change it
+/// is instead of silently passing.
+#[test]
+fn two_hour_debounce_is_clamped_to_the_one_hour_ceiling() {
+    let requested = Duration::from_millis(7_200_000);
+    assert_eq!(requested, Duration::from_secs(2 * 60 * 60));
+    assert_eq!(MAX_DEBOUNCE, Duration::from_secs(60 * 60));
+    assert_eq!(
+        effective_debounce(&WatchOptions {
+            debounce: requested,
+            ..WatchOptions::default()
+        }),
+        MAX_DEBOUNCE,
+        "#1794 a two-hour debounce the baseline honours verbatim lands on the one-hour ceiling"
+    );
+    // Negative control: deleting the `.min(MAX_DEBOUNCE)` lets 7200 s
+    // through unclamped and this assertion fails with left: 7200s,
+    // right: 3600s (recorded in the ledger entry's 机器判据).
+}
+
 /// #1736: `Instant + Duration` panics once `debounce` stops being
 /// representable, and the panic happens inside the detached watcher task —
 /// `WatchHandle::stop` swallows the `JoinError` and `Drop` only aborts, so
