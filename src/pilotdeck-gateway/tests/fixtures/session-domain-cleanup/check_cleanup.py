@@ -1468,6 +1468,14 @@ def _dynamic_write_names(tree):
             targets = (node.targets if isinstance(node, ast.Assign)
                        else [node.target])
             for target in targets:
+                if isinstance(target, ast.Name):
+                    # #892 r30: ``g = globals(); g |= {'common': <stub>}``
+                    # replaces the namespace through an alias (GLM sibling r29
+                    # P1-3/P1-5).
+                    if (isinstance(node, ast.AugAssign)
+                            and _is_namespace_object(target, kinds)):
+                        names.add('*')
+                    continue
                 if not isinstance(target, ast.Subscript):
                     continue
                 if not _is_namespace_object(target.value, kinds):
@@ -1475,16 +1483,19 @@ def _dynamic_write_names(tree):
                 names |= _write_key_names(target.slice, tree)
         elif isinstance(node, ast.Call):
             func = node.func
-            attr = func.attr if isinstance(func, ast.Attribute) else None
-            if (attr in ('update', 'setdefault', 'pop', 'popitem', 'clear')
-                    and _is_namespace_object(func.value, kinds)):
-                # ``globals().update({'name': stub})`` / ``vars().update(...)``
-                if attr == 'setdefault':
-                    names |= _setdefault_key(node)
-                elif attr == 'update':
-                    names |= _updated_keys(node)
+            written = _mapping_method_call(node, kinds, tree)
+            if written is not None and _is_namespace_object(written[0], kinds):
+                # ``globals().update(...)``, ``dict.update(globals(), ...)``,
+                # ``globals().pop(...)``/``clear()`` -- one decoder for the
+                # bound and the unbound spelling (#892 r30).
+                keys = written[1]
+                names |= {'*'} if '*' in keys else set(keys)
                 continue
             helper = _callable_name(func, kinds)
+            if helper == 'eval' and node.args:
+                # #892 r30: ``eval("setattr(md, 'common', None)")`` writes with
+                # no statement the graph can see (GLM concurrency r29 P0-5).
+                names.add('*')
             if _setattr_arguments(node, kinds) is not None:
                 names |= _setattr_module_keys(node, kinds, tree)
             elif helper == 'exec' and node.args:
@@ -1509,7 +1520,8 @@ def _dynamic_write_names(tree):
 # 'common', stub)``, ``builtins.setattr(...)`` and ``bi.globals()`` were the same
 # write under another spelling (GLM sibling r26 P1-4 / simplify r26 P1-2 /
 # DeepSeek concurrency r26 P1-6).  One alias resolver now feeds every rule.
-_CALLABLE_KINDS = ('setattr', 'exec', 'eval', 'globals', 'vars')
+_CALLABLE_KINDS = ('setattr', 'setitem', 'exec', 'eval', 'globals', 'vars',
+                   'locals', 'getattr')
 _KIND_CACHE = {}
 
 
@@ -1556,6 +1568,23 @@ def _import_literal(node):
     return None
 
 
+def _getattr_literal(node):
+    """The attribute a two-argument ``getattr(obj, '<literal>')`` reads (#892 r30).
+
+    ``getattr(md, '__dict__')['common'] = <stub>`` and
+    ``getattr(md, '__dict__').update(common=<stub>)`` name the same mapping as
+    ``md.__dict__``; the call spelling reached no mapping root, so the relay
+    stayed trusted (MiniMax simplify r29 P0-4, third spelling).
+    """
+    if not (isinstance(node, ast.Call) and len(node.args) == 2
+            and isinstance(node.func, ast.Name) and node.func.id == 'getattr'):
+        return None
+    literal = node.args[1]
+    if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
+        return literal.value
+    return None
+
+
 def _expr_kinds(node, kinds):
     """Object kinds *node* can evaluate to under the alias map (#892 r27).
 
@@ -1583,6 +1612,12 @@ def _expr_kinds(node, kinds):
             if 'builtins' in _expr_kinds(node.value, kinds):
                 return frozenset({'fn:' + node.attr})
             return frozenset()
+        # #892 r30: ``ft.partial`` / ``operator.setitem`` / ``getattr`` reach the
+        # same callables as their ``from ... import`` spellings.
+        if node.attr in ('partial', 'setitem', 'setattr', 'getattr', 'itemgetter'):
+            inner = _expr_kinds(node.value, kinds)
+            if inner & {'functools', 'operator', 'builtins'}:
+                return frozenset({'fn:' + node.attr})
         return frozenset()
     if isinstance(node, ast.Subscript):
         if _expr_is_sys_modules(node.value, kinds):
@@ -1592,14 +1627,27 @@ def _expr_kinds(node, kinds):
         imported = _import_literal(node)
         if imported is not None:
             return frozenset({imported})
+        # #892 r30: ``p = functools.partial(setattr, md)`` keeps a write handle
+        # whose target the alias table cannot name -- ``p('common', None)``
+        # still writes ``md.common`` (MiniMax boundary r29 P0-3).
+        if 'fn:partial' in _expr_kinds(node.func, kinds):
+            return frozenset({'fn:partial'})
+        # #892 r30: ``getattr(md, '__dict__')`` evaluates to whatever
+        # ``md.__dict__`` evaluates to -- the kinds rule has to decode the call
+        # spelling, not only the attribute one.
+        literal = _getattr_literal(node)
+        if literal is not None:
+            return _expr_kinds(ast.Attribute(value=node.args[0], attr=literal,
+                                             ctx=ast.Load()), kinds)
         func = node.func
         if isinstance(func, ast.Name):
             found = kinds.get(func.id, ())
-            if any('fn:' + helper in found for helper in ('globals', 'vars')):
+            if any('fn:' + helper in found
+                   for helper in ('globals', 'vars', 'locals')):
                 return frozenset({'namespace'})
             return frozenset()
         if isinstance(func, ast.Attribute):
-            if (func.attr in ('globals', 'vars')
+            if (func.attr in ('globals', 'vars', 'locals')
                     and 'builtins' in _expr_kinds(func.value, kinds)):
                 return frozenset({'namespace'})
         return frozenset()
@@ -1628,6 +1676,10 @@ def _object_kinds(tree):
 
     for helper in _CALLABLE_KINDS:
         add(helper, 'fn:' + helper)
+    # #892 r30: ``__builtins__`` is the builtins module in a module body, so
+    # ``bi = __builtins__; bi.dict.update(...)`` names the same type (GLM
+    # sibling r29 P1-4).
+    add('__builtins__', 'builtins')
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1635,7 +1687,11 @@ def _object_kinds(tree):
                     add(alias.asname or 'sys', 'sys')
                 elif alias.name == 'builtins':
                     add(alias.asname or 'builtins', 'builtins')
-        elif isinstance(node, ast.ImportFrom) and node.module in ('sys', 'builtins'):
+                elif alias.name in ('functools', 'operator'):
+                    add(alias.asname or alias.name, alias.name)
+        elif isinstance(node, ast.ImportFrom) and node.module in ('sys', 'builtins',
+                                                                  'functools',
+                                                                  'operator'):
             for alias in node.names:
                 if node.module == 'sys' and alias.name == 'modules':
                     add(alias.asname or 'modules', 'sysmods')
@@ -1643,6 +1699,14 @@ def _object_kinds(tree):
                     # #892 r27: ``from builtins import setattr as _sa`` names
                     # the same callable as the bare spelling (DeepSeek boundary
                     # r26 P1-2).
+                    add(alias.asname or alias.name, 'fn:' + alias.name)
+                elif node.module == 'builtins' and alias.name in _BUILTIN_TYPES:
+                    # #892 r30: ``from builtins import dict as _bd``
+                    add(alias.asname or alias.name, 'type:' + alias.name)
+                elif node.module in ('functools', 'operator') and alias.name in (
+                        'partial', 'setitem', 'setattr', 'getattr', 'update'):
+                    # #892 r30: ``from functools import partial`` /
+                    # ``from operator import setitem as put``
                     add(alias.asname or alias.name, 'fn:' + alias.name)
     pairs = _alias_assignments(tree)
     changed = True
@@ -1659,12 +1723,17 @@ def _object_kinds(tree):
 def _callable_name(func, kinds):
     """The builtin a call target denotes, or ``None`` (#892 r27)."""
     if isinstance(func, ast.Name):
-        for helper in _CALLABLE_KINDS:
+        for helper in _CALLABLE_KINDS + ('getattr', 'partial', 'itemgetter'):
             if 'fn:' + helper in kinds.get(func.id, ()):
                 return helper
         return None
     if isinstance(func, ast.Attribute) and func.attr in _CALLABLE_KINDS:
         if 'builtins' in _expr_kinds(func.value, kinds):
+            return func.attr
+        return None
+    if isinstance(func, ast.Attribute):
+        # #892 r30: ``ft.partial`` / ``operator.setitem``
+        if 'fn:' + func.attr in _expr_kinds(func, kinds):
             return func.attr
     return None
 
@@ -1696,6 +1765,81 @@ def _write_key_names(expr, tree):
     return {'*'} if found is None else found
 
 
+# #892 r30: every attribute spelling of the same write.  ``setitem`` is the
+# ``operator``/``builtins`` form of ``__setitem__`` -- the status ruler
+# ``_call_written_values`` already read it, the receiver rule did not (GLM
+# concurrency r29 P0-2, MiniMax concurrency r29 P0-3).
+_MANAGED_WRITE_ATTRS = ('__setattr__', '__setitem__', 'setattr', 'setitem')
+
+
+def _managed_write_kind(name):
+    """``'setitem'`` for the item spellings, ``'setattr'`` otherwise (#892 r30)."""
+    return 'setitem' if name.lstrip('_').startswith('setitem') else 'setattr'
+
+
+def _write_call_target(func, kinds, depth=0):
+    """``(kind, receiver, bound)`` a write call target denotes, else ``None``.
+
+    The receiver is the object a *bound* spelling writes (``md.__setattr__``,
+    ``getattr(md, '__setattr__')``); ``bound`` are the leading arguments a
+    ``partial`` already fixed.  Covered spellings (#892 r30): the attribute
+    forms, a bare/aliased builtin, ``getattr(<obj>, '<literal>')`` and
+    ``functools.partial(<managed>[, <obj>])``.
+    """
+    if depth > 2:
+        return None
+    if isinstance(func, ast.Attribute) and func.attr in _MANAGED_WRITE_ATTRS:
+        return _managed_write_kind(func.attr), func.value, ()
+    if isinstance(func, ast.Name):
+        for candidate in _MANAGED_WRITE_ATTRS:
+            if 'fn:' + candidate in kinds.get(func.id, ()):
+                return _managed_write_kind(candidate), None, ()
+        return None
+    if isinstance(func, ast.Subscript):
+        # #892 r30: the fixture runs as ``__main__``, where ``__builtins__`` is
+        # a dict, so ``__builtins__['setattr'](md, 'common', <stub>)`` is the
+        # builtin call (GLM simplify r29 P0-4, fourth spelling).
+        literal = func.slice
+        if (isinstance(func.value, ast.Name) and func.value.id == '__builtins__'
+                and isinstance(literal, ast.Constant)
+                and literal.value in _MANAGED_WRITE_ATTRS):
+            return _managed_write_kind(literal.value), None, ()
+        return None
+    if not isinstance(func, ast.Call):
+        return None
+    callee = _callable_name(func.func, kinds)
+    if callee == 'getattr' and len(func.args) == 2:
+        literal = func.args[1]
+        if (isinstance(literal, ast.Constant) and literal.value in _MANAGED_WRITE_ATTRS):
+            return _managed_write_kind(literal.value), func.args[0], ()
+        return None
+    if (callee == 'partial' or _expr_kinds(func.func, kinds) & {'fn:partial'}) \
+            and func.args:
+        inner = _write_call_target(func.args[0], kinds, depth + 1)
+        if inner is None:
+            return None
+        kind, receiver, bound = inner
+        return kind, receiver, tuple(bound) + tuple(func.args[1:])
+    return None
+
+
+def _unbounded_write(node, kinds):
+    """True when a call is a managed write whose target/key cannot be named.
+
+    ``p = functools.partial(setattr, md); p('common', <stub>)`` keeps a write
+    handle in a plain name; the alias graph knows only that it is a partial, so
+    the file fails closed instead of trusting the receiver (#892 r30).
+    """
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name) and 'fn:partial' in kinds.get(func.id, ()):
+        return True
+    if (isinstance(func, ast.Attribute) and 'fn:partial' in _expr_kinds(func, kinds)):
+        return True
+    return False
+
+
 def _setattr_arguments(node, kinds):
     """``(target, key)`` a setattr/setitem spelling writes, else ``None`` (#892 r28).
 
@@ -1708,23 +1852,19 @@ def _setattr_arguments(node, kinds):
     """
     if not isinstance(node, ast.Call):
         return None
-    func = node.func
-    if isinstance(func, ast.Attribute) and func.attr in ('__setattr__', '__setitem__'):
-        if len(node.args) == 2:
-            return func.value, node.args[0]
-        if len(node.args) == 3:
-            return node.args[0], node.args[1]
+    decoded = _write_call_target(node.func, kinds)
+    if decoded is None:
         return None
-    if isinstance(func, ast.Attribute) and func.attr == 'setattr':
-        # #892 r29: a helper module's ``setattr`` wrapper -- ``attr.setattr(obj,
-        # 'common', <stub>)`` -- is the same write as the builtin's.
-        if len(node.args) == 3:
-            return node.args[0], node.args[1]
-        if len(node.args) == 2:
-            return func.value, node.args[0]
-        return None
-    if _callable_name(func, kinds) == 'setattr' and len(node.args) >= 2:
-        return node.args[0], node.args[1]
+    _kind, receiver, bound = decoded
+    args = list(bound) + list(node.args)
+    # #892 r30: ``operator.setitem(mapping, key, value)`` is the same write as
+    # the ``__setitem__`` spelling the class already read, and so is any
+    # ``getattr(<obj>, '<managed>')`` / ``partial(<managed>, ...)`` call target
+    # (GLM concurrency r29 P0-2/P0-3/P0-4, MiniMax boundary r29 P0-3).
+    if len(args) == 3:
+        return args[0], args[1]
+    if len(args) == 2 and receiver is not None:
+        return receiver, args[0]
     return None
 
 
@@ -1733,18 +1873,23 @@ def _setattr_arguments(node, kinds):
 # is the builtin's.  r28 read only the bound ``receiver.method(...)`` spelling.
 _BUILTIN_TYPES = ('dict', 'type', 'object', 'list', 'set', 'str', 'bytes')
 _MAPPING_METHODS = ('update', 'setdefault', 'pop', 'popitem', 'clear', '__ior__',
-                    '__setitem__')
+                    '__setitem__', 'setitem')
 
 
 def _builtin_type_name(node, kinds):
     """The builtin type *node* names, else ``None`` (#892 r29)."""
-    if isinstance(node, ast.Name) and node.id in _BUILTIN_TYPES:
-        # a name the file rebinds is not the builtin
-        return None if kinds.get(node.id) else node.id
+    if isinstance(node, ast.Name):
+        # #892 r30: ``from builtins import dict as _bd`` names the same type.
+        for kind in kinds.get(node.id, ()):
+            if kind.startswith('type:'):
+                return kind.split(':', 1)[1]
+        # A name the file rebinds is still read as the builtin: treating it as
+        # "not the builtin" let ``dict = sys; dict.update(md.__dict__, ...)``
+        # pass, and the conservative direction is a false FAIL (GLM sibling
+        # r29 P1-4).
+        return node.id if node.id in _BUILTIN_TYPES else None
     if isinstance(node, ast.Attribute) and node.attr in _BUILTIN_TYPES:
-        if ('builtins' in _expr_kinds(node.value, kinds)
-                or (isinstance(node.value, ast.Name)
-                    and node.value.id == '__builtins__')):
+        if 'builtins' in _expr_kinds(node.value, kinds):
             return node.attr
     return None
 
@@ -1763,7 +1908,9 @@ def _mapping_method_call(node, kinds, tree):
     if attr not in _MAPPING_METHODS:
         return None
     receiver = node.func.value
-    if _builtin_type_name(receiver, kinds) is not None:
+    if attr == 'setitem' or _builtin_type_name(receiver, kinds) is not None:
+        # #892 r30: ``operator.setitem(mapping, key, value)`` names its target
+        # first, like the unbound ``dict.__setitem__`` form.
         if not node.args:
             return None
         target, args, keywords = node.args[0], node.args[1:], node.keywords
@@ -1771,7 +1918,7 @@ def _mapping_method_call(node, kinds, tree):
         target, args, keywords = receiver, node.args, node.keywords
     if attr == 'update':
         keys = {key for key, _value in _updated_items_parts(args, keywords)}
-    elif attr in ('setdefault', 'pop', '__setitem__'):
+    elif attr in ('setdefault', 'pop', '__setitem__', 'setitem'):
         keys = _write_key_names(args[0], tree) if args else {'*'}
     else:
         keys = {'*'}
@@ -1885,6 +2032,13 @@ def _sys_modules_write_values(tree, kinds=None):
         file: the harness restores ``sys.modules[name] = previous`` inside
         ``for name, previous in (('common', saved), ...)``, and a file-wide
         lookup sees every unrelated ``name`` binding.
+
+        #892 r30: the value is the *actual* right-hand side unless it is the
+        loop's own value variable -- ``for name, previous in (...):
+        sys.modules[name] = object()`` writes a stub, while
+        ``sys.modules[name] = previous`` republishes the saved module (GLM
+        concurrency r29 P0-7 / MiniMax concurrency r29 P0-5).  A key the loop
+        body rebinds is unbounded, exactly as in the receiver rule.
         """
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
             record(key.value, _resolve_scope_value(value, scope))
@@ -1893,14 +2047,27 @@ def _sys_modules_write_values(tree, kinds=None):
         if key_name is not None:
             for loop in reversed(loops):
                 if _first_target_name(loop.target) == key_name:
+                    if _rebound_in_loop(loop, key_name):
+                        record('*', value)
+                        return
                     found = _iterable_dict_keys(loop.iter, tree)
                     if found is None:
                         record('*', value)
                         return
                     items = _iterable_dict_items(loop.iter)
+                    value_name = _first_target_name(loop.target)
+                    pair_value = None
+                    if (isinstance(loop.target, ast.Tuple)
+                            and len(loop.target.elts) > 1
+                            and isinstance(loop.target.elts[1], ast.Name)):
+                        pair_value = loop.target.elts[1].id
+                    relayed = (items is not None
+                               and isinstance(value, ast.Name)
+                               and value.id == pair_value)
                     for spelling in found:
                         record(spelling, _resolve_scope_value(
-                            value if items is None else items.get(spelling, value),
+                            value if not relayed
+                            else items.get(spelling, value),
                             scope))
                     return
         record('*', value)
@@ -1918,9 +2085,31 @@ def _sys_modules_write_values(tree, kinds=None):
                     continue
                 record_key(target.slice, node.value, loops, scope)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in ('update', 'setdefault') \
+            attr = node.func.attr
+            written = _mapping_method_call(node, kinds, tree)
+            if written is not None and _expr_is_sys_modules(written[0], kinds):
+                # #892 r30: ``dict.update(sys.modules, {...})`` /
+                # ``operator.setitem(sys.modules, 'k', stub)`` name the mapping
+                # first; r29 read only the bound spelling (GLM sibling r29
+                # P1-6, MiniMax concurrency r29 P0-7).
+                unbound = (attr == 'setitem'
+                           or _builtin_type_name(node.func.value, kinds) is not None)
+                args = node.args[1:] if unbound else node.args
+                if attr == 'update':
+                    for key, value in _updated_items_parts(args, node.keywords):
+                        record(key, value)
+                elif attr in ('setitem', '__setitem__', 'setdefault'):
+                    if len(args) >= 2:
+                        record_key(args[0], args[1], loops, scope)
+                    else:
+                        record('*', node)
+                # ``pop`` / ``popitem`` / ``clear`` only remove entries; a
+                # removal cannot install a stub, and recording it as an open
+                # write fails every file closed (r30 first cut did exactly
+                # that on the harness's own ``sys.modules.pop``).
+            elif attr in ('update', 'setdefault') \
                     and _expr_is_sys_modules(node.func.value, kinds):
-                if node.func.attr == 'setdefault':
+                if attr == 'setdefault':
                     if (len(node.args) >= 2
                             and isinstance(node.args[0], ast.Constant)
                             and isinstance(node.args[0].value, str)):
@@ -2235,6 +2424,19 @@ def _proven_modules_from(tree, bindings, imported, sys_poisoned, kinds=None):
     return proven
 
 
+def _leaf_targets(targets):
+    """Every leaf of a (possibly tuple/nested) assignment target (#892 r30)."""
+    leaves = []
+    for target in targets:
+        if isinstance(target, (ast.Tuple, ast.List)):
+            leaves.extend(_leaf_targets(target.elts))
+        elif isinstance(target, ast.Starred):
+            leaves.extend(_leaf_targets([target.value]))
+        else:
+            leaves.append(target)
+    return leaves
+
+
 def _receiver_attribute_writes(tree, receivers, shared):
     """Receivers whose shared attribute a write replaced (#892 r26/r28).
     ``setattr(md, 'common', <stub>)`` rewrites the relay's shared attribute
@@ -2246,6 +2448,14 @@ def _receiver_attribute_writes(tree, receivers, shared):
     if not receivers:
         return poisoned
     kinds = _object_kinds(tree)
+    # #892 r30: ``p = functools.partial(setattr, md); p('common', None)`` keeps
+    # the write in a callable the alias table only knows as a partial, so the
+    # receiver cannot be named; every receiver fails closed (MiniMax boundary
+    # r29 P0-3).  The audited apparatus uses no ``partial`` at all.
+    for node in ast.walk(tree):
+        if _unbounded_write(node, kinds):
+            poisoned |= set(receivers)
+            break
     # #892 r27: ``m = md`` hands the relay to another name; both spellings are
     # the same receiver (DeepSeek sibling r26 P1-4).
     roots = {name: {name} for name in receivers}
@@ -2268,16 +2478,30 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if (isinstance(node, ast.Call) and _callable_name(node.func, kinds) == 'vars'
                 and node.args):
             return receiver_roots(node.args[0])
+        # #892 r30: ``getattr(md, '__dict__')`` is the same mapping root, both as
+        # a subscript target (``getattr(md, '__dict__')['common'] = <stub>``)
+        # and through an alias (``_d = getattr(md, '__dict__')``).
+        if _getattr_literal(node) == '__dict__':
+            return receiver_roots(node.args[0])
         if isinstance(node, ast.Name):
             return set(dict_roots.get(node.id, ())) & receivers
         return set()
 
-    for _ in range(4):
+    # #892 r30: a fixpoint, not a fixed number of rounds -- a four-hop
+    # reverse-order alias chain (``_e = _d; _d = _c; ...; _a = md.__dict__``)
+    # kept the last two links unresolved and the relay trusted (GLM
+    # concurrency r29 P0-5).
+    while True:
         grown = False
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 value, targets = node.value, node.targets
             elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value, targets = node.value, [node.target]
+            elif isinstance(node, ast.NamedExpr):
+                # #892 r30: ``(m := md); setattr(m, 'common', <stub>)`` hands the
+                # receiver to another name outside the statement walk (GLM
+                # concurrency r29 P0-6).
                 value, targets = node.value, [node.target]
             else:
                 continue
@@ -2350,7 +2574,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
             targets = [node.target]
         else:
             continue
-        for target in targets:
+        for target in _leaf_targets(targets):
+            if isinstance(target, ast.Name):
+                # #892 r30: ``_d = md.__dict__; _d |= {'common': <stub>}``
+                # replaces the mapping through its alias.
+                if isinstance(node, ast.AugAssign):
+                    found = namespace_dict_roots(target)
+                    if found and _dict_replacement_hits(node.value, shared):
+                        poisoned |= found
+                continue
             if isinstance(target, ast.Attribute):
                 found = receiver_roots(target.value)
                 if not found:
@@ -2372,6 +2604,19 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     poisoned |= found
                 elif key.value in shared:
                     poisoned |= found
+    # #892 r30: ``exec(src, md.__dict__)`` / ``eval(src, md.__dict__)`` run an
+    # arbitrary write against the receiver's mapping with no AST node to read;
+    # ``=(...)``-style tuple targets (``md.common, _x = None, None``) are the
+    # plain assignment one punctuation mark away from it.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        helper = _callable_name(node.func, kinds)
+        if helper not in ('exec', 'eval'):
+            continue
+        namespaces = node.args[1:]
+        for namespace in namespaces:
+            poisoned |= namespace_dict_roots(namespace)
     # #892 r28: the mapping's own mutators are the subscript write one call
     # away -- ``md.__dict__.update(common=<stub>)``, ``setdefault('common',
     # <stub>)``, ``pop('common')``, ``clear()``.  r27 read ``update`` /
@@ -2823,8 +3068,13 @@ def _proven_source_names(tree):
     definition_stems = {Path(rel).stem for rel, _name in PROVEN_SHARED_DEFINITIONS}
     imported_defs = {name for _rel, name in PROVEN_SHARED_DEFINITIONS
                      if name in imported
-                     and any(source.split('.')[-1] in definition_stems
-                             for source in sources.get(name, ()))}    # #892 r25: a function-local rebinding -- nested ``def``, walrus target or
+                     and sources.get(name)
+                     # #892 r30: *every* import of the name must come from a
+                     # proven module -- ``any`` let a stub module of the same
+                     # name ride along beside the real import (GLM sibling r29
+                     # P2-2).
+                     and all(source.split('.')[-1] in definition_stems
+                             for source in sources[name])}    # #892 r25: a function-local rebinding -- nested ``def``, walrus target or
     # plain assignment -- shadows the module definition for that body, and the
     # module-scope receiver scan cannot see which function a ``global`` rebind
     # came from (GLM boundary r24 P0-2 / concurrency r24 P1-2).  Withdraw the
@@ -4335,7 +4585,83 @@ def _unproven_expansion(call, bindings, module=None, rel=None):
     return False
 
 
-def _call_written_values(call):
+_WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
+
+
+def _builtin_receiver(node, bindings, depth=0):
+    """True when *node* denotes a builtin type/module (#892 r30).
+
+    ``dict.update(report, ...)`` / ``operator.setitem(report, ...)`` name their
+    target first; the bound spelling names it on the left of the dot.  The
+    resolver follows one local alias, so ``_d = dict; _d.update(report, ...)``
+    is read the same way.
+    """
+    if depth > 3:
+        return False
+    if isinstance(node, ast.Name):
+        if node.id in ('dict', 'type', 'object', 'builtins', 'operator',
+                       '__builtins__'):
+            return True
+        for _line, value in (bindings or {}).get(node.id) or ():
+            if _builtin_receiver(value, bindings, depth + 1):
+                return True
+        return False
+    if isinstance(node, ast.Attribute) and node.attr in ('dict', 'type', 'object'):
+        return (isinstance(node.value, ast.Name)
+                and node.value.id in ('builtins', '__builtins__'))
+    return False
+
+
+def _resolved_write_helper(node, bindings, depth=0):
+    """The builtin write callable *node* denotes through local aliases (#892 r30).
+
+    ``sa = setattr; sa(report, 'status', 'PASS')`` and
+    ``from builtins import setattr as _sa`` bind the same callable; the status
+    ruler compared the bare name only and read neither (GLM sibling r29 P1-7).
+    """
+    if depth > 3:
+        return None
+    if isinstance(node, ast.Name):
+        if node.id in _WRITE_HELPERS:
+            return node.id
+        found = {_resolved_write_helper(value, bindings, depth + 1)
+                 for _line, value in (bindings or {}).get(node.id) or ()}
+        if len(found) == 1:
+            return found.pop() or None
+        return None
+    if isinstance(node, ast.Attribute):
+        # ``obj.__setattr__(...)`` / ``dict.__setitem__(obj, ...)`` /
+        # ``operator.setitem(obj, ...)`` -- the dunder and the builtin names
+        # are the same write; the arity tells bound from unbound.
+        attr = node.attr.strip('_')
+        if attr in _WRITE_HELPERS:
+            return attr
+    if isinstance(node, ast.Call):
+        # ``getattr(obj, '__setattr__')('status', value)``
+        callee = node.func
+        if isinstance(callee, ast.Name) and callee.id == 'getattr':
+            name = 'getattr'
+        else:
+            name = _resolved_write_helper(callee, bindings, depth + 1)
+        if name == 'getattr' and len(node.args) == 2:
+            literal = node.args[1]
+            if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
+                attr = literal.value.strip('_')
+                if attr in ('setattr', 'setitem'):
+                    return attr
+    if isinstance(node, ast.Subscript):
+        # #892 r30: ``__builtins__['setattr'](report, 'status', ...)`` is the
+        # builtin call when the fixture runs as ``__main__``.
+        literal = node.slice
+        if (isinstance(node.value, ast.Name) and node.value.id == '__builtins__'
+                and isinstance(literal, ast.Constant)
+                and isinstance(literal.value, str)
+                and literal.value.strip('_') in _WRITE_HELPERS):
+            return literal.value.strip('_')
+    return None
+
+
+def _call_written_values(call, bindings=None):
     """Values a ``update(...)`` / ``setdefault(...)`` call writes into a slot.
 
     Every argument shape counts: a dict literal, a list/tuple of ``(key,
@@ -4352,22 +4678,34 @@ def _call_written_values(call):
     """
     written = []
     func = call.func
-    if isinstance(func, ast.Name) and func.id == 'setattr':
-        if len(call.args) == 3:
-            key = call.args[1]
-            if _status_key(key):
-                written.append(call.args[2])
-        return written
-    if not isinstance(func, ast.Attribute):
-        return written
-    if func.attr in ('__setitem__', '__setattr__', 'setitem', 'setattr'):
-        # Bound form: ``obj.__setitem__('status', value)``.  Unbound form:
+    helper = _resolved_write_helper(func, bindings)
+    if helper in ('setattr', 'setitem'):
+        # Bound form: ``obj.__setitem__('status', value)`` /
+        # ``getattr(obj, '__setattr__')('status', value)``.  Unbound form:
         # ``dict.__setitem__(obj, 'status', value)`` /
         # ``object.__setattr__(obj, 'status', value)`` /
         # ``operator.setitem(obj, 'status', value)`` /
-        # ``builtins.setattr(obj, 'status', value)``.  Only the bound form and
-        # the bare ``setattr`` were read, so the three-argument spellings wrote
-        # a status slot nobody saw (GLM sibling r17 P2-2).
+        # ``builtins.setattr(obj, 'status', value)`` / an alias of the builtin.
+        if isinstance(func, ast.Attribute) and func.attr.startswith('__'):
+            bound = len(call.args) == 2
+        elif isinstance(func, ast.Call):
+            bound = True
+        else:
+            bound = len(call.args) == 2 and isinstance(func, ast.Attribute)
+        if len(call.args) == 3:
+            key, value = call.args[1], call.args[2]
+        elif bound and len(call.args) == 2:
+            key, value = call.args[0], call.args[1]
+        else:
+            return written
+        if _status_key(key):
+            written.append(value)
+        return written
+    if helper == 'setdefault' or (isinstance(func, ast.Attribute)
+                                  and func.attr == 'setdefault'):
+        # ``dict.setdefault(obj, 'status', value)`` names its target first and
+        # the key second; reading ``args[0]`` as the key saw the *object* and
+        # dropped the write (GLM sibling r29 P1-7).
         if len(call.args) == 3:
             key, value = call.args[1], call.args[2]
         elif len(call.args) == 2:
@@ -4377,13 +4715,21 @@ def _call_written_values(call):
         if _status_key(key):
             written.append(value)
         return written
-    if func.attr == 'setdefault':
-        if len(call.args) > 1:
-            key = call.args[0]
-            if _status_key(key):
-                written.append(call.args[1])
+    # Only an ``update``-shaped call writes the slots its arguments spell:
+    # ``report.update({...})`` / ``dict.update(report, ...)`` / an alias of
+    # either.  Reading every call's dict arguments made ``save(path, {'status':
+    # ...})`` a status write (r30 first cut) -- an unrelated helper taking a
+    # summary stays unrelated.
+    if helper != 'update' and not (isinstance(func, ast.Attribute)
+                                   and func.attr == 'update'):
         return written
-    for argument in call.args:
+    arguments = call.args
+    if (isinstance(func, ast.Attribute) and func.attr == 'update'
+            and arguments and _builtin_receiver(func.value, bindings)):
+        # ``dict.update(report, ...)``: the first argument is the target, not a
+        # value written into it.
+        arguments = arguments[1:]
+    for argument in arguments:
         for summary in _returned_summary_dicts(argument):
             written.extend(_status_slot_values(summary))
         if isinstance(argument, (ast.List, ast.Tuple)):
@@ -4486,7 +4832,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
             call = node.value
             if isinstance(call.func, ast.Attribute) and call.func.attr in ('update', 'setdefault'):
-                written = _call_written_values(call)
+                written = _call_written_values(call, bindings)
                 if any(_assigns_clean_status(item, bindings, module=module,
                                              rel=rel)
                        for item in written):
@@ -4498,7 +4844,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
                         f'inline status/exit assignment {ast.unparse(node.value)[:60]} '
                         f'at line {node.lineno}')
                 continue
-            written = _call_written_values(call)
+            written = _call_written_values(call, bindings)
             if written:
                 # ``setattr(report, 'status', 'PASS')`` /
                 # ``report.__setitem__('status', 'PASS')``: the same slot as
@@ -4809,7 +5155,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
             # P1-1).
             markers.add('raise-exit-status')
         elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-              and (_call_written_values(node.value)
+              and (_call_written_values(node.value, bindings)
                    or (isinstance(node.value.func, ast.Attribute)
                        and _unproven_update_on_summary(node.value, dict_names,
                                                        bindings, parameters,
@@ -5458,6 +5804,19 @@ def aggregation_audit():
         "    report = {'cases': rows}\n"
         "    _bi.setattr(report, 'status', 'PASS')\n"
         "    return report\n"
+        "def _alias_setattr_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    sa = setattr\n"
+        "    sa(report, 'status', 'PASS')\n"
+        "    return report\n"
+        "def _unbound_setdefault_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    dict.setdefault(report, 'status', 'PASS')\n"
+        "    return report\n"
+        "def _getattr_dunder_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    getattr(report, '__setitem__')('status', 'PASS')\n"
+        "    return report\n"
         "try:\n"
         "    _guarded_bail = _s.exit\n"
         "except ImportError:\n"
@@ -6085,7 +6444,15 @@ def aggregation_audit():
             ('_operator_setitem_slot', ('write-status',),
              'a status write spelled ``operator.setitem(report, ...)``'),
             ('_builtins_setattr_slot', ('write-status',),
-             'a status write spelled ``builtins.setattr(report, ...)``')):
+             'a status write spelled ``builtins.setattr(report, ...)``'),
+            # #892 r30: the alias and the unbound/bound spellings the status
+            # ruler read only by the bare name (GLM sibling r29 P1-7).
+            ('_alias_setattr_slot', ('write-status',),
+             'a status write through a ``setattr`` alias (``sa = setattr``)'),
+            ('_unbound_setdefault_slot', ('write-status',),
+             'a status write spelled ``dict.setdefault(report, ...)``'),
+            ('_getattr_dunder_slot', ('write-status',),
+             'a status write spelled ``getattr(report, \'__setitem__\')(...)``')):
         probe = probe892_found.get(('<self-test-892>', probe_name))
         if not probe or not set(markers) & set(probe[0]):
             failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
