@@ -35,6 +35,11 @@ const server=createServer(async(req,res)=>{
 });
 server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
+// #1369: a ready line is the product's `eprintln!("native listening {address}")`
+// line and nothing else -- the phrase, exactly one space, the address, then the
+// line end. This mirrors the Rust judge `advertises` in tests/native_process.rs;
+// the old `[^\n]*` also accepted `native listening 127.0.0.1:4321 extra`.
+const LISTENING_NATIVE=/^native listening (\S+:\d+)\r?\n/m;
 async function launch(name:string,registry:string){
   const home=join(out,name,'home'),project=join(out,name,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});
   await writeFile(join(home,'pilotdeck.yaml'),`schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:${port}/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n`,{flag:'wx'});
@@ -43,7 +48,7 @@ async function launch(name:string,registry:string){
   const child=spawn(binary,args,{cwd:project,env:{PATH:process.env.PATH,HOME:home,PILOT_HOME:home,LANG:'en_US.UTF-8',PILOTDECK_NATIVE_RUN_REGISTRY:registry},stdio:['ignore','pipe','pipe']});children.push(child);
   let stderr='';const exit=once(child,'exit');child.stderr.on('data',(b:any)=>stderr+=b.toString());
   const ready=bounded(new Promise<string>((resolve,reject)=>{
-    child.stderr.on('data',()=>{const match=/native listening (\S+:\d+)[^\n]*\n/.exec(stderr);if(match)resolve(match[1]);});
+    child.stderr.on('data',()=>{const match=LISTENING_NATIVE.exec(stderr);if(match)resolve(match[1]);});
     child.once('exit',(code:any)=>reject(Error(`#1369 early exit ${code}: ${stderr}`)));child.once('error',reject);
   }),'readiness');
   const address=await ready;
@@ -71,6 +76,11 @@ const submit=async(ws:any,next:()=>Promise<any>,process:any,sessionKey:string,ru
   return events;
 };
 try{
+  // #1369: the matcher accepts the two line endings the product can print and
+  // keeps rejecting trailing content after the address (the shape the Rust
+  // `advertises` judge rejects).
+  for(const line of ['native listening 127.0.0.1:4321\n','native listening [::1]:4321\r\n'])assert.ok(LISTENING_NATIVE.exec(line),'#1369 listening line is an advertisement: '+JSON.stringify(line));
+  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n'])assert.equal(LISTENING_NATIVE.exec(line),null,'#1369 trailing content is not an advertisement: '+JSON.stringify(line));
   // off: the registry is absent end to end, but the turn, transcript and
   // signal drain keep their real production behavior.
   {
