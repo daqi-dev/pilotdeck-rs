@@ -20,9 +20,11 @@ mutation's own expected assertion text: the same command can also kill an
 unrelated assertion, e.g. the oracle's property-order check, which is not
 evidence for the behavior under test (review P1-5).
 
-The two #1494 rows pin the read_at handle binding: dropping it, or restoring
-the pre-fix pre-open path spelling check, must each turn its named TOCTOU
-test red.
+The #1494 rows pin the read_at handle binding: dropping it, or restoring the
+pre-fix pre-open path spelling check, must each turn its named TOCTOU test
+red; the pre-open identity row drops the identity term; and the approved-stat
+row restores the follow-the-link sample, which lets a link planted before the
+approved stat become the approved object.
 """
 import difflib
 import hashlib
@@ -52,6 +54,8 @@ READ_AT_SWAP = ('upload::tests::upload_read_at_metadata_swapped_between_'
                 'canonicalize_and_open_is_rejected')
 LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_lease'
 READ_AT_RENAME = ('upload::tests::upload_read_at_record_renamed_after_open_is_rejected')
+READ_AT_PREAPPROVED = (
+    'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -242,6 +246,15 @@ mutations = [
      '                    if false {',
      READ_AT_RENAME,
      '#1494 a renamed-in outside record must never be read back'),
+    # #1494: the approved identity must be sampled without following a link.
+    # Restoring `fs::metadata` lets a link planted in the
+    # `[canonicalize, approved stat]` window become the approved object; the
+    # after-open rename then gives the outside record an in-root name.
+    ('read-at-approved-stat-follows-link', STORE,
+     '        let approved = match fs::symlink_metadata(&canonical_path) {',
+     '        let approved = match fs::metadata(&canonical_path) {',
+     READ_AT_PREAPPROVED,
+     '#1494 a link planted before the approved stat must be refused before the open'),
 ]
 
 if '--check' in sys.argv[1:]:

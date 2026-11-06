@@ -1,6 +1,7 @@
 //! Contract tests against fixtures recorded from the real TS UploadStore
 //! (tests/fixtures/upload/generate.mts). Golden byte tests are never ignored.
 use super::*;
+use crate::negative_assert;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/upload/oracle.json");
@@ -979,6 +980,73 @@ fn upload_read_at_record_renamed_after_open_is_rejected() {
         (
             "PROJECT_PATH_FORBIDDEN",
             "Upload metadata handle names a different file than the one validated."
+        )
+    );
+}
+
+/// #1494 (review deepseek concurrency#2 / boundary#1): the "approved" identity
+/// must be the object the prefix check validated, not whatever the path points
+/// at afterwards. A symlink planted in the `[canonicalize, approved stat]`
+/// window is refused by `symlink_metadata`; under the pre-fix `fs::metadata`
+/// the approved object becomes the outside inode, the open follows the same
+/// link, and the after-open rename gives that outside record an in-root name —
+/// every remaining check passes and the forged record is read back.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_swapped_before_approved_stat_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let outside = project.join("outside-preapproved.json");
+    let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
+    set(&mut forged, "forgedMarker", text("outside"));
+    fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    let swapped = Arc::new(AtomicBool::new(false));
+    let renamed = Arc::new(AtomicBool::new(false));
+    let link = {
+        let swapped = swapped.clone();
+        let metadata = metadata.clone();
+        let outside = outside.clone();
+        move |_path: &Path| {
+            fs::remove_file(&metadata).unwrap();
+            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            swapped.store(true, Ordering::SeqCst);
+        }
+    };
+    let rename = {
+        let renamed = renamed.clone();
+        let metadata = metadata.clone();
+        let outside = outside.clone();
+        move |_path: &Path| {
+            fs::rename(&outside, &metadata).unwrap();
+            renamed.store(true, Ordering::SeqCst);
+        }
+    };
+    let _link = swap_test_hook::set(
+        swap_test_hook::SwapWindow::BetweenCanonicalizeAndApprovedStat,
+        link,
+    );
+    let _rename = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, rename);
+    let result = h.store.get("upload-1");
+    drop(_link);
+    drop(_rename);
+    assert!(
+        swapped.load(Ordering::SeqCst),
+        "#1494 the pre-approval swap hook must fire before the approved stat"
+    );
+    negative_assert!(
+        !renamed.load(Ordering::SeqCst),
+        "#1494 a link planted before the approved stat must be refused before the open"
+    );
+    let error =
+        result.expect_err("#1494 a link planted before the approved stat must never be read back");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata path became a symlink after validation."
         )
     );
 }

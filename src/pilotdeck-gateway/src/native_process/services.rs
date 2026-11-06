@@ -554,6 +554,20 @@ pub(super) fn handle_bound_to_upload_areas(
     }
 }
 
+/// #1468: the canonical upload-store root — the second legitimate home of a
+/// lease object — or `None` when there is none to accept. `None` covers both
+/// the ordinary "no uploads yet" case and the adversarial one: a
+/// `.tmp/chat-uploads` that resolves outside the project is not a home at
+/// all. The containment decision lives in this one function so it can be
+/// tested (and mutation-killed) without a live handle path; its unit test is
+/// `upload_store_root_outside_the_project_is_not_a_home`.
+pub(super) fn canonical_upload_store(project_canon: &Path) -> Option<PathBuf> {
+    match fs::canonicalize(project_canon.join(".tmp").join("chat-uploads")) {
+        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
+        _ => None,
+    }
+}
+
 /// TS GatewayAttachmentTurnComposer.ts:125-151 — `attachmentDiagnosticsGuidance`.
 fn attachment_diagnostics_guidance(
     entries: &[AttachEntry],
@@ -701,11 +715,12 @@ pub(super) fn compose_attachment_turn(
     // containment guard as `lease_canon` — a `.tmp/chat-uploads` swapped for
     // a symlink out of the project must not become a second accepted home,
     // or step 4 starts approving handles that live wherever the link points.
-    let upload_store_canon = match fs::canonicalize(project_canon.join(".tmp").join("chat-uploads"))
-    {
-        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
-        _ => None,
-    };
+    // The guard is a named function with its own unit test
+    // (`upload_store_root_outside_the_project_is_not_a_home`) so the decision
+    // is exercised without a live handle path (review deepseek
+    // concurrency#3 / minimax boundary#2: the end-to-end fixture alone left
+    // the guard unkilled).
+    let upload_store_canon = canonical_upload_store(&project_canon);
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
     let mut inline_blocks: Vec<JsValue> = Vec::new();
@@ -804,7 +819,11 @@ pub(super) fn compose_attachment_turn(
         //   0. the file identity the pre-open validation approved
         //      (`approved_stat`) is remembered before the open, so a
         //      post-open rename that moves an outside vnode's name into the
-        //      lease root still changes which inode the handle references;
+        //      lease root still changes which inode the handle references.
+        //      The identity is sampled with `symlink_metadata`: the
+        //      canonical path is symlink-free by construction, so a link
+        //      appearing at the leaf is a swap and must not become the
+        //      "approved" object (see the note on `approved_stat`);
         //   1. open `resolved`;
         //   2. post-open `canonicalize` containment under the canonical
         //      lease root — a swap made after the open resolves outside
@@ -844,7 +863,34 @@ pub(super) fn compose_attachment_turn(
         // planted in the lease root *before* the turn is not covered — the
         // object then genuinely has a legitimate name — and is documented on
         // `handle_bound_to_upload_areas`.
-        let approved_stat = match fs::metadata(&resolved) {
+        //
+        // #1468 r2: the identity must belong to the object the *containment
+        // check* validated. `fs::metadata` re-walks the path and follows a
+        // symlink, so a swap landing between `lease_guard`'s canonicalize
+        // and this stat aimed the approval: "approved" became the outside
+        // inode, the open followed the same link, and a post-open rename
+        // gave that outside vnode an in-root name — identity included, every
+        // check then passed. `fs::symlink_metadata` does not follow a link at
+        // the leaf: anything that is a link here appeared after the
+        // validation and takes the not-found branch. An *ancestor directory*
+        // swapped to a link inside this same window is still open (the
+        // canonical spelling re-resolves through it); only an identity
+        // recorded when the lease is created closes that — the #1468
+        // follow-up, stated on `handle_bound_to_upload_areas`.
+        #[cfg(test)]
+        swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeApprovedStat, &resolved);
+        let approved_stat = match fs::symlink_metadata(&resolved) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                if audio {
+                    continue;
+                }
+                let error = std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "attachment lease path became a symlink after validation",
+                );
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                continue;
+            }
             Ok(metadata) => metadata,
             Err(error) => {
                 if audio {
@@ -1762,15 +1808,18 @@ pub fn native_settings_for_process(
 pub(super) mod swap_test_hook {
     use super::*;
 
-    /// Which injection point the swap happens in: after `lease_guard`'s
-    /// canonicalization but before `File::open` (#1468 — the open itself
-    /// may then follow a swapped link), between `File::open` and the
-    /// post-open `canonicalize` containment revalidation (step 2), or
-    /// between the revalidation and the `(dev, inode)` path-stat/fstat
-    /// comparison (step 3). The #1468 multi-step sequence chains one swap
-    /// per window, so every window holds its own slot.
+    /// Which injection point the swap happens in: right after `lease_guard`'s
+    /// canonicalization but before the approved identity is sampled (#1468
+    /// r2 — the approved stat must not follow a link planted here), after
+    /// that sample but before `File::open` (#1468 — the open itself may then
+    /// follow a swapped link), between `File::open` and the post-open
+    /// `canonicalize` containment revalidation (step 2), or between the
+    /// revalidation and the `(dev, inode)` path-stat/fstat comparison
+    /// (step 3). The #1468 multi-step sequence chains one swap per window,
+    /// so every window holds its own slot.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
+        BeforeApprovedStat,
         BeforeOpen,
         AfterOpen,
         AfterRevalidate,
