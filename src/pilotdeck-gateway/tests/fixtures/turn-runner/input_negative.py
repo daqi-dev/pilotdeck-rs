@@ -28,6 +28,12 @@ mutations = [
     # arm needle cannot bind there). Bind aborted_result's call site — HEAD's
     # actual writing — so a broken terminal loses history and synthetic.
     ('abort-messages', live, 'aborted_result', 'self.abort_messages()', 'self.input.accepted_messages()', 'live_input_reads_current_history_on_every_submit', '#741k abort preserves history and synthetic'),
+    # #1406: the final fallback arm (pre-execute cancel: no execute snapshot,
+    # no recorded runner) shared its `self.input.loop_messages()` spelling with
+    # the live-abort-finish-messages switch arm, so no single-line anchor could
+    # bind it. pre_execute_messages() gives the arm its own anchor; the bound
+    # test aborts before execute and expects history + accepted + synthetic.
+    ('abort-messages-fallback', live, 'abort_messages', 'self.pre_execute_messages()', 'self.input.accepted_messages()', 'live_input_reads_current_history_on_every_submit', '#741k abort preserves history and synthetic'),
     ('accepted-text', recording, 'accepted_messages', 'JsValue::String(text.clone())', 'JsValue::String(String::from_utf16_lossy(text.units()).into())', oracle, '#741k TS loop input'),
     ('accepted-blocks', recording, 'accepted_messages', 'content.clone()', 'vec![]', oracle, '#741k TS loop input'),
     ('metadata', recording, 'from_agent_input', '(!metadata.is_empty()).then_some(metadata)', 'None', oracle, '#741k TS metadata'),

@@ -1218,7 +1218,17 @@ impl LiveTurnStream {
             .as_ref()
             .and_then(Recording::runner)
             .map(|runner| runner.messages().to_vec())
-            .unwrap_or_else(|| self.input.loop_messages())
+            .unwrap_or_else(|| self.pre_execute_messages())
+    }
+
+    /// The pre-execute abort fallback: no execute snapshot and no recorded
+    /// runner, so the loop input is the only remaining record of what
+    /// submit_prompt accepted. Exists as its own method so the fallback arm
+    /// has anchor text distinct from the `live-abort-finish-messages` switch
+    /// arm above (#1406: the shared `self.input.loop_messages()` spelling
+    /// left the fallback without a single-line negative-control anchor).
+    fn pre_execute_messages(&self) -> Vec<JsValue> {
+        self.input.loop_messages()
     }
 }
 
