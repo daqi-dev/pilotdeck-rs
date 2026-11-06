@@ -25,6 +25,47 @@ def assertion_message_present(source, message):
     return re.search(pattern, source) is not None
 
 
+def squeeze(source):
+    """Collapse whitespace *between tokens*, leaving string literals intact.
+
+    A multi-line ``negative_assert!(`` call is the same call as its one-line
+    form, so a check that binds the condition, its polarity and the message
+    together has to look past rustfmt's line breaks. Whitespace inside a
+    literal is data (module docstring), so literals are copied verbatim:
+    collapsing them would let a one-space needle match a two-space message
+    (#1401 review P2). A space that only separated a bracket from its content
+    is dropped too, so a call reads the same whether rustfmt kept it on one
+    line or spread it over five.
+    """
+    out = []
+    pending_space = False
+
+    def flush(next_char):
+        if pending_space and out and out[-1] not in '([' and next_char not in ')]':
+            out.append(' ')
+
+    i = 0
+    while i < len(source):
+        ch = source[i]
+        if ch == '"':
+            flush(ch)
+            pending_space = False
+            j = i + 1
+            while j < len(source) and source[j] != '"':
+                j += 2 if source[j] == '\\' else 1
+            out.append(source[i:j + 1])
+            i = j + 1
+            continue
+        if ch.isspace():
+            pending_space = True
+        else:
+            flush(ch)
+            pending_space = False
+            out.append(ch)
+        i += 1
+    return ''.join(out)
+
+
 def test_body(source, name):
     """The named Rust test function's body, cut at its own closing brace.
 

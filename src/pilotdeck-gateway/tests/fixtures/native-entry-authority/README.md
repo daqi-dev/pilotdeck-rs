@@ -12,16 +12,19 @@
 起真实 `--native` 子进程（完整合法 CLI、`env_clear()` 后注入被测键），断言子进程非零
 退出且 stderr 含 `native isolated mode does not accept inherited <key>`。子进程由
 `kill_on_drop` + 显式 `kill`/`wait` 回收，stderr 经 `observe_child_stderr` 按行读，读到
-**整行恰好是产品广播形状**立即返回：`native listening` + 一个空格 + 非空且不含空白的地址，
-与 `src/native_process.rs` 的 `eprintln!("native listening {address}")` 一致（#1401 评审
+**整行恰好是产品广播形状**立即返回：`native listening` + 一个空格 + 非空且不含空白的地址 +
+换行，与 `src/native_process.rs` 的 `eprintln!("native listening {address}")` 一致（#1401 评审
 P2：原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次白等满 5 秒，慢主机又会被读成「没有
 广播」）。观察有三重界：单行静默 60 秒、整体预算 180 秒，以及直接套在流上的 64 KiB
 `take`——逐行超时会在每读到一行时重置，没有总预算则持续输出不匹配行的子进程会让测试永久
 挂起（#1401 评审两家独立提出）；`read_until` 见到换行前会一直往同一个缓冲追加，只在读完后
 检查字节数挡不住单行无换行的持续输出，所以上限必须套在流本身（#1401 评审 P0）。**没有读完
-的行一律不算广告**：子进程只打出半行前缀就卡住或退出时，超时 / EOF 分支返回 `false`（半行
-字节仍作为证据返回，供调用方自己的 needle 检查），scrub 测试因此不会把「喊了半句」当成正控
-通过（#1401 评审 P0）。调用点的两种破坏各有专属观察：删除调用时子进程会带着
+的行一律不算广告**：子进程只打出半行前缀就卡住或退出时，超时 / EOF / 字节上限分支返回
+`false`（半行字节仍作为证据返回，供调用方自己的 needle 检查），scrub 测试因此不会把「喊了
+半句」当成正控通过（#1401 评审 P0；换行也是形状的一部分——EOF 或 `take` 截断的残行不带
+换行，`advertises` 直接拒绝）。读取函数 `read_advertisement` 对流与两个时限泛化，函数级
+负控用字节切片、超长无换行行与 duplex 管道分别覆盖「完整广告 / EOF 残行 / 上限截断 / 静默」
+四支，不再只有真实子进程一条路（#1401 评审 P0）。调用点的两种破坏各有专属观察：删除调用时子进程会带着
 被接受的权限常驻，stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是
 证据）；后移调用时装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home`
 除自身写入的 config 外无新增条目。
@@ -56,12 +59,22 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 
 `python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
 模板、三个键名与 scrub 标记外，还按**测试函数体切段**绑定观察——rejects 测试里的
-`leftover.is_empty()`、`observe_child_stderr(stderr)` 与判广告的断言调用本身
-（`negative_assert!(!advertised,`），scrub 测试里的 `Failed to parse default config YAML.`、
-同一条广播观察、判继承键的那条断言（`!leaked_parse,`）与它自己的「无法判定」panic
+`observe_child_stderr(stderr)` 与三条判杀断言**整条调用**（`negative_assert!(!advertised,
+"…"`、`!status.success()`、`leftover.is_empty()`），scrub 测试里的
+`Failed to parse default config YAML.`、同一条广播观察、判继承键的断言整条调用
+（`negative_assert!(!leaked_parse, "…"`）与它自己的「无法判定」分支
+（`if !advertised { panic!("…"`）
 （#1401 项 4 / 评审 P2：整文件 needle 分不清哪个测试在观察，两个测试都含
-`native listening` 后删掉 rejects 那处仍会通过；只绑 marker 模板也不够——子进程早退 / 退出
-码 / 残留三处断言复用同一句消息，删掉判广告那条后模板仍在，`--check` 仍会通过；切段函数由
+`native listening` 后删掉 rejects 那处仍会通过；只绑片段也不够——三处断言复用同一句消息，
+删掉其中一条、反转条件极性、或把它改写成 `let _ = (!leaked_parse, "…");` 都仍会通过，所以
+needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_source.squeeze` 折叠**字面量
+之外**的空白，rustfmt 换行不影响绑定。两个 pin 测试也一并绑：`--check` 按函数体切出
+`native_listening_advertisement_shape`（正反两张形状表、尾部多余内容与 IPv6 各一条）与
+`native_listening_observation_needs_a_finished_line`（完整广告 / EOF 残行 / 上限截断 /
+静默四支），并直接绑 `advertises` 开头的换行守卫——两个变异体都只打印拒绝行或一条完整
+广告，看不出形状被放宽成前缀匹配，只有 pin 自己会红（#1401 评审 P2）。这几条漂移由 `_tmp/20261107-issue-1401/r4/check-drift.py`
+逐例证明能让相应脚本 rc=1（断言级五例两家都红，pin 三例 `negative_controls.py` 红：裁剪
+形状反例表、删掉换行守卫、删掉 EOF 残行用例）；切段函数由
 两个脚本共用
 `negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
 函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认）。实际负控命令

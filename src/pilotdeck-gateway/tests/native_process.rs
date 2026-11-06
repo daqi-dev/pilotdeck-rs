@@ -163,10 +163,14 @@ const CHILD_STDERR_LIMIT: usize = 64 * 1024;
 
 // Whether one *finished* stderr line is the product's listening
 // advertisement: the phrase, a space, then a non-empty address with no
-// whitespace of its own. Anything else -- the bare phrase, a longer
-// diagnostic that merely begins with it, junk after the address -- is not
+// whitespace of its own, then the newline `eprintln!` writes. Anything else
+// -- the bare phrase, a longer diagnostic that merely begins with it, junk
+// after the address, or a line EOF or the byte bound cut short -- is not
 // proof that something is serving (#1401 review P0).
 fn advertises(line: &[u8]) -> bool {
+    if !line.ends_with(b"\n") {
+        return false;
+    }
     let text = String::from_utf8_lossy(line);
     let text = text.trim_end_matches(&['\r', '\n'][..]);
     match text
@@ -186,7 +190,6 @@ fn native_listening_advertisement_shape() {
     for line in [
         "native listening 127.0.0.1:4321\n",
         "native listening [::1]:4321\r\n",
-        "native listening ::1:4321",
     ] {
         assert!(
             advertises(line.as_bytes()),
@@ -196,6 +199,7 @@ fn native_listening_advertisement_shape() {
     for line in [
         "native listening\n",
         "native listening \n",
+        "native listening ::1:4321",
         "native listening 127.0.0.1:4321 extra\n",
         "native listening: 127.0.0.1:4321\n",
         "warn: native listening 127.0.0.1:4321\n",
@@ -208,9 +212,50 @@ fn native_listening_advertisement_shape() {
     }
 }
 
-// The observation both tests wait for: the child's own listening
-// advertisement, under the shared bounds. Kept as one unformatted call per
-// test because the fixture's `--check` binds this call inside each test body.
+// The observation function's own edges: a finished advertisement counts, and
+// an unfinished one -- EOF without the newline, a line the byte bound cut --
+// or silence does not (#1401 review P0: the branch that judged a half line as
+// an advertisement had no test that could see it).
+#[tokio::test]
+async fn native_listening_observation_needs_a_finished_line() {
+    use tokio::io::AsyncWriteExt;
+    let silence = std::time::Duration::from_millis(50);
+    let budget = std::time::Duration::from_secs(5);
+
+    let (collected, advertised) =
+        read_advertisement(&b"native listening 127.0.0.1:4321\n"[..], silence, budget).await;
+    assert!(advertised, "finished advertisement: {collected:?}");
+
+    // The same bytes without the newline: EOF left the line unfinished, so the
+    // child never completed the product's `eprintln!` line.
+    let (collected, advertised) =
+        read_advertisement(&b"native listening 127.0.0.1:4321"[..], silence, budget).await;
+    assert!(!advertised, "line cut by EOF: {collected:?}");
+
+    // The byte bound cuts a single unterminated line: its advertisement-
+    // shaped prefix must not be accepted, and the buffer must stop growing.
+    let mut stream = b"native listening ".to_vec();
+    stream.resize(stream.len() + CHILD_STDERR_LIMIT * 2, b'1');
+    let (collected, advertised) = read_advertisement(&stream[..], silence, budget).await;
+    assert!(
+        !advertised,
+        "line cut by the byte bound: {} bytes",
+        collected.len()
+    );
+    assert!(
+        collected.len() <= CHILD_STDERR_LIMIT,
+        "collected {} bytes",
+        collected.len()
+    );
+
+    // Silence resolves at the silence bound, not at the total budget.
+    let (mut writer, reader) = tokio::io::duplex(64);
+    let (collected, advertised) = read_advertisement(reader, silence, budget).await;
+    assert!(!advertised, "silence: {collected:?}");
+    let _ = writer.write_all(b"late").await;
+}
+
+// Reads stderr until the child advertises listening.
 //
 // Returns as soon as a line is an advertisement, so a child that stays up
 // afterwards costs one line, not a whole deadline (#1401 review P2:
@@ -218,7 +263,20 @@ fn native_listening_advertisement_shape() {
 // read a slow host as a missing advertisement). Otherwise the bytes collected
 // before EOF, a read error, the silence bound, the total budget or the byte
 // bound come back with `false`.
-async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, bool) {
+//
+// Generic over the stream and parameterized over both bounds so the
+// function-level control below can drive it with a byte slice, a long
+// unterminated line and a duplex pipe instead of a real child: the EOF,
+// truncation and silence branches had no test that could see them
+// (#1401 review P0).
+async fn read_advertisement<R>(
+    stderr: R,
+    silence: std::time::Duration,
+    budget: std::time::Duration,
+) -> (Vec<u8>, bool)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
     use tokio::io::{AsyncBufReadExt, AsyncReadExt};
     let started = std::time::Instant::now();
     // `take` bounds the stream itself, not just what this loop keeps:
@@ -229,13 +287,13 @@ async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, 
     let mut line = Vec::new();
     let mut collected = Vec::new();
     loop {
-        let left = CHILD_OBSERVATION_BUDGET.saturating_sub(started.elapsed());
+        let left = budget.saturating_sub(started.elapsed());
         if left.is_zero() {
             return (collected, false);
         }
         line.clear();
         let read = reader.read_until(b'\n', &mut line);
-        match tokio::time::timeout(CHILD_SILENCE_LIMIT.min(left), read).await {
+        match tokio::time::timeout(silence.min(left), read).await {
             // EOF, read error, silence, budget and the byte bound are one
             // case: nothing more will be observed, and a line this read did
             // not finish is not an advertisement. A child that prints the
@@ -255,6 +313,13 @@ async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, 
             }
         }
     }
+}
+
+// The observation both tests wait for: the child's own listening
+// advertisement, under the shared bounds. Kept as one unformatted call per
+// test because the fixture's `--check` binds this call inside each test body.
+async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, bool) {
+    read_advertisement(stderr, CHILD_SILENCE_LIMIT, CHILD_OBSERVATION_BUDGET).await
 }
 
 // One complete valid profile for both child tests: with the entry gate or the

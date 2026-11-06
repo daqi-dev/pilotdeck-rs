@@ -8,7 +8,7 @@ looked present. The helper may relax syntax whitespace only.
 """
 import unittest
 
-from negative_source import assertion_message_present, test_body
+from negative_source import assertion_message_present, squeeze, test_body
 
 MESSAGE = 'gateway case filter must match at least one scenario'
 SPLIT = f'''
@@ -88,6 +88,41 @@ fn helper_after_the_last_test() {
             test_body(self.SOURCE, 'absent')
         with self.assertRaises(LookupError):
             test_body('async fn open() {\n    let x = 1;\n', 'open')
+
+
+class SqueezeKeepsLiteralsAndCallShapes(unittest.TestCase):
+    """#1401 review P2: bind a whole ``negative_assert!`` call, not a fragment.
+
+    The needle says which assertion it bound (head, condition, polarity and
+    message), so a call rewritten as a plain tuple no longer satisfies it.
+    """
+
+    def test_a_multiline_call_reads_as_its_one_line_form(self):
+        spread = (
+            '        negative_assert!(\n'
+            '            !leaked_parse,\n'
+            '            "#1261 native entry scrubs inherited X"\n'
+            '        );\n'
+        )
+        self.assertIn(
+            'negative_assert!(!leaked_parse, "#1261 native entry scrubs '
+            'inherited X");',
+            squeeze(spread))
+
+    def test_whitespace_inside_a_literal_is_kept(self):
+        # Collapsing the literal would let a one-space needle match a
+        # two-space message.
+        squeezed = squeeze('assert!(a, "must  match");')
+        self.assertIn('"must  match"', squeezed)
+        self.assertNotIn('"must match"', squeezed)
+
+    def test_a_rewritten_tuple_is_not_the_assertion(self):
+        rewritten = squeeze('let _ = (!leaked_parse, "message");')
+        self.assertNotIn('negative_assert!(', rewritten)
+
+    def test_an_escaped_quote_does_not_end_the_literal(self):
+        squeezed = squeeze(r'assert!(a, "a \"quoted\" word");')
+        self.assertIn(r'"a \"quoted\" word"', squeezed)
 
 
 if __name__ == '__main__':
