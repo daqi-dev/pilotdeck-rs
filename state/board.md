@@ -3704,3 +3704,11 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 > **壳泄漏清理**：主进程名下 54 个子 shell 里 **33 个是无上限 `until … sleep` 等待**——杀掉 7 个可证永假的 + 1 个卡 6 小时的 `ugrep`（stdin 是 socket，永远读不完）。
 > **新硬要求**：所有等待循环必须带终止上限（`timeout N` / `for i in {1..N}`）；等文件时同时验生产者 `kill -0 <pid>`；同一目标只留一个 watcher。
 > **资源**：交接时记录 `_build+_tmp` 168.3/200 GiB、worktree 42/60；本机 worker 2/2、cargo 1/2 贴顶，三台远端基本空闲。13:1x 本 PR 实测 `_build+_tmp` 已 **186.8 GiB**（过 160 WARN、逼近 185 开树硬闸）、worktree **44/60**。
+
+> ## 2026-11-06 14:0x · #1738 收口（webhook / sms active_chats panic-safe）
+> **PR #1799 已开**（`claude/issue-1738-active-chats-panic-safe`，head `dba0f280a`，base `0aeec64e2`，7 文件 +427/−62）。**未合入 main**（派单要求）。
+> **做了什么**：`channel::ActiveChat<K>` 泛化上移，webhook / sms / api_server 共用；sms 的 guard 与 insert 在同一同步段构造；webhook 准入以 `admit` 的 `Some/None` 判定（并发落败方不再误摘对方的槽）。
+> **三轮评审**（作者 GLM；r1/r2 两家非作者 anthropic + deepseek，r3 增量单家 deepseek）：r1 收敛 1 条 P1（webhook 两段锁）+ 若干 P2/P3 → fix-r1 `bc47ee736`；r2 增量 P0=0 P1=0，P2 收进共享 `admit` + 补确定性用例 → fix-r2 `dba0f280a`；r3 增量 `P0=0 P1=0 P2=3 P3=8`，P2 全部转跟进（weixin→#1780、handler 级负控→#1744）。anthropic r2 的 1 条 P1 前提不成立（`git show` 实证 head 上没有它说的双 insert）。
+> **负控**：修前 cb8 三套 KILLED 13/26/20、SURVIVED 0、INVALID 0；fix-r2 后三套**全量重跑**（`channel/mod.rs` 变了）——`api-server-channel` 13/0/0 在 mbp2，`channel-sms` 26/0/0 与 `webhook-channel` 20/0/0 在 macmini-01（mbp2 的 python3.9 跑不了两套装置的 `X | Y` 语法，整套 INVALID；macmini 首轮缺 `cargo` PATH 亦 INVALID，均已原机留档），锚点 `anchors=5039 errors=0`；源文件 sha256 与 head git 对象逐一对齐，原始记录 `_tmp/20261106-issue-1738/neg-remote-r3/`。
+> **跟进**：#1780（weixin 同形，P1，前置于 #1328）· #1790（sms permission 跨 await 置位，P2，前置于 #1339 收尾）· #1744（已更正：槽误释放已修、**落败方已跑过 `resolve` 的副作用仍在**；handler 级负控并入其「无负控」半）。
+> **资源**：本机 `_build`+`_tmp` 176.1 GiB（WARN 档，上限 200）；`wt-1738` 13.2 GiB，合入后回收。
