@@ -1424,11 +1424,20 @@ fn prepare_lease_root(project: &Path) -> Result<PathBuf> {
     // Only now is a directory created. `create_dir` never follows a link at
     // the leaf (EEXIST), so a leaf swapped in after the check above is refused
     // by the second pass. An **ancestor** swapped in that gap is not covered by
-    // this call: path resolution follows it, so the `chat-upload-leases`
-    // directory is created under the link target and only the second pass
-    // refuses the root (#1887 review boundary#2 — the stray empty directory is
-    // the residual; no lease is written through it because the caller's
-    // `make_dir` never runs on the refused root).
+    // this call: path resolution follows it, so the directory is created under
+    // the link target and only the second pass refuses the root — the stray
+    // empty directory here is harmless on its own.
+    //
+    // What is **not** harmless, and is the residual (#1887 review
+    // boundary#1 / concurrency#1): the value returned above is a plain path,
+    // so it is re-resolved by every later syscall. An ancestor swapped after
+    // *this* function's last check but before the caller's `make_dir`
+    // (`acquire_attachment_lease`) and `fs::hard_link` re-resolves the same
+    // spelling outside the project, and a whole lease — `lease.json` plus the
+    // attachment's hard link — is written there. No later term refuses it: the
+    // linked inode really is the approved attachment and its digest really
+    // matches, and the TTL sweep only walks the in-project `.tmp`. Closing it
+    // needs the same dirfd/`O_NOFOLLOW` chain creation the read side uses.
     if canonical_home(&project.join(".tmp"), project, project).is_none() {
         return Err(lease_root_unavailable());
     }
