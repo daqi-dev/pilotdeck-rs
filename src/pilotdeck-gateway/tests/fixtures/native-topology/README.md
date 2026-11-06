@@ -27,7 +27,7 @@ python3 -I pilotdeck-gateway/tests/fixtures/native-topology/run.py \
 
 每案保存配置、原始 NDJSON、stderr、HTTP 观察、进程 PID/PPID/PGID/启动时间/命令以及隔离目录；第二种配置还保存完整比较输入。比较器复用现有 `compare.Normalizer` 的实体与时钟规则，仅额外剔除 Module transport 的不透明 messageId/streamId，原始值仍保留。事件类型、顺序、终态、运行身份、结果、错误、实际 HTTP 和 Module 操作均参与核验。HostClient 故意不转发普通 `turn_completed`，因此末尾权威 terminal 前的一个 sequence 缺口是明确规则，其他缺帧/重帧/乱序均拒绝。
 
-`report.json` 分开表示 `moduleMatrixStatus` 和总体 `status`。40 次与 20 对比较完整通过时，前者为 PASS；总体仍为 NOT_RUN，退出码 **2**。任一已执行案、源码校验或观察清理失败则为 FAIL，退出码 **1**。不会输出代表完整 A5.3 成功的退出码 0。首次目录创建等无法写报告的错误也返回非零。
+`report.json` 分开表示 `moduleMatrixStatus` 和总体 `status`。40 次与 20 对比较完整通过时，前者为 PASS；总体仍为 NOT_RUN，退出码 **2**。任一已执行案、源码校验或观察清理失败则为 FAIL，退出码 **1**。不会输出代表完整 A5.3 成功的退出码 0。退出码 1 不必然是 FAIL：`main()` 只接 `KeyboardInterrupt`，锁等 600 s 抛的 `TimeoutError` 未捕获（traceback / exit 1），取消也走 exit 1；判成败以 `report.json` 为准。首次目录创建等无法写报告的错误也返回非零。
 
 进程抽样只证明已观察到的后代及其清理，不能发现一切短命 helper。探针启动握手前安装 SIGINT；取消会触发 HostClient 的进程组清理。Python 仅清理由 PID 与启动时间共同确认的自有后代，最终核查已观察进程退出；不把这些证据升级为完整 native 退役审计。
 

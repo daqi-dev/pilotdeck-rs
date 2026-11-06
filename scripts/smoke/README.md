@@ -33,9 +33,9 @@ printed. An empty key set is **not** a pass: the self-check prints
 `0 keys loaded, cannot verify` and returns non-zero.
 
 Limits (constants in `real_provider.py`, echoed by the probe in
-`PROBE_RESULT`). Do not quote a limit from this page: the authoritative values
-are the constants in `real_provider.py`, and each run echoes them in
-`report.json`'s flat `limits` object and in `limits.json`'s
+`PROBE_RESULT`). Do not quote a request or token cap from this page: the
+authoritative values are the constants in `real_provider.py`, and each run
+echoes them in `report.json`'s flat `limits` object and in `limits.json`'s
 `declared`/`actual`.
 
 - One request per scenario (`MAX_REQUESTS == len(SCENARIOS)`).
@@ -75,7 +75,7 @@ are the constants in `real_provider.py`, and each run echoes them in
   group and produce a BLOCKED row plus a report instead of a traceback.
 - The probe disables retries with the keys the product actually reads
   (`requestMaxRetries`/`streamMaxRetries` = 0), and sets the model to
-  `thinking.state = "disabled"` so the 128-token text scenario does not lose
+  `thinking.state = "disabled"` so the small-cap text scenario does not lose
   its body to provider-side reasoning.
 
 Ports 28789/28790/28810-28812 are checked for occupancy; the probe opens no

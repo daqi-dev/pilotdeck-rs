@@ -26,7 +26,8 @@
    按 sidecar 侧信号记（逐条名称与推导见 R5「范围」节，本卡不复制）。
 3. 因此 #590 格②的 sidecar 侧信号为 **23 条（22 条纯换位 + `deadline` 契约不符），不因本条降低**；
    作为对照的广读数字 19–21 不改变这个计数。
-4. 记录落点：`specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R5.md`（更正条目，`original` 指向 R3）、
+4. 记录落点：`specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R5.md`（更正条目，`original` 指向原条目
+   `A7-HOST-POST-CANCEL-EXIT-001`，本条的「基线依据」再指向 R3）、
    `docs/research/008_phase-a-session-domain/four-cell-matrix.md` §六.8。
 
 ## 复核状态

@@ -127,8 +127,9 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 `native-topology/run.py` 的 `Rust-sidecar-ts` 格：`status=PASS`，`executedCases` = `model-stream` / `provider-error` /
 `provider-unconfigured` / `token-saver-judge` 四案全跑、每案 5 轮。证据 `_tmp/20261106-issue-590/native-topology-001/report.json`。
-（**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 里 **`cells[].status`**（该格 `Rust-sidecar-ts` 的 PASS），
-不是顶层 `status`——顶层恒为 `NOT_RUN`，见下段；见 §七.2。）
+（**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 里 **`cells[].status`**（该格 `Rust-sidecar-ts` 的 PASS）。
+顶层 `status` 在本 run 是 `NOT_RUN`，但**不是恒为 `NOT_RUN`**：任一案失败（`run.py:563`）、外层异常（`:577`）、
+清理异常（`:594`）或取消补发布（`:109`）都会把它置 `FAIL`——**顶层是 `FAIL` 时不得只看 `cells`**。见下段与 §七.2。）
 
 边界：整份报告 `status=NOT_RUN`、`moduleMatrixStatus=PASS`。`NOT_RUN` 来自 `entryCoverage`（生产入口
 `production native request adapter not connected`）与 `retirement`（`complete exec/egress and storage observers absent`），
@@ -261,7 +262,8 @@ EXIT=3
 | `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
 
 合计 **3 次请求 / 49 输出 token**（不在此复述上限数字）。`limits.violations=[]` 单独看**不足以**证明没超限：
-那两条上限项只在拿到 usage 时才写入，usage 缺席时 `violations` 仍是 `[]` 而 `capsVerified=false`。
+**两条 token 上限项**只在拿到 usage 时才写入，usage 缺席时这两项不写入、而 `capsVerified=false`（请求数与 echo
+的违规另有分支，与 usage 无关，仍会写 `violations`）。
 **没超限 = `capsVerified=true`（证明检查确实做过：`usageMissing=[]` 且 `echoMissing=[]`）且 `violations=[]`（数值没超）**，
 本 run 两者都成立；
 `secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
@@ -385,7 +387,8 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
    **本页有三处例外没做到，如实记录（#1722 第 4 条）**：格① 的 `session_domain.py --suite calibrate`、①② 的
    `scripts/parity/round.py`、③④ 的 `native-topology/run.py` 三次**顶层**命令的退出码都没有留痕
    （calibrate 那次只留了单行 JSON 的 `calibrate-ts-ts.stdout.log` 与空的 `calibrate-ts-ts.stderr.log`，
-   没有 `EXIT=` 行；①② 只有内层 `run.py` 的 `run_py_exit`；③④ 只有 report 级 `status`）。因此 §二 各格的结论**只依据 `report.json` / `run.json` 的 status**，
+   没有 `EXIT=` 行；①② 只有内层 `run.py` 的 `run_py_exit`；③④ 只有 report 级 `status`）。因此 §二 各格的结论
+   **只依据 `report.json` / `run.json` 的 status**（③④ 取 `cells[].status`，顶层 `status` 见格③ 注），
    不引用、也不推断这三个顶层退出码；复跑时按上面的写法补齐。
    **补齐 ③④ 时注意它的退出码语义**：`native-topology/run.py` 的 `run()` 返回
    `1 if report['status'] == 'FAIL' else 2`——**没有 0**，四案全过也 exit 2；所以那个 2
