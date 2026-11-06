@@ -837,7 +837,7 @@ cases = [
         }
 ''',
      'clear_failing_after_l0_ids_selected_rearms_indexed_rows',
-     '#1298 the clear must fail with the injected error'),
+     '#1207 the clear must fail with the injected error'),
     # #1298: the pre-#1298 `?` restored — a re-arm that cannot run replaces
     # the error that aborted the clear, so the caller is told "database is not
     # open" instead of why the clear died, and the re-arm failure is recorded
