@@ -31542,6 +31542,665 @@
       }
     },
     {
+      "name": "restore-artifact-null",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of null (reading 'length')"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":null}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-missing",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "error": {
+              "name": "TypeError",
+              "message": "Cannot read properties of undefined (reading 'length')"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-number",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":5}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": 5
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": 5
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":5}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-string",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":\"str\"}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": "str"
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": "str"
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":\"str\"}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-boolean",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":false}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": false
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": false
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":false}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-object",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":{}}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": {}
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": {}
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":{}}\n"
+      }
+    },
+    {
+      "name": "restore-artifact-empty",
+      "store": {},
+      "initialFiles": {
+        "s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":[]}\n"
+      },
+      "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+      "steps": [
+        {
+          "op": "open",
+          "sessionId": "s1",
+          "outcome": {
+            "paths": {
+              "chatDir": "<dir>/home/projects/pdrs-fixture-project/chats",
+              "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl",
+              "projectionCheckpointPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl.projections.json",
+              "toolResultsDir": "/pdrs-fixture/project/.pilotdeck/tool-results/s1",
+              "fileHistoryDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/file-history",
+              "subagentsDir": "<dir>/home/projects/pdrs-fixture-project/chats/s1/subagents"
+            },
+            "externalTranscriptStore": true,
+            "capabilities": []
+          }
+        },
+        {
+          "op": "restore",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": []
+              }
+            ],
+            "diagnostics": [],
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "state",
+          "outcome": {
+            "state": {
+              "sequence": 1,
+              "lastEntryId": "l-1"
+            }
+          }
+        },
+        {
+          "op": "read",
+          "outcome": {
+            "entries": [
+              {
+                "type": "file_artifacts",
+                "sessionId": "x",
+                "turnId": "turn-1",
+                "sequence": 1,
+                "createdAt": "2026-10-18T00:00:00.000Z",
+                "entryId": "l-1",
+                "parentEntryId": null,
+                "artifacts": []
+              }
+            ],
+            "diagnostics": []
+          }
+        }
+      ],
+      "calls": [
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        },
+        {
+          "method": "read",
+          "key": {
+            "projectRoot": "/pdrs-fixture/project",
+            "pilotHome": "<dir>/home",
+            "sessionId": "s1",
+            "transcriptPath": "<dir>/home/projects/pdrs-fixture-project/chats/s1.jsonl"
+          }
+        }
+      ],
+      "files": {
+        "home/projects/pdrs-fixture-project/chats/s1.jsonl": "{\"type\":\"file_artifacts\",\"sessionId\":\"x\",\"turnId\":\"turn-1\",\"sequence\":1,\"createdAt\":\"2026-10-18T00:00:00.000Z\",\"entryId\":\"l-1\",\"parentEntryId\":null,\"artifacts\":[]}\n"
+      }
+    },
+    {
       "name": "domain-append-failure",
       "store": {
         "failBefore": [

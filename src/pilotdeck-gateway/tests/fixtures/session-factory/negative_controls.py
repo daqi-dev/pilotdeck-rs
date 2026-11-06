@@ -99,8 +99,12 @@ cases = [
     ('projection-completion', factory, '&& done\n        {', '&& true\n        {', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-usage', factory, 'first + second', 'first', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     # #1985 block 1: the string arm of merge_permission_denials must keep the
-    # JS string-iterator semantics (surrogate pair = one element).
-    ('denials-string-surrogate-pair', factory, '                if (0xd800..=0xdbff).contains(&first)\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', '                if false\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', None, prefix+'hydrated_projection_matches_ts', '#1985 hydrated conclusion denials-string-nonbmp'),
+    # JS string-iterator semantics (surrogate pair = one element). Bound to the
+    # dedicated unit test: under `hydrated_projection_matches_ts` the mutant dies
+    # earlier, when the lone surrogate makes the actual-state JSON unserializable
+    # (r5b: `#745 actual JSON: unexpected end of hex escape` instead of the
+    # intended conclusion assertion).
+    ('denials-string-surrogate-pair', factory, '                if (0xd800..=0xdbff).contains(&first)\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', '                if false\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', None, prefix+'permission_denials_string_expands_by_code_point_like_js', '#1985 code point expansion'),
     ('projection-metadata', factory, 'key.equals_str("title") || key.equals_str("linkedPullRequest")', 'false', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-invalid-compact', factory, 'return text("text");', 'return true;', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-js-trim', factory, 'crate::metadata::js_trim(&text)', 'text.trim()', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
