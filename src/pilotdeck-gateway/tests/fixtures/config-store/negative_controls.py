@@ -152,6 +152,38 @@ mutations = [
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
      '#1899 the watcher must still be running before the store is dropped'),
+    # #1899 review P2 (boundary): a liveness check taken at spawn time proves
+    # nothing about a watcher that returns on its first in-loop tick — still
+    # #1650's silent death, one tick later. Each check advances one poll interval
+    # first, and this mutant is what that advance is there to catch.
+    ('watch-loop-exits-after-first-tick', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                return;\n'
+     '                let mut changed = false;',
+     'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped']),
+    # #1899 review P2 (sibling): the same mutant against `WatchHandle::stop`,
+    # which aborts and swallows the `JoinError` — `weak_count == 0` and "no
+    # reload" alone would accept a watcher that died before the stop.
+    ('watch-loop-exits-after-first-tick-before-stop', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                return;\n'
+     '                let mut changed = false;',
+     'config::store::tests::stop_cancels_pending_reload_and_leaves_no_task',
+     '#1899 the watcher must still be running before stop'),
 ]
 
 

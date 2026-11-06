@@ -662,6 +662,18 @@ async fn stop_cancels_pending_reload_and_leaves_no_task() {
     watch.notify_change();
     settle().await;
     tokio::time::advance(Duration::from_millis(100)).await;
+    // #1899: `WatchHandle::stop` aborts and then swallows the `JoinError`; a
+    // watcher that died before the stop would leave the same `weak_count == 0`
+    // and "no reload", so prove it was still running (and had already ticked)
+    // before the stop.
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before stop"
+    );
     watch.stop().await;
     assert_eq!(
         Arc::weak_count(&store.inner),
@@ -682,6 +694,18 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         .start_watching(WatchOptions::default())
         .expect("#879 healthy watcher paths");
     settle().await;
+    tokio::time::advance(Duration::from_millis(100)).await;
+    // #1899: `weak_count == 0` and "no reload" are also true for a watcher that
+    // died on its own, so prove it was running (past its first in-loop tick,
+    // not merely un-finished at spawn time) before the handle is dropped.
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the handle is dropped"
+    );
     watch.notify_change();
     drop(watch);
     settle().await;
@@ -693,6 +717,7 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         .start_watching(WatchOptions::default())
         .expect("#879 healthy watcher paths");
     settle().await;
+    tokio::time::advance(Duration::from_millis(100)).await;
     assert!(
         !watch
             .task
