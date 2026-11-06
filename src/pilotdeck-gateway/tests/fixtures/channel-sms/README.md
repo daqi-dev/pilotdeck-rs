@@ -73,9 +73,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 22 `#996` compile-time switches the
+`negative_controls.py` runs the 26 `#996` compile-time switches the
 channel carries (`crate::mutants::on("sms-…")`, the fix-r1 round added
-the last 11) through the shared
+11 and #1589 added the last 4) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files
