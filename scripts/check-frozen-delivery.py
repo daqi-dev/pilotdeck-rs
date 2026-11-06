@@ -1244,7 +1244,7 @@ def _sys_roots(tree):
 
 
 def _sys_aliases(tree, span=None):
-    """``(module names, table names)`` that still hold ``sys`` / one of its tables.
+    """``(module names, table names, container tables)`` still holding ``sys``.
 
     Follows ``_s = sys``, ``_m = sys.modules``, ``_p = _m`` and unpacking to a
     fixed point over every scope.  A name is a *table* when it was bound to
@@ -1252,10 +1252,19 @@ def _sys_aliases(tree, span=None):
     itself: ``_alias_roots`` strips attributes, so ``_p = sys.path`` lands in
     both sets there and the two questions ("is this the module?" for
     ``X.modules``, "is this a table?" for ``_p.append``) would collapse again.
+
+    The third set names the tables a *container* handed over.  ``_foreign_writes``
+    subtracts the module names from the table names, on the assumption that a
+    name bound to the module itself cannot be indexed into a table -- a
+    container breaks that, and a name that was also bound to the module earlier
+    (``both = sys`` then ``both = [sys.path]``) would be subtracted right back
+    out.  Those names are kept on the table side.
     """
     modules, tables = (set(part) for part in _sys_roots(tree))
+    container_tables = set()
     while True:
         added_modules, added_tables = set(), set()
+        added_from_containers = set()
         for node in ast.walk(tree):
             if _in_block(node, span):
                 continue
@@ -1288,6 +1297,7 @@ def _sys_aliases(tree, span=None):
                             added_modules.add(target.id)
                         if is_table:
                             added_tables.add(target.id)
+                            added_from_containers.add(target.id)
                     continue
                 if not isinstance(target, (ast.Tuple, ast.List)):
                     continue
@@ -1326,10 +1336,12 @@ def _sys_aliases(tree, span=None):
                             added_modules |= names
                         if is_table:
                             added_tables |= names
+                            added_from_containers |= names
         if added_modules <= modules and added_tables <= tables:
-            return modules, tables
+            return modules, tables, container_tables
         modules |= added_modules
         tables |= added_tables
+        container_tables |= added_from_containers
 
 
 def _alias_roots(tree, seeds, span=None):
@@ -1481,11 +1493,12 @@ def _container_elements(value, roots=None):
                 + [item for item in value.values if item is not None])
     if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
         return list(value.elts)
-    if isinstance(value, ast.BinOp) and isinstance(value.op, (ast.Add, ast.BitOr)):
-        # ``[common] + [None]`` / ``{'k': common} | _d``: one half is written
-        # out, so the result holds what that half holds even when the other
-        # half is an expression this model cannot read.  Dropping the known
-        # half would be the fail-open direction.
+    if isinstance(value, ast.BinOp) \
+            and isinstance(value.op, (ast.Add, ast.BitOr, ast.Mult)):
+        # ``[common] + [None]`` / ``{'k': common} | _d`` / ``[common] * 3``: one
+        # half is written out, so the result holds what that half holds even
+        # when the other half is an expression this model cannot read.  Dropping
+        # the known half would be the fail-open direction.
         halves = []
         for half in (value.left, value.right):
             part = _container_elements(half, roots)
@@ -2015,7 +2028,14 @@ def _aliased_mutator(tree, mutating, roots, span):
     expansion, a variable attribute name) binds a callable nothing else in the
     file names: that is a write exactly when such a name is later *called with*
     a watched object, so those bindings are collected and matched against the
-    call sites at the end instead of blocking every reflection in the file.
+    call sites at the end instead of blocking every reflection in the file.  A
+    mutator attribute read off an object this model does not track (``_g =
+    dict.update``, ``getattr(dict, 'update')``) joins the same set, and the
+    names that carry such a callable are followed to a fixed point (``_h =
+    _g``, ``xs = [_g]``, ``_h, _i = _g, None``) before the call sites are
+    matched -- one hop is all the reflection needs to walk around a name match.
+    Binding order and scope are not modelled: a carrier is matched against
+    every call of that name in the file, which can only over-block.
     """
     opaque = set()
     for node in ast.walk(tree):
@@ -2028,9 +2048,14 @@ def _aliased_mutator(tree, mutating, roots, span):
                 if isinstance(child, ast.Attribute):
                     if child.attr in mutating:
                         return True
-                    if child.attr in _MUTATOR_ATTRS \
-                            and _contains_root(child.value, roots):
-                        return True  # _g = common.update / REQUIRED.update
+                    if child.attr in _MUTATOR_ATTRS:
+                        if _contains_root(child.value, roots):
+                            return True  # _g = common.update / REQUIRED.update
+                        # ``_g = dict.update`` / ``_g = [_s].append``: a mutator
+                        # read off an object this model does not track.  It is
+                        # only a write once it is *called with* a watched
+                        # object, so it joins the same call-site match below.
+                        opaque |= _target_names(target)
                 if isinstance(child, ast.Call) and _call_name(child.func) == 'getattr':
                     if child.keywords or any(isinstance(arg, ast.Starred)
                                              for arg in child.args):
@@ -2063,17 +2088,32 @@ def _aliased_mutator(tree, mutating, roots, span):
                         continue
                     if attr.value in mutating:
                         return True
-                    if attr.value in _MUTATOR_ATTRS \
-                            and _contains_root(child.args[0], roots):
-                        return True  # _g = getattr(sys.modules, 'update')
+                    if attr.value in _MUTATOR_ATTRS:
+                        if _contains_root(child.args[0], roots):
+                            return True  # _g = getattr(sys.modules, 'update')
+                        # ``_g = getattr(dict, 'update')``: a named mutator off an
+                        # untracked object, matched at the call site like any
+                        # other opaque binding.
+                        opaque |= _target_names(target)
     if not opaque:
         return False
+    # A name bound to a callable the model cannot name keeps that callable
+    # through every spelling ``_alias_roots`` follows -- ``_h = _g``,
+    # ``xs = [_g]``, unpacking -- so the call site is matched on the carrier
+    # set, not on the one name the reflection was bound to.  Only a name or an
+    # element of a carrier can *call* it; ``xs.append(...)`` is a call on the
+    # container, not on what it holds.
+    carriers = _alias_roots(tree, opaque, span)
     for node in ast.walk(tree):
         if _in_block(node, span) or not isinstance(node, ast.Call):
             continue
-        if _call_name(node.func) in opaque and any(
-                _contains_root(value, roots) for value in _call_values(node)):
-            return True  # _f = getattr(*_pair); _f(common)
+        func = node.func
+        if not (isinstance(func, ast.Name) and func.id in carriers) \
+                and not (isinstance(func, ast.Subscript)
+                         and _root_name(func) in carriers):
+            continue
+        if any(_contains_root(value, roots) for value in _call_values(node)):
+            return True  # _f = getattr(*_pair); _h = _f; _h(common)
     return False
 
 
@@ -2159,7 +2199,12 @@ def _foreign_writes(tree, watched, span):
     walk around the check.
     """
     watched_roots = _alias_roots(tree, watched, span)
-    module_roots, table_roots = _sys_aliases(tree, span)
+    module_roots, table_roots, container_tables = _sys_aliases(tree, span)
+    # A name a container handed a table to stays on the table side even when it
+    # also named the module itself (``both = sys`` then ``both = [sys.path]``):
+    # the subtraction below assumes a module name cannot be indexed into a
+    # table, and the container is exactly what breaks that assumption.
+    guarded_tables = table_roots - (module_roots - container_tables)
     roots = watched_roots | table_roots
     parameters = _parameters(tree, span)
     mutating, unbound = _mutating_functions(tree, span)
@@ -2220,7 +2265,7 @@ def _foreign_writes(tree, watched, span):
                     return True  # sys.modules.update(...), sys.path.append(...)
                 # The receiver is matched by containment: ``[_m][0].update(...)``
                 # names the table without spelling it as a bare name.
-                if _contains_root(func.value, table_roots - module_roots):
+                if _contains_root(func.value, guarded_tables):
                     return True  # _p = sys.path; _p.append(...) / _m.update(...)
                 if _contains_root(func.value, watched_roots - table_roots):
                     return True  # common.__dict__.update(...), _c.clear()

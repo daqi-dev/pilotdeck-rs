@@ -1404,6 +1404,42 @@ def run():
                       + "x = [0]\n_a = x.copy()\n_b = list(x)\n"
                         "_c = [e for e in x]\nprint(_a, _b, _c)\n"
                       + _gw_tail) is not None)
+    # r31：容器重复、把方法读成值、反射绑定再换名、模块名被容器换成表。
+    case("gateway 容器重复后被看护对象仍在 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "rows = [common] * 3\nrows[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway sys 表容器重复 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\nrows = [_m] * 2\n"
+                        "rows[0].update({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway 把 dict.update 读成值再喂被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    pass\n_g = dict.update\n"
+                        "_g(common, {'A2_SCRIPTS': ()})\n" + _gw_tail) is None)
+    case("gateway 反射取 dict.update 再喂被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    pass\n"
+                        "_g = getattr(dict, 'update')\n"
+                        "_g(common, {'A2_SCRIPTS': ()})\n" + _gw_tail) is None)
+    case("gateway 反射绑定换名后仍喂被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_n = '_swap'\n_g = getattr(_C(), _n)\n_h = _g\n"
+                        "_h(common)\n" + _gw_tail) is None)
+    case("gateway 模块名被容器换成表后写表 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\nboth = sys\nboth = [sys.path]\n"
+                        "both[0].append('/tmp/evil')\n" + _gw_tail) is None)
+    # 正控：同样的拼法落在自己的数据上不该被跟随。
+    case("gateway 自己的容器重复 / 自己的 dict.update → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    pass\n_d = {'k': 1}\n"
+                        "_g = dict.update\n_g(_d, {'k': 2})\n"
+                        "rows = [1] * 3\nprint(_d, rows)\n"
+                      + _gw_tail) is not None)
+
     # 白名单每个成员都要有配对的负控（名单漂移即红）与正控（干净数据不误拦）。
     for _consumer in sorted(cfd._LAMBDA_CONSUMERS):
         case(f"gateway 无主 lambda 交给 {_consumer} 且同时喂被看护对象 → 不可判定",
