@@ -33,6 +33,11 @@ pub struct PendingDialog {
 pub enum ConsumeResult {
     Entry(Box<ConsumedDialog>),
     NotPending,
+    /// The request is still pending, but not the dialog the caller validated:
+    /// a host callback reentered the bus between the snapshot and the consume
+    /// and replaced it. Delivering would hand the new dialog an answer its own
+    /// validator never saw, so this fails closed like [`Self::NotPending`].
+    Replaced,
     LeaseRequired,
 }
 
@@ -44,6 +49,11 @@ pub enum ConsumeResult {
 pub struct ConsumedDialog {
     pub entry: PendingDialog,
     lease: Option<ActiveLease>,
+    /// Where the entry sat in its session bucket. TS `remove()` leaves the
+    /// bucket untouched when `onSettled` throws, so [`Self::restore`] puts it
+    /// back at its original position instead of appending to the tail (which
+    /// would reorder `list`).
+    index: usize,
 }
 
 /// A session-rejected dialog plus its own "settled" broadcast. TS
@@ -233,7 +243,11 @@ impl GatewayUserDialogBus {
             ("requestId", JsValue::String(request.clone())),
             ("reason", reason.into()),
         ]));
-        Some(ConsumedDialog { entry, lease })
+        Some(ConsumedDialog {
+            entry,
+            lease,
+            index,
+        })
     }
 
     /// Puts a consumed dialog back after its settle hook failed outside the
@@ -242,7 +256,11 @@ impl GatewayUserDialogBus {
     /// (GatewayUserDialogBus.ts:220-222). The caller discards the queued
     /// "settled" change instead of delivering it.
     pub fn restore(&mut self, session: &JsString, consumed: ConsumedDialog) {
-        let ConsumedDialog { entry, lease } = consumed;
+        let ConsumedDialog {
+            entry,
+            lease,
+            index,
+        } = consumed;
         if let Some(lease) = lease {
             self.leases
                 .insert((session.clone(), entry.request_id.clone()), lease);
@@ -252,23 +270,33 @@ impl GatewayUserDialogBus {
             .iter()
             .position(|value| value.request_id == entry.request_id)
         {
-            Some(index) => bucket[index] = entry,
-            None => bucket.push(entry),
+            Some(position) => bucket[position] = entry,
+            None => bucket.insert(index.min(bucket.len()), entry),
         }
     }
 
     /// As in TS this does not validate values: callers must call `accepts`
     /// first. The settle hook does not run here (#1442); the caller runs it
     /// after dropping the guard and restores on failure.
+    ///
+    /// `validated` is the validator handle the caller just ran outside the
+    /// guard. Between the snapshot and this call a host callback may reenter
+    /// the bus and register a different dialog under the same request id
+    /// (#1599); comparing the handle keeps the answer bound to the dialog it
+    /// was validated against instead of silently delivering it to the new one.
     pub fn consume_for_response(
         &mut self,
         session: &JsString,
         request: &JsString,
         lease_id: Option<&JsString>,
         reason: &str,
+        validated: Option<&AcceptsFn>,
     ) -> ConsumeResult {
-        if !self.has_pending(session, request) {
+        let Some(pending) = self.peek(session, request) else {
             return ConsumeResult::NotPending;
+        };
+        if validated.is_some_and(|validated| !Arc::ptr_eq(&pending.accepts, validated)) {
+            return ConsumeResult::Replaced;
         }
         if let Some(lease) = self.active_lease(session, request)
             && Some(&lease.lease_id) != lease_id

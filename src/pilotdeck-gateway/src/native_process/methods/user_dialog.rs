@@ -395,9 +395,8 @@ impl Requests {
                     };
                     outbox.deliver();
 
-                    if answer.to_value().get("behavior") == Some(&"answered".into())
-                        && let Some(snapshot) = snapshot
-                    {
+                    let answered = answer.to_value().get("behavior") == Some(&"answered".into());
+                    if answered && let Some(snapshot) = &snapshot {
                         let value = result_val
                             .get("value")
                             .cloned()
@@ -415,12 +414,7 @@ impl Requests {
                         }
                     }
 
-                    let reason_str =
-                        if answer.to_value().get("behavior") == Some(&"answered".into()) {
-                            "answered"
-                        } else {
-                            "cancelled"
-                        };
+                    let reason_str = if answered { "answered" } else { "cancelled" };
 
                     // TS hands the bus `input.leaseId?.trim()`
                     // (InProcessGateway.ts:2683), not the raw validated string.
@@ -435,12 +429,32 @@ impl Requests {
                             &request_id,
                             lease_id.as_ref(),
                             reason_str,
+                            // Only an answered response was validated against
+                            // the snapshot; a cancel removes whatever is
+                            // pending, like TS (#1599).
+                            if answered {
+                                snapshot.as_ref().map(|snapshot| &snapshot.accepts)
+                            } else {
+                                None
+                            },
                         );
                         let outbox = bus.drain_events();
                         (consumed, outbox)
                     };
                     match consumed {
                         ConsumeResult::NotPending => {
+                            outbox.deliver();
+                            Ok(crate::metadata::object([(
+                                "delivered",
+                                JsValue::Bool(false),
+                            )]))
+                        }
+                        ConsumeResult::Replaced => {
+                            // A host callback reentered the bus between the
+                            // snapshot and this consume and put a different
+                            // dialog under the same request id (#1599). The
+                            // answer was validated against the old one, so it
+                            // must not be delivered to the new one.
                             outbox.deliver();
                             Ok(crate::metadata::object([(
                                 "delivered",
