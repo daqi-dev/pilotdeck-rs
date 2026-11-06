@@ -8,11 +8,11 @@ test reads a committed-mode mutant of ``capture.py`` and fails the golden
 sha256 while the source guard still holds the tree lock. GREEN proves the fixed
 test survives the same writer protocol: an independent writer child holds the
 tree lock with the mutant on disk, the fixed test waits for the lease, and
-reads only restored bytes. Both verdicts are published after every source was
+reads only restored bytes. Every row is published after each source was
 restored and re-verified; any non-KILLED row exits non-zero.
 
-The two directions use separate judges. In RED a golden-sha failure is the
-mutant being killed; in GREEN only a *pass* counts, and the pass must carry the
+GREEN and RED use separate judges. In RED a golden-sha failure is the mutant
+being killed; in GREEN only a *pass* counts, and the pass must carry the
 resident test's own measured lease wait (``#1662 read lease wait ms=``) at or
 above ``MIN_LEASE_WAIT_MS`` -- a pass without it never met the writer and
 proves nothing. GREEN failures of any kind are INVALID, never KILLED.
@@ -96,6 +96,12 @@ MIN_LEASE_WAIT_MS = 500
 # ``--stop-check`` only exercises the writer's exit contract, so it can use a
 # short hold: nothing waits on the lease there.
 STOP_CHECK_HOLD_SECONDS = 5
+# The SIGTERM run must outlive ``STOP_CHECK_STOP_BUDGET`` so the controller's own
+# *terminate* branch is exercised, and the stop has to land well inside the hold
+# to prove the signal -- not the sleep ending -- is what stopped it
+# (#1662 review r10 P2).
+STOP_CHECK_STOP_HOLD_SECONDS = 30
+STOP_CHECK_STOP_BUDGET = 5
 # Printed to stderr only when the writer takes the requested-stop path; the
 # self-check greps for it so "rc 0 + restored" cannot be satisfied by a SIGTERM
 # that was ignored while the writer ran out its hold (#1662 review r9 P2).
@@ -253,10 +259,15 @@ def writer(out, hold):
                     # also see the mutant bytes (#166 tmp-and-rename).
                     opened = epoch_ms()
                     publish_hold(out, opened, None)
-                    # Entered as soon as the hold start is published: every
-                    # "released" record then has a published window behind it,
-                    # and a stop landing between the two markers still leaves
-                    # consistent evidence (#1662 review r7/r8/r9 P3).
+                    # "Entered" means the hold start is on disk, so every
+                    # "released" record has a published ``start_ms`` behind it and
+                    # a stop landing between these two markers still leaves
+                    # consistent evidence (#1662 review r7/r8/r9 P3). The
+                    # filename marker is published right after; a signal caught
+                    # in between publishes a release without the marker, which
+                    # controllers read as "window never opened" -- fail-closed,
+                    # and unreachable here because both callers signal only after
+                    # seeing that marker (r10 P3).
                     entered[0] = True
                     publish(out / 'writer-window-open', 'open\n')
                     time.sleep(hold)
@@ -353,8 +364,11 @@ def force_stop(process, out):
     return False
 
 
-def stop_writer(process, out):
+def stop_writer(process, out, budget=WRITER_EXIT_BUDGET):
     """Bounded stop: let the writer restore first, then terminate, then kill.
+
+    ``budget`` bounds each of the two waits; the self-check passes a short one so
+    the *terminate* branch is the one that runs (#1662 review r10 P2).
 
     The exit status is judged unconditionally: a writer we terminated ourselves
     restores and then exits 0, so anything else -- a restore that raised, a HEAD
@@ -364,12 +378,12 @@ def stop_writer(process, out):
     """
     killed = False
     try:
-        stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
+        stdout, stderr = process.communicate(timeout=budget)
     except subprocess.TimeoutExpired:
         # Graceful first: the handler unwinds mutating_sources and restores.
         process.terminate()
         try:
-            stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
+            stdout, stderr = process.communicate(timeout=budget)
         except subprocess.TimeoutExpired:
             killed = True
             _kill_group(process)
@@ -490,9 +504,13 @@ def green(out):
                     fallback_note = (f'; the stop fallback itself failed: '
                                      f'{type(stop_failure).__name__}: {stop_failure}')
             if not stopped:
+                # ``force_stop`` answers by exit status, so this covers both a
+                # writer that had to be killed and one that exited non-zero on
+                # its own (restore or HEAD verification failed). Say both, or
+                # the audit trail claims a kill that never happened (r10 P3).
                 stop_error = RuntimeError(
-                    f'{type(error).__name__}: {error}; the writer had to be killed or '
-                    f'could not be stopped, source restoration is NOT confirmed'
+                    f'{type(error).__name__}: {error}; the writer did not stop cleanly '
+                    f'(killed, or exited non-zero), source restoration is NOT confirmed'
                     f'{fallback_note}')
     for interrupt in (failure, hard_interrupt):
         if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
@@ -521,13 +539,14 @@ def green(out):
     if end_ms is None:
         return 'INVALID', ('the writer never published the end of its hold; the acquisition '
                            'timestamp cannot be attributed to it')
-    if end_ms - start_ms <= 2 * WITNESS_MARGIN_MS:
+    if end_ms - start_ms <= WITNESS_MARGIN_MS:
         # Derived-quantity guard: shortening HOLD_SECONDS (the neighbouring
-        # ``STOP_CHECK_HOLD_SECONDS`` is easy to mix up) would make the window
-        # smaller than the margin and every refusal would be "outside" it
-        # (#1662 review r9 P3).
+        # ``STOP_CHECK_HOLD_SECONDS`` is easy to mix up) would make the hold no
+        # wider than the margin, so no refusal could ever sit inside
+        # ``[start_ms, end_ms - margin]`` and every row would be INVALID with a
+        # misleading reason (#1662 review r9 P3 / r10 P3).
         return 'INVALID', (f'the published writer hold spans {end_ms - start_ms} ms, which '
-                           f'does not clear twice the {WITNESS_MARGIN_MS} ms witness margin')
+                           f'does not clear the {WITNESS_MARGIN_MS} ms witness margin')
     # The witness is the *refused* attempt: ``try_lock_shared`` returning
     # WouldBlock is a direct observation that an exclusive holder was there, and
     # nothing but a real holder produces it. Requiring that instant to fall
@@ -594,9 +613,10 @@ def stop_check(out):
 
     Two runs, no cargo:
 
-    * ``sigterm`` -- SIGTERM lands inside the window. A *requested* stop must
-      restore the guarded bytes, record ``restored: true`` and exit 0; that is
-      what lets ``stop_writer`` judge the exit status unconditionally.
+    * ``sigterm`` -- the writer outlives a short ``stop_writer`` budget, so the
+      controller takes its own *terminate* branch. A requested stop must restore
+      the guarded bytes, record ``restored: true`` and exit 0; that is what lets
+      ``stop_writer`` judge the exit status unconditionally.
     * ``own-failure`` -- the writer fails on its own after the hold
       (``PDRS_1662_WRITER_FAIL_AFTER_HOLD``). It must exit non-zero, and
       ``stop_writer`` must *report* it instead of returning cleanly (#1662
@@ -605,7 +625,9 @@ def stop_check(out):
     _ensure_workspace_scanner()
     before = capture.read_bytes()
     rows = []
-    for label, signal_it in (('sigterm', True), ('own-failure', False)):
+    for label, hold, signal_it in (
+            ('sigterm', STOP_CHECK_STOP_HOLD_SECONDS, True),
+            ('own-failure', STOP_CHECK_HOLD_SECONDS, False)):
         run_out = out / label
         run_out.mkdir(parents=True, exist_ok=False)
         environment = dict(os.environ)
@@ -613,10 +635,11 @@ def stop_check(out):
             environment['PDRS_1662_WRITER_FAIL_AFTER_HOLD'] = '1'
         process = subprocess.Popen(
             [sys.executable, '-I', str(Path(__file__).resolve()), '--writer',
-             str(run_out), str(STOP_CHECK_HOLD_SECONDS)],
+             str(run_out), str(hold)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, env=environment)
         reported = None
+        cleanup_error = None
         try:
             deadline = time.monotonic() + WRITER_ENTRY_BUDGET
             while not (run_out / 'writer-window-open').is_file():
@@ -625,17 +648,15 @@ def stop_check(out):
                 if time.monotonic() > deadline:
                     raise TimeoutError(f'#1662 {label}: writer never opened its window')
                 time.sleep(0.05)
-            if signal_it:
-                # Exactly what ``stop_writer`` does once its wait times out.
-                process.terminate()
-                stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
-                exclusive_write(run_out / 'stop-check.stdout', stdout or '')
-                exclusive_write(run_out / 'stop-check.stderr', stderr or '')
-            else:
-                try:
-                    stop_writer(process, run_out)
-                except RuntimeError as error:
-                    reported = str(error)
+            try:
+                # The SIGTERM run goes through the controller's own stop path, with
+                # a budget far below its hold so the *terminate* branch is the one
+                # exercised (a manual terminate() here would leave that branch
+                # untested; #1662 review r10 P2).
+                stop_writer(process, run_out,
+                            budget=STOP_CHECK_STOP_BUDGET if signal_it else WRITER_EXIT_BUDGET)
+            except RuntimeError as error:
+                reported = str(error)
         finally:
             if process.poll() is None:
                 # Never a bare kill here: an interrupt landing mid-restore would
@@ -644,22 +665,41 @@ def stop_check(out):
                 # (#1662 review r9 P0).
                 try:
                     force_stop(process, run_out)
-                except BaseException:
-                    pass
+                except BaseException as error:
+                    # Recorded, never swallowed: the writer may still hold the
+                    # lock with the mutant on disk, and the caller must say so
+                    # instead of reporting a clean row (#1662 review r10 P1).
+                    cleanup_error = error
         row = {'label': label, 'rc': process.returncode,
                'window': (run_out / 'writer-window-open').is_file(),
                'bytes_back': capture.read_bytes() == before,
-               'stderr': (run_out / 'stop-check.stderr').read_text()
-               if (run_out / 'stop-check.stderr').is_file() else '',
-               'released': read_released(run_out), 'reported': reported}
+               'start_ms': (read_hold(run_out)[0]
+                            if (run_out / WRITER_HOLD).is_file() else None),
+               'stderr': (run_out / 'writer.stderr').read_text()
+               if (run_out / 'writer.stderr').is_file() else '',
+               'released': read_released(run_out), 'reported': reported,
+               'cleanup': cleanup_error}
         rows.append(row)
         print(f'{label}: rc={row["rc"]} window={row["window"]} '
               f'bytes_back={row["bytes_back"]} released={row["released"]} '
               f'reported={row["reported"]!r}', flush=True)
+    for row in rows:
+        if row['cleanup'] is not None and not isinstance(row['cleanup'], Exception):
+            # A real interrupt (Ctrl-C / SystemExit) still aborts the run, as in
+            # ``green()``: the writer may be alive, and turning that into a quiet
+            # INVALID row would hide it (#1662 review r10 P1).
+            raise row['cleanup']
     sigterm, own_failure = rows
     failed = []
+    for row in rows:
+        if row['cleanup'] is not None:
+            failed.append(f'{row["label"]}: the stop fallback was itself interrupted '
+                          f'({type(row["cleanup"]).__name__}: {row["cleanup"]}); the writer '
+                          f'may still hold the lock and its restore is NOT confirmed')
     if not sigterm['window']:
         failed.append('the SIGTERM run never published its window')
+    if sigterm['reported'] is not None:
+        failed.append(f'stop_writer rejected a requested stop: {sigterm["reported"]!r}')
     if sigterm['rc'] != 0:
         failed.append(f'a requested stop exited {sigterm["rc"]}, not 0')
     # The writer prints the ``_Stopped`` text on the graceful path only. Without
@@ -673,6 +713,15 @@ def stop_check(out):
     if not (sigterm['released'] and sigterm['released'][1]):
         failed.append(f'a requested stop did not record restored: true '
                       f'(record={sigterm["released"]})')
+    # The terminate branch is only *proven* if the writer stopped well before its
+    # hold would have ended on its own (#1662 review r10 P2).
+    if sigterm['released'] is None or sigterm['start_ms'] is None:
+        failed.append('the SIGTERM run published no hold interval to time the stop against')
+    else:
+        stopped_after_ms = sigterm['released'][0] - sigterm['start_ms']
+        if not 0 < stopped_after_ms < STOP_CHECK_STOP_HOLD_SECONDS * 1000:
+            failed.append(f'the requested stop took {stopped_after_ms} ms, which does not '
+                          f'land inside the {STOP_CHECK_STOP_HOLD_SECONDS} s hold')
     if not own_failure['window']:
         failed.append('the own-failure run never opened its window')
     if own_failure['rc'] == 0:
