@@ -148,19 +148,15 @@ mutations = [
      LAZY_DISPATCH_TO,
      'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 fifo fixture owes the second append a receipt'),
     # #1648: the settle must come from the receipt write, not from the caller's
-    # first poll. Without the signal the witnessed job sits on the single worker
-    # for the whole `WITNESS_SETTLE`, so the append behind a withheld witnessed
-    # future starves past the observation cap.
+    # first poll. Keeping the sender alive without ever sending models that
+    # deferred settle: the witnessed job sits on the single worker for the whole
+    # `WITNESS_SETTLE`, so the append behind a withheld witnessed future starves
+    # past the observation cap and the receipt-bound assertion fires.
     ('registry-witness-settle-not-from-write', STIMULUS,
-     '''            let write = handle.spawn_blocking(move || {
-                let outcome = write();
-                let _ = settled.send(outcome.is_ok());
-                outcome
-            });''',
-     '''            let write = handle.spawn_blocking(move || {
-                let _ = &settled;
-                write()
-            });''',
+     '''                let _ = settled.send(outcome.is_ok());
+                outcome''',
+     '''                std::mem::forget(settled);
+                outcome''',
      'storage::stimulus_tests::withheld_witnessed_future_does_not_park_the_registry_worker', '#1370 a withheld witnessed future does not park the registry worker'),
     # fix-r2: a barrier that fails while held must release the hold, or every
     # later entry at the site is stamped with a queued receipt it does not owe.
