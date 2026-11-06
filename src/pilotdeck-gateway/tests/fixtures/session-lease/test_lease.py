@@ -43,6 +43,74 @@ class LeaseTests(unittest.TestCase):
         except Exception as error:
             self.fail(marker + ': ' + repr(error))
 
+    def test_guarded_sources_exclude_captured_fixture(self):
+        marker = '#1662 guarded sources exclude capture.py whose disk bytes are golden-verified'
+        path = Path(__file__).with_name('negative.py')
+        try:
+            spec = importlib.util.spec_from_file_location('lease_negative_exclusion', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            self.assertTrue(module.capture not in module.guarded_sources, marker)
+            capture_case = next(row for row in module.cases
+                                if row[0] == 'capture-term-raises-twice')
+            self.assertTrue(capture_case[1] == module.capture, marker)
+        except Exception as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_capture_case_mutates_memory_only(self):
+        marker = '#1662 the capture case mutates memory only, never the disk fixture'
+        path = Path(__file__).with_name('negative.py')
+        fixture = ROOT / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py'
+        try:
+            spec = importlib.util.spec_from_file_location('lease_capture_routing', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            commands, writes = [], []
+            real_write_text = Path.write_text
+
+            def recording_write_text(self, data, *args, **keywords):
+                if self.resolve() == fixture:
+                    # Record, do not write: the fixture bytes stay pristine even
+                    # when the routing under test is broken.
+                    writes.append('write_text')
+                    return None
+                return real_write_text(self, data, *args, **keywords)
+
+            def fake_run_owned(command, **_keywords):
+                commands.append(list(command))
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            class fake_guard:
+                def __init__(self, *_args, **_keywords):
+                    pass
+
+                def __enter__(self):
+                    return {}
+
+                def __exit__(self, *_exc):
+                    return None
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-1662-lease-') as folder:
+                    with patch.object(module, 'mutating_sources', fake_guard), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch.object(Path, 'write_text', recording_write_text), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'),
+                                                       '--case', 'capture-term-raises-twice']):
+                        module.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(writes == [], marker)
+            self.assertTrue(any(command[3:5] == ['--memory-run', 'capture-term-raises-twice']
+                                for command in commands), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
     def test_documented_release_definition(self):
         marker = '#1221 allStopped documents lease proof separately from scoring'
         try:

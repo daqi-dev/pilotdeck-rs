@@ -23,8 +23,57 @@ use std::{
 
 const NEGATIVE_CONTROLS: u64 = 73;
 
+/// #1662 upper bound for waiting out one committed-mode negative control that
+/// holds the tree lock; far above the Python side's 900 s acquisition budget.
+const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
+
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
+}
+
+fn repo_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("#1662 repository root above the pilotdeck-cli manifest")
+}
+
+/// #1662 shared read lease over the fixture directory's on-disk bytes.
+///
+/// Committed-mode negative controls mutate guarded sources in place while an
+/// exclusive flock on `<root>/.negative-source.lock` is held (the gateway
+/// fixtures' `negative_process.py` TreeLock). A resident test reading those
+/// bytes without that lease races the mutation window and can false-fail the
+/// golden sha256, and a SIGKILLed runner's leftover mutant keeps it red. A
+/// shared lock suffices: readers never exclude each other, and the writer
+/// restores every guarded source before releasing. Exceeding the bound fails
+/// with this marker instead of hanging.
+fn fixture_read_lease() -> fs::File {
+    let path = repo_root().join(".negative-source.lock");
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .expect("#1662 negative source lock file must open");
+    let deadline = Instant::now() + READ_LEASE_WAIT;
+    loop {
+        match file.try_lock_shared() {
+            Ok(()) => return file,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "#1662 fixture read lease wait exceeded {} seconds",
+                    READ_LEASE_WAIT.as_secs()
+                );
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                panic!("#1662 fixture read lease acquisition failed: {error}")
+            }
+        }
+    }
 }
 
 fn verify_hash_group(source: &Value, field: &str, root: &Path) {
@@ -89,6 +138,7 @@ fn verify_all_files(source: &Value, directory: &Path) {
 // prevents the ignored regeneration command from being the only golden guard.
 #[test]
 fn signal_oracle_matches_recorded_source_and_local_files() {
+    let _lease = fixture_read_lease();
     verify_local_oracle(&fixture_directory());
 }
 
@@ -148,6 +198,7 @@ fn rejects_with_marker(action: impl FnOnce() + std::panic::UnwindSafe, marker: &
 
 #[test]
 fn signal_local_replay_rejects_disk_drift() {
+    let _lease = fixture_read_lease();
     let directory = fixture_directory();
     let source: Value = serde_json::from_slice(
         &fs::read(directory.join("source.json")).expect("#1145 local negative original"),
@@ -184,6 +235,7 @@ fn signal_local_replay_rejects_disk_drift() {
 
 #[test]
 fn signal_provenance_rejects_replaced_identity_and_golden() {
+    let _lease = fixture_read_lease();
     let directory = fixture_directory();
     let mut source: Value = serde_json::from_slice(
         &fs::read(directory.join("source.json")).expect("#1145 identity negative original"),
@@ -287,6 +339,7 @@ fn run_node(directory: &Path, args: &[&std::ffi::OsStr], label: &str, budget: Du
 }
 
 fn regenerates_identically(fixture: &str) {
+    let _lease = fixture_read_lease();
     let scratch = Scratch::new();
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
@@ -375,6 +428,7 @@ fn verify_abort_state_oracle(oracle: &Value) {
 
 #[test]
 fn signal_abort_state_local_provenance() {
+    let _lease = fixture_read_lease();
     verify_local_oracle(&fixture_directory());
     let oracle: Value =
         serde_json::from_str(include_str!("fixtures/sdk-signal-abort-state/oracle.json"))
@@ -487,6 +541,7 @@ fn signal_negative_summary_rejects_missing_controls() {
 #[test]
 #[ignore = "requires PDRS_BASELINE; actual TS disk identity negative control"]
 fn signal_ts_provenance_rejects_disk_drift() {
+    let _lease = fixture_read_lease();
     let directory = fixture_directory();
     let source: Value = serde_json::from_slice(
         &fs::read(directory.join("source.json")).expect("#1145 TS negative source"),
