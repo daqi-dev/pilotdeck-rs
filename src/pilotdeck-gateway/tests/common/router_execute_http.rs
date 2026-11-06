@@ -257,6 +257,11 @@ async fn execute_http(
     let ctx = RouterExecuteContext {
         session_id: "s".into(),
         turn_id: "t".into(),
+        // `abortAfterText` in the recorded fixtures is TS's `controller.signal`,
+        // which is the same object handed to `router.execute` as `abortSignal`,
+        // so the spec's caller abort *is* the turn's flag — same as
+        // `tests/router_execute.rs`.
+        turn_abort: Some(abort.clone()),
         stream_options: StreamOptions {
             abort: Some(abort.clone()),
             ..Default::default()
