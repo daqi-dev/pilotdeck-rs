@@ -45,7 +45,7 @@ c8a21ce64dfa798a64667f82777704175b520115263f1917f56e0010c4b1754b  ../../scripts/
 7bab891b7690b21c2442229e7406d8d0d9e4feb2352df267852f61ac9acd9cba  ../../scripts/ui-server-parity/apparatus.py
 2586ba1c070e3e5a168820807051ca1b1845df091f6fae48f0dc6935d9fae180  ../../scripts/ui-server-parity/benchmark_clock.py
 209743e7db9181f7faa6a645c4859bb71be6b784b40c208fad001dec1babfcf3  ../../scripts/ui-server-parity/calibrate.py
-e8724af2dd0c7536dc514c136ed8b4ae099257aeae461ff8b303fd22111c8f7a  ../../scripts/ui-server-parity/calibrate.sh
+22c484287c2da2a818861bbe3c9e25f77e3883e50c248ce4ccfdfd3409cd0f30  ../../scripts/ui-server-parity/calibrate.sh
 206000021604a6f45890b1a3f8bc919117843452ca08648267de9c851b03ecd6  ../../scripts/ui-server-parity/chat_driver.mjs
 8db8e2dfa3212cc2e9388c2322910cbeb5e947fe34f1b4a3ef457a226b85d9c1  ../../scripts/ui-server-parity/check_coverage.py
 c2fc65bf4c281efe59bdb5f9aad146d50041a530ab7fe2d5810e91647e62e2f4  ../../scripts/ui-server-parity/check_frozen.py

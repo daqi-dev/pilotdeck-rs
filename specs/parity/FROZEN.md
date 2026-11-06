@@ -28,7 +28,7 @@
 | `scripts/parity/controls/review_r1.py` | `59870cd0fd658cd99d8e0d3ee352320dcc26919cd1f0bda5cd9d9f3d97a34b5e` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；setUp 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/controls/run_all.py` | `ae92319dcf69dadf5bda5dee265ce57008115f3d9f39a911cc4a70d44ed14666` | 2026-10-30 #1067 fix-r1 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照；run_controls 先建 `_tmp/`（新检出可跑） |
 | `scripts/parity/g03_compare.py` | `76886b502de58087470102653f8c50c00a362358916f84fe998917d6c945091b` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
-| `scripts/parity/round.py` | `b205e526389ba94c59476de077998ff2f366799d33887aef8ca88c50f89d8da0` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
+| `scripts/parity/round.py` | `5c1db239c3bc60f3e096197a4212b332d55950e0430b600ed5d9c12d6178542c` | 2026-10-26 #209 A1 重登记（**AI 代批，待人复核**） | 锁只在本次会话组证实停止后释放；清理期间挂起 SIGINT/SIGTERM |
 | `scripts/parity/score.py` | `2ef798219663b8c2758532479d0abb65a3081ff0967049978e1b6bb3489f1d3b` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 计分：普通第 i 对第 i；多态整类匹配；日期 / 同源 / 不重叠前提 |
 | `scripts/parity/self_compare.py` | `5f2bbc5087b389a8ddb6037d679c5bfaaa9375ebf03139247b6977765d2c0621` | 2026-10-25 #694 重登记（**AI 代批，待人复核**） | 比较器 / 驱动 / 对照 |
 
