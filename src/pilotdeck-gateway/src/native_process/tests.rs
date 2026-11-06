@@ -727,6 +727,55 @@ fn storage_stimulus_switch_matrix() {
     );
 }
 
+// #1371: the controlled loop stimulus entry, the third startup switch in this
+// family. Unset keeps the production default; a set value must name an
+// existing directory and is returned as the control directory; anything else
+// — including the empty string and a missing directory — fails closed at
+// startup. Note the value is only a directory here: whether it carries a plan
+// is decided later, and an armed directory without one stays inert.
+#[test]
+fn loop_stimulus_switch_matrix() {
+    negative_assert!(
+        matches!(assembly::loop_stimulus_switch(&Env::new()), Ok(None)),
+        "#1371 unset loop stimulus keeps the production default"
+    );
+    let scratch = Scratch::new();
+    let control = scratch.0.join("control");
+    std::fs::create_dir(&control).expect("#1371 control directory fixture");
+    let mut env = Env::new();
+    env.insert(
+        "PILOTDECK_NATIVE_LOOP_STIMULUS".into(),
+        control.to_str().expect("#1371 control UTF8").into(),
+    );
+    let resolved =
+        assembly::loop_stimulus_switch(&env).expect("#1371 existing control directory resolves");
+    negative_assert_eq!(
+        resolved.as_deref(),
+        Some(control.as_path()),
+        "#1371 loop switch returns the control directory"
+    );
+    for value in ["", " "] {
+        let mut env = Env::new();
+        env.insert("PILOTDECK_NATIVE_LOOP_STIMULUS".into(), value.into());
+        negative_assert!(
+            assembly::loop_stimulus_switch(&env).is_err(),
+            "#1371 empty loop switch value rejected"
+        );
+    }
+    let missing = scratch.0.join("missing-control");
+    let mut env = Env::new();
+    env.insert(
+        "PILOTDECK_NATIVE_LOOP_STIMULUS".into(),
+        missing.to_str().expect("#1371 missing UTF8").into(),
+    );
+    let error = assembly::loop_stimulus_switch(&env)
+        .expect_err("#1371 missing stimulus directory rejected");
+    negative_assert!(
+        error.to_string().contains("existing directory"),
+        "#1371 missing stimulus directory reports the explicit gate: {error}"
+    );
+}
+
 // A runs.json directory makes opening the persistent registry fail, so only
 // the off switch can complete startup: unset and "on" pin the production
 // default, and an invalid value is rejected before the file is touched.
