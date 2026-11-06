@@ -1485,7 +1485,7 @@ def _dynamic_write_names(tree):
                     names |= _updated_keys(node)
                 continue
             helper = _callable_name(func, kinds)
-            if helper == 'setattr':
+            if _setattr_arguments(node, kinds) is not None:
                 names |= _setattr_module_keys(node, kinds, tree)
             elif helper == 'exec' and node.args:
                 # ``exec(source, namespace[, namespace])`` writes *that*
@@ -1534,8 +1534,26 @@ def _expr_is_sys_modules(node, kinds):
     if isinstance(node, ast.Name):
         return 'sysmods' in kinds.get(node.id, ())
     return (isinstance(node, ast.Attribute) and node.attr == 'modules'
-            and isinstance(node.value, ast.Name)
-            and 'sys' in kinds.get(node.value.id, ()))
+            and 'sys' in _expr_kinds(node.value, kinds))
+
+
+def _import_literal(node):
+    """``'sys'`` / ``'builtins'`` when *node* imports one by a literal (#892 r28).
+
+    ``__import__('sys')`` and ``importlib.import_module('builtins')`` name the
+    same modules as ``import sys as s``; r27 resolved only the statement form,
+    so ``__import__('sys').modules[__name__].__setattr__(...)`` stayed green.
+    """
+    func = node.func
+    if not ((isinstance(func, ast.Name) and func.id in ('__import__', 'import_module'))
+            or (isinstance(func, ast.Attribute) and func.attr == 'import_module')):
+        return None
+    if len(node.args) != 1:
+        return None
+    argument = node.args[0]
+    if isinstance(argument, ast.Constant) and argument.value in ('sys', 'builtins'):
+        return argument.value
+    return None
 
 
 def _expr_kinds(node, kinds):
@@ -1552,9 +1570,8 @@ def _expr_kinds(node, kinds):
         return kinds.get(node.id, frozenset())
     if isinstance(node, ast.Attribute):
         if node.attr == 'modules':
-            if ((isinstance(node.value, ast.Name)
-                 and 'sys' in kinds.get(node.value.id, ()))
-                    or 'sysmods' in _expr_kinds(node.value, kinds)):
+            if 'sys' in _expr_kinds(node.value, kinds) \
+                    or 'sysmods' in _expr_kinds(node.value, kinds):
                 return frozenset({'sysmods'})
             return frozenset()
         if node.attr == '__dict__':
@@ -1572,6 +1589,9 @@ def _expr_kinds(node, kinds):
             return frozenset({'module'})
         return frozenset()
     if isinstance(node, ast.Call):
+        imported = _import_literal(node)
+        if imported is not None:
+            return frozenset({imported})
         func = node.func
         if isinstance(func, ast.Name):
             found = kinds.get(func.id, ())
@@ -1676,19 +1696,115 @@ def _write_key_names(expr, tree):
     return {'*'} if found is None else found
 
 
+def _setattr_arguments(node, kinds):
+    """``(target, key)`` a setattr/setitem spelling writes, else ``None`` (#892 r28).
+
+    r27 resolved the builtin's aliases but still read only calls *named*
+    ``setattr``; ``md.__setattr__('common', <stub>)``, ``object.__setattr__(md,
+    'common', <stub>)``, ``type(md).__setattr__(md, 'common', <stub>)``,
+    ``mapping.__setitem__('common', <stub>)`` and ``dict.__setitem__(mapping,
+    'common', <stub>)`` are the same write.  The three-argument forms name the
+    target first; the two-argument forms write their own receiver.
+    """
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr in ('__setattr__', '__setitem__'):
+        if len(node.args) == 2:
+            return func.value, node.args[0]
+        if len(node.args) == 3:
+            return node.args[0], node.args[1]
+        return None
+    if isinstance(func, ast.Attribute) and func.attr == 'setattr':
+        # #892 r29: a helper module's ``setattr`` wrapper -- ``attr.setattr(obj,
+        # 'common', <stub>)`` -- is the same write as the builtin's.
+        if len(node.args) == 3:
+            return node.args[0], node.args[1]
+        if len(node.args) == 2:
+            return func.value, node.args[0]
+        return None
+    if _callable_name(func, kinds) == 'setattr' and len(node.args) >= 2:
+        return node.args[0], node.args[1]
+    return None
+
+
+# #892 r29: the unbound spelling of a mapping method names its target first
+# (``dict.update(mapping, ...)``), and any helper module's ``setattr`` wrapper
+# is the builtin's.  r28 read only the bound ``receiver.method(...)`` spelling.
+_BUILTIN_TYPES = ('dict', 'type', 'object', 'list', 'set', 'str', 'bytes')
+_MAPPING_METHODS = ('update', 'setdefault', 'pop', 'popitem', 'clear', '__ior__',
+                    '__setitem__')
+
+
+def _builtin_type_name(node, kinds):
+    """The builtin type *node* names, else ``None`` (#892 r29)."""
+    if isinstance(node, ast.Name) and node.id in _BUILTIN_TYPES:
+        # a name the file rebinds is not the builtin
+        return None if kinds.get(node.id) else node.id
+    if isinstance(node, ast.Attribute) and node.attr in _BUILTIN_TYPES:
+        if ('builtins' in _expr_kinds(node.value, kinds)
+                or (isinstance(node.value, ast.Name)
+                    and node.value.id == '__builtins__')):
+            return node.attr
+    return None
+
+
+def _mapping_method_call(node, kinds, tree):
+    """``(target, keys)`` a mapping-method spelling writes, else ``None`` (#892 r29).
+
+    ``dict.update(md.__dict__, common=<stub>)``,
+    ``dict.setdefault(md.__dict__, 'common', <stub>)`` and
+    ``dict.__setitem__(md.__dict__, 'common', <stub>)`` write the same mapping
+    as the bound ``md.__dict__.update(...)`` the r28 rule reads.
+    """
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+        return None
+    attr = node.func.attr
+    if attr not in _MAPPING_METHODS:
+        return None
+    receiver = node.func.value
+    if _builtin_type_name(receiver, kinds) is not None:
+        if not node.args:
+            return None
+        target, args, keywords = node.args[0], node.args[1:], node.keywords
+    else:
+        target, args, keywords = receiver, node.args, node.keywords
+    if attr == 'update':
+        keys = {key for key, _value in _updated_items_parts(args, keywords)}
+    elif attr in ('setdefault', 'pop', '__setitem__'):
+        keys = _write_key_names(args[0], tree) if args else {'*'}
+    else:
+        keys = {'*'}
+    return target, keys
+
+
+def _dict_replacement_hits(value, shared):
+    """Whether a dict literal assigned to a namespace can spell *shared*."""
+    if (isinstance(value, ast.Dict)
+            and all(isinstance(key, ast.Constant) and isinstance(key.value, str)
+                    for key in value.keys)):
+        return bool({key.value for key in value.keys} & set(shared))
+    return True
+
+
 def _updated_items(node):
     """``(key, value)`` pairs a dict-update call writes, ``('*', node)`` if open."""
+    return _updated_items_parts(node.args, node.keywords)
+
+
+def _updated_items_parts(args, keywords):
+    """``(key, value)`` pairs an ``update`` writes, ``('*', None)`` if open."""
     items = []
-    for argument in node.args:
+    for argument in args:
         if not isinstance(argument, ast.Dict):
-            return [('*', node)]
+            return [('*', None)]
         for key, value in zip(argument.keys, argument.values):
             if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
-                return [('*', node)]
+                return [('*', None)]
             items.append((key.value, value))
-    for keyword in node.keywords:
+    for keyword in keywords:
         if keyword.arg is None:
-            return [('*', node)]
+            return [('*', None)]
         items.append((keyword.arg, keyword.value))
     return items
 
@@ -1707,19 +1823,22 @@ def _setdefault_key(node):
 
 
 def _setattr_module_keys(node, kinds, tree):
-    """Names ``setattr(<module object>, ...)`` can replace (#892 r26).
+    """Names a ``setattr`` spelling on a module object can replace (#892 r26).
 
     Only a module-object target is collected here: the apparatus itself calls
     ``setattr(md, name, value)`` with a non-literal key on a plain object, and
     that is a receiver attribute write, judged by ``_withdrawn_receivers``
-    instead of withdrawing every name in the file.
+    instead of withdrawing every name in the file.  #892 r28: the dunder
+    spellings (``sys.modules[__name__].__setattr__(...)``,
+    ``object.__setattr__(globals(), ...)``) go through the same resolver.
     """
-    if len(node.args) < 2:
+    written = _setattr_arguments(node, kinds)
+    if written is None:
         return set()
-    target = node.args[0]
+    target, key = written
     if not (_is_namespace_object(target, kinds) or _is_module_object(target, kinds)):
         return set()
-    return _write_key_names(node.args[1], tree)
+    return _write_key_names(key, tree)
 
 
 def _sys_aliases(tree):
@@ -2117,7 +2236,7 @@ def _proven_modules_from(tree, bindings, imported, sys_poisoned, kinds=None):
 
 
 def _receiver_attribute_writes(tree, receivers, shared):
-    """Receivers whose shared attribute a ``setattr`` replaced (#892 r26).
+    """Receivers whose shared attribute a write replaced (#892 r26/r28).
     ``setattr(md, 'common', <stub>)`` rewrites the relay's shared attribute
     without any binding of ``md`` changing, so ``md.common.aggregate_status``
     keeps counting as the shared map.  A non-literal key on a receiver
@@ -2130,6 +2249,29 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # #892 r27: ``m = md`` hands the relay to another name; both spellings are
     # the same receiver (DeepSeek sibling r26 P1-4).
     roots = {name: {name} for name in receivers}
+    dict_roots = {}
+
+    def receiver_roots(node):
+        if isinstance(node, ast.Name):
+            return set(roots.get(node.id, ())) & receivers
+        return set()
+
+    def namespace_dict_roots(node):
+        """Receivers whose ``__dict__`` mapping *node* evaluates to (#892 r28).
+
+        ``md.__dict__``, ``vars(md)`` and a name bound to either (``d =
+        md.__dict__``) are the same mapping; r27 judged only the first two, so
+        ``d = md.__dict__; d['common'] = <stub>`` kept the relay trusted.
+        """
+        if isinstance(node, ast.Attribute) and node.attr == '__dict__':
+            return receiver_roots(node.value)
+        if (isinstance(node, ast.Call) and _callable_name(node.func, kinds) == 'vars'
+                and node.args):
+            return receiver_roots(node.args[0])
+        if isinstance(node, ast.Name):
+            return set(dict_roots.get(node.id, ())) & receivers
+        return set()
+
     for _ in range(4):
         grown = False
         for node in ast.walk(tree):
@@ -2139,29 +2281,25 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 value, targets = node.value, [node.target]
             else:
                 continue
-            if not isinstance(value, ast.Name) or value.id not in roots:
-                continue
-            for target in targets:
-                for name in _target_names(target):
-                    known = roots.setdefault(name, set())
-                    if not roots[value.id] <= known:
-                        known |= roots[value.id]
-                        grown = True
+            for table, found in ((roots, receiver_roots(value)),
+                                 (dict_roots, namespace_dict_roots(value))):
+                if not found:
+                    continue
+                for target in targets:
+                    for name in _target_names(target):
+                        known = table.setdefault(name, set())
+                        if not found <= known:
+                            known |= found
+                            grown = True
         if not grown:
             break
-
-    def receiver_roots(node):
-        if isinstance(node, ast.Name):
-            return set(roots.get(node.id, ())) & receivers
-        return set()
 
     calls = []
 
     def collect(node, scope, loops):
-        if (isinstance(node, ast.Call)
-                and _callable_name(node.func, kinds) == 'setattr'
-                and len(node.args) >= 2):
-            calls.append((node, scope, loops))
+        written = _setattr_arguments(node, kinds)
+        if written is not None:
+            calls.append((node, scope, loops, written))
         for child in ast.iter_child_nodes(node):
             collect(child, child if isinstance(
                 child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
@@ -2169,14 +2307,14 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 (loops + (node,)) if isinstance(node, ast.For) else loops)
 
     collect(tree, tree, ())
-    for node, scope, loops in calls:
-        found = receiver_roots(node.args[0])
+    for node, scope, loops, written in calls:
+        target, key = written
+        found = receiver_roots(target) or namespace_dict_roots(target)
         if not found:
             continue
         # #892 r26: the key is resolved in its own scope and from the loop it
         # runs in -- a file-wide lookup sees every unrelated ``name`` binding
         # and would fail closed on the apparatus's own save/restore loop.
-        key = node.args[1]
         values = None
         key_name = key.id if isinstance(key, ast.Name) else None
         for loop in reversed(loops):
@@ -2215,17 +2353,18 @@ def _receiver_attribute_writes(tree, receivers, shared):
         for target in targets:
             if isinstance(target, ast.Attribute):
                 found = receiver_roots(target.value)
-                if found and target.attr in shared:
+                if not found:
+                    continue
+                if target.attr in shared:
                     poisoned |= found
+                # #892 r28: ``md.__dict__ |= {...}`` replaces the mapping the
+                # relay answers from; only a literal dict of unrelated keys is
+                # harmless.
+                elif target.attr == '__dict__':
+                    if _dict_replacement_hits(node.value, shared):
+                        poisoned |= found
             elif isinstance(target, ast.Subscript):
-                base = target.value
-                if isinstance(base, ast.Attribute) and base.attr == '__dict__':
-                    found = receiver_roots(base.value)
-                elif (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
-                      and base.func.id == 'vars' and base.args):
-                    found = receiver_roots(base.args[0])
-                else:
-                    found = set()
+                found = namespace_dict_roots(target.value)
                 if not found:
                     continue
                 key = target.slice
@@ -2233,6 +2372,21 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     poisoned |= found
                 elif key.value in shared:
                     poisoned |= found
+    # #892 r28: the mapping's own mutators are the subscript write one call
+    # away -- ``md.__dict__.update(common=<stub>)``, ``setdefault('common',
+    # <stub>)``, ``pop('common')``, ``clear()``.  r27 read ``update`` /
+    # ``setdefault`` only for the module namespace (``globals().update(...)``),
+    # so every receiver spelling stayed green.
+    for node in ast.walk(tree):
+        written = _mapping_method_call(node, kinds, tree)
+        if written is None:
+            continue
+        target, keys = written
+        found = namespace_dict_roots(target)
+        if not found:
+            continue
+        if '*' in keys or keys & shared:
+            poisoned |= found
     return frozenset(poisoned & receivers)
 
 

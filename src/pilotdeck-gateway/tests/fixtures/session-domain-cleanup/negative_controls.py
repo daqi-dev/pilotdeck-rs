@@ -2883,7 +2883,226 @@ MUTATIONS = [
      "            common=SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0)))):\n"
      "        pass\n"
      "    executed = [row for row in results if row.get('passed') is not None]"),
+    # #892 fix-r28 (r27 自审实测): ``md.__dict__.update(common=<stub>)`` is the
+    # subscript write one call away; r27 read ``update``/``setdefault`` only for
+    # the module namespace (``globals().update(...)``).
+    ('calibrate-dict-namespace-update', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.__dict__.update(common=None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r28: ``md.__dict__ |= {...}`` replaces the mapping in place.
+    ('calibrate-dict-namespace-augassign', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.__dict__ |= {'common': None}\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r28: ``md.__setattr__('common', <stub>)`` is the bound method
+    # spelling of the builtin r27 resolved.
+    ('calibrate-dunder-setattr-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.__setattr__('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r28: ``object.__setattr__(md, 'common', <stub>)`` is the unbound
+    # spelling that bypasses ``builtins.setattr`` altogether.
+    ('calibrate-object-setattr-unbound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    object.__setattr__(md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r28: a name bound to the receiver's ``__dict__`` writes the same
+    # mapping one alias away from ``vars(md)[...]``.
+    ('calibrate-dict-alias-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _receiver_dict = md.__dict__\n"
+     "    _receiver_dict['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r28: ``__import__('sys')`` names the same module as
+    # ``import sys``, so the module-object setattr path must resolve it.
+    ('calibrate-import-call-modules', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    __import__('sys').modules[__name__].__setattr__(\n"
+     "        'load_session_domain', lambda *a, **k: None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r29 (r28 自审实测): the unbound spelling names its target first
+    # -- ``dict.update(md.__dict__, common=<stub>)``.
+    ('calibrate-dict-update-unbound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    dict.update(md.__dict__, common=None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r29: ``dict.setdefault(md.__dict__, 'common', <stub>)``.
+    ('calibrate-dict-setdefault-unbound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    dict.setdefault(md.__dict__, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r29: ``dict.pop(md.__dict__, 'common', <stub>)``.
+    ('calibrate-dict-pop-unbound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    dict.pop(md.__dict__, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r29: ``dict.__setitem__(md.__dict__, 'common', <stub>)`` -- this
+    # path was already red in r28; the mutant pins it.
+    ('calibrate-dict-setitem-unbound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    dict.__setitem__(md.__dict__, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r29: a helper module's ``setattr`` wrapper is the builtin's.
+    ('calibrate-helper-setattr', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    attr.setattr(md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
+
+def calibrate_dict_namespace_update(rows):
+    """#892 fix-r28: ``md.__dict__.update(common=<stub>)`` writes the mapping."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: namespace-dict update flagged, passed=False')
+
+
+def calibrate_dict_namespace_augassign(rows):
+    """#892 fix-r28: ``md.__dict__ |= {'common': <stub>}``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: namespace-dict in-place update flagged, passed=False')
+
+
+def calibrate_dunder_setattr_receiver(rows):
+    """#892 fix-r28: ``md.__setattr__('common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: bound __setattr__ receiver flagged, passed=False')
+
+
+def calibrate_object_setattr_unbound(rows):
+    """#892 fix-r28: ``object.__setattr__(md, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: unbound __setattr__ receiver flagged, passed=False')
+
+
+def calibrate_dict_alias_write(rows):
+    """#892 fix-r28: a name bound to the receiver's ``__dict__``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __dict__ alias write flagged, passed=False')
+
+
+def calibrate_import_call_modules(rows):
+    """#892 fix-r28: ``__import__('sys').modules[__name__]`` is a module object."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __import__ module setattr flagged, passed=False')
+
+
+def calibrate_dict_update_unbound(rows):
+    """#892 fix-r29: ``dict.update(md.__dict__, common=<stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: unbound dict update flagged, passed=False')
+
+
+def calibrate_dict_setdefault_unbound(rows):
+    """#892 fix-r29: ``dict.setdefault(md.__dict__, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: unbound dict setdefault flagged, passed=False')
+
+
+def calibrate_dict_pop_unbound(rows):
+    """#892 fix-r29: ``dict.pop(md.__dict__, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: unbound dict pop flagged, passed=False')
+
+
+def calibrate_dict_setitem_unbound(rows):
+    """#892 fix-r29: ``dict.__setitem__(md.__dict__, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: unbound dict setitem flagged, passed=False')
+
+
+def calibrate_helper_setattr(rows):
+    """#892 fix-r29: ``attr.setattr(md, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: helper-module setattr flagged, passed=False')
+
 
 JUDGES = {
     'empty-group-probe-removed': (
@@ -3264,6 +3483,28 @@ JUDGES = {
         'aggregation-audit', calibrate_sys_modules_chain_poison, False, ()),
     'calibrate-walrus-receiver-local': (
         'aggregation-audit', calibrate_walrus_receiver_local, False, ()),
+    'calibrate-dict-namespace-update': (
+        'aggregation-audit', calibrate_dict_namespace_update, False, ()),
+    'calibrate-dict-namespace-augassign': (
+        'aggregation-audit', calibrate_dict_namespace_augassign, False, ()),
+    'calibrate-dunder-setattr-receiver': (
+        'aggregation-audit', calibrate_dunder_setattr_receiver, False, ()),
+    'calibrate-object-setattr-unbound': (
+        'aggregation-audit', calibrate_object_setattr_unbound, False, ()),
+    'calibrate-dict-alias-write': (
+        'aggregation-audit', calibrate_dict_alias_write, False, ()),
+    'calibrate-import-call-modules': (
+        'aggregation-audit', calibrate_import_call_modules, False, ()),
+    'calibrate-dict-update-unbound': (
+        'aggregation-audit', calibrate_dict_update_unbound, False, ()),
+    'calibrate-dict-setdefault-unbound': (
+        'aggregation-audit', calibrate_dict_setdefault_unbound, False, ()),
+    'calibrate-dict-pop-unbound': (
+        'aggregation-audit', calibrate_dict_pop_unbound, False, ()),
+    'calibrate-dict-setitem-unbound': (
+        'aggregation-audit', calibrate_dict_setitem_unbound, False, ()),
+    'calibrate-helper-setattr': (
+        'aggregation-audit', calibrate_helper_setattr, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (

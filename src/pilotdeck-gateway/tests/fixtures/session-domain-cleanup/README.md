@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 153 mutants:
+`JUDGES`, keyed by the same names. The current table has 164 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -382,7 +382,13 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-single-definition-dynamic`, `calibrate-dynamic-shared-name`,
 `calibrate-builtin-alias-setattr`, `calibrate-vars-dict-receiver`,
 `calibrate-loop-key-rebind`, `calibrate-definition-header-walrus`,
-`calibrate-sys-modules-chain-poison`, `calibrate-walrus-receiver-local`.
+`calibrate-sys-modules-chain-poison`, `calibrate-walrus-receiver-local`,
+`calibrate-dict-namespace-update`, `calibrate-dict-namespace-augassign`,
+`calibrate-dunder-setattr-receiver`, `calibrate-object-setattr-unbound`,
+`calibrate-dict-alias-write`, `calibrate-import-call-modules`,
+`calibrate-dict-update-unbound`, `calibrate-dict-setdefault-unbound`,
+`calibrate-dict-pop-unbound`, `calibrate-dict-setitem-unbound`,
+`calibrate-helper-setattr`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -747,6 +753,44 @@ and the single-definition rule accepts only a `def`/`async def`, never a
 captures (`calibrate-walrus-receiver-local`), and a definition *header* --
 decorators, defaults, annotations, bases -- is walked in the enclosing scope,
 so a walrus there counts (`calibrate-definition-header-walrus`).
+
+`fix-r28` closed the r27 self-audit's write spellings.  r27 resolved the
+builtin `setattr` and the two subscript roots, so every *other* spelling of the
+same write still answered green: the namespace mapping's own mutators
+(`recv.__dict__.update(common=<stub>)` /
+`setdefault` / `pop` / `clear`, `calibrate-dict-namespace-update`), the
+in-place replacement `recv.__dict__ |= {'common': <stub>}`
+(`calibrate-dict-namespace-augassign`), the bound method
+`recv.__setattr__('common', <stub>)` (`calibrate-dunder-setattr-receiver`), the
+unbound `object.__setattr__(recv, 'common', <stub>)` and
+`dict.__setitem__(mapping, 'common', <stub>)` (`calibrate-object-setattr-unbound`),
+and a name bound to the mapping itself
+(`_d = recv.__dict__; _d['common'] = <stub>`, `calibrate-dict-alias-write`).
+One resolver `_setattr_arguments` now feeds both the receiver rule and the
+module-namespace rule, `namespace_dict_roots` follows `__dict__` / `vars()` /
+their aliases, and `_expr_kinds` resolves `__import__('sys')` /
+`importlib.import_module('builtins')` to the same module kinds as the import
+statement (`calibrate-import-call-modules`).
+
+`fix-r29` closed the *unbound* spelling of the same mapping writes.  r28 read
+only the bound `receiver.method(...)` form, so `dict.update(md.__dict__,
+common=<stub>)` (`calibrate-dict-update-unbound`),
+`dict.update(md.__dict__, {'common': <stub>})`, `dict.setdefault(md.__dict__,
+'common', <stub>)` (`calibrate-dict-setdefault-unbound`), `dict.pop(
+md.__dict__, 'common', <stub>)` (`calibrate-dict-pop-unbound`) and
+`__builtins__.dict.update(md.__dict__, common=<stub>)` stayed green, and so did
+a helper module's `attr.setattr(md, 'common', <stub>)`
+(`calibrate-helper-setattr`).  `dict.__setitem__(md.__dict__, 'common',
+<stub>)` and `builtins.dict.__setitem__(md.__dict__, 'common', <stub>)` were
+*already* red in r28 -- its non-bound three-argument branch covers them -- and
+`calibrate-dict-setitem-unbound` pins that path rather than closing a new hole.
+One resolver `_mapping_method_call` now names the target for both spellings --
+`_builtin_type_name` decides whether the receiver is the builtin type (a bare
+`dict`/`type`, `builtins.dict`, `__builtins__.dict`) and, if so, takes the
+first argument as the mapping -- and `_setattr_arguments` accepts any
+`<expr>.setattr(target, key, value)` wrapper.  A `del md.__dict__['common']`
+is still out of scope: deleting the attribute makes the audit itself raise, so
+it cannot turn a real bypass into a green report.
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
