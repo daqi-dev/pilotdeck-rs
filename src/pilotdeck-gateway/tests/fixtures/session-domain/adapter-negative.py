@@ -118,6 +118,7 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
           ('restore-message-after-posttok', restore_passes,
            P_METADATA + P_WEBHOOK_COMMENT + P_COMPACT + P_FILEARTIFACT),
           ('restore-artifact-read-missing', '            file_artifact_supported(entry)?;\n', ''),
+          ('restore-artifact-array-only', '    let artifacts = field(entry, "artifacts");\n    if nullish(artifacts) {', '    let artifacts = field(entry, "artifacts");\n    if !matches!(artifacts, JsValue::Array(_)) {'),
           ('restore-artifact-pass-split', P_FILEARTIFACT, P_MESSAGE_LOOP + P_ARTIFACT_LOOP),
           ('list-title-trim-dropped', '''        Some(_) => {
             return Err(AdapterError::Type(
@@ -141,6 +142,6 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-loses-domain-state', True)
         restore()
         run('restored', False)
-        print('PASS: 12 / 12 adapter mutants killed', flush=True)
+        print('PASS: 13 / 13 adapter mutants killed', flush=True)
     finally:
         restore()

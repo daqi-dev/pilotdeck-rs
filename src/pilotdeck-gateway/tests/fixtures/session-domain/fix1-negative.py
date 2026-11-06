@@ -73,8 +73,16 @@ with mutating_sources(REPO, [ADAPTER]) as snapshots:
             run(name, True)
             ADAPTER.write_text(original)
         if not selected or 'wrong-reducer-order' in selected:
-            a = original.index('        for entry in entries {', original.index('        // Hydration runs every'))
-            b = original.index('        // WebHistory reads', a)
+            # #1985 r4: locate the hydrate passes by the calls they make. The
+            # agent-transcript cell (controlBoundary, turnSummary, metadata) runs
+            # before WebHistory's fileArtifact/tokenUsage passes, and the old
+            # `// WebHistory reads` comment anchor disappeared in d39affa51.
+            opens = '        for entry in entries {\n'
+            first = opens + '            if is_str(field(entry, "type"), "control_boundary") {\n                control_boundary_supported(entry)?;'
+            web = opens + '            if is_durable_message_entry(entry) {'
+            assert original.count(first) == 1 and original.count(web) == 1
+            a = original.index(first)
+            b = original.index(web, a)
             c = original.index('        Ok(())', b)
             ADAPTER.write_text(original[:a] + original[b:c] + original[a:b] + original[c:])
             run('wrong-reducer-order', True)

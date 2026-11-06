@@ -45,7 +45,7 @@ with scratch('fix2') as root:
         test(name, DOMAIN_TEST, env, diagnostic)
         shutil.copyfile(FIXTURES / 'session-domain/oracle.json', domain)
     for name, path, fixture, target, count in [
-        ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 485),
+        ('drop-adapter-scenarios', transcript, 'transcript-adapter', ADAPTER_TEST, 492),
         ('drop-domain-scenarios', domain, 'session-domain', DOMAIN_TEST, 304),
     ]:
         oracle = json.loads(path.read_bytes())
@@ -84,7 +84,9 @@ with scratch('fix2') as root:
     # lines; re-install the block before restore_entries' own terminator
     # (after the hydrate loops), never before every `Ok(())` in the section.
     without = section.replace(block, '')
-    hydrate = without.index('        // WebHistory reads')
+    # #1985 r4: the old `// WebHistory reads` comment anchor disappeared in
+    # d39affa51; the last hydrate pass is WebHistory's fileArtifact read.
+    hydrate = without.index('            file_artifact_supported(entry)?;')
     terminator = without.index('        Ok(())', hydrate)
     assert '\n    }\n' not in without[hydrate:terminator]
     adapter.write_text(original[:start] + without[:terminator] + block

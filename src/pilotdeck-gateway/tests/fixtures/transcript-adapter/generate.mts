@@ -745,6 +745,22 @@ try {
     steps: [open(), { op: 'restore' }, { op: 'state' }],
   }, ['open:0', 'error:TypeError', 'state:4']);
 
+  // #1985 r4 boundary: pin the `artifacts` shape matrix the fileArtifact
+  // reducer reads. `entry.artifacts.length` is `undefined` for every
+  // non-nullish shape below, so `undefined > 0` is false and restore only
+  // rejects null/missing — a gate tightened to arrays-only would otherwise be
+  // a false PASS. Captured from real TS, not constructed.
+  const artifactShapes = [
+    ['null', null], ['missing', undefined], ['number', 5], ['string', 'str'],
+    ['boolean', false], ['object', {}], ['empty', []],
+  ] as const;
+  for (const [shape, artifacts] of artifactShapes) {
+    scenarios.push(await runScenario(scratch, `restore-artifact-${shape}`, {
+      files: { 's1.jsonl': line(at(1, 'file_artifacts', { artifacts })) },
+      steps: [open(), { op: 'restore' }, { op: 'state' }, { op: 'read' }],
+    }));
+  }
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -784,7 +800,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 485, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 492, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);
