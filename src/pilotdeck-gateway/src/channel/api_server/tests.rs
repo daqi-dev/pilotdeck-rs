@@ -11,7 +11,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -776,6 +776,29 @@ impl TurnGateway for ScriptedGateway {
                 latch,
                 dropped,
             }) as Box<dyn TurnEventStream>)
+        })
+    }
+}
+
+/// #1737: a gateway whose `submit` rejects outright. No scripted turn can
+/// reach the `Err` arms of `stream_turn` / `buffered_turn`: `ScriptedGateway`
+/// always returns a stream and `ScriptedTurn.error` only fails the stream's
+/// `next()`, so the submit-rejection path gets its own mock. The counter is
+/// the no-retry assertion: both call sites must submit exactly once.
+struct FailingGateway {
+    calls: AtomicUsize,
+}
+
+impl TurnGateway for FailingGateway {
+    fn submit(
+        &self,
+        _request: TurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Err(ChannelError::Error(
+                "#1737 scripted submit rejection".to_owned(),
+            ))
         })
     }
 }
@@ -2020,6 +2043,208 @@ fn unconfigured_port_falls_back_to_the_ts_default() {
         9100.0,
         "#1333 the env port wins over the default"
     );
+}
+
+/// #1737: `stream_turn`'s submit-rejection arm — the SSE head is already on
+/// the wire, so the client must still get a `channel_submit_failed` frame
+/// (not a hang, not `[DONE]`), the chat guard must be released, and the
+/// submit is not retried. This is the test the `stream-submit-err-arm`
+/// negative control binds to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submit_error_stream_turn_emits_channel_submit_failed() {
+    let gateway = Arc::new(FailingGateway {
+        calls: AtomicUsize::new(0),
+    });
+    let started = start(
+        options(&json!({"options": {}}), None),
+        Some(gateway.clone() as Arc<dyn TurnGateway>),
+    )
+    .await;
+    let response = exchange(
+        started.addr,
+        &ReqSpec::post(
+            "/v1/chat/completions",
+            "chat-submit-err-stream",
+            "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+        ),
+    )
+    .await;
+    // The SSE head is sent before `submit` runs (by design), so a rejected
+    // submit still streams — a 500 here would mean the head moved after submit.
+    assert_eq!(
+        response.status,
+        Some(200),
+        "#1737 a rejected stream submit keeps the already-sent SSE head, got {:?}",
+        response.status
+    );
+    assert_eq!(
+        response.headers.get("content-type").map(String::as_str),
+        Some("text/event-stream"),
+        "#1737 a rejected stream submit still answers as SSE, got {:?}",
+        response.headers
+    );
+    let body = String::from_utf8_lossy(&response.body);
+    assert!(
+        body.contains("data: {"),
+        "#1737 the rejected submit frames its error as SSE data, got {body:?}"
+    );
+    assert!(
+        body.contains("\"event\":\"channel_submit_failed\""),
+        "#1737 a rejected stream submit emits channel_submit_failed, got {body:?}"
+    );
+    assert!(
+        body.contains("\"status\":500"),
+        "#1737 the channel_submit_failed frame carries status 500, got {body:?}"
+    );
+    assert!(
+        body.contains("\"scope\":\"channel\""),
+        "#1737 the channel_submit_failed frame carries scope channel, got {body:?}"
+    );
+    assert!(
+        body.contains("\"type\":\"server_error\""),
+        "#1737 the channel_submit_failed frame carries type server_error, got {body:?}"
+    );
+    assert!(
+        !body.contains("[DONE]"),
+        "#1737 a rejected submit must not close the stream with [DONE], got {body:?}"
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !started
+            .channel
+            .0
+            .active
+            .lock()
+            .expect("#1737 active chats")
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#1737 a rejected submit releases the active chat guard");
+    assert_eq!(
+        gateway.calls.load(Ordering::SeqCst),
+        1,
+        "#1737 a rejected stream submit is not retried"
+    );
+    started
+        .handle
+        .stop("submit-error-stream")
+        .await
+        .expect("#1737 stop after the submit-error stream");
+}
+
+/// #1737: `buffered_turn`'s submit-rejection arm — the 500 `submit_failed`
+/// body (`error` + `agent_status`, `error_body.rs` field set), the released
+/// chat guard and the single submit. This is the test the
+/// `buffered-submit-err-arm` negative control binds to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn submit_error_buffered_turn_returns_submit_failed() {
+    let gateway = Arc::new(FailingGateway {
+        calls: AtomicUsize::new(0),
+    });
+    let started = start(
+        options(&json!({"options": {}}), None),
+        Some(gateway.clone() as Arc<dyn TurnGateway>),
+    )
+    .await;
+    let response = exchange(
+        started.addr,
+        &ReqSpec::post(
+            "/v1/chat/completions",
+            "chat-submit-err-buffered",
+            "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+        ),
+    )
+    .await;
+    assert_eq!(
+        response.status,
+        Some(500),
+        "#1737 a rejected buffered submit answers 500, got error {:?}",
+        response.error
+    );
+    let body: Value = serde_json::from_slice(&response.body).unwrap_or_else(|error| {
+        panic!(
+            "#1737 the submit_failed body is JSON: {error}, got {:?}",
+            String::from_utf8_lossy(&response.body)
+        )
+    });
+    assert_eq!(
+        body["error"]["code"],
+        json!("channel_submit_failed"),
+        "#1737 the submit_failed error code is channel_submit_failed, got {body}"
+    );
+    assert_eq!(
+        body["error"]["event"],
+        json!("channel_submit_failed"),
+        "#1737 the submit_failed error event is channel_submit_failed, got {body}"
+    );
+    assert_eq!(
+        body["error"]["status"],
+        json!(500),
+        "#1737 the submit_failed error status is 500, got {body}"
+    );
+    assert_eq!(
+        body["error"]["scope"],
+        json!("channel"),
+        "#1737 the submit_failed error scope is channel, got {body}"
+    );
+    assert_eq!(
+        body["error"]["type"],
+        json!("server_error"),
+        "#1737 the submit_failed error type is server_error, got {body}"
+    );
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("#1737 scripted submit rejection"),
+        "#1737 the submit_failed error message carries the rejection, got {body}"
+    );
+    assert_eq!(
+        body["agent_status"]["event"],
+        json!("channel_submit_failed"),
+        "#1737 the submit_failed agent_status event is channel_submit_failed, got {body}"
+    );
+    assert_eq!(
+        body["agent_status"]["detail"]["code"],
+        json!("channel_submit_failed"),
+        "#1737 the submit_failed agent_status detail code is channel_submit_failed, got {body}"
+    );
+    assert_eq!(
+        body["agent_status"]["detail"]["status"],
+        json!(500),
+        "#1737 the submit_failed agent_status detail status is 500, got {body}"
+    );
+    assert_eq!(
+        body["agent_status"]["detail"]["scope"],
+        json!("channel"),
+        "#1737 the submit_failed agent_status detail scope is channel, got {body}"
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !started
+            .channel
+            .0
+            .active
+            .lock()
+            .expect("#1737 active chats")
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#1737 a rejected buffered submit releases the active chat guard");
+    assert_eq!(
+        gateway.calls.load(Ordering::SeqCst),
+        1,
+        "#1737 a rejected buffered submit is not retried"
+    );
+    started
+        .handle
+        .stop("submit-error-buffered")
+        .await
+        .expect("#1737 stop after the submit-error buffered turn");
 }
 
 #[test]
