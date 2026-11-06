@@ -13,7 +13,7 @@
    `session-lease/`，其自带 26 项案例含两个 #1662 变异）。
 2. `sdk_signal_exit.rs` 的读盘测试统一持共享读租约（本负控的对象）。
 
-## 两段式判杀
+## 三段式判杀（GREEN / RED / writer-exit-contract）
 
 - **GREEN `fixed-test-survives-writer-window`**：预编译后起独立 writer 子进程
   （`--writer`：自身走 `mutating_sources(root, [capture.py])`，持锁写变异、原子发布
@@ -42,10 +42,14 @@
   持锁跑同一测试 → 期望 FAIL 于
   `#1145 source file SHA256 matches disk: probeSha256/capture.py`。
 
-两段全 KILLED 才退出 0；锚点过期在写盘前报错退出（INVALID，不记 SURVIVED）。全部
+- **`writer-exit-contract`**（`--stop-check`）：两跑、不跑 cargo，证明 `stop_writer()`
+  的两条判据真的成立——被叫停的 writer 恢复并退出 0，自己失败的 writer 非零且被报出。
+  细节见下文「writer 的退出契约自检」。
+
+三行全 KILLED 才退出 0；锚点过期在写盘前报错退出（INVALID，不记 SURVIVED）。全部
 cargo 经 `sigint_default.py` 包装、`run_owned` 进程组管理、`wait_for_slot` 名额闸。
 
-两段**不共用判分器**。RED 侧「金样 sha 断言失败」就是变异被杀（KILLED）；GREEN 侧同
+GREEN 与 RED **不共用判分器**。RED 侧「金样 sha 断言失败」就是变异被杀（KILLED）；GREEN 侧同
 一失败意味着修复失效，因此 GREEN 只接受 **PASS**：任何失败（编译错、错 panic、金样
 sha 失败）一律 INVALID，绝不会被记成 KILLED。
 
@@ -61,6 +65,10 @@ GREEN 不能只看「测试通过」——没等到 writer 也会通过；也不
 - GREEN 用 `--nocapture` 跑常驻测试，解析这一行；没有该行、或 `blocked=0` →
   INVALID（从未被拒，即从未遇到排他持有者）；`blocked` 不在 writer 公布的持锁区间内 →
   INVALID（拒绝不是本次 writer 造成的）；等待 `< MIN_LEASE_WAIT_MS`（500 ms）→ INVALID。
+- 派生量守卫：公布的持锁跨度 `end_ms − start_ms` 不超过 `WITNESS_MARGIN_MS`（1000 ms）时
+  直接 INVALID。上端边距会吃掉整个区间，任何拒绝都进不去，剩下的只有一句误导人的
+  「拒绝不在本次 writer 区间内」；把 `HOLD_SECONDS` 误写成旁边的
+  `STOP_CHECK_HOLD_SECONDS` 正好会落进这一格（r9/r10 P3）。
 - 只有「测试 PASS + `blocked` 落在本次 writer 的持锁区间 + 等待 ≥ 500 ms」才是 KILLED。
 - marker 字面量漂移守卫：`LEASE_MARKER` 不在 `sdk_signal_exit.rs` 文本里时 GREEN 直接
   INVALID，避免两侧改名后控制项静默失效。
@@ -94,11 +102,12 @@ writer 已自行失败退出，全都会被看见（`#1662` r8 P1：先前在 `t
 走优雅恢复、等 `WRITER_EXIT_BUDGET`；只有**确认超时**才 `_kill_group`，且 `_collect`
 放在 `finally` 里一定会执行。确认口径：`communicate()` 抛 `TimeoutExpired`；或它在第一次
 等待时就抛了别的异常（IPC / 管道问题）——`wait()` 会重复同样的抛错，故不再尝试，直接用
-不会抛错的 `poll()` 轮询到同一期限，到点仍在跑才算确认超时。writer 自行退出即算恢复
-成功（它退出前已恢复并复核，正常 rc 为 0；这一路径只看「是否停下」）；只有真被强杀时
-该行 reason 才明写「source restoration is NOT confirmed」。中断本身记在 `hard_interrupt`
-里，不会被改写后的 `stop_error` 顶掉——**兜底自身再抛错时也一样**，仍照原样重抛；兜底
-抛的是普通异常时，其文本也拼进 reason，不静默丢弃。
+不会抛错的 `poll()` 轮询到同一期限，到点仍在跑才算确认超时。`force_stop()` 现在也按
+**退出码**回答（`returncode == 0` 才算干净停下）：writer 被请求停止时走「恢复并复核 →
+退出 0」，所以非零 rc 意味着它没走完这条路，调用方不能声称恢复成功（r9/r10）；只有真被
+强杀或非零退出时，该行 reason 才明写「source restoration is NOT confirmed」。中断本身记在
+`hard_interrupt` 里，不会被改写后的 `stop_error` 顶掉——**兜底自身再抛错时也一样**，仍
+照原样重抛；兜底抛的是普通异常时，其文本也拼进 reason，不静默丢弃。
 
 **为什么边距之后 `blocked` 仍只能来自本次 writer**：`end_ms` 是在
 `mutating_sources` 的 `with` **体内**、`__exit__` 恢复之前取的，所以真实放锁时刻必然
@@ -117,8 +126,7 @@ writer 已自行失败退出，全都会被看见（`#1662` r8 P1：先前在 `t
 
 ### writer 的退出契约自检（`--stop-check`）
 
-`stop_writer()` 的「退出码无条件作数」是可复现的，不是注释里的断言：两跑、不跑 cargo，
-各自用 `STOP_CHECK_HOLD_SECONDS = 5 s` 的短窗口。
+`stop_writer()` 的「退出码无条件作数」是可复现的，不是注释里的断言：两跑、不跑 cargo。
 
 ```sh
 CARGO_TARGET_DIR=<target> python3 -I \
@@ -126,13 +134,21 @@ CARGO_TARGET_DIR=<target> python3 -I \
   --stop-check NEW_OUTPUT_DIR
 ```
 
-- `NEW_OUTPUT_DIR/sigterm/`：窗口内发 `SIGTERM`。要求 rc 0、字节回位、
-  `writer-released.json` 的 `restored: true`，**且** stderr 里出现 `#1662 writer stopped`
-  —— 只有走处理器 → `_Stopped` → `mutating_sources.__exit__` 恢复这条路的 writer 才会
-  打印它，所以「rc 0 + restored」不能被一个忽略信号、跑满 hold 正常退出的 writer 冒充
-  （r9 P2）。
+- `NEW_OUTPUT_DIR/sigterm/`：writer 持锁 `STOP_CHECK_STOP_HOLD_SECONDS = 30 s`，控制方用
+  `stop_writer(..., budget=STOP_CHECK_STOP_BUDGET = 5 s)` 停它 —— 第一段等待必然超时，
+  于是走的是**控制方自己的 terminate 分支**（手动 `terminate()` 会让这条分支永远没人
+  跑）。要求：窗口已发布（`window=True`）、`stop_writer` 不抛错、rc 0、字节回位、
+  `restored: true`、stderr 里出现 `#1662 writer stopped`，**且**
+  `released_ms − start_ms < 30 s`（停止确实由信号触发，不是睡满 hold 自己退出）。
 - `NEW_OUTPUT_DIR/own-failure/`：`PDRS_1662_WRITER_FAIL_AFTER_HOLD=1` 让 writer 正常
-  跑满窗口后自行失败。要求 rc≠0、`stop_writer()` 抛错且报出的文本含该退出码、字节回位。
+  跑满 `STOP_CHECK_HOLD_SECONDS = 5 s` 窗口后自行失败。要求窗口已发布（`window=True`）、
+  rc≠0、`stop_writer()` 抛错且报出的文本含该退出码、字节回位。
+- 两跑任一行的兜底 `force_stop()` 若**自身被中断**（例如第二枚 Ctrl-C 落在等待里），
+  该异常会记进该行的 `cleanup` 字段并让整行判 INVALID：writer 可能仍持锁、恢复未确认，
+  不能当作干净收场上报（r10 P1）。
+- **未覆盖**：`#1662 writer stopped` marker 与 `own-failure` 的 `bytes_back` 只有正控
+  路径——仓内没有能造出「忽略 SIGTERM、跑满 hold 后正常退出」或「恢复失败但退出 0」的
+  writer，这两条断言从没红过。补注入开关的负控记在 #1885，前置于 #1662 收尾（r10 P2）。
 
 原始输出形如：
 

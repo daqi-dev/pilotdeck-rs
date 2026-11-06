@@ -31,9 +31,10 @@ const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
 /// (epoch ms, 0 when the first attempt succeeded) and the acquisition instant
 /// (epoch ms). The paired GREEN control in `sdk-signal-read-lease/` uses the
 /// refused attempt as its witness: `WouldBlock` observed inside the writer's
-/// published hold -- less its one-second upper-end margin for the truncated
-/// millisecond bucket -- proves the reader met that lock, and no scheduling
-/// delay can manufacture it. Both sides must agree on this exact spelling.
+/// published hold -- less the upper-end margin `WITNESS_MARGIN_MS` in that
+/// fixture's `negative_controls.py`, which covers the truncated millisecond
+/// bucket -- proves the reader met that lock, and no scheduling delay can
+/// manufacture it. Both sides must agree on this exact spelling.
 const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
 
 /// Wall-clock milliseconds since the Unix epoch.
