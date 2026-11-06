@@ -1097,26 +1097,28 @@ async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), C
     // releases the slot — the TS `finally { delete }` both baselines have. The
     // guard must outlive the `.await` below, hence the named binding.
     //
-    // Admission is the `insert` return value, not the `contains` above: the
-    // check and the add are two lock sections with the mapper `/new` reply in
+    // Admission is this `insert`, not the `contains` above: the two are
+    // separate lock sections with `mapper.resolve` and the `/new` reply in
     // between, so two concurrent turns of one chat can both pass the check —
     // and the first to finish would then drop the slot the other still holds.
-    // TS cannot race here (one event loop). Same shape as api_server's
-    // `admit_chat`.
-    let chat_key = chat_id.to_owned();
-    let admitted = active_chats
-        .lock()
-        .expect("#1738 webhook active chats mutex")
-        .insert(chat_key.clone());
-    if !admitted {
+    // TS cannot race here (one event loop), and its `add` sits at this same
+    // point (after the `/new` and empty-message early returns), so the order
+    // stays; only the decision is taken from the insert itself.
+    //
+    // Deliberately unlike `api_server::admit_chat`, which admits *before*
+    // `resolve`: admitting here any earlier would hold the chat across the
+    // `/new` reply, where TS has not added it yet. The residual window — a
+    // turn rejected here has already run `resolve`, so a `/new` in it may
+    // have re-pointed the chat's session — is pre-existing and tracked in
+    // #1744.
+    let Some(_guard) = super::ActiveChat::admit(active_chats, chat_id.to_owned()) else {
         log(
             ctx,
             "info",
             &format!("webhook: chat {chat_id} already active, skipping"),
         );
         return Ok(());
-    }
-    let _guard = super::ActiveChat::new(active_chats, chat_key);
+    };
     process_message(ctx, chat_id, &mapped.session_key, &mapped.message).await
 }
 

@@ -39,6 +39,25 @@ impl<K: Eq + Hash> ActiveChat<K> {
     pub(crate) fn new(active: Arc<Mutex<HashSet<K>>>, chat_id: K) -> Self {
         Self { active, chat_id }
     }
+
+    /// Take the slot and hand back its guard in one step: `Some` only when
+    /// *this* call inserted the id. `None` means another turn of the same chat
+    /// already holds it — the caller must skip the turn and must not build a
+    /// guard, or its drop would release the other turn's admission. This is
+    /// the shape callers should use when the admit decision has to survive a
+    /// check made in an earlier lock section (`webhook::handle_incoming`);
+    /// channels that insert inside a larger lock section (sms) keep using
+    /// [`Self::new`] there.
+    pub(crate) fn admit(active: Arc<Mutex<HashSet<K>>>, chat_id: K) -> Option<Self>
+    where
+        K: Clone,
+    {
+        let fresh = {
+            let mut set = active.lock().expect("#1738 active chats mutex");
+            set.insert(chat_id.clone())
+        };
+        fresh.then(|| Self::new(active, chat_id))
+    }
 }
 
 impl<K: Eq + Hash> Drop for ActiveChat<K> {
