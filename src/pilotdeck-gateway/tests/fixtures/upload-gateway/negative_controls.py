@@ -68,6 +68,7 @@ READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
+LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
 ORPHAN = 'upload::tests::upload_cleanup_reclaims_expired_orphan_directories'
@@ -330,6 +331,23 @@ mutations = [
      '    match (fs::metadata(destination), expected) {',
      LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
+    # #1888: the writer's lease root goes through the same home guard as the
+    # reader's. This row restores the pre-fix shape — a bare join off
+    # `projectKey`, created through whatever is at that spelling — so a lease
+    # root that is a link into the project takes the write and the paired
+    # write-side test goes red. The read-side sibling is
+    # `read-at-upload-root-prefix-dropped`; each assertion names its side.
+    ('lease-root-link-refused', STORE,
+     '''        let dir = prepare_lease_root(&project)?
+            .join(upload_id)
+            .join(random_id()?);''',
+     '''        let dir = project
+            .join(".tmp")
+            .join("chat-upload-leases")
+            .join(upload_id)
+            .join(random_id()?);''',
+     LEASE_ROOT_LINK,
+     '#1888 the writer must not create through a linked lease root'),
     # #1887: `read_at` holds a record to the upload root by lexical spelling,
     # so a `.tmp` that is a link to another subtree of the same project is
     # refused there. Dropping that prefix check leaves only the handle check,
