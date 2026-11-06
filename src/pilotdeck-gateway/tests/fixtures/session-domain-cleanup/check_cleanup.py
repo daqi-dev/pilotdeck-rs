@@ -1998,6 +1998,11 @@ def _write_key_names(expr, tree):
 # ``_call_written_values`` already read it, the receiver rule did not (GLM
 # concurrency r29 P0-2, MiniMax concurrency r29 P0-3).
 _MANAGED_WRITE_ATTRS = ('__setattr__', '__setitem__', 'setattr', 'setitem')
+# #892 r35: a *read* that hands over the receiver's mapping or a method that
+# can reach it.  ``_MANAGED_WRITE_ATTRS`` holds the write sides only, so
+# ``getattr(md, '__getattribute__')('__dict__')['common'] = <stub>`` wrote
+# through an attribute name no rule decoded (codex boundary r34 P0-6).
+_HANDOVER_ATTRS = ('__dict__', '__getattribute__')
 
 
 def _managed_write_kind(name):
@@ -2100,7 +2105,16 @@ def _handle_escapes(call, parents):
         return True
     if isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr, ast.Return)):
         return True
-    return isinstance(parent, ast.Starred)
+    if isinstance(parent, ast.Starred):
+        return True
+    # #892 r35: a container literal or a generator is the same escape -- the
+    # handle can be taken back out and called (``hs = [getattr(md, n)];
+    # hs[0]('common', <stub>)``; codex boundary r34 P0-5).  A dict
+    # *comprehension* stays clean on purpose: the apparatus's own save loop
+    # (``{name: getattr(md, name) for name in patched}``) only replays the
+    # value as the restore operand.
+    return isinstance(parent, (ast.List, ast.Tuple, ast.Set, ast.Dict,
+                               ast.Yield, ast.YieldFrom))
 
 
 def _dynamic_getattr(call, kinds, simple=None):
@@ -2118,11 +2132,13 @@ def _dynamic_getattr(call, kinds, simple=None):
     if literal is not None:
         # The inline spelling is already covered by the kinds/write-handle and
         # namespace-dict rules; only the through-a-name spelling is new here.
-        return False
+        # #892 r35: ``__getattribute__`` is the exception -- it is a read, so
+        # none of those rules decode it, and it hands the mapping over.
+        return literal == '__getattribute__'
     name = _constant_string(call.args[1], simple)
     if name is None:
         return True
-    return name in _MANAGED_WRITE_ATTRS or name == '__dict__'
+    return name in _MANAGED_WRITE_ATTRS or name in _HANDOVER_ATTRS
 
 
 def _unbounded_write(node, kinds):
