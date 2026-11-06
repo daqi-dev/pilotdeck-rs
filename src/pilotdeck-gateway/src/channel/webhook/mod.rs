@@ -587,8 +587,13 @@ async fn route_request(
 /// local 1.0 pin and no 1.0 golden cell — its 1.0 keep-alive and status line
 /// are untested and tracked in #1688; the `sms` lane has none yet (#1913).
 /// The unsized wrapper is webhook-only because this channel answers with
-/// `handler_response_with_length` bodies, while those paths stream an
-/// unknown-size body that a 1.0 connection already frames by closing.
+/// known-length bodies: `module_host`, `module_host/approvals` and `api_web`
+/// reply from `streamed` (unknown size), which a 1.0 connection already frames
+/// by closing, but a `Full` body would get a `content-length` from hyper that
+/// Node's 1.0 replies do not carry. The lanes that still build a `Full` body
+/// (`user_dialog/http_store.rs`, `native_http::handler_response_with_length`,
+/// module_host's provider value body) have that framing difference unmeasured
+/// per lane and tracked in #1947.
 fn finalize(mut response: hyper::Response<Body>, version: hyper::Version) -> hyper::Response<Body> {
     if version != hyper::Version::HTTP_10 || crate::mutants::on("webhook-http10-finalize-off") {
         return response;
