@@ -62,6 +62,14 @@ switches = [
     # cell in memory (the native-ws-large-oracle-content style), so the
     # per-cell byte comparison must fail on its own assertion.
     ('native-ws-upgrade-oracle-431', TESTS, PREFIX + 'upgrade_budget_boundary_matches_ts', "#1351 every boundary cell's response matches the recorded TS bytes"),
+    # #1351 exemption (2026-11-06 review, #1757): the two standalone cell tests
+    # upgrade_budget_16385_cell_431s_like_ts / upgrade_budget_20kib_cell_431s_like_ts
+    # have no row here. This table binds one switch name to exactly one test, and a
+    # per-cell switch would need its own site in the native_ws upgrade guard; the two
+    # cells are covered here by the boundary replay above, and their independent
+    # anchors are witnessed by hand-run PDRS_MUTANT=native-http-upgrade-budget-off
+    # --exact runs (_tmp/20261106-issue-1351/negctl-newcells/, 2 KILLED / 0 SURVIVED
+    # / 0 INVALID) which do not carry nonce receipts. Registering them is #1757.
     ('native-ws-retain-reader', SOURCE, PREFIX + 'socket_drops_before_business_drains', '#749 closed socket released before business drain'),
     ('native-ws-skip-host-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_precedes_runtime_exit', '#749 owned cleanup called'),
     ('native-ws-error-skips-cleanup', ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs', PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
