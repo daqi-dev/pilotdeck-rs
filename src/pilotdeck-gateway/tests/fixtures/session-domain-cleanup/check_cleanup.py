@@ -1612,16 +1612,25 @@ def _target_value_pairs(target, value, simple=None):
     return [(name, value) for name in _target_names(target)]
 
 
+_CONTAINER_WRAPPERS = frozenset((
+    'iter', 'next', 'tuple', 'list', 'sorted', 'reversed', 'set', 'frozenset',
+))
+
+
 def _iter_literal_elements(node):
     """Elements of ``iter((a, b))`` / ``tuple([...])`` (#892 r33).
 
     ``for m in iter((md,)): m.common = <stub>`` iterates a literal the loop
     rule did not read, so the receiver was lost (codex boundary r32 P0-3).
+
+    #1953 fix-r1 round 7 (GLM sibling r3 P2): the wrapper names live in one
+    constant now -- this decoder and :func:`_container_callee` had drifted
+    (``sorted``/``next`` missing here, ``set``/``frozenset`` missing there).
     """
     if (isinstance(node, ast.Call) and len(node.args) == 1
             and not node.keywords and isinstance(node.args[0], (ast.Tuple, ast.List))
             and isinstance(node.func, ast.Name)
-            and node.func.id in ('iter', 'tuple', 'list', 'reversed', 'frozenset')):
+            and node.func.id in _CONTAINER_WRAPPERS):
         return node.args[0].elts
     return []
 
@@ -2172,6 +2181,15 @@ def _constant_string(node, simple):
                 # ``keys = ('__doc__',); getattr(md, keys[-1])`` is the same
                 # pure read and was failing closed.  A negative literal is
                 # ``UnaryOp(USub, Constant)``, not ``Constant(-1)``.
+                #
+                # #1953 fix-r1 round 7 (GLM boundary r3 P1): a starred element
+                # makes the literal length differ from the runtime one
+                # (``('__doc__', *more)``), so neither a negative position nor
+                # a positive one can be folded -- the element read may be the
+                # attacker's ``'__setattr__'``.
+                if any(isinstance(item, ast.Starred)
+                       for item in sequence.elts):
+                    return None
                 if position < 0:
                     position += len(sequence.elts)
                 if 0 <= position < len(sequence.elts):
@@ -2285,26 +2303,33 @@ def _container_handle_roots(value, kinds, simple):
     return roots
 
 
+def _container_base(node):
+    """The container name *node* evaluates to, through wrappers (#1953 r7)."""
+    if isinstance(node, ast.Subscript):
+        return _container_base(node.value)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id in _CONTAINER_WRAPPERS
+                and len(node.args) == 1):
+            return _container_base(node.args[0])
+        if (isinstance(func, ast.Attribute) and func.attr == 'copy'
+                and isinstance(func.value, ast.Name)):
+            return func.value.id
+        return None
+    return node.id if isinstance(node, ast.Name) else None
+
+
 def _container_callee(func):
     """The container name whose element *func* takes out and calls (#1953)."""
     if isinstance(func, ast.Subscript):
-        base = func.value
-        if (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
-                and base.func.id in ('list', 'tuple', 'sorted', 'iter',
-                                     'reversed') and base.args):
-            base = base.args[0]
-        return base.id if isinstance(base, ast.Name) else None
-    if (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
-            and func.func.id in ('next', 'iter', 'list', 'tuple', 'sorted',
-                                 'reversed') and func.args):
-        return func.args[0].id if isinstance(func.args[0], ast.Name) else None
-    # #1953 fix-r1 round 4 (GLM boundary r2 P0): ``for h in hs.copy():`` hands
-    # the same elements over; the call position already knew the wrapper on the
-    # loop side, the iteration side did not decode the method at all.
-    if (isinstance(func, ast.Call) and isinstance(func.func, ast.Attribute)
-            and func.func.attr == 'copy'
-            and isinstance(func.func.value, ast.Name)):
-        return func.func.value.id
+        return _container_base(func.value)
+    if isinstance(func, ast.Call):
+        func_id = func.func.id if isinstance(func.func, ast.Name) else None
+        if func_id in _CONTAINER_WRAPPERS and len(func.args) == 1:
+            return _container_base(func.args[0])
+        if (isinstance(func.func, ast.Attribute) and func.func.attr == 'copy'
+                and isinstance(func.func.value, ast.Name)):
+            return func.func.value.id
     return None
 
 
@@ -3195,18 +3220,35 @@ def _fresh_value(node):
                              ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
 
 
-def _rebinds_to_fresh(statement, name):
-    """True when *statement* unconditionally rebinds *name* to a literal."""
+def _statically_false(node):
+    """True for a literal that is always falsy (#1953 r7, codex r3 P1)."""
+    return isinstance(node, ast.Constant) and not node.value
+
+
+def _alias_and_fresh(statement, tracked):
+    """``(aliases, fresh)`` a plain assignment introduces (#1953 r7).
+
+    ``_f = _h`` copies the handle into another name -- a use of ``_h`` that a
+    later ``_f('common', <stub>)`` writes through (GLM boundary r3 P1).  A
+    rebinding to a provably fresh value, by contrast, ends the name's life.
+    """
     if isinstance(statement, ast.Assign):
-        targets = [target for target in statement.targets
-                   if isinstance(target, ast.Name) and target.id == name]
-        return bool(targets) and _fresh_value(statement.value)
-    if isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
-        target = statement.target
-        return (isinstance(target, ast.Name) and target.id == name
-                and statement.value is not None
-                and _fresh_value(statement.value))
-    return False
+        if len(statement.targets) != 1:
+            return set(), set()
+        target, value = statement.targets[0], statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        target, value = statement.target, statement.value
+        if value is None:
+            return set(), set()
+    else:
+        return set(), set()
+    if not isinstance(target, ast.Name):
+        return set(), set()
+    if isinstance(value, ast.Name):
+        return ({target.id} if value.id in tracked else set()), set()
+    if _fresh_value(value):
+        return set(), {target.id}
+    return set(), set()
 
 
 def _loop_target_used_after(statements, name):
@@ -3217,21 +3259,34 @@ def _loop_target_used_after(statements, name):
     call went through (``h = h('common', <stub>)`` never even got read).  Only
     a *sibling* rebinding to a provably fresh value ends the scan now; uses
     inside nested definitions do not count (their ``h`` is another object).
+
+    #1953 fix-r1 round 7 (GLM boundary r3 P1): the handle also leaves through
+    a second name (``_f = _h``) or a ``return``, so the scan follows aliases
+    and treats a returned handle as a use.
     """
+    tracked = {name}
     for statement, sibling in statements:
         for scope, child in _walk_scoped(statement):
             if scope is not None:
                 continue
             if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
-                    and child.func.id == name):
+                    and child.func.id in tracked):
                 return True
             if (isinstance(child, (ast.Subscript, ast.Attribute))
                     and isinstance(child.value, ast.Name)
-                    and child.value.id == name
+                    and child.value.id in tracked
                     and isinstance(getattr(child, 'ctx', None), ast.Store)):
                 return True
-        if sibling and _rebinds_to_fresh(statement, name):
-            return False
+            if (isinstance(child, ast.Return) and child.value is not None
+                    and any(isinstance(inner, ast.Name) and inner.id in tracked
+                            for inner in ast.walk(child.value))):
+                return True
+        aliases, fresh = _alias_and_fresh(statement, tracked)
+        tracked |= aliases
+        if sibling:
+            tracked -= fresh
+            if not tracked:
+                return False
     return False
 
 
@@ -3365,6 +3420,14 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
                              ast.DictComp)):
             element = node.value if isinstance(node, ast.DictComp) else node.elt
+            # #1953 fix-r1 round 7 (codex r3 P1): a statically false filter
+            # makes the comprehension yield nothing, so its result cannot
+            # relay the receiver -- ``[h for h in (md,) if False]`` used to
+            # fail the clean append-and-write closed.
+            if any(_statically_false(condition)
+                   for generator in node.generators
+                   for condition in generator.ifs):
+                return set()
             found = set()
             for generator in node.generators:
                 names = set(_target_names(generator.target))
@@ -3374,6 +3437,29 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     found |= receiver_roots(item, scope)
             return found
         return set()
+
+    def _relay_handle_roots(node, scope):
+        """Receivers whose handles a relay comprehension carries (#1953 r7).
+
+        ``g = [h for h in hs]; g[0]('common', <stub>)`` hands the same handles
+        out of ``g`` that ``hs`` holds; ``hs`` is not a literal, its roots live
+        in the alias table (GLM sibling r3 P2).
+        """
+        element = node.value if isinstance(node, ast.DictComp) else node.elt
+        if not isinstance(element, ast.Name):
+            return []
+        found = []
+        for generator in node.generators:
+            if element.id not in set(_target_names(generator.target)):
+                continue
+            name = _container_base(generator.iter)
+            if name is None:
+                continue
+            for level in _chain(scope):
+                if (level, name) in handle_containers:
+                    found.extend(handle_containers[(level, name)])
+                    break
+        return found
 
     def _literal_elements(expr, scope, seen=None):
         """Elements of a literal / name-bound literal iterable (#1953 r5)."""
@@ -3521,6 +3607,19 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 node.func.value, (ast.ListComp, ast.SetComp, ast.DictComp,
                                   ast.GeneratorExp)):
             carried = _container_handle_roots(node.func.value, kinds, simple)
+        if carried is None and isinstance(node.func, ast.Subscript):
+            # #1953 fix-r1 round 7 (GLM sibling r3 P2): the comprehension may
+            # be reachable through a name and relay a container the alias table
+            # already knows (``g = [h for h in hs]; g[0](...)``).
+            container = node.func.value
+            if isinstance(container, ast.Name):
+                values = simple.get(container.id) or ()
+                if len(values) == 1:
+                    container = values[0]
+            if isinstance(container, (ast.ListComp, ast.SetComp, ast.DictComp,
+                                      ast.GeneratorExp)):
+                carried = (_container_handle_roots(container, kinds, simple)
+                           or _relay_handle_roots(container, scope))
         for root in carried or ():
             poisoned |= (receiver_roots(root, scope)
                          | namespace_dict_roots(root, scope))
@@ -7904,6 +8003,105 @@ def aggregation_audit():
                             frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test withdrew '
                         'on a comprehension result that is only read')
+    comp_filter_false_probe = ast.parse(
+        "def main():\n"
+        "    _g = [_h for _h in (md,) if False]\n"
+        "    _g.append(object())\n"
+        "    _g[0].common = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(comp_filter_false_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a statically empty comprehension result')
+    loop_return_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    return _h\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(loop_return_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'loop target returned to the caller')
+    loop_alias_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    _f = _h\n"
+        "    _f('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(loop_alias_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'loop target through an alias call')
+    loop_alias_read_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    _f = _h\n"
+        "    print(_f)\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(loop_alias_read_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a loop target aliased for a pure read')
+    slice_read_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs[:]:\n"
+        "        print(_h)\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(slice_read_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a read of an iterated slice')
+    copy_read_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs.copy():\n"
+        "        print(_h)\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(copy_read_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a read of an iterated copy')
+    starred_keys_probe = ast.parse(
+        "def main():\n"
+        "    _more = ('__setattr__',)\n"
+        "    _keys = ('__doc__', *_more)\n"
+        "    getattr(md, _keys[-2])('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(starred_keys_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test folded a '
+                        'tuple with a starred element')
+    comp_handle_relay_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _g = [_h for _h in _hs]\n"
+        "    _g[0]('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(comp_handle_relay_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost a '
+                        'handle container relayed through a comprehension')
     getattribute_name_probe = ast.parse(
         "def main():\n"
         "    _key = '__dict__'\n"

@@ -4145,6 +4145,65 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-for-target-return', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _leak():\n"
+     "        _n = '__setattr__'\n"
+     "        _hs = [getattr(md, k) for k in (_n,)]\n"
+     "        for _h in _hs:\n"
+     "            pass\n"
+     "        return _h\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _f = _h\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-starred-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _more = ('__setattr__',)\n"
+     "    _keys = ('__doc__', *_more)\n"
+     "    getattr(md, _keys[-2])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    _g[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4869,6 +4928,40 @@ def calibrate_comp_name_iter(rows):
         'aggregation-audit: calibrate-comp-name-iter flagged, passed=False')
 
 
+def calibrate_for_target_return(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): returning the loop target hands
+    the write handle to the caller."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-return flagged, passed=False')
+
+
+def calibrate_for_target_alias(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): ``f = h; f('common', <stub>)``
+    writes through the copy of the handle."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-alias flagged, passed=False')
+
+
+def calibrate_starred_const_subscript(rows):
+    """#1953 fix-r1 r7 (GLM boundary r3 P1): a tuple with a starred element has
+    no static length, so its subscript cannot be folded to a known name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-starred-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay(rows):
+    """#1953 fix-r1 r7 (GLM sibling r3 P2): a comprehension that relays a known
+    handle container hands the same handles out of its result."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -5571,6 +5664,14 @@ JUDGES = {
         'aggregation-audit', calibrate_comp_dict_result, False, ()),
     'calibrate-comp-name-iter': (
         'aggregation-audit', calibrate_comp_name_iter, False, ()),
+    'calibrate-for-target-return': (
+        'aggregation-audit', calibrate_for_target_return, False, ()),
+    'calibrate-for-target-alias': (
+        'aggregation-audit', calibrate_for_target_alias, False, ()),
+    'calibrate-starred-const-subscript-write': (
+        'aggregation-audit', calibrate_starred_const_subscript, False, ()),
+    'calibrate-comp-handle-relay': (
+        'aggregation-audit', calibrate_comp_handle_relay, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
