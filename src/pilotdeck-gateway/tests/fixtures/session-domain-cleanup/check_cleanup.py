@@ -1568,16 +1568,21 @@ def _import_literal(node):
     return None
 
 
-def _getattr_literal(node):
+def _getattr_literal(node, kinds):
     """The attribute a two-argument ``getattr(obj, '<literal>')`` reads (#892 r30).
 
     ``getattr(md, '__dict__')['common'] = <stub>`` and
     ``getattr(md, '__dict__').update(common=<stub>)`` name the same mapping as
     ``md.__dict__``; the call spelling reached no mapping root, so the relay
     stayed trusted (MiniMax simplify r29 P0-4, third spelling).
+
+    #892 r31: the callee goes through the shared alias resolver, so
+    ``from builtins import getattr as _g`` / ``builtins.getattr`` /
+    ``__builtins__['getattr']`` name the same builtin as the bare spelling
+    (the r30 fix judged only the literal name ``getattr``).
     """
     if not (isinstance(node, ast.Call) and len(node.args) == 2
-            and isinstance(node.func, ast.Name) and node.func.id == 'getattr'):
+            and _callable_name(node.func, kinds) == 'getattr'):
         return None
     literal = node.args[1]
     if isinstance(literal, ast.Constant) and isinstance(literal.value, str):
@@ -1635,7 +1640,7 @@ def _expr_kinds(node, kinds):
         # #892 r30: ``getattr(md, '__dict__')`` evaluates to whatever
         # ``md.__dict__`` evaluates to -- the kinds rule has to decode the call
         # spelling, not only the attribute one.
-        literal = _getattr_literal(node)
+        literal = _getattr_literal(node, kinds)
         if literal is not None:
             return _expr_kinds(ast.Attribute(value=node.args[0], attr=literal,
                                              ctx=ast.Load()), kinds)
@@ -1735,6 +1740,18 @@ def _callable_name(func, kinds):
         # #892 r30: ``ft.partial`` / ``operator.setitem``
         if 'fn:' + func.attr in _expr_kinds(func, kinds):
             return func.attr
+    if isinstance(func, ast.Subscript):
+        # #892 r31: the fixture runs as ``__main__``, where ``__builtins__`` is
+        # a dict, so ``__builtins__['getattr'](md, '__dict__')`` is the builtin
+        # call.  r30 taught the write-target rule this spelling but not the
+        # shared resolver, so the read side stayed one spelling behind.
+        literal = func.slice
+        if (isinstance(func.value, ast.Name) and func.value.id == '__builtins__'
+                and isinstance(literal, ast.Constant)
+                and isinstance(literal.value, str)
+                and literal.value in _CALLABLE_KINDS + ('partial', 'itemgetter')):
+            return literal.value
+        return None
     return None
 
 
@@ -2481,7 +2498,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # #892 r30: ``getattr(md, '__dict__')`` is the same mapping root, both as
         # a subscript target (``getattr(md, '__dict__')['common'] = <stub>``)
         # and through an alias (``_d = getattr(md, '__dict__')``).
-        if _getattr_literal(node) == '__dict__':
+        if _getattr_literal(node, kinds) == '__dict__':
             return receiver_roots(node.args[0])
         if isinstance(node, ast.Name):
             return set(dict_roots.get(node.id, ())) & receivers

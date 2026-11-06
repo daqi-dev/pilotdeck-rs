@@ -3236,6 +3236,52 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-getattr-import-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    from builtins import getattr as _pdrs_g\n"
+     "    _pdrs_g(md, '__dict__')['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-module-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import builtins as _pdrs_b\n"
+     "    _pdrs_b.getattr(md, '__dict__')['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-getattr-subscript', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    __builtins__['getattr'](md, '__dict__')['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-subscript-vars', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    __builtins__['vars'](md)['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -3451,6 +3497,38 @@ def calibrate_builtins_subscript_setattr(rows):
     return _not_shared(
         rows, CHECK_REL, 'main',
         'aggregation-audit: __builtins__ subscript setattr flagged, '
+        'passed=False')
+
+
+def calibrate_getattr_import_alias(rows):
+    """#892 fix-r31: ``from builtins import getattr as _g`` then ``_g(...)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: aliased builtins getattr __dict__ write flagged, '
+        'passed=False')
+
+
+def calibrate_builtins_module_alias(rows):
+    """#892 fix-r31: ``import builtins as _b; _b.getattr(md, '__dict__')``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: aliased builtins module getattr flagged, '
+        'passed=False')
+
+
+def calibrate_builtins_getattr_subscript(rows):
+    """#892 fix-r31: ``__builtins__['getattr'](md, '__dict__')``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __builtins__ subscript getattr flagged, '
+        'passed=False')
+
+
+def calibrate_builtins_subscript_vars(rows):
+    """#892 fix-r31: ``__builtins__['vars'](md)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __builtins__ subscript vars flagged, '
         'passed=False')
 
 
@@ -3893,6 +3971,14 @@ JUDGES = {
         'aggregation-audit', calibrate_getattr_dict_subscript, False, ()),
     'calibrate-builtins-subscript-setattr': (
         'aggregation-audit', calibrate_builtins_subscript_setattr, False, ()),
+    'calibrate-getattr-import-alias': (
+        'aggregation-audit', calibrate_getattr_import_alias, False, ()),
+    'calibrate-builtins-module-alias': (
+        'aggregation-audit', calibrate_builtins_module_alias, False, ()),
+    'calibrate-builtins-getattr-subscript': (
+        'aggregation-audit', calibrate_builtins_getattr_subscript, False, ()),
+    'calibrate-builtins-subscript-vars': (
+        'aggregation-audit', calibrate_builtins_subscript_vars, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
