@@ -9,6 +9,11 @@ shape, mtime boundary, path, transcript entry, style echo, busy messages)
 each have a mutant bound to the test that pins them. Each mutant compiles
 before its exact test runs. Every case is reported, then restoration and all
 statuses determine the exit code; never bypass HEAD.
+
+#1864 wires the three selectors to a store the next session reads. A
+stub-revert alone cannot see that, so the three write sites and both read
+sites (the session factory's compose step and the live adapter's per-turn
+permission-mode source) each carry their own mutant.
 """
 from pathlib import Path
 import os
@@ -21,6 +26,11 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
+# #1864: the read side of the three selectors — the compose step in the
+# session factory and the per-turn permission-mode source on the live
+# adapter. Both are mutated below so "stored but never read" cannot come back.
+ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 CFG = 'native_process::methods::config::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -39,13 +49,13 @@ mutations = [
     ('permission-stub-revert', CONFIG,
      '"set_permission_mode" => self.set_permission_mode(&params).await,',
      '"set_permission_mode" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_permission_mode is unavailable.")),',
-     CFG + 'set_permission_mode_validates_then_reports_unavailable',
-     '#1457 set_permission_mode unavailable message'),
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1864 set_permission_mode applies the fixture mode'),
     ('thinking-stub-revert', CONFIG,
      '"set_session_thinking" => self.set_session_thinking(&params).await,',
      '"set_session_thinking" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_session_thinking is unavailable.")),',
-     CFG + 'set_session_thinking_validates_then_reports_unavailable',
-     '#1457 thinking unavailable message for '),
+     CFG + 'set_session_thinking_applies_and_validates',
+     '#1864 set_session_thinking stores the mode object'),
     ('styles-list-stub-revert', CONFIG,
      '"output_styles_list" => self.output_styles_list(&params).await,',
      '"output_styles_list" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "output_styles_list is unavailable.")),',
@@ -54,8 +64,8 @@ mutations = [
     ('styles-set-stub-revert', CONFIG,
      '"set_output_style" => self.set_output_style(&params).await,',
      '"set_output_style" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "set_output_style is unavailable.")),',
-     CFG + 'output_styles_list_reports_project_styles',
-     '#1457 set_output_style unavailable message'),
+     CFG + 'set_output_style_validates_names_and_key',
+     '#1864 set_output_style applies the probe style'),
     ('seed-stub-revert', CONFIG,
      '"seed_read_state" => self.seed_read_state(&params).await,',
      '"seed_read_state" => Err(gateway_error("CAPABILITY_UNAVAILABLE", "seed_read_state is unavailable.")),',
@@ -70,22 +80,22 @@ mutations = [
     ('session-key-gate-code', CONFIG,
      '"INVALID_SESSION_KEY",\n        "sessionKey is required.",\n    )',
      '"INVALID_REQUEST",\n        "sessionKey is required.",\n    )',
-     CFG + 'set_permission_mode_validates_then_reports_unavailable',
+     CFG + 'set_permission_mode_applies_and_validates',
      '#1457 missing sessionKey code'),
     ('permission-mode-gate-removed', CONFIG,
      'if !mode_ok {',
      'if !mode_ok && false {',
-     CFG + 'set_permission_mode_validates_then_reports_unavailable',
-     '#1457 set_permission_mode rejects '),
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1457 set_permission_mode rejects unknown mode'),
     ('mode-whitelist-narrowed', CONFIG,
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| m.equals_str(allowed))',
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| *allowed != "default" && m.equals_str(allowed))',
-     CFG + 'set_permission_mode_validates_then_reports_unavailable',
-     '#1457 set_permission_mode unavailable code'),
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1864 set_permission_mode applies the fixture mode'),
     ('thinking-shape-message', CONFIG,
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled boolean.",',
      '            "INVALID_THINKING_CONFIG",\n            "thinking must be null or an object with an enabled flag.",',
-     CFG + 'set_session_thinking_validates_then_reports_unavailable',
+     CFG + 'set_session_thinking_applies_and_validates',
      '#1457 non-object thinking message'),
     ('seed-mtime-boundary', CONFIG,
      'n.is_finite() && n.fract() == 0.0 && *n >= 0.0',
@@ -146,11 +156,6 @@ mutations = [
      '            let Some(_lease) = Some::<()>(())',
      DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
      '#1457 a cold append must not run beside a session that owns the writer'),
-    ('style-unavailable-method-name', CONFIG,
-     'Err(session_config_unavailable("set_output_style"))',
-     'Err(session_config_unavailable("unknown"))',
-     CFG + 'output_styles_list_reports_project_styles',
-     '#1457 set_output_style unavailable message'),
     ('seed-mtime-wiring', CONFIG,
      '.seed_read_state(&path, mtime)',
      '.seed_read_state(&path, 0.0)',
@@ -169,12 +174,12 @@ mutations = [
     ('permission-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change permission mode during an active turn.",',
      '"SESSION_BUSY",\n                "Cannot change permission mode while a turn is active.",',
-     CFG + 'set_permission_mode_validates_then_reports_unavailable',
+     CFG + 'set_permission_mode_applies_and_validates',
      '#1457 pm busy message'),
     ('thinking-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change thinking while a turn is active.",',
      '"SESSION_BUSY",\n                "Cannot change thinking during an active turn.",',
-     CFG + 'set_session_thinking_validates_then_reports_unavailable',
+     CFG + 'set_session_thinking_applies_and_validates',
      '#1457 th busy message'),
     ('style-busy-message', CONFIG,
      '"SESSION_BUSY",\n                "Cannot change output style during an active turn.",',
@@ -199,6 +204,40 @@ mutations = [
      '        .filter(|s| s.to_utf8().is_ok())',
      DIR + 'resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
+    # ── #1864: the three selectors now have a reader. Each write and each of
+    # the two read paths gets a mutant, so a store that is written but never
+    # read (the -R4 defect) turns the bound positive red instead of passing.
+    ('permission-store-write-removed', CONFIG,
+     '        self.session_overrides\n'
+     '            .set_permission_mode(&session_key, mode);',
+     '        let _ = (&session_key, &mode);',
+     CFG + 'set_permission_mode_applies_and_validates',
+     '#1864 the plan selection is stored for the next run to read'),
+    ('thinking-store-write-removed', CONFIG,
+     '            thinking => self\n'
+     '                .session_overrides\n'
+     '                .set_thinking(&session_key, thinking.clone()),',
+     '            thinking => {\n'
+     '                let _ = thinking;\n'
+     '            }',
+     CFG + 'set_session_thinking_applies_and_validates',
+     '#1864 the mode object is stored'),
+    ('compose-permission-readback-removed', ASSEMBLY,
+     '                let stored_permission_mode =\n'
+     '                    session_overrides.permission_mode(&context.session_key);',
+     '                let stored_permission_mode = None::<JsString>;',
+     CFG + 'selector_writes_reach_the_compose_step',
+     '#1864 the stored permission mode reaches the agent config'),
+    ('compose-style-merge-removed', ASSEMBLY,
+     '    if let Some(content) = style_content {',
+     '    if let Some(content) = None::<&str> {',
+     CFG + 'apply_session_overrides_composes_the_selections',
+     '#1864 the style content joins the existing prompt'),
+    ('submit-permission-source-removed', LIVE,
+     '            if let Some(source) = &self.permission_mode_source',
+     '            if let Some(source) = &None::<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>',
+     'runtime::turn::live::stream_tests::permission_mode_source_rewrites_the_agent_config_each_turn',
+     "#1864 the stored mode reaches the live session's next turn"),
 ]
 
 
