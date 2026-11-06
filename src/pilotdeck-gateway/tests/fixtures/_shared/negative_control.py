@@ -255,7 +255,20 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
     no synthetic Git repository or alternate baseline is involved.
     """
     output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    # #1666: a taken evidence directory means "never started" (2). Letting
+    # `FileExistsError` escape printed a traceback and exited 1, which the host
+    # triage table reads as "ran and did not pass" -- an investigation of a run
+    # that never began.
+    try:
+        output.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        print(f'INVALID: output directory already exists: {output}',
+              file=sys.stderr, flush=True)
+        return 2
+    except OSError as error:
+        print(f'INVALID: cannot create the output directory {output}: {error}',
+              file=sys.stderr, flush=True)
+        return 2
     records = []
     interrupted = None
 

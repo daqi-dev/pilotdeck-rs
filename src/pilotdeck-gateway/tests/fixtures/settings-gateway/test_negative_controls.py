@@ -65,8 +65,11 @@ class RosterGuards(unittest.TestCase):
         code, stdout, stderr, out = result
         self.assertEqual(code, 2, f'expected refusal, got {code}: {stderr!r}{stdout!r}')
         self.assertIn(needle, stderr)
-        self.assertEqual(list(out.iterdir()), [],
-                         'a refusal before the run must not write evidence')
+        # The evidence directory is claimed after every startup guard, so a
+        # "never started" refusal must not even create it: a host that finds
+        # the directory reads it as this run's verdict.
+        self.assertFalse(out.exists(),
+                         'a refusal before the run must not create the evidence directory')
 
     def test_denominator_and_roster_disagree(self):
         self.assertRefused(
@@ -125,10 +128,14 @@ class ExitCodeTaxonomy(unittest.TestCase):
         code, _stdout, stderr, out = run('no-such-mutation-1734')
         self.assertEqual(code, 2)
         self.assertIn('no-such-mutation-1734', stderr)
-        self.assertEqual(list(out.iterdir()), [])
+        self.assertFalse(out.exists())
 
     def test_existing_output_directory_is_refused(self):
-        code, _stdout, stderr, out = run(output_exists=True)
+        # The directory claim sits behind the startup guards, so this case
+        # supplies the environment those guards require; otherwise it would
+        # stop at CARGO_TARGET_DIR and never reach the claim.
+        code, _stdout, stderr, out = run(
+            output_exists=True, environ={'CARGO_TARGET_DIR': '/nonexistent-cargo-target'})
         self.assertEqual(code, 2)
         self.assertIn('output directory already exists', stderr)
         self.assertEqual(list(out.iterdir()), [])
@@ -139,8 +146,8 @@ class ExitCodeTaxonomy(unittest.TestCase):
         code, _stdout, stderr, out = run()
         self.assertEqual(code, 2)
         self.assertIn('CARGO_TARGET_DIR must be supplied by the caller', stderr)
-        self.assertEqual(list(out.iterdir()), [],
-                         'the CARGO_TARGET_DIR refusal happens before any evidence write')
+        self.assertFalse(out.exists(),
+                         'the CARGO_TARGET_DIR refusal happens before the directory claim')
 
 
 class MarkerScopeShared(unittest.TestCase):

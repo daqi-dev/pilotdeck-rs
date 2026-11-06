@@ -149,3 +149,6 @@
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
 （`network-timing` 在 `mutation_suite` / `baseline_only` 内部占目录，同样在守卫之后）。
+这条由 `test_negative_optimize_guards.py` 机检：每个入口用不存在的变异名拒跑后，
+断言的输出目录不存在；另有一条「目录已存在 → rc=2 且不写入」的用例覆盖全族
+（`_shared/negative_control.py` 的 `mutation_suite` 也走同一拒跑）——不是靠读代码维持。

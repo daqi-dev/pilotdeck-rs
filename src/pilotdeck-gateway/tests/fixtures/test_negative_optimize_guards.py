@@ -16,6 +16,7 @@ a Python that ignores the flag.
 
 Run from this directory: ``python3 -m unittest test_negative_optimize_guards``.
 """
+import ast
 import os
 from pathlib import Path
 import re
@@ -52,22 +53,27 @@ SCRIPTS = (
     ('cli-parity-mock-gateway/negative_controls.py', (), ('-I',)),
 )
 
-# #1666 is *not* closed for the whole family: these `*/negative_controls.py`
-# scripts still carry bare `assert` guards and are migrated batch by batch
-# (tracked in the issue). This register is shrink-only: a file that is not
-# listed here may not contain a judgment `assert`, and migrating a listed file
-# must remove it here in the same change. Every entry needs a reason.
+# #1666 is *not* closed for the whole family: these hand-rolled entries still
+# carry bare `assert` guards and are migrated batch by batch (tracked in the
+# issue). This register is shrink-only: a file that is not listed here may not
+# contain a judgment `assert`, and migrating a listed file must remove it here
+# in the same change. Every entry needs a reason.
+#
+# Scope: the scan covers every ``negative_controls.py`` at any depth plus the
+# entries named in ``SCANNED_EXTRA``. Same-shaped entries with other names
+# (``negative.py``, ``negative-controls.py``, ``negative_round*.py``,
+# ``negative_ids.py`` …) are *not* scanned yet — that is #1666 batch 3, not a
+# claim that they are clean.
 PENDING_BARE_ASSERTS = {
     'cli-parity-lock-bounded/negative_controls.py':
         'frozen positive/negative pairing pins the assert text; needs its own round',
-    'grep-etxtbsy/negative_controls.py': 'not migrated yet (batch 3)',
     'host-event-pump/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-gateway/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-hooks-spawn/negative_controls.py': 'not migrated yet (batch 3)',
+    'native-settings/negative/negative_controls.py':
+        'not migrated yet (batch 3); nested one level deeper than the flat entries',
     'pump-order-cases/negative_controls.py': 'not migrated yet (batch 3)',
     'runtime-spawn-panic/negative_controls.py': 'not migrated yet (batch 3)',
-    'shared-runner-failclosed/negative_controls.py':
-        'documented exemption: hand-run, fails closed, no exit-code consumer',
     'skills/negative_controls.py': 'not migrated yet (batch 3)',
     'skills-external/negative_controls.py': 'not migrated yet (batch 3)',
     'spill-isolation/negative_controls.py': 'not migrated yet (batch 3)',
@@ -76,25 +82,69 @@ PENDING_BARE_ASSERTS = {
     'workspace-snapshot-gate/negative_controls.py': 'not migrated yet (batch 3)',
     'workspace-snapshot-nonutf8/negative_controls.py': 'not migrated yet (batch 3)',
 }
+
+# Migrated entries whose file name is not ``negative_controls.py``. They are
+# scanned too, so re-introducing an `assert` (or a bare one in the shared
+# helper they import) is a CI failure rather than untested drift.
+SCANNED_EXTRA = (
+    'turn-runner/runner_negative.py',
+    'turn-runner/_negative_common.py',
+    'network-timing/negative_private.py',
+)
 BARE_ASSERT = re.compile(r'^\s*assert\b', re.MULTILINE)
 _CLEANUP = []
 
 
-def run(script, args, flags=(), *, optimize, base):
-    """Run ``script`` with a throwaway output directory; return the process."""
+def scanned_entries():
+    """Every entry the register accounts for, at any nesting depth."""
+    return ({str(path.relative_to(FIXTURES))
+             for path in FIXTURES.rglob('negative_controls.py')}
+            | set(SCANNED_EXTRA))
+
+
+def uses_a_bare_assert(path):
+    """True when the file contains an ``assert`` *statement* anywhere.
+
+    A line-anchored regex misses ``if cond: assert x`` and ``x; assert y``,
+    which `-O` strips just the same. Parse instead; fall back to the regex only
+    for a file this interpreter cannot parse, so the answer stays fail-closed.
+    """
+    source = path.read_text(encoding='utf-8')
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return bool(BARE_ASSERT.search(source))
+    return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
+
+
+def run(script, args, flags=(), *, optimize, base, claim_exists=False):
+    """Run ``script`` with a throwaway output directory.
+
+    Returns ``(process, claimed_dir)``: the output directory path is part of
+    the result because "refused before it started" is only honest if the
+    evidence directory was never created (a host reads that directory as this
+    run's verdict).
+    """
     directory = Path(tempfile.mkdtemp(prefix='negctl-1666-', dir=base))
     _CLEANUP.append(directory)
     out = directory / 'out'
     command = [sys.executable, *flags]
     if optimize:
         command.append('-O')
-    command += [str(FIXTURES / script), str(out), *args, UNKNOWN]
+    if claim_exists:
+        out.mkdir()
+        command_entry = [str(out), *args]
+    else:
+        command_entry = [str(out), *args, UNKNOWN]
+    command += [str(FIXTURES / script), *command_entry]
     env = dict(os.environ)
     # Presence-only preconditions some scripts check before their roster guard.
     env.setdefault('CARGO_TARGET_DIR', str(out.parent / 'cargo-target'))
+    env.setdefault('PDRS_BASELINE', str(out.parent / 'pinned-ts-checkout'))
     env.pop('PYTHONOPTIMIZE', None)
-    return subprocess.run(command, cwd=str(FIXTURES), env=env,
-                          capture_output=True, text=True, timeout=300)
+    result = subprocess.run(command, cwd=str(FIXTURES), env=env,
+                            capture_output=True, text=True, timeout=300)
+    return result, out
 
 
 class OptimizeStripsAssert(unittest.TestCase):
@@ -129,8 +179,8 @@ class UnknownControlIsRefused(unittest.TestCase):
         for script, extra, flags in SCRIPTS:
             for optimize in (False, True):
                 with self.subTest(script=script, optimize=optimize):
-                    result = run(script, extra, flags, optimize=optimize,
-                                 base=self.base)
+                    result, out = run(script, extra, flags, optimize=optimize,
+                                      base=self.base)
                     self.assertEqual(
                         result.returncode, 2,
                         f'{script} (optimize={optimize}) must refuse to run: '
@@ -139,24 +189,53 @@ class UnknownControlIsRefused(unittest.TestCase):
                                   f'{script} must name the unknown control on stderr')
                     self.assertNotIn('0/0', result.stdout,
                                      f'{script} must not report an empty run as a result')
+                    # A refusal is "never started": it must not leave an
+                    # evidence directory for a host to read as this run.
+                    self.assertFalse(
+                        out.exists(),
+                        f'{script} (optimize={optimize}) refused but still created '
+                        f'its evidence directory {out}')
+
+    def test_existing_output_directory_is_refused(self):
+        """A taken evidence directory means "never started" (2), not a run (1).
+
+        `mkdir(exist_ok=False)` used to raise `FileExistsError`, whose traceback
+        exits 1 -- the host reads that as "ran and did not pass" and investigates
+        a run that never happened. The directory is still empty afterwards: this
+        run wrote nothing.
+        """
+        for script, extra, flags in SCRIPTS:
+            with self.subTest(script=script):
+                result, out = run(script, extra, flags, optimize=True,
+                                  base=self.base, claim_exists=True)
+                self.assertEqual(
+                    result.returncode, 2,
+                    f'{script} must refuse an existing output directory: '
+                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                self.assertIn('already exists', result.stderr,
+                              f'{script} must say why it refused')
+                self.assertEqual(list(out.iterdir()), [],
+                                 f'{script} must not write into another run\'s directory')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.
         for script, extra, flags in SCRIPTS:
             with self.subTest(script=script):
-                plain = run(script, extra, flags, optimize=False, base=self.base)
-                optimized = run(script, extra, flags, optimize=True, base=self.base)
+                plain, _ = run(script, extra, flags, optimize=False, base=self.base)
+                optimized, _ = run(script, extra, flags, optimize=True, base=self.base)
                 self.assertEqual(plain.returncode, optimized.returncode)
 
 
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The ten scripts this PR migrated are not the whole ``*/negative_controls.py``
-    family. Rather than let a hand-written list look like a closed set, the
-    remaining debt is named here: a file that is not in ``PENDING_BARE_ASSERTS``
-    may not contain a judgment ``assert``, and each listed file carries a
-    reason. Migrating one must delete its entry in the same change.
+    The fifteen entries this PR migrated are not the whole family. Rather than
+    let a hand-written list look like a closed set, the remaining debt is named
+    here: a file in ``scanned_entries()`` that is not in
+    ``PENDING_BARE_ASSERTS`` may not contain a judgment ``assert``, and each
+    listed file carries a reason. Migrating one must delete its entry in the
+    same change. The scan reaches every nesting depth; entries with other file
+    names are batch 3 (see the comment on the register).
     """
 
     def test_every_script_entry_exists(self):
@@ -165,9 +244,8 @@ class BareAssertInventory(unittest.TestCase):
                             f'{script} is listed but does not exist')
 
     def test_no_unregistered_script_uses_a_bare_assert(self):
-        found = {str(path.relative_to(FIXTURES))
-                 for path in FIXTURES.glob('*/negative_controls.py')
-                 if BARE_ASSERT.search(path.read_text(encoding='utf-8'))}
+        found = {name for name in scanned_entries()
+                 if uses_a_bare_assert(FIXTURES / name)}
         self.assertEqual(found, set(PENDING_BARE_ASSERTS),
                          'migrate the script (see #1666) and update '
                          'PENDING_BARE_ASSERTS, or remove the bare assert')

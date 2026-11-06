@@ -566,10 +566,10 @@ try:
     run_rows = select(mutations, selected, always=())
 except ValueError as error:
     refuse(str(error))
-out = claim_dir(sys.argv[1])
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     refuse('set CARGO_TARGET_DIR to the caller build directory')
+out = claim_dir(sys.argv[1])
 summary = []
 baseline = os.environ.get('PDRS_NEG_BASELINE', 'HEAD')
 with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:

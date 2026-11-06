@@ -88,17 +88,6 @@ def refuse(message):
     sys.exit(2)
 
 
-out = Path(sys.argv[1]).resolve()
-try:
-    out.mkdir(parents=True, exist_ok=False)
-except FileExistsError:
-    # #1538 fix-r4 (concurrency P1): this is the only exit-2 branch that can
-    # sit next to files. A doomed re-run into a finished directory used to look
-    # like "never ran" while `summary.json` from the *previous* run (complete,
-    # all KILLED, a different `runId`) was still there for a host to read as
-    # this run's verdict. Say so in the message.
-    refuse(f'#1538 output directory already exists: {out}'
-           ' (this run wrote nothing; any files inside belong to an earlier run)')
 source = root / 'src/pilotdeck-gateway/src/runtime/settings'
 REPLAY = 'runtime::settings::tests::settings_gateway_replays_the_real_ts_oracle'
 UPDATE_DROP = ('runtime::settings::tests::'
@@ -281,6 +270,21 @@ for marker in MARKERS.values():
     if marker.startswith('case ') and marker[5:] not in case_ids:
         # #1538: explicit, so `-O` cannot strip the check.
         refuse(f'#1318 marker {marker!r} names no oracle case id')
+# The evidence directory is claimed *after* every startup guard, so a refusal
+# ("never started", exit 2: roster drift, missing CARGO_TARGET_DIR, unreadable
+# baseline or oracle, bad marker) leaves nothing behind for a host to read as
+# this run's evidence.
+out = Path(sys.argv[1]).resolve()
+try:
+    out.mkdir(parents=True, exist_ok=False)
+except FileExistsError:
+    # #1538 fix-r4 (concurrency P1): this is the only exit-2 branch that can
+    # sit next to files. A doomed re-run into a finished directory used to look
+    # like "never ran" while `summary.json` from the *previous* run (complete,
+    # all KILLED, a different `runId`) was still there for a host to read as
+    # this run's verdict. Say so in the message.
+    refuse(f'#1538 output directory already exists: {out}'
+           ' (this run wrote nothing; any files inside belong to an earlier run)')
 summary = []
 failures = []
 slot_script = root / 'scripts/cargo-slots.sh'
