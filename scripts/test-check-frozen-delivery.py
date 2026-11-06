@@ -1337,6 +1337,73 @@ def run():
                         "class _C:\n    def _swap(self, x):\n"
                         "        x.update({'A2_SCRIPTS': ()})\n"
                       + _gw_tail) is None)
+    # r30：容器表达式的「另一半读不出来」「已跟踪容器再派生」「builtins 换名
+    # 写」「for / 推导式目标」四种拼法补齐。每条都对应 r29 复审的一条发现。
+    case("gateway 容器相加只有一半写得出来 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "rows = [common] + _x\nrows[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway sys 表容器相加只有一半写得出来 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\n_a, _b = [_m] + _x, 0\n"
+                        "_a[0].update({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway 字典按 | 合并后被看护对象仍在 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "d = {'x': common} | _d\nd['x'].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 已跟踪容器与字面量相加 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\ny = x + [None]\ny[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 已跟踪容器的 copy() → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\ny = x.copy()\ny[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 已跟踪容器交给 list() → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\ny = list(x)\ny[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 对已跟踪容器做逐元素推导 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\ny = [e for e in x]\ny[0].A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway builtins 换名后改绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\n_b = builtins\n"
+                        "def _apply(f):\n    return f(common)\n"
+                        "_b.sorted = _apply\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 经 builtins.__dict__ 改绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\ndef _apply(f):\n    return f(common)\n"
+                        "builtins.__dict__['sorted'] = _apply\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 经 __builtins__.update 改绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "__builtins__.update({'sorted': _apply})\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway for 目标重绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "for sorted in _fns:\n"
+                        "    sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 推导式目标重绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "_r = [sorted(lambda o: o.update({'A2_SCRIPTS': ()})) "
+                        "for sorted in _fns]\nprint(_r)\n"
+                      + _gw_tail) is None)
+    # 正控：干净容器上的同名拼法不该被跟随。
+    case("gateway 干净容器 copy/list/推导 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [0]\n_a = x.copy()\n_b = list(x)\n"
+                        "_c = [e for e in x]\nprint(_a, _b, _c)\n"
+                      + _gw_tail) is not None)
     # 白名单每个成员都要有配对的负控（名单漂移即红）与正控（干净数据不误拦）。
     for _consumer in sorted(cfd._LAMBDA_CONSUMERS):
         case(f"gateway 无主 lambda 交给 {_consumer} 且同时喂被看护对象 → 不可判定",
