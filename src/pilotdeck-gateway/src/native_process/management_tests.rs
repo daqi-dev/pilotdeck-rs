@@ -1522,12 +1522,15 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
         "#1431 --storage-root selects the staged root"
     );
     // Take the recorder from the production staging helpers instead of
-    // building one by hand: these two calls resolve `--storage-root`, register
-    // the project and read the recorder out of `PersistenceResources`, so a
-    // regression there cannot leave this test green. Handing that recorder to
-    // `Services` inside `assembly` is *not* driven here — this test composes
-    // the `Services` literal itself and never starts a real submit turn; that
-    // last hop still has no end-to-end control (#1431).
+    // building one by hand: they acquire the staged project registry and
+    // extract the provider from `PersistenceResources`, so a regression in
+    // that extraction cannot leave this test green. (They do not re-resolve
+    // `--storage-root` themselves — staging did that when `setup()` registered
+    // the project, and the assertions above pin the root the CLI selects.)
+    // Handing that recorder to `Services` inside `assembly` is *not* driven
+    // here — this test composes the `Services` literal itself and never starts
+    // a real submit turn; that last hop still has no end-to-end control
+    // (#1431).
     let enabled =
         crate::native_process::assembly::snapshot::snapshot_enabled(&options, &requests.project)
             .await
