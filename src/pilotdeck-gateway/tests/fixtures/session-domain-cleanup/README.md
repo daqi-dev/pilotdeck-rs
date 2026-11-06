@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 243 mutants:
+`JUDGES`, keyed by the same names. The current table has 247 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -429,7 +429,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-handle-aliased-escape`,
 `calibrate-getattribute-write-attribute`,
 `calibrate-getattr-const-subscript-write`, `calibrate-match-capture-helper`,
-`calibrate-comprehension-write-helper`, `calibrate-mixed-alias-binding`.
+`calibrate-comprehension-write-helper`, `calibrate-mixed-alias-binding`,
+`calibrate-handle-container-alias`, `calibrate-handle-mapping-write`,
+`calibrate-list-const-subscript-write`,
+`calibrate-comprehension-filter-write`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1088,6 +1091,26 @@ plain read and must stay clean, while the same shapes naming a **write**
 attribute still turn the gate red --
 `calibrate-getattribute-write-attribute` and
 `calibrate-getattr-const-subscript-write`.
+
+### Closed by `fix-r1` round 2 (codex r1b)
+
+The first `fix-r1` head closed the eight constructs above but the same review
+found four ways around the new rules; each now has its own mutant.
+
+| Shape | Mutant |
+|---|---|
+| **N/N2 alias**: the whole **container** is handed to a second name (`other = hs; other[0](...)`); the fixpoint only followed subscript/call wrappers. | `calibrate-handle-container-alias` |
+| **N/N2 mapping write**: the handle is not only *called* -- `hs[0]['common'] = <stub>` (or `hs[0].common = ...`) writes the object it was taken from. | `calibrate-handle-mapping-write` |
+| **M hole**: a **list** literal was folded like a tuple, so `keys = ['__doc__']; keys[0] = '__setattr__'; getattr(md, keys[0])(...)` read as a pure `__doc__` read. Only immutable tuples are folded now. | `calibrate-list-const-subscript-write` |
+| Comprehension **filter / iterable**: the write sat in `if <write>` or in the iterated expression, neither of which was scanned. | `calibrate-comprehension-filter-write` |
+
+Round 2 also narrowed two rules the first head over-reached on, both pinned by
+in-file self-tests that run on every `aggregation-audit`:
+a **comprehension target** no longer leaks into the enclosing function's
+bindings (`[h for h in (operator.setitem,)]; h = lambda *a: None;
+h(report, 'status', 'PASS')` is clean -- probe `N13`), and a bare write-handle
+name resolves its target from the first positional argument instead of
+withdrawing every receiver in the file.
 
 Also measured at the same head, tracked in #1954 rather than accepted here (they
 are P2-level and narrower than the constructs above): `from operator import attrgetter as _ag;

@@ -2049,6 +2049,20 @@ def _write_call_target(func, kinds, depth=0):
         for candidate in _MANAGED_WRITE_ATTRS:
             if 'fn:' + candidate in kinds.get(func.id, ()):
                 return _managed_write_kind(candidate), None, ()
+        # #1953 fix-r1 (codex r1b P1): a name the kinds table only knows as
+        # *some* write handle (a comprehension target bound to
+        # ``operator.setitem``, ``h = getattr(md, <name>)``) is the unbound
+        # spelling: it names its target first, exactly like the builtin.
+        # Without the decode ``_unbounded_write`` answered "no target" and
+        # withdrew every receiver in the file, which turned the harmless
+        # ``[h for h in (operator.setitem,)]; h = lambda *a: None;
+        # h(report, 'status', 'PASS')`` into a false FAIL, while the real
+        # ``h(md, 'common', <stub>)`` spelling kept no named target at all.
+        # A ``partial`` pre-binds its leading arguments, so that shape stays
+        # undecoded here and keeps failing closed.
+        handle_kinds = kinds.get(func.id, ())
+        if 'fn:write-handle' in handle_kinds and 'fn:partial' not in handle_kinds:
+            return 'setitem', None, ()
         return None
     if isinstance(func, ast.Subscript):
         # #892 r30: the fixture runs as ``__main__``, where ``__builtins__`` is
@@ -2128,7 +2142,13 @@ def _constant_string(node, simple):
                 if len(values) != 1:
                     return None
                 sequence = values[0]
-            if (isinstance(sequence, (ast.Tuple, ast.List))
+            # #1953 fix-r1 (codex r1b P0): only an immutable tuple is folded.
+            # ``keys = ['__doc__']; keys[0] = '__setattr__'; getattr(md,
+            # keys[0])(...)`` writes the list before the read, so folding a
+            # list literal told the gate the name was still ``__doc__`` and
+            # the write handle went out trusted.  A list is mutable, so its
+            # element is never a proven constant.
+            if (isinstance(sequence, ast.Tuple)
                     and isinstance(index, ast.Constant)
                     and isinstance(index.value, int)
                     and not isinstance(index.value, bool)
@@ -2234,8 +2254,7 @@ def _container_handle_roots(value, kinds, simple):
         if not isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
                                  ast.GeneratorExp)):
             continue
-        parts = ([node.key, node.value] if isinstance(node, ast.DictComp)
-                 else [node.elt])
+        parts = _comprehension_parts(node)
         for part in parts:
             for inner in ast.walk(part):
                 if (isinstance(inner, ast.Call) and inner.args
@@ -3239,6 +3258,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
                         if (level, called) in handle_containers:
                             carried = handle_containers[(level, called)]
                             break
+            if not carried and isinstance(value, ast.Name):
+                # ``other = hs`` hands the *container* over whole, and
+                # ``other[0]('common', <stub>)`` takes the same handle out of
+                # the second name; the fixpoint used to follow only a
+                # subscript/call wrapper, so the alias lost the roots
+                # (codex r1b P0).
+                for level in _chain(scope):
+                    if (level, value.id) in handle_containers:
+                        carried = handle_containers[(level, value.id)]
+                        break
             if not carried:
                 continue
             for target in _leaf_targets(targets):
@@ -3283,6 +3312,27 @@ def _receiver_attribute_writes(tree, receivers, shared):
                                  | namespace_dict_roots(root, scope))
                 break
 
+    # #1953 fix-r1 (codex r1b P0): the handle is not only *called* -- a
+    # mapping or attribute write through an element writes the object the
+    # handle came from just as well (``hs[0]['common'] = <stub>`` /
+    # ``hs[0].common = <stub>``).  The call-site scan saw neither.
+    for scope, node in _walk_scoped(tree):
+        if not isinstance(node, (ast.Subscript, ast.Attribute)):
+            continue
+        if not isinstance(getattr(node, 'ctx', None), ast.Store):
+            continue
+        called = _container_callee(node.value)
+        if called is None and isinstance(node.value, ast.Name):
+            called = node.value.id
+        if called is None:
+            continue
+        for level in _chain(scope):
+            if (level, called) in handle_containers:
+                for root in handle_containers[(level, called)]:
+                    poisoned |= (receiver_roots(root, scope)
+                                 | namespace_dict_roots(root, scope))
+                break
+
     for scope, target in dynamic_targets:
         poisoned |= receiver_roots(target, scope) | namespace_dict_roots(target, scope)
     for scope, node in _walk_scoped(tree):
@@ -3302,8 +3352,32 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     calls = []
 
+    # #1953 fix-r1 (codex r1b P1): the kinds table is name-global, so a
+    # comprehension target bound to ``operator.setitem`` makes every call of
+    # the same spelling a write handle -- including one the function shadows
+    # with a lambda afterwards.  Before a generic-handle call is read as a
+    # write, check what the name denotes *in that scope at that call*; a plain
+    # dynamic ``getattr`` handle still withdraws its own receiver through the
+    # dynamic-target scan above.
+    scoped_bindings = {tree: _name_bindings(tree)}
+    for scope, node in _walk_scoped(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scoped_bindings.setdefault(node, _name_bindings(node))
+
+    def _generic_handle(func):
+        if not isinstance(func, ast.Name) or func.id in _WRITE_HELPERS:
+            return False
+        found = kinds.get(func.id, ())
+        return ('fn:write-handle' in found
+                or any('fn:' + name in found for name in _MANAGED_WRITE_ATTRS))
+
     def collect(node, scope, loops):
         written = _setattr_arguments(node, kinds)
+        if written is not None and _generic_handle(node.func):
+            bindings = scoped_bindings.get(scope)
+            if bindings is not None and _resolved_write_helper(
+                    node.func, bindings) is None:
+                written = None
         if written is not None:
             calls.append((node, scope, loops, written))
         for child in ast.iter_child_nodes(node):
@@ -4235,12 +4309,19 @@ class _NameBindings(dict):
     with the use.
     """
 
-    __slots__ = ('loops_of', 'comps_of')
+    __slots__ = ('loops_of', 'comps_of', 'comp_bound')
 
     def __init__(self):
         super().__init__()
         self.loops_of = {}
         self.comps_of = {}
+        # #1953 fix-r1 (codex r1b P1): a comprehension target lives in the
+        # comprehension's own scope, but the table recorded it like any other
+        # local, so ``[h for h in (operator.setitem,)]`` made an unrelated
+        # ``h = lambda *a: None`` later in the same function resolve to the
+        # write helper and the clean function failed.  ``(name, lineno,
+        # id(value))`` -> the comprehension that owns the binding.
+        self.comp_bound = {}
 
     def loops_at(self, node):
         if node is None:
@@ -4317,7 +4398,7 @@ def _name_bindings(function):
             # boundary r35 P0-2).
             for generator in node.generators:
                 _bind_iterable(generator.target, generator.iter, bindings,
-                               node.lineno)
+                               node.lineno, node)
         inner = loops + (node,) if isinstance(
             node, (ast.For, ast.AsyncFor, ast.While)) else loops
         inner_comp = comp + (node,) if isinstance(
@@ -4332,18 +4413,23 @@ def _name_bindings(function):
     return bindings
 
 
-def _bind_values(target, value, bindings, lineno):
+def _bind_values(target, value, bindings, lineno, comp=None):
     if (isinstance(target, (ast.Tuple, ast.List))
             and isinstance(value, (ast.Tuple, ast.List))
             and len(target.elts) == len(value.elts)):
         for element_target, element_value in zip(target.elts, value.elts):
-            _bind_values(element_target, element_value, bindings, lineno)
+            _bind_values(element_target, element_value, bindings, lineno, comp)
         return
     for name in _target_names(target):
         bindings.setdefault(name, []).append((lineno, value))
+        if comp is not None:
+            # #1953 fix-r1 (codex r1b P1): tag the binding with the
+            # comprehension that owns it so ``_bindings_at`` can keep it out
+            # of the enclosing function's scope.
+            bindings.comp_bound[(name, lineno, id(value))] = comp
 
 
-def _bind_iterable(target, iterable, bindings, lineno):
+def _bind_iterable(target, iterable, bindings, lineno, comp=None):
     """A comprehension variable takes each element of a literal sequence.
 
     ``[h(report, 'status', 'PASS') for h in [operator.setitem]]`` binds ``h``
@@ -4354,9 +4440,9 @@ def _bind_iterable(target, iterable, bindings, lineno):
     """
     if isinstance(iterable, (ast.List, ast.Tuple, ast.Set)) and iterable.elts:
         for element in iterable.elts:
-            _bind_values(target, element, bindings, lineno)
+            _bind_values(target, element, bindings, lineno, comp)
         return
-    _bind_values(target, iterable, bindings, lineno)
+    _bind_values(target, iterable, bindings, lineno, comp)
 
 
 def _name_relays(name, bindings, seen=None):
@@ -4422,6 +4508,23 @@ def _returned_names(value):
     else:
         return []
     return [name for arm in arms for name in _returned_names(arm)]
+
+
+def _comprehension_parts(node):
+    """Every expression a comprehension evaluates (#1953 fix-r1 r1b P0).
+
+    The element is the obvious one, but every generator also evaluates its
+    iterable and its ``if`` filters, and both can hold the write
+    (``[x for x in (operator.setitem(report, 'status', 'PASS'),)]`` /
+    ``[x for x in (1,) if operator.setitem(report, 'status', 'PASS')]``).
+    Only the element was scanned, so those derivations stayed green.
+    """
+    parts = ([node.key, node.value] if isinstance(node, ast.DictComp)
+             else [node.elt])
+    for generator in node.generators:
+        parts.append(generator.iter)
+        parts.extend(generator.ifs)
+    return parts
 
 
 def _comprehension_calls(node):
@@ -5539,8 +5642,17 @@ def _bindings_at(bindings, name, node=None):
     concurrency P1-2).  An int *node* keeps the old line-only meaning.
     """
     values = (bindings or {}).get(name) or ()
+    # #1953 fix-r1 (codex r1b P1): a comprehension target is not a function
+    # local.  Java-/C-style scoping would leak it here and an unrelated later
+    # binding of the same spelling then resolved together with it, which both
+    # invented writes and hid the real (single) value.  Only a use that sits
+    # inside the owning comprehension may see it.
+    comp_bound = getattr(bindings, 'comp_bound', None)
     if node is None:
-        return list(values)
+        if comp_bound is None:
+            return list(values)
+        return [(lineno, value) for lineno, value in values
+                if (name, lineno, id(value)) not in comp_bound]
     if isinstance(node, ast.AST):
         limit = (getattr(node, 'lineno', 0), getattr(node, 'col_offset', -1))
         loops_at = getattr(bindings, 'loops_at', None)
@@ -5555,6 +5667,10 @@ def _bindings_at(bindings, name, node=None):
         use_comp = frozenset()
     visible = []
     for lineno, value in values:
+        if comp_bound is not None:
+            owner = comp_bound.get((name, lineno, id(value)))
+            if owner is not None and owner not in use_comp:
+                continue
         if limit[1] is None:
             if lineno <= limit[0]:
                 visible.append((lineno, value))
@@ -6008,8 +6124,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
             # the subscript write went out with no violation (codex boundary
             # r35 P0-2).  The loop variable resolves through ``_name_bindings``'
             # generator handling.
-            parts = ([node.key, node.value] if isinstance(node, ast.DictComp)
-                     else [node.elt])
+            parts = _comprehension_parts(node)
             for part in parts:
                 for inner in _comprehension_calls(part):
                     written = _call_written_values(inner, bindings)
@@ -6324,9 +6439,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
         elif (isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
                                 ast.DictComp))
               and any(_call_written_values(inner, bindings)
-                      for part in (
-                          [node.key, node.value]
-                          if isinstance(node, ast.DictComp) else [node.elt])
+                      for part in _comprehension_parts(node)
                       for inner in _comprehension_calls(part))):
             # #1953 fix-r1: the same write spelled inside a comprehension
             # element (``[h(report, 'status', 'PASS') for h in
@@ -7305,6 +7418,60 @@ def aggregation_audit():
                                         frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test lost the '
                         'aliased handle container')
+    container_alias_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _other = _hs\n"
+        "    _other[0]('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(container_alias_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'container handed over under a second name')
+    mapping_write_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    _hs[0]['common'] = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(mapping_write_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'mapping write through a handle container')
+    list_const_write_probe = ast.parse(
+        "def main():\n"
+        "    _keys = ['__doc__']\n"
+        "    _keys[0] = '__setattr__'\n"
+        "    getattr(md, _keys[0])('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(list_const_write_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test folded a '
+                        'mutable list into a constant attribute name')
+    comp_filter_probe = ast.parse(
+        "def main(report, rows):\n"
+        "    [row for row in rows"
+        " if operator.setitem(report, 'status', 'PASS')]\n")
+    if not unshared_status_slots(comp_filter_probe.body[0], module={},
+                                 rel=_1953_rel):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'write in a comprehension filter/iterable')
+    comp_scope_probe = ast.parse(
+        "def main(report):\n"
+        "    [h for h in (operator.setitem,)]\n"
+        "    h = lambda *a: None\n"
+        "    h(report, 'status', 'PASS')\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if (_withdrawn_receivers(comp_scope_probe, _1953_rel, frozenset({'common'}))
+            or unshared_status_slots(comp_scope_probe.body[0], module={},
+                                     rel=_1953_rel)):
+        failures.append('#1953 aggregation-audit: detector self-test leaked a '
+                        'comprehension-local binding into the function scope')
     receiver_local = _probe892_function('_shadowed_receiver_local')
     if receiver_local is None:
         failures.append('#892 aggregation-audit: detector self-test lost the '
