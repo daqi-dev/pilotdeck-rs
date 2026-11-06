@@ -15,3 +15,5 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 ```
 
 忽略测试 `webhook_channel_regenerates_identically` 必须在具备固定基线的宿主显式运行。Rust 直测补金样覆盖不到的状态格（假钟 prune 边界、限流窗口滑动、activeChats 重入、turn 中 stop、双 stop、热重载端口释放、原生 `/health` 原始字节 pin），不冒充 TS 行为。
+
+#1729：`negative_controls.py` 现有 **44** 个开关（以 `switches` 表为准），新增 24 个录制字段保护。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1334、字段和实际值。

@@ -73,7 +73,7 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the 26 `#996` compile-time switches the
+`negative_controls.py` runs the 65 `#996` compile-time switches the
 channel carries (`crate::mutants::on("sms-…")`, the fix-r1 round added
 11 and #1589 added the last 4) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
@@ -87,3 +87,5 @@ python3 -I negative_controls.py --check          # bindings preflight
 python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
+
+#1729：`negative_controls.py` 现有 **65** 个开关（以 `switches` 表为准），新增 39 个录制字段/预算保护。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
