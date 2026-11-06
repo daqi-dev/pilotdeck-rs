@@ -767,6 +767,7 @@ async fn project_path_boundaries_worker() {
         )),
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
+        cron: None,
         settings: requests::Requests::stub_settings(&owner),
     };
     let services = services::Services {

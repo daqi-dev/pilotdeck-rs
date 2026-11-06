@@ -50,6 +50,11 @@ pub struct Requests {
     /// "callback not configured" shape: `{requested: false, reason:
     /// "unsupported"}` with a fresh `requestedAt`.
     pub prepare_weixin_login: Option<methods::PrepareWeixinLogin>,
+    /// A8 U8 cron runtime (#1326). `None` is TS `options.cron` unconfigured
+    /// (no `cron:` section in the config): the six names stay out of
+    /// capabilities and every call answers the `requireCron` gate
+    /// (InProcessGateway.ts:3016-3022).
+    pub cron: Option<Arc<crate::runtime::cron::CronManager>>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].
@@ -167,6 +172,16 @@ impl GatewayRequests for Requests {
                             "snapshot_list",
                             "snapshot_get",
                             "snapshot_restore",
+                            // TS splices the six cron names right after the
+                            // snapshot triplet, gated on `options.cron`
+                            // (InProcessGateway.ts:2114-2122); the filter
+                            // below keeps the unconfigured gate.
+                            "cron_create",
+                            "cron_list",
+                            "cron_update",
+                            "cron_delete",
+                            "cron_stop",
+                            "cron_run_now",
                             "manager_sessions",
                             "commands_list",
                             "usage_snapshot",
@@ -237,6 +252,16 @@ impl GatewayRequests for Requests {
                                 ))
                                 && (memory_enabled
                                     || !matches!(*capability, "memory_list" | "memory_wipe"))
+                                && (self.cron.is_some()
+                                    || !matches!(
+                                        *capability,
+                                        "cron_create"
+                                            | "cron_list"
+                                            | "cron_update"
+                                            | "cron_delete"
+                                            | "cron_stop"
+                                            | "cron_run_now"
+                                    ))
                         })
                         .map(JsValue::from)
                         .collect(),

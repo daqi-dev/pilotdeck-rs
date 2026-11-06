@@ -184,6 +184,7 @@ async fn observe(name: &str) -> (Value, Value) {
         )),
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
+        cron: None,
         settings: requests::Requests::stub_settings(&owner),
     };
     let services = services::Services {
@@ -550,6 +551,7 @@ async fn observe_archive(name: &str) {
         )),
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
+        cron: None,
         settings: requests::Requests::stub_settings(&owner),
     };
     let mut params = json!({"sessionKey":"fixture"});

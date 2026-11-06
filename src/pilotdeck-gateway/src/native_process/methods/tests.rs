@@ -143,6 +143,15 @@ fn registry_matches_current_methods() {
         "reload_output_styles",
         "reload_config",
         "reload_extensions",
+        // #1326 A8 U8: the six cron control names, one registration
+        // (methods/cron.rs) whose method table is `runtime::cron`'s own
+        // `CRON_METHODS`.
+        "cron_create",
+        "cron_list",
+        "cron_update",
+        "cron_delete",
+        "cron_stop",
+        "cron_run_now",
     ];
     let methods: Vec<_> = registered_methods().collect();
     let actual: BTreeSet<_> = methods.iter().copied().collect();

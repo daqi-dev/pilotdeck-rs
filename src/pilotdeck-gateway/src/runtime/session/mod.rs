@@ -20,13 +20,16 @@ pub use owner::{
 use pilotdeck_protocol::JsString;
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// InProcessGateway.abortTurn's volatile coordination. The live owner supplies
 /// the abort sink; this layer does not manufacture or cache AgentSessions.
 #[derive(Default)]
 pub struct SessionTurns {
-    pub admission: SessionAdmission,
+    /// `Arc` so secondary consumers (cron's `SessionAdmissionCronGateway`,
+    /// #1326) bind the same volatile fence the live gateway admits through —
+    /// never a second `SessionAdmission` instance.
+    pub admission: Arc<SessionAdmission>,
     pub completion: TurnCompletionFence,
     aborted_reasons: Mutex<HashMap<JsString, JsString>>,
 }
