@@ -3873,22 +3873,31 @@ def _recorded_gitdir(entry):
     """The path an admin entry's ``gitdir`` file names, canonicalised.
 
     Returns ``_UNREADABLE_GITDIR`` when the file cannot be read; callers must
-    not read that as an absence (see the constant).  A readable but empty or
-    relative ``gitdir`` gets the same answer: ``git worktree add`` writes the
-    path non-atomically, so a truncated file is a real possibility, and
+    not read that as an absence (see the constant).  A readable but empty
+    ``gitdir`` gets the same answer: ``git worktree add`` writes the path
+    non-atomically, so a truncated file is a real possibility, and
     ``_real_path('')`` resolves to the *cwd* -- compared unequal to every
     wanted path, it read as "proven not ours" and let the cleanup deregister
-    a holder whose entry was still on disk.  Git never writes a relative
-    gitdir, so requiring an absolute one loses nothing.
+    a holder whose entry was still on disk.
+
+    A *relative* path is legitimate (``git worktree add --relative-paths`` /
+    ``worktree.useRelativePaths``, git >= 2.48) and is resolved against this
+    entry's own directory, which is what git writes it relative to.  Rejecting
+    it as unreadable would block every cleanup on such a repository.
     """
     try:
         text = (entry / 'gitdir').read_text(encoding='utf-8',
                                             errors='surrogateescape').strip()
     except OSError:
         return _UNREADABLE_GITDIR
-    if not text or not os.path.isabs(text):
+    if not text:
         return _UNREADABLE_GITDIR
-    return _real_path(text)
+    path = Path(text)
+    if not path.is_absolute():
+        # ``.git/worktrees/<id>/gitdir`` holds e.g. ``../../../../wt/.git``
+        # relative to ``.git/worktrees/<id>`` (measured with git 2.54).
+        path = entry / path
+    return _real_path(path)
 
 
 def _scan_admin(admin, wanted):
