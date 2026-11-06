@@ -841,6 +841,7 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
         cors_origins: case_origins(options),
         mapper: None,
         request_timeout: timeout,
+        body_read_timeout: None,
         uuid: Some(Arc::new(|| FIXED_UUID.to_owned())),
     }
 }
@@ -952,6 +953,7 @@ async fn replays_real_ts_api_server_cells() {
             "oversized-1",
             "oversized-2",
             "body-limit-exact",
+            "body-read-timeout",
             "keep-alive",
         ],
         "#1333 oracle must keep every TS surface cell, in order"
@@ -978,6 +980,52 @@ async fn replays_real_ts_api_server_cells() {
             Some(recorded_requests.len()),
             "#1333 {id}: every recorded TS response must pair with a recorded request"
         );
+        if id == "body-read-timeout" {
+            // #1620: a client that declares `Content-Length` and then stops
+            // sending is answered by Node's `requestTimeout` (300 s) with the
+            // 408 and a close. Not replayed here because the real cell waits
+            // out that full 300 s and hyper frames the same 408 with a
+            // `Transfer-Encoding` header the oracle's parsed view does not
+            // carry. `partial_body_is_answered_at_the_body_read_deadline`
+            // pins the Rust side with a shortened injected deadline instead.
+            //
+            // Pin the TS side so the skip is not blind: the baseline must
+            // deliver the 408, not reset the connection, and it must record
+            // how much of the declared body it sent before stalling.
+            let expected = &case["expect"][0];
+            assert_eq!(
+                expected["status"].as_u64(),
+                Some(408),
+                "#1333 {id}: the baseline answers a stalled body with 408, got {expected}"
+            );
+            assert_eq!(
+                expected["body"].as_str(),
+                Some(""),
+                "#1333 {id}: the requestTimeout body is empty, got {expected}"
+            );
+            assert!(
+                expected.get("error").is_none(),
+                "#1333 {id}: the baseline must deliver the 408, not reset the connection, got {expected}"
+            );
+            let request = &recorded_requests[0];
+            let declared: u64 = request["headers"]["content-length"]
+                .as_str()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "#1333 {id}: the request must declare a numeric Content-Length: {request}"
+                    )
+                });
+            let stalled = request["stalledAfter"].as_u64().unwrap_or_else(|| {
+                panic!("#1333 {id}: the request must record how many bytes it sent: {request}")
+            });
+            assert!(
+                stalled < declared,
+                "#1333 {id}: the request must stall before the declared body is complete \
+                 (sent {stalled} of {declared})"
+            );
+            continue;
+        }
         if id.starts_with("oversized-") {
             // The three oversized cells record the same request; one of them is
             // replayed for real by `oversized_body_closes_without_response`
@@ -1550,6 +1598,61 @@ async fn body_at_the_exact_limit_is_read_then_rejected_as_json() {
         String::from_utf8_lossy(&response.body)
     );
     started.handle.stop("done").await.unwrap();
+}
+
+/// #1620: a client that declares `Content-Length` and then stops sending —
+/// without closing — used to park `read_body` forever, and `stop()` drains the
+/// connection tasks, so it hung too. Node's `requestTimeout` answers at the
+/// deadline (webhook lane: `shutdown_with_partial_body_finishes_at_request_timeout`);
+/// this pins the api-server lane to the same behavior with a shortened,
+/// injected deadline. This is the test the `api-server-body-read-no-timeout`
+/// negative control removes the deadline from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partial_body_is_answered_at_the_body_read_deadline() {
+    const DEADLINE: Duration = Duration::from_secs(5);
+    let mut case_options = options(&json!({"options":{}}), None);
+    case_options.body_read_timeout = Some(Duration::from_millis(200));
+    let started = start(case_options, None).await;
+    let port = started.addr.port();
+    let handle = started.handle.clone();
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1333 connect to the stalled-body listener");
+    stream
+        .write_all(
+            b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n\
+             Content-Length: 64\r\nConnection: keep-alive\r\n\r\nxxxxxxxx",
+        )
+        .await
+        .expect("#1333 send the partial body");
+    // Start `stop()` while the body is still stalled: without the deadline the
+    // connection task never finishes and this join never resolves.
+    let stopping = tokio::spawn(async move { handle.stop("partial-body").await });
+    let mut response = Vec::new();
+    tokio::time::timeout(DEADLINE, stream.read_to_end(&mut response))
+        .await
+        .expect("#1333 a stalled body is answered at the body-read deadline")
+        .expect("#1333 read the stalled-body response bytes");
+    let (end, status, headers) =
+        parse_head(&response).expect("#1333 the stalled-body answer carries a response head");
+    assert_eq!(
+        status, 408,
+        "#1333 a stalled body is answered with Node's requestTimeout 408"
+    );
+    assert_eq!(
+        headers.get("connection").map(String::as_str),
+        Some("close"),
+        "#1333 the requestTimeout 408 closes the connection"
+    );
+    assert!(
+        dechunk(&response[end..]).is_empty(),
+        "#1333 the requestTimeout 408 body is empty"
+    );
+    tokio::time::timeout(DEADLINE, stopping)
+        .await
+        .expect("#1333 stop finishes after the body-read deadline")
+        .expect("#1333 stop join")
+        .expect("#1333 stop ok after the body-read deadline");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

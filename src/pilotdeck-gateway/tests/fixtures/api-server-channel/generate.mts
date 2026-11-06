@@ -133,6 +133,68 @@ function send(port: number, spec: RequestSpec): Promise<any> {
   });
 }
 
+// #1620: a request whose body is declared but never completed. The baseline's
+// `requestTimeout` (Node default 300 s) is the only thing that ends it, so
+// this helper deliberately never calls `req.end()`.
+function sendPartial(
+  port: number,
+  spec: RequestSpec & { sendBytes: number },
+): Promise<any> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const received: Buffer[] = [];
+    let status: number | undefined;
+    const done = (value: any) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    const failure = (error: any) => ({
+      error: String(error.code ?? error.message),
+      bytes: received.reduce((total, chunk) => total + chunk.length, 0),
+      status,
+    });
+    const declared = Number(spec.headers?.['content-length']);
+    assert.ok(
+      Number.isInteger(declared) && spec.sendBytes >= 0 && spec.sendBytes < declared,
+      '#1620 sendPartial needs an integer content-length larger than sendBytes',
+    );
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        method: spec.method ?? 'GET',
+        path: spec.path ?? '/',
+        headers: { ...(spec.headers ?? {}) },
+        agent: false,
+      },
+      (response) => {
+        status = response.statusCode;
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () =>
+          done({
+            status: response.statusCode,
+            headers: maskHeaders(response.headers),
+            body: maskText(Buffer.concat(chunks).toString('utf8')),
+          }),
+        );
+        response.on('error', (error: any) => done(failure(error)));
+      },
+    );
+    req.on('socket', (socket) => {
+      socket.on('data', (chunk: Buffer) => received.push(chunk));
+    });
+    req.on('error', (error: any) => done(failure(error)));
+    try {
+      req.write(spec.body!.slice(0, spec.sendBytes));
+    } catch (error: any) {
+      done(failure(error));
+    }
+  });
+}
+
 function scriptedGateway(turns: any[], calls: any[]) {
   let index = 0;
   return {
@@ -436,6 +498,46 @@ const AT_CAP_BYTES = 1_000_000;
     id: 'body-limit-exact',
     options: {},
     requests: [{ method: 'POST', path: '/v1/chat/completions', body: `<${AT_CAP_BYTES} bytes>` }],
+    expect: [result],
+  });
+}
+
+// 10c. #1620: a declared `Content-Length` the client never completes. Node's
+// default `requestTimeout` (v22.22.0: 300 s) answers with its 51-byte
+// `requestTimeoutResponse` and closes; the connection is held open on purpose,
+// so this cell takes the full 300 s once per generation. The recorded request
+// keeps the declared length as a placeholder plus the number of bytes actually
+// sent, so the replay can tell the cell never completed the body.
+const STALLED_DECLARED_BYTES = 64;
+const STALLED_SENT_BYTES = 8;
+{
+  const started = await startChannel({}, undefined);
+  const result = await sendPartial(started.port, {
+    method: 'POST',
+    path: '/v1/chat/completions',
+    headers: {
+      'content-length': String(STALLED_DECLARED_BYTES),
+      connection: 'keep-alive',
+    },
+    body: 'x'.repeat(STALLED_DECLARED_BYTES),
+    sendBytes: STALLED_SENT_BYTES,
+  });
+  await started.handle.stop('surface-done');
+  cases.push({
+    id: 'body-read-timeout',
+    options: {},
+    requests: [
+      {
+        method: 'POST',
+        path: '/v1/chat/completions',
+        headers: {
+          'content-length': String(STALLED_DECLARED_BYTES),
+          connection: 'keep-alive',
+        },
+        body: `<${STALLED_DECLARED_BYTES} bytes>`,
+        stalledAfter: STALLED_SENT_BYTES,
+      },
+    ],
     expect: [result],
   });
 }

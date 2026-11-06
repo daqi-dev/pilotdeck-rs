@@ -52,7 +52,13 @@ pub(crate) struct ServerShared {
     pub mapper: Arc<SessionMapper>,
     pub active: Arc<Mutex<HashSet<String>>>,
     pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
+    /// The *turn* timeout (TS `DEFAULT_REQUEST_TIMEOUT`), not the body read.
     pub timeout: Duration,
+    /// Node `http.createServer`'s default `requestTimeout` (v22.22.0: 300 s):
+    /// the bound on receiving the whole request. `read_body` uses it as its
+    /// only deadline, mirroring `channel::webhook` (#1620). Distinct from
+    /// [`Self::timeout`] even though both default to 300 s.
+    pub body_read_timeout: Duration,
     pub log: Option<super::super::protocol::ChannelLog>,
 }
 
@@ -456,7 +462,16 @@ pub(crate) async fn handle(
     } else if path == "/v1/models" {
         json_response(StatusCode::OK, &models_body(&shared.model_name))
     } else if path == "/v1/chat/completions" && method == Method::POST {
-        chat_completions(&shared, request).await?
+        let response = chat_completions(&shared, request).await?;
+        // Node's `requestTimeout` answer is written before the connection
+        // closes, unframed and without a `Date` header (#1620). `read_body`
+        // tags its 408 with [`BodyReadTimeout`] so it can bypass `finish` and
+        // keep the webhook lane's pinned 408 shape (`Connection: close` plus
+        // hyper's empty-chunk framing) instead of gaining a `Date` line.
+        if response.extensions().get::<BodyReadTimeout>().is_some() {
+            return Ok(crate::channel::webhook::node_request_timeout_response());
+        }
+        response
     } else {
         not_found()
     };
@@ -476,6 +491,13 @@ enum ReadBodyError {
     TooLarge,
     Io(io::Error),
 }
+
+/// Marks the response built when `read_body` hits the Node `requestTimeout`
+/// deadline. `handle` swaps it for the shared, unframed
+/// [`crate::channel::webhook::node_request_timeout_response`] before `finish`
+/// can add a `Date` header the baseline does not send.
+#[derive(Clone)]
+struct BodyReadTimeout;
 
 async fn read_body(mut body: Incoming) -> Result<Vec<u8>, ReadBodyError> {
     let mut out = Vec::new();
@@ -656,7 +678,23 @@ async fn chat_completions(
         ));
     }
 
-    let body = match read_body(request.into_body()).await {
+    // Node `http.createServer`'s default `requestTimeout` bounds the body
+    // read: a client that declares `Content-Length` and then stops sending
+    // (without closing) is answered at the deadline instead of parking the
+    // service future — and `stop()`, which drains the connection tasks —
+    // forever (#1620). The deadline covers the body read only; a fully read
+    // body keeps the existing unbounded-turn semantics (`shared.timeout`).
+    let body_read =
+        tokio::time::timeout(shared.body_read_timeout, read_body(request.into_body())).await;
+    let body_read = match body_read {
+        Ok(result) => result,
+        Err(_) => {
+            let mut response = empty_response(StatusCode::REQUEST_TIMEOUT);
+            response.extensions_mut().insert(BodyReadTimeout);
+            return Ok(response);
+        }
+    };
+    let body = match body_read {
         Ok(body) => body,
         Err(ReadBodyError::TooLarge) => {
             // TS calls `req.destroy()` right after rejecting; measured three

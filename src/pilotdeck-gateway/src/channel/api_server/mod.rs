@@ -25,7 +25,14 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: f64 = 8642.0;
 pub const DEFAULT_MODEL_NAME: &str = "pilotdeck-gateway";
 pub const MAX_REQUEST_BYTES: usize = 1_000_000;
+/// The *turn* deadline (`ApiServerChannel.ts` `DEFAULT_REQUEST_TIMEOUT`).
+/// Same 300 s value as Node's `requestTimeout` default but a different
+/// mechanism — do not reuse it for the body read (#1620).
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Node `http.createServer`'s default `requestTimeout` (v22.22.0: 300000 ms):
+/// the bound on receiving the whole request. The channel applies it to the
+/// body read only, like the webhook lane's `DEFAULT_REQUEST_TIMEOUT`.
+pub const DEFAULT_BODY_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Constructor options of the TS adapter. `port`/`cors_origins` accept JS
 /// values because `loadEnabledChannels` forwards `cfg.extra` unchanged; `env`
@@ -38,8 +45,15 @@ pub struct ApiServerOptions {
     pub model_name: Option<String>,
     pub cors_origins: Option<JsValue>,
     pub mapper: Option<Arc<SessionMapper>>,
-    /// Rust test seam for the TS 300 s constants; production keeps the default.
+    /// Rust test seam for the TS 300 s *turn* timeout; production keeps the
+    /// default. Not the body-read deadline — that is
+    /// [`Self::body_read_timeout`].
     pub request_timeout: Option<Duration>,
+    /// Rust test seam for Node's `requestTimeout` body-read deadline
+    /// ([`DEFAULT_BODY_READ_TIMEOUT`]). TS exposes no channel option for it
+    /// (it is the server default), so this exists only for tests, like the
+    /// webhook lane's `request_timeout`.
+    pub body_read_timeout: Option<Duration>,
     pub uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
@@ -57,6 +71,7 @@ pub(crate) struct Inner {
     mapper: Arc<SessionMapper>,
     active: Arc<Mutex<std::collections::HashSet<String>>>,
     timeout: Duration,
+    body_read_timeout: Duration,
     state: Mutex<Option<Listener>>,
     logger: Mutex<Option<ChannelLog>>,
     gateway: Mutex<Option<Arc<dyn TurnGateway>>>,
@@ -84,6 +99,9 @@ impl ApiServerChannel {
         Self(Arc::new(Inner {
             key: ChannelKey::new("api_server"),
             timeout: options.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
+            body_read_timeout: options
+                .body_read_timeout
+                .unwrap_or(DEFAULT_BODY_READ_TIMEOUT),
             options,
             env,
             uuid,
@@ -301,6 +319,7 @@ impl ChannelAdapter for ApiServerChannel {
                 mapper: inner.mapper.clone(),
                 active: inner.active.clone(),
                 timeout: inner.timeout,
+                body_read_timeout: inner.body_read_timeout,
                 log: deps.log.clone(),
             });
             let task = tokio::spawn(server::accept_loop(listener, shared, stop_rx));
