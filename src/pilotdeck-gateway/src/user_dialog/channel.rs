@@ -527,10 +527,9 @@ impl GatewayUserDialogChannel {
             tool_call_id,
             tool_name,
             event: request_event.clone(),
-            accepts: {
-                let accepts = state.accepts.clone();
-                Box::new(move |value| accepts(value))
-            },
+            // #1442: `accepts` is host code, so it travels as a cloneable Arc
+            // and only runs after the bus guard drops.
+            accepts: state.accepts.clone(),
             resolve: {
                 let channel = self.clone();
                 let state = state.clone();
@@ -554,7 +553,11 @@ impl GatewayUserDialogChannel {
         {
             let mut bus = self.inner.options.bus.lock().unwrap();
             bus.register(&self.inner.options.session_key, pending);
+            // #1442: the change observer is host code; deliver it only after
+            // the guard drops.
+            bus.drain_events()
         }
+        .deliver();
         state.registered.store(true, Ordering::SeqCst);
 
         if let Err(error) = (self.inner.options.emit)(request_event.clone()) {
@@ -673,17 +676,36 @@ impl GatewayUserDialogChannel {
                 .store(true, Ordering::SeqCst);
             return;
         }
-        let entry = {
+        // #1442: the settle hook, the resolve callback and the change
+        // observer are host code; none of them run under the bus guard. TS
+        // `remove()` runs onSettled before its mutations, and a throw leaves
+        // the dialog pending and broadcast-free (fail-closed,
+        // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
+        // consumed entry instead of resolving.
+        let (consumed, outbox) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            bus.consume(&self.inner.options.session_key, request_id, "cancelled")
+            let consumed = bus.consume(&self.inner.options.session_key, request_id, "cancelled");
+            let outbox = bus.drain_events();
+            (consumed, outbox)
         };
-        match entry {
-            Ok(Some(entry)) => (entry.resolve)(DialogAnswer::Cancelled(Some(reason.into()))),
-            Ok(None) => {}
-            Err(error) => {
-                self.complete(&state, Err(error.to_string()));
-                return;
+        match consumed {
+            Some(consumed) => {
+                let settled = consumed
+                    .entry
+                    .on_settled
+                    .as_ref()
+                    .map_or(Ok(()), |hook| hook());
+                if let Err(error) = settled {
+                    let mut bus = self.inner.options.bus.lock().unwrap();
+                    bus.restore(&self.inner.options.session_key, consumed);
+                    drop(bus);
+                    self.complete(&state, Err(error.to_string()));
+                    return;
+                }
+                outbox.deliver();
+                (consumed.entry.resolve)(DialogAnswer::Cancelled(Some(reason.into())));
             }
+            None => outbox.deliver(),
         }
         let mut event = JsObject::new();
         event.insert("type".into(), "user_dialog_cancelled".into());
@@ -776,38 +798,58 @@ impl GatewayUserDialogChannel {
             stop_polling(&self.inner, request_id);
             return;
         }
-        let entry = {
+        // #1442: the settle hook and the completion callbacks are host code;
+        // they run only after the bus guard drops.
+        let (consumed, outbox) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            bus.consume(
+            let consumed = bus.consume(
                 &self.inner.options.session_key,
                 request_id,
                 "cross_gateway_answer",
-            )
+            );
+            let outbox = bus.drain_events();
+            (consumed, outbox)
         };
-        let entry = match entry {
-            Ok(Some(entry)) => entry,
-            _ => {
+        let consumed = match consumed {
+            Some(consumed) => consumed,
+            None => {
+                outbox.deliver();
                 finish_poll(&self.inner, request_id);
                 return;
             }
         };
+        // A failed settle hook restores the entry (TS remove() fail-closed,
+        // GatewayUserDialogBus.ts:219-226) and discards the queued broadcast.
+        let settled = consumed
+            .entry
+            .on_settled
+            .as_ref()
+            .map_or(Ok(()), |hook| hook());
+        if settled.is_err() {
+            let mut bus = self.inner.options.bus.lock().unwrap();
+            bus.restore(&self.inner.options.session_key, consumed);
+            drop(bus);
+            finish_poll(&self.inner, request_id);
+            return;
+        }
+        outbox.deliver();
         match &answer.result {
             DialogAnswer::Answered(value) => {
                 if !(state.accepts)(value) {
-                    (entry.reject)(format!(
+                    (consumed.entry.reject)(format!(
                         "Cross-Gateway {} dialog result does not match the pending dialog contract.",
                         state.dialog_kind.to_utf8().unwrap_or_default()
                     ));
                     finish_poll(&self.inner, request_id);
                     return;
                 }
-                (entry.resolve)(DialogAnswer::Answered(value.clone()));
+                (consumed.entry.resolve)(DialogAnswer::Answered(value.clone()));
             }
             DialogAnswer::Cancelled(reason) => {
                 // TS drops a falsy cross-Gateway reason:
                 // `...(answer.result.reason ? { reason } : {})`.
                 let reason = reason.clone().filter(|reason| !reason.is_empty());
-                (entry.resolve)(DialogAnswer::Cancelled(reason));
+                (consumed.entry.resolve)(DialogAnswer::Cancelled(reason));
             }
         }
         finish_poll(&self.inner, request_id);

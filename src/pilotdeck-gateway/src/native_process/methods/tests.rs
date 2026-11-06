@@ -1,6 +1,7 @@
 use super::*;
 use crate::{negative_assert, negative_assert_eq};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 /// The project's staged `InteractionSteer` resource for the registry fixture.
 fn steer_resource(
@@ -1462,7 +1463,7 @@ async fn user_dialog_claim_null_ttlms_claims_default_lease() {
                 tool_call_id: "call-1".into(),
                 tool_name: "ask".into(),
                 event: crate::metadata::object([("requestId", JsValue::String(request.clone()))]),
-                accepts: Box::new(|_value| true),
+                accepts: Arc::new(|_value| true),
                 resolve: Box::new(|_answer| {}),
                 reject: Box::new(|_error| {}),
                 on_settled: None,
@@ -1548,7 +1549,7 @@ fn register_null_tri_state_dialog(
                 tool_call_id: "call-1".into(),
                 tool_name: "ask".into(),
                 event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
-                accepts: Box::new(move |value| std::matches!(value, JsValue::Null) == accepts_null),
+                accepts: Arc::new(move |value| std::matches!(value, JsValue::Null) == accepts_null),
                 resolve: Box::new(move |answer| sink.lock().unwrap().push(answer)),
                 reject: Box::new(|_error| {}),
                 on_settled: None,
@@ -2304,7 +2305,7 @@ fn register_dialog_1437(
                 tool_call_id: "call-1437".into(),
                 tool_name: "ask".into(),
                 event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
-                accepts: Box::new(|_value| true),
+                accepts: Arc::new(|_value| true),
                 resolve: Box::new(move |answer| sink.lock().unwrap().push(answer)),
                 reject: Box::new(|_error| {}),
                 on_settled: None,
@@ -2999,4 +3000,362 @@ async fn user_dialog_respond_unwired_bus_returns_delivered_false() {
         .dispose()
         .await
         .expect("#1437 unwired bus fixture project shutdown");
+}
+
+// #1442/#1599: user_dialog respond must not run any host-supplied callback
+// (the on_change observer, the accepts validator, the settle hook, or the
+// resolver) while the GatewayUserDialogBus MutexGuard is alive. Every probe
+// below captures the bus Arc and records whether try_lock re-acquires it;
+// a callback executed under the guard records WouldBlock and fails.
+
+/// Recorded try_lock outcome of one host callback: (callback, re-entered).
+type ReentryLog1442 = std::sync::Arc<std::sync::Mutex<Vec<(&'static str, bool)>>>;
+
+fn assert_lock_free_1442(log: &ReentryLog1442, expected: &[&'static str]) {
+    let recorded = log.lock().unwrap().clone();
+    let names: Vec<&'static str> = recorded.iter().map(|(name, _)| *name).collect();
+    negative_assert_eq!(
+        names.as_slice(),
+        expected,
+        "#1442 every probe fires exactly once, in order"
+    );
+    for (name, reentered) in recorded {
+        negative_assert!(
+            reentered,
+            "#1442 the {name} callback re-acquired the bus lock; it must not run under the guard"
+        );
+    }
+}
+
+/// Wires a bus whose observer records try_lock re-acquisition (#1442).
+fn wire_reentry_bus_1442(requests: &mut super::super::requests::Requests, log: &ReentryLog1442) {
+    let log = log.clone();
+    requests.user_dialog_bus = std::sync::Arc::new_cyclic(
+        |bus: &std::sync::Weak<std::sync::Mutex<crate::user_dialog::GatewayUserDialogBus>>| {
+            let bus = bus.clone();
+            let log = log.clone();
+            std::sync::Mutex::new(crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::DialogRuntime::default(),
+                Some(Box::new(move |_event| {
+                    let reentered = bus.upgrade().is_some_and(|bus| bus.try_lock().is_ok());
+                    log.lock().unwrap().push(("observer", reentered));
+                    Ok(())
+                })),
+            ))
+        },
+    );
+}
+
+/// Registers a dialog whose on_settled/resolve callbacks record try_lock
+/// re-acquisition (#1442).
+fn register_reentry_dialog_1442(
+    requests: &super::super::requests::Requests,
+    session: &JsString,
+    request_id: &str,
+    log: &ReentryLog1442,
+) {
+    let settle_bus = requests.user_dialog_bus.clone();
+    let settle_log = log.clone();
+    let resolve_bus = requests.user_dialog_bus.clone();
+    let resolve_log = log.clone();
+    requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(
+            session,
+            crate::user_dialog::PendingDialog {
+                request_id: request_id.into(),
+                dialog_kind: "input".into(),
+                tool_call_id: "call-1442".into(),
+                tool_name: "request_user_input".into(),
+                event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
+                accepts: Arc::new(|_value| true),
+                resolve: Box::new(move |_answer| {
+                    let reentered = resolve_bus.try_lock().is_ok();
+                    resolve_log.lock().unwrap().push(("resolve", reentered));
+                }),
+                reject: Box::new(|_error| {}),
+                on_settled: Some(Box::new(move || {
+                    let reentered = settle_bus.try_lock().is_ok();
+                    settle_log.lock().unwrap().push(("on_settled", reentered));
+                    Ok(())
+                })),
+            },
+        );
+}
+
+// #1442 a: the on_change observer must not run under the bus guard. The
+// registration broadcast fires the observer while the test itself holds the
+// lock; the respond broadcast fires it under the method layer's guard. The
+// dialog itself is inert: this probe is about the observer only.
+#[tokio::test]
+async fn user_dialog_observer_reenters_the_bus_lock_free() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1442 observer fixture setup");
+    let log: ReentryLog1442 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    wire_reentry_bus_1442(&mut requests, &log);
+    let session: JsString = "1442-observer-session".into();
+    let resolved: std::sync::Arc<std::sync::Mutex<Vec<crate::user_dialog::DialogAnswer>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    register_dialog_1437(&requests, &session, "1442-observer-dialog", &resolved);
+    // #1442: the host drains the registration broadcast after dropping its
+    // own guard — the same caller contract the channel's begin() follows.
+    // The guard is bound to its own statement; delivering on the same chain
+    // would keep it alive across the observer.
+    let outbox = requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain_events();
+    outbox.deliver();
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1442-observer-dialog".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "cancelled".into()),
+                        ("reason", "done".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1442 observer probe respond delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1442 observer probe respond reports delivered"
+    );
+    assert_lock_free_1442(&log, &["observer", "observer"]);
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1442 observer fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1442 observer fixture project shutdown");
+}
+
+// #1442 b: the settle hook and the resolver must not run under the bus guard.
+#[tokio::test]
+async fn user_dialog_settle_and_resolve_reenter_the_bus_lock_free() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1442 settle fixture setup");
+    let log: ReentryLog1442 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1442-settle-session".into();
+    register_reentry_dialog_1442(&requests, &session, "1442-settle-dialog", &log);
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1442-settle-dialog".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "yes".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1442 settle probe respond delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1442 settle probe respond reports delivered"
+    );
+    assert_lock_free_1442(&log, &["on_settled", "resolve"]);
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1442 settle fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1442 settle fixture project shutdown");
+}
+
+// #1442 c: the accepts validator must not run under the bus guard.
+#[tokio::test]
+async fn user_dialog_accepts_reenters_the_bus_lock_free() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1442 accepts fixture setup");
+    let log: ReentryLog1442 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    wire_user_dialog_bus_1437(&mut requests);
+    let session: JsString = "1442-accepts-session".into();
+    let accepts_bus = requests.user_dialog_bus.clone();
+    let accepts_log = log.clone();
+    requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .register(
+            &session,
+            crate::user_dialog::PendingDialog {
+                request_id: "1442-accepts-dialog".into(),
+                dialog_kind: "input".into(),
+                tool_call_id: "call-1442".into(),
+                tool_name: "request_user_input".into(),
+                event: crate::metadata::object([(
+                    "requestId",
+                    JsValue::String("1442-accepts-dialog".into()),
+                )]),
+                accepts: Arc::new(move |value| {
+                    let reentered = accepts_bus.try_lock().is_ok();
+                    accepts_log.lock().unwrap().push(("accepts", reentered));
+                    value.as_string().is_some()
+                }),
+                resolve: Box::new(|_answer| {}),
+                reject: Box::new(|_error| {}),
+                on_settled: None,
+            },
+        );
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1442-accepts-dialog".into()),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "yes".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1442 accepts probe respond delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1442 accepts probe respond reports delivered"
+    );
+    assert_lock_free_1442(&log, &["accepts"]);
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1442 accepts fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1442 accepts fixture project shutdown");
+}
+
+// #1442: a genuine re-entrant bus call (lock + list) issued from inside the
+// observer callback, bounded everywhere: the re-entrant acquisition runs on
+// its own thread and the callback waits for it with a hard recv_timeout, so
+// even a callback executed under the guard cannot hang the test — the
+// re-entrant call then merely misses its deadline and turns this red.
+#[tokio::test]
+async fn user_dialog_observer_reentry_completes_within_timeout() {
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1442 reentry fixture setup");
+    let log: ReentryLog1442 = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let session: JsString = "1442-reentry-session".into();
+    let session_key = session.clone();
+    requests.user_dialog_bus = std::sync::Arc::new_cyclic(
+        |bus: &std::sync::Weak<std::sync::Mutex<crate::user_dialog::GatewayUserDialogBus>>| {
+            let bus = bus.clone();
+            let log = log.clone();
+            std::sync::Mutex::new(crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::DialogRuntime::default(),
+                Some(Box::new(move |_event| {
+                    // A real re-entrant bus call: lock() + list(). It runs on
+                    // its own thread so a guard held across this callback
+                    // misses the deadline instead of deadlocking the host.
+                    let (done, arrived) = std::sync::mpsc::channel::<usize>();
+                    let reentry = bus.upgrade().expect("#1442 bus arc alive");
+                    let reentry_session = session_key.clone();
+                    std::thread::spawn(move || {
+                        let dialogs = reentry
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .list(&reentry_session);
+                        let _ = done.send(dialogs.len());
+                    });
+                    let reentered = arrived
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .is_ok();
+                    log.lock().unwrap().push(("observer reentry", reentered));
+                    Ok(())
+                })),
+            ))
+        },
+    );
+    register_reentry_dialog_1442(&requests, &session, "1442-reentry-dialog", &log);
+    // The reentry dialog's settle/resolve try_lock probes are covered above;
+    // here they additionally record whether the guard is held on the
+    // registration and respond paths. The registration broadcast is drained
+    // after the registering guard drops (#1442 caller contract); the guard
+    // must not stay alive across the deliver.
+    let outbox = requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain_events();
+    outbox.deliver();
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", "1442-reentry-dialog".into()),
+                (
+                    "result",
+                    crate::metadata::object([("behavior", "cancelled".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1442 reentry probe respond delivers");
+    negative_assert_eq!(
+        result.get("delivered"),
+        Some(&JsValue::Bool(true)),
+        "#1442 reentry probe respond reports delivered"
+    );
+    let recorded = log.lock().unwrap().clone();
+    let names: Vec<&'static str> = recorded.iter().map(|(name, _)| *name).collect();
+    negative_assert_eq!(
+        names.as_slice(),
+        &[
+            "observer reentry",
+            "on_settled",
+            "observer reentry",
+            "resolve"
+        ],
+        "#1442 the registration broadcast, settle, respond broadcast and resolver all fire"
+    );
+    for (name, reentered) in recorded {
+        negative_assert!(
+            reentered,
+            "#1442 the {name} callback's re-entrant bus call completed within the timeout"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1442 reentry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1442 reentry fixture project shutdown");
 }

@@ -326,7 +326,7 @@ fn pending(request: &JsValue, callbacks: &Arc<Callbacks>) -> PendingDialog {
         tool_call_id: string(request, "toolCallId").unwrap().clone(),
         tool_name: string(request, "toolName").unwrap().clone(),
         event: request.clone(),
-        accepts: Box::new(|value| value.as_string().is_some()),
+        accepts: Arc::new(|value| value.as_string().is_some()),
         resolve: Box::new(move |answer| resolve.resolved.lock().unwrap().push(answer)),
         reject: Box::new(move |error| reject.rejected.lock().unwrap().push(error)),
         on_settled: Some(Box::new(move || {
@@ -337,6 +337,28 @@ fn pending(request: &JsValue, callbacks: &Arc<Callbacks>) -> PendingDialog {
             Ok(())
         })),
     }
+}
+
+/// #1442 caller contract: run a consumed dialog's settle hook outside the
+/// bus. A failure restores the entry (with its lease) — the TS remove()
+/// fail-closed contract (GatewayUserDialogBus.ts:219-226) — and the caller
+/// drops the queued broadcast instead of delivering it.
+fn settle_or_restore(
+    bus: &mut GatewayUserDialogBus,
+    session: &JsString,
+    consumed: ConsumedDialog,
+) -> Result<PendingDialog> {
+    let settled = consumed
+        .entry
+        .on_settled
+        .as_ref()
+        .map_or(Ok(()), |hook| hook());
+    let error = match settled {
+        Err(error) => error,
+        Ok(()) => return Ok(consumed.entry),
+    };
+    bus.restore(session, consumed);
+    Err(error)
 }
 #[test]
 fn real_ts_bus_trace_covers_two_renderers_renew_release_expiry_and_broadcast_failure() {
@@ -361,25 +383,52 @@ fn real_ts_bus_trace_covers_two_renderers_renew_release_expiry_and_broadcast_fai
             Ok(match text(action, "op").as_str() {
                 "register" => {
                     bus.register(&session, pending(field(&fixture, "request"), &callbacks));
+                    bus.drain_events().deliver();
                     JsValue::Null
                 }
-                "claim" => claim_value(
-                    bus.claim(&session, &request, number(action, "ttl"), lease.as_ref())?,
-                    true,
-                ),
-                "list" => JsValue::Array(bus.list(&session)),
-                "consume" => match bus.consume_for_response(
-                    &session,
-                    &request,
-                    lease.as_ref(),
-                    "answered",
-                )? {
-                    ConsumeResult::Entry(entry) => object([("entry", entry.event)]),
-                    ConsumeResult::NotPending => object([("reason", "not_pending".into())]),
-                    ConsumeResult::LeaseRequired => object([("reason", "lease_required".into())]),
-                },
+                "claim" => {
+                    let claim =
+                        bus.claim(&session, &request, number(action, "ttl"), lease.as_ref());
+                    bus.drain_events().deliver();
+                    claim_value(claim?, true)
+                }
+                "list" => {
+                    let listed = bus.list(&session);
+                    bus.drain_events().deliver();
+                    JsValue::Array(listed)
+                }
+                "consume" => {
+                    let consumed =
+                        bus.consume_for_response(&session, &request, lease.as_ref(), "answered");
+                    let outbox = bus.drain_events();
+                    match consumed {
+                        ConsumeResult::Entry(consumed) => {
+                            match settle_or_restore(&mut bus, &session, *consumed) {
+                                Ok(entry) => {
+                                    outbox.deliver();
+                                    object([("entry", entry.event)])
+                                }
+                                Err(error) => {
+                                    // Fail-closed: drop the queued broadcast.
+                                    drop(outbox);
+                                    return Err(error);
+                                }
+                            }
+                        }
+                        ConsumeResult::NotPending => {
+                            outbox.deliver();
+                            object([("reason", "not_pending".into())])
+                        }
+                        ConsumeResult::LeaseRequired => {
+                            outbox.deliver();
+                            object([("reason", "lease_required".into())])
+                        }
+                    }
+                }
                 "release" => {
-                    JsValue::Bool(bus.release(&session, &request, lease.as_ref().unwrap()))
+                    let released = bus.release(&session, &request, lease.as_ref().unwrap());
+                    bus.drain_events().deliver();
+                    JsValue::Bool(released)
                 }
                 "advance" => JsValue::Number(
                     (clock.fetch_add(number(action, "ms") as i64, Ordering::SeqCst)
@@ -392,7 +441,19 @@ fn real_ts_bus_trace_covers_two_renderers_renew_release_expiry_and_broadcast_fai
                     JsValue::Null
                 }
                 "reject" => {
-                    bus.reject_session(&session, "closed");
+                    // #1442: the settle hooks, reject callbacks and changes
+                    // run outside the bus, in TS's per-entry order
+                    // [onSettled (swallowed), reject, emit]
+                    // (GatewayUserDialogBus.ts:198-213).
+                    for rejected in bus.reject_session(&session, "closed") {
+                        let _ = rejected
+                            .entry
+                            .on_settled
+                            .as_ref()
+                            .map_or(Ok(()), |hook| hook());
+                        (rejected.entry.reject)("closed".into());
+                        rejected.change.deliver();
+                    }
                     JsValue::Null
                 }
                 op => panic!("unhandled {op}"),
@@ -457,12 +518,14 @@ fn wrong_values_do_not_consume_waiter_and_snapshots_are_detached() {
             );
             assert!(callbacks.resolved.lock().unwrap().is_empty());
         } else {
-            let ConsumeResult::Entry(entry) = bus
-                .consume_for_response(&session, &request, None, "answered")
-                .unwrap()
+            let ConsumeResult::Entry(consumed) =
+                bus.consume_for_response(&session, &request, None, "answered")
             else {
                 panic!("not consumed")
             };
+            // #1442: the settle hook and resolve run outside the bus.
+            let entry = settle_or_restore(&mut bus, &session, *consumed).unwrap();
+            bus.drain_events().deliver();
             (entry.resolve)(DialogAnswer::Answered(value.clone()));
             assert_eq!(
                 field(field(expected, "result"), "delivered").as_bool(),
@@ -521,7 +584,11 @@ fn crash_reopen_and_owner_expiry_do_not_transfer_renderer_or_native_waiter() {
         field(&fixture, "liveProjection"),
         "live projection",
     );
-    bus.consume(&"session".into(), &request, "closed").unwrap();
+    let consumed = bus
+        .consume(&"session".into(), &request, "closed")
+        .expect("pending entry");
+    settle_or_restore(&mut bus, &"session".into(), consumed).unwrap();
+    bus.drain_events().deliver();
     clock.fetch_add(1000, Ordering::SeqCst);
     assert!(reopened.list_live(&key).unwrap().is_empty());
     assert_eq!(
@@ -730,11 +797,14 @@ fn session_isolation_native_cleanup_and_duplicate_registration() {
     bus.register(&"a".into(), pending(field(&fixture, "request"), &callbacks));
     assert_eq!(bus.pending_count(&"a".into()), 1);
     assert!(matches!(
-        bus.consume_for_response(&"a".into(), &id, None, "answered")
-            .unwrap(),
+        bus.consume_for_response(&"a".into(), &id, None, "answered"),
         ConsumeResult::LeaseRequired
     ));
-    assert!(bus.consume(&"a".into(), &id, "abort").unwrap().is_some());
+    let consumed = bus
+        .consume(&"a".into(), &id, "abort")
+        .expect("consumed entry");
+    settle_or_restore(&mut bus, &"a".into(), consumed).unwrap();
+    bus.drain_events().deliver();
     assert!(bus.has_pending(&"b".into(), &id));
     let scratch = Scratch::new();
     let store = store(&scratch.0, &clock);

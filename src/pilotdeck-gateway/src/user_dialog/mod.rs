@@ -15,7 +15,10 @@ pub mod http_store;
 mod journal;
 mod store;
 
-pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};
+pub use bus::{
+    AcceptsFn, ConsumeResult, ConsumedDialog, GatewayUserDialogBus, Outbox, PendingDialog,
+    RejectedDialog, ResponseSnapshot,
+};
 pub use channel::{
     AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,
     GatewayUserDialogChannel, InputRequest, SelectChoice, SelectRequest, UserDialogStore,
