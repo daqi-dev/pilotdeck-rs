@@ -1055,6 +1055,51 @@ def calibrate_bare_raise_exit(rows):
         'aggregation-audit: bare raise SystemExit enumerated, passed=False')
 
 
+def calibrate_alias_sysexit(rows):
+    """#892 r17: ``import sys as s; s.exit(0)`` is the same exit as
+    ``sys.exit(0)`` (GLM boundary r16 P0-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: aliased sys.exit enumerated, passed=False')
+
+
+def calibrate_alias_system_exit(rows):
+    """#892 r17: ``from builtins import SystemExit as SE; raise SE(0)`` is the
+    same raise as ``raise SystemExit(0)`` (GLM boundary r16 P0-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'raise-exit-status',
+        'aggregation-audit: aliased SystemExit enumerated, passed=False')
+
+
+def _calibrate_status_write_spelling(rows, needle):
+    """#892 r17: a status write behind ``setattr`` / ``__setitem__``."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any(needle in failure for failure in failures):
+        return False, (f'failures={failures!r}, want the {needle!r} status write '
+                       f'flagged')
+    return True, f'aggregation-audit: {needle} status write flagged'
+
+
+def calibrate_setattr_status(rows):
+    """#892 r17: ``setattr(report, 'status', ...)`` writes the same slot as
+    ``report['status'] = ...`` (GLM boundary r16 P1-1)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment setattr(report, 'status', 'PASS')")
+
+
+def calibrate_dunder_setitem_status(rows):
+    """#892 r17: ``report.__setitem__('status', ...)`` is the same slot under
+    the dunder spelling (GLM boundary r16 P1-1)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment report.__setitem__('status', 'PASS')")
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1827,6 +1872,31 @@ MUTATIONS = [
      "    print(report)\n"
      "    raise SystemExit(0)\n\n"
      "def _failure(error, policy, common):"),
+    # #892 fix-r17 (GLM boundary r16 P0-1): the exit family matched literal
+    # names only, so an import alias walked straight past every rule.
+    ('calibrate-alias-sysexit', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "import sys as s\n\n"
+     "def publish(report):\n"
+     "    print(report)\n"
+     "    s.exit(0)\n\n"
+     "def _failure(error, policy, common):"),
+    ('calibrate-alias-system-exit', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "from builtins import SystemExit as SE\n\n"
+     "def publish(report):\n"
+     "    print(report)\n"
+     "    raise SE(0)\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r17 (GLM boundary r16 P1-1): the write family knew
+    # ``update`` / ``setdefault`` only; ``setattr`` and ``__setitem__`` write the
+    # same slot and were read by nothing.
+    ('calibrate-setattr-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    setattr(report, 'status', 'PASS')\n"),
+    ('calibrate-dunder-setitem-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    report.__setitem__('status', 'PASS')\n"),
 ]
 
 JUDGES = {
@@ -2100,6 +2170,14 @@ JUDGES = {
         'aggregation-audit', calibrate_attr_collision, False, ()),
     'calibrate-bare-raise-exit': (
         'aggregation-audit', calibrate_bare_raise_exit, False, ()),
+    'calibrate-alias-sysexit': (
+        'aggregation-audit', calibrate_alias_sysexit, False, ()),
+    'calibrate-alias-system-exit': (
+        'aggregation-audit', calibrate_alias_system_exit, False, ()),
+    'calibrate-setattr-status': (
+        'aggregation-audit', calibrate_setattr_status, False, ()),
+    'calibrate-dunder-setitem-status': (
+        'aggregation-audit', calibrate_dunder_setitem_status, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (

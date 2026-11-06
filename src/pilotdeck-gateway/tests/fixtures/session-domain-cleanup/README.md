@@ -126,9 +126,9 @@ supplies a slot must carry its measured face as a reason (`fix-r16`).  A non-zer
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests eighty-one probe functions: eighty inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests eighty-nine probe functions: eighty-eight inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the eighty (the nine helpers
+function.  `probe892` is the authoritative list for the eighty-eight (the nine helpers
 it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
 `_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
@@ -302,7 +302,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 99 mutants:
+`JUDGES`, keyed by the same names. The current table has 103 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -349,7 +349,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-quit-exit`, `calibrate-partial-raise-point`,
 `calibrate-augassign-cross-file-call`, `calibrate-exit-call-unregistered`,
 `calibrate-tuple-status-target`, `calibrate-attr-collision`,
-`calibrate-bare-raise-exit`.
+`calibrate-bare-raise-exit`, `calibrate-alias-sysexit`,
+`calibrate-alias-system-exit`, `calibrate-setattr-status`,
+`calibrate-dunder-setitem-status`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -486,7 +488,29 @@ expanded tuple targets since `fix-r9`).  The two `fix-r16` mutants pin the r15-r
 the write looked proven (GLM boundary r15 P1-1); `calibrate-bare-raise-exit`
 gives an unregistered point `raise SystemExit(0)` as its only evidence, the
 optimistic spelling the raise family skipped while the exit-call family already
-enumerated every call (MiniMax sibling r15 P1-1).  Two boundaries stay open and are
+enumerated every call (MiniMax sibling r15 P1-1).  The four `fix-r17` mutants pin the r16-round gaps:
+`calibrate-alias-sysexit` gives an unregistered point `import sys as s` plus
+`s.exit(0)` as its only evidence (the exit family matched the literal names
+`sys.exit` / `os._exit` / `exit` / `quit`, so every alias spelling walked past
+all of them — GLM boundary r16 P0-1); `calibrate-alias-system-exit` does the
+same through `from builtins import SystemExit as SE; raise SE(0)`; and
+`calibrate-setattr-status` / `calibrate-dunder-setitem-status` write a clean
+status into a registered point's summary through `setattr(report, 'status',
+'PASS')` / `report.__setitem__('status', 'PASS')`, the two spellings the write
+family (`update` / `setdefault` / `|=`) never read (GLM boundary r16 P1-1).
+Alias resolution is one resolver (`_exit_target`) used by all three predicate
+families, fed from two places: module-level `import ... as` / `from ... import
+... as` (`_module_exit_aliases`) and the function's own bindings
+(`_binding_exit_aliases`, e.g. `bail = sys.exit`).
+
+Two boundaries stay open and are
+recorded here so they are not re-reported as new: an exit alias rebound inside a
+*called helper* is not resolved (the helper's body is walked for exit calls with
+the module-level aliases plus its own bindings, so `bail = sys.exit` in the
+helper itself is seen, but a name bound in a third function and passed in is
+not); and an exit spelled as an attribute of an object that is not one of
+`sys` / `os` / `builtins` / `posix` (`helpers.exit(0)`) is not treated as a
+process exit.Two boundaries stay open and are
 recorded here so they are not re-reported as new: an augmented assignment on a
 *parameter* is only judged by its own payload (a `|=` set-union of two
 parameters is not treated as an aggregation point), a `{**payload}`
