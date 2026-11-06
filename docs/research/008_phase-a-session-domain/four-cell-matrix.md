@@ -56,7 +56,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 |---|---|---|
 | `session_domain.py --suite calibrate`（E1，TS 进程内受控，**无 sidecar、无 HTTP**） | `status=PASS`、`executionStatus=PASS`、`expectations=PASS`（72 case / 360 measurement / a19DiffCases 54）、`oracle=PASS`（`oracle.controls` **9 条负控**全部 `detected=true`；`expectations.measurements=360` 是**观测条数**＝72 case × 5 轮，不是负控条数；`e1Controls` 另记 68 条装置变异用例，68/68 `passed`、`status=PASS`）、`cleanupStatus=VERIFIED`、`unstableGroups=[]`、`frozen.exitCode=0`（30 项登记） | `_tmp/20261106-issue-590/calibrate-ts-ts/report.json` |
 | `native-topology/run.py` 的 `TS-sidecar-ts` 格 | `NOT_RUN`，`reason="TS host not executed"` | `_tmp/20261106-issue-590/native-topology-001/report.json` |
-| `scripts/parity/round.py --side ts` | sidecar 身份 `identity_ok=true`（53/53 场景各一条 `harness.proof`，sha256 与预期一致、`spawnObserved=true`）、`valid_round=true`、`run_py_exit=1`；`summary.json`：`scenarios=53` / `failed=27` / `expectedExtensions=3` / `blocked=0` / `oracleFailures=0` | `_tmp/20261106-issue-590/parity/side-ts/run.json` 与 `artifacts/*-pilotdeck.md` |
+| `scripts/parity/round.py --side ts` | sidecar 身份 `identity_ok=true`（53/53 场景各一条 `harness.proof`，sha256 与预期一致、`spawnObserved=true`）、`valid_round=true`、`run_py_exit=1`（**`round.py` 顶层退出码未留痕**，见 §七.2）；`summary.json`：`scenarios=53` / `failed=27` / `expectedExtensions=3` / `blocked=0` / `oracleFailures=0` | `_tmp/20261106-issue-590/parity/side-ts/run.json` 与 `artifacts/*-pilotdeck.md` |
 
 E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-controlled`、`sidecar.status=NOT_APPLICABLE`
 （"controlled in-process TS loop; no sidecar binary"），`acceptanceStatus=NOT_RUN`、`freezeStatus=DRAFT_AWAITING_A5_4`。
@@ -88,7 +88,7 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 |---|---|
 | sidecar 二进制 | `pilotdeck-agent-loop-sidecar`，sha256 `37961b37b9340e49f0ec6d76a65a58703c5f6832aa34f1f49a4a02d72d7009f6` |
 | 身份 | `identity_ok=true`，**53/53 场景逐条** `harness.proof` 命中——`round.py:438` 是**五项合取**：`len(proofs)==1`（恰一条 proof）、`side`、`sha256`、`spawnObserved is True`，且 `trace_health(...)` 无异常 |
-| 轮次 | `valid_round=true`，`run_py_exit=1`，用时 243.7 s |
+| 轮次 | `valid_round=true`，`run_py_exit=1`，用时 243.7 s（**`round.py` 顶层退出码未留痕**，见 §七.2） |
 | 比较 | **49 个场景 failed**（47 个纯换位 + 2 个含非换位差异）+ **2 条 expectedExtensions**（0 条差异）+ **2 条完全一致**（`auto_compact`、`plan_mode_host_policy`）= 53 |
 
 **归因（这是本账本最有用的一格）：**
@@ -127,6 +127,7 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 `native-topology/run.py` 的 `Rust-sidecar-ts` 格：`status=PASS`，`executedCases` = `model-stream` / `provider-error` /
 `provider-unconfigured` / `token-saver-judge` 四案全跑、每案 5 轮。证据 `_tmp/20261106-issue-590/native-topology-001/report.json`。
+（**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 的 status，见 §七.2。）
 
 边界：整份报告 `status=NOT_RUN`、`moduleMatrixStatus=PASS`。`NOT_RUN` 来自 `entryCoverage`（生产入口
 `production native request adapter not connected`）与 `retirement`（`complete exec/egress and storage observers absent`），
@@ -136,7 +137,7 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 | 装置 | 结果 | 证据 |
 |---|---|---|
-| `native-topology/run.py` 的 `Rust-sidecar-native` 格 | `status=PASS`，同 4 案 × 5 轮 | 同上 |
+| `native-topology/run.py` 的 `Rust-sidecar-native` 格 | `status=PASS`，同 4 案 × 5 轮（**顶层退出码未留痕**，见 §七.2） | 同上 |
 | `session_domain.py --suite deadline --native-capture` | 采集 `WITNESS_CAPTURED`；打分 72/72 `NOT_RUN`（`rule=COVERAGE`），批 `NOT_RUN` / exit 3 | `_tmp/20261106-issue-590/deadline-native-002/report.json`（详见第四节；-001 为同命令首次运行） |
 
 ③ 与 ④ 在同一装置、同一 4 案、同一 5 轮下**同为 PASS**，即该 4 案范围内宿主换 Rust、sidecar 换 Rust 各自都保持一致；
@@ -241,16 +242,13 @@ EXIT=3
 
 ## 五、真实 provider 冒烟候选（交付③）
 
-复用的是已合入的 `scripts/smoke/real_provider.py`（#709），不新写脚本。它的上限是**脚本常量**，随原始记录留档：
+复用的是已合入的 `scripts/smoke/real_provider.py`（#709），不新写脚本。上限是**脚本常量**，正本在脚本里：
+`SCENARIOS` 决定场景集合，`MAX_REQUESTS = len(SCENARIOS)`，每请求 `MAX_OUTPUT_TOKENS_PER_REQUEST`，
+合计 `MAX_TOTAL_OUTPUT_TOKENS = MAX_REQUESTS × 每请求`（派生值）。
 
-| 常量 | 值 |
-|---|---|
-| `MAX_REQUESTS` | 3（= `len(SCENARIOS)`；场景 text / stream-cancel / tool） |
-| `MAX_OUTPUT_TOKENS_PER_REQUEST` | 128 |
-| `MAX_TOTAL_OUTPUT_TOKENS` | 384 |
-
-（以上三项以 `scripts/smoke/real_provider.py` 的常量为准，脚本每次运行也把同名字段写进 `report.json`
-（`limits.*`），核对时以原始记录 JSON 为准而不是本表拷贝。）
+**本页不抄具体数字**（#1722 第 5 条）：脚本常量一变，抄进文档的值会与实际测的三处同时静默过期。
+核对时以当次 `run-<id>/report.json` 的 `limits.declared` / `limits.actual` 为准（脚本每次运行把同名字段写进
+report，probe 也把每请求上限与内层超时经 argv 回显，report 不引第二份数字）；原始记录另存 `run-<id>/limits.json`。
 
 **本轮已实测（AI 已实测，待人签字）**：2026-11-05T22:50:13Z 起跑，`exitCode=0`、`finalPass=true`、`capsVerified=true`：
 
@@ -260,7 +258,8 @@ EXIT=3
 | `model_runtime_stream_cancel`（stream-cancel） | **PASS** | 1 | 不适用 | 首个 stream delta 后即中止，Anthropic Messages 的 usage 块在流尾，结构性缺席（`limits.usageNotApplicable` 有记录） |
 | `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
 
-合计 **3 次请求 / 49 输出 token**（上限 3 / 384），`limits.violations=[]`、`usageMissing=[]`、`echoMissing=[]`；
+合计 **3 次请求 / 49 输出 token**（是否超限只看 `limits.actual.violations=[]`，不在此复述上限数字），
+`limits.violations=[]`、`usageMissing=[]`、`echoMissing=[]`；
 `secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
 provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key 只从 `/Users/da/ws/pilotdeck-rs/.env.local` 读，
 证据目录独占（`fcntl.flock`，`evidenceLock.holder.pid=67214`），跑前 `cargo-slots` 为「在跑 1 / 上限 2」。
@@ -269,8 +268,13 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
 `report.json` 里另有 8 条 `NOT_YET` 的 gateway-process 场景（`gateway_e2e_*` / `permission_*` / `hooks_*` / `steer_*` / `reload_*` / `cleanup_once`），
 它们**既不是 PASS 也不是失败**，本页不拿它们充数。**阶段状态不因此改变**：人签字前不算实效通过。
 
-原始记录：主仓 `_tmp/20261106-issue-590-smoke/`（`report.json` / `report.md` / `run-20261105T225013Z-67214/`；
-`report.json` 内部路径记的是工作树绝对路径，归档副本在主仓同目录）。
+原始记录：主仓 `_tmp/20261106-issue-590-smoke/run-20261105T225013Z-67214/report.json`
+（**权威副本，不可覆盖**；sha256 `3970eedb536203d47e9c2db963694ac170e1d23eff4ab3a3ef89acfe0c0d574d`，
+同目录 `limits.json` sha256 `eb20a0ff489f5888a6c18fe55393362e4dd11bf150886ad489cdf399c9dcfbff`）。
+根级 `_tmp/20261106-issue-590-smoke/report.json` / `report.md` 只是**最新索引副本**
+（`scripts/smoke/real_provider.py:972-983` 自述「run 副本权威、根副本是最新索引」；evidence 根按日共享、
+`exist_ok=True`，同根再跑一次会静默替换），**不作为本账本的证据引用**。
+`report.json` 内部路径记的是工作树绝对路径，归档副本在主仓同目录。
 
 **待人签字的部分**：AI 只能判「请求/上限/回包/密钥自检」这些可实测项；需要人眼的是
 ① `report.md` 的可读性与场景叙述是否符合你的验收口味，② 三个场景的输出文案（`SMOKE-OK`、工具轮回复）观感是否可接受，
@@ -294,13 +298,19 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
    - ③④ 的 fixture 只有 `model-stream` / `provider-error` / `provider-unconfigured` / `token-saver-judge` 四案，**不含取消场景** ⇒ 未被触发；
      ④ 的 72 case 全部 `NOT_RUN` ⇒ 也判不到。
    - 结论：四格里没有任何一格能验证这条偏离，本账本不对它作裁决，也不据此改任何判据。
-     该条目最新版本是 `A7-HOST-POST-CANCEL-EXIT-001-R4`（2026-10-31 人批「全部按默认」，#1158），R4 自述「范围同 R3、只改批准状态」，
-     因此上面引用的适用范围以 R3 原文为准。
-   - **那句「四格矩阵中涉及取消的场景按本偏离判定」的适用范围有歧义**（窄读=只管 Rust 宿主格；广读=四格全管，
-     会把②的 sidecar 侧信号由 23 降到至少 21——具体降幅取决于「涉及取消」是否把名字带 abort/close 的
-     `sidecar_one_shot_parent_abort_after_admission`、`sidecar_one_shot_parent_close_after_admission` 也算进去，
-     R3 原文没有枚举）。本页采**窄读**，理由与两种读法的逐场景差别见决策单 **#1716**（`question`，AI 代批待人复核）。
-     这不是判分语义变更，不动冻结件，只影响本页一处计数；人回一句即可改。
+     该条目最新版本是 `A7-HOST-POST-CANCEL-EXIT-001-R5`（2026-11-06 登记，正本 `specs/gateway-parity/diffs/`），
+     R5 只补 R3 末句的适用口径、不改行为与判分语义；R4 自述「范围同 R3、只改批准状态」。
+     上面引用的机制描述以 R3 原文为准，**适用口径以 R5 为准**。
+   - **那句「四格矩阵中涉及取消的场景按本偏离判定」的适用范围**（窄读=只管 Rust 宿主格；广读=四格全管）
+     已由人于 2026-11-06 批「**按窄读**」（决策单 #1716 评论）：② 的
+     `cancel_during_tool`、`stream_interruption`、`sidecar_one_shot_parent_abort_after_admission`、
+     `sidecar_one_shot_parent_close_after_admission` 四条取消场景是「TS 宿主眼里观测到的 sidecar 侧差异」，
+     **仍按 sidecar 侧信号记 —— ② 的 sidecar 侧信号为 23 条，不降**。
+     作为对照：广读会把这四条全部豁免，② 的 sidecar 侧信号降到 **19–21 条（最少 19）**——
+     只豁免前两条为 21（降幅下限），连同两条名字带 abort/close 的 one-shot 场景一起豁免为 19（降幅上限）；
+     R3 原文没有枚举「涉及取消」的边界，19 与 21 分别是豁免最多与最少的两端。
+     口径正本见 `A7-HOST-POST-CANCEL-EXIT-001-R5`，本页不重复其范围。
+     这不是判分语义变更，不动冻结件，只影响本页一处计数。
 9. **本单的冻结装置授权没用上**：`state/decisions-20261025.md`「#590 A7.2-pr6b 四格矩阵：授权修改冻结装置」允许在本单范围内改
    `session_domain.py` 及配套冻结件；实际执行**没有改动任何冻结文件**（30 项登记哈希在每份报告里 `frozen.exitCode=0`），
    72 case 的 `NOT_RUN` 是装置现状而非本单改判的结果。人要求的「事后详细解释」在 PR 正文里给出。
@@ -356,25 +366,25 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
 
 **复现时的四条硬约束**（都是本单踩过的，不是假想）：
 
-1. **对拍锁是独占的，但四个装置不是同一份实现**：四者都抢 `/tmp/pdrs-parity.lock`（目录租约，**不要**自己 `flock` 一个文件），
-   可得行为并不一样：
-   - `round.py` 自带一份同契约实现（`scripts/parity/round.py:211`，**没有 timeout 形参**），抢不到就 `sleep 2` **无限等**，
-     不会超时退出、也不写 `run.json`——看到 `waiting for /tmp/pdrs-parity.lock` 就是它在等，别当成死锁去删锁。
-   - `collect.py` 等 **1 s**（`:182`），失败抛 `Blocked` → **BLOCKED / exit 2**；`session_domain.py` 等 **30 s**（`:2952`）→ 同样 BLOCKED / exit 2；
-     `native-topology/run.py` 等 **默认 600 s**（`common.parity_lock`）→ `TimeoutError` 未被 main 捕获，**traceback / exit 1**。
-   - `2400 s` 只是 `MAX_AGE` 上限，**已发布的 owner 不会因年龄被自动接管**：`owner.json` 必带 `cleanupPending`（真值），
-     接管条件要求它是假。所以一次被 SIGKILL 的运行会留下「永不自愈」的锁。脱困路径按 `scripts/cli-parity/README.md`
-     「锁被保留时怎么解」节：先 `cat /tmp/pdrs-parity.lock/owner.json` 看 `pid` / `token` / `cleanupPending`，
-     确认没有残留进程组后**人工**删 `owner.json` 再 `rmdir`；不要在不看残留的情况下删锁。
+1. **对拍锁是独占的，四台装置不是同一份实现**：四者都抢 `/tmp/pdrs-parity.lock`（目录租约，**不要**自己 `flock` 一个文件）。
+   各装置的等待上限与失败形态、以及锁被保留时的人工回收步骤（含 `.guard` 互斥、残留 pgid 去哪查），
+   正本在 `scripts/cli-parity/README.md`「锁被保留时怎么解」节；本节不复述，只留链接。
    同一主机同时只跑一个全量对拍，串行排队。
 2. **退出码要单独留存**：这几条命令的 stdout 是单行 JSON，退出码不在 JSON 里。写法统一成
    `python3 -I <cmd> > <新文件名>.log 2>&1; echo "EXIT=$?" >> <新文件名>.log`，
    日志文件名每次新起（`deadline-bare-3`、`deadline-native-002` 就是这么来的；`-2` 那次只留了 JSON 没留退出码，被评审正确指出）。
+   **本页有两处例外没做到，如实记录（#1722 第 4 条）**：①② 的 `scripts/parity/round.py` 与 ③④ 的
+   `native-topology/run.py` 两次**顶层**命令的退出码没有留痕——①② 只有内层 `run.py` 的 `run_py_exit`，
+   ③④ 只有 report 级 `status`。因此 §二 各格的①②③④ 结论**只依据 `run.json` / `report.json` 的 status**，
+   不引用、也不推断这两个顶层退出码；复跑时按上面的写法补齐。
 3. **采集与判分之间不要重建 ELF**：`capture/prelaunch.json` 记的是二进制绝对路径 + sha256（本单 gateway
    sha256 `f2ad413665f3ac12127260d17db78d4648ff063d41826847278ebb408f280679`），判分侧按原路径复核字节。
    中途 `cargo build` 换掉二进制 ⇒ 判分 `BLOCKED / APPARATUS_IMPORTS`。
 4. **证据目录独占**：`--output` / `--label` 都是一次性目录（`mkdir(exist_ok=False)`），重跑必须换名字，
    不要复用 `side-ts` / `side-rust` 这类 label，也不要往已完成目录里补文件。
+   该独占**只对 `--output` / `--label` 成立**：真实 provider 冒烟的 evidence **根**是按日共享的
+   （默认 `_tmp/YYYYMMDD-real-provider-smoke`，`exist_ok=True`），根级 `report.json` / `report.md` 是**最新索引副本**，
+   同根再跑一次会静默替换；引用冒烟证据时以不可覆盖的 `run-<id>/report.json` 为准（见 §五）。
 
 本单 ④ 的判分是在 cb8 上跑的（`--native-capture` 只能回采集机判分）：用的是一棵按 `git worktree add --detach 2e2a26e4`
 开的临时检出 `~/ws/pdrs-worker-wt/issue-590-deadline`（HEAD 就是基线 `2e2a26e4`，工作区干净，跑完即可弃）；
