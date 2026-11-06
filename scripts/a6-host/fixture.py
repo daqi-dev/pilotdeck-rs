@@ -13,12 +13,13 @@ import lifetime  # #1779: parent-death + lifetime watchdog, same directory
 # The `grandchild-*` sleeper runs this: the same watchdog, one level down, so it
 # exits within one poll interval of *its* parent (this process) dying however
 # that happens -- including SIGKILL, where no code of ours runs (#1779). argv is
-# [expected parent pid, armed receipt], so it watches for this process even if
-# this process is already gone by the time it gets scheduled.
+# [expected parent pid, armed receipt, own receipt], so it watches for this
+# process even if this process is already gone by the time it gets scheduled,
+# and it records the death it acted on in a receipt of its own.
 _GRANDCHILD_WATCH = (
     'import sys, time; from pathlib import Path; sys.path.insert(0, {!r}); '
     'import lifetime; '
-    'lifetime.install(None, "grandchild", parent=int(sys.argv[1])); '
+    'lifetime.install(Path(sys.argv[3]), "grandchild", parent=int(sys.argv[1])); '
     'Path(sys.argv[2]).write_text("armed"); '
     'time.sleep(60)'
 )
@@ -26,8 +27,12 @@ _GRANDCHILD_WATCH = (
 # A descendant that never arms its watchdog (import failure, crash at startup)
 # must break the handshake instead of leaving the kill-path test with nothing to
 # reap, and one that dies right after arming must not pass for the same reason.
-# Both bounds are far below the 60 s sleep they guard.
-GRANDCHILD_ARM_LIMIT = 5.0
+# Both bounds are far below the 60 s sleep they guard. The arming wait also has
+# to stay below the host's own `handshake_timeout` (5 s, `protocol_limits` in
+# `host/tests.rs`), which covers the whole spawn: at 5 s the host would give up
+# first and its generic "handshake timed out" would hide which descendant
+# check failed (#1779 review).
+GRANDCHILD_ARM_LIMIT = 3.0
 GRANDCHILD_ALIVE_SETTLE = 0.05
 
 mode = sys.argv[1]
@@ -173,9 +178,13 @@ if mode.startswith('grandchild-'):
     # while we are still scheduled, which is the race that cost three rounds.
     assert receipt is not None
     armed = receipt.with_suffix('.armed')
+    # The descendant keeps a receipt of its own, so a test can tell "it went
+    # down because this process died" from "it was gone anyway": its watchdog
+    # writes the file only on the parent-death path (#1779 review).
+    descendant_receipt = receipt.with_suffix('.descendant.txt')
     descendant = subprocess.Popen([
         sys.executable, '-c', _GRANDCHILD_WATCH.format(str(Path(__file__).resolve().parent)),
-        str(os.getpid()), str(armed),
+        str(os.getpid()), str(armed), str(descendant_receipt),
     ])
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
     # A recorded pid only says `Popen` returned. Wait for the descendant to arm

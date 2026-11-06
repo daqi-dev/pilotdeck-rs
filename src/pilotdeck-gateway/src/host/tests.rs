@@ -282,6 +282,12 @@ fn orphan_probe() -> &'static str {
         "/../../scripts/a6-host/orphan_probe.py"
     )
 }
+fn preinstall_probe() -> &'static str {
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/a6-host/preinstall_probe.py"
+    )
+}
 fn command(mode: &str) -> Command {
     let mut command = Command::new("python3");
     command.arg(fixture_script()).arg(mode);
@@ -1299,6 +1305,15 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
             .await
             .unwrap_or_else(|_| panic!("{role} {pid} outlived its host (#1779)"));
     }
+    // ... and it has to be gone *because the peer died*. The descendant writes
+    // this receipt only from its own parent-death path, so a descendant that
+    // exited on its own -- crash, or a shortened sleep -- leaves the pid gone
+    // with no receipt, and the elapsed-time arithmetic alone cannot tell those
+    // apart (#1779 review).
+    assert!(
+        owned.join(format!("{mode}.descendant.orphan")).exists(),
+        "the descendant disappeared without recording that its parent died"
+    );
     // The descendant sleeps 60 s from arming and the probe dies after that, so
     // a reaped descendant cannot have expired on its own. Two sequential 5 s
     // windows plus startup must stay well under that. The window is *not*
@@ -1314,6 +1329,29 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
     );
     println!(
         "HOST_PASS killed host: peer {peer} and its descendant {grandchild} exited instead of orphaning"
+    );
+}
+
+/// #1779 review: the descendant is handed the pid it expects to outlive. If it
+/// sampled `os.getppid()` when it started instead, a parent that died before it
+/// was first scheduled would already be reaped, the sample would record the
+/// reaper as the baseline, and the watch would never fire for the very death it
+/// exists to catch. `preinstall_probe.py` forces that ordering (`preexec_fn`
+/// SIGKILLs the middle process before the sleeper execs) and reports only
+/// whether the sleeper's own parent-death receipt appeared, so nothing here
+/// depends on scheduling luck.
+#[cfg(unix)]
+#[test]
+fn descendant_notices_a_parent_that_died_before_it_was_scheduled() {
+    let output = std::process::Command::new("python3")
+        .arg(preinstall_probe())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "the pre-install watch did not fire: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
