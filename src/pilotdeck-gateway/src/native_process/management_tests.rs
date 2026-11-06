@@ -240,10 +240,16 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             interactions: Arc::default(),
             mcp: requests::Requests::stub_mcp(&owner),
             async_hook_registry: None,
+            // #1600: same state production assembles
+            // (`native_process/assembly/user_dialog.rs`): connected, no
+            // renderer observer. The legacy observer-coupled `new(runtime,
+            // None)` made the shared fixture diverge from production, so any
+            // case relying on "the bus is unavailable" here would test a state
+            // that no longer exists. A case that genuinely needs the
+            // unconnected state builds it explicitly.
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
-                crate::user_dialog::GatewayUserDialogBus::new(
+                crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),
-                    None,
                 ),
             )),
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
@@ -252,6 +258,34 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             settings: requests::Requests::stub_settings(&owner),
         }
     })
+}
+
+/// #1600 negative control: the shared fixture must assemble the same
+/// user-dialog bus state production does
+/// (`native_process/assembly/user_dialog.rs`), so no case can silently assert
+/// against the retired `connected = false` state. Reverting `setup()` to the
+/// observer-coupled `GatewayUserDialogBus::new(runtime, None)` turns this red.
+#[tokio::test]
+async fn setup_assembles_a_connected_user_dialog_bus() {
+    let (_scratch, requests) = setup();
+    negative_assert!(
+        requests
+            .user_dialog_bus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_connected(),
+        "#1600 the shared fixture's user-dialog bus must be connected like production"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1600 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1600 fixture project shutdown");
 }
 
 type Trace = Arc<Mutex<Vec<Value>>>;

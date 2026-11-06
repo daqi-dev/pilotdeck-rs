@@ -9,6 +9,10 @@ pub type AcceptsFn = Arc<dyn Fn(&JsValue) -> bool + Send + Sync>;
 /// The observer's cloneable handle: broadcasts are delivered outside the bus
 /// lock (#1442), so the shared closure must be `Send + Sync`.
 type ObserverFn = dyn Fn(JsValue) -> Result<()> + Send + Sync;
+/// Only the `#[cfg(test)]` legacy constructor takes the boxed observer form;
+/// production stores the cloneable [`ObserverFn`] handle that `Outbox`
+/// delivers after the guard drops (#1442/#1600).
+#[cfg(test)]
 type Observer = Box<ObserverFn>;
 type SettleHook = Box<dyn Fn() -> Result<()> + Send>;
 
@@ -106,7 +110,12 @@ pub struct GatewayUserDialogBus {
     connected: bool,
 }
 impl GatewayUserDialogBus {
-    /// Legacy/test constructor: connected iff a change observer is supplied.
+    /// Legacy observer-coupled constructor: connected iff a change observer is
+    /// supplied. Production must use [`Self::connected`]; this one exists only
+    /// so tests can build the historical "bus unavailable" state explicitly
+    /// (#1600). It is `#[cfg(test)]` so production code cannot reach for it by
+    /// accident and reintroduce a state that no longer exists in production.
+    #[cfg(test)]
     pub fn new(runtime: DialogRuntime, on_change: Option<Observer>) -> Self {
         let connected = on_change.is_some();
         Self {
