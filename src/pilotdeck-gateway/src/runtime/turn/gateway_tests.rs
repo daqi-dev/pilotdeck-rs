@@ -1463,3 +1463,98 @@ fn a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup() {
         "#1746 a builder error must still poll the embedding cleanup"
     );
 }
+
+/// #1746: the refusal branch carries services, so the host also disposes what
+/// it refuses — the owner it was handed is shut down, not just dropped.
+#[test]
+fn a_refused_submitter_is_disposed_before_the_failure_is_reported() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let cleanup_ran = Arc::new(AtomicBool::new(false));
+    let refused_owner = Arc::new(std::sync::Mutex::new(None));
+    let disposed = coordinator_disposed.clone();
+    let cleaned = cleanup_ran.clone();
+    let owner_out = refused_owner.clone();
+    let error = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            let session = Arc::new(Session {
+                thread: std::thread::current().id(),
+                native: Vec::new(),
+                coordinator: coordinator.clone(),
+                accepted: Gate::new(),
+                terminal: Gate::new(),
+                end: Gate::new(),
+                aborts: AtomicUsize::new(0),
+            });
+            let mut options =
+                SessionOwnerOptions::new(Arc::new(NativeFixtureFactory(session, false)));
+            options.idle_sweep_interval_ms = 0;
+            let owner = SessionOwner::new(options);
+            *owner_out.lock().unwrap() = Some(owner.clone());
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner,
+                    // #1746 fixture: a coordinator this host does not drive.
+                    coordinator: Arc::new(TurnEventCoordinator::new()),
+                    registry: None,
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#1746 fixture projector"),
+                    ),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests: Arc::new(Requests),
+            })
+        },
+        async move {
+            cleaned.store(true, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .err()
+    .expect("#1746 a refused submitter must fail the host");
+    assert_eq!(
+        "submitter must use the serial host coordinator",
+        error.to_string()
+    );
+    assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1746 a refused submitter must still dispose the coordinator"
+    );
+    assert!(
+        cleanup_ran.load(Ordering::SeqCst),
+        "#1746 a refused submitter must still poll the embedding cleanup"
+    );
+    let owner = refused_owner
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("#1746 refused owner captured");
+    assert!(
+        owner.begin_turn(&"project".into(), &"run".into()).is_none(),
+        "#1746 the refused owner must be shut down, not merely dropped"
+    );
+}
+
+/// #1746: the failure teardown is bounded — a cleanup that never completes
+/// must not turn a startup failure into a startup hang.
+#[test]
+fn a_hung_cleanup_does_not_hold_the_failure_report() {
+    let error = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        |_| Err(std::io::Error::other("#1746 hung cleanup fixture")),
+        std::future::pending::<Result<(), String>>(),
+    )
+    .err()
+    .expect("#1746 a builder failure must fail the host");
+    assert_eq!("#1746 hung cleanup fixture", error.to_string());
+}
