@@ -193,3 +193,30 @@ fn fixture_generators_do_not_call_the_old_guard_api() {
         "#953 generator inventory shrank unexpectedly: {checked}"
     );
 }
+
+/// #1901 pins the floor of the `channel-sms` regeneration budget against the
+/// fixture's own probe deadline. `generate.mts` waits up to
+/// `STALLED_PROBE_DEADLINE_MS` (480 s) for a stalled body read and replays
+/// every case twice, so one cell can cost `2 * 480 = 960 s` before the other
+/// 55 cases run; a budget under that would kill the generator mid-cell and
+/// surface as a spurious timeout instead of the oracle drift the run is for.
+/// Only the floor is pinned: raising the budget for a slower host stays fine.
+#[test]
+fn channel_sms_regeneration_budget_covers_two_probe_deadlines() {
+    const STALLED_PROBE_DEADLINE_SECS: u64 = 480;
+    let sms = baseline::default_regen_timeout_secs("channel-sms");
+    assert!(
+        sms >= 2 * STALLED_PROBE_DEADLINE_SECS,
+        "#1901 channel-sms budget {sms}s cannot cover two \
+         {STALLED_PROBE_DEADLINE_SECS}s stalled-probe waits"
+    );
+    let shared = baseline::default_regen_timeout_secs("run-registry");
+    assert_eq!(
+        shared, 600,
+        "#953 the shared generator budget stays at 600 s"
+    );
+    assert!(
+        sms > shared,
+        "#1901 channel-sms needs a larger budget than the shared {shared}s default"
+    );
+}

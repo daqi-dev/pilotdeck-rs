@@ -630,8 +630,10 @@ async fn read_request_body(body: Incoming, max: f64) -> io::Result<String> {
 /// completes (probe `_tmp/20261026-issue-1334/fix-r1/node-probe/probe4.out`).
 /// The body is close-terminated (`Connection: close`, no `content-length`);
 /// hyper's public API frames an unknown-length HTTP/1.1 body as chunked, so
-/// the wire is Node's 51 bytes plus the chunked framing — a presentation
-/// residual of the A8.4-NATIVE-HTTP-001 class, pending registration.
+/// the wire is Node's 51 bytes plus the chunked framing. That residual is
+/// registered per lane: `A8.3-CH-WEBHOOK-001` for the webhook listener and
+/// `A8.3-CH-SMS-010` for the sms listener, whose bare `http1::Builder` also
+/// writes lowercase header names and an implicit `date`.
 pub(crate) fn node_request_timeout_response() -> hyper::Response<Body> {
     let mut response = hyper::Response::new(native_http::streamed(None));
     *response.status_mut() = hyper::StatusCode::REQUEST_TIMEOUT;

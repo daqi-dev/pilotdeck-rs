@@ -461,13 +461,14 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// Default total deadline for one generator run, per fixture.
 ///
-/// `PDRS_REGEN_TIMEOUT_SECS` overrides it for slow hosts. `channel-sms` needs
-/// more than the shared 600 s: its `body-read-timeout` cell waits out Node's
-/// 300 s `requestTimeout` (worst case just under 330 s on the 30 s
+/// `PDRS_REGEN_TIMEOUT_SECS` can raise it for slow hosts (it is a floor, not a
+/// replacement — see [`run_generator`]). `channel-sms` needs more than the
+/// shared 600 s: its `body-read-timeout` cell waits out Node's 300 s
+/// `requestTimeout` (worst case just under 330 s on the 30 s
 /// connections-checker grid) and the generator replays every case twice, so
 /// that cell alone is ~660 s before the other 55 cases run (#1901).
-#[allow(dead_code)]
-fn default_regen_timeout_secs(fixture: &str) -> u64 {
+/// `tests/regeneration_masks.rs` pins this value and the headroom.
+pub(crate) fn default_regen_timeout_secs(fixture: &str) -> u64 {
     match fixture {
         "channel-sms" => 1_500,
         _ => 600,
@@ -482,18 +483,23 @@ fn default_regen_timeout_secs(fixture: &str) -> u64 {
 /// kill *and reap* the child's whole process group before reporting. The
 /// deadline also covers the pipes: a child may exit while a forked descendant
 /// still holds stdout/stderr, so reader joins are bounded too.
-/// `PDRS_REGEN_TIMEOUT_SECS` overrides the per-fixture default (see
-/// [`default_regen_timeout_secs`]).
+/// `PDRS_REGEN_TIMEOUT_SECS` raises the per-fixture default (see
+/// [`default_regen_timeout_secs`]). It is a floor rather than a replacement:
+/// the knob exists to help slow hosts, and a host that set it for one fixture
+/// must not shorten the deadline of a fixture that needs more (a `channel-sms`
+/// regeneration under a leftover `600` would be killed mid-cell).
 fn run_generator(
     command: &mut Command,
     fixture: &str,
 ) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {
-    let deadline = Duration::from_secs(
-        std::env::var("PDRS_REGEN_TIMEOUT_SECS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or_else(|| default_regen_timeout_secs(fixture)),
-    );
+    let fixture_default = default_regen_timeout_secs(fixture);
+    let override_secs = std::env::var("PDRS_REGEN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let deadline = Duration::from_secs(match override_secs {
+        Some(secs) => secs.max(fixture_default),
+        None => fixture_default,
+    });
     run_generator_with_deadline(command, fixture, deadline)
 }
 

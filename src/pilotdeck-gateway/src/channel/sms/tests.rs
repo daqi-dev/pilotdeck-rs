@@ -2348,7 +2348,7 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
     );
     // Node's `requestTimeoutResponse` writes no `Content-Type`.
     crate::negative_assert!(
-        expected.get("contentType").map_or(true, Value::is_null),
+        expected.get("contentType").is_none_or(Value::is_null),
         "#1901 body-read-timeout: the requestTimeout answer has no content-type, \
          got {expected}"
     );
@@ -2368,10 +2368,17 @@ async fn replay_body_read_timeout(case: &Value, port: u16) {
          request shape"
     );
     let declared = recorded_body(step).len();
-    let sent = declared.saturating_sub(
-        usize::try_from(recorded_truncate(step).unwrap_or_default())
-            .expect("#1901 truncate fits usize"),
+    let truncate = usize::try_from(recorded_truncate(step).unwrap_or_default())
+        .expect("#1901 truncate fits usize");
+    // The generator clamps with `Math.max(0, len - truncate)`, so a truncation
+    // longer than the body can only come from hand-edited fixtures; keep that
+    // corruption loud instead of letting it collapse to `sent = 0` below.
+    crate::negative_assert!(
+        truncate <= declared,
+        "#1901 body-read-timeout: truncate {truncate} exceeds the declared body \
+         ({declared} bytes)"
     );
+    let sent = declared - truncate;
     crate::negative_assert!(
         sent < declared,
         "#1901 body-read-timeout: the request must stall before its declared \
