@@ -113,9 +113,10 @@ silently degrade a cell into "some short body":
   response used to be compared by nothing at all. Both ends now pin its shape:
   the generator refuses to record anything but a zero-byte close, and the
   replay asserts **every** `expect[i]` — not only the `oversized-*` ones — is
-  either a complete response (numeric `status`, object `headers`, no `error`)
-  or a clean error close (`error` string, `bytes: 0`, no `status`, no
-  `headers`); anything else panics (`assert_recorded_error_shape`). The rule is
+  either a complete response (numeric `status` that fits the `u16` the
+  comparison narrows to, object `headers`, no `error`) or a clean error close
+  (`error` string, `bytes: 0`, no `status`, no `headers`); a missing or
+  mistyped required field panics (`assert_recorded_error_shape`). The rule is
   shape-driven so a renamed or newly added error cell cannot keep r8's measured
   fields uncompared, and the two shapes are mutually exclusive so a cell cannot
   drop its `error` key and leave the rest unread. The `oversized-*` branch

@@ -691,10 +691,20 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         // and `compare_response` reads the status with `as_u64()`, so a key
         // that merely exists would let a null status compare equal to a
         // connection close (#1759 r2 boundary P1). Pin the value, not the key.
+        let status = match expected.get("status").and_then(Value::as_u64) {
+            Some(status) => status,
+            None => panic!(
+                "#1333 {case} request {index}: a recorded expectation with no `error` must carry \
+                 a numeric status line, got {expected}"
+            ),
+        };
+        // `compare_response` narrows the recorded status with `as u16`, so a
+        // recorded value outside that range would alias a real one and compare
+        // equal; zero is not a status line either (#1759 r4 boundary P3).
         assert!(
-            expected.get("status").and_then(Value::as_u64).is_some(),
-            "#1333 {case} request {index}: a recorded expectation with no `error` must carry a \
-             numeric status line, got {expected}"
+            (1..=u64::from(u16::MAX)).contains(&status),
+            "#1333 {case} request {index}: a recorded status line must fit the `u16` the \
+             comparison narrows to, got {expected}"
         );
         // Cells that skip the replay (`body-read-timeout`) read this map
         // directly, so a missing `headers` would make their `date` pin a
@@ -721,11 +731,12 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         "#1333 {case} request {index}: a recorded connection error must not carry a status \
          line, got {expected}"
     );
-    // The generator records an error close as exactly `{error, bytes}` and
-    // refuses to record anything else (`generate.mts`'s own shape check), so a
-    // recorded close that grew a headers map is drift, not a shape to
-    // tolerate; leaving it open made the two shapes non-exclusive
-    // (#1759 r4 boundary P2).
+    // The generator's oversized-cell shape check (`generate.mts`) records an
+    // error close as exactly `{error, bytes}` and refuses to record anything
+    // else there, so a recorded close that grew a headers map is drift, not a
+    // shape to tolerate; leaving it open made the two shapes non-exclusive
+    // (#1759 r4 boundary P2). Other error paths record `{error, bytes, status}`
+    // without a gate, and this reader refuses those here.
     assert!(
         expected.get("headers").is_none(),
         "#1333 {case} request {index}: a recorded connection error must not carry headers, \
@@ -822,6 +833,30 @@ fn recorded_expectation_refuses_headers_on_a_clean_close() {
         0,
         &json!({ "error": "ECONNRESET", "bytes": 0, "headers": {} }),
     );
+}
+
+// #1759 r4 boundary P3: `compare_response` narrows the recorded status with
+// `as u16`, so an out-of-range recording would alias a real status and compare
+// equal. Neither value is a status line the baseline can produce.
+#[test]
+#[should_panic(expected = "must fit the `u16` the comparison narrows to")]
+fn recorded_expectation_refuses_a_status_above_the_u16_range() {
+    assert_recorded_error_shape("cell", 0, &json!({ "status": 65_792, "headers": {} }));
+}
+
+#[test]
+#[should_panic(expected = "must fit the `u16` the comparison narrows to")]
+fn recorded_expectation_refuses_a_zero_status() {
+    assert_recorded_error_shape("cell", 0, &json!({ "status": 0, "headers": {} }));
+}
+
+// #1759 r4 boundary P2: the key-set guard has to run before a cell can be
+// skipped, so it is a standalone function over the recorded `options`, not
+// something a replayed cell happens to trigger inside `options()`.
+#[test]
+#[should_panic(expected = "options key \"requestTimeout\" is not read")]
+fn recorded_options_refuse_an_unknown_key_before_a_cell_is_skipped() {
+    assert_recorded_options_are_known(&json!({ "options": { "requestTimeout": 1000 } }));
 }
 
 // #1759 r4 boundary P0: the skipped `oversized-*` branch claimed "every
@@ -1131,6 +1166,29 @@ fn case_option(options: &Value, key: &str, fallback: &str) -> String {
 const REPLAY_OPTION_KEYS: [&str; 3] = ["apiKey", "modelName", "corsOrigins"];
 
 fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
+    assert_recorded_options_are_known(case);
+    let options = &case["options"];
+    ApiServerOptions {
+        port: Some(JsValue::Number(0.0)),
+        api_key: Some(case_option(options, "apiKey", "")),
+        host: Some("127.0.0.1".to_owned()),
+        model_name: Some(case_option(options, "modelName", "parity-model")),
+        cors_origins: case_origins(options),
+        mapper: None,
+        request_timeout: timeout,
+        body_read_timeout: None,
+        uuid: Some(Arc::new(|| FIXED_UUID.to_owned())),
+    }
+}
+
+/// #1759 r4 (boundary P2): the `options` container and key-set guards used to
+/// live inside `options()`, which the replay only calls for cells it actually
+/// replays — `oversized-*` and `body-read-timeout` `continue` first, so a key
+/// recorded on those four cells was never checked. That is the same "skipped
+/// cell is unread" hole the shape pin closes for expectations, so the guard is
+/// shape/roster-only (it never parses a value) and runs for every cell before
+/// any branch can skip it.
+fn assert_recorded_options_are_known(case: &Value) {
     // #1606 r6 (both zai roles, independently): r5 tightened every key *inside*
     // `options` and claimed this file no longer conflates absent with
     // wrong-type — but the container itself was still two-state. With
@@ -1158,17 +1216,6 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
                  {REPLAY_OPTION_KEYS:?}); the fixture and the reader have drifted apart"
             );
         }
-    }
-    ApiServerOptions {
-        port: Some(JsValue::Number(0.0)),
-        api_key: Some(case_option(options, "apiKey", "")),
-        host: Some("127.0.0.1".to_owned()),
-        model_name: Some(case_option(options, "modelName", "parity-model")),
-        cors_origins: case_origins(options),
-        mapper: None,
-        request_timeout: timeout,
-        body_read_timeout: None,
-        uuid: Some(Arc::new(|| FIXED_UUID.to_owned())),
     }
 }
 
@@ -1326,6 +1373,11 @@ async fn replays_real_ts_api_server_cells() {
         // `oversized-*` and `body-read-timeout` cells never reach
         // `compare_response`, so an id-scoped pin would leave a future error
         // cell's recorded `bytes` / `status` unread.
+        //
+        // The same applies to `options`: the guard lives in `options()`, which
+        // only replayed cells ever call, so the skipped cells' recorded option
+        // keys were unread (#1759 r4 boundary P2).
+        assert_recorded_options_are_known(case);
         for (index, expected) in case["expect"]
             .as_array()
             .expect("#1333 expect")
