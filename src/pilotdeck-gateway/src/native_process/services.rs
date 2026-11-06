@@ -521,15 +521,33 @@ pub(super) fn attachment_identity_matches(_before: &fs::Metadata, _opened: &fs::
 /// canonical lease root or the canonical upload-store root (a lease file is
 /// a hard link of an upload-store file, and the platform may report either
 /// name). An unavailable handle path fails closed — never approved.
+///
+/// Stated honestly, this answers with the vnode's *current* name: it says
+/// the object has some legitimate home, not that the name is the one the
+/// open used. A rename performed after the open therefore moves an outside
+/// vnode under an accepted root — closed by the identity comparison in the
+/// caller (step 0/3), not here. A hard link created inside the lease root
+/// before the turn is not caught at all: the object then genuinely has an
+/// in-root name, and only recording the lease's expected `(dev, inode)` at
+/// creation time would distinguish it (#1468 follow-up).
 pub(super) fn handle_bound_to_upload_areas(
     file: &File,
     lease_root: &Path,
     upload_store: Option<&Path>,
+    approved: &fs::Metadata,
 ) -> bool {
     match crate::handle_path::opened_path(file) {
         Ok(handle) => {
-            handle.starts_with(lease_root)
-                || upload_store.is_some_and(|store| handle.starts_with(store))
+            let named_inside = handle.starts_with(lease_root)
+                || upload_store.is_some_and(|store| handle.starts_with(store));
+            // The name says the object has a legitimate home; the identity
+            // says it is the object the pre-open validation approved. A
+            // rename after the open satisfies the first and not the second.
+            let same_object = file
+                .metadata()
+                .map(|opened| attachment_identity_matches(approved, &opened))
+                .unwrap_or(false);
+            named_inside && same_object
         }
         // #1468: an unavailable handle path is never approved.
         Err(_) => false,
@@ -679,7 +697,15 @@ pub(super) fn compose_attachment_turn(
     // `_tmp/20261106-issue-1468-1494/probe/`; Linux /proc always reports
     // the spelling the open used). A missing store root (no uploads yet)
     // simply leaves the lease spelling as the only accepted home.
-    let upload_store_canon = fs::canonicalize(project_canon.join(".tmp").join("chat-uploads")).ok();
+    // P1 (deepseek boundary#2 / concurrency#2): the store root gets the same
+    // containment guard as `lease_canon` — a `.tmp/chat-uploads` swapped for
+    // a symlink out of the project must not become a second accepted home,
+    // or step 4 starts approving handles that live wherever the link points.
+    let upload_store_canon = match fs::canonicalize(project_canon.join(".tmp").join("chat-uploads"))
+    {
+        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
+        _ => None,
+    };
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
     let mut inline_blocks: Vec<JsValue> = Vec::new();
@@ -775,6 +801,10 @@ pub(super) fn compose_attachment_turn(
         // the outside file and pass every check that consults the path.
         // The approval is now bound to the opened handle itself, and every
         // read comes from that handle:
+        //   0. the file identity the pre-open validation approved
+        //      (`approved_stat`) is remembered before the open, so a
+        //      post-open rename that moves an outside vnode's name into the
+        //      lease root still changes which inode the handle references;
         //   1. open `resolved`;
         //   2. post-open `canonicalize` containment under the canonical
         //      lease root — a swap made after the open resolves outside
@@ -783,13 +813,18 @@ pub(super) fn compose_attachment_turn(
         //      made after the revalidation stats a different file than
         //      the handle and is treated as not-found;
         //   4. the handle's own resolved path (`handle_path`, macOS
-        //      F_GETPATH / Linux /proc/self/fd) must name a location
+        //      F_GETPATH / Linux / proc/self/fd) must name a location
         //      inside the canonical lease root or the canonical
         //      upload-store root, and an unavailable handle path is never
-        //      approved — the step that survives a fully choreographed
-        //      multi-swap sequence, because it asks the platform which
-        //      object the descriptor references instead of consulting the
-        //      movable path;
+        //      approved — this is the step that closes the multi-swap
+        //      sequence, because the swaps decide which object step 1
+        //      opens and the handle's name follows that object. The name is
+        //      still a name: a rename *after* the open moves an outside
+        //      vnode under an accepted root, which is why step 0/3 compare
+        //      identities rather than trusting the spelling. A hard link
+        //      planted in the lease root before the turn leaves the object
+        //      with a genuine in-root name and is out of this sequence's
+        //      reach (documented on `handle_bound_to_upload_areas`);
         //   5. a swap made after all checks only moves the path, never
         //      the opened handle, so the bytes still come from the object
         //      this sequence validated.
@@ -799,6 +834,26 @@ pub(super) fn compose_attachment_turn(
         // registered allowedReadFiles spelling is the post-open canonical
         // form from step 2 (identical to the pre-open one when nothing
         // moved).
+        // #1468 step 0 (deepseek concurrency#1 / boundary#1): the identity
+        // the pre-open validation approved. Step 4 asks the platform for the
+        // handle's *current* name, so a rename performed after the open
+        // could hand an outside vnode a name inside the lease root and pass
+        // every path check. A rename cannot change which inode the handle
+        // references, so pinning the approved identity here and comparing it
+        // with the handle's fstat (step 3) closes that entry. A hard link
+        // planted in the lease root *before* the turn is not covered — the
+        // object then genuinely has a legitimate name — and is documented on
+        // `handle_bound_to_upload_areas`.
+        let approved_stat = match fs::metadata(&resolved) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                if audio {
+                    continue;
+                }
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                continue;
+            }
+        };
         #[cfg(test)]
         swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeOpen, &resolved);
         let mut file = match File::open(&resolved) {
@@ -884,9 +939,12 @@ pub(super) fn compose_attachment_turn(
         // resolved location exposes it. A handle whose path is unavailable
         // fails closed (`handle_bound_to_upload_areas`).
         let handle_bound = match lease_canon.as_deref() {
-            Some(lease_root) => {
-                handle_bound_to_upload_areas(&file, lease_root, upload_store_canon.as_deref())
-            }
+            Some(lease_root) => handle_bound_to_upload_areas(
+                &file,
+                lease_root,
+                upload_store_canon.as_deref(),
+                &approved_stat,
+            ),
             // No valid canonical lease root is reachable here (lease_guard
             // resolved under one); if it ever is, fail closed anyway.
             None => false,
@@ -897,7 +955,7 @@ pub(super) fn compose_attachment_turn(
             }
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "attachment handle resolved outside the lease root after open",
+                "attachment handle is not the lease object approved before the open",
             );
             diagnostics.push(attachment_not_found(entry, &entry.path, &error));
             continue;

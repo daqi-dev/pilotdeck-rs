@@ -51,6 +51,7 @@ MESSAGES = 'upload::gateway_tests::upload_gateway_error_messages_preserve_lone_s
 READ_AT_SWAP = ('upload::tests::upload_read_at_metadata_swapped_between_'
                 'canonicalize_and_open_is_rejected')
 LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_lease'
+READ_AT_RENAME = ('upload::tests::upload_read_at_record_renamed_after_open_is_rejected')
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -219,6 +220,14 @@ mutations = [
      '                let handle_inside = canonical_path.starts_with(&upload_root);',
      LEASE_CHAIN,
      '#1494 a forged record must never reach the attachment lease'),
+    # #1494: the identity recorded before the open. Dropping only this term
+    # leaves the name-based handle check intact, so the renamed-in outside
+    # record passes it — the named test must go red.
+    ('read-at-identity-dropped', STORE,
+     '''                    if opened.dev() != approved.dev() || opened.ino() != approved.ino() {''',
+     '                    if false {',
+     READ_AT_RENAME,
+     '#1494 a renamed-in outside record must never be read back'),
 ]
 
 if '--check' in sys.argv[1:]:
