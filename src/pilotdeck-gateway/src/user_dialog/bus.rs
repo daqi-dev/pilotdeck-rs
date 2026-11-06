@@ -49,11 +49,14 @@ pub enum ConsumeResult {
 pub struct ConsumedDialog {
     pub entry: PendingDialog,
     lease: Option<ActiveLease>,
-    /// Where the entry sat in its session bucket. TS `remove()` leaves the
-    /// bucket untouched when `onSettled` throws, so [`Self::restore`] puts it
-    /// back at its original position instead of appending to the tail (which
-    /// would reorder `list`).
-    index: usize,
+    /// The neighbours the entry had in its session bucket. TS `remove()`
+    /// leaves the bucket untouched when `onSettled` throws, so [`Self::restore`]
+    /// puts the entry back where it sat instead of appending to the tail
+    /// (which would reorder `list`). Ids rather than an index: a settle hook is
+    /// host code and may reenter the bus to remove or insert other members, so
+    /// a stale numeric index would land the entry on the wrong side of them.
+    predecessor: Option<JsString>,
+    successor: Option<JsString>,
     /// Registration number of the consumed entry, put back by [`Self::restore`]
     /// so the restored dialog keeps its identity (#1599).
     generation: u64,
@@ -87,6 +90,37 @@ pub struct Outbox {
     observer: Option<Arc<ObserverFn>>,
 }
 impl Outbox {
+    /// The changes this consume already caused, minus the rollback-able
+    /// "settled" broadcast of `request`. A failing settle hook restores the
+    /// entry and drops that one event — TS `remove()` throws before it emits
+    /// (GatewayUserDialogBus.ts:219-226) — but effects that happened earlier in
+    /// the same consume, such as a lease expiring inside
+    /// `consume_for_response`, already occurred and must still reach the
+    /// renderer.
+    #[must_use]
+    pub fn without_settled(self, session: &JsString, request: &JsString) -> Self {
+        let settled = JsString::from("settled");
+        let events = self
+            .events
+            .into_iter()
+            .filter(|event| {
+                let matches = |key: &str, wanted: &JsString| {
+                    event
+                        .get(key)
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value == wanted)
+                };
+                !(matches("type", &settled)
+                    && matches("sessionKey", session)
+                    && matches("requestId", request))
+            })
+            .collect();
+        Self {
+            events,
+            observer: self.observer,
+        }
+    }
+
     /// Delivers every queued change. Observer errors are ignored, like TS
     /// `emitChange`'s try/catch (GatewayUserDialogBus.ts:244-251).
     pub fn deliver(self) {
@@ -251,6 +285,11 @@ impl GatewayUserDialogBus {
     /// a throw leaves the dialog pending (GatewayUserDialogBus.ts:219-226);
     /// the settle hook now travels with the entry instead (#1442), so the
     /// caller runs it after dropping the guard and restores on failure.
+    ///
+    /// The returned value owns a pending dialog: dropping it without running
+    /// [`PendingDialog::on_settled`] and without [`Self::restore`] leaks the
+    /// waiter, so the result is `#[must_use]`.
+    #[must_use = "run on_settled outside the guard, then restore on failure or deliver the answer"]
     pub fn consume(
         &mut self,
         session: &JsString,
@@ -263,6 +302,11 @@ impl GatewayUserDialogBus {
             .iter()
             .position(|entry| &entry.request_id == request)?;
         let bucket = self.pending.get_mut(session).expect("pending session");
+        let predecessor = index
+            .checked_sub(1)
+            .and_then(|before| bucket.get(before))
+            .map(|entry| entry.request_id.clone());
+        let successor = bucket.get(index + 1).map(|entry| entry.request_id.clone());
         let entry = bucket.remove(index);
         if bucket.is_empty() {
             self.pending.remove(session);
@@ -281,7 +325,8 @@ impl GatewayUserDialogBus {
         Some(ConsumedDialog {
             entry,
             lease,
-            index,
+            predecessor,
+            successor,
             generation,
         })
     }
@@ -301,7 +346,8 @@ impl GatewayUserDialogBus {
         let ConsumedDialog {
             entry,
             lease,
-            index,
+            predecessor,
+            successor,
             generation,
         } = consumed;
         let bucket = self.pending.entry(session.clone()).or_default();
@@ -312,7 +358,18 @@ impl GatewayUserDialogBus {
             return;
         }
         let request_id = entry.request_id.clone();
-        bucket.insert(index.min(bucket.len()), entry);
+        // Prefer the old successor (insert before it); otherwise the old
+        // predecessor (insert after it); otherwise the tail. Either neighbour
+        // may have been consumed by a reentrant host callback in the meantime.
+        let position = successor
+            .and_then(|after| bucket.iter().position(|value| value.request_id == after))
+            .or_else(|| {
+                predecessor
+                    .and_then(|before| bucket.iter().position(|value| value.request_id == before))
+                    .map(|before| before + 1)
+            })
+            .unwrap_or(bucket.len());
+        bucket.insert(position, entry);
         self.generations
             .insert((session.clone(), request_id.clone()), generation);
         if let Some(lease) = lease {
@@ -356,6 +413,7 @@ impl GatewayUserDialogBus {
     /// id (#1599); comparing the registration keeps the answer bound to the
     /// dialog it was validated against instead of silently delivering it to
     /// the new one.
+    #[must_use = "run on_settled outside the guard, then restore or deliver"]
     pub fn consume_for_response(
         &mut self,
         session: &JsString,
@@ -387,6 +445,7 @@ impl GatewayUserDialogBus {
     /// callbacks do not run here (#1442); the caller runs them after dropping
     /// the guard, keeping TS's per-entry `[onSettled (swallowed), reject,
     /// emitChange]` order (GatewayUserDialogBus.ts:198-213).
+    #[must_use = "run each settle/reject outside the guard and deliver the events"]
     pub fn reject_session(&mut self, session: &JsString, reason: &str) -> Vec<RejectedDialog> {
         let entries = self.pending.remove(session).unwrap_or_default();
         self.leases.retain(|(key, _), _| key != session);
@@ -414,6 +473,7 @@ impl GatewayUserDialogBus {
     /// Takes every broadcast queued by a mutation, for delivery after the
     /// guard drops. The observer is host code: it never runs while the bus
     /// lock is held (#1442).
+    #[must_use = "queued broadcasts must be delivered after the guard drops"]
     pub fn drain_events(&mut self) -> Outbox {
         Outbox {
             events: std::mem::take(&mut self.outbox),

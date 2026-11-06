@@ -3808,3 +3808,128 @@ async fn user_dialog_respond_reports_not_delivered_when_accepts_replaces_the_dia
         .await
         .expect("#1599 accepts-replacement fixture project shutdown");
 }
+
+// #1599: a lease that expired during the consume is a real, already-happened
+// broadcast. A failing settle hook rolls back only this consume's own
+// "settled" event (TS remove() throws before it mutates,
+// GatewayUserDialogBus.ts:219-226) — the renderer still has to hear that the
+// lease expired, otherwise its claimed state never clears.
+#[tokio::test]
+async fn user_dialog_respond_settle_failure_still_delivers_the_expired_lease() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    let (_scratch, mut requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1599 settle-failure fixture setup");
+    let session: JsString = "1599-settle-session".into();
+    let request: JsString = "1599-settle-dialog".into();
+    let clock = Arc::new(AtomicI64::new(1_000));
+    let seen: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::default();
+    let seen_by_observer = seen.clone();
+    let mut bus = crate::user_dialog::GatewayUserDialogBus::new(
+        crate::user_dialog::DialogRuntime {
+            now: {
+                let clock = clock.clone();
+                Arc::new(move || clock.load(Ordering::SeqCst))
+            },
+            uuid: Arc::new(|| "1599-settle-lease".into()),
+        },
+        Some(Box::new(move |event| {
+            let read = |key: &str| {
+                event
+                    .get(key)
+                    .and_then(JsValue::as_string)
+                    .and_then(|value| value.to_utf8().ok())
+                    .unwrap_or_default()
+            };
+            seen_by_observer
+                .lock()
+                .unwrap()
+                .push((read("type"), read("action")));
+            Ok(())
+        })),
+    );
+    bus.register(
+        &session,
+        crate::user_dialog::PendingDialog {
+            request_id: request.clone(),
+            dialog_kind: "input".into(),
+            tool_call_id: "call-settle".into(),
+            tool_name: "request_user_input".into(),
+            event: crate::metadata::object([("requestId", JsValue::String(request.clone()))]),
+            accepts: Arc::new(|_value| true),
+            resolve: Box::new(|_answer| {}),
+            reject: Box::new(|_error| {}),
+            on_settled: Some(Box::new(|| {
+                Err(crate::user_dialog::DialogError::Invalid(
+                    "journal-io".into(),
+                ))
+            })),
+        },
+    );
+    requests.user_dialog_bus = std::sync::Arc::new(std::sync::Mutex::new(bus));
+    let claimed = requests
+        .user_dialog_request(
+            "user_dialog_claim".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(request.clone())),
+                ("ttlMs", JsValue::Number(1_000.0)),
+            ]),
+        )
+        .await
+        .expect("#1599 settle fixture claim");
+    negative_assert_eq!(
+        claimed.get("claimed"),
+        Some(&JsValue::Bool(true)),
+        "#1599 settle fixture claim succeeds"
+    );
+    let lease_id = claimed
+        .get("leaseId")
+        .cloned()
+        .unwrap_or(JsValue::Undefined);
+    // Drop the renderer-visible claim broadcast; only the expiry matters here.
+    seen.lock().unwrap().clear();
+    clock.store(2_500, Ordering::SeqCst);
+    let result = requests
+        .user_dialog_request(
+            "user_dialog_respond".into(),
+            crate::metadata::object([
+                ("sessionKey", JsValue::String(session.clone())),
+                ("requestId", JsValue::String(request.clone())),
+                ("leaseId", lease_id),
+                (
+                    "result",
+                    crate::metadata::object([
+                        ("behavior", "answered".into()),
+                        ("value", "answer".into()),
+                    ]),
+                ),
+            ]),
+        )
+        .await;
+    negative_assert!(
+        result.is_err(),
+        "#1599 the failing settle hook fails the respond"
+    );
+    let events = seen.lock().unwrap().clone();
+    negative_assert!(
+        events
+            .iter()
+            .any(|(kind, action)| kind == "lease_changed" && action == "expired"),
+        "#1599 a failing settle hook still delivers the lease expiry it did not roll back"
+    );
+    negative_assert!(
+        !events.iter().any(|(kind, _)| kind == "settled"),
+        "#1599 the rolled-back settled broadcast is not delivered"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1599 settle fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1599 settle fixture project shutdown");
+}
