@@ -100,9 +100,26 @@ function send(port: number, spec: RequestSpec): Promise<any> {
             body: maskText(Buffer.concat(chunks).toString('utf8')),
           }),
         );
-        response.on('error', (error: any) => done({ error: String(error.code ?? error.message), bytes: 0 }));
+        // #1606 fix-r7 (GLM r6 boundary P1): this handler used to write
+        // `bytes: 0` as a literal, same as the two paths below that have no
+        // `response` object at all. That made the oversized pin tautological:
+        // a baseline that wrote a status line and part of the body, then
+        // reset the connection, would record `{error, bytes: 0}` exactly like
+        // a clean reset — the generator guard (`result.bytes !== 0`,
+        // `result.status !== undefined`) and the Rust replay assertion would
+        // both stay green while the two sides disagreed. Record what the
+        // client actually received instead of asserting it received nothing.
+        response.on('error', (error: any) =>
+          done({
+            status: response.statusCode,
+            bytes: Buffer.concat(chunks).length,
+            error: String(error.code ?? error.message),
+          }),
+        );
       },
     );
+    // No `response` object ever arrived, so zero bytes is a fact here rather
+    // than a placeholder.
     req.on('error', (error: any) => done({ error: String(error.code ?? error.message), bytes: 0 }));
     try {
       if (spec.body !== undefined) req.write(spec.body);
