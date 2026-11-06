@@ -80,6 +80,14 @@ fn executable_native_loop_stimulus() {
             "#1371 executable armed inert turn",
         ),
         (
+            "#1371 inert turn real model text",
+            "#1371 executable inert real text",
+        ),
+        (
+            "#1371 inert turn keeps the title request",
+            "#1371 executable inert title request",
+        ),
+        (
             "#1371 armed inert publishes no receipts",
             "#1371 executable armed inert quiet",
         ),

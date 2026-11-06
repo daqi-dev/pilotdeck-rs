@@ -164,8 +164,12 @@ try {
     const {ws, next} = await client(process.address);
     const {events, terminal} = await submitUntilFinal(ws, next, 'loop-unset', process);
     assert.equal(terminal.type, 'turn_completed', '#1371 unset turn completes');
-    assert.ok(events.some(e => e.type === 'assistant_message' || e.type === 'turn_completed'), '#1371 unset real model text');
-    rows.push({scenario: 'unset'});
+    // The label claims model *text*, so the turn_completed event (which any
+    // completed turn emits, text or not) cannot satisfy it: the provider's
+    // own string must arrive as an event text payload.
+    const texts = events.filter((e: any) => typeof e.text === 'string' && e.text.length > 0);
+    assert.ok(texts.some((e: any) => e.text.includes('native loop stimulus text')), '#1371 unset real model text');
+    rows.push({scenario: 'unset', eventTypes: [...new Set(events.map((e: any) => e.type))]});
     ws.terminate(); await stop(process, 'unset');
   }
   // Armed with an existing control directory that carries no plan: the entry
@@ -173,13 +177,22 @@ try {
   {
     const control = join(out, 'loop-armed-empty', 'control');
     await mkdir(control, {recursive: true});
+    const titlesBefore = titleRequests;
     const process = await launch('loop-armed-empty', control);
     assert.ok(process.stderr().includes(`native loop stimulus on ${control}`), '#1371 stimulus receipt on stderr');
     const {ws, next} = await client(process.address);
-    const {terminal} = await submitUntilFinal(ws, next, 'loop-armed-empty', process);
+    const {events, terminal} = await submitUntilFinal(ws, next, 'loop-armed-empty', process);
     assert.equal(terminal.type, 'turn_completed', '#1371 armed inert turn completes');
     assert.equal(await exists(join(control, 'witness')), false, '#1371 armed inert publishes no receipts');
-    rows.push({scenario: 'armed-empty'});
+    const inertTexts = events.filter((e: any) => typeof e.text === 'string' && e.text.length > 0);
+    assert.ok(inertTexts.some((e: any) => e.text.includes('native loop stimulus text')), '#1371 inert turn real model text');
+    // Inert keeps the production behaviour byte for byte, the automatic title
+    // request included; suppressing it for an entry that never drives the
+    // loop would still be a behaviour difference.
+    const titleDeadline = Date.now() + 3000;
+    while (titleRequests === titlesBefore && Date.now() < titleDeadline) await sleep(25);
+    assert.ok(titleRequests > titlesBefore, '#1371 inert turn keeps the title request');
+    rows.push({scenario: 'armed-empty', eventTypes: [...new Set(events.map((e: any) => e.type))]});
     ws.terminate(); await stop(process, 'armed-empty');
   }
   // Invalid: a value that does not name an existing directory fails closed at
@@ -317,8 +330,13 @@ try {
     // cell measures the loop/fence ordering: the turn ends red and bounded,
     // and the outer fence has already completed before the late unknown.
     assert.equal(terminal.type, 'error', '#1371 after-complete ends red');
-    const fence = await witness(control, 'fence', 'complete', 'loop-after-complete-run');
-    assert.ok(fence.seq >= 0, '#1371 after-complete fence.complete before the late unknown');
+    // The ordering is measured when the receipt appears, not by comparing
+    // sequence numbers: the gateway and the sidecar number their receipts
+    // independently. At this moment the loop is still held (no release is
+    // written), so a fence completion that only happened after the late
+    // unknown would leave that loop receipt behind and fail here.
+    await witness(control, 'fence', 'complete', 'loop-after-complete-run');
+    assert.equal(await hasWitness(control, 'loop', 'final', 'result_unknown'), false, '#1371 after-complete fence.complete before the late unknown');
     await release(control, plan, 'outcome', 'unknown');
     await witness(control, 'loop', 'final', 'result_unknown');
     ws.terminate(); await stop(process, 'after-complete');
@@ -367,11 +385,13 @@ try {
     const process = await launch('loop-bound', control);
     const {ws, next} = await client(process.address);
     const pump = submitUntilFinal(ws, next, 'loop-bound', process, {timeoutMs: 400});
-    await witness(control, 'loop', 'wait', plan.id);
+    const wait = await witness(control, 'loop', 'wait', plan.id);
     const {terminal} = await pump;
     assert.equal(terminal.type, 'error', '#1371 bound timeout still ends red');
     const bound = await witness(control, 'loop', 'bound', 'outcome');
-    assert.ok(bound.seq >= 0, '#1371 bound expires instead of hanging');
+    // Both receipts come from the sidecar's single counter, so the expiry is
+    // ordered after the wait it replaced.
+    assert.ok(bound.seq > wait.seq, '#1371 bound expires instead of hanging');
     assert.equal(await hasWitness(control, 'loop', 'final', 'completed'), false, '#1371 bound never fabricates a completion');
     rows.push({scenario: 'bound', boundSeq: bound.seq, terminal});
     ws.terminate(); await stop(process, 'bound');
@@ -387,6 +407,8 @@ try {
       '#1371 unset real model text',
       '#1371 stimulus receipt on stderr',
       '#1371 armed inert turn completes',
+      '#1371 inert turn real model text',
+      '#1371 inert turn keeps the title request',
       '#1371 armed inert publishes no receipts',
       '#1371 invalid stimulus dir rejected',
       '#1371 invalid stimulus dir reports the gate',

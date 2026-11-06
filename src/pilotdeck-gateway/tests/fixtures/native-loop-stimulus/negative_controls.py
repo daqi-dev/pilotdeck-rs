@@ -31,6 +31,7 @@ PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_loop_stimulus.rs'
 PROCESS = Path(__file__).resolve().parent / 'process.mts'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_panic import panic_evidence
 from negative_suite import passed
 
 EXECUTABLE = 'executable_native_loop_stimulus'
@@ -48,7 +49,7 @@ mutations = [
      '''let matches_id = value
                             .get("id")
                             .and_then(JsValue::as_string)
-                            .is_none_or(|id| id.equals_str(&plan.id));''',
+                            .is_some_and(|id| id.equals_str(&plan.id));''',
      'let matches_id = true;',
      'loop_stimulus::tests::release_matches_id_and_stage', '#1371 foreign releases are ignored'),
     # An armed directory without a plan stays inert; fabricating a plan turns
@@ -143,11 +144,15 @@ def classify(result, case):
         return 'SURVIVED', 'bound test still passed'
     anchors = case.assertion if isinstance(case.assertion, list) else [case.assertion]
     # The named test's own failure plus its own panic payload is the only
-    # accepted evidence; a sibling panic is not.
+    # accepted evidence; a sibling panic is not. The payload comes from the
+    # shared #813 helper so this fixture cannot drift into a looser rule:
+    # a block is attributable only to the named test (or, in a one-test run,
+    # to a thread that test spawned itself).
     named = re.search(r'^test ' + re.escape(case.test) + r' \.\.\. FAILED$', log, re.MULTILINE)
-    payload = ''
-    for match in re.finditer(r"panicked at [^\n]*:\n((?:.*\n)*?)(?:note: |\Z)", log):
-        payload += match.group(1)
+    try:
+        payload = panic_evidence(log, case.test)
+    except ValueError:
+        return 'INVALID', 'unattributable panic evidence (module path or ambiguous run)'
     if (result.returncode != 0 and named is not None and 'test result: FAILED' in log
             and 'could not compile' not in log
             and any(anchor in payload for anchor in anchors)):
@@ -254,10 +259,18 @@ def main():
                 try:
                     if not args.compile_only:
                         if test == EXECUTABLE:
-                            run_owned(['cargo', 'build', '--offline', '--manifest-path',
-                                       'src/Cargo.toml', '-p', 'pilotdeck-transport',
-                                       '--bin', 'pilotdeck-agent-loop-sidecar'],
-                                      cwd=ROOT, env=env, timeout=900)
+                            # The restored round must observe the pristine
+                            # sidecar: an unchecked rebuild would leave the
+                            # mutant binary in place and make `restoredPass`
+                            # evidence for the wrong bytes.
+                            rebuilt = run_owned(['cargo', 'build', '--offline', '--manifest-path',
+                                                 'src/Cargo.toml', '-p', 'pilotdeck-transport',
+                                                 '--bin', 'pilotdeck-agent-loop-sidecar'],
+                                                cwd=ROOT, env=env, timeout=900)
+                            (output / f'{name}-restored-sidecar.log').write_text(
+                                rebuilt.stdout + rebuilt.stderr)
+                            if rebuilt.returncode:
+                                raise RuntimeError('restored sidecar did not rebuild')
                         if not passed(run(name + '-restored', env, test), test):
                             raise RuntimeError('restored bound test failed')
                         item['restoredPass'] = True

@@ -182,7 +182,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
         eprintln!("native storage stimulus on {}", dir.display());
     }
     let loop_switch = loop_stimulus_switch(&env)?;
-    let loop_armed = loop_switch.is_some();
+    // #1371: only a resolved *plan* replaces the turn. An armed directory
+    // without a plan is inert, so it must keep the production behaviour byte
+    // for byte, automatic title request included. Resolving the entry here
+    // (once per process) is the same value the turn factory reads later.
+    let loop_planned = pilotdeck_transport::loop_stimulus::LoopStimulus::global()
+        .is_some_and(|stimulus| matches!(stimulus.plan(), Ok(Some(_))));
     if let Some(dir) = &loop_switch {
         // #1371: the controlled loop/fence entry states its directory before
         // any turn is driven, in the same construction style as #1370.
@@ -336,11 +341,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
                     cwd: Some(options.project.clone()),
                     // #1371: the controlled loop emits no assistant text, so
                     // the automatic title request is a stimulus difference
-                    // (RESULT.md TEXT row). An armed loop entry removes that
-                    // side effect instead of leaving a non-comparable extra
-                    // provider request in the recorded cells.
-                    auto_generate_title: !loop_armed,
-                    title_provider: (!loop_armed).then_some(title),
+                    // (RESULT.md TEXT row). An armed loop *with a plan*
+                    // removes that side effect instead of leaving a
+                    // non-comparable extra provider request in the recorded
+                    // cells; an inert entry keeps the production request.
+                    auto_generate_title: !loop_planned,
+                    title_provider: (!loop_planned).then_some(title),
                     ..Default::default()
                 };
                 let session = context.session_key;
