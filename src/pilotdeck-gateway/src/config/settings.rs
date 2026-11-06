@@ -1,8 +1,10 @@
 //! `resolve_settings` snapshot response projection, mirroring the fixed
 //! TypeScript baseline's `toGatewayResolvedSettings`
-//! (`src/cli/createLocalGateway.ts`). This is an unenabled native component:
-//! default gateway dispatch still routes `resolve_settings` through the
-//! TypeScript host, and nothing here is registered anywhere yet.
+//! (`src/cli/createLocalGateway.ts`). #1320: the native process serves this
+//! projection — `native_process::services::native_settings` binds it as the
+//! `resolve_settings` delegate and `native_process/methods/settings.rs`
+//! routes it through the #1305 method registry; `dispatch.rs`
+//! (LOCAL_METHODS) still does not reference it.
 //!
 //! The projection is pure: it reads one already-loaded snapshot and rebuilds
 //! the wire response. `config` is redacted by the snapshot's own

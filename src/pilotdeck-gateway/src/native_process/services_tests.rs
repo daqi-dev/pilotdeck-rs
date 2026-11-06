@@ -8,13 +8,31 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
-//! message, #1459/#1464 the lease-root/lease-path softening).
+//! message, #1459/#1464 the lease-root/lease-path softening) and the #1320
+//! fix-r1 F2/F3 settings-composition tests (the production stack binds no
+//! notification server; the settings store anchors at PILOT_HOME).
 
-use super::services::{attachment_identity_matches, compose_attachment_turn, swap_test_hook};
+use super::services::{
+    NativeSettingsOptions, attachment_identity_matches, compose_attachment_turn, native_settings,
+    native_settings_for_process, swap_test_hook,
+};
+use crate::config::Env;
+use crate::config::store::{ConfigStore, StoreOptions};
+use crate::runtime::project::{
+    DisposeFuture, ProjectRuntimeRegistry, ResourceBundle, RuntimeError, RuntimeResult,
+};
+use crate::runtime::refresh::{
+    BoxFuture, ConsoleLog, NotificationServer, RefreshRegistry, RefreshRouter,
+};
+use crate::runtime::session::{
+    LiveSession, LiveSessionHandle, SessionContext, SessionFactory, SessionOwner,
+    SessionOwnerOptions,
+};
 use crate::{metadata::object, negative_assert, negative_assert_eq};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Scratch project under the system temp dir (never inside the worktree),
 /// canonicalized up front like `native_process::tests::Scratch` so the
@@ -1846,4 +1864,238 @@ fn symlink_loop_lease_path_fails_the_turn() {
         "#1321 P2: a non-ENOENT canonicalize failure must be a hard failure, got: {}",
         error.message
     );
+}
+
+// ------------------------------------------- #1320 fix-r1 F2/F3 settings tests
+
+/// The minimal valid scratch config (the `management_tests` fixture shape):
+/// a load failure would fail the composition before either assertion runs.
+const SETTINGS_YAML: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  \
+     providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      \
+     apiKey: test-only\n      models:\n        test: {}\n";
+
+/// A no-op `LiveSession`/`SessionFactory` pair for the settings compositions'
+/// session-owner port: none of the F2/F3 assertions drives a turn, so the
+/// factory only has to exist (the same minimal pair `management_tests` uses).
+struct NullSession;
+impl LiveSession for NullSession {
+    fn snapshot(&self) -> JsValue {
+        object([("messages", JsValue::Array(vec![]))])
+    }
+    fn abort(&self, _: &JsString) -> RuntimeResult {
+        Ok(())
+    }
+    fn dispose(&self) -> DisposeFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+}
+struct NullFactory;
+impl SessionFactory for NullFactory {
+    fn create(
+        &self,
+        _: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        Box::pin(async { Ok(LiveSessionHandle::new(Arc::new(NullSession), None)) })
+    }
+    fn can_recreate(&self) -> bool {
+        true
+    }
+}
+
+fn settings_owner() -> SessionOwner {
+    let mut options = SessionOwnerOptions::new(Arc::new(NullFactory));
+    options.idle_sweep_interval_ms = 0;
+    SessionOwner::new(options)
+}
+
+struct NullRegistry;
+impl RefreshRegistry for NullRegistry {
+    fn reload(&self) -> Result<BoxFuture<RuntimeResult>, RuntimeError> {
+        Ok(Box::pin(async { Ok(()) }))
+    }
+    fn invalidate(&self, _: Option<&JsString>) {}
+}
+
+struct NullRouter;
+impl RefreshRouter for NullRouter {
+    fn mark_all_dirty(&self, _: &str) -> usize {
+        0
+    }
+    fn mark_project_dirty(&self, _: &JsString, _: &str) -> usize {
+        0
+    }
+    fn mark_session_dirty(&self, _: &JsString, _: &str) -> bool {
+        false
+    }
+    fn cached_session_count(&self) -> usize {
+        0
+    }
+    fn snapshot_session(&self, _: &JsString) -> Option<JsValue> {
+        None
+    }
+}
+
+struct NullServer;
+impl NotificationServer for NullServer {
+    fn broadcast_notification(&self, _: &str, _: &JsValue) {}
+}
+
+/// A store over an own scratch home (the `own_store` shape of the #1320 S4
+/// fixtures): the same file anchor and env, so only the composition under
+/// test decides what loads.
+fn scratch_store(home: &Path, yaml: &str) -> ConfigStore {
+    std::fs::create_dir_all(home).expect("#1320 scratch home");
+    std::fs::write(home.join("pilotdeck.yaml"), yaml).expect("#1320 scratch config");
+    let home_text = home.to_string_lossy().into_owned();
+    let env = Env::from([
+        ("HOME".to_owned(), home_text.clone()),
+        ("PILOT_HOME".to_owned(), home_text),
+    ]);
+    let mut options = StoreOptions::new(home.to_path_buf(), home.to_path_buf(), env);
+    options.project = Some(home.join("pilotdeck.yaml").to_string_lossy().into_owned());
+    ConfigStore::new(options).expect("#1320 the scratch store must load")
+}
+
+/// #1320 fix-r1 F2: the production settings composition binds no notification
+/// server — the isolated native process has no server-push channel, so the
+/// bundle's broadcasts are lost (the connection registry is #1669, not built
+/// here). The bound-sever half is the positive control proving the negative
+/// assertion is not vacuous: the seam reports `true` the moment a server is
+/// bound, exactly what the S4 order tests rely on.
+#[tokio::test]
+async fn native_settings_production_binds_no_notification_server() {
+    let root = std::env::temp_dir().join(format!("pdrs-1320-f2-{}", uuid::Uuid::new_v4()));
+    let store = scratch_store(&root.join("home"), SETTINGS_YAML);
+    let settings = native_settings(NativeSettingsOptions {
+        owner: settings_owner(),
+        router: Arc::new(NullRouter),
+        registry: Arc::new(NullRegistry),
+        store,
+        project_root: JsString::from("/pdrs-fixture/project"),
+        log: Arc::new(ConsoleLog),
+    });
+    negative_assert!(
+        !settings.bundle.has_notification_server(),
+        "#1320 生产组合不得假装有广播通道（见 #1669）"
+    );
+    settings.bundle.bind_server(Arc::new(NullServer));
+    negative_assert!(
+        settings.bundle.has_notification_server(),
+        "#1320 the bind_server seam must report the recording server the order tests bind"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// #1320 fix-r1 F3: the settings store anchors at PILOT_HOME from the
+/// environment — the same `resolvePilotHome` every other config read of the
+/// process uses (`NativeConfigSource`) — with `--home` only as the fallback
+/// homedir, so a PILOT_HOME pointing elsewhere must not be silently
+/// overridden. Two configs differing by anchor comment: the resolved
+/// `contentHash`/`sources` must come from the PILOT_HOME copy, never from
+/// the `--home` copy.
+#[tokio::test]
+async fn settings_store_anchors_at_pilot_home_env() {
+    let root = std::env::temp_dir().join(format!("pdrs-1320-f3-{}", uuid::Uuid::new_v4()));
+    let pilot_home = root.join("ph");
+    let flag_home = root.join("home");
+    let served_project = root.join("project");
+    std::fs::create_dir_all(&served_project).expect("#1320 served project");
+    let pilot_yaml = format!("{SETTINGS_YAML}# pilot-home anchor\n");
+    let flag_yaml = format!("{SETTINGS_YAML}# flag-home anchor\n");
+    std::fs::create_dir_all(&pilot_home).expect("#1320 the PILOT_HOME scratch dir");
+    std::fs::write(pilot_home.join("pilotdeck.yaml"), &pilot_yaml)
+        .expect("#1320 the PILOT_HOME copy");
+    std::fs::create_dir_all(&flag_home).expect("#1320 the --home scratch dir");
+    std::fs::write(flag_home.join("pilotdeck.yaml"), &flag_yaml).expect("#1320 the --home copy");
+    let env = Env::from([
+        ("HOME".to_owned(), flag_home.to_string_lossy().into_owned()),
+        (
+            "PILOT_HOME".to_owned(),
+            pilot_home.to_string_lossy().into_owned(),
+        ),
+    ]);
+    let registry = Arc::new(ProjectRuntimeRegistry::new(
+        served_project.clone(),
+        Arc::new(|_: &Path, _: &mut ResourceBundle| Ok(())),
+    ));
+    let settings = native_settings_for_process(
+        settings_owner(),
+        registry,
+        &flag_home,
+        &served_project,
+        &env,
+    )
+    .expect("#1320 the production settings stack must compose");
+    let resolved = match settings
+        .gateway
+        .dispatch("resolve_settings", &JsValue::Undefined)
+        .await
+    {
+        Some(Ok(value)) => value,
+        Some(Err(error)) => panic!(
+            "#1320 resolve_settings must succeed over the production stack: {}",
+            String::from_utf16_lossy(error.message().units())
+        ),
+        None => panic!("#1320 resolve_settings must be dispatched by the gateway"),
+    };
+    // Reference stores over each home, anchored exactly like the composition
+    // (cwd/projectRoot = the served project): the resolved projection has to
+    // match the PILOT_HOME one and differ from the --home one.
+    let reference = |home: &Path| {
+        let mut options =
+            StoreOptions::new(home.to_path_buf(), served_project.clone(), env.clone());
+        options.project = Some(served_project.to_string_lossy().into_owned());
+        let store = ConfigStore::new(options).expect("#1320 reference store");
+        store.resolved_settings()
+    };
+    let pilot_reference = reference(&pilot_home);
+    let flag_reference = reference(&flag_home);
+    negative_assert_eq!(
+        resolved
+            .get("contentHash")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+        pilot_reference
+            .get("contentHash")
+            .cloned()
+            .unwrap_or(JsValue::Undefined),
+        "#1320 the resolved contentHash must come from the PILOT_HOME copy"
+    );
+    negative_assert!(
+        source_triples(&resolved) == source_triples(&pilot_reference),
+        "#1320 the resolved sources must come from the PILOT_HOME copy, got: {:?}",
+        source_triples(&resolved)
+    );
+    negative_assert!(
+        source_triples(&resolved) != source_triples(&flag_reference),
+        "#1320 the resolved sources must not come from the --home copy"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `(kind, path, contentHash)` per source: the fields that identify WHICH
+/// copy was loaded, unlike `loadedAt` (a per-load timestamp).
+fn source_triples(resolved: &JsValue) -> Vec<(String, String, String)> {
+    match resolved.get("sources") {
+        Some(JsValue::Array(sources)) => sources
+            .iter()
+            .map(|source| {
+                (
+                    text_of(source, "kind"),
+                    text_of(source, "path"),
+                    text_of(source, "contentHash"),
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn text_of(value: &JsValue, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(JsValue::as_string)
+        .and_then(|s| s.to_utf8().ok())
+        .unwrap_or_default()
 }

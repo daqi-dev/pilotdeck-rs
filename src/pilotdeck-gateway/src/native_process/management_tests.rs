@@ -1080,6 +1080,9 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
         "permission_decide",
         "async_hook_result",
         "delete_session",
+        // #1320: served for real (the native settings stack's only
+        // delegated settings method).
+        "resolve_settings",
     ];
     if with_snapshots {
         expected.extend(["snapshot_list", "snapshot_get", "snapshot_restore"]);
@@ -1099,6 +1102,77 @@ fn assert_ts_capability_subset(expected: &[&str]) {
             .all(|capability| ts_capabilities.contains(&json!(capability))),
         "#1231 wired capabilities are TS subset"
     );
+}
+
+/// #1320「公布 ⟺ 真能服务」：`describe_server` 的能力表与 U7 四方法
+/// （apply_flag_settings / update_settings / resolve_settings /
+/// reload_output_styles）的交集必须经 `Requests::settings_request` 真的
+/// 可服务（不得回答 CAPABILITY_UNAVAILABLE），差集必须回答
+/// CAPABILITY_UNAVAILABLE "<method> is unavailable."。settings 网关换成
+/// 生产组合（`services::native_settings_for_process`）——`stub_settings`
+/// 连 resolve_settings 都不可用，用它自证毫无意义。
+#[tokio::test]
+async fn settings_capabilities_match_served_delegates() {
+    let (_scratch, mut requests) = setup();
+    let native = services::native_settings_for_process(
+        requests.owner.clone(),
+        requests.project.clone(),
+        &requests.options.home,
+        &requests.options.project,
+        &requests.env,
+    )
+    .expect("#1320 the production settings stack must compose over the fixture");
+    requests.settings = native.gateway;
+    let description = requests
+        .describe_server()
+        .await
+        .expect("#1320 describe_server succeeds");
+    let advertised: Vec<String> = match description.get("capabilities") {
+        Some(JsValue::Array(items)) => items
+            .iter()
+            .map(|item| {
+                item.as_string()
+                    .and_then(|item| item.to_utf8().ok())
+                    .expect("#1320 capability entries are strings")
+            })
+            .collect(),
+        _ => panic!("#1320 describe_server must carry a capabilities array"),
+    };
+    for method in [
+        "apply_flag_settings",
+        "update_settings",
+        "resolve_settings",
+        "reload_output_styles",
+    ] {
+        let result = requests
+            .settings_request(method.to_owned(), JsValue::Undefined)
+            .await;
+        if advertised.iter().any(|name| name == method) {
+            negative_assert!(
+                !matches!(&result, Err(error) if error.code == "CAPABILITY_UNAVAILABLE"),
+                "#1320 advertised settings method {method} must be served for real, not \
+                 CAPABILITY_UNAVAILABLE"
+            );
+        } else {
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!(
+                    "#1320 unadvertised settings method {method} must answer \
+                     CAPABILITY_UNAVAILABLE"
+                ),
+            };
+            negative_assert_eq!(
+                error.code,
+                "CAPABILITY_UNAVAILABLE",
+                "#1320 unadvertised settings method {method} code"
+            );
+            negative_assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                format!("{method} is unavailable."),
+                "#1320 unadvertised settings method {method} message"
+            );
+        }
+    }
 }
 
 #[tokio::test]

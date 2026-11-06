@@ -19,14 +19,16 @@
 //! * `reloadConfig` / `reloadExtensions` bind the existing
 //!   [`RefreshBundle`](super::refresh::RefreshBundle).
 //!
-//! This is a component, not a wiring change: `dispatch.rs`, the native
-//! process request table and the default routing are untouched; wiring
-//! belongs to #1320. A caller assembling this component answers for the
-//! capability gate exactly like the TS assembly: the gateway assembled
-//! without an option answers `CAPABILITY_UNAVAILABLE` per method (or the
-//! `{reloaded: false, reason: "unsupported"}` projection for the two
-//! reloads), and any future wiring must check the capability before routing
-//! to this adapter instead of mounting it unconditionally.
+//! This is a component plus its native-process wiring (#1320): the six
+//! methods are routed in the native process's request table through the
+//! #1305 method registry (`native_process/methods/settings.rs`), while
+//! `dispatch.rs` (LOCAL_METHODS) still does not reference it. A caller
+//! assembling this component answers for the capability gate exactly like
+//! the TS assembly: the gateway assembled without an option answers
+//! `CAPABILITY_UNAVAILABLE` per method (or the `{reloaded: false,
+//! reason: "unsupported"}` projection for the two reloads), and any future
+//! wiring must check the capability before routing to this adapter instead
+//! of mounting it unconditionally.
 //!
 //! ## JS semantics
 //!

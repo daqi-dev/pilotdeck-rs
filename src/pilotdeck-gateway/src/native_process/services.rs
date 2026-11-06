@@ -1491,10 +1491,15 @@ pub struct NativeSettingsOptions {
 pub struct NativeSettings {
     pub gateway: Arc<SettingsGateway>,
     // Nothing in production reads the handle yet: the delegates inside the
-    // gateway keep the bundle alive, and the native process has no
-    // server-push channel to bind (see RESULT). The #1320 S4 tests bind a
-    // recording notification server here to observe the dirty/broadcast
-    // order, the `bind_server` seam createLocalGateway.ts:835 wires in TS.
+    // gateway keep the bundle alive. #1320 fix-r1 F2: the production
+    // composition never binds a notification server — the isolated native
+    // process has no server-push channel, so the bundle's broadcasts are
+    // simply lost (the connection registry is #1669, deliberately not built
+    // here). Tests that need to observe the dirty/broadcast order must
+    // `bind_server` a recording server themselves AND assert both
+    // `has_notification_server()` and the difference from the production
+    // assembly (`native_settings_production_binds_no_notification_server`).
+    // Keep `dead_code`: only those tests read the handle.
     #[allow(dead_code)]
     pub bundle: Arc<RefreshBundle>,
 }
@@ -1509,6 +1514,14 @@ pub struct NativeSettings {
 /// session registry and the production local-settings writer, neither
 /// assembled into the isolated native process) and answer the TS
 /// unconfigured shapes through the component's own option handling.
+///
+/// #1320 fix-r1 F2: this composition never binds a notification server — the
+/// isolated native process has no server-push channel, so the bundle's
+/// broadcasts are lost (the connection registry is #1669, deliberately not
+/// built here). Tests that need to observe the dirty/broadcast order must
+/// `bind_server` a recording server themselves AND assert both
+/// `has_notification_server()` and the difference from the production
+/// assembly.
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
@@ -1554,6 +1567,14 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
 /// owner as the dirty router. The store anchors exactly like the process's
 /// other config reads (`NativeConfigSource`: PILOT_HOME from the
 /// environment, the served project as cwd and `projectRoot`).
+///
+/// #1320 fix-r1 F2: this composition never binds a notification server —
+/// the isolated native process has no server-push channel, so the bundle's
+/// broadcasts are lost (the connection registry is #1669, deliberately not
+/// built here). Tests that need to observe the dirty/broadcast order must
+/// `bind_server` a recording server themselves AND assert both
+/// `has_notification_server()` and the difference from the production
+/// assembly.
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1561,7 +1582,12 @@ pub fn native_settings_for_process(
     served_project: &std::path::Path,
     env: &crate::config::Env,
 ) -> std::io::Result<NativeSettings> {
-    let mut store_options = StoreOptions::new(home.to_path_buf(), served_project, env.clone());
+    // #1320 fix-r1 F3: same anchor as every other config read of the process
+    // (`NativeConfigSource`): PILOT_HOME from the environment resolved
+    // against the served project, `--home` only as the fallback homedir —
+    // a PILOT_HOME pointing elsewhere must not be silently overridden.
+    let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
+    let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
     let store = ConfigStore::new(store_options).map_err(|error| {
         std::io::Error::new(
