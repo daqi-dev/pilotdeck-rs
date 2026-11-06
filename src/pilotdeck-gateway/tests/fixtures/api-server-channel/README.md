@@ -114,14 +114,15 @@ silently degrade a cell into "some short body":
   the generator refuses to record anything but a zero-byte close, and the
   replay asserts **every** `expect[i]` — not only the `oversized-*` ones — is
   either a complete response (numeric `status`, object `headers`, no `error`)
-  or a clean error close (`error` string, `bytes: 0`, no `status`); anything
-  else panics (`assert_recorded_error_shape`). The rule is shape-driven so a
-  renamed or newly added error cell cannot keep r8's measured fields
-  uncompared, and the two shapes are mutually exclusive so a cell cannot drop
-  its `error` key and leave the rest unread. The `oversized-*` branch
-  additionally requires every recorded expectation to be a connection error,
-  so a baseline cap raised above the recorded `OVER_CAP_BYTES` fails loudly
-  instead of leaving the surface green.
+  or a clean error close (`error` string, `bytes: 0`, no `status`, no
+  `headers`); anything else panics (`assert_recorded_error_shape`). The rule is
+  shape-driven so a renamed or newly added error cell cannot keep r8's measured
+  fields uncompared, and the two shapes are mutually exclusive so a cell cannot
+  drop its `error` key and leave the rest unread. The `oversized-*` branch
+  additionally requires one recorded expectation per request, every one of them
+  a connection error, so neither an emptied `expect` (vacuously true for
+  `Iterator::all`) nor a baseline cap raised above the recorded
+  `OVER_CAP_BYTES` can leave the surface green.
   `bytes` is a **measurement**, not a constant: it is counted on the socket, so
   it is recorded even when the connection dies before the `response` callback
   runs

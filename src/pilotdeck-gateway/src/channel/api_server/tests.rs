@@ -721,6 +721,48 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         "#1333 {case} request {index}: a recorded connection error must not carry a status \
          line, got {expected}"
     );
+    // The generator records an error close as exactly `{error, bytes}` and
+    // refuses to record anything else (`generate.mts`'s own shape check), so a
+    // recorded close that grew a headers map is drift, not a shape to
+    // tolerate; leaving it open made the two shapes non-exclusive
+    // (#1759 r4 boundary P2).
+    assert!(
+        expected.get("headers").is_none(),
+        "#1333 {case} request {index}: a recorded connection error must not carry headers, \
+         got {expected}"
+    );
+}
+
+/// #1759 r4 (boundary P0): the `oversized-*` cells are skipped by the replay,
+/// so this is the only place their recorded responses are read. `Iterator::all`
+/// is vacuously true on an empty slice, so a cell that lost every expectation
+/// satisfied the claim below while the whole surface stayed green. Require one
+/// recorded outcome per request first, then the connection-error claim itself.
+fn assert_oversized_cell_records_only_connection_errors(id: &str, case: &Value) {
+    let requests = case["requests"]
+        .as_array()
+        .expect("#1333 oversized cell requests");
+    let expectations = case["expect"]
+        .as_array()
+        .expect("#1333 oversized cell expect");
+    assert!(
+        !expectations.is_empty(),
+        "#1333 {id}: an oversized cell must record at least one expectation, got \
+         {expectations:?}"
+    );
+    assert_eq!(
+        expectations.len(),
+        requests.len(),
+        "#1333 {id}: an oversized cell must record one expectation per request, got \
+         {expectations:?}"
+    );
+    assert!(
+        expectations
+            .iter()
+            .all(|expected| expected.get("error").is_some()),
+        "#1333 {id}: an oversized body must record a connection error, not a response, \
+         got {expectations:?}"
+    );
 }
 
 // #1759 r2 (boundary P1 / sibling P3): the two shapes the mutual-exclusion pin
@@ -769,6 +811,59 @@ fn recorded_expectation_refuses_a_status_on_an_error_close() {
         "cell",
         0,
         &json!({ "error": "ECONNRESET", "bytes": 0, "status": 200 }),
+    );
+}
+
+#[test]
+#[should_panic(expected = "must not carry headers")]
+fn recorded_expectation_refuses_headers_on_a_clean_close() {
+    assert_recorded_error_shape(
+        "cell",
+        0,
+        &json!({ "error": "ECONNRESET", "bytes": 0, "headers": {} }),
+    );
+}
+
+// #1759 r4 boundary P0: the skipped `oversized-*` branch claimed "every
+// recorded response is a connection error" with `Iterator::all`, which is true
+// of an empty slice, so a cell that recorded nothing passed while the surface
+// stayed green. These three are the shapes that claim has to refuse.
+#[test]
+#[should_panic(expected = "must record at least one expectation")]
+fn oversized_cell_refuses_an_empty_expectation_list() {
+    assert_oversized_cell_records_only_connection_errors(
+        "oversized-x",
+        &json!({
+            "requests": [{ "method": "POST", "path": "/v1/chat/completions" }],
+            "expect": [],
+        }),
+    );
+}
+
+#[test]
+#[should_panic(expected = "must record one expectation per request")]
+fn oversized_cell_refuses_a_dropped_expectation() {
+    assert_oversized_cell_records_only_connection_errors(
+        "oversized-x",
+        &json!({
+            "requests": [
+                { "method": "POST", "path": "/v1/chat/completions" },
+                { "method": "POST", "path": "/v1/chat/completions" },
+            ],
+            "expect": [{ "error": "ECONNRESET", "bytes": 0 }],
+        }),
+    );
+}
+
+#[test]
+#[should_panic(expected = "must record a connection error, not a response")]
+fn oversized_cell_refuses_an_answered_response() {
+    assert_oversized_cell_records_only_connection_errors(
+        "oversized-x",
+        &json!({
+            "requests": [{ "method": "POST", "path": "/v1/chat/completions" }],
+            "expect": [{ "status": 400, "headers": {}, "body": "" }],
+        }),
     );
 }
 
@@ -1315,17 +1410,11 @@ async fn replays_real_ts_api_server_cells() {
             // here is the cell's own claim — this surface must be a connection
             // error at all, not an answered `400` — because the replay skips
             // the comparison and nothing else would notice the whole response
-            // turning into a normal one (#1759 r1 boundary P1). Every recorded
-            // response is checked, so a cell that grows a second, answered
-            // request cannot slip past on `expect[0]` alone (#1759 r2 P3).
-            let expectations = case["expect"].as_array().expect("#1333 expect");
-            assert!(
-                expectations
-                    .iter()
-                    .all(|expected| expected.get("error").is_some()),
-                "#1333 {id}: an oversized body must record a connection error, not a response, \
-                 got {expectations:?}"
-            );
+            // turning into a normal one (#1759 r1 boundary P1). The helper also
+            // requires one recorded outcome per request before it makes that
+            // claim, so an emptied `expect` cannot pass vacuously
+            // (#1759 r4 boundary P0).
+            assert_oversized_cell_records_only_connection_errors(id, case);
             continue;
         }
         let dropped = Arc::new(AtomicBool::new(false));
