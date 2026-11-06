@@ -26,9 +26,11 @@ const NEGATIVE_CONTROLS: u64 = 73;
 /// #1662 upper bound for waiting out one committed-mode negative control that
 /// holds the tree lock; far above the Python side's 900 s acquisition budget.
 const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
-/// One stderr line per lease acquisition: the measured wait (ms). The paired
-/// GREEN control in `sdk-signal-read-lease/` reads it as its contention
-/// witness, so both sides must agree on this exact spelling.
+/// One stderr line per lease acquisition: the measured wait (ms) and the
+/// wall-clock instant of the acquisition (epoch ms). The paired GREEN control in
+/// `sdk-signal-read-lease/` reads both: the wait is its contention witness, and
+/// the instant is what ties that witness to the writer whose hold it published.
+/// Both sides must agree on this exact spelling.
 const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
 
 fn fixture_directory() -> PathBuf {
@@ -68,9 +70,17 @@ fn fixture_read_lease() -> fs::File {
             Ok(()) => {
                 // The measured wait is the only honest evidence that a reader
                 // really met a writer: elapsed cargo time also counts startup,
-                // the package-cache lock and rebuilds. The paired GREEN control
+                // the package-cache lock and rebuilds. The acquisition instant
+                // says *which* holder it waited on. The paired GREEN control
                 // parses this line (cargo test only shows it with --nocapture).
-                eprintln!("{READ_LEASE_MARKER}{}", started.elapsed().as_millis());
+                let at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis())
+                    .unwrap_or(0);
+                eprintln!(
+                    "{READ_LEASE_MARKER}{} at={at}",
+                    started.elapsed().as_millis()
+                );
                 return file;
             }
             Err(std::fs::TryLockError::WouldBlock) => {

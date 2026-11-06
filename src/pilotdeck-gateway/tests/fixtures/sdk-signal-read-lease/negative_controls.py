@@ -17,9 +17,15 @@ resident test's own measured lease wait (``#1662 read lease wait ms=``) at or
 above ``MIN_LEASE_WAIT_MS`` -- a pass without it never met the writer and
 proves nothing. GREEN failures of any kind are INVALID, never KILLED.
 
+The writer publishes the exact interval it holds the lock in; the resident test
+reports the instant it acquired the lease, and GREEN requires that instant to
+fall inside the interval. A wait measured against some later lock holder is
+therefore INVALID, never KILLED.
+
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
 """
+import json
 import os
 import re
 import signal
@@ -55,7 +61,14 @@ SHA_MARKER = '#1145 source file SHA256 matches disk: probeSha256/capture.py'
 LEASE_WAIT_ANCHOR = 'thread::sleep(Duration::from_millis(50));'
 LEASE_WAIT_REMOVED = 'return file;'
 CAPTURE_RESIDUE = '\n# 1662 committed-mode mutant residue\n'
-WINDOW_SECONDS = 60
+# How long the writer holds the lock once its window opens. The reader is
+# launched right after the window appears (its cargo slot is taken beforehand),
+# so it reaches the lock well inside this hold. The writer also publishes the
+# exact hold interval in epoch milliseconds; GREEN requires the reader's own
+# acquisition timestamp to fall inside it, which is what binds the witness to
+# *this* writer instead of any later lock holder (#1662 review r3 P0).
+HOLD_SECONDS = 90
+WRITER_HOLD = 'writer-hold.json'
 # The writer fails fast instead of queueing behind a long committed suite: it
 # only has to win the lock once, and a slow acquisition is a busy workspace,
 # not evidence about the lease. 300 s stays well inside the 900 s default other
@@ -63,8 +76,8 @@ WINDOW_SECONDS = 60
 WRITER_LOCK_TIMEOUT = 300
 # Writer start -> lock acquisition (<= WRITER_LOCK_TIMEOUT) -> window open.
 WRITER_ENTRY_BUDGET = WRITER_LOCK_TIMEOUT + 300
-# Writer finish after the reader returns: the rest of the window plus restore.
-WRITER_EXIT_BUDGET = WINDOW_SECONDS + 120
+# Writer finish after the hold: the rest of the window plus the restore.
+WRITER_EXIT_BUDGET = HOLD_SECONDS + 120
 # The resident test reports its own lease wait on stderr (cargo test only shows
 # it under --nocapture). That measurement is the contention witness: elapsed
 # cargo time also covers startup, the package-cache lock and rebuilds, so it can
@@ -73,6 +86,10 @@ WRITER_EXIT_BUDGET = WINDOW_SECONDS + 120
 # 50 ms poll granularity and far below a window-scale wait.
 LEASE_MARKER = '#1662 read lease wait ms='
 MIN_LEASE_WAIT_MS = 500
+# Slack between the writer's recorded release instant and the reader actually
+# getting the lock: the writer still has to restore the guarded bytes after that
+# instant, and the reader polls every 50 ms.
+HOLD_TOLERANCE_MS = 2000
 CARGO_TIMEOUT = 1800
 
 
@@ -82,15 +99,19 @@ def cargo_argv(suffix):
             '--test', 'sdk_signal_exit', *suffix]
 
 
-def run_cargo(out, label, suffix):
+def run_cargo(out, label, suffix, slot_taken=False):
     """Run one cargo invocation; return ``(result, seconds spent inside it)``.
 
     The elapsed time is reported for the evidence trail only; it is not a
     contention witness (see ``MIN_LEASE_WAIT_MS``). Waiting for a cargo slot is
     excluded either way: it is a scheduling delay, not lease contention.
+    ``slot_taken`` skips the wait when the caller already took one (GREEN does
+    that before the writer opens its window, so the hold only has to cover the
+    test itself).
     """
-    slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
-    exclusive_write(out / f'{label}.slots.log', slot.stdout + slot.stderr)
+    if not slot_taken:
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
+        exclusive_write(out / f'{label}.slots.log', slot.stdout + slot.stderr)
     started = time.monotonic()
     try:
         result = run_owned(cargo_argv(suffix), cwd=root, env=os.environ.copy(),
@@ -107,33 +128,68 @@ def run_cargo(out, label, suffix):
     return result, elapsed
 
 
-def writer(out, window):
+def publish(path, text):
+    """Write a rendezvous marker atomically: readers see the file or nothing."""
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(text)
+    temporary.replace(path)
+
+
+def epoch_ms():
+    return int(time.time() * 1000)
+
+
+def publish_hold(out, start_ms, end_ms):
+    """Publish the writer's hold interval; ``end_ms`` is None while it is open."""
+    publish(out / WRITER_HOLD, json.dumps({'start_ms': start_ms, 'end_ms': end_ms}) + '\n')
+
+
+def read_hold(out):
+    hold = json.loads((out / WRITER_HOLD).read_text())
+    return int(hold['start_ms']), hold['end_ms'] and int(hold['end_ms'])
+
+
+def writer(out, hold):
     """Independent committed-mode writer: hold the tree lock over one mutant.
 
-    SIGTERM is acted on only while the mutation window is open: raising
-    ``SystemExit`` there unwinds through ``mutating_sources``, which restores
-    every guarded byte. Once the sleep is over the handler is disarmed so a
-    signal that lands during restoration cannot interrupt ``write_bytes``. A
-    SIGKILL (or a failing restore) can still leave the mutant on disk; the next
+    The hold interval is published in epoch milliseconds (``writer-hold.json``,
+    written once when the window opens and again just before the lock is
+    released). GREEN compares the reader's own acquisition timestamp against
+    that interval, so a wait measured against some later lock holder cannot be
+    mistaken for this writer (#1662 review r3 P0).
+
+    SIGTERM is acted on only while the mutation window is open, and the handler
+    disarms *itself* before raising: the unwind then restores every guarded byte
+    with the handler already off, so a second SIGTERM landing inside that
+    restore cannot interrupt ``write_bytes`` (#1662 review r3 P0). A SIGKILL (or
+    a failing restore) can still leave the mutant on disk; the next
     ``mutating_sources`` run then refuses the dirty tree instead of silently
-    mutating a mutated baseline (#1662 review P1).
+    mutating a mutated baseline.
     """
     armed = [True]
 
     def stop(_signum, _frame):
         if armed[0]:
+            armed[0] = False
             raise SystemExit('#1662 writer stopped before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
     with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
-        capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
-        # Publish the window atomically: a reader that sees the file must also
-        # see the mutant bytes (#166 tmp-and-rename).
-        temporary = out / 'writer-window-open.tmp'
-        temporary.write_text('open\n')
-        temporary.replace(out / 'writer-window-open')
-        time.sleep(window)
-        armed[0] = False
+        try:
+            capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
+            # Publish the window atomically: a reader that sees the file must also
+            # see the mutant bytes (#166 tmp-and-rename).
+            opened = epoch_ms()
+            publish_hold(out, opened, None)
+            publish(out / 'writer-window-open', 'open\n')
+            time.sleep(hold)
+            # Recorded while the lock is still held: the reader can only acquire
+            # it after this instant (plus the restore, covered by the tolerance).
+            publish_hold(out, opened, epoch_ms())
+        finally:
+            # Disarm on every path out of the window, including an exception:
+            # restoration must never run with the handler still armed.
+            armed[0] = False
     return 0
 
 
@@ -168,8 +224,9 @@ def judge(result):
 
 
 def observations(log):
-    """Lease waits (ms) the resident test reported, in order."""
-    return [int(value) for value in re.findall(re.escape(LEASE_MARKER) + r'(\d+)', log)]
+    """Lease acquisitions the resident test reported: (wait ms, epoch ms)."""
+    return [(int(waited), int(at)) for waited, at in
+            re.findall(re.escape(LEASE_MARKER) + r'(\d+) at=(\d+)', log)]
 
 
 def green(out):
@@ -188,12 +245,24 @@ def green(out):
     # Build the #1166 workspace scanner outside the writer's budget: otherwise
     # mutating_sources builds it inside WRITER_ENTRY_BUDGET on a cold target.
     _ensure_workspace_scanner()
+    # Field-family drift guard: the marker is written by the Rust test and read
+    # here, so a rename on either side would silently turn every GREEN into
+    # INVALID (fail-closed, but the control would quietly stop working).
+    if LEASE_MARKER not in test_source.read_text():
+        return 'INVALID', (f'marker {LEASE_MARKER!r} is no longer in '
+                           f'{test_source.name}; the two sides drifted apart')
+    # Take the cargo slot *before* the writer opens its window: the slot wait is
+    # the only unbounded delay between the window and the test's first attempt
+    # at the lock, and HOLD_SECONDS has to cover it (#1662 review r3 P3).
+    slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900, interval=15)
+    exclusive_write(out / 'green.slots.log', slot.stdout + slot.stderr)
     process = subprocess.Popen(
         [sys.executable, '-I', str(Path(__file__).resolve()), '--writer', str(out),
-         str(WINDOW_SECONDS)],
+         str(HOLD_SECONDS)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         start_new_session=True)
     failure = None
+    stop_error = None
     result = None
     try:
         deadline = time.monotonic() + WRITER_ENTRY_BUDGET
@@ -204,17 +273,30 @@ def green(out):
                 raise TimeoutError('#1662 writer never opened its mutation window')
             time.sleep(0.5)
         result, _elapsed = run_cargo(out, 'fixed-test-survives-writer-window',
-                                     [RESIDENT_TEST, '--', '--exact', '--nocapture'])
-    except Exception as error:
+                                     [RESIDENT_TEST, '--', '--exact', '--nocapture'],
+                                     slot_taken=True)
+    except BaseException as error:
         failure = error
-    try:
-        stop_writer(process, out)
-    except Exception as error:
-        # Keep the original failure as the reason when there is one; the stop
-        # error still turns an otherwise-passing row into INVALID.
-        failure = failure or error
-    if failure is not None:
-        return 'INVALID', f'{type(failure).__name__}: {failure}'
+    finally:
+        # ``finally``, not a sequential call: BaseException (KeyboardInterrupt,
+        # SystemExit) must stop the writer too, or it outlives us holding the
+        # lock with the mutant on disk (#1662 review r3 P1).
+        try:
+            stop_writer(process, out)
+        except BaseException as error:
+            stop_error = error
+    if isinstance(failure, BaseException) and not isinstance(failure, Exception):
+        # Interrupts still abort the run; the writer is already stopped above.
+        raise failure
+    if failure is not None or stop_error is not None:
+        # Report both: a stop failure must not hide the primary reason (and the
+        # other way round) -- the summary is the audit trail (#1662 review r3 P2).
+        parts = []
+        if failure is not None:
+            parts.append(f'{type(failure).__name__}: {failure}')
+        if stop_error is not None:
+            parts.append(f'stop failed: {type(stop_error).__name__}: {stop_error}')
+        return 'INVALID', '; '.join(parts)
     log = result.stdout + result.stderr
     if not passed(result, RESIDENT_TEST):
         return 'INVALID', (
@@ -225,10 +307,23 @@ def green(out):
     if not waits:
         return 'INVALID', (f'resident test reported no "{LEASE_MARKER}" line, so it never '
                            f'waited on the writer lease; this row is no evidence for the fix')
-    if max(waits) < MIN_LEASE_WAIT_MS:
-        return 'INVALID', (f'resident test waited {max(waits)} ms, under the '
+    start_ms, end_ms = read_hold(out)
+    if end_ms is None:
+        return 'INVALID', ('the writer never published the end of its hold; the acquisition '
+                           'timestamp cannot be attributed to it')
+    # The acquisition must land in this writer's hold: it can only happen after
+    # the lock is released, and an unrelated later holder would push it far past
+    # the tolerance below (#1662 review r3 P0).
+    waited, at = max(waits)
+    if not (start_ms <= at <= end_ms + HOLD_TOLERANCE_MS):
+        return 'INVALID', (f'resident test acquired the lease at {at} ms, outside the '
+                           f'writer hold [{start_ms}, {end_ms}] (+{HOLD_TOLERANCE_MS} ms); '
+                           f'that wait was not against this writer')
+    if waited < MIN_LEASE_WAIT_MS:
+        return 'INVALID', (f'resident test waited {waited} ms, under the '
                            f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
-    return 'KILLED', f'resident test waited {max(waits)} ms on the writer and passed'
+    return 'KILLED', (f'resident test waited {waited} ms and acquired the lease inside the '
+                      f'writer hold [{start_ms}, {end_ms}]')
 
 
 def red(out):
@@ -250,7 +345,7 @@ def main():
     arguments = sys.argv[1:]
     if arguments[:1] == ['--writer']:
         if len(arguments) != 3:
-            raise SystemExit('#1662 writer usage: --writer OUT WINDOW_SECONDS')
+            raise SystemExit('#1662 writer usage: --writer OUT HOLD_SECONDS')
         return writer(Path(arguments[1]), float(arguments[2]))
     if len(arguments) != 1 or arguments[0].startswith('-'):
         raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR')
