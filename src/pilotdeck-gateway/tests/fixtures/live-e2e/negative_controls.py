@@ -54,6 +54,10 @@ LIB_BINDINGS = {
     'live-durable-before-yield': ('runtime::turn::live::stream_tests::wire_durable_messages_match_ts_yield_before_callback', '#748 TS durable message is yielded before callback', 'live.rs', 'live_stream_tests.rs'),
 }
 ALL_BINDINGS = {**BINDINGS, **{name: (row[0], row[1]) for name, row in LIB_BINDINGS.items()}}
+# 纯文本绑定：没有 mutants::on 开关可挂，靠 capture.py 与 test_acceptance.py
+# 双向锚定，任一侧的那段绑定被单独删掉都响亮失败。
+CAPTURE_GUARD = '\n    if sys.exception() is not None:\n        return\n'
+TEXT_BINDINGS = {'capture-second-signal': ('capture.py', CAPTURE_GUARD, 'test_acceptance.py', "'capture-secondary-signal'")}
 TURN = ROOT / 'src/pilotdeck-gateway/src/runtime/turn'
 
 
@@ -80,10 +84,13 @@ def main():
     # #1194/#1398: the feature switches above cannot see a plain-Python guard,
     # so bind it by text here. Behaviour is proven by
     # test_acceptance.py::test_capture_second_signal_preserves_cleanup.
-    if '\n    if sys.exception() is not None:\n        return\n' not in (FIXTURE / 'capture.py').read_text():
-        raise RuntimeError('#748 capture second-signal guard missing')
+    for name, (source_file, anchor, probe_file, probe) in TEXT_BINDINGS.items():
+        if (FIXTURE / source_file).read_text().count(anchor) != 1:
+            raise RuntimeError(f'#748 {name}: guard anchor missing or duplicated in {source_file}')
+        if (FIXTURE / probe_file).read_text().count(probe) != 1:
+            raise RuntimeError(f'#748 {name}: binding probe missing or duplicated in {probe_file}')
     if args.check:
-        print(f'#748 {len(ALL_BINDINGS)} feature switches and assertion bindings: OK')
+        print(f'#748 {len(ALL_BINDINGS)} feature switches and assertion bindings + {len(TEXT_BINDINGS)} text bindings: OK')
         return 0
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
         raise RuntimeError('#748 output and caller CARGO_TARGET_DIR required')

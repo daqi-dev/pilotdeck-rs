@@ -14,6 +14,8 @@ import capture
 import run_host
 import stdio_mitm
 
+EXPECTED_PROBES = 5
+
 
 class AcceptanceTests(unittest.TestCase):
     def test_exact_test_inventory(self):
@@ -171,7 +173,6 @@ class AcceptanceTests(unittest.TestCase):
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
 
-
     def test_negative_controls_kill_old_behaviors(self):
         probes = [
             (run_host, 'completed_tests', "'passed': not reasons,",
@@ -192,6 +193,10 @@ class AcceptanceTests(unittest.TestCase):
              'test_capture_second_signal_preserves_cleanup',
              '#1398 second signal preserved cleanup', 'capture-secondary-signal'),
         ]
+        # #1398: probes have no external anchor, so pin the inventory. Deleting a
+        # row (e.g. the capture one) would otherwise leave `all([])` true and the
+        # binding silently unproven, exactly like session-lease's EXPECTED_CASES.
+        self.assertEqual(len(probes), EXPECTED_PROBES, '#748 Python probe inventory drifted')
         outcomes = []
         for module, function, old, new, test, message, label in probes:
             try:
