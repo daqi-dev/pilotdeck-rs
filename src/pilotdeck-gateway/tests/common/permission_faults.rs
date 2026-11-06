@@ -9,10 +9,16 @@
 //!
 //! `PDRS_REQUIRE_PERMISSION_FAULTS` flips that skip into a panic: CI and the
 //! formal host recipes export the switch, local runs leave it unset and keep
-//! the recognizable skip line. Shared by edgeclaw_heartbeat_indexer.rs,
-//! write_tools.rs, dump_request.rs and workspace_snapshot.rs (`#[path]`), and by
-//! the crate's own unit tests through `crate::test_permission_faults` (lib.rs) —
-//! do not copy the parser.
+//! the recognizable skip line. Shared by the integration tests that pull it in
+//! with `#[path = "common/permission_faults.rs"]` (dump_request.rs,
+//! edgeclaw_heartbeat_indexer.rs, tool_budget.rs, workspace_snapshot.rs,
+//! write_tools.rs) and by the crate's own unit tests through
+//! `crate::test_permission_faults` (lib.rs: dispatch, project_files,
+//! runtime::cron, skills, storage) — do not copy the parser. An unset variable
+//! means "off" only when it is *absent*: an empty value (the switch exported
+//! with no spelling after `=`, which a missing shell expansion produces) is a
+//! configuration error and panics with the other unrecognized spellings,
+//! rather than quietly reading as off.
 //!
 //! #1900: every spelling that means "on" must actually arm the switch. The old
 //! parser matched the exact literals `1` and `true`, so `True`, `YES` or `" 1"`

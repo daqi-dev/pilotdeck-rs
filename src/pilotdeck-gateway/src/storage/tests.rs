@@ -1535,15 +1535,22 @@ fn temporary_create_failure_reports_the_transcript_not_the_staging_name() {
     }
     let scratch = Scratch::new();
     let path = scratch.path();
-    let original = fs::metadata(&scratch.0).unwrap().permissions();
-    let mut readonly = original.clone();
-    readonly.set_mode(0o500);
-    fs::set_permissions(&scratch.0, readonly).unwrap();
+    fs::set_permissions(&scratch.0, fs::Permissions::from_mode(0o500)).unwrap();
     let error = match transcript::create_temporary(&path) {
         Ok(_) => panic!("a read-only parent must fail the staging create"),
         Err(error) => error,
     };
-    fs::set_permissions(&scratch.0, original).unwrap();
+    // #1900 review (same class as the heartbeat restore): do not hand back the
+    // permissions captured above verbatim. They are whatever umask created the
+    // scratch directory, so under a 0200/0222 umask the "restore" puts back a
+    // mode with no write bit — measured with a standalone probe under
+    // `umask 0222`: `create_dir` yields 0555, restoring the captured mode puts
+    // 0555 back, and the next `write` into the directory fails with EACCES
+    // (a non-empty 0555 directory also cannot be removed, and `Scratch`'s drop
+    // ignores that error, so the transcript would leak). Restore an explicit
+    // owner-rwx mode instead of the umask-dependent original; the directory
+    // only ever holds this test's transcript.
+    fs::set_permissions(&scratch.0, fs::Permissions::from_mode(0o700)).unwrap();
     let LedgerError::Io(error) = error else {
         panic!("expected an io failure: {error:?}")
     };

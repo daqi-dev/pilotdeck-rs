@@ -1212,15 +1212,19 @@ class EnvironmentControls(unittest.TestCase):
     # filter entries that cover it[, relay helpers the note also travels
     # through]). Coverage is checked against the filter, so a stale "covered
     # by" cannot rot silently, and an entry whose call site is gone fails as
-    # stale.
+    # stale. For a helper entry the guard also walks every caller: direct
+    # callers and callers of each declared relay both have to be registered,
+    # so the `covered` list is a claim the guard keeps true rather than a list
+    # of the callers the author happened to remember.
     #
     # Known blind spots — both registered, neither excused:
     #  * a hand-rolled writer (`tests/unsafe_boundary.rs`'s
     #    `stderr_boundary_line`, which carries the same #448 contract);
     #  * a skip note still written with `eprintln!` (`channel/sms/tests.rs` has
-    #    three `#1339 skipped:` macro writes; that file is in flight in five
-    #    other lanes, so #1525 — whose title already lists 同形 eprintln! skip —
-    #    carries the conversion).
+    #    four `#1339 skipped:` macro writes; that file is in flight in five
+    #    other lanes, so the conversion is carried by #1937 — which is
+    #    registered as a precondition of #1525 closing — and #1525's own title
+    #    already lists 同形 eprintln! skip).
     # The writers are collected by #1937. Anything new should call the shared
     # writer, not copy it.
     skip_line_exceptions = {
@@ -1234,10 +1238,10 @@ class EnvironmentControls(unittest.TestCase):
             '#1525 helper: the note is printed on behalf of the test that calls it',
             ('skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore',
              'skills::tests::real_ts_scenarios_match_outcomes_and_file_trees'),
-            # The helper is also reached through `replay`, and one more test
-            # calls that relay; naming only the callers the author remembered
-            # would make the covered list a claim, not a check (#1900 boundary
-            # P2). Every caller of a declared relay must be in the filter too.
+            # The helper is also reached through `replay`, and the walk below
+            # covers that path plus every direct caller; naming only the callers
+            # the author remembered would make the covered list a claim, not a
+            # check (#1900 boundary P2).
             ('replay',)),
         'tests/workspace_snapshot.rs::replay_scenario': (
             '#1263 helper: the note is printed on behalf of the scenario it replays',
@@ -1257,20 +1261,25 @@ class EnvironmentControls(unittest.TestCase):
         # fails loudly (false red) instead of passing quietly.
         crate = crate or Path(__file__).resolve().parents[1]
         sources = sources if sources is not None else self.read_crate_sources(crate)
-        # Only the one shared writer is exempt: it *defines* `stderr_skip_line`,
-        # so its signature line matches the scan. Excluding by bare filename
-        # would silently excuse any future same-named copy (#1900 boundary P2).
+        # Only the shared writer's own *definition* line is exempt: it declares
+        # `stderr_skip_line`, so the signature line matches the scan. Excluding
+        # the whole file — or every file named `skip_line.rs` — silently
+        # excused a second call site written next to the writer (#1900 simplify
+        # P3); the exemption is the definition site, nothing else.
         writer = crate/'tests'/'common'/'skip_line.rs'
         named = {entry[1:] for entry in re.findall(r'test\(([^)]*)\)', filter_text)
                  if entry.startswith('=')}
         seen = set()
         unregistered = []
         for source in sorted(sources):
-            if source == writer:
-                continue
             text = sources[source]
-            lines = text.splitlines()
+            # Split on `\n` exactly as `call_sites` counts them, so the index
+            # cannot drift on a file holding a ` `-style separator
+            # (#1900 simplify P3).
+            lines = text.split('\n')
             for index in self.call_sites(text, 'stderr_skip_line'):
+                if source == writer and self.defining_function.match(lines[index]):
+                    continue
                 owner = self.defining_function_at(lines, index)
                 key = f'{source.relative_to(crate)}::{owner}'
                 seen.add(key)
@@ -1296,8 +1305,14 @@ class EnvironmentControls(unittest.TestCase):
                             f'`fn {leaf}` exists in {source.relative_to(crate)}')
                     # #1900 boundary P2: a helper's covered list is hand-kept, so
                     # on its own it proves nothing about the callers the author
-                    # did not think of. Walk the declared relays instead.
-                    self.assert_relay_callers_are_named(crate, text, source, key, relays, named)
+                    # did not think of. Walk the callers — of the helper itself
+                    # (a *direct* caller needs registering just as much as one
+                    # that goes through a declared relay) and of every declared
+                    # relay. The walk starts at the helper unless the exception
+                    # is for a test, which has no callers.
+                    if not self.is_test_fn(lines, self.defining_line_at(lines, index)):
+                        self.assert_relay_callers_are_named(
+                            crate, text, source, key, (owner, *relays), named)
                     continue
                 visible = self.nextest_visible_name(crate, source, owner)
                 if visible not in named:
@@ -1321,47 +1336,102 @@ class EnvironmentControls(unittest.TestCase):
 
     def assert_relay_callers_are_named(self, crate, text, source, key, relays, named):
         # #1900 boundary P2: `key` is a helper that prints on someone else's
-        # behalf. Each declared relay must still exist, and every test that
-        # reaches the helper — directly or through a relay — has to be in the
-        # filter, or the note is silently captured when that test runs.
-        if not relays:
-            return
-        lines = text.splitlines()
+        # behalf. Every step in `relays` (the helper itself, plus any declared
+        # relay) must still be called, and every test that reaches the note —
+        # directly or through a relay — has to be in the filter, or the note is
+        # silently captured when that test runs. Colour-coding the `covered`
+        # list by hand is what this replaces.
+        owner = key.rsplit('::', 1)[-1]
+        lines = text.split('\n')
         pending, visited = list(relays), set()
         while pending:
             relay = pending.pop()
             if relay in visited:
                 continue
             visited.add(relay)
-            callers = {self.defining_function_at(lines, index)
-                       for index in self.call_sites(text, relay)
-                       if not self.defining_function.match(lines[index])}
+            callers = {}
+            for index in self.call_sites(text, relay):
+                if self.defining_function.match(lines[index]):
+                    continue
+                callers.setdefault(self.entry_point_at(lines, index), index)
             self.assertTrue(
                 callers,
-                f'#1900 the exception for {key} declares {relay} as a relay, but nothing in '
-                f'{source.relative_to(crate)} calls `{relay}(` any more')
+                f'#1900 the exception for {key} expects the note to travel through '
+                f'`{relay}(`, but nothing in {source.relative_to(crate)} calls it any '
+                f'more')
             for caller in sorted(callers):
                 if caller in relays:
                     pending.append(caller)
                     continue
+                via = 'directly' if relay == owner else f'through {relay}'
                 visible = self.nextest_visible_name(crate, source, caller)
                 self.assertIn(
                     visible, named,
                     f'#1900 the exception for {key} only holds while every caller is '
-                    f'registered too: {caller} reaches the note through {relay}, but '
+                    f'registered too: {caller} reaches the note {via}, but '
                     f'`{visible}` is not in the success-output filter')
+
+    @classmethod
+    def defining_line_at(cls, lines, index):
+        for back in range(index, -1, -1):
+            if cls.defining_function.match(lines[back]):
+                return back
+        raise AssertionError(
+            f'#1900 cannot map the stderr_skip_line call on line {index + 1} to a function')
+
+    @classmethod
+    def entry_point_at(cls, lines, index):
+        # Which item does the caller belong to? Usually the innermost `fn`, but
+        # a *nested* item — `impl Drop for Restore { fn drop(&mut self) { … } }`
+        # declared inside a test body — is not an entry point of its own: the
+        # note is printed while that test runs, so the test is what has to be
+        # registered. Rustfmt puts top-level items in column 0 and nested items
+        # indented, so the enclosing item is the first non-blank, unindented
+        # line above. Attribute upwards only when that item really is a test;
+        # otherwise fail closed on the nested name, so a note printed from a
+        # top-level `impl` method still has to be registered on its own.
+        definition = cls.defining_line_at(lines, index)
+        name = cls.defining_function.match(lines[definition]).group(1)
+        if not lines[definition][:1].isspace():
+            return name
+        for back in range(definition - 1, -1, -1):
+            line = lines[back]
+            if not line.strip() or line[:1].isspace():
+                continue
+            match = cls.defining_function.match(line)
+            if match and cls.is_test_fn(lines, back):
+                return match.group(1)
+            break
+        return name
+
+    @classmethod
+    def is_test_fn(cls, lines, index):
+        # Is the `fn` at `index` a `#[test]` / `#[tokio::test]` rather than a
+        # helper? An exception for a test has no callers to walk (the two
+        # `#[cfg(not(target_os = "linux"))]` entries); an exception for a
+        # helper does. Reading the attributes is also what tells them apart:
+        # a Linux-only test is not in the filter either, so "is it named" would
+        # misclassify it as a helper.
+        back = index - 1
+        while back >= 0:
+            stripped = lines[back].strip()
+            if not stripped or stripped.startswith('//'):
+                back -= 1
+                continue
+            if not stripped.startswith('#['):
+                return False
+            if re.match(r'#\[(?:tokio::)?test\b', stripped):
+                return True
+            back -= 1
+        return False
 
     @classmethod
     def defining_function_at(cls, lines, index):
         # Walk back to the `fn` that encloses the call. Both the scan above and
         # the negative control rely on this mapping, so it fails loudly instead
         # of guessing a key that would silently excuse a call site.
-        for back in range(index, -1, -1):
-            match = cls.defining_function.match(lines[back])
-            if match:
-                return match.group(1)
-        raise AssertionError(
-            f'#1900 cannot map the stderr_skip_line call on line {index + 1} to a function')
+        match = cls.defining_function.match(lines[cls.defining_line_at(lines, index)])
+        return match.group(1)
 
     def test_skip_line_reverse_guard_rejects_an_unregistered_call_site(self):
         # #1900 controls for the reverse guard: a skip-printing test the filter
@@ -1466,13 +1536,103 @@ class EnvironmentControls(unittest.TestCase):
             self.assert_every_skip_line_reaches_nextest(
                 'test(=covered_test) | test(=unregistered_test)', crate=relay_crate)
             # A relay nobody calls any more is stale data, not a pass.
-            with self.assertRaisesRegex(AssertionError, 'but nothing in .* calls .relay.'):
+            with self.assertRaisesRegex(AssertionError,
+                                        'expects the note to travel through .relay.., but '
+                                        'nothing in .* calls it'):
                 self.assert_every_skip_line_reaches_nextest(
                     'test(=covered_test) | test(=unregistered_test)',
                     crate=relay_crate,
                     sources={relay_crate/'tests'/'relay.rs':
                              (relay_crate/'tests'/'relay.rs').read_text()
                              .replace('    relay();\n', '')})
+        # A caller that reaches the helper without going through a *declared*
+        # relay is exactly as unregistered, and the old walk (declared relays
+        # only) never looked at it: with no relays declared the check was a
+        # no-op (#1900 review, three reviewers). The walk now starts at the
+        # helper itself.
+        direct_crate = self.root/'direct-crate'
+        (direct_crate/'tests').mkdir(parents=True)
+        (direct_crate/'tests'/'direct.rs').write_text(
+            'fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            'fn covered_test() {\n'
+            '    helper_note();\n'
+            '}\n'
+            '\n'
+            'fn direct_caller() {\n'
+            '    helper_note();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/direct.rs::helper_note': ('helper', ('covered_test',))}):
+            with self.assertRaisesRegex(AssertionError,
+                                        'every caller is registered too.*direct_caller'):
+                self.assert_every_skip_line_reaches_nextest('test(=covered_test)',
+                                                            crate=direct_crate)
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=covered_test) | test(=direct_caller)', crate=direct_crate)
+        # Only the shared writer's definition line is exempt, not everything in
+        # that file: a second note-printing function written next to the writer
+        # is still a call site (#1900 simplify P3).
+        writer_crate = self.root/'writer-crate'
+        (writer_crate/'tests'/'common').mkdir(parents=True)
+        (writer_crate/'tests'/'common'/'skip_line.rs').write_text(
+            'pub fn stderr_skip_line(_note: &str) {}\n'
+            '\n'
+            'fn helper_note() {\n'
+            '    stderr_skip_line("skip: from the writer file\\n");\n'
+            '}\n'
+            '\n'
+            'fn covered_test() {\n'
+            '    helper_note();\n'
+            '}\n')
+        with self.assertRaisesRegex(AssertionError,
+                                    'covers these skip-line call sites.*helper_note'):
+            self.assert_every_skip_line_reaches_nextest('test(=covered_test)',
+                                                        crate=writer_crate)
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/common/skip_line.rs::helper_note':
+                           ('helper', ('covered_test',))}):
+            self.assert_every_skip_line_reaches_nextest('test(=covered_test)',
+                                                        crate=writer_crate)
+        # A nested item is part of the test that declares it, not an entry
+        # point of its own: `impl Drop for Restore { fn drop(&mut self) { … } }`
+        # inside a test body is how src/skills/tests.rs prints the note on the
+        # privileged-host path. Attributing that to `drop` would demand a filter
+        # entry nextest can never name; attributing it to the enclosing test
+        # keeps the check true (the note really is printed by that test). The
+        # green case is the control: `drop` itself is never registered.
+        nested_crate = self.root/'nested-crate'
+        (nested_crate/'tests').mkdir(parents=True)
+        (nested_crate/'tests'/'nested.rs').write_text(
+            'fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            '#[test]\n'
+            'fn covered_test() {\n'
+            '    struct Guard;\n'
+            '    impl Drop for Guard {\n'
+            '        fn drop(&mut self) {\n'
+            '            helper_note();\n'
+            '        }\n'
+            '    }\n'
+            '    let _guard = Guard;\n'
+            '}\n'
+            '\n'
+            'fn unregistered_direct() {\n'
+            '    helper_note();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/nested.rs::helper_note': ('helper', ('covered_test',))}):
+            with self.assertRaisesRegex(AssertionError,
+                                        'every caller is registered too.*'
+                                        'unregistered_direct'):
+                self.assert_every_skip_line_reaches_nextest('test(=covered_test)',
+                                                            crate=nested_crate)
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=covered_test) | test(=unregistered_direct)', crate=nested_crate)
         # A call site above no `fn` at all must not be silently skipped.
         (crate/'tests'/'other'/'skip_line.rs').unlink()
         (crate/'tests'/'sample.rs').write_text(
