@@ -969,6 +969,38 @@ fn write_creates_a_missing_project_root() {
     );
 }
 
+/// #1675 regression probe (missing root below a symlinked ancestor): the root
+/// path reaches the fixture through a link, so the lexical spelling and the
+/// canonical one disagree — the shape macOS `/tmp` / `/var` gives every real
+/// request. Creating the root must still succeed and land at the canonical
+/// location, instead of answering `workspace_boundary` because the containment
+/// check compared the canonical target with a lexical root.
+#[cfg(unix)]
+#[test]
+fn write_creates_a_missing_root_below_a_symlinked_ancestor() {
+    let (parent, _root) = fixture();
+    let real = parent.join("real");
+    fs::create_dir_all(&real).expect("#1675 create the real ancestor");
+    std::os::unix::fs::symlink(&real, parent.join("alias")).expect("#1675 install the alias link");
+    let aliased = parent.join("alias").join("fresh");
+    let service =
+        files::ProjectFileService::new(aliased.to_str().expect("#1675 the aliased root is UTF-8"));
+    let result = service.write_file(
+        "nested/a.txt",
+        &pilotdeck_protocol::JsString::from("hello\n"),
+        false,
+    );
+    assert!(
+        result.is_ok(),
+        "#1675 a write below a missing root reached through a link creates it"
+    );
+    assert_eq!(
+        fs::read_to_string(real.join("fresh/nested/a.txt")).expect("#1675 read the written file"),
+        "hello\n",
+        "#1675 the write landed at the canonical root"
+    );
+}
+
 /// #1675 probe (tree race window): the listed directory is swapped for a link
 /// to the outside directory after the realpath gate and before the pinned
 /// enumeration.
@@ -1034,6 +1066,80 @@ fn read_rejects_a_file_swapped_inside_the_window() {
         Err(_) => panic!("#1675 a raced read answers workspace_boundary, not a read error"),
         Ok(value) => panic!(
             "#1675 mutated: a raced read served content from outside the workspace: {}",
+            json_of(&value)
+        ),
+    }
+}
+
+/// #1675 probe (middle component, deterministic): a directory inside the root
+/// is a link to a directory outside it and the request names a file *below*
+/// that link, so the escaping component is neither the first nor the last.
+/// The realpath gate answers 403 before any descriptor is opened, which is why
+/// this pin stays green with the descriptor walk switched off: what it fixes
+/// is the shape of the answer, not the walk. The walk itself is pinned by the
+/// raced form below and by `write_rejects_a_symlink_that_leaves_the_root`
+/// (also a middle component, and bound to the switch).
+#[cfg(unix)]
+#[test]
+fn read_rejects_a_symlink_in_a_middle_component() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    fs::write(outside.join("passwd"), b"outside bytes\n")
+        .expect("#1675 write the file outside the root");
+    std::os::unix::fs::symlink(&outside, root.join("etc")).expect("#1675 install the middle link");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.read_file("etc/passwd");
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "etc/passwd",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a middle link answers workspace_boundary, not a read error"),
+        Ok(value) => panic!(
+            "#1675 a middle symlink must not be followed: {}",
+            json_of(&value)
+        ),
+    }
+}
+
+/// #1675 probe (middle component, race window): the directory in the middle of
+/// the request is an ordinary in-root directory when the realpath gate runs and
+/// is swapped for a link to the outside directory before the read. Only the
+/// per-component `openat` walk refuses this — a last-segment `O_NOFOLLOW`, or a
+/// canonicalize-then-open-by-path, follows the swapped middle component and
+/// serves the outside file.
+#[cfg(unix)]
+#[test]
+fn read_rejects_a_middle_component_swapped_inside_the_window() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    fs::write(outside.join("passwd"), b"outside bytes\n")
+        .expect("#1675 write the file outside the root");
+    fs::create_dir_all(root.join("etc")).expect("#1675 create the in-root middle directory");
+    fs::write(root.join("etc/passwd"), b"inside bytes\n").expect("#1675 write the in-root file");
+    let link_root = root.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "read" {
+            fs::remove_dir_all(link_root.join("etc")).expect("#1675 remove the middle directory");
+            std::os::unix::fs::symlink(&link_target, link_root.join("etc"))
+                .expect("#1675 install the racing middle symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.read_file("etc/passwd");
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "etc/passwd",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a raced middle component answers workspace_boundary"),
+        Ok(value) => panic!(
+            "#1675 mutated: the race window resolved a middle component outside the workspace: {}",
             json_of(&value)
         ),
     }

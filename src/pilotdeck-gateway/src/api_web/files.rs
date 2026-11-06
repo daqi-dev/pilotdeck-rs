@@ -38,8 +38,10 @@ pub(crate) enum FilesError {
 }
 
 pub(crate) struct ProjectFileService {
-    /// `realpathSync(resolve(options.projectRoot))`, the lexical resolve as
-    /// fallback when the root does not exist yet.
+    /// `realpathSync(resolve(options.projectRoot))`, falling back to the
+    /// canonical form of the deepest existing ancestor when the root does not
+    /// exist yet — the lexical spelling (`/tmp/...` on macOS) would otherwise
+    /// disagree with every `canonical_prefix` comparison below.
     root: PathBuf,
     max_read_bytes: u64,
     /// The compiled `api-web-boundary-off` switch, read once here so the
@@ -57,7 +59,7 @@ impl ProjectFileService {
             Err(_) => PathBuf::from(project_root),
         };
         Self {
-            root: fs::canonicalize(&resolved).unwrap_or(resolved),
+            root: fs::canonicalize(&resolved).unwrap_or_else(|_| canonical_prefix(&resolved)),
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             boundary: !crate::mutants::on("api-web-boundary-off"),
             nofollow: !crate::mutants::on("api-web-nofollow-off"),
@@ -72,6 +74,12 @@ impl ProjectFileService {
         if !stats.is_dir() {
             return Err(FilesError::Message(format!("Not a directory: {relative}")));
         }
+        // Deterministic boundary-probe seam: the realpath/stat gate above has
+        // run, so a test may replace the listed directory before either walk
+        // opens it — the seam sits ahead of the switch so the measured path
+        // form is exercised by the same swap.
+        #[cfg(test)]
+        test_hook::notify("tree");
         let mut rows = self.tree_rows(relative, &target)?;
         let collator =
             crate::project_files::node_collator(&crate::node_locale::node_locale(|key| {
@@ -260,10 +268,6 @@ impl ProjectFileService {
         target: &Path,
     ) -> Result<Vec<(bool, String, JsObject)>, FilesError> {
         use rustix::fs::{AtFlags, Dir, FileType, statat};
-        // Deterministic boundary-probe seam: the realpath gate above has run,
-        // so a test may replace the directory before the pinned open.
-        #[cfg(test)]
-        test_hook::notify("tree");
         let directory = crate::project_files::open_beneath(&self.root, target)
             .map_err(|error| self.refusal("scandir", relative, target, error))?;
         let mut rows = Vec::new();
@@ -379,11 +383,7 @@ impl ProjectFileService {
             // TS `writeFile` runs `mkdir(dirname(target), {recursive: true})`
             // first, so a project root that does not exist yet is created and
             // the write succeeds instead of answering ENOENT.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                fs::create_dir_all(&self.root)
-                    .map_err(|error| sys_error(&error, "mkdir", &self.root))?;
-                self.created_root()
-            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => self.created_root(),
             other => other,
         };
         pinned.map_err(|error| {
@@ -398,24 +398,29 @@ impl ProjectFileService {
         })
     }
 
-    /// Pin a root this call just created. The canonical form is walked so a
-    /// symlinked ancestor (macOS `/tmp`, `/var`) is not read as a raced link,
-    /// and a root that is no longer a direct child of its own parent is
-    /// refused as the raced replacement it is.
+    /// Create the project root this write found missing, through the same
+    /// pinned walk as every other write step: the deepest existing ancestor is
+    /// pinned NOFOLLOW first, the missing tail is `mkdirat`-ed below that
+    /// descriptor, and the finished root is re-pinned the same way. No path is
+    /// ever reopened, so ancestry swapped for a link inside the window fails
+    /// closed instead of carrying the root (and the write) out of the
+    /// workspace.
     #[cfg(unix)]
     fn created_root(&self) -> io::Result<fs::File> {
-        let real = fs::canonicalize(&self.root)?;
-        if let Some(parent) = self
+        let ancestor = deepest_existing(&self.root);
+        let pinned = crate::project_files::open_directory_beneath(&ancestor, &ancestor)?;
+        let tail = self
             .root
-            .parent()
-            .and_then(|path| fs::canonicalize(path).ok())
-            && real.parent() != Some(parent.as_path())
-        {
-            return Err(io::Error::from_raw_os_error(
-                rustix::io::Errno::LOOP.raw_os_error(),
-            ));
+            .strip_prefix(&ancestor)
+            .map_err(|_| io::Error::from_raw_os_error(libc::EACCES))?;
+        if !tail.as_os_str().is_empty() {
+            crate::project_files::create_directories_at(
+                &pinned,
+                tail,
+                rustix::fs::Mode::from_raw_mode(0o777),
+            )?;
         }
-        crate::project_files::open_directory_beneath(&real, &real)
+        crate::project_files::open_directory_beneath(&self.root, &self.root)
     }
 
     /// The target below the root when the #1675 descriptor walk is armed. The
@@ -558,6 +563,24 @@ fn canonical_prefix(path: &Path) -> PathBuf {
                 }
             }
             Err(_) => return path.to_path_buf(),
+        }
+    }
+}
+
+/// The deepest ancestor of `path` that exists, so a missing tail can be
+/// created below a pinned descriptor instead of below a reopened path. Only
+/// the existence question is asked here; the pinned NOFOLLOW walk decides
+/// whether the ancestor is usable.
+#[cfg(unix)]
+fn deepest_existing(path: &Path) -> PathBuf {
+    let mut existing = path;
+    loop {
+        if fs::metadata(existing).is_ok() {
+            return existing.to_path_buf();
+        }
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return PathBuf::from("/"),
         }
     }
 }
