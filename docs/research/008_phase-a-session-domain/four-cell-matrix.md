@@ -129,7 +129,8 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 `provider-unconfigured` / `token-saver-judge` 四案全跑、每案 5 轮。证据 `_tmp/20261106-issue-590/native-topology-001/report.json`。
 （**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 里 **`cells[].status`**（该格 `Rust-sidecar-ts` 的 PASS）。
 顶层 `status` 在本 run 是 `NOT_RUN`，但**不是恒为 `NOT_RUN`**：任一案失败（`run.py:563`）、外层异常（`:577`）、
-清理异常（`:594`）或取消补发布（`:109`）都会把它置 `FAIL`——**顶层是 `FAIL` 时不得只看 `cells`**。见下段与 §七.2。）
+清理异常（`:594`）都会把它置 `FAIL`，取消也会在 `run()` 已建输出目录时经 `publish_cancelled`（`:109`）置 `FAIL`
+（租约等待期取消则**不发布任何报告**，见装置 README）——**顶层是 `FAIL` 时不得只看 `cells`**。见下段与 §七.2。）
 
 边界：整份报告 `status=NOT_RUN`、`moduleMatrixStatus=PASS`。`NOT_RUN` 来自 `entryCoverage`（生产入口
 `production native request adapter not connected`）与 `retirement`（`complete exec/egress and storage observers absent`），
@@ -262,8 +263,9 @@ EXIT=3
 | `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
 
 合计 **3 次请求 / 49 输出 token**（不在此复述上限数字）。`limits.violations=[]` 单独看**不足以**证明没超限：
-**两条 token 上限项**只在拿到 usage 时才写入，usage 缺席时这两项不写入、而 `capsVerified=false`（请求数与 echo
-的违规另有分支，与 usage 无关，仍会写 `violations`）。
+**两条 token 上限项**只在拿到 usage 时才写入，usage 被记为 `usageMissing` 时这两项不写入、而 `capsVerified=false`
+（请求数与 echo 的违规另有分支，与 usage 无关，仍会写 `violations`）；stream-cancel 的结构性缺席记在
+`usageNotApplicable`，**不算 missing、不使 `capsVerified` 变假**。
 **没超限 = `capsVerified=true`（证明检查确实做过：`usageMissing=[]` 且 `echoMissing=[]`）且 `violations=[]`（数值没超）**，
 本 run 两者都成立；
 `secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
@@ -314,14 +316,13 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
      `cancel_during_tool`、`stream_interruption`、`sidecar_one_shot_parent_abort_after_admission`、
      `sidecar_one_shot_parent_close_after_admission` 四条取消场景是「TS 宿主眼里观测到的 sidecar 侧差异」，
      **仍按 sidecar 侧信号记 —— ② 的 sidecar 侧信号为 23 条，不降**。
-     作为对照：广读会把这四条全部豁免，② 的 sidecar 侧信号降到 **19–21 条（最少 19）**——
+     反事实对照（**本账本不采用**）：若按宽读把这四条全部豁免，② 的 sidecar 侧信号会降到 **19–21 条（最少 19）**——
      只豁免前两条为 21（降幅下限），连同两条名字带 abort/close 的 one-shot 场景一起豁免为 19（降幅上限）。
      **这个区间不是封闭端点**：R3 原文没有枚举「涉及取消」的边界，22 条名单里的 `deadline_during_tool`
      （`durableStopReason=aborted_streaming`，同属中止路径）是否算第五条候选没有裁决，计入则广读下限还要再降。
      本页只按 #1722 第 1 条给出 19–21 这个已知范围，**窄读的 23 条不受这些候选影响**。
-     口径正本见 `A7-HOST-POST-CANCEL-EXIT-001-R5`；本页按 #1722 第 1 条保留四条场景名与 19–21 的对照数字，
-     除此之外不重复 R5 的范围论证。
-     这不是判分语义变更，不动冻结件，只影响本页一处计数。
+     **适用口径的正本是 `A7-HOST-POST-CANCEL-EXIT-001-R5`（它只写 23 与指针）；19–21 的推导只留在本页**，
+     两处不各写一半。这不是判分语义变更，不动冻结件，只影响本页一处计数。
 9. **本单的冻结装置授权没用上**：`state/decisions-20261025.md`「#590 A7.2-pr6b 四格矩阵：授权修改冻结装置」允许在本单范围内改
    `session_domain.py` 及配套冻结件；实际执行**没有改动任何冻结文件**（30 项登记哈希在每份报告里 `frozen.exitCode=0`），
    72 case 的 `NOT_RUN` 是装置现状而非本单改判的结果。人要求的「事后详细解释」在 PR 正文里给出。
