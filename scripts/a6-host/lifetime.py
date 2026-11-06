@@ -17,9 +17,8 @@ and every unbounded wait additionally gets a ceiling.
 
 Three layers, cheapest first:
   * ``install`` -- a daemon thread polls ``os.getppid()``. Reparenting means the
-    host is gone: write ``.orphan``, say why on stderr, kill the descendants
-    registered through ``track`` (the ``grandchild-*`` sleepers), exit 70.
-    Covers the mbp2 scenario within one poll interval.
+    host is gone: write ``.orphan``, say why on stderr, exit 70. Covers the mbp2
+    scenario within one poll interval.
   * ``bounded_close_wait`` -- the `close-*` waits get a hard ceiling after EOF
     instead of an unbounded ``signal.pause()``.
   * the lifetime ceiling (``PDRS_A6_FIXTURE_MAX_LIFETIME``) -- a backstop for
@@ -27,12 +26,17 @@ Three layers, cheapest first:
     runs): write ``.lifetime`` and exit 71. Deliberately not a "kill every
     ppid=1 process" sweep: that would hit processes this fixture does not own.
 
-What is *not* covered: a descendant nobody handed to ``track``. Every fixture
-mode that spawns one registers it inside ``spawning()``, so today there is none;
-a future mode has to opt in. ``os.killpg(0, SIGKILL)`` is deliberately not used
-as a catch-all: the fixture is spawned as its own group leader
-(``connection.rs:65``), so a group kill would SIGKILL this process too, and the
-exit code is then no longer ours to choose.
+Descendants are covered by the same mechanism, one level down: the
+``grandchild-*`` sleeper runs ``install`` itself, so it exits on its own within
+one poll interval of *this* process dying, however that happens -- including a
+SIGKILL of this process, where none of our code runs. This module therefore
+keeps no registry of child processes and never signals anything but itself:
+a registry would only work while this process is still scheduled, which is
+exactly the window a killed host takes away.
+
+``os.killpg(0, SIGKILL)`` is deliberately not used as a catch-all: the fixture
+is spawned as its own group leader (``connection.rs:65``), so a group kill would
+SIGKILL this process too, and the exit code is then no longer ours to choose.
 
 Exit codes: 71 is asserted in ``host/tests.rs`` (the test is the peer's parent
 there). 70 is *not* observable by the tests -- on the orphan path the parent is
@@ -40,9 +44,8 @@ gone by definition -- so ``.orphan`` is the receipt that proves this path ran,
 and no test claims the number.
 
 Nothing here sends signals to processes this fixture does not own: the watchdog
-only kills itself, its registered descendants, and this process.
+only exits this process.
 """
-import contextlib
 import math
 import os
 import signal
@@ -67,59 +70,6 @@ CLOSE_WAIT_LIMIT = 30.0
 
 EXIT_PARENT_DIED = 70
 EXIT_MAX_LIFETIME = 71
-
-# Descendants this fixture owns (see ``track``). Deliberately a registry, not a
-# process-table scan.
-_TRACKED = []
-# A lock alone does not close the fork -> ``track`` window: the watchdog can
-# publish ``_EXITING`` and reach ``os._exit`` before the spawning thread is
-# scheduled again. So a spawn is announced *before* ``Popen`` forks
-# (``spawning()``), and the watchdog waits for ``_SPAWNING`` to drain before it
-# snapshots the registry. A ``track`` that runs after the watchdog gave up still
-# kills its own process, which covers the spawn-after-exit case.
-_COND = threading.Condition()
-_SPAWNING = 0
-_EXITING = False
-# Bounded so a spawning thread that never returns cannot hang the exit; Popen
-# returns in milliseconds, so this only trips on a wedged interpreter.
-SPAWN_SETTLE_LIMIT = 1.0
-
-
-@contextlib.contextmanager
-def spawning():
-    """Announce that a descendant is about to be forked and registered.
-
-    Wrap both the ``Popen`` and the ``track`` call: the watchdog may fire while
-    this block runs, and it waits for the block to finish before killing, so the
-    descendant is always registered by the time the registry is read.
-    """
-    global _SPAWNING
-    with _COND:
-        _SPAWNING += 1
-    try:
-        yield
-    finally:
-        with _COND:
-            _SPAWNING -= 1
-            _COND.notify_all()
-
-
-def track(process):
-    """Register a descendant so it dies with us on the orphan/lifetime paths."""
-    global _EXITING
-    with _COND:
-        _TRACKED.append(process)
-        exiting = _EXITING
-    if exiting:
-        _kill_one(process)
-
-
-def _kill_one(process):
-    try:
-        process.kill()
-    except Exception:
-        pass
-
 
 def _knob(name, default):
     """Read a ceiling from the environment without ever disabling it.
@@ -163,26 +113,6 @@ def _report(receipt, suffix, message):
             pass
 
 
-def _kill_tracked():
-    """Kill the descendants this fixture owns, so 父死子死 covers them too.
-
-    Only pids handed to ``track`` are touched -- never a scan of the process
-    table, which would reach processes this fixture does not own. Called from
-    the watchdog thread; ``Popen.kill`` is safe there.
-
-    Publishes ``_EXITING`` and first waits (bounded) for an in-flight
-    ``spawning()`` block to finish, so a descendant that was forked but not yet
-    registered is in the snapshot instead of being left behind.
-    """
-    global _EXITING
-    with _COND:
-        _EXITING = True
-        _COND.wait_for(lambda: _SPAWNING == 0, timeout=SPAWN_SETTLE_LIMIT)
-        tracked = list(_TRACKED)
-    for process in tracked:
-        _kill_one(process)
-
-
 def install(receipt, mode):
     """Start the watchdog. Call once, as early as possible, in every mode."""
     max_lifetime = _knob('PDRS_A6_FIXTURE_MAX_LIFETIME', DEFAULT_MAX_LIFETIME)
@@ -198,13 +128,11 @@ def install(receipt, mode):
                         '{}: parent {} is gone (reparented to {}); exiting instead of '
                         'waiting for a signal that will never come (#1779)'
                         .format(mode, parent, now))
-                _kill_tracked()
                 os._exit(EXIT_PARENT_DIED)
             if time.monotonic() - started > max_lifetime:
                 _report(receipt, '.lifetime',
                         '{}: lifetime exceeded {:.0f}s; exiting (#1779)'
                         .format(mode, max_lifetime))
-                _kill_tracked()
                 os._exit(EXIT_MAX_LIFETIME)
 
     threading.Thread(target=watch, name='a6-parent-watch', daemon=True).start()
