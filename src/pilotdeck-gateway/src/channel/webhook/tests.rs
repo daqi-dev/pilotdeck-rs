@@ -1838,6 +1838,12 @@ fn recorded_expected_panics_on_wrong_type() {
     recorded_expected(&json!({"expected": []}));
 }
 
+#[test]
+#[should_panic(expected = "#1334 expected must be an object, got <missing>")]
+fn recorded_expected_panics_when_absent() {
+    recorded_expected(&json!({}));
+}
+
 async fn replay(name: &str) {
     let case = case(name);
     let expected = recorded_expected(&case)

@@ -931,12 +931,15 @@ fn recorded_permission_delivered_panics_on_wrong_type() {
 }
 
 fn recorded_expected_checked(value: &Value) -> Result<Option<&Value>, String> {
+    // #1729 fix-r6: the terminal comparison container is required, same as the
+    // webhook harness. Absence must fail here with a field-level diagnostic
+    // instead of becoming `Value::Null` in `assert_responses_so_far`.
     recorded_checked(
         value.get("expected"),
         "expected",
         "an object",
         |value| value.is_object().then_some(value),
-        false,
+        true,
         crate::mutants::on("sms-oracle-recorded-expected"),
     )
 }
@@ -957,6 +960,12 @@ fn recorded_expected_rejects_wrong_type() {
 #[should_panic(expected = "#1339 expected must be an object")]
 fn recorded_expected_panics_on_wrong_type() {
     recorded_expected(&json!({"expected": []}));
+}
+
+#[test]
+#[should_panic(expected = "#1339 expected must be an object, got <missing>")]
+fn recorded_expected_panics_when_absent() {
+    recorded_expected(&json!({}));
 }
 
 fn recorded_responses_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
@@ -1772,7 +1781,12 @@ fn absent_recording_fields_keep_defaults() {
         recorded_permission_delivered(&json!({"permissionDelivered":true})).is_some(),
         "#1339 valid permissionDelivered"
     );
-    assert!(recorded_expected(&empty).is_none(), "#1339 absent expected");
+    // #1729 fix-r6: `expected` is required (absent = recording drift); the
+    // wrapper panics with the field-level diagnostic.
+    assert!(
+        recorded_expected_checked(&empty).is_err(),
+        "#1339 expected is a required recording field"
+    );
     assert!(
         recorded_expected(&json!({"expected":{}})).is_some(),
         "#1339 valid expected"
