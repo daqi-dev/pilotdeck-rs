@@ -3531,12 +3531,14 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              f"recorded={recorded!r} present={present!r} dropped={dropped!r} "
              f"kept={kept} entry_exists={entry.exists()}")
 
-    # P1（boundary）：``gitdir`` 可读但为空 / 全是空白（非原子写入被截断）或
-    # 相对路径时，旧实现 _real_path('') 得到 cwd、与 wanted 不等 → 又变成
-    # 「证明不是我们的」，drop_holder 照摘登记。
+    # P1（boundary）：``gitdir`` 可读但为空 / 全是空白（非原子写入被截断）时，
+    # 旧实现 _real_path('') 得到 cwd、与 wanted 不等 → 变成「证明不是我们的」，
+    # drop_holder 照摘登记。相对路径不是坏数据：``git worktree add
+    # --relative-paths``（git 2.54 实测写 ``../../../../wt/.git``）也合法，
+    # 必须按条目目录解析，否则这类仓库的清理会被永久 BLOCK。
     with tempfile.TemporaryDirectory() as td:
         results = []
-        for idx, payload in enumerate(("", "   \n", "relative/.git\n")):
+        for idx, payload in enumerate(("", "   \n")):
             root = Path(td) / f"repo{idx}"
             root.mkdir()
             init_repo(root)
@@ -3556,9 +3558,34 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
                 cfd._SNAPSHOT_HOLDERS.clear()
             results.append((payload.strip(), recorded is cfd._UNREADABLE_GITDIR,
                             present, dropped, kept, entry.exists()))
-        case("gitdir 为空 / 空白 / 相对路径 → 不可读，不报 False、不摘登记",
+        case("gitdir 为空 / 空白 → 不可读，不报 False、不摘登记",
              all(row[1] and row[2] is None and row[3] is False and row[4]
                  and row[5] for row in results), f"{results}")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        holder = Path(td) / "cfd-snapshot-rel"
+        target = holder / "tree"
+        target.mkdir(parents=True)
+        entry = root / ".git" / "worktrees" / "tree"
+        entry.mkdir(parents=True)
+        relative = os.path.relpath(str(target / ".git"), str(entry))
+        (entry / "gitdir").write_text(relative + "\n")
+        recorded = cfd._recorded_gitdir(entry)
+        present = cfd.admin_entry_present(root, target)
+        cfd._SNAPSHOT_HOLDERS.append((root, holder))
+        try:
+            dropped = cfd.drop_holder(root, holder)
+            kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+        finally:
+            cfd._SNAPSHOT_HOLDERS.clear()
+        case("相对 gitdir（git --relative-paths）按条目目录解析 → 仍认作自家记账",
+             recorded == cfd._real_path(target / ".git") and present is True
+             and dropped is True and not kept and not entry.exists(),
+             f"relative={relative!r} recorded={recorded!r} present={present!r} "
+             f"dropped={dropped!r} kept={kept} entry_exists={entry.exists()}")
 
     # P2（codex）：可读匹配 + 不可读条目并存时，可读的那条就是证据 → True；
     # 只有持久坏条目 → None，且阻塞文案点名该条目路径（不再指认自家快照未清）。
