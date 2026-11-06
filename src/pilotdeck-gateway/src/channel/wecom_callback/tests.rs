@@ -8,7 +8,7 @@
 
 use super::super::protocol::{TurnEventStream, TurnGateway, TurnRequest};
 use super::crypto::sha1_hex;
-use super::interaction::PermissionAnswer;
+use super::interaction::{NoInteraction, PermissionAnswer};
 use super::*;
 use crate::test_baseline;
 use bytes::Bytes;
@@ -202,9 +202,7 @@ impl TurnGateway for MockInbound {
                 let _ = events.send(Err(ChannelError::error(error)));
             }
         });
-        Box::pin(async move {
-            Ok(Box::new(MockStream(stream)) as Box<dyn TurnEventStream>)
-        })
+        Box::pin(async move { Ok(Box::new(MockStream(stream)) as Box<dyn TurnEventStream>) })
     }
 }
 
@@ -405,7 +403,13 @@ impl Qyapi {
 }
 
 async fn start_qyapi(qyapi: Arc<Qyapi>) {
-    let listener = TcpListener::bind(("127.0.0.1", QYAPI_PORT))
+    start_qyapi_on(qyapi, QYAPI_PORT).await;
+}
+
+/// The same fake on another port: the cron-delivery pin runs beside the golden
+/// replay, so the two must not race for one listener.
+async fn start_qyapi_on(qyapi: Arc<Qyapi>, port: u16) {
+    let listener = TcpListener::bind(("127.0.0.1", port))
         .await
         .expect("#1336 qyapi bind");
     tokio::spawn(async move {
@@ -819,6 +823,108 @@ async fn channel_matches_real_ts() {
         strays.len(),
         0,
         "#1336 no qyapi request arrives outside an armed case"
+    );
+}
+
+/// `WeComCallbackChannel.deliverCronResult` is the shared
+/// `deliverChatCronResult(delivery, channelKey, sendReply)` call: a foreign
+/// `originChannelKey` answers `false` without touching qyapi, a session key
+/// without the `<key>:chat=` prefix does the same, and a matching delivery
+/// sends the text and answers the `sendReply` boolean. The TS golden fixture
+/// has no cron case (it scripts `submitTurn`, not `deliverCronResult`), so this
+/// pin covers the helper hand-off rather than a recorded cell.
+#[tokio::test]
+async fn deliver_cron_result_follows_the_shared_helper() {
+    const PORT: u16 = 18997;
+    let qyapi = Qyapi::new();
+    start_qyapi_on(qyapi.clone(), PORT).await;
+    let record = Arc::new(Mutex::new(Record::default()));
+    qyapi.arm(
+        &json!({"qyapi": [
+            {"status": 200, "json": {"errcode": 0, "access_token": "tok-1", "expires_in": 7200}},
+            {"status": 200, "json": {"errcode": 0, "errmsg": "ok"}},
+        ]}),
+        record.clone(),
+    );
+
+    let mut options = JsObject::new();
+    for (key, value) in [
+        ("corpId", "corp-x"),
+        ("agentId", "agent-1"),
+        ("secret", "corp-secret"),
+        ("token", "callback-token"),
+        (
+            "encodingAesKey",
+            "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY",
+        ),
+    ] {
+        options.insert(key.into(), JsValue::String(JsString::from(value)));
+    }
+    options.insert("port".into(), JsValue::Number(0.0));
+    let channel = WeComCallbackChannel::new(
+        WeComCallbackOptions::from_object(&options, &format!("http://127.0.0.1:{PORT}/cgi-bin")),
+        Arc::new(NoInteraction),
+    );
+    let delivery = |origin_channel: Option<&str>, session: &str| CronResultDelivery {
+        task_id: JsString::from("task-1"),
+        run_id: JsString::from("run-1"),
+        session_key: JsString::from(session),
+        channel_key: ChannelKey::new("cron"),
+        origin_session_key: None,
+        origin_channel_key: origin_channel.map(ChannelKey::new),
+        text: JsString::from("cron says hi"),
+    };
+
+    let foreign = channel
+        .deliver_cron_result(&delivery(
+            Some("webhook"),
+            "wecom_callback:chat=user-1:general",
+        ))
+        .await;
+    crate::negative_assert!(!foreign, "#1336 cron: foreign origin channel answers false");
+
+    let unparsable = channel
+        .deliver_cron_result(&delivery(Some(CHANNEL_KEY), "wecom_callback:chat="))
+        .await;
+    crate::negative_assert!(
+        !unparsable,
+        "#1336 cron: a session key without a parsable chat id answers false"
+    );
+    crate::negative_assert_eq!(
+        record.lock().expect("#1336 record mutex").qyapi.len(),
+        0,
+        "#1336 cron: neither rejected delivery reaches qyapi"
+    );
+
+    let delivered = channel
+        .deliver_cron_result(&delivery(
+            Some(CHANNEL_KEY),
+            "wecom_callback:chat=user-1:s_0123abcd-0000-4000-8000-000000000000",
+        ))
+        .await;
+    crate::negative_assert!(
+        delivered,
+        "#1336 cron: a matching delivery answers sendReply"
+    );
+    let calls = record.lock().expect("#1336 record mutex").qyapi.clone();
+    crate::negative_assert_eq!(calls.len(), 2, "#1336 cron: gettoken then message/send");
+    crate::negative_assert_eq!(
+        calls[1]["path"].as_str(),
+        Some("/cgi-bin/message/send"),
+        "#1336 cron: the delivery goes out through sendReply"
+    );
+    let body: Value = serde_json::from_str(calls[1]["body"].as_str().expect("#1336 cron body"))
+        .expect("#1336 cron body JSON");
+    crate::negative_assert_eq!(
+        body["touser"].as_str(),
+        Some("user-1"),
+        "#1336 cron: the chat id comes from the session-key parse"
+    );
+    crate::negative_assert!(
+        body["text"]["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("cron says hi")),
+        "#1336 cron: the delivery text is the message body"
     );
 }
 
