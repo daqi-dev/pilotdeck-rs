@@ -931,6 +931,11 @@ def run():
                       + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
                         "def _a(y):\n    z = y\n    _swap(z)\n_a(common)\n"
                       + _gw_tail) is None)
+    case("gateway 形参互相赋值（x = y; y = x）不挂起，改名后的写仍算数 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x, y):\n    x = y\n    y = x\n"
+                        "    x.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(None, common)\n" + _gw_tail) is None)
     case("gateway 默认参数里带 common、调用点不传 → 不可判定",
          gw_inventory(GW_BOOTSTRAP
                       + "def _swap(x=common):\n    x.update({'A2_SCRIPTS': ()})\n"
@@ -940,6 +945,52 @@ def run():
                       + "class _C:\n    def _swap(self, x):\n"
                         "        x.update({'A2_SCRIPTS': ()})\n"
                         "_C()._swap(common)\n" + _gw_tail) is None)
+    case("gateway 绑定方法的实例形参不叫 self，位置对位不能靠名字猜 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(m, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_C()._swap(common)\n" + _gw_tail) is None)
+    case("gateway 属性调用把 common 交给接收者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(m):\n"
+                        "        m.update({'A2_SCRIPTS': ()})\n"
+                        "_C()._swap(common)\n" + _gw_tail) is None)
+    case("gateway 传递链上的属性调用也要按绑定方法对位 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    _C()._swap(y)\n_a(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 传递链上的 * 展开 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "def _a(y):\n    _swap(*y)\n_a((common,))\n"
+                      + _gw_tail) is None)
+    case("gateway 无主 lambda（直接当实参）里的就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "sorted((common,), key=lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 链式赋值把 lambda 绑到第二个名字 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_f = _g = lambda x: x.update({'A2_SCRIPTS': ()})\n"
+                        "_g(common)\n" + _gw_tail) is None)
+    case("gateway 海象绑定的 lambda → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "(_f := lambda x: x.update({'A2_SCRIPTS': ()}))(common)\n"
+                      + _gw_tail) is None)
+    case("gateway from sys import modules as _m 后解包传播表别名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\n"
+                        "_p, _q = _m, None\n"
+                        "_p.update({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway 解包右值是 set 字面量（迭代顺序不由文件固定）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_a, _b = {common, None}\n"
+                        "_b.A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway for 遍历 dict 字面量（键）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "for _k in {common: None}:\n    _k.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
     case("gateway 清单函数里出现 lambda → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
                       "\ndef manifest_inventory(root):\n"
@@ -1722,6 +1773,11 @@ def run():
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}",
              "    def _extra():\n        return None\n"
              "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}"))) is None)
+    case("ui 扫描函数里嵌套 lambda → 扫描目录不可判定",
+         cfd._ui_scan_dirs(cfd._parse(UI_FROZEN.replace(
+             "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}",
+             "    _f = lambda x: x\n"
+             "    files = {Path(p) for p in scan(root / 'scripts/ui-server-parity')}"))) is None)
 
     # ---------------------------------------------------------------- r24 ui 负控
     # gateway 侧 r24 新增的绑定形态在 ui 侧同源（同一个 `_alias_roots`），这里
@@ -1741,9 +1797,18 @@ def run():
     case("ui 块外 sys.path.sort() 重排导入解析顺序 → 不可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\n_boot_sys.path.sort()\n") is None)
-    case("ui 块外 REQUIRED 的别名 reverse() → 不可判定",
+    case("ui 块外 sys.path.reverse() 重排导入解析顺序 → 不可判定",
          ui_registrable(UI_APPARATUS, UI_FROZEN
-                        + "\n_r = REQUIRED\n_r.reverse()\n") is None)
+                        + "\n_boot_sys.path.reverse()\n") is None)
+    case("ui 块外以属性形式调用被改函数（实例形参不叫 self）→ 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\nclass _C:\n    def _swap(m, x):\n"
+                          "        x.update({})\n"
+                          "_C()._swap(_boot_manifest)\n") is None)
+    case("ui 块外默认参数里带被看护对象、调用点不传 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\ndef _swap(x=_boot_manifest):\n"
+                          "    x.update({})\n_swap()\n") is None)
 
     with tempfile.TemporaryDirectory() as td:
         # unexpected registered file 的两条负控：仓外绝对路径 / merge-base 无行。
