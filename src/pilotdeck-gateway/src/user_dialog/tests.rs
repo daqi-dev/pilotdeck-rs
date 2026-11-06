@@ -1117,13 +1117,12 @@ fn restore_keeps_a_registration_that_replaced_the_consumed_dialog() {
     // The settle hook reentered and registered the replacement, then failed.
     let replacement: AcceptsFn = Arc::new(|_value| false);
     let generation = bus.register(&session, numbered_pending("dialog", replacement.clone()));
-    let dropped = bus
-        .restore(&session, consumed)
-        .expect("#1599 the displaced waiter comes back to be ended");
-    negative_assert!(
-        dropped.request_id == request,
-        "#1599 restore reports the entry whose request id the replacement took"
-    );
+    let dropped = bus.restore(&session, consumed);
+    // The reentrant registration is the live one, so check that first: a
+    // `restore` that drops the conflict branch does not merely misplace the
+    // consumed entry, it re-inserts it (and its generation and lease) over the
+    // replacement. That shows up on the snapshot, while "did the displaced
+    // waiter come back" only tells us whether the early return ran at all.
     let snapshot = bus
         .snapshot_for_response(&session, &request)
         .expect("the reentrant registration is still pending");
@@ -1134,6 +1133,10 @@ fn restore_keeps_a_registration_that_replaced_the_consumed_dialog() {
     negative_assert!(
         Arc::ptr_eq(&snapshot.accepts, &replacement),
         "#1599 the reentrant registration keeps its own validator"
+    );
+    negative_assert!(
+        matches!(&dropped, Some(entry) if entry.request_id == request),
+        "#1599 the displaced waiter comes back to be ended"
     );
     negative_assert!(
         listed_request_ids(&mut bus, &session) == vec!["tail".to_string(), "dialog".to_string()],
