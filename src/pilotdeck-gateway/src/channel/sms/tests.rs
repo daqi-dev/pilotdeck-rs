@@ -1962,6 +1962,19 @@ async fn ensure_replay_port_free(port: u16) {
     // that broke every fix-r6 run — would collide with the previous replay's
     // `TIME_WAIT`.
     //
+    // #1729 fix-r1: check the wildcard bind first. On macOS a socket bound
+    // to `[::]:port` without listening can stall the IPv4 connect below;
+    // the bind probe still reports that IPv6 is occupied immediately.
+    match v6_wildcard_state(port) {
+        V6Port::Free | V6Port::Absent => {}
+        V6Port::Occupied => panic!(
+            "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
+        ),
+        V6Port::Unknown => {
+            panic!("#1339 cannot prove the IPv6 wildcard port {port} is free; refusing to replay")
+        }
+    }
+
     // #1339 fix-r9 (P2, four roles): the IPv4 probe carries the same shape as
     // the generator's `portIsFree` — `bounded` caps the wait and
     // `ConnectionRefused` is the only proof of a free port.
@@ -1977,15 +1990,6 @@ async fn ensure_replay_port_free(port: u16) {
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => {
             panic!("#1339 cannot prove port {port} is free on IPv4 ({error}); refusing to replay")
-        }
-    }
-    match v6_wildcard_state(port) {
-        V6Port::Free | V6Port::Absent => {}
-        V6Port::Occupied => panic!(
-            "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
-        ),
-        V6Port::Unknown => {
-            panic!("#1339 cannot prove the IPv6 wildcard port {port} is free; refusing to replay")
         }
     }
 }
