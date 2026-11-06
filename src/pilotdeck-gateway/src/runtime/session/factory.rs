@@ -1494,6 +1494,38 @@ fn array(value: &JsValue) -> Result<&[JsValue], RuntimeError> {
         _ => Err(RuntimeError::new("Session projection requires an array.")),
     }
 }
+/// `[...state.permissionDenials, ...entry.result.permissionDenials]`
+/// (AgentTranscriptProjections.ts turnSummary reduce): arrays append their
+/// elements and strings iterate code points, keeping lone surrogates; anything
+/// else throws the TS iterability TypeError. This models the hydrate port
+/// (reduce only) — the list port's conversation finalize maps
+/// turn_result.permissionDenials and rejects non-arrays first. `array()` above
+/// is the stricter Rust-composition helper and must not be used for this
+/// spread.
+fn merge_permission_denials(
+    target: &mut Vec<JsValue>,
+    denials: &JsValue,
+) -> Result<(), RuntimeError> {
+    match denials {
+        JsValue::Array(items) => target.extend_from_slice(items),
+        JsValue::String(text) => {
+            let mut units = text.units().iter().copied().peekable();
+            while let Some(first) = units.next() {
+                let mut item = vec![first];
+                if (0xd800..=0xdbff).contains(&first)
+                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))
+                {
+                    item.push(units.next().unwrap());
+                }
+                target.push(JsValue::String(JsString::from_utf16(item)));
+            }
+        }
+        _ => {
+            return Err(type_error("entry.result.permissionDenials is not iterable"));
+        }
+    }
+    Ok(())
+}
 fn merge_metadata(target: &mut JsObject, metadata: &JsObject) {
     for (key, value) in metadata.entries() {
         if (key.equals_str("title") || key.equals_str("linkedPullRequest"))
@@ -1616,9 +1648,10 @@ fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
                     result.usage.insert(name.into(), sum);
                 }
             }
-            result
-                .permission_denials
-                .extend_from_slice(array(field(turn, "permissionDenials"))?);
+            merge_permission_denials(
+                &mut result.permission_denials,
+                field(turn, "permissionDenials"),
+            )?;
         }
         if is(kind, "session_metadata") {
             let metadata = field(entry, "metadata");

@@ -578,6 +578,80 @@ try {
     }
   }
 
+  // #1985 block 1: turn_result usage/permissionDenials/errors,
+  // session_metadata title/aiTitle and compactMetadata read surfaces. Restore
+  // (hydrate: reduce only) and list (reduce + finalize + the title trims)
+  // accept different shapes, so every row is one measured cell of the real-TS
+  // probe (restore ok?, list ok?) rather than a re-derivation. Both ports run
+  // on the same file; a rejected restore still installs the validated state.
+  {
+    const shapeUsage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1, totalTokens: 18 };
+    const shapeDenied = { toolName: 'Bash', toolCallId: 'c1', errorCode: 'denied' };
+    const shapeError = { code: 'tool_failed', message: 'boom' };
+    const shapeResult = (extra: any) => ({ type: 'completed', usage: shapeUsage, permissionDenials: [], ...extra });
+    const shapeCompact = (compactMetadata: any) => ({ boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: [user('replacement')], compactMetadata } });
+    // [suffix, entry type, extra, restore accepts, list accepts]
+    const shapes: Array<[string, string, any, boolean, boolean]> = [
+      ['turn-usage-full', 'turn_result', { result: shapeResult({}) }, true, true],
+      ['turn-usage-partial', 'turn_result', { result: shapeResult({ usage: { inputTokens: 3 } }) }, true, true],
+      ['turn-usage-zero', 'turn_result', { result: shapeResult({ usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 0 } }) }, true, true],
+      ['turn-usage-empty', 'turn_result', { result: shapeResult({ usage: {} }) }, true, true],
+      ['turn-usage-null', 'turn_result', { result: shapeResult({ usage: null }) }, false, false],
+      ['turn-usage-missing', 'turn_result', { result: shapeResult({ usage: undefined }) }, false, false],
+      ['turn-usage-primitive', 'turn_result', { result: shapeResult({ usage: 5 }) }, true, true],
+      ['turn-usage-string', 'turn_result', { result: shapeResult({ usage: 'u' }) }, true, true],
+      ['turn-denials-one', 'turn_result', { result: shapeResult({ permissionDenials: [shapeDenied] }) }, true, true],
+      ['turn-denials-null', 'turn_result', { result: shapeResult({ permissionDenials: null }) }, false, false],
+      ['turn-denials-missing', 'turn_result', { result: shapeResult({ permissionDenials: undefined }) }, false, false],
+      ['turn-denials-string', 'turn_result', { result: shapeResult({ permissionDenials: 'd' }) }, true, false],
+      ['turn-denials-object', 'turn_result', { result: shapeResult({ permissionDenials: {} }) }, false, false],
+      ['turn-errors-array', 'turn_result', { result: shapeResult({ errors: [shapeError] }) }, true, true],
+      ['turn-errors-empty', 'turn_result', { result: shapeResult({ errors: [] }) }, true, true],
+      ['turn-errors-null', 'turn_result', { result: shapeResult({ errors: null }) }, true, true],
+      ['turn-errors-string', 'turn_result', { result: shapeResult({ errors: 'e' }) }, true, false],
+      ['turn-errors-object', 'turn_result', { result: shapeResult({ errors: {} }) }, true, false],
+      ['turn-result-missing', 'turn_result', { result: undefined }, false, false],
+      ['turn-result-null', 'turn_result', { result: null }, false, false],
+      ['turn-result-primitive', 'turn_result', { result: 5 }, false, false],
+      ['turn-result-string', 'turn_result', { result: 'r' }, false, false],
+      ['turn-result-error-type', 'turn_result', { result: { type: 'error', usage: shapeUsage, permissionDenials: [], errors: [shapeError] } }, true, true],
+      ['compact-metadata-full', 'control_boundary', shapeCompact({ postTokens: 100, preTokens: 200, messagesSummarized: 3 }), true, true],
+      ['compact-post-zero', 'control_boundary', shapeCompact({ postTokens: 0, preTokens: 200 }), true, true],
+      ['compact-post-missing', 'control_boundary', shapeCompact({ preTokens: 200 }), true, true],
+      ['compact-metadata-missing', 'control_boundary', shapeCompact(undefined), false, true],
+      ['compact-metadata-null', 'control_boundary', shapeCompact(null), false, true],
+      ['compact-metadata-primitive', 'control_boundary', shapeCompact(7), true, true],
+      ['metadata-title', 'session_metadata', { metadata: { title: 'T' } }, true, true],
+      ['metadata-title-empty', 'session_metadata', { metadata: { title: '' } }, true, true],
+      ['metadata-title-blank', 'session_metadata', { metadata: { title: '  \t' } }, true, true],
+      ['metadata-title-null', 'session_metadata', { metadata: { title: null } }, true, true],
+      ['metadata-title-absent', 'session_metadata', { metadata: {} }, true, true],
+      ['metadata-title-number', 'session_metadata', { metadata: { title: 5 } }, true, false],
+      ['metadata-title-boolean', 'session_metadata', { metadata: { title: true } }, true, false],
+      ['metadata-title-object', 'session_metadata', { metadata: { title: {} } }, true, false],
+      ['metadata-ai-title', 'session_metadata', { metadata: { aiTitle: 'AI' } }, true, true],
+      ['metadata-ai-title-empty', 'session_metadata', { metadata: { aiTitle: '' } }, true, true],
+      ['metadata-ai-title-null', 'session_metadata', { metadata: { aiTitle: null } }, true, true],
+      ['metadata-ai-title-number', 'session_metadata', { metadata: { aiTitle: 7 } }, true, false],
+      ['metadata-both-titles', 'session_metadata', { metadata: { title: 'T', aiTitle: 'A' } }, true, true],
+      ['metadata-missing', 'session_metadata', { metadata: undefined }, false, false],
+      ['metadata-null', 'session_metadata', { metadata: null }, false, false],
+      ['metadata-primitive', 'session_metadata', { metadata: 5 }, true, true],
+    ];
+    for (const [suffix, type, extra, restoreOk, listOk] of shapes) {
+      await scenario(`restore-shape-${suffix}`, {
+        store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+        files: { 's1.jsonl': line(at(1, 'accepted_input', { messages: [user('prompt')] })) + line(at(2, type, extra)) },
+        steps: [open(), { op: 'restore' }, { op: 'state' }, { op: 'list' }],
+      }, [
+        'open:0',
+        restoreOk ? 'restored:2/0@2' : 'error:TypeError',
+        'state:2',
+        listOk ? 'list:s1' : 'error:TypeError',
+      ]);
+    }
+  }
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -617,7 +691,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 423, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 468, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

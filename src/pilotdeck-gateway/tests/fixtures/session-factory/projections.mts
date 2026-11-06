@@ -3,7 +3,7 @@ export async function observations(base:string) {
  const {projectAgentTranscriptEntries}=await import(`${base}/src/session/projection/AgentTranscriptProjections.ts`);
  const {AgentLoop}=await import(`${base}/src/agent/loop/AgentLoop.ts`);
  const message=(text:string,role='user',metadata?:any)=>({role,content:[{type:'text',text}],...(metadata?{metadata}:{})});
- const result=(turnId:string,usage:any={},permissionDenials:any[]=[])=>({type:'turn_result',turnId,result:{type:'success',sessionId:'session-745',turnId,usage,permissionDenials}});
+ const result=(turnId:string,usage:any={},permissionDenials:any=[],errors?:any)=>({type:'turn_result',turnId,result:{type:'success',sessionId:'session-745',turnId,usage,permissionDenials,...(errors===undefined?{}:{errors})}});
  const inputs:any[]=[
   {name:'null-usage',entries:[result('A',null)]},
   {name:'dynamic-usage',entries:[result('A',{inputTokens:null,outputTokens:'4',cacheReadTokens:true,cacheWriteTokens:[],totalTokens:{}}),result('B',{outputTokens:2})]},
@@ -40,5 +40,39 @@ export async function observations(base:string) {
  });
  const file=AgentLoop.prototype.snapshotFileState.call({readFileState:new Map([['seed.txt',{mtimeMs:7,kind:'text',offset:2}]]),writeSnapshots:new Map(),allowedReadFiles:new Set(['seed.txt'])});
  assert(file.readFileState instanceof Map);
- return {projections,storageErrors,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
+ // #1985 block 1: the durable state comes from SessionRuntime.restore +
+ // SessionProjectionDriver.hydrate, which runs each reducer's `reduce` and
+ // never its `finalize` (stateOf reads the raw cell state). That is why a
+ // string permissionDenials spreads here while projectAgentTranscriptEntries
+ // throws in cloneTurnResult: the two ports differ and each gets its own rows.
+ const hydratedInputs:Array<[string,any[]]>=[
+  ['usage-full',[result('A',{inputTokens:10,outputTokens:5,cacheReadTokens:2,cacheWriteTokens:1,totalTokens:18})]],
+  ['usage-partial',[result('A',{inputTokens:3})]],
+  ['usage-zero',[result('A',{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0,totalTokens:0})]],
+  ['usage-empty',[result('A',{})]],
+  ['usage-sum',[result('A',{inputTokens:2}),result('B',{inputTokens:3,outputTokens:7})]],
+  ['usage-primitive',[result('A',5)]],
+  ['usage-string',[result('A','u')]],
+  ['denials-one',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}])]],
+  ['denials-string',[result('A',{inputTokens:1},'d')]],
+  ['denials-string-multi',[result('A',{inputTokens:1},'ab')]],
+  ['denials-object',[result('A',{inputTokens:1},{})]],
+  ['errors-string',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}],'e')]],
+  ['errors-object',[result('A',{inputTokens:1},[{toolName:'read',toolCallId:'one'}],{})]],
+  ['metadata-title-number',[{type:'session_metadata',metadata:{title:5}}]],
+  ['metadata-merge',[{type:'session_metadata',metadata:{title:' 原题 ',extra:'kept'}},{type:'session_metadata',metadata:{title:null,aiTitle:'AI'}}]],
+ ];
+ const hydrated=hydratedInputs.map(([name,raw])=>{
+  const entries=raw.map((e:any,i:number)=>({version:1,entryId:`entry-${i+1}`,parentEntryId:i?`entry-${i}`:null,sequence:i+1,sessionId:'session-745',turnId:'A',createdAt:'2026-10-28T00:00:00.000Z',...e}));
+  const runtime=new SessionRuntime();
+  const driver=new SessionProjectionDriver({runtime,registry:createDefaultSessionProjectionRegistry()});
+  try {
+   runtime.restore(entries);
+   driver.hydrate(entries);
+   const summary:any=driver.stateOf('agent-transcript.turn-summary');
+   return {name,entries,state:{usage:summary.usage,permissionDenials:summary.permissionDenials,metadata:driver.stateOf('agent-transcript.metadata')}};
+  } catch(error:any) { return {name,entries,error:{name:error.name,message:error.message}}; }
+  finally { driver.dispose(); }
+ });
+ return {projections,storageErrors,hydrated,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
 }

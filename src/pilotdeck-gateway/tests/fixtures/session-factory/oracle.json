@@ -22935,6 +22935,537 @@
       }
     }
   ],
+  "hydrated": [
+    {
+      "name": "usage-full",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 10,
+              "outputTokens": 5,
+              "cacheReadTokens": 2,
+              "cacheWriteTokens": 1,
+              "totalTokens": 18
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 10,
+          "outputTokens": 5,
+          "cacheReadTokens": 2,
+          "cacheWriteTokens": 1,
+          "totalTokens": 18
+        },
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-partial",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 3
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 3
+        },
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-zero",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "totalTokens": 0
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "totalTokens": 0
+        },
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-empty",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {},
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {},
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-sum",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 2
+            },
+            "permissionDenials": []
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "entry-2",
+          "parentEntryId": "entry-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "B",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "B",
+            "usage": {
+              "inputTokens": 3,
+              "outputTokens": 7
+            },
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 5,
+          "outputTokens": 7
+        },
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-primitive",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": 5,
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {},
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "usage-string",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": "u",
+            "permissionDenials": []
+          }
+        }
+      ],
+      "state": {
+        "usage": {},
+        "permissionDenials": [],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "denials-one",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": [
+              {
+                "toolName": "read",
+                "toolCallId": "one"
+              }
+            ]
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          {
+            "toolName": "read",
+            "toolCallId": "one"
+          }
+        ],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "denials-string",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": "d"
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          "d"
+        ],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "denials-string-multi",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": "ab"
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          "a",
+          "b"
+        ],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "denials-object",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": {}
+          }
+        }
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "entry.result.permissionDenials is not iterable"
+      }
+    },
+    {
+      "name": "errors-string",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": [
+              {
+                "toolName": "read",
+                "toolCallId": "one"
+              }
+            ],
+            "errors": "e"
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          {
+            "toolName": "read",
+            "toolCallId": "one"
+          }
+        ],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "errors-object",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": [
+              {
+                "toolName": "read",
+                "toolCallId": "one"
+              }
+            ],
+            "errors": {}
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          {
+            "toolName": "read",
+            "toolCallId": "one"
+          }
+        ],
+        "metadata": {}
+      }
+    },
+    {
+      "name": "metadata-title-number",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "session_metadata",
+          "metadata": {
+            "title": 5
+          }
+        }
+      ],
+      "state": {
+        "usage": {},
+        "permissionDenials": [],
+        "metadata": {
+          "title": 5
+        }
+      }
+    },
+    {
+      "name": "metadata-merge",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "session_metadata",
+          "metadata": {
+            "title": " 原题 ",
+            "extra": "kept"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "entry-2",
+          "parentEntryId": "entry-1",
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "session_metadata",
+          "metadata": {
+            "title": null,
+            "aiTitle": "AI"
+          }
+        }
+      ],
+      "state": {
+        "usage": {},
+        "permissionDenials": [],
+        "metadata": {
+          "title": " 原题 ",
+          "extra": "kept",
+          "aiTitle": "AI"
+        }
+      }
+    }
+  ],
   "fileState": {
     "allowedReadFiles": [
       "seed.txt"
