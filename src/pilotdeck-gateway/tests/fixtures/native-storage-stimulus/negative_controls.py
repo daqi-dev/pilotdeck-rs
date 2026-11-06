@@ -28,6 +28,22 @@ sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
+# The entry-tick receipt write, and the lazy variant of it that defers the
+# `spawn_blocking` (and with it the `queued` receipt) into the returned future.
+# Shared by the two mutations that must each be bound to their own case.
+LAZY_DISPATCH_FROM = '''            let write = handle.spawn_blocking(move || {
+                let outcome = write();
+                let _ = settled.send(outcome.is_ok());
+                outcome
+            });
+            Box::pin(async move {'''
+LAZY_DISPATCH_TO = '''            Box::pin(async move {
+                let write = handle.spawn_blocking(move || {
+                    let outcome = write();
+                    let _ = settled.send(outcome.is_ok());
+                    outcome
+                });'''
+
 mutations = [
     # The barrier must actually hold the write: skipping the bounded wait
     # releases instantly, so the bound-expiry release receipt loses its
@@ -121,36 +137,31 @@ mutations = [
     # predecessor settles, so a lazy dispatch writes the receipt after the
     # barrier already released — the collector's wait then never sees it.
     ('registry-witness-lazily-dispatched', STIMULUS,
-     '''            let write = handle.spawn_blocking(move || {
-                let outcome = write();
-                let _ = settled.send(outcome.is_ok());
-                outcome
-            });
-            Some(Box::pin(async move {''',
-     '''            Some(Box::pin(async move {
-                let write = handle.spawn_blocking(move || {
-                    let outcome = write();
-                    let _ = settled.send(outcome.is_ok());
-                    outcome
-                });''',
+     LAZY_DISPATCH_FROM,
+     LAZY_DISPATCH_TO,
      'storage::stimulus_tests::publication_queued_receipt_survives_predecessor_serialization', '#1370 publication publishes the queued receipt while the barrier is held'),
     # #1648: the same entry-tick dispatch is also the FIFO case's entry-tick
     # proof. Its future is deliberately withheld, so a lazy receipt write never
     # appears while the barrier is held and the `queued` wait times out.
     ('registry-witness-lazily-dispatched-fifo', STIMULUS,
+     LAZY_DISPATCH_FROM,
+     LAZY_DISPATCH_TO,
+     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 fifo fixture owes the second append a receipt'),
+    # #1648: the settle must come from the receipt write, not from the caller's
+    # first poll. Without the signal the witnessed job sits on the single worker
+    # for the whole `WITNESS_SETTLE`, so the append behind a withheld witnessed
+    # future starves past the observation cap.
+    ('registry-witness-settle-not-from-write', STIMULUS,
      '''            let write = handle.spawn_blocking(move || {
                 let outcome = write();
                 let _ = settled.send(outcome.is_ok());
                 outcome
-            });
-            Some(Box::pin(async move {''',
-     '''            Some(Box::pin(async move {
-                let write = handle.spawn_blocking(move || {
-                    let outcome = write();
-                    let _ = settled.send(outcome.is_ok());
-                    outcome
-                });''',
-     'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append', '#1370 fifo fixture owes the second append a receipt'),
+            });''',
+     '''            let write = handle.spawn_blocking(move || {
+                let _ = &settled;
+                write()
+            });''',
+     'storage::stimulus_tests::withheld_witnessed_future_does_not_park_the_registry_worker', '#1370 a withheld witnessed future does not park the registry worker'),
     # fix-r2: a barrier that fails while held must release the hold, or every
     # later entry at the site is stamped with a queued receipt it does not owe.
     ('registry-hold-not-cleared-on-error', STIMULUS,
@@ -166,7 +177,7 @@ mutations = [
     # execution waits for the receipt; queueing the job from inside the returned
     # future lets a later plain append overtake it.
     ('registry-witness-deferred-past-entry', PUBLISH,
-     '''        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
+     '''        let append = Self::witnessed_within(self.jobs.clone(), gate, run, event, WITNESS_SETTLE);
         Box::pin(async move {
             witness.await?;
             append.await
@@ -174,7 +185,7 @@ mutations = [
      '''        let parts = (self.jobs.clone(), gate, run, event);
         Box::pin(async move {
             witness.await?;
-            Self::witnessed(parts.0, parts.1, parts.2, parts.3).await
+            Self::witnessed_within(parts.0, parts.1, parts.2, parts.3, WITNESS_SETTLE).await
         })''',
      'storage::stimulus_tests::witnessed_append_keeps_its_fifo_slot_before_a_later_plain_append',
      '#1370 a witnessed append keeps its FIFO slot before a later plain append'),

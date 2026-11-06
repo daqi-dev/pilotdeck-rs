@@ -1300,11 +1300,12 @@ async fn witnessed_job_fails_when_the_receipt_sender_drops() {
         FileRegistry::new(FileRunRegistry::open(root.join("registry.json")).unwrap()).unwrap();
     let (settled, gate) = mpsc::channel::<bool>();
     drop(settled);
-    let error = FileRegistry::witnessed(
+    let error = FileRegistry::witnessed_within(
         registry.jobs.clone(),
         gate,
         run_ref(),
         js(&json!({"type":"agent_status","runId":"r","event":"turn_timeout"})),
+        WITNESS_SETTLE,
     )
     .await
     .unwrap_err();
