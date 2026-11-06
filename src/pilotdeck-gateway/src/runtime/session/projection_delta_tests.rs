@@ -666,6 +666,46 @@ fn out_of_order_append_is_idempotent() {
     );
 }
 
+/// #1500: a durable entry may carry no numeric `sequence` (a foreign store, a
+/// partially migrated log). `project()` replays every entry regardless, so the
+/// live projection must not depend on `Option<f64>` ordering to include it.
+fn without_sequence(entry: &JsValue) -> JsValue {
+    let JsValue::Object(fields) = entry else {
+        panic!("#1500 fixture entry must be an object");
+    };
+    let skipped = JsString::from("sequence");
+    let mut copy = JsObject::new();
+    for (name, value) in fields.entries() {
+        if name != &skipped {
+            copy.insert(name.clone(), value.clone());
+        }
+    }
+    JsValue::Object(copy)
+}
+
+#[test]
+fn sequence_less_append_joins_the_projection() {
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1500 delivery entries");
+    let store = store();
+    append(&store, &entries[0]);
+    append(&store, &without_sequence(&entries[0]));
+    let live = lock(&store.projection.entries).clone();
+    assert_eq!(
+        live.len(),
+        2,
+        "#1500 durable entry without a sequence is not silently skipped"
+    );
+    assert_eq!(
+        store
+            .projection
+            .snapshot()
+            .expect("#1500 sequence-less snapshot"),
+        project(&live).expect("#1500 sequence-less replay"),
+        "#1500 live projection equals replay from the durable log"
+    );
+}
+
 #[test]
 fn restore_racing_completion_keeps_late_message() {
     let row = delivery();
