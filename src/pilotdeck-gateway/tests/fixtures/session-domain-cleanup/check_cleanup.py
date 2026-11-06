@@ -4061,7 +4061,14 @@ def _name_bindings(function):
     """
     bindings = _NameBindings()
 
-    def visit(node, loops):
+    # #1953: the walk order is load-bearing -- ``_exit_terminal_bindings``
+    # returns the first binding of a name it meets, so the table's insertion
+    # order decides which spelling an exit relay is judged by.  Keep the
+    # original ``_own_nodes`` order (an explicit LIFO stack, children pushed in
+    # iteration order) rather than recursing in source order.
+    stack = [(function, ())]
+    while stack:
+        node, loops = stack.pop()
         bindings.loops_of[node] = loops
         if isinstance(node, ast.AnnAssign):
             if node.value is not None:
@@ -4085,9 +4092,8 @@ def _name_bindings(function):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
                                   ast.Lambda, ast.ClassDef)):
                 continue
-            visit(child, inner)
+            stack.append((child, inner))
 
-    visit(function, ())
     return bindings
 
 
