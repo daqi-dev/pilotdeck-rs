@@ -18,9 +18,15 @@ above ``MIN_LEASE_WAIT_MS`` -- a pass without it never met the writer and
 proves nothing. GREEN failures of any kind are INVALID, never KILLED.
 
 The writer publishes the exact interval it holds the lock in; the resident test
-reports the instant of its *first* lock attempt, and GREEN requires that instant
-to fall inside the interval. A wait measured against some later lock holder, or
-a stall after an uncontended acquisition, is therefore INVALID, never KILLED.
+reports the instant of its first *refused* attempt, and GREEN requires that
+instant to fall inside the interval less ``WITNESS_MARGIN_MS`` at the upper end
+(the truncated-millisecond bucket argument in the constant below). A wait
+measured against some later lock holder, or a stall after an uncontended
+acquisition, is therefore INVALID, never KILLED.
+
+``--stop-check`` self-checks the writer's exit contract (a requested stop exits
+0 *via* the graceful path, an own failure exits non-zero and is reported); it is
+also the third row of the default run below.
 
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
@@ -90,14 +96,24 @@ MIN_LEASE_WAIT_MS = 500
 # ``--stop-check`` only exercises the writer's exit contract, so it can use a
 # short hold: nothing waits on the lease there.
 STOP_CHECK_HOLD_SECONDS = 5
+# Printed to stderr only when the writer takes the requested-stop path; the
+# self-check greps for it so "rc 0 + restored" cannot be satisfied by a SIGTERM
+# that was ignored while the writer ran out its hold (#1662 review r9 P2).
+STOPPED_MARKER = '#1662 writer stopped'
 # ``epoch_ms()`` truncates, so a timestamp is a whole millisecond *bucket*, not
 # an instant: the writer's ``end_ms`` bucket also covers the release, and a
 # reader refused right after that release by the *next* exclusive holder could
 # still report the same number. GREEN therefore requires the refusal to sit at
-# least this far inside the published interval. One second is ~1 % of the hold
-# and far above any scheduling slop, yet it makes ``blocked <= end_ms - margin``
+# least this far *below* the published end. One second is ~1 % of the hold and
+# far above any scheduling slop, yet it makes ``blocked <= end_ms - margin``
 # mean "refused at least a second before this writer let go" -- while the writer
 # demonstrably still held the exclusive lock (#1662 review r8 P0).
+#
+# Only the end side needs it. ``start_ms`` is sampled in the window body, i.e.
+# after ``mutating_sources`` already holds the exclusive lock and after the
+# mutant write, so no other holder can have been there a whole bucket earlier;
+# a lower margin would only eat into the (much smaller) reader start-up gap and
+# turn a perfectly good refusal into INVALID (#1662 review r9 P1).
 WITNESS_MARGIN_MS = 1000
 CARGO_TIMEOUT = 1800
 
@@ -225,7 +241,7 @@ def writer(out, hold):
             # A private exception, not ``SystemExit``: the controller must be able
             # to tell "we asked it to stop, it restored and left cleanly" from
             # "it failed on its own". Only the former exits 0 (#1662 r8 P1).
-            raise _Stopped('#1662 writer stopped before its window closed')
+            raise _Stopped(f'{STOPPED_MARKER} before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
     try:
@@ -237,11 +253,12 @@ def writer(out, hold):
                     # also see the mutant bytes (#166 tmp-and-rename).
                     opened = epoch_ms()
                     publish_hold(out, opened, None)
-                    publish(out / 'writer-window-open', 'open\n')
-                    # Only now is the window *published*: before this point a
-                    # SIGTERM leaves a "released" record with no window behind it,
-                    # which is exactly the fake evidence r7 removed (#1662 r8 P3).
+                    # Entered as soon as the hold start is published: every
+                    # "released" record then has a published window behind it,
+                    # and a stop landing between the two markers still leaves
+                    # consistent evidence (#1662 review r7/r8/r9 P3).
                     entered[0] = True
+                    publish(out / 'writer-window-open', 'open\n')
                     time.sleep(hold)
                     # Recorded while the lock is still held: the reader can only
                     # acquire it after this instant.
@@ -267,9 +284,9 @@ def writer(out, hold):
         # process can acquire it. Published on the normal path *and* on the
         # SIGTERM unwind, so each run can show, rather than argue, that the
         # recorded ``end_ms`` lies strictly inside the real hold
-        # (#1662 review r7 arbitration evidence). Only when the window was
-        # actually published: a SIGTERM before that never held a published
-        # window, and a "released" record there would be fake evidence
+        # (#1662 review r7 arbitration evidence). Only once the hold start was
+        # published: a SIGTERM during lock acquisition never published a window,
+        # and a "released" record there would be fake evidence
         # (#1662 review r7 P3 / r8 P3). ``restored`` is measured here, not
         # assumed: the record itself says whether the bytes are back (#1662 r8 P2).
         if entered[0]:
@@ -301,22 +318,19 @@ def force_stop(process, out):
     Graceful first (the writer's SIGTERM handler unwinds ``mutating_sources``,
     which restores every guarded byte), then a bounded wait, and only then a
     kill -- a kill during restoration can leave a mutant or a truncated file on
-    disk (#1662 review r5/r6). Returns True when the writer exited on its own,
-    which is what makes the restoration claim true. A requested stop exits 0
-    (#1662 review r8), but this path stays about *whether* it stopped: the
-    caller of ``force_stop`` only has a fallback, and a non-zero status here is
-    judged by ``stop_writer``'s own contract, not swallowed.
+    disk (#1662 review r5/r6). Returns True only when the writer exited *cleanly*
+    (status 0), which is what makes the restoration claim true: a requested stop
+    restores and then exits 0, so a non-zero status here means it did not, and
+    the caller must not claim restoration (#1662 review r8/r9).
     """
     if process.poll() is not None:
         _drain(process, out)
-        return True
+        return process.returncode == 0
     try:
         process.terminate()
         process.communicate(timeout=WRITER_EXIT_BUDGET)
-        # It exited: a requested stop restores and then leaves with status 0, so
-        # the status is judged by ``stop_writer``; here only *that* it stopped
-        # matters.
-        return True
+        # It exited: a requested stop restores and then leaves with status 0.
+        return process.returncode == 0
     except subprocess.TimeoutExpired:
         pass
     except Exception:
@@ -330,7 +344,7 @@ def force_stop(process, out):
             time.sleep(0.5)
         if process.poll() is not None:
             _drain(process, out)
-            return True
+            return process.returncode == 0
     try:
         _kill_group(process)
     finally:
@@ -507,19 +521,26 @@ def green(out):
     if end_ms is None:
         return 'INVALID', ('the writer never published the end of its hold; the acquisition '
                            'timestamp cannot be attributed to it')
+    if end_ms - start_ms <= 2 * WITNESS_MARGIN_MS:
+        # Derived-quantity guard: shortening HOLD_SECONDS (the neighbouring
+        # ``STOP_CHECK_HOLD_SECONDS`` is easy to mix up) would make the window
+        # smaller than the margin and every refusal would be "outside" it
+        # (#1662 review r9 P3).
+        return 'INVALID', (f'the published writer hold spans {end_ms - start_ms} ms, which '
+                           f'does not clear twice the {WITNESS_MARGIN_MS} ms witness margin')
     # The witness is the *refused* attempt: ``try_lock_shared`` returning
     # WouldBlock is a direct observation that an exclusive holder was there, and
     # nothing but a real holder produces it. Requiring that instant to fall
     # inside this writer's hold leaves no room for a scheduler pause (before the
     # call, or after an uncontended acquisition) and none for a later lock
-    # holder (#1662 review r4/r5 P0). It must fall ``WITNESS_MARGIN_MS`` inside
-    # both ends, because the timestamps are truncated milliseconds: see the
-    # constant for the boundary path that margin closes (#1662 review r8 P0).
+    # holder (#1662 review r4/r5 P0). The upper end needs ``WITNESS_MARGIN_MS``
+    # of slack for the truncation bucket, and only the upper end: see the
+    # constant (#1662 review r8 P0 / r9 P1).
     waited, first, blocked, at = max(waits, key=lambda row: row[0])
     if blocked == 0:
         return 'INVALID', ('the resident test never observed a refused attempt, so it never '
                            'met an exclusive holder; this row is no evidence for the lease')
-    if not (start_ms + WITNESS_MARGIN_MS <= blocked <= end_ms - WITNESS_MARGIN_MS):
+    if not (start_ms <= blocked <= end_ms - WITNESS_MARGIN_MS):
         return 'INVALID', (f'resident test was refused at {blocked} ms, outside the writer '
                            f'hold [{start_ms}, {end_ms}] less the {WITNESS_MARGIN_MS} ms '
                            f'witness margin: that refusal was not this writer')
@@ -617,27 +638,54 @@ def stop_check(out):
                     reported = str(error)
         finally:
             if process.poll() is None:
-                _kill_group(process)
-                _collect(process, 30)
+                # Never a bare kill here: an interrupt landing mid-restore would
+                # abandon the writer's unwind and leave the mutant on disk. This
+                # is the bounded graceful-then-kill path, not SIGKILL first
+                # (#1662 review r9 P0).
+                try:
+                    force_stop(process, run_out)
+                except BaseException:
+                    pass
         row = {'label': label, 'rc': process.returncode,
+               'window': (run_out / 'writer-window-open').is_file(),
                'bytes_back': capture.read_bytes() == before,
+               'stderr': (run_out / 'stop-check.stderr').read_text()
+               if (run_out / 'stop-check.stderr').is_file() else '',
                'released': read_released(run_out), 'reported': reported}
         rows.append(row)
-        print(f'{label}: rc={row["rc"]} bytes_back={row["bytes_back"]} '
-              f'released={row["released"]} reported={row["reported"]!r}', flush=True)
+        print(f'{label}: rc={row["rc"]} window={row["window"]} '
+              f'bytes_back={row["bytes_back"]} released={row["released"]} '
+              f'reported={row["reported"]!r}', flush=True)
     sigterm, own_failure = rows
     failed = []
+    if not sigterm['window']:
+        failed.append('the SIGTERM run never published its window')
     if sigterm['rc'] != 0:
         failed.append(f'a requested stop exited {sigterm["rc"]}, not 0')
+    # The writer prints the ``_Stopped`` text on the graceful path only. Without
+    # it, "rc 0 + restored" cannot tell a handled stop from a SIGTERM that was
+    # ignored and simply ran out its hold (#1662 review r9 P2).
+    if STOPPED_MARKER not in sigterm['stderr']:
+        failed.append(f'the SIGTERM run did not take the stop path: '
+                      f'{STOPPED_MARKER!r} missing from its stderr')
     if not sigterm['bytes_back']:
         failed.append('a requested stop left the guarded bytes mutated')
     if not (sigterm['released'] and sigterm['released'][1]):
         failed.append(f'a requested stop did not record restored: true '
                       f'(record={sigterm["released"]})')
+    if not own_failure['window']:
+        failed.append('the own-failure run never opened its window')
     if own_failure['rc'] == 0:
         failed.append('a writer that failed on its own exited 0')
     if own_failure['reported'] is None:
         failed.append('stop_writer accepted a non-zero writer exit')
+    elif f'exited {own_failure["rc"]}' not in own_failure['reported']:
+        failed.append(f'the reported failure does not name the exit status: '
+                      f'{own_failure["reported"]!r}')
+    if not own_failure['bytes_back']:
+        # The failure restores through the same unwind; bytes left mutated mean
+        # the restore itself broke (#1662 review r9 P2).
+        failed.append('the own-failure run left the guarded bytes mutated')
     return ('KILLED' if not failed else 'INVALID'), (
         '; '.join(failed) if failed else
         f'requested stop exited 0 and restored, own failure exited '
@@ -654,7 +702,13 @@ def main():
         if len(arguments) != 2:
             raise SystemExit('#1662 stop-check usage: --stop-check NEW_OUTPUT_DIR')
         out = new_output_directory(arguments[1])
-        status, reason = stop_check(out)
+        status, reason = 'INVALID', 'not run'
+        try:
+            status, reason = stop_check(out)
+        except Exception as error:
+            # Same shape as green/red: a crash still leaves an audit row
+            # (#1662 review r9 P3).
+            status, reason = 'INVALID', f'{type(error).__name__}: {error}'
         print(f'writer exit contract: {status}: {reason}', flush=True)
         publish_summary(out, [{'name': 'writer-exit-contract',
                                'status': status, 'reason': reason}])
@@ -665,8 +719,12 @@ def main():
         raise SystemExit('#1662 CARGO_TARGET_DIR must be supplied by the caller')
     out = new_output_directory(arguments[0])
     rows = []
+    # The exit contract is part of the control, not an optional extra: it is the
+    # only thing that shows a killed writer is reported rather than swallowed
+    # (#1662 review r9 P2).
     for name, phase in (('fixed-test-survives-writer-window', green),
-                         ('lease-removed-false-fail', red)):
+                         ('lease-removed-false-fail', red),
+                         ('writer-exit-contract', stop_check)):
         status, reason = 'INVALID', 'not run'
         try:
             status, reason = phase(out)
