@@ -29,6 +29,7 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import itertools
 import json
 import os
 import re
@@ -332,15 +333,22 @@ def check_lock():
 
 JOB_HEADER = re.compile(r'^  ([\w-]+):\s*$')
 STEP_ITEM = re.compile(r'^      - +(\S.*)$')
-# YAML 允许引号键（`"if": false` 与 `if: false` 等价），缩进也可能不是恰好 8 空格；
-# 只认「键名叫 if」会漏掉这两种写法，而漏掉一次就是闸门被跳过而 job 仍 success。
-STEP_IF = re.compile(r'''^ {8,}(?:if|'if'|"if")\s*:\s*(.*)$''')
-STEP_IGNORE_FAILURE = re.compile(
-    r'''^ {8,}(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''')
+# 按**缩进**取键，不按「哪一行含某个词」取：job 的直属键在 4 空格，step 的直属键在
+# 8 空格（`      - ` 之后）。`env: {run: exit 1}` 里的 run 不是这一步执行的脚本，
+# `env.UNUSED: |` 里的命令也不是——只有 step 直属的那个 `run` 会被 Actions 执行。
+JOB_KEY = re.compile(r'^ {4}([A-Za-z_][\w-]*)\s*:\s*(.*)$')
+STEP_KEY = re.compile(r'''^ {8}([A-Za-z_][\w-]*|'[^']+'|"[^"]+")\s*:\s*(.*)$''')
+BLOCK_SCALARS = ('|', '>', '|-', '>-', '|+', '>+')
 RETIREMENT_JOB = 'retirement-outcome-parity'
 AGGREGATE_JOB = 'check'
 REQUIRE_STEP_NAME = 'Require retirement outcome-parity success'
-REQUIRE_RUN = 'run: exit 1'
+REQUIRE_RUN = 'exit 1'
+# 两个 job 的直属键白名单：出现 `continue-on-error`（job 级，4 空格缩进，此前完全
+# 扫不到）、`env`、`defaults` 等任何未登记键即红。job 级 `continue-on-error: true`
+# 会让六个闸门 step 全红而 job 仍 success。
+RETIREMENT_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'timeout-minutes', 'steps'})
+AGGREGATE_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'steps'})
+RETIREMENT_JOB_CONDITION = "${{ needs.scope.outputs.docs_only != 'true' }}"
 # 聚合闸门的 Require step 本来就该带 `always()` 条件，所以不能像 job 内 step 那样
 # 一律拒 `if:`；要求它**恰好**是这一条（归一化空白后逐字相等）——只核前缀 + 子串
 # 挡不住在末尾追加 `&& false`（条件恒假 → step 从不执行，job 仍 success）。
@@ -348,63 +356,147 @@ REQUIRE_CONDITION = (
     f"always() && needs.{RETIREMENT_JOB}.result != 'success' && "
     f"!(needs.{RETIREMENT_JOB}.result == 'skipped' && "
     "needs.scope.outputs.docs_only == 'true')")
-# 闸门命令必须是**独立的整行**：`echo <命令>`（只打印不跑）与 `<命令> || true`
-# （失败被吞）都能让子串 needle 照样命中而闸门实际已失效。
-STEP_NEEDLES = (
-    ('emit step',
-     'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \\'),
-    ('check step',
-     'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \\'),
-    ('negative controls step',
-     'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\'),
-    ('self-check step',
-     'python3 -I scripts/retirement-outcome-parity/self_check.py'),
-    ('self-check controls step',
-     'python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls'),
+# 闸门 step 的 `run` 体必须与这里**逐字相等**（去缩进后逐行比较）。整行 `needle`
+# 只能证明「文本还在」：`echo <命令>`、`<命令> || true`、外层包一层 `if false; then … fi`、
+# 或者把命令整行挪进同一个 step 的 `env.UNUSED: |`，文本都还在而闸门已经失效。
+# 逐字相等把这些形态一次性挡掉，且不会误拒（不靠猜哪些 token 危险）。
+GATE_SCRIPTS = {
+    'emit 复算与金样逐字节比对': (
+        'F=scripts/retirement-outcome-parity/fixtures',
+        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \\',
+        '  --oracle "$RUNNER_TEMP/ts-oracle.json" \\',
+        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\',
+        '  --round "$F/round-04" --round "$F/round-05"',
+        'cmp "$RUNNER_TEMP/ts-oracle.json" '
+        'scripts/retirement-outcome-parity/ts-oracle.json',
+    ),
+    'check 5 轮': (
+        'F=scripts/retirement-outcome-parity/fixtures',
+        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \\',
+        '  --oracle scripts/retirement-outcome-parity/ts-oracle.json \\',
+        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\',
+        '  --round "$F/round-04" --round "$F/round-05"',
+    ),
+    '负控 N1–N17 全 KILLED': (
+        'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\',
+        '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"',
+    ),
+    '装置守卫自检（六项）': (
+        'python3 -I scripts/retirement-outcome-parity/self_check.py',
+    ),
+    '接线守卫变异自检': (
+        'python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls',
+    ),
+}
+# retirement job 的 step 列表按**顺序**登记：删一个闸门 step、插一个 `run: exit 0`
+# 的 step、或把两个 step 调换，都会让「登记的命令」与实际执行的不再对应。
+RETIREMENT_STEP_ORDER = (
+    ('uses', 'actions/checkout@v4'),
+    ('gate', 'emit 复算与金样逐字节比对'),
+    ('gate', 'check 5 轮'),
+    ('gate', '负控 N1–N17 全 KILLED'),
+    ('gate', '装置守卫自检（六项）'),
+    ('gate', '接线守卫变异自检'),
+    ('uses', '上传负控证据'),
 )
-# run 块里的 shell 级抑制：任一条都能让「命令失败了」变成 step success。
-RUN_TOKENS = ('||', 'set +e', 'set +o errexit', 'exit 0')
-RUN_EXACT_LINES = ('true', ':')
+# 非闸门 step 必须是 action：action step 不执行 shell，吞不掉闸门结果。
+USE_STEP_KEYS = frozenset({'name', 'uses', 'if', 'with'})
 
 
-def _step_conditions(step):
-    return [match[1].strip() for match in (STEP_IF.match(line) for line in step)
-            if match]
+def _indent_of(line):
+    return len(line) - len(line.lstrip(' '))
 
 
-def _run_block(step):
-    """step 的 `run:` 脚本行（`run: |` 之后的缩进行；单行 `run: cmd` 返回 [cmd]）。"""
-    for index, line in enumerate(step):
-        stripped = line.strip()
-        if not (stripped == 'run:' or stripped.startswith('run: ')):
+def _step_entries(path, step, label):
+    """step 的直属键 → [[键, 行内值, 缩进更深的子行], …]。
+
+    首行 `      - name: X` 归一化成 8 空格缩进，此后 8 空格 = 直属键、>8 = 上一条键
+    的值（块标量的脚本行）。<8 说明这个 step 的块已经结束，属解析错误而不是「没看见」。
+    """
+    header = step[0]
+    item = STEP_ITEM.match(header)
+    if item is None:
+        raise CheckFailure(f'{path}: step `{label}` has no `- ` item header')
+    entries = []
+    for line in [' ' * 8 + header[item.start(1):], *step[1:]]:
+        if not line.strip():
             continue
-        inline = stripped[len('run:'):].strip()
-        if inline in ('|', '>', '|-', '>-', '|+', '>+'):
-            return [rest.strip() for rest in step[index + 1:] if rest.strip()]
-        return [inline] if inline else []
-    return []
-
-
-def _reject_ignored_failure(path, step):
-    if any(STEP_IGNORE_FAILURE.match(line) for line in step):
-        raise CheckFailure(
-            f'{path}: a retirement gate step sets `continue-on-error`; its failure '
-            'would be ignored and the job would still be success')
-
-
-def _reject_suppressed_run(path, step):
-    """run 块里出现 shell 级抑制 → 命令失败也不影响 step 结果。"""
-    for command in _run_block(step):
-        for token in RUN_TOKENS:
-            if token in command:
+        indent = _indent_of(line)
+        if indent > 8:
+            if not entries:
                 raise CheckFailure(
-                    f'{path}: a gate step neutralises its own exit status with '
-                    f'`{token}` in `{command[:80]}`; the step would still succeed '
-                    'when the gate fails')
-        if command in RUN_EXACT_LINES:
+                    f'{path}: step `{label}` starts with an indented line {line!r}')
+            entries[-1][2].append(line)
+            continue
+        if indent < 8:
             raise CheckFailure(
-                f'{path}: a gate step runs the no-op `{command}`, which swallows the '
-                'real gate command\'s failure')
+                f'{path}: step `{label}` has a line at indent {indent}: {line!r}')
+        match = STEP_KEY.match(line)
+        if match is None:
+            raise CheckFailure(f'{path}: step `{label}` has an unparseable key {line!r}')
+        entries.append([match.group(1).strip('\'"'), match.group(2).strip(), []])
+    return entries
+
+
+def _step_label(entries):
+    """step 的显示名：`name` 优先，其次 `uses`。"""
+    for key in ('name', 'uses'):
+        for entry_key, inline, _ in entries:
+            if entry_key == key:
+                return inline
+    return None
+
+
+def _script_lines(path, label, entries):
+    """step **直属**的 `run` 看到的多行脚本文本（去缩进、去空行）。"""
+    runs = [entry for entry in entries if entry[0] == 'run']
+    if len(runs) != 1:
+        raise CheckFailure(
+            f'{path}: `{label}` must have exactly one top-level `run:` ({len(runs)} '
+            'found); a nested or duplicated `run` is not what the runner executes')
+    _, inline, body = runs[0]
+    if inline in BLOCK_SCALARS:
+        live = [line for line in body if line.strip()]
+        if not live:
+            raise CheckFailure(f'{path}: `{label}` has an empty `run: {inline}` body')
+        base = min(_indent_of(line) for line in live)
+        return [line[base:].rstrip() for line in live]
+    if not inline:
+        raise CheckFailure(f'{path}: `{label}` has an empty `run:`')
+    return [inline]
+
+
+def _job_entries(path, block, name):
+    entries = []
+    for line in block:
+        if not line.strip() or _indent_of(line) != 4:
+            continue
+        match = JOB_KEY.match(line)
+        if match is None:
+            raise CheckFailure(f'{path}: cannot parse a `{name}` job key from {line!r}')
+        entries.append((match.group(1), match.group(2).strip()))
+    return entries
+
+
+def _require_job_keys(path, block, name, allowed):
+    for key, _ in _job_entries(path, block, name):
+        if key not in allowed:
+            raise CheckFailure(
+                f'{path}: `{name}` job carries the unregistered key `{key}`; a job-level '
+                '`continue-on-error` / `env` / `defaults` can change or swallow the gate '
+                'without touching any step')
+
+
+def _normalised_expression(condition):
+    return ' '.join(condition.removeprefix('${{').removesuffix('}}').split())
+
+
+def _needs_list(value):
+    """`needs: [a, b]` 或 `needs: a` → 逐项列表（不做子串匹配）。"""
+    inner = value.strip()
+    if inner.startswith('[') and inner.endswith(']'):
+        return [item.strip() for item in inner[1:-1].split(',') if item.strip()]
+    return [inner] if inner else []
 
 
 def _live_lines(text):
@@ -437,13 +529,19 @@ def _steps(block):
 
 
 def check_wiring(workflow=None):
-    """CI 里这几件事必须真的接着：job 存在、三步都在、`check` 依赖它。
+    """CI 里的闸门必须**按登记的样子**接着，而不是「文本还在」。
 
-    只认**活配置**：整行注释先剥掉；闸门命令必须整行出现（`echo` / `|| true` 判红）；
-    retirement job 的 step 不得带 `if:`（含引号键 `"if": false`）、`continue-on-error`
-    或 run 块内的 shell 抑制；聚合 `check` job 的 Require step 必须仍以 `run: exit 1`
-    结束、且 `if:` 逐字等于登记的恒执行条件——否则 step 不生效或失败了不报，job 结果
-    仍是 success，聚合闸门就放行了。
+    只认活配置（整行注释先剥掉），然后按 YAML 缩进取真值逐字比对：
+
+    - 两个 job 的直属键必须在白名单内（job 级 `continue-on-error` 会让全红的 job 仍 success）；
+    - retirement job 的 step 顺序、闸门 step 的名字、直属键集合（只有 `name` + 顶层 `run`）
+      必须与登记一致——`env: {run: …}` / `env.UNUSED: |` / `if:` / `with:` 一律判红；
+    - 每个闸门 step 的 `run` 体必须与 `GATE_SCRIPTS` 逐字相等——`echo` 前缀、`|| true`
+      后缀、外层 `if false; then … fi`、多一行 `set +e` 全部逐字不等即红；
+    - 聚合 `check` job 依赖 retirement job，它的 Require step 只有 `name`/`if`/`run`
+      三个键，`run` 恰为 `exit 1`，`if:` 逐字等于登记的恒执行条件。
+
+    任一条不满足，闸门要么不执行、要么失败了不报，job 结果仍是 success，聚合闸门就放行了。
     """
     path = Path(workflow or WORKFLOW)
     try:
@@ -451,66 +549,96 @@ def check_wiring(workflow=None):
     except OSError as error:
         raise CheckFailure(f'cannot read {path}: {error}') from error
     lines = _live_lines(text)
-    live = '\n'.join(lines)
-    required = (
-        ('job', f'{RETIREMENT_JOB}:'),
-        *STEP_NEEDLES,
-        ('aggregate needs', f'negative-controls, {RETIREMENT_JOB}]'),
-        ('aggregate require step', REQUIRE_STEP_NAME),
-    )
-    missing = [label for label, needle in required if needle not in live]
-    if missing:
-        raise CheckFailure(f'{path} is missing the retirement gate: {missing}')
-    # needle 只是子串；命令还必须**整行**出现，否则 `echo <命令>` 或 `<命令> || true`
-    # 都能让 needle 命中而闸门根本没执行 / 失败了也不报。
-    shell_lines = {line.strip() for line in lines}
-    missing_commands = [needle for _, needle in STEP_NEEDLES if needle not in shell_lines]
-    if missing_commands:
+
+    retirement = _job_block(lines, RETIREMENT_JOB)
+    _require_job_keys(path, retirement, RETIREMENT_JOB, RETIREMENT_JOB_KEYS)
+    retirement_keys = dict(_job_entries(path, retirement, RETIREMENT_JOB))
+    if 'scope' not in _needs_list(retirement_keys.get('needs', '')):
         raise CheckFailure(
-            f'{path}: each gate command must be its own shell line (an `echo ` prefix '
-            f'or a `|| true` suffix silently disables it): {missing_commands}')
-    steps = _steps(_job_block(lines, RETIREMENT_JOB))
-    if not steps:
-        raise CheckFailure(f'{path}: `{RETIREMENT_JOB}` has no steps')
-    for step in steps:
-        gate = '\n'.join(step)
-        if not any(needle in gate for _, needle in STEP_NEEDLES):
-            continue
-        conditions = _step_conditions(step)
-        if conditions:
+            f'{path}: `{RETIREMENT_JOB}` must still need `scope` (docs-only classifier)')
+    job_condition = _normalised_expression(
+        retirement_keys.get('if', ''))
+    expected_job_condition = _normalised_expression(RETIREMENT_JOB_CONDITION)
+    if job_condition != expected_job_condition:
+        raise CheckFailure(
+            f'{path}: `{RETIREMENT_JOB}` job condition is `{job_condition}` but must be '
+            f'exactly `{expected_job_condition}`; any other condition can skip the job '
+            'on PRs the classifier does not mark docs-only')
+
+    steps = _steps(retirement)
+    if len(steps) != len(RETIREMENT_STEP_ORDER):
+        raise CheckFailure(
+            f'{path}: `{RETIREMENT_JOB}` must keep exactly {len(RETIREMENT_STEP_ORDER)} '
+            f'steps (found {len(steps)}); adding, dropping or reordering steps changes '
+            'which script actually runs')
+    for step, (kind, wanted) in zip(steps, RETIREMENT_STEP_ORDER):
+        entries = _step_entries(path, step, wanted)
+        label = _step_label(entries)
+        if label != wanted:
             raise CheckFailure(
-                f'{path}: a retirement gate step is guarded by `if: {conditions[0]}`; '
-                'a skipped step still leaves the job success, so the gate would be '
-                'silently disabled')
-        _reject_ignored_failure(path, step)
-        _reject_suppressed_run(path, step)
-    # 聚合闸门那一侧同样要守：`check` job 的 Require step 被 `if: false` 挡掉时，
-    # retirement job 照跑照过、needle 照命中，只扫本 job 的 step 会假 PASS。
-    require = next((step for step in _steps(_job_block(lines, AGGREGATE_JOB))
-                    if any(REQUIRE_STEP_NAME in line for line in step)), None)
+                f'{path}: expected the `{wanted}` step at this position, found `{label}`')
+        keys = [entry[0] for entry in entries]
+        if kind == 'gate':
+            if set(keys) != {'name', 'run'} or len(keys) != 2:
+                raise CheckFailure(
+                    f'{path}: gate step `{label}` may only carry `name` and one top-level '
+                    f'`run`, found {keys}; `env` / `with` / `if` / `continue-on-error` '
+                    'can disable the step or replace what it executes')
+            script = _script_lines(path, label, entries)
+            expected = list(GATE_SCRIPTS[label])
+            if script != expected:
+                first = next((f'line {number}: {got!r} != {want!r}'
+                              for number, (got, want)
+                              in enumerate(itertools.zip_longest(script, expected,
+                                                                 fillvalue='<missing>'), 1)
+                              if got != want), 'length differs')
+                raise CheckFailure(
+                    f'{path}: gate step `{label}` does not run the registered script '
+                    f'({first}); the script is pinned verbatim, so an `echo` prefix, a '
+                    '`|| true` / `! ` suffix, an `if false; then … fi` wrapper or an '
+                    'extra line all change the text')
+        else:
+            unknown = set(keys) - USE_STEP_KEYS
+            if unknown or 'uses' not in keys:
+                raise CheckFailure(
+                    f'{path}: step `{label}` must stay an action (`uses:`), found {keys}')
+
+    # 聚合闸门那一侧同样要守：Require step 被 `if: false` 挡掉、条件被改弱、或
+    # `run: exit 0` 时，retirement job 照跑照过，job 结果仍是 success。
+    aggregate = _job_block(lines, AGGREGATE_JOB)
+    _require_job_keys(path, aggregate, AGGREGATE_JOB, AGGREGATE_JOB_KEYS)
+    aggregate_keys = dict(_job_entries(path, aggregate, AGGREGATE_JOB))
+    if RETIREMENT_JOB not in _needs_list(aggregate_keys.get('needs', '')):
+        raise CheckFailure(
+            f'{path}: `{AGGREGATE_JOB}` no longer needs `{RETIREMENT_JOB}`; without the '
+            'dependency the Require step cannot see the gate result')
+    require = None
+    for step in _steps(aggregate):
+        entries = _step_entries(path, step, REQUIRE_STEP_NAME)
+        if _step_label(entries) == REQUIRE_STEP_NAME:
+            require = entries
+            break
     if require is None:
         raise CheckFailure(f'{path}: `{AGGREGATE_JOB}` has no retirement Require step')
-    _reject_ignored_failure(path, require)
-    _reject_suppressed_run(path, require)
-    if not any(line.strip() == REQUIRE_RUN for line in require):
+    keys = [entry[0] for entry in require]
+    if set(keys) != {'name', 'if', 'run'} or len(keys) != 3:
         raise CheckFailure(
-            f'{path}: the aggregate Require step no longer ends in `{REQUIRE_RUN}`; '
-            'it would run and still succeed, so a failed retirement job would not '
-            'block the merge')
-    conditions = _step_conditions(require)
-    if len(conditions) != 1:
+            f'{path}: the aggregate Require step may only carry `name`, `if` and `run`, '
+            f'found {keys}; an extra key can swallow the failure')
+    script = _script_lines(path, REQUIRE_STEP_NAME, require)
+    if script != [REQUIRE_RUN]:
         raise CheckFailure(
-            f'{path}: the aggregate Require step must carry exactly one `if:` '
-            f'({len(conditions)} found); without it the gate is unconditional or '
-            'unspecified')
-    expression = ' '.join(
-        conditions[0].removeprefix('${{').removesuffix('}}').split())
+            f'{path}: the aggregate Require step must run exactly `{REQUIRE_RUN}`, '
+            f'found {script}; anything else lets a failed retirement job pass')
+    condition = next(inline for key, inline, _ in require if key == 'if')
+    expression = _normalised_expression(condition)
     if expression != REQUIRE_CONDITION:
         raise CheckFailure(
             f'{path}: the aggregate Require step condition is `{expression}` but must '
             f'be exactly `{REQUIRE_CONDITION}`; a weakened condition (e.g. a trailing '
             '`&& false`) silently disables the gate')
-    return f'{len(required)} wiring anchors live in {path.name}'
+    return (f'{len(RETIREMENT_STEP_ORDER)} registered steps + aggregate Require step '
+            f'live in {path.name}')
 
 
 CHECKS = {
@@ -581,73 +709,149 @@ def control_lock():
     return detail
 
 
-def control_wiring():
-    """十三种拆法都必须让接线守卫变红：删行、整段注释、job 内 step 四种挡法、
-    聚合 Require step 五种挡法、shell 级三种抑制。"""
+def _step_range(lines, name):
+    """workflow 文本里某个 `- name: <name>` step 的 [start, end) 行号。"""
+    start = next((index for index, line in enumerate(lines)
+                  if line.rstrip('\n') == f'      - name: {name}'), None)
+    if start is None:
+        raise CheckFailure(f'CI workflow has no `{name}` step to mutate')
+    end = next((index for index in range(start + 1, len(lines))
+                if STEP_ITEM.match(lines[index])
+                or JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+    return start, end
+
+
+def _run_range(lines, start, end, label):
+    """step 里 `        run: |` 与其脚本体的 [run_index, body_end)。"""
+    run_index = next((index for index in range(start, end)
+                      if lines[index].rstrip('\n') == '        run: |'), None)
+    if run_index is None:
+        raise CheckFailure(f'step `{label}` has no `run: |` block to mutate')
+    body_end = next((index for index in range(run_index + 1, end)
+                     if lines[index].strip() and _indent_of(lines[index]) <= 8), end)
+    if body_end == run_index + 1:
+        raise CheckFailure(f'step `{label}` has an empty `run: |` block to mutate')
+    return run_index, body_end
+
+
+def wiring_samples():
+    """所有接线变异样本 `[(名字, 变异后的 workflow 文本)]`。
+
+    覆盖：删整个 job / 整段注释 / step 级三种挡法（`if: false`、引号键 `"if"`
+    `continue-on-error`）/ **job 级** `continue-on-error`（4 空格缩进）/ 命令整行挪进
+    `env.UNUSED: |` / 嵌套 `env: {run: …}` 冒充 Require 的执行体 / 条件块 `if false; then`
+    包住整条命令 / 三种 shell 级抑制（`|| true`、`echo` 前缀、`! ` 取反退出码）/
+    聚合 Require 的五种改法（禁用、改弱、忽略失败、追加 `&& false`、`exit 0`）/
+    删掉一个闸门 step。
+
+    每条样本都**真的能造成假绿**，不是语法坏掉的变异体：`bash -e` 下要么命令没执行、
+    要么失败被吞、要么 step / job 被跳过，而 job 结果仍是 success。
+    """
     text = WORKFLOW.read_text(encoding='utf-8')
-    original = text.splitlines(keepends=True)
+    lines = text.splitlines(keepends=True)
     samples = []
 
-    stripped = [line for line in original if 'outcome-parity' not in line.lower()]
-    if len(stripped) == len(original):
+    stripped = [line for line in lines if 'outcome-parity' not in line.lower()]
+    if len(stripped) == len(lines):
         raise CheckFailure('CI workflow has no retirement anchor to remove')
     samples.append(('removed', ''.join(stripped)))
 
-    # 整段注释：job 块连同聚合 `needs` 条目与 Require 步骤一起注掉，needle 仍作为
-    # 子串躺在文本里——只有「注释不算活配置」才能抓到。
-    raw = text.splitlines(keepends=True)
-    job_start = next((index for index, line in enumerate(raw)
+    # 整段注释：job 块连同聚合 `needs` 条目与 Require 步骤一起注掉，命令文本仍躺在
+    # 文件里——只有「注释不算活配置」才能抓到。
+    job_start = next((index for index, line in enumerate(lines)
                       if line.rstrip('\n') == f'  {RETIREMENT_JOB}:'), None)
     if job_start is None:
         raise CheckFailure('CI workflow has no retirement job to comment out')
-    job_end = next((index for index in range(job_start + 1, len(raw))
-                    if JOB_HEADER.match(raw[index].rstrip('\n'))), len(raw))
-    dead = set(range(job_start, job_end))
-    require_start = next((index for index, line in enumerate(raw)
-                          if 'Require retirement outcome-parity success' in line), None)
-    if require_start is None:
-        raise CheckFailure('CI workflow has no Require step to comment out')
-    require_end = next((index for index in range(require_start + 1, len(raw))
-                        if STEP_ITEM.match(raw[index])
-                        or JOB_HEADER.match(raw[index].rstrip('\n'))), len(raw))
-    dead |= set(range(require_start, require_end))
-    dead |= {index for index, line in enumerate(raw)
+    job_end = next((index for index in range(job_start + 1, len(lines))
+                    if JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+    require_start, require_end = _step_range(lines, REQUIRE_STEP_NAME)
+    dead = set(range(job_start, job_end)) | set(range(require_start, require_end))
+    dead |= {index for index, line in enumerate(lines)
              if f'{RETIREMENT_JOB}]' in line}
-    commented = ['# ' + line if index in dead else line
-                 for index, line in enumerate(raw)]
-    samples.append(('commented-out', ''.join(commented)))
+    samples.append(('commented-out',
+                    ''.join('# ' + line if index in dead else line
+                            for index, line in enumerate(lines))))
 
-    # step 级 `if: false` / 引号键 `"if": false` / `continue-on-error`：三种都能让闸门
-    # step 不生效，而 job 结果仍是 success → 聚合闸门放行。
-    anchor = '      - name: check 5 轮\n'
-    if text.count(anchor) != 1:
-        raise CheckFailure(f'CI workflow has no unique anchor to disable: {anchor!r}')
+    # step 级挡法：加一个 `if:` / 引号键 `"if"` / `continue-on-error` 键，闸门 step
+    # 就不执行或失败被忽略，而 job 结果仍是 success。
+    check_start, check_end = _step_range(lines, 'check 5 轮')
     for label, injected in (
             ('disabled-step', '        if: false\n'),
             ('quoted-if-step', '        "if": false\n'),
             ('continue-on-error-step', '        continue-on-error: true\n')):
-        samples.append((label, text.replace(anchor, anchor + injected, 1)))
-    # `set +e` 不改变命令行本身（整行比对照样命中），只能靠 run 块扫描抓到。
-    run_anchor = anchor + '        run: |\n'
-    if text.count(run_anchor) != 1:
-        raise CheckFailure(f'CI workflow has no unique run block to weaken: {run_anchor!r}')
-    samples.append(('set-plus-e-step',
-                    text.replace(run_anchor, run_anchor + '          set +e\n', 1)))
+        samples.append((label, ''.join(
+            lines[:check_start + 1] + [injected] + lines[check_start + 1:])))
 
-    # 聚合闸门那一侧的同型拆法：Require step 被禁用 / 条件被改弱 / 失败被忽略，
-    # retirement job 本身照跑照过，只扫本 job step 的守卫会假 PASS。
-    lines = text.splitlines(keepends=True)
-    require_start = next((index for index, line in enumerate(lines)
-                          if line.rstrip('\n') == f'      - name: {REQUIRE_STEP_NAME}'),
-                         None)
-    if require_start is None:
-        raise CheckFailure(
-            f'CI workflow has no Require step to disable: {REQUIRE_STEP_NAME!r}')
-    require_end = next((index for index in range(require_start + 1, len(lines))
-                        if STEP_ITEM.match(lines[index])
-                        or JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+    # job 级 `continue-on-error`（4 空格缩进，此前完全扫不到）：六个闸门 step 全红，
+    # job 仍 success，聚合 Require 看到的是 success。
+    samples.append(('job-level-continue-on-error', ''.join(
+        lines[:job_start + 1] + ['    continue-on-error: true\n']
+        + lines[job_start + 1:])))
+
+    # 命令文本整行挪进同一个 step 的 `env.UNUSED: |`：YAML 合法，run 里只剩
+    # `echo disabled`——按「文件里有没有这一行」判的守卫会假 PASS。
+    controls_start, controls_end = _step_range(lines, '接线守卫变异自检')
+    samples.append(('commands-moved-to-env', ''.join(
+        lines[:controls_start]
+        + ['      - name: 接线守卫变异自检\n',
+           '        run: |\n',
+           '          echo disabled\n',
+           '        env:\n',
+           '          UNUSED: |\n']
+        + ['    ' + line for line in lines[controls_start + 2:controls_end]]
+        + lines[controls_end:])))
+
+    # 聚合 Require 的 `run: exit 1` 被嵌套键冒充：`env:` 下的 `run: exit 1` 只是环境
+    # 变量，真正执行的是 `run: echo success`——按「有没有一行 strip 后等于 run: exit 1」
+    # 判的守卫会假 PASS。
+    require_run = next((index for index in range(require_start, require_end)
+                        if lines[index].rstrip('\n') == '        run: exit 1'), None)
+    if require_run is None:
+        raise CheckFailure('the aggregate Require step has no `run: exit 1` line')
+    nested = list(lines)
+    nested[require_run] = ('        env:\n'
+                           '          run: exit 1\n'
+                           '        run: echo success\n')
+    samples.append(('nested-env-run', ''.join(nested)))
+
+    # 条件块：命令仍整行独占，但被 `if false; then … fi` 包住，`bash -e` 返回 0。
+    check_run, check_body_end = _run_range(lines, check_start, check_end, 'check 5 轮')
+    samples.append(('false-if-block', ''.join(
+        lines[:check_run + 1]
+        + ['          if false; then\n']
+        + lines[check_run + 1:check_body_end]
+        + ['          fi\n']
+        + lines[check_body_end:])))
+
+    # `! cmd`：取反退出码，闸门失败时这一步反而 rc=0（`bash -e` 也不会中止）。
+    negated = list(lines)
+    negated[check_run + 2] = '          ! ' + lines[check_run + 2].lstrip()
+    samples.append(('negated-command', ''.join(negated)))
+
+    # `|| true` 必须加在一行**不以续行反斜杠结尾**的完整命令末尾，否则反斜杠会把
+    # 空格转义、下一行不再是参数（变异体 rc=127，根本没造出假绿）。check 块的末行
+    # `--round "$F/round-05"` 正好是多行命令的收尾。
+    last = lines[check_body_end - 1].rstrip('\n')
+    if last.endswith('\\'):
+        raise CheckFailure('the check step body ends in a continuation; '
+                           '`|| true` would not suppress the real command')
+    suppressed = list(lines)
+    suppressed[check_body_end - 1] = last + ' || true\n'
+    samples.append(('suppressed-command', ''.join(suppressed)))
+
+    # `echo` 前缀：命令只打印不执行。加在 python3 那一行（块的第 2 行）。
+    echoed = list(lines)
+    echoed[check_run + 2] = '          echo ' + lines[check_run + 2].lstrip()
+    samples.append(('echoed-command', ''.join(echoed)))
+
+    # 删掉一个闸门 step：其余命令照跑，少一道闸门而 job 仍 success。
+    samples.append(('removed-gate-step',
+                    ''.join(lines[:controls_start] + lines[controls_end:])))
+
+    # 聚合闸门那一侧的同型拆法：Require step 被禁用 / 条件被改弱 / 失败被忽略 /
+    # `exit 0`，retirement job 照跑照过，只扫本 job step 的守卫会假 PASS。
     if_index = next((index for index in range(require_start, require_end)
-                     if STEP_IF.match(lines[index])), None)
+                     if lines[index].lstrip().startswith('if:')), None)
     if if_index is None:
         raise CheckFailure('the aggregate Require step has no `if:` line to weaken')
     for label, replacement in (
@@ -657,40 +861,24 @@ def control_wiring():
         mutated = list(lines)
         mutated[if_index] = replacement
         samples.append((label, ''.join(mutated)))
-    ignored = list(lines)
-    ignored.insert(require_start + 1, '        continue-on-error: true\n')
-    samples.append(('continue-on-error-require-step', ''.join(ignored)))
-
-    # shell 级拆法：命令只打印不执行（`echo`）、失败被吞（`|| true`）、条件恒假
-    # （`&& false`）、失败动作改成成功（`run: exit 0`）——四者都让 needle 照命中。
-    check_command = STEP_NEEDLES[1][1]
-    command_index = next((index for index, line in enumerate(lines)
-                          if line.strip() == check_command), None)
-    if command_index is None:
-        raise CheckFailure(f'CI workflow has no `{check_command}` line to weaken')
-    command_line = lines[command_index].rstrip('\n')
-    command_indent = command_line[:len(command_line) - len(command_line.lstrip())]
-    for label, replacement in (
-            ('suppressed-command', command_line + ' || true\n'),
-            ('echoed-command', command_indent + 'echo ' + check_command + '\n')):
-        mutated = list(lines)
-        mutated[command_index] = replacement
-        samples.append((label, ''.join(mutated)))
+    samples.append(('continue-on-error-require-step', ''.join(
+        lines[:require_start + 1] + ['        continue-on-error: true\n']
+        + lines[require_start + 1:])))
     weakened_if = lines[if_index].rstrip('\n')
     if not weakened_if.endswith(' }}'):
         raise CheckFailure(f'the Require condition line does not end in ` }}}}`: '
                            f'{weakened_if!r}')
-    samples.append(('and-false-require-step',
-                    ''.join(lines[:if_index] + [weakened_if[:-3] + ' && false }}\n']
-                            + lines[if_index + 1:])))
-    run_index = next((index for index in range(require_start, require_end)
-                      if lines[index].strip() == REQUIRE_RUN), None)
-    if run_index is None:
-        raise CheckFailure(f'the aggregate Require step has no `{REQUIRE_RUN}` line')
-    exit_zero = list(lines)
-    exit_zero[run_index] = '        run: exit 0\n'
-    samples.append(('exit-zero-require-step', ''.join(exit_zero)))
+    samples.append(('and-false-require-step', ''.join(
+        lines[:if_index] + [weakened_if[:-3] + ' && false }}\n']
+        + lines[if_index + 1:])))
+    samples.append(('exit-zero-require-step', ''.join(
+        lines[:require_run] + ['        run: exit 0\n'] + lines[require_run + 1:])))
+    return samples
 
+
+def control_wiring():
+    """`wiring_samples()` 的每一条都必须让接线守卫变红。"""
+    samples = wiring_samples()
     survived = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
         for label, mutated in samples:
@@ -704,7 +892,8 @@ def control_wiring():
     if survived:
         raise CheckFailure('wiring guard did not reject: '
                            f'{survived} (the CI wiring check was weakened)')
-    return f'{len(samples)} mutated workflows ({", ".join(s for s, _ in samples)}) rejected'
+    return (f'{len(samples)} mutated workflows '
+            f'({", ".join(s for s, _ in samples)}) rejected')
 
 
 CONTROLS_FOR_CHECK = {
