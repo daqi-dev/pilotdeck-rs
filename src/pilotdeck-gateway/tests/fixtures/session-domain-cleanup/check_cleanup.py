@@ -1529,6 +1529,27 @@ _CALLABLE_KINDS = ('setattr', 'setitem', 'exec', 'eval', 'globals', 'vars',
 _KIND_CACHE = {}
 
 
+def _value_elements(node):
+    """*node*'s tuple elements with a Starred over a literal expanded (#892 r33).
+
+    ``*(md,), None`` unpacks to ``md, None``; a Starred over anything else has
+    no static shape, so the caller falls back to the whole-value binding.
+    """
+    elements = []
+    for element in node.elts:
+        if not isinstance(element, ast.Starred):
+            elements.append(element)
+            continue
+        inner = element.value
+        if not isinstance(inner, (ast.Tuple, ast.List)):
+            return None
+        nested = _value_elements(inner)
+        if nested is None:
+            return None
+        elements.extend(nested)
+    return elements
+
+
 def _target_value_pairs(target, value):
     """``(name, value)`` pairs a binding gives, unpacking tuples (#892 r32).
 
@@ -1536,20 +1557,95 @@ def _target_value_pairs(target, value):
     right-hand tuple, whose kinds are empty, so a later ``m.common = <stub>``
     never withdrew the receiver (codex boundary r31 P0-5).
     """
-    if (isinstance(target, (ast.Tuple, ast.List))
-            and isinstance(value, (ast.Tuple, ast.List))
-            and len(target.elts) == len(value.elts)
-            and not any(isinstance(element, ast.Starred) for element in target.elts)):
-        pairs = []
-        for element, element_value in zip(target.elts, value.elts):
-            pairs.extend(_target_value_pairs(element, element_value))
-        return pairs
+    if isinstance(value, ast.Starred):
+        # #892 r33: ``m, x = *(md,), None`` stores the segment behind a star;
+        # pairing ``m`` with the Starred node gave it no kinds at all, so the
+        # receiver was lost (GLM boundary r32 P1-3).
+        return _target_value_pairs(target, value.value)
+    if isinstance(target, (ast.Tuple, ast.List)) and isinstance(value, (ast.Tuple, ast.List)):
+        # #892 r33: ``m, x = *(md,), None`` expands the star before the
+        # positional pairing; reading the Starred node as one element gave
+        # ``m`` no kinds and lost the receiver (GLM boundary r32 P1-3).
+        expanded = _value_elements(value)
+        if expanded is None:
+            return [(name, value) for name in _target_names(target)]
+        value = ast.Tuple(elts=expanded, ctx=ast.Load())
+        stars = [index for index, element in enumerate(target.elts)
+                 if isinstance(element, ast.Starred)]
+        if len(stars) == 1:
+            # ``m, *rest = (md, None)``: the elements around the star keep
+            # their positions; the star target itself is handed the whole
+            # right-hand side, which fails closed on any later write.
+            index = stars[0]
+            trailing = len(target.elts) - index - 1
+            if len(value.elts) >= index + trailing:
+                pairs = []
+                for element, element_value in zip(target.elts[:index], value.elts[:index]):
+                    pairs.extend(_target_value_pairs(element, element_value))
+                if trailing:
+                    for element, element_value in zip(target.elts[index + 1:],
+                                                      value.elts[len(value.elts) - trailing:]):
+                        pairs.extend(_target_value_pairs(element, element_value))
+                pairs.extend(_target_value_pairs(target.elts[index].value, value))
+                return pairs
+        elif not stars and len(target.elts) == len(value.elts):
+            pairs = []
+            for element, element_value in zip(target.elts, value.elts):
+                pairs.extend(_target_value_pairs(element, element_value))
+            return pairs
     return [(name, value) for name in _target_names(target)]
+
+
+def _iter_literal_elements(node):
+    """Elements of ``iter((a, b))`` / ``tuple([...])`` (#892 r33).
+
+    ``for m in iter((md,)): m.common = <stub>`` iterates a literal the loop
+    rule did not read, so the receiver was lost (codex boundary r32 P0-3).
+    """
+    if (isinstance(node, ast.Call) and len(node.args) == 1
+            and not node.keywords and isinstance(node.args[0], (ast.Tuple, ast.List))
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ('iter', 'tuple', 'list', 'reversed', 'frozenset')):
+        return node.args[0].elts
+    return []
+
+
+def _simple_bindings(tree):
+    """``name -> values`` for one-target assignments (#892 r33)."""
+    simple = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            simple.setdefault(node.targets[0].id, []).append(node.value)
+        elif (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+              and node.value is not None):
+            simple.setdefault(node.target.id, []).append(node.value)
+    return simple
+
+
+def _context_argument(node, simple, depth=0):
+    """The object a ``with`` manager was handed (#892 r33).
+
+    ``with C(md) as m`` binds the value ``C`` returns, which the graph cannot
+    name; ``C`` handed exactly one positional argument, so that argument is the
+    bound object for the shapes the apparatus uses (``nullcontext``,
+    ``contextlib.suppress``).  A manager held in a name is resolved first.
+    """
+    if depth > _RESOLVE_DEPTH:
+        return None
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        return node.args[0]
+    if isinstance(node, ast.Name):
+        values = simple.get(node.id) or ()
+        if len(values) == 1:
+            return _context_argument(values[0], simple, depth + 1)
+    return None
 
 
 def _alias_assignments(tree):
     """``(name, value)`` pairs a plain binding gives a bare name (#892 r27)."""
     pairs = []
+    simple = _simple_bindings(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -1564,7 +1660,7 @@ def _alias_assignments(tree):
             # target to an element the literal iterable names (codex boundary
             # r31 P0-5).
             elements = (node.iter.elts if isinstance(node.iter, (ast.Tuple, ast.List))
-                        else [])
+                        else _iter_literal_elements(node.iter))
             for element in elements:
                 pairs.extend(_target_value_pairs(node.target, element))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
@@ -1572,12 +1668,14 @@ def _alias_assignments(tree):
                 if item.optional_vars is None:
                     continue
                 context = item.context_expr
-                if (isinstance(context, ast.Call) and len(context.args) == 1
-                        and not context.keywords):
-                    # ``with nullcontext(md) as m:`` -- the bound object is the
-                    # one the manager was handed.
-                    pairs.extend(_target_value_pairs(item.optional_vars,
-                                                     context.args[0]))
+                # ``with nullcontext(md) as m:`` -- the bound object is the one
+                # the manager was handed.  #892 r33: the manager may be held in
+                # a name first (``h = nullcontext(md); with h as m:``), so the
+                # argument is resolved through the simple binding table before
+                # the fallback (codex boundary r32 P0-3).
+                argument = _context_argument(context, simple)
+                if argument is not None:
+                    pairs.extend(_target_value_pairs(item.optional_vars, argument))
                 else:
                     pairs.extend(_target_value_pairs(item.optional_vars, context))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -1935,6 +2033,19 @@ def _write_call_target(func, kinds, depth=0):
     return None
 
 
+def _attrgetter_is_dynamic(call):
+    """True when ``op.attrgetter(<expr>)`` fixes its attribute at run time.
+
+    A literal managed name is already a ``fn:write-handle``; anything else can
+    only be judged by the object the handle is taken from (#892 r33).
+    """
+    if not call.args:
+        return True
+    literal = call.args[0]
+    return not (isinstance(literal, ast.Constant)
+                and literal.value in _MANAGED_WRITE_ATTRS)
+
+
 def _unbounded_write(node, kinds):
     """True when a call writes a managed slot whose target cannot be named.
 
@@ -1954,10 +2065,10 @@ def _unbounded_write(node, kinds):
     func = node.func
     decoded = _write_call_target(func, kinds)
     found = _expr_kinds(func, kinds)
-    if isinstance(func, ast.Call) and _callable_name(func.func, kinds) == 'getattr':
-        # An unresolved attribute name can be ``__setattr__``/``__setitem__``.
-        if _getattr_literal(func, kinds) is None:
-            return True
+    # #892 r33: an unresolved attribute name can be ``__setattr__`` /
+    # ``__setitem__``, but the write lands on the object the handle was taken
+    # from -- the caller judges that one receiver instead of the whole file
+    # (codex boundary r32 P1-1).
     managed = (decoded is not None or 'fn:partial' in found
                or 'fn:write-handle' in found)
     if not managed:
@@ -2393,6 +2504,12 @@ def _module_scope_binding_map(tree):
             for name in bound:
                 if name in global_names:
                     add(name, value)
+        # #892 r33: a walrus on a ``global``-declared name rewrites the module
+        # binding with no statement shape ``_local_bound_names`` reads, so
+        # ``global md; (md := object())`` kept every ``md.common`` call trusted
+        # (codex boundary r32 P0-1).
+        for name in _walrus_names(function) & global_names:
+            add(name, None)
     return bindings
 
 
@@ -2606,6 +2723,101 @@ def _leaf_targets(targets):
     return leaves
 
 
+def _walk_scoped(tree):
+    """``(scope, node)`` for every node, *scope* being the enclosing function."""
+    stack = [(None, tree)]
+    while stack:
+        scope, node = stack.pop()
+        yield scope, node
+        inner = node if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) else scope
+        for child in ast.iter_child_nodes(node):
+            stack.append((inner, child))
+
+
+def _scope_parents(tree):
+    """function node -> the function that encloses it (``None`` at module)."""
+    return {node: scope for scope, node in _walk_scoped(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))}
+
+
+def _scoped_alias_assignments(tree):
+    """``(scope, name, value)`` triples a binding gives a bare name (#892 r33).
+
+    *scope* is the enclosing function, ``None`` at module scope; a ``global``
+    declaration lands at module scope and a ``nonlocal`` one in the enclosing
+    function.  The file-wide table merged ``_x = md`` in one function with
+    ``_x = <stub>`` in another, so an unrelated helper withdrew a clean file's
+    relay (codex boundary r32 P1-2).
+    """
+    parents = _scope_parents(tree)
+    declared = {}
+    for scope, node in _walk_scoped(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        globals_, nonlocals_ = set(), set()
+        for child in ast.walk(node):
+            if isinstance(child, ast.Global):
+                globals_.update(child.names)
+            elif isinstance(child, ast.Nonlocal):
+                nonlocals_.update(child.names)
+        declared[node] = (globals_, nonlocals_)
+
+    def binding_scope(scope, name):
+        while scope is not None:
+            globals_, nonlocals_ = declared.get(scope, ((), ()))
+            if name in globals_:
+                return None
+            if name in nonlocals_:
+                scope = parents.get(scope)
+                continue
+            return scope
+        return None
+
+    def add(scope, target, value):
+        for name in _target_names(target):
+            pairs.append((binding_scope(scope, name), name, value))
+
+    pairs = []
+    simple = _simple_bindings(tree)
+    for scope, node in _walk_scoped(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name, value in _target_value_pairs(target, node.value):
+                    pairs.append((binding_scope(scope, name), name, value))
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            add(scope, node.target, node.value)
+        elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+            pairs.append((binding_scope(scope, node.target.id), node.target.id, node.value))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            elements = (node.iter.elts if isinstance(node.iter, (ast.Tuple, ast.List))
+                        else _iter_literal_elements(node.iter))
+            for element in elements:
+                for name, value in _target_value_pairs(node.target, element):
+                    pairs.append((binding_scope(scope, name), name, value))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is None:
+                    continue
+                argument = _context_argument(item.context_expr, simple)
+                context = argument if argument is not None else item.context_expr
+                for name, value in _target_value_pairs(item.optional_vars, context):
+                    pairs.append((binding_scope(scope, name), name, value))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            # Defaults are evaluated in the enclosing scope but land in the
+            # parameter, so they are scoped to the function itself.
+            arguments = node.args
+            positional = list(arguments.posonlyargs) + list(arguments.args)
+            defaults = list(arguments.defaults)
+            for argument, default in zip(positional[len(positional) - len(defaults):],
+                                         defaults):
+                pairs.append((node, argument.arg, default))
+            for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
+                if default is not None:
+                    pairs.append((node, argument.arg, default))
+    return pairs
+
+
 def _receiver_attribute_writes(tree, receivers, shared):
     """Receivers whose shared attribute a write replaced (#892 r26/r28).
     ``setattr(md, 'common', <stub>)`` rewrites the relay's shared attribute
@@ -2621,21 +2833,74 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # the write in a callable the alias table only knows as a partial, so the
     # receiver cannot be named; every receiver fails closed (MiniMax boundary
     # r29 P0-3).  The audited apparatus uses no ``partial`` at all.
-    for node in ast.walk(tree):
+    for scope, node in _walk_scoped(tree):
         if _unbounded_write(node, kinds):
             poisoned |= set(receivers)
             break
+    # #892 r33: a dynamic ``getattr(obj, name)`` handle may be any bound
+    # method, ``__setattr__``/``__setitem__`` included, but it writes *obj*.
+    # The r32 guard withdrew every receiver in the file for any such call,
+    # which both missed the handle held in a name (false PASS, GLM boundary
+    # r32 P0-1 / concurrency r32 P1-1) and failed unrelated objects closed
+    # (false FAIL, codex boundary r32 P1-1).
+    dynamic_targets = []
+    dynamic_handles = {}
+    for scope, node in _walk_scoped(tree):
+        if isinstance(node, ast.Call):
+            callee = node.func
+            if (isinstance(callee, ast.Call)
+                    and _callable_name(callee.func, kinds) == 'getattr'
+                    and _getattr_literal(callee, kinds) is None and callee.args):
+                dynamic_targets.append((scope, callee.args[0]))
+            elif (isinstance(callee, ast.Call)
+                  and 'fn:attrgetter' in _expr_kinds(callee.func, kinds)
+                  and _attrgetter_is_dynamic(callee) and node.args):
+                dynamic_targets.append((scope, node.args[0]))
+        elif isinstance(node, ast.Assign):
+            value = node.value
+            if (isinstance(value, ast.Call)
+                    and _callable_name(value.func, kinds) == 'getattr'
+                    and _getattr_literal(value, kinds) is None and value.args):
+                # The handle may be called (``__setattr__``) or subscripted
+                # (``__dict__``); either way the object it was taken from is
+                # the one at risk, so it is withdrawn here rather than at the
+                # use site (GLM concurrency r32 P1-1 second sequence).
+                dynamic_targets.append((scope, value.args[0]))
+            elif (isinstance(value, ast.Call)
+                  and 'fn:attrgetter' in _expr_kinds(value.func, kinds)
+                  and _attrgetter_is_dynamic(value)):
+                # ``h = op.attrgetter(name)`` takes its object at call time.
+                for leaf in _leaf_targets(node.targets):
+                    if isinstance(leaf, ast.Name):
+                        dynamic_handles[(scope, leaf.id)] = 'call-time'
     # #892 r27: ``m = md`` hands the relay to another name; both spellings are
-    # the same receiver (DeepSeek sibling r26 P1-4).
-    roots = {name: {name} for name in receivers}
+    # the same receiver (DeepSeek sibling r26 P1-4).  #892 r33: the table is
+    # keyed by scope, so a binding inside one function no longer answers for a
+    # same-named local of another (codex boundary r32 P1-2).
+    scope_parent = _scope_parents(tree)
+    roots = {(None, name): {name} for name in receivers}
     dict_roots = {}
 
-    def receiver_roots(node):
-        if isinstance(node, ast.Name):
-            return set(roots.get(node.id, ())) & receivers
+    def _chain(scope):
+        while True:
+            yield scope
+            if scope is None:
+                return
+            scope = scope_parent.get(scope)
+
+    def _lookup(table, name, scope):
+        for level in _chain(scope):
+            key = (level, name)
+            if key in table:
+                return set(table[key]) & receivers
         return set()
 
-    def namespace_dict_roots(node):
+    def receiver_roots(node, scope):
+        if isinstance(node, ast.Name):
+            return _lookup(roots, node.id, scope)
+        return set()
+
+    def namespace_dict_roots(node, scope):
         """Receivers whose ``__dict__`` mapping *node* evaluates to (#892 r28).
 
         ``md.__dict__``, ``vars(md)`` and a name bound to either (``d =
@@ -2643,17 +2908,17 @@ def _receiver_attribute_writes(tree, receivers, shared):
         ``d = md.__dict__; d['common'] = <stub>`` kept the relay trusted.
         """
         if isinstance(node, ast.Attribute) and node.attr == '__dict__':
-            return receiver_roots(node.value)
+            return receiver_roots(node.value, scope)
         if (isinstance(node, ast.Call) and _callable_name(node.func, kinds) == 'vars'
                 and node.args):
-            return receiver_roots(node.args[0])
+            return receiver_roots(node.args[0], scope)
         # #892 r30: ``getattr(md, '__dict__')`` is the same mapping root, both as
         # a subscript target (``getattr(md, '__dict__')['common'] = <stub>``)
         # and through an alias (``_d = getattr(md, '__dict__')``).
         if _getattr_literal(node, kinds) == '__dict__':
-            return receiver_roots(node.args[0])
+            return receiver_roots(node.args[0], scope)
         if isinstance(node, ast.Name):
-            return set(dict_roots.get(node.id, ())) & receivers
+            return _lookup(dict_roots, node.id, scope)
         return set()
 
     # #892 r30: a fixpoint, not a fixed number of rounds -- a four-hop
@@ -2662,20 +2927,41 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # concurrency r29 P0-5).  #892 r32: the pairs come from the shared binding
     # walk, so a ``for``/``with``/unpacked/defaulted name resolves like a plain
     # assignment (codex boundary r31 P0-5).
-    pairs = _alias_assignments(tree)
+    pairs = _scoped_alias_assignments(tree)
     while True:
         grown = False
-        for name, value in pairs:
-            for table, found in ((roots, receiver_roots(value)),
-                                 (dict_roots, namespace_dict_roots(value))):
+        for scope, name, value in pairs:
+            for table, found in ((roots, receiver_roots(value, scope)),
+                                 (dict_roots, namespace_dict_roots(value, scope))):
+                key = (scope, name)
                 if not found:
+                    # A binding that is not a receiver shadows the outer name
+                    # of the same spelling instead of inheriting it.
+                    table.setdefault(key, set())
                     continue
-                known = table.setdefault(name, set())
+                known = table.setdefault(key, set())
                 if not found <= known:
                     known |= found
                     grown = True
         if not grown:
             break
+
+    for scope, target in dynamic_targets:
+        poisoned |= receiver_roots(target, scope) | namespace_dict_roots(target, scope)
+    for scope, node in _walk_scoped(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target_expr = None
+        if isinstance(node.func, ast.Name):
+            for level in _chain(scope):
+                if (level, node.func.id) in dynamic_handles:
+                    target_expr = dynamic_handles[(level, node.func.id)]
+                    break
+            if target_expr == 'call-time':
+                target_expr = node.args[0] if node.args else None
+        if target_expr is None:
+            continue
+        poisoned |= receiver_roots(target_expr, scope) | namespace_dict_roots(target_expr, scope)
 
     calls = []
 
@@ -2692,7 +2978,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
     collect(tree, tree, ())
     for node, scope, loops, written in calls:
         target, key = written
-        found = receiver_roots(target) or namespace_dict_roots(target)
+        found = receiver_roots(target, scope) or namespace_dict_roots(target, scope)
         if not found:
             continue
         # #892 r26: the key is resolved in its own scope and from the loop it
@@ -2726,7 +3012,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # = <stub>`` builds no call at all, so every ``setattr`` rule was one
     # punctuation mark away from bypass (six r26 findings, GLM boundary r26
     # P0-1 / DeepSeek boundary r26 P0-1).
-    for node in ast.walk(tree):
+    for scope, node in _walk_scoped(tree):
         if isinstance(node, ast.Assign):
             targets = node.targets
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
@@ -2738,12 +3024,12 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # #892 r30: ``_d = md.__dict__; _d |= {'common': <stub>}``
                 # replaces the mapping through its alias.
                 if isinstance(node, ast.AugAssign):
-                    found = namespace_dict_roots(target)
+                    found = namespace_dict_roots(target, scope)
                     if found and _dict_replacement_hits(node.value, shared):
                         poisoned |= found
                 continue
             if isinstance(target, ast.Attribute):
-                found = receiver_roots(target.value)
+                found = receiver_roots(target.value, scope)
                 if not found:
                     continue
                 if target.attr in shared:
@@ -2755,7 +3041,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     if _dict_replacement_hits(node.value, shared):
                         poisoned |= found
             elif isinstance(target, ast.Subscript):
-                found = namespace_dict_roots(target.value)
+                found = namespace_dict_roots(target.value, scope)
                 if not found:
                     continue
                 key = target.slice
@@ -2767,7 +3053,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # arbitrary write against the receiver's mapping with no AST node to read;
     # ``=(...)``-style tuple targets (``md.common, _x = None, None``) are the
     # plain assignment one punctuation mark away from it.
-    for node in ast.walk(tree):
+    for scope, node in _walk_scoped(tree):
         if not isinstance(node, ast.Call):
             continue
         helper = _callable_name(node.func, kinds)
@@ -2775,18 +3061,18 @@ def _receiver_attribute_writes(tree, receivers, shared):
             continue
         namespaces = node.args[1:]
         for namespace in namespaces:
-            poisoned |= namespace_dict_roots(namespace)
+            poisoned |= namespace_dict_roots(namespace, scope)
     # #892 r28: the mapping's own mutators are the subscript write one call
     # away -- ``md.__dict__.update(common=<stub>)``, ``setdefault('common',
     # <stub>)``, ``pop('common')``, ``clear()``.  r27 read ``update`` /
     # ``setdefault`` only for the module namespace (``globals().update(...)``),
     # so every receiver spelling stayed green.
-    for node in ast.walk(tree):
+    for scope, node in _walk_scoped(tree):
         written = _mapping_method_call(node, kinds, tree)
         if written is None:
             continue
         target, keys = written
-        found = namespace_dict_roots(target)
+        found = namespace_dict_roots(target, scope)
         if not found:
             continue
         if '*' in keys or keys & shared:
@@ -3381,6 +3667,20 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
     # unions drifted a binding form per round (GLM simplify r25 P2-6).
     local_names = _function_local_names(function) - declared_global
     rebound |= supplied - declared_global
+    # #892 r33: a nested function that rebinds an enclosing local through
+    # ``nonlocal`` replaces the receiver the enclosing body reads, but the
+    # outer walk sees only the nested ``def`` name.  ``_outer(common)`` with
+    # ``nonlocal common; common = object()`` kept ``common.aggregate_status``
+    # counted as the shared call (codex boundary r32 P0-2).
+    for nested in ast.walk(function):
+        if not isinstance(nested, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(nested):
+            if not isinstance(node, ast.Nonlocal):
+                continue
+            for name in node.names:
+                trusted.discard(name)
+                rebound.add(name)
     # #892 r27: a walrus, a ``match`` capture or a nested ``def`` rebinds a
     # receiver exactly like an assignment.  ``_function_local_names`` already
     # unions them for the callee side, but ``rebound`` was still built from the
@@ -4759,6 +5059,17 @@ def _unproven_expansion(call, bindings, module=None, rel=None):
 _WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
 
 
+_RESOLVE_DEPTH = 50
+"""Hops the name-resolution helpers follow before giving up (#892 r33).
+
+The kinds world (``_object_kinds``) is a fixpoint, so a fixed three-hop cap in
+``_builtin_receiver`` / ``_resolved_write_helper`` / ``_name_resolves_to_builtins``
+stopped short of a longer alias chain the main rule already followed
+(``bi4 = bi3 = bi2 = bi1 = __builtins__`` kept the write invisible; GLM
+boundary r32 P2-5).
+"""
+
+
 def _builtin_receiver(node, bindings, depth=0):
     """True when *node* denotes a builtin type/module (#892 r30).
 
@@ -4767,18 +5078,22 @@ def _builtin_receiver(node, bindings, depth=0):
     resolver follows one local alias, so ``_d = dict; _d.update(report, ...)``
     is read the same way.
     """
-    if depth > 3:
+    if depth > _RESOLVE_DEPTH:
         return False
     if isinstance(node, ast.Name):
         # #892 r32: a local that shadows the builtin name is not the builtin.
         # Reading ``dict`` as the builtin dropped the real target argument and
         # left ``dict = {...}; dict.update({'status': ...})`` invisible (GLM
         # boundary r31 P0-3).
-        if (bindings or {}).get(node.id):
-            for _line, value in bindings[node.id]:
-                if _builtin_receiver(value, bindings, depth + 1):
-                    return True
-            return False
+        values = (bindings or {}).get(node.id) or ()
+        if values:
+            # #892 r33: the name denotes the *last* binding at run time, not
+            # any binding it ever had.  Asking whether a historical one was the
+            # builtin left ``dict = builtins.dict; dict = report;
+            # dict.update({'status': 'PASS'})`` invisible (codex boundary
+            # r32 P0-4).
+            _line, last = max(values, key=lambda item: item[0])
+            return _builtin_receiver(last, bindings, depth + 1)
         if node.id in ('dict', 'type', 'object', 'builtins', 'operator',
                        '__builtins__'):
             return True
@@ -4796,7 +5111,7 @@ def _resolved_write_helper(node, bindings, depth=0):
     ``from builtins import setattr as _sa`` bind the same callable; the status
     ruler compared the bare name only and read neither (GLM sibling r29 P1-7).
     """
-    if depth > 3:
+    if depth > _RESOLVE_DEPTH:
         return None
     if isinstance(node, ast.Name):
         if node.id in _WRITE_HELPERS or node.id in ('getattr', 'partial'):
@@ -4857,12 +5172,45 @@ def _resolved_write_helper(node, bindings, depth=0):
 
 def _name_resolves_to_builtins(node, bindings, depth=0):
     """True when *node* is the ``builtins`` module table (#892 r32)."""
-    if depth > 3 or not isinstance(node, ast.Name):
+    if depth > _RESOLVE_DEPTH or not isinstance(node, ast.Name):
         return False
     if node.id in ('builtins', '__builtins__'):
         return True
     return any(_name_resolves_to_builtins(value, bindings, depth + 1)
                for _line, value in (bindings or {}).get(node.id) or ())
+
+
+def _partial_bound_arguments(node, bindings, depth=0):
+    """Leading positional arguments a ``partial`` handle pre-binds (#892 r33).
+
+    ``functools.partial(setattr, report)`` returns a callable whose first
+    argument is already ``report``; the status ruler read only the invocation's
+    own arguments, so a pre-bound target/key made the write invisible.
+    Returns ``None`` when *node* is not a partial at all.
+    """
+    if depth > _RESOLVE_DEPTH:
+        return None
+    if isinstance(node, ast.Name):
+        found = None
+        for _line, value in (bindings or {}).get(node.id) or ():
+            got = _partial_bound_arguments(value, bindings, depth + 1)
+            if got is None:
+                continue
+            if found is not None and [ast.dump(item) for item in got] != [
+                    ast.dump(item) for item in found]:
+                return None
+            found = got
+        return found
+    if isinstance(node, ast.Call):
+        callee = node.func
+        is_partial = ((isinstance(callee, ast.Name) and callee.id == 'partial')
+                      or (isinstance(callee, ast.Attribute) and callee.attr == 'partial')
+                      or _resolved_write_helper(callee, bindings, depth + 1) == 'partial')
+        if is_partial and node.args:
+            inner = _resolved_write_helper(node.args[0], bindings, depth + 1)
+            if inner in _WRITE_HELPERS:
+                return list(node.args[1:])
+    return None
 
 
 def _call_written_values(call, bindings=None):
@@ -4890,16 +5238,25 @@ def _call_written_values(call, bindings=None):
         # ``object.__setattr__(obj, 'status', value)`` /
         # ``operator.setitem(obj, 'status', value)`` /
         # ``builtins.setattr(obj, 'status', value)`` / an alias of the builtin.
+        # #892 r33: a ``partial`` handle pre-binds its leading positional
+        # arguments, so ``p = functools.partial(setattr, report);
+        # p('status', 'PASS')`` and
+        # ``functools.partial(operator.setitem, report, 'status')('PASS')``
+        # write the same slot as the inline spelling.  The ruler expanded only
+        # the call's own arguments and dropped the bound ones (codex boundary
+        # r32 P0-5 / GLM boundary r32 P1-2).
+        prebound = _partial_bound_arguments(func, bindings)
+        arguments = list(call.args) if prebound is None else prebound + list(call.args)
         if isinstance(func, ast.Attribute) and func.attr.startswith('__'):
-            bound = len(call.args) == 2
-        elif isinstance(func, ast.Call):
+            bound = len(arguments) == 2
+        elif isinstance(func, ast.Call) and prebound is None:
             bound = True
         else:
-            bound = len(call.args) == 2 and isinstance(func, ast.Attribute)
-        if len(call.args) == 3:
-            key, value = call.args[1], call.args[2]
-        elif bound and len(call.args) == 2:
-            key, value = call.args[0], call.args[1]
+            bound = len(arguments) == 2 and isinstance(func, ast.Attribute)
+        if len(arguments) == 3:
+            key, value = arguments[1], arguments[2]
+        elif bound and len(arguments) == 2:
+            key, value = arguments[0], arguments[1]
         else:
             return written
         if _status_key(key):
