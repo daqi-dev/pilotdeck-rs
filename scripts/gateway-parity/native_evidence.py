@@ -486,6 +486,26 @@ WS_TERMINAL_FALLBACK = {
 }
 
 
+def same_json(left, right):
+    """Compare two decoded JSON values by type, not by Python's ``==``.
+
+    Python treats ``True``/``1`` and ``False``/``0`` as equal, so a terminal
+    whose JSON boolean became a number still satisfied the derivation rule and
+    the audit scored a stream whose terminal is not the frame it claims to
+    repeat (#1372 review P0).  Booleans therefore only match booleans; numbers
+    keep comparing by value, which is what ``JSON.parse`` gives JavaScript.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(same_json(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        return len(left) == len(right) and all(same_json(one, other) for one, other in zip(left, right))
+    return type(left) is type(right) and left == right
+
+
 def terminal_source(frames, terminal):
     """Name the derivation rule that must have produced ``terminal``.
 
@@ -496,9 +516,9 @@ def terminal_source(frames, terminal):
     last_completed = next((frame for frame in reversed(frames) if frame.get('type') == 'turn_completed'), None)
     expected = last_error if last_error is not None else last_completed
     if expected is None:
-        need(terminal == WS_TERMINAL_FALLBACK, 'terminal envelope must be the empty-stream fallback')
+        need(same_json(terminal, WS_TERMINAL_FALLBACK), 'terminal envelope must be the empty-stream fallback')
         return 'fallback'
-    need(terminal == expected, 'terminal envelope must repeat lastError ?? lastCompleted')
+    need(same_json(terminal, expected), 'terminal envelope must repeat lastError ?? lastCompleted')
     return 'error' if last_error is not None else 'turn_completed'
 
 

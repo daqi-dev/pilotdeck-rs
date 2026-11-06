@@ -2343,6 +2343,26 @@ class WsProjection(unittest.TestCase):
             self.project(self.envelope(0, {'type': 'error', 'code': 'turn_timeout'}),
                          self.envelope(1, dict(self.native.WS_TERMINAL_FALLBACK), final=True))
 
+    def test_terminal_types_are_not_coerced(self):
+        # #1372 review P0: Python's ``==`` makes True == 1, so a terminal that
+        # turned a JSON boolean into a number still satisfied the derivation
+        # rule and the audit scored a stream whose terminal is not the frame it
+        # claims to repeat.  Types the wire distinguishes must stay distinct.
+        coerced = dict(self.native.WS_TERMINAL_FALLBACK, recoverable=1)
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, coerced, final=True))
+        error = {'type': 'error', 'code': 'turn_timeout', 'retryable': True}
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, error), self.envelope(1, dict(error, retryable=1), final=True))
+        completed = {'type': 'turn_completed', 'usage': {'inputTokens': 3}}
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, completed),
+                         self.envelope(1, {'type': 'turn_completed', 'usage': {'inputTokens': '3'}}, final=True))
+        # Number spelling stays a value, not a type: JSON.parse gives JavaScript
+        # one number type, so 3 and 3.0 are the same terminal.
+        self.project(self.envelope(0, completed),
+                     self.envelope(1, {'type': 'turn_completed', 'usage': {'inputTokens': 3.0}}, final=True))
+
     def test_exactly_one_terminal_and_it_must_be_last(self):
         event = {'type': 'assistant_text_delta', 'text': 'x'}
         with self.assertRaises(self.native.Incomplete):
