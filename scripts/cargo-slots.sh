@@ -21,12 +21,13 @@
 #   2   保留：本脚本从不主动使用。bash 自身语法错误会返回 2，调用方见到就是「脚本坏了」，不得放行。
 #   3   取样失败（ps 失败 / 输出为空），无法判断名额
 #   4   统一闸存在但给不出名额（--status 非 0 / 输出解不出名额 / 冷启动超时且本机无名额缓存 /
-#       HOME 未设或不是目录导致闸路径无法确定 / 本机有 pdrs-ops 或共享池迹象但闸不可执行 /
-#       名额缓存超过 24 h 未从闸刷新）→ fail-closed。冷启动超时的恢复路径是人工跑
+#       HOME 未设或不是目录导致闸路径无法确定 / 本机有 pdrs-ops、pdrs-runner-tools 或共享池迹象
+#       但闸不可执行 / 名额缓存超过 24 h 未从闸刷新）→ fail-closed。冷启动超时的恢复路径是人工跑
 #       `--refresh-cap`（预算 240 s ≥ 闸自己的单次 du 上限 180 s）：写完缓存后消费方只读缓存。
 #   64  用法错误（传了旧的上限参数）
-#   69  本机确实没有统一闸（EX_UNAVAILABLE：CI / 普通开发机：$HOME 下既无 pdrs-ops 也无共享池目录），
-#       或调用方用 PDRS_CARGO_SLOT_BIN 显式声明「本机不用共享名额」→ 无共享名额可等，可以继续
+#   69  本机确实没有统一闸（EX_UNAVAILABLE：CI / 普通开发机：$HOME 下既无 pdrs-ops、也无
+#       pdrs-runner-tools 安装、也无共享池目录），或调用方用 PDRS_CARGO_SLOT_BIN 显式声明
+#       「本机不用共享名额」→ 无共享名额可等，可以继续
 #
 # 为什么要有名额缓存（11-06，#1556 r1 P1-2）：`cargo-slot --status` 除名额行外还会算磁盘余量，
 # 闸内 disk.cache（TTL 300 s）过期时会起 8 路 du 扫 _build+_tmp。本机实测冷缓存 31.8–38.6 s、
@@ -98,8 +99,8 @@ done
 #   · PDRS_CARGO_SLOT_BIN 显式指定 = 调用方声明闸在哪（负控桩闸 / 换机）；不可执行按「显式 opt-in
 #     的不用共享名额」处理 → 69（沿用 r1 契约）。
 #   · 未指定且 HOME 未设 → 无法定位，fail-closed 4。
-#   · 未指定、HOME 有但闸不可执行 → 本机有 pdrs-ops 目录或共享池目录就是「装了但坏了」→ 4；
-#     两者都没有才是真的没有闸 → 69。
+#   · 未指定、HOME 有但闸不可执行 → 本机有 pdrs-ops / pdrs-runner-tools 目录或共享池目录就是
+#     「装了但坏了」→ 4；都没有才是真的没有闸 → 69。
 #   闸路径：$HOME/ws/pdrs-ops/bin/cargo-slot；**没有**该安装目录的远端 runner 宿主回退到
 #   $HOME/ws/pdrs-runner-tools/bin/cargo（#589 收尾：同一实现的闸，此前只有 run_host.py 认）。
 #   双装宿主不回退：ops 闸坏掉仍按「装了但坏了」→ 4，不让 runner 副本静默顶替。
@@ -125,11 +126,14 @@ else
   if [ ! -x "$GATE" ]; then
     POOL_DIR=/private/tmp/pdrs-cargo-gate
     [ "$(uname -s)" = Darwin ] || POOL_DIR=/tmp/pdrs-cargo-gate
+    # 测试旋钮：负控要证明「runner-tools 目录在、闸坏 → 4」，必须能把共享池目录
+    # 指到不存在的位置，否则真机上的 POOL_DIR 本身就足以退 4，用例分不出对错。
+    POOL_DIR=${PDRS_CARGO_SLOTS_POOL_DIR:-$POOL_DIR}
     if [ -d "$HOME/ws/pdrs-ops" ] || [ -d "$HOME/ws/pdrs-runner-tools" ] || [ -d "$POOL_DIR" ]; then
       echo "cargo-slots: 本机有 pdrs-ops / pdrs-runner-tools 或共享池（${POOL_DIR}）迹象，但闸 ${GATE} 不可执行 → fail-closed" >&2
       exit 4
     fi
-    echo "cargo-slots: 本机没有统一闸（${GATE} 不存在，$HOME 下也无 pdrs-ops / 共享池）→ 无共享名额可等" >&2
+    echo "cargo-slots: 本机没有统一闸（${GATE} 不存在，$HOME 下也无 pdrs-ops / pdrs-runner-tools / 共享池）→ 无共享名额可等" >&2
     exit 69
   fi
 fi

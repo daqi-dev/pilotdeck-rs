@@ -1152,7 +1152,8 @@ def test_probe_rust_tests() -> None:
     set is a hard failure here, not a silent skip, so a green suite cannot
     hide unexecuted probe tests.
 
-    11-05：`cargo-slots.sh` 的名额只来自统一闸（`~/ws/pdrs-ops/bin/cargo-slot`，
+    11-05：`cargo-slots.sh` 的名额只来自统一闸（`~/ws/pdrs-ops/bin/cargo-slot`；没有该
+    安装的远端 runner 宿主回退到同一实现的 `~/ws/pdrs-runner-tools/bin/cargo`，
     按主机 2 / 4 / 2 / 2）。CI 与普通开发机没有这把闸，脚本按 EX_UNAVAILABLE
     退出 69——那说明本机没有共享名额可等，不是「槽位已满」，继续跑 probe 测试；
     退出 1（真的满）仍然是硬失败，退出 2 / 3 / 4 / 64（脚本或闸坏了）同样是硬失败。
