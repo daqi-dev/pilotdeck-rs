@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N15）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N17）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -20,10 +20,14 @@ import sys
 
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
+# 同族装置口径：不落 .pyc（本脚本用 spec_from_file_location 再加载 checker，
+# 陈旧字节码会让「跑的是当前源码」不成立）。
+sys.dont_write_bytecode = True
 
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -217,8 +221,20 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
         rows, frames = clone((base_rows, base_frames))[0]
         identifier = send_id(frames, stream_ok[0])
         bad = error_response(identifier, ALT_CODE, INJECTED_MESSAGE)
-        frames.append({'direction': 'receive', 'raw': json.dumps(bad, ensure_ascii=False),
-                       'frame': bad})
+        # 规则允许 stream ok 已有一条 ok:true 的 response；那种形状下必须**改写**
+        # 既有帧（追加会让落地检查先看到成功帧 → 控件 INVALID）。
+        existing = [frame for frame in frames
+                    if frame.get('direction') == 'receive'
+                    and isinstance(frame.get('frame'), dict)
+                    and frame['frame'].get('type') == 'response'
+                    and frame['frame'].get('id') == identifier]
+        if existing:
+            existing[0]['frame'] = bad
+            existing[0]['raw'] = json.dumps(bad, ensure_ascii=False)
+            del existing[1:]
+        else:
+            frames.append({'direction': 'receive',
+                           'raw': json.dumps(bad, ensure_ascii=False), 'frame': bad})
         return {'round-01': (rows, frames)}
 
     def n15():
@@ -239,11 +255,52 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
             row = find_row(rows, stream_ok[0])
             if row['outcome'] != 'ok':
                 return False, f'{stream_ok[0]} outcome changed to {row["outcome"]!r}'
-            frame = response_frame(frames, send_id(frames, stream_ok[0]))
-            if frame is None or (frame['frame'] or {}).get('ok') is not False:
+            matching = [frame for frame in frames
+                        if frame.get('direction') == 'receive'
+                        and isinstance(frame.get('frame'), dict)
+                        and frame['frame'].get('type') == 'response'
+                        and frame['frame'].get('id') == send_id(frames, stream_ok[0])]
+            if len(matching) != 1 or (matching[0]['frame'] or {}).get('ok') is not False:
                 return False, 'contradictory error response did not land'
             return True, ''
         return check
+
+    def n16():
+        rows, frames = clone((base_rows, base_frames))[0]
+        identifier = send_id(frames, request_ok[0])
+        replay = ok_response(identifier)
+        frames.append({'direction': 'receive',
+                       'raw': json.dumps(replay, ensure_ascii=False), 'frame': replay})
+        return {'round-01': (rows, frames)}
+
+    def n17():
+        rows, frames = clone((base_rows, base_frames))[0]
+        method = shape_probe
+        original = next(frame for frame in frames
+                        if frame.get('direction') == 'send'
+                        and isinstance(frame.get('frame'), dict)
+                        and frame['frame'].get('method') == method)
+        frames.append(json.loads(json.dumps(original)))
+        return {'round-01': (rows, frames)}
+
+    def landed_count(direction, kind, method):
+        """被注入方法在同向同类型帧里的条数必须恰为 expected。"""
+        def build(expected):
+            def check(bundles):
+                _, frames = bundles['round-01']
+                matching = [frame for frame in frames
+                            if frame.get('direction') == direction
+                            and isinstance(frame.get('frame'), dict)
+                            and frame['frame'].get('type') == kind
+                            and (frame['frame'].get('method') == method
+                                 if direction == 'send'
+                                 else frame['frame'].get('id') == send_id(frames, method))]
+                if len(matching) != expected:
+                    return False, (f'{len(matching)} {direction}/{kind} frames for '
+                                   f'{method}, expected {expected}')
+                return True, ''
+            return check
+        return build
 
     def landed_n15():
         def check(bundles):
@@ -394,17 +451,28 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
                 ['P6-WIRE-CODE'], stream_ok[0], n14, landed_n14()),
         Control('N15', f'{request_ok[0]} 与 {request_ok[1]} 共用同一请求 id（只留一条 response）',
                 ['P6-WIRE-CODE'], request_ok[0], n15, landed_n15()),
+        Control('N16', f'{request_ok[0]} 的 response 复制一条（同 id 两条 response）',
+                ['P6-WIRE-CODE'], request_ok[0], n16,
+                landed_count('receive', 'response', request_ok[0])(2)),
+        Control('N17', f'{shape_probe} 的 send 帧复制一条（一个方法两条 send）',
+                ['P6-WIRE-CODE'], shape_probe, n17,
+                landed_count('send', 'request', shape_probe)(2)),
     ]
 
 
 def preflight_base_rounds(data_root, oracle, names):
     """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。"""
     for name in names:
-        result = subprocess.run(
-            [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle),
-             '--round', str(Path(data_root) / name)],
-            capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS,
-            start_new_session=True)
+        try:
+            result = subprocess.run(
+                [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle),
+                 '--round', str(Path(data_root) / name)],
+                capture_output=True, text=True, timeout=CHECK_TIMEOUT_SECONDS,
+                start_new_session=True)
+        except subprocess.TimeoutExpired:
+            print(f'preflight {name}: TIMEOUT after {CHECK_TIMEOUT_SECONDS}s',
+                  file=sys.stderr)
+            return 2
         print(f'preflight {name}: rc={result.returncode}', file=sys.stderr)
         if result.returncode != 0:
             print(result.stdout[:2000], result.stderr[:2000], file=sys.stderr)
@@ -496,9 +564,35 @@ def run_control(control, out_root, oracle):
     return record
 
 
+def invalidate_stale_summary(out_root):
+    """**启动第一件事**：删掉上一轮的 summary.json 与残留 tmp。
+
+    下游以「summary.json 存在」为「负控已跑完」的证据；早退路径（读数据失败、
+    preflight 非 0、控件构造断言失败）若走不到这里，旧 PASS 会冒充本轮结果
+    （两家评审 P0，实测 `rc: 2` 且 `unlink: []`）。
+    """
+    out_root = Path(out_root)
+    try:
+        out_root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(f'negative_controls: cannot create {out_root}: {error}', file=sys.stderr)
+        return False
+    removed = []
+    for path in sorted(out_root.glob('summary.json*')):
+        try:
+            path.unlink()
+        except OSError as error:
+            print(f'negative_controls: cannot remove {path}: {error}', file=sys.stderr)
+            return False
+        removed.append(path.name)
+    if removed:
+        print(f'removed stale {", ".join(removed)}', file=sys.stderr)
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Negative controls N1-N15 for the retirement outcome-parity '
+        description='Negative controls N1-N17 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
     parser.add_argument('output', help='output directory for mutated rounds + summary')
     parser.add_argument('--data', default=str(DEFAULT_DATA),
@@ -507,25 +601,30 @@ def main(argv=None):
                         help='ts-oracle.json (default: %(default)s)')
     args = parser.parse_args(argv)
 
-    data = Path(args.data)
-    base_rows, base_frames = read_round(data, 'round-01')
-    round2_rows, round2_frames = read_round(data, 'round-02')
-    # 前置：未变异的参考轮必须本来 PASS。否则「期望规则 fire」可能是既有违规，
-    # 归因就不成立（例如 --data 指向的轮本就有 P4）。
-    preflight = preflight_base_rounds(data, Path(args.oracle), ('round-01', 'round-02'))
-    if preflight != 0:
-        print('negative_controls: 未变异的参考轮已不 PASS 金样，负控无法归因；先修数据或金样',
-              file=sys.stderr)
-        return 2
-    controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
-
     out_root = Path(args.output)
-    out_root.mkdir(parents=True, exist_ok=True)
-    # 上一轮的 summary.json 不得冒充本轮结果（下游以「summary.json 存在」为跑完证据）。
-    stale = out_root / 'summary.json'
-    if stale.exists():
-        stale.unlink()
-        print(f'removed stale {stale}', file=sys.stderr)
+    # 第一件事：旧 summary 失效。任何早退路径都不得把上一轮的 PASS 留在盘上。
+    if not invalidate_stale_summary(out_root):
+        return 2
+    data = Path(args.data)
+    try:
+        base_rows, base_frames = read_round(data, 'round-01')
+        round2_rows, round2_frames = read_round(data, 'round-02')
+        # 前置：未变异的参考轮必须本来 PASS。否则「期望规则 fire」可能是既有违规，
+        # 归因就不成立（例如 --data 指向的轮本就有 P4）。
+        preflight = preflight_base_rounds(data, Path(args.oracle),
+                                          ('round-01', 'round-02'))
+        if preflight != 0:
+            print('negative_controls: 未变异的参考轮已不 PASS 金样，负控无法归因；'
+                  '先修数据或金样', file=sys.stderr)
+            return 2
+        controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
+    except InputError as error:
+        print(f'negative_controls: 输入不可用：{error}', file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001 - 控件构造失败同样按输入不可用收口
+        print(f'negative_controls: cannot assemble controls: {error!r}', file=sys.stderr)
+        return 2
+
     records = []
     for control in controls:  # 全部跑完再汇总，不遇败即停
         record = run_control(control, out_root, Path(args.oracle))
@@ -538,10 +637,12 @@ def main(argv=None):
                'controls': records, 'counts': counts,
                'oracle': str(args.oracle), 'data': str(args.data)}
     target = out_root / 'summary.json'
-    tmp = out_root / 'summary.json.tmp'
+    # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
+    # 会把另一进程写了一半的内容发布成最终文件）。
+    tmp = out_root / f'summary.json.{os.getpid()}.tmp'
     tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n',
                    encoding='utf-8')
-    tmp.rename(target)  # 原子发布：先写 *.tmp 再 rename
+    tmp.replace(target)  # 原子发布：先写 *.tmp 再 replace
     print(json.dumps({'status': summary['status'], 'counts': counts,
                       'summary': str(target)}, ensure_ascii=False))
     return 0 if summary['status'] == 'PASS' else 1
