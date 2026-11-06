@@ -7,11 +7,14 @@
 //! Not wired into the host, ProjectRuntimeRegistry or gateway methods.
 //!
 //! Domain validation is shared with the recorder. The two read ports gate on
-//! the TS reducer reads they model: `restore_entry_supported` mirrors hydrate
-//! (reduce only) and `list_entry_supported` mirrors listSessions
-//! (reduce + finalize + the title trims). Shapes TS throws on reject with the
-//! same TypeError text; ProjectionUnavailable is left for shapes TS accepts
-//! that Rust has not modelled.
+//! the TS reducer reads they model: `turn_summary_supported`,
+//! `control_boundary_supported` and `metadata_reduce_supported` mirror hydrate
+//! (reduce only) and `list_conversation_entry_supported` + `list_title_supported`
+//! mirror listSessions (conversation reduce + finalize, then the title trims).
+//! Every gate runs projector by projector over the whole log, because that is
+//! the order TS surfaces errors in. Shapes TS throws on reject with the same
+//! TypeError text; ProjectionUnavailable is left for shapes TS accepts that
+//! Rust has not modelled.
 use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
@@ -797,16 +800,20 @@ impl TranscriptWriter {
         inner.last_entry_id = state.last_entry_id;
         inner.entry_ids = ids;
         inner.recorder_domain = domain;
-        // Hydration runs every registered reducer. Agent transcript reducers
-        // run over the whole log before WebHistory's file-artifact reducer;
-        // accepted_input.messages waits for conversation finalization.
+        // Hydration runs every registered reducer over the whole log, reducer by
+        // reducer (turnSummary, then the compact boundary + WebHistory token
+        // usage, then metadata) — not entry by entry: a malformed entry late in
+        // the log wins over an earlier one from a later reducer.
         for entry in entries {
-            if matches!(
-                lossy_value(field(entry, "type")).as_str(),
-                "turn_result" | "control_boundary" | "session_metadata"
-            ) {
-                restore_entry_supported(entry)?;
+            turn_summary_supported(entry)?;
+        }
+        for entry in entries {
+            if is_str(field(entry, "type"), "control_boundary") {
+                control_boundary_supported(entry, true)?;
             }
+        }
+        for entry in entries {
+            metadata_reduce_supported(entry)?;
         }
         // WebHistory reads message.content.some even for incomplete turns.
         for entry in entries {
@@ -1371,40 +1378,54 @@ fn message_supported(message: &JsValue) -> bool {
 fn nullish(value: &JsValue) -> bool {
     matches!(value, JsValue::Undefined | JsValue::Null)
 }
-/// TS restore (`ProjectSessionStorage.restore` → `SessionProjectionDriver.hydrate`)
-/// runs every registered reducer's `reduce` without catching and never runs
-/// `finalize`. Each arm below reproduces only the reads that throw, in reducer
-/// order, so every shape TS restores must restore here and every shape TS
-/// rejects must reject with the same TypeError text (fixture rows
-/// `restore-shape-*` in tests/fixtures/transcript-adapter).
+// TS restore (`ProjectSessionStorage.restore` → `SessionProjectionDriver.hydrate`)
+// runs every registered reducer's `reduce` without catching and never runs
+// `finalize`. The three reducers below reproduce only the reads that throw, in
+// reducer order, so every shape TS restores must restore here and every shape TS
+// rejects must reject with the same TypeError text (fixture rows
+// `restore-shape-*` and `restore-order-*` in tests/fixtures/transcript-adapter).
+/// Single-entry dispatcher for one log entry; the ports themselves run each
+/// projector over the whole log instead (see `restore_entries` and
+/// `project_session_info`), which is what decides the error TS surfaces.
+#[cfg(test)]
 fn restore_entry_supported(entry: &JsValue) -> AdapterResult<()> {
     match lossy_value(field(entry, "type")).as_str() {
-        "turn_result" => {
-            // AgentTranscriptProjections.ts turnSummary reduce:
-            // `mergeUsage(state.usage, entry.result.usage)` reads the second
-            // usage's fields, then the permissionDenials spread accepts any
-            // iterable (a string spreads into code points, an object throws).
-            // `errors` is never read by hydrate.
-            let result = projection_result(entry)?;
-            let usage = field(result, "usage");
-            if nullish(usage) {
-                return Err(cannot_read(usage, "inputTokens"));
-            }
-            if !js_iterable(field(result, "permissionDenials")) {
-                return Err(AdapterError::Type(
-                    "entry.result.permissionDenials is not iterable".into(),
-                ));
-            }
-        }
-        "control_boundary" => control_boundary_supported(entry, true)?,
-        "session_metadata" => {
-            // mergeMetadata reads `metadata.title` on the new value.
-            let metadata = field(entry, "metadata");
-            if nullish(metadata) {
-                return Err(cannot_read(metadata, "title"));
-            }
-        }
-        _ => {}
+        "turn_result" => turn_summary_supported(entry),
+        "control_boundary" => control_boundary_supported(entry, true),
+        "session_metadata" => metadata_reduce_supported(entry),
+        _ => Ok(()),
+    }
+}
+/// turnSummary reducer, shared by both ports: `mergeUsage(state.usage,
+/// entry.result.usage)` runs over `entry.result` first and reads the new
+/// usage's fields, then the permissionDenials spread accepts any iterable (a
+/// string spreads into code points, an object throws). `errors` is never read
+/// here — only the conversation finalize reads it, and only on the list port.
+fn turn_summary_supported(entry: &JsValue) -> AdapterResult<()> {
+    if !is_str(field(entry, "type"), "turn_result") {
+        return Ok(());
+    }
+    let result = projection_result(entry)?;
+    let usage = field(result, "usage");
+    if nullish(usage) {
+        return Err(cannot_read(usage, "inputTokens"));
+    }
+    if !js_iterable(field(result, "permissionDenials")) {
+        return Err(AdapterError::Type(
+            "entry.result.permissionDenials is not iterable".into(),
+        ));
+    }
+    Ok(())
+}
+/// metadata reducer: `mergeMetadata` reads `second.title` on every metadata
+/// entry, so a nullish `metadata` throws before the merged value is trimmed.
+fn metadata_reduce_supported(entry: &JsValue) -> AdapterResult<()> {
+    if !is_str(field(entry, "type"), "session_metadata") {
+        return Ok(());
+    }
+    let metadata = field(entry, "metadata");
+    if nullish(metadata) {
+        return Err(cannot_read(metadata, "title"));
     }
     Ok(())
 }
@@ -1413,7 +1434,13 @@ fn restore_entry_supported(entry: &JsValue) -> AdapterResult<()> {
 /// `reduce` **and** `finalize`, then reads `metadata.title?.trim()` /
 /// `metadata.aiTitle?.trim()`. Web-history reducers do not run here, so
 /// `compactMetadata` is never read on this port.
-fn list_entry_supported(entry: &JsValue) -> AdapterResult<()> {
+///
+/// `before_boundary` is the conversation finalize's `beforeBoundary` flag: the
+/// compact boundary discards every history entry before it, so `cloneTurnResult`
+/// never runs for those turn results. Message entries are still read there (the
+/// `metadata?.compactReplacement` probe runs before the flag), so only the
+/// `turn_result` arm is skipped.
+fn list_conversation_entry_supported(entry: &JsValue, before_boundary: bool) -> AdapterResult<()> {
     let kind = lossy_value(field(entry, "type"));
     let ok = match kind.as_str() {
         "accepted_input" => {
@@ -1423,8 +1450,12 @@ fn list_entry_supported(entry: &JsValue) -> AdapterResult<()> {
             message_supported(field(entry, "message"))
         }
         "turn_result" => {
-            // Conversation finalize (cloneTurnResult) precedes the turnSummary
-            // reduce: permissionDenials.map, then errors?.map, then mergeUsage.
+            // Conversation finalize (cloneTurnResult) reads the result:
+            // `{...result.usage}` never throws, then permissionDenials.map and
+            // errors?.map. The turnSummary reduce that reads usage runs later.
+            if before_boundary {
+                return Ok(());
+            }
             let result = projection_result(entry)?;
             let denials = field(result, "permissionDenials");
             if !matches!(denials, JsValue::Array(_)) {
@@ -1440,44 +1471,6 @@ fn list_entry_supported(entry: &JsValue) -> AdapterResult<()> {
                     "result.errors?.map is not a function".into(),
                 ));
             }
-            let usage = field(result, "usage");
-            if nullish(usage) {
-                return Err(cannot_read(usage, "inputTokens"));
-            }
-            true
-        }
-        "control_boundary" => {
-            control_boundary_supported(entry, false)?;
-            true
-        }
-        "session_metadata" => {
-            // mergeMetadata in the metadata reducer, then the two trims in
-            // projectSessionInfo: title is read first; aiTitle only when the
-            // trimmed title is falsy.
-            let metadata = field(entry, "metadata");
-            if nullish(metadata) {
-                return Err(cannot_read(metadata, "title"));
-            }
-            let title = field(metadata, "title");
-            if !nullish(title) && title.as_string().is_none() {
-                return Err(AdapterError::Type(
-                    "metadata.title?.trim is not a function".into(),
-                ));
-            }
-            let blank = match title {
-                JsValue::Null | JsValue::Undefined => true,
-                value => value
-                    .as_string()
-                    .is_some_and(|text| js_trim_units(text.units()).is_empty()),
-            };
-            if blank {
-                let ai_title = field(metadata, "aiTitle");
-                if !nullish(ai_title) && ai_title.as_string().is_none() {
-                    return Err(AdapterError::Type(
-                        "metadata.aiTitle?.trim is not a function".into(),
-                    ));
-                }
-            }
             true
         }
         _ => true,
@@ -1488,6 +1481,63 @@ fn list_entry_supported(entry: &JsValue) -> AdapterResult<()> {
         Err(projection_unavailable(format!(
             "Session projection of this {kind} entry shape is not implemented (A7.5)."
         )))
+    }
+}
+/// `projectSessionInfo`'s summary line, evaluated on the **merged** metadata
+/// after every projection has run: `metadata.title?.trim()` first, then
+/// `metadata.aiTitle?.trim()` only when the trimmed title is falsy.
+fn list_title_supported(title: &Option<JsValue>, ai_title: &Option<JsValue>) -> AdapterResult<()> {
+    let blank = match title {
+        None => true,
+        Some(JsValue::String(text)) => js_trim_units(text.units()).is_empty(),
+        Some(_) => {
+            return Err(AdapterError::Type(
+                "metadata.title?.trim is not a function".into(),
+            ));
+        }
+    };
+    if blank && matches!(ai_title, Some(value) if value.as_string().is_none()) {
+        return Err(AdapterError::Type(
+            "metadata.aiTitle?.trim is not a function".into(),
+        ));
+    }
+    Ok(())
+}
+/// Conversation reducer: the index of the last compact boundary whose
+/// `readCompactSnapshot(entry) ?? replacementMessages` is truthy. `finalize`
+/// skips every entry before it, so a malformed turn result that the compact
+/// boundary discarded never reaches `cloneTurnResult`.
+fn last_compact_boundary_index(entries: &[JsValue]) -> AdapterResult<isize> {
+    let mut last: isize = -1;
+    for (index, entry) in entries.iter().enumerate() {
+        if !is_str(field(entry, "type"), "control_boundary") {
+            continue;
+        }
+        control_boundary_supported(entry, false)?;
+        let boundary = field(entry, "boundary");
+        if !is_str(field(boundary, "kind"), "compact")
+            || !is_str(field(boundary, "subtype"), "compact_boundary")
+        {
+            continue;
+        }
+        let replacement = match compact_snapshot_messages(boundary)? {
+            Some(messages) => messages,
+            None => field(boundary, "replacementMessages"),
+        };
+        if js_truthy(replacement) {
+            last = index as isize;
+        }
+    }
+    Ok(last)
+}
+/// JS truthiness for the values a JSON transcript can carry.
+fn js_truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(flag) => *flag,
+        JsValue::Number(number) => *number != 0.0 && !number.is_nan(),
+        JsValue::String(text) => !text.units().is_empty(),
+        _ => true,
     }
 }
 /// A JS iterable in the JSON value model: arrays and strings.
@@ -1749,8 +1799,20 @@ fn project_session_info(
     {
         return Ok(None);
     }
+    // projectAgentTranscriptEntries runs one projection at a time over the whole
+    // log, so the error that surfaces is decided by projection order, not by
+    // entry order: conversation reduce → conversation finalize → turnSummary →
+    // metadata → the trims below.
+    let last_boundary = last_compact_boundary_index(&transcript.entries)?;
+    for (index, entry) in transcript.entries.iter().enumerate() {
+        let before_boundary = last_boundary != -1 && (index as isize) < last_boundary;
+        list_conversation_entry_supported(entry, before_boundary)?;
+    }
     for entry in &transcript.entries {
-        list_entry_supported(entry)?;
+        turn_summary_supported(entry)?;
+    }
+    for entry in &transcript.entries {
+        metadata_reduce_supported(entry)?;
     }
     // mergeMetadata: title keeps the previous value when the new one is nullish;
     // other keys follow object spread (a present key overrides, null included).
@@ -1808,6 +1870,8 @@ fn project_session_info(
             .filter(|s| !s.is_empty())
     };
     let ai_title = spread[0].1.clone();
+    // The two trims read the merged metadata, after every projection has run.
+    list_title_supported(&title, &ai_title)?;
     let Some(summary) = trimmed(&title)
         .or_else(|| trimmed(&ai_title))
         .or_else(|| prompts.last().cloned())

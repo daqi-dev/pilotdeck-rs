@@ -1024,6 +1024,32 @@ fn regenerates_identically() {
 }
 
 #[test]
+fn permission_denials_string_expands_by_code_point_like_js() {
+    // #1985 review P2: the string branch of `merge_permission_denials` mirrors
+    // the JS string iterator (a surrogate pair is one element, a lone
+    // surrogate survives as its own element). Real TS/Node v22.22.0:
+    //   [...'a\u{1F600}\uD800b']  ->  ['a', '\u{1F600}', '\uD800', 'b']
+    // i.e. 5 UTF-16 units in, 4 elements out. Without this test a later
+    // "simplification" to `chars()`/`from_utf16_lossy` would drift silently.
+    let denials = JsValue::String(JsString::from_utf16(vec![
+        0x61, 0xd83d, 0xde00, 0xd800, 0x62,
+    ]));
+    let mut target = Vec::new();
+    merge_permission_denials(&mut target, &denials).expect("#1985 string denials iterable");
+    let units: Vec<Vec<u16>> = target
+        .iter()
+        .map(|value| match value {
+            JsValue::String(text) => text.units().to_vec(),
+            _ => panic!("#1985 string denials expand into strings"),
+        })
+        .collect();
+    assert_eq!(
+        units,
+        vec![vec![0x61], vec![0xd83d, 0xde00], vec![0xd800], vec![0x62]],
+        "#1985 code point expansion"
+    );
+}
+#[test]
 fn durable_projection_matches_ts() {
     let oracle: serde_json::Value = serde_json::from_str(include_str!(
         "../../../tests/fixtures/session-factory/oracle.json"
@@ -1080,7 +1106,7 @@ fn hydrated_projection_matches_ts() {
     ))
     .expect("#1985 hydrated fixture");
     let rows = oracle["hydrated"].as_array().expect("#1985 hydrated rows");
-    assert_eq!(rows.len(), 15, "#1985 hydrated denominator");
+    assert_eq!(rows.len(), 16, "#1985 hydrated denominator");
     for row in rows {
         let values = js(&row["entries"].to_string());
         let entries = array(&values).expect("#1985 hydrated entries");

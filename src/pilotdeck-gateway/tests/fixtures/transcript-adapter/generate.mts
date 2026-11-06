@@ -652,6 +652,50 @@ try {
     }
   }
 
+  // #1985 review (Codex r1): the ports run one projector at a time over the
+  // whole log, so with two malformed records the winner is decided by
+  // projector order, not record order. TS surfaces, measured through the real
+  // adapter: restore runs turnSummary → compact boundary (WebHistory token
+  // usage) → metadata; list runs the conversation finalize (which skips
+  // everything before the last compact boundary) → turnSummary → metadata →
+  // the title trims on the *merged* metadata.
+  {
+    const okUsage = { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1, totalTokens: 18 };
+    const result = (extra: any) => ({ type: 'completed', usage: okUsage, permissionDenials: [], ...extra });
+    const meta = (value: any) => ({ type: 'session_metadata', metadata: value });
+    const compact = (compactMetadata: any) => ({ type: 'control_boundary', boundary: { kind: 'compact', subtype: 'compact_boundary', replacementMessages: [user('replacement')], ...(compactMetadata === undefined ? {} : { compactMetadata }) } });
+    // [suffix, entries, restore accepts, list accepts]
+    const ordered: Array<[string, any[], boolean, boolean]> = [
+      ['title-before-badusage', [meta({ title: 42 }), { type: 'turn_result', result: result({ usage: null }) }], false, false],
+      ['badusage-before-title', [{ type: 'turn_result', result: result({ usage: null }) }, meta({ title: 42 })], false, false],
+      ['title-before-baddenials', [meta({ title: 42 }), { type: 'turn_result', result: result({ permissionDenials: null }) }], false, false],
+      ['posttok-before-title', [compact(undefined), meta({ title: 42 })], false, false],
+      ['title-before-posttok', [meta({ title: 42 }), compact(undefined)], false, false],
+      ['posttok-before-badusage', [compact(undefined), { type: 'turn_result', result: result({ usage: null }) }], false, false],
+      ['compaction-skips-denials', [{ type: 'turn_result', result: result({ permissionDenials: 'x', errors: 7 }) }, compact({ postTokens: 9 })], true, true],
+      ['compaction-keeps-denials', [compact({ postTokens: 9 }), { type: 'turn_result', result: result({ permissionDenials: null }) }], false, false],
+      ['metadata-merge-overwritten', [meta({ title: 5 }), meta({ title: 'ok' })], true, true],
+      ['metadata-merge-inherited', [meta({ title: 'ok' }), meta({ aiTitle: 7 })], true, true],
+      ['metadata-merge-final-invalid', [meta({ title: 'ok', aiTitle: 7 }), meta({ title: '' })], true, false],
+      ['metadata-merge-ai-title', [meta({ aiTitle: 'A' }), meta({ title: '  ' })], true, true],
+    ];
+    for (const [suffix, records, restoreOk, listOk] of ordered) {
+      const lines = [line(at(1, 'accepted_input', { messages: [user('prompt')] }))];
+      records.forEach((record: any, i) => lines.push(line(at(i + 2, record.type, record))));
+      const total = records.length + 1;
+      await scenario(`restore-order-${suffix}`, {
+        store: { list: [{ sessionId: 's1', lastModified: 1, fileSize: 1 }] },
+        files: { 's1.jsonl': lines.join('') },
+        steps: [open(), { op: 'restore' }, { op: 'state' }, { op: 'list' }],
+      }, [
+        'open:0',
+        restoreOk ? `restored:${total}/0@${total}` : 'error:TypeError',
+        `state:${total}`,
+        listOk ? 'list:s1' : 'error:TypeError',
+      ]);
+    }
+  }
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -691,7 +735,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 468, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 480, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

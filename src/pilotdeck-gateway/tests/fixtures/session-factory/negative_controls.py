@@ -98,6 +98,9 @@ cases = [
     ('durable-before-projection', factory, 'self.inner.append(key, entry)?;\n        let mut entries = lock(&self.projection.entries);', 'let mut candidate = lock(&self.projection.entries).clone();\n        candidate.push(entry.clone());\n        project(&candidate).map_err(|e| crate::storage::LedgerError::Invalid(e.message))?;\n        self.inner.append(key, entry)?;\n        let mut entries = lock(&self.projection.entries);', None, prefix+'committed_projection_failure_is_not_rolled_back', '#745 invalid projection durable commit'),
     ('projection-completion', factory, '&& done\n        {', '&& true\n        {', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-usage', factory, 'first + second', 'first', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
+    # #1985 block 1: the string arm of merge_permission_denials must keep the
+    # JS string-iterator semantics (surrogate pair = one element).
+    ('denials-string-surrogate-pair', factory, '                if (0xd800..=0xdbff).contains(&first)\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', '                if false\n                    && units.peek().is_some_and(|v| (0xdc00..=0xdfff).contains(v))', None, prefix+'hydrated_projection_matches_ts', '#1985 hydrated conclusion denials-string-nonbmp'),
     ('projection-metadata', factory, 'key.equals_str("title") || key.equals_str("linkedPullRequest")', 'false', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-invalid-compact', factory, 'return text("text");', 'return true;', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
     ('projection-js-trim', factory, 'crate::metadata::js_trim(&text)', 'text.trim()', None, prefix+'durable_projection_matches_ts', '#745 projection conclusion'),
@@ -440,7 +443,7 @@ def audit():
                 marker_matches(literal) for literal in literals
                 if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
                 or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal
-                or '#1253 ' in literal):
+                or '#1253 ' in literal or '#1985 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:

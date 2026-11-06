@@ -23287,6 +23287,39 @@
       }
     },
     {
+      "name": "denials-string-nonbmp",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "entry-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {
+              "inputTokens": 1
+            },
+            "permissionDenials": "😀"
+          }
+        }
+      ],
+      "state": {
+        "usage": {
+          "inputTokens": 1
+        },
+        "permissionDenials": [
+          "😀"
+        ],
+        "metadata": {}
+      }
+    },
+    {
       "name": "denials-object",
       "entries": [
         {
