@@ -1691,7 +1691,17 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
             },
             call_timeout_ms: None,
         }],
-        McpRuntimeOptions::default(),
+        // Pin the handshake timeout so the default 10 s one can never fire
+        // first on a loaded machine: if it did, the timeout branch would own
+        // the directory cleanup and the epoch-mismatch branch this test (and
+        // its `late-handshake-dir-kept` mutant) exists for would never run.
+        McpRuntimeOptions {
+            connect_concurrency: None,
+            client_options: McpClientOptions {
+                handshake_timeout_ms: Some(120_000.0),
+                ..Default::default()
+            },
+        },
     ));
     let starting = tokio::spawn({
         let runtime = runtime.clone();
@@ -1718,10 +1728,12 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     tokio::time::timeout(Duration::from_secs(2), runtime.stop())
         .await
         .expect("#401 dispose must not fence the in-flight handshake");
-    assert!(
-        session_dir.exists(),
-        "#401 dispose returns before the gated handshake settles, so the directory is still there"
-    );
+    // Deliberately NOT asserted here: whether the per-session directory still
+    // exists right after `dispose()`. The TS baseline removes it in `close()`
+    // (`probe-dispose-inflight.out`: `dirRemovedAtClose: true`) while the port
+    // deletes it only once the late handshake settles, so pinning either way
+    // would freeze an accepted-diff entry that is not registered yet — that
+    // divergence is being raised separately (#401 follow-up).
     assert_eq!(
         runtime
             .client("mock")
