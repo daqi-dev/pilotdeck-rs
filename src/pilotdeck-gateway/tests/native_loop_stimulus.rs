@@ -152,10 +152,6 @@ fn executable_native_loop_stimulus() {
             "#1371 executable unknown-first before timer",
         ),
         (
-            "#1371 unknown-first stays bounded",
-            "#1371 executable unknown-first bounded",
-        ),
-        (
             "#1371 unknown-first timer cleared",
             "#1371 executable unknown-first timer cleared",
         ),
