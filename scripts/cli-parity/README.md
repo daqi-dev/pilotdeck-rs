@@ -59,10 +59,12 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
    同名兄弟文件）⇒ 活 owner 手里的锁目录被整个删掉，下一个等待者看到锁不存在就立刻建锁发布，**两个运行同时进入
    持锁段**，互斥失效（它们会争同一批 witness 端口与 /tmp 共享状态，污染在跑的校准证据，可能造成假 PASS / 假 FAIL）。
    反过来，若只 `rm owner.json` 没 `rmdir`、留下无标记目录，它会在 `MAX_AGE`（2400 s）后按超龄被自动接管，
-   **不会「永久」留存**；真正永不自愈的只有带真值 `cleanupPending` 的已发布 owner（见下一节）。
+   **不会「永久」留存**——但**只有带接管逻辑的装置**（`scripts/parity/round.py` 与 gateway 系）会回收它；
+   下一个恰好是 `calibrate.sh` 或 `scripts/cli-parity` 自己的装置时，它们只报「锁被占」、绝不接管，
+   空目录会原样留着，仍需人工 `rmdir`。真正永不自愈的只有带真值 `cleanupPending` 的已发布 owner（见下一节）。
    所以别把「有人在排队」当成唯一症状——看到锁被异常改动，先按本节持 guard 核 owner 再动手。运行器自身从不抢锁或自动接管。
 
-### 四台装置的锁等待差异
+### 各装置的锁等待差异（同一把共享锁，五个使用者）
 
 锁契约相同（`/tmp/pdrs-parity.lock` 目录租约 + `.guard` flock + `owner.json`），但**等待上限与失败形态不同**
 （2026-11-06 从 #590 四格账本 §七上移，源码行号为当时 HEAD）：
@@ -76,11 +78,20 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 | `scripts/ui-server-parity/calibrate.sh`（UI↔server 定标） | **0**（抢不到立即拒绝，不排队、不接管） | `FileExistsError` → 直接报错退出 | `:76-88` |
 
 `2400 s` 只是 `MAX_AGE` 上限，**已发布且带 `cleanupPending` 的 owner 不会因年龄被自动接管**：接管条件要求
-`cleanupPending` 为假。gateway 侧装置（`parity/round.py`、`gateway-parity/*`、`native-topology/run.py`、
-`ui-server-parity/calibrate.sh`）获取时必发 `cleanupPending: true`，所以一次被 SIGKILL 的运行会留下
-「永不自愈」的锁，按上一节人工回收。**`scripts/cli-parity` 自己的装置是例外**：它的 `owner.json` 没有该键，
-锁不会被这条规则保住，人工回收前务必先按上一节第 1 步看 `round.json` / `isolation.json` 的残留。
+`cleanupPending` 为假。gateway 侧装置（`parity/round.py`、`gateway-parity/*`、`native-witness/collect.py`、
+`native-topology/run.py`、`ui-server-parity/calibrate.sh`）获取时必发 `cleanupPending: true`，所以一次被
+SIGKILL 的运行会留下「永不自愈」的锁，按上一节人工回收。**`scripts/cli-parity` 自己的装置是例外**：它的
+`owner.json` 没有该键，锁不会被这条规则保住，人工回收前务必先按上一节第 1 步看 `round.json` / `isolation.json` 的残留。
 
 另：`scripts/gateway-parity/README.md:169` 的人工回收段写于本节的 guard 规则之前，只要求「核实 owner 已停止」，
 **按旧口径操作会撞上一节所述的竞态**；该文件在冻结装置目录内（`DATA_FILES` 白名单），改动要走冻结程序，
-本节不代改。两份说明冲突时以本节为准。
+本节不代改。两份说明冲突时以本节为准（双向指针待冻结程序补，见 #1783）。
+
+**不在这套租约里的两个使用者**（不要按上表对号入座）：
+
+- `scripts/fe-parity/README.md` 的一批配方直接 `mkdir /tmp/pdrs-parity.lock || exit 1` + `trap 'rmdir' EXIT`：
+  没有 `.guard`、没有 `owner.json`，退出时的 `trap rmdir` 正是本节禁止的无 guard 删锁。看到锁目录里**没有**
+  `owner.json` 时先怀疑它，按上一节第 1 步核残留后再处理；它与本节的租约规则冲突时以本节为准。
+- Rust CLI 集成测试的 `ParityLock`（`src/pilotdeck-cli/tests/*_exit.rs`，同一 `.guard` + `owner.json` 契约，
+  另加 `O_NOFOLLOW` 与 `nlink==1` 加固）：等待上限 **180 s**，超时即测试失败、绝不接管。
+  `cargo test` 与全量对拍撞在一起时，看到这类等待属正常排队。

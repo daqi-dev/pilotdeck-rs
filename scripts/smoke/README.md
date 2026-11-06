@@ -34,8 +34,9 @@ printed. An empty key set is **not** a pass: the self-check prints
 
 Limits (constants in `real_provider.py`, echoed by the probe in
 `PROBE_RESULT`). The concrete numbers below are a snapshot at writing time:
-the authoritative values are the constants in `real_provider.py` and the
-run's `limits.json` (`declared`), so check those before quoting a limit.
+the authoritative values are the constants in `real_provider.py`; each run
+echoes them in `report.json`'s flat `limits` object and in `limits.json`'s
+`declared`/`actual`, so check those before quoting a limit.
 
 - 3 requests (one per scenario; `MAX_REQUESTS == len(SCENARIOS)`).
 - 128 output tokens per request; 384 total. The probe receives the per-request

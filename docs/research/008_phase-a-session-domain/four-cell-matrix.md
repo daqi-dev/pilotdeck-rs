@@ -54,7 +54,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 
 | 装置 | 结果 | 原始证据 |
 |---|---|---|
-| `session_domain.py --suite calibrate`（E1，TS 进程内受控，**无 sidecar、无 HTTP**） | `status=PASS`、`executionStatus=PASS`、`expectations=PASS`（72 case / 360 measurement / a19DiffCases 54）、`oracle=PASS`（`oracle.controls` **9 条负控**全部 `detected=true`；`expectations.measurements=360` 是**观测条数**＝72 case × 5 轮，不是负控条数；`e1Controls` 另记 68 条装置变异用例，68/68 `passed`、`status=PASS`）、`cleanupStatus=VERIFIED`、`unstableGroups=[]`、`frozen.exitCode=0`（30 项登记） | `_tmp/20261106-issue-590/calibrate-ts-ts/report.json` |
+| `session_domain.py --suite calibrate`（E1，TS 进程内受控，**无 sidecar、无 HTTP**） | `status=PASS`、`executionStatus=PASS`、`expectations=PASS`（72 case / 360 measurement / a19DiffCases 54）、`oracle=PASS`（`oracle.controls` **9 条负控**全部 `detected=true`；`expectations.measurements=360` 是**观测条数**＝72 case × 5 轮，不是负控条数；`e1Controls` 另记 68 条装置变异用例，68/68 `passed`、`status=PASS`）、`cleanupStatus=VERIFIED`、`unstableGroups=[]`、`frozen.exitCode=0`（30 项登记；**`session_domain.py` 顶层退出码未留痕**，见 §七.2） | `_tmp/20261106-issue-590/calibrate-ts-ts/report.json` |
 | `native-topology/run.py` 的 `TS-sidecar-ts` 格 | `NOT_RUN`，`reason="TS host not executed"` | `_tmp/20261106-issue-590/native-topology-001/report.json` |
 | `scripts/parity/round.py --side ts` | sidecar 身份 `identity_ok=true`（53/53 场景各一条 `harness.proof`，sha256 与预期一致、`spawnObserved=true`）、`valid_round=true`、`run_py_exit=1`（**`round.py` 顶层退出码未留痕**，见 §七.2）；`summary.json`：`scenarios=53` / `failed=27` / `expectedExtensions=3` / `blocked=0` / `oracleFailures=0` | `_tmp/20261106-issue-590/parity/side-ts/run.json` 与 `artifacts/*-pilotdeck.md` |
 
@@ -312,7 +312,8 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
      作为对照：广读会把这四条全部豁免，② 的 sidecar 侧信号降到 **19–21 条（最少 19）**——
      只豁免前两条为 21（降幅下限），连同两条名字带 abort/close 的 one-shot 场景一起豁免为 19（降幅上限）；
      R3 原文没有枚举「涉及取消」的边界，19 与 21 分别是豁免最多与最少的两端。
-     口径正本见 `A7-HOST-POST-CANCEL-EXIT-001-R5`，本页不重复其范围。
+     口径正本见 `A7-HOST-POST-CANCEL-EXIT-001-R5`；本页按 #1722 第 1 条保留四条场景名与 19–21 的对照数字，
+     除此之外不重复 R5 的范围论证。
      这不是判分语义变更，不动冻结件，只影响本页一处计数。
 9. **本单的冻结装置授权没用上**：`state/decisions-20261025.md`「#590 A7.2-pr6b 四格矩阵：授权修改冻结装置」允许在本单范围内改
    `session_domain.py` 及配套冻结件；实际执行**没有改动任何冻结文件**（30 项登记哈希在每份报告里 `frozen.exitCode=0`），
@@ -369,17 +370,18 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
 
 **复现时的四条硬约束**（都是本单踩过的，不是假想）：
 
-1. **对拍锁是独占的，四台装置不是同一份实现**：四者都抢 `/tmp/pdrs-parity.lock`（目录租约，**不要**自己 `flock` 一个文件）。
+1. **对拍锁是独占的，几台装置不是同一份实现**：它们都抢 `/tmp/pdrs-parity.lock`（目录租约，**不要**自己 `flock` 一个文件）。
    各装置的等待上限与失败形态、以及锁被保留时的人工回收步骤（含 `.guard` 互斥、残留 pgid 去哪查），
-   正本在 `scripts/cli-parity/README.md`「锁被保留时怎么解」节；本节不复述，只留链接。
+   正本在 `scripts/cli-parity/README.md`「锁被保留时怎么解」与「各装置的锁等待差异」两节；本节不复述，只留链接。
    同一主机同时只跑一个全量对拍，串行排队。
 2. **退出码要单独留存**：这几条命令的 stdout 是单行 JSON，退出码不在 JSON 里。写法统一成
    `python3 -I <cmd> > <新文件名>.log 2>&1; echo "EXIT=$?" >> <新文件名>.log`，
    日志文件名每次新起（`deadline-bare-3`、`deadline-native-002` 就是这么来的；`-2` 那次只留了 JSON 没留退出码，被评审正确指出）。
-   **本页有两处例外没做到，如实记录（#1722 第 4 条）**：①② 的 `scripts/parity/round.py` 与 ③④ 的
-   `native-topology/run.py` 两次**顶层**命令的退出码没有留痕——①② 只有内层 `run.py` 的 `run_py_exit`，
-   ③④ 只有 report 级 `status`。因此 §二 各格的①②③④ 结论**只依据 `run.json` / `report.json` 的 status**，
-   不引用、也不推断这两个顶层退出码；复跑时按上面的写法补齐。
+   **本页有三处例外没做到，如实记录（#1722 第 4 条）**：格① 的 `session_domain.py --suite calibrate`、①② 的
+   `scripts/parity/round.py`、③④ 的 `native-topology/run.py` 三次**顶层**命令的退出码都没有留痕
+   （calibrate 那次只留了单行 JSON 的 `calibrate-ts-ts.stdout.log` 与空的 `calibrate-ts-ts.stderr.log`，
+   没有 `EXIT=` 行；①② 只有内层 `run.py` 的 `run_py_exit`；③④ 只有 report 级 `status`）。因此 §二 各格的结论**只依据 `report.json` / `run.json` 的 status**，
+   不引用、也不推断这三个顶层退出码；复跑时按上面的写法补齐。
    **补齐 ③④ 时注意它的退出码语义**：`native-topology/run.py` 的 `main` 是
    `return 1 if report['status'] == 'FAIL' else 2`——**没有 0**，四案全过也 exit 2。所以那个 2
    **不是 BLOCKED**（与 `collect.py` / `session_domain.py` 的 exit 2 含义不同），只能用来区分 1 / 2。
