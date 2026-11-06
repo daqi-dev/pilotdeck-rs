@@ -195,11 +195,13 @@ mutations = [
     # respond on an unwired bus stays Ok({delivered:false}).
     ('notpending-delivered-true', USER_DIALOG,
      'ConsumeResult::NotPending => {\n'
+     '                            pre.deliver();\n'
      '                            outbox.deliver();\n'
      '                            Ok(crate::metadata::object([(\n'
      '                                "delivered",\n'
      '                                JsValue::Bool(false),\n',
      'ConsumeResult::NotPending => {\n'
+     '                            pre.deliver();\n'
      '                            outbox.deliver();\n'
      '                            Ok(crate::metadata::object([(\n'
      '                                "delivered",\n'

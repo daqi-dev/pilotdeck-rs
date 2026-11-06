@@ -97,7 +97,7 @@ mutants = [
         "channel-renew-failure-continues",
         "channel.rs",
         """                Ok(false) | Err(_) => {
-                    finish_poll(&self.inner, request_id);
+                    finish_poll(&self.inner, request_id, generation);
                     return;
                 }""",
         "                Ok(false) | Err(_) => {}",

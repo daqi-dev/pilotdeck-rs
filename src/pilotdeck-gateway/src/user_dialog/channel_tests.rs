@@ -1660,3 +1660,106 @@ fn cross_gateway_answer_is_not_delivered_to_a_dialog_replaced_during_the_take() 
         other => panic!("the replaced request must end with an explicit error, got {other:?}"),
     }
 }
+
+#[test]
+fn a_replaced_dialog_keeps_its_own_cross_gateway_poll() {
+    use crate::negative_assert;
+
+    // #1599: TS keeps one poll timer per request
+    // (`GatewayUserDialogChannel.ts:130-133`), so the old request ending must
+    // not stop the poll its same-id replacement installed. Here the
+    // replacement is registered through the channel while the original poll
+    // holds a stored answer, which is exactly the interleaving that used to
+    // delete the replacement's poll entry.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-replaced-poll",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let takes = Arc::new(AtomicI64::new(0));
+    let mut options = ChannelOptions::new("session", bus, Arc::new(|_event| Ok(())));
+    // Both requests get the same id, which is what makes the replacement
+    // supersede the original registration.
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.take_stored_answer = Some(Arc::new({
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        let takes = takes.clone();
+        move |id: &JsString| {
+            let call = takes.fetch_add(1, Ordering::SeqCst) + 1;
+            if call == 1 {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first poll");
+                let next = channel.request_confirm(&ConfirmRequest {
+                    tool_call_id: "call-replacement".into(),
+                    tool_name: "request_user_confirm".into(),
+                    prompt: "Replacement dialog".into(),
+                    confirm_label: None,
+                    cancel_label: None,
+                    default_value: None,
+                    abort: None,
+                });
+                replacement.lock().unwrap().replace(next);
+                return Ok(Some(StoredAnswer {
+                    request_id: id.clone(),
+                    result: DialogAnswer::Answered(JsValue::Bool(true)),
+                    submitted_at: "2026-01-01T00:00:00.000Z".into(),
+                }));
+            }
+            if call == 2 {
+                // The replacement's own first poll must stay unanswered so it
+                // is still pending when the original request completes.
+                return Ok(None);
+            }
+            Ok(Some(StoredAnswer {
+                request_id: id.clone(),
+                result: DialogAnswer::Answered(JsValue::Bool(false)),
+                submitted_at: "2026-01-01T00:00:01.000Z".into(),
+            }))
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded while polling".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("replaced while its stored answer was taken"),
+            "#1599 the replaced original request must end with the replacement error, got {message}"
+        ),
+        other => {
+            panic!("#1599 the replaced original request must end with an error, got {other:?}")
+        }
+    }
+
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    channel.tick();
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the replacement request was registered");
+    match next.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(false),
+            "#1599 a replaced dialog keeps its own cross-gateway poll"
+        ),
+        other => panic!("#1599 a replaced dialog keeps its own cross-gateway poll, got {other:?}"),
+    }
+}
