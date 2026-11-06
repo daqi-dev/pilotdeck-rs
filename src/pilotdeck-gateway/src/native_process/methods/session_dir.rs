@@ -302,6 +302,20 @@ impl Requests {
             ));
         }
         let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
+        // #1457 fix-r1: same single-writer fence the config family uses; two
+        // fresh writers that both restore the tail and append `sequence + 1`
+        // leave the transcript unloadable.
+        let write_fence =
+            super::transcript_locks::acquire(&project_root.to_string_lossy(), &key).await;
+        // Retire a live writer while the fence is held: it keeps its own
+        // in-memory sequence, so an out-of-band append followed by its next
+        // write would replay `sequence + 1` from a stale tail. The factory
+        // refuses that rather than corrupting the file, but the session breaks
+        // until it is re-created; closing lets the next turn re-hydrate.
+        self.owner
+            .close(&key)
+            .await
+            .map_err(|e| RequestError::new(e.to_string()))?;
         let home = self.options.home.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
         let value_str: Option<String> = match &value_field {
@@ -320,6 +334,9 @@ impl Requests {
         };
         let key_clone = key.clone();
         tokio::task::spawn_blocking(move || {
+            // Held inside the closure: a cancelled request drops the future but
+            // not the blocking append, so the fence has to travel with the write.
+            let _write = write_fence;
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new()),
@@ -433,10 +450,20 @@ impl Requests {
             .get(&session_key)
             .and_then(std::sync::Weak::upgrade);
         if let Some(recorder) = live_recorder {
+            // #1457 fix-r1: the live writer numbers its append from its own
+            // in-memory sequence, so it has to take the same fence the fresh
+            // writers do — otherwise it can append while `record_model_selection`
+            // holds a tail both of them read as `N`.
+            let write_fence = super::transcript_locks::acquire(
+                &self.options.project.to_string_lossy(),
+                &session_key,
+            )
+            .await;
             let session_key2 = session_key.clone();
             let turn_id2 = turn_id.clone();
             let status2 = status.clone();
             let recorded = tokio::task::spawn_blocking(move || {
+                let _write = write_fence;
                 recorder
                     .writer()
                     .record_agent_status_message(&session_key2, &turn_id2, &status2)
@@ -449,9 +476,18 @@ impl Requests {
         }
 
         // Cold path: write to the durable transcript directly.
+        // #1457 fix-r1: this path also builds a fresh writer and numbers its
+        // append from the tail it restores, so it shares the same per-session
+        // single-writer fence as rename/tag and the model-selection writes.
+        let write_fence =
+            super::transcript_locks::acquire(&self.options.project.to_string_lossy(), &session_key)
+                .await;
         let home = self.options.home.clone();
         let project_root = self.options.project.clone();
         let recorded = tokio::task::spawn_blocking(move || {
+            // The fence must outlive a cancelled request, so it moves into the
+            // blocking closure instead of dropping with this future.
+            let _write = write_fence;
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new()),

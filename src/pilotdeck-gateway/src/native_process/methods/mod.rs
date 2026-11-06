@@ -23,6 +23,7 @@ pub(crate) use settings::METHODS;
 mod sop;
 mod steer;
 mod tools;
+mod transcript_locks;
 mod upload;
 mod user_dialog;
 mod weixin_login;
