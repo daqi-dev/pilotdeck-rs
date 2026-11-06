@@ -2990,15 +2990,24 @@ async fn user_dialog_respond_lease_required() {
 // #1437: user_dialog_respond is the one family method that is NOT capability
 // gated (require_user_dialog_bus only guards list/claim/release): a respond
 // for a request that is not pending returns Ok({"delivered": false}), never
-// Err(CAPABILITY_UNAVAILABLE). The name is historical — the shared fixture
-// has been connected since #1600, and this value is the same on the
-// unconnected bus, because respond has no capability gate at all. The
-// assertion therefore pins the method-layer contract, not the bus's
-// availability.
+// Err(CAPABILITY_UNAVAILABLE). The shared fixture has been connected since
+// #1600 (like production), so this case rebuilds the unconnected bus
+// explicitly — otherwise the state in the test's name would no longer be
+// covered. The assertion pins both the method-layer contract and the
+// unconnected availability.
 #[tokio::test]
 async fn user_dialog_respond_unwired_bus_returns_delivered_false() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1437 unwired bus fixture setup");
+    // Same explicit unconnected construction as
+    // `user_dialog_capability_gate_precedes_parameter_validation` (#1600).
+    *requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = crate::user_dialog::GatewayUserDialogBus::new(
+        crate::user_dialog::DialogRuntime::default(),
+        None,
+    );
     for (label, result) in [
         (
             "answered",

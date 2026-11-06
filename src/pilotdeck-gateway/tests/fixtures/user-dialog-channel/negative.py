@@ -48,6 +48,11 @@ originals["mod.rs"] = (
     .replace("#[cfg(test)]\nmod tests;\n", "")
     .replace("mod http_store;\n", "", 1)
     .replace(HTTP_STORE_USE, "", 1)
+    # #1334 added this re-export after the removal list above was written;
+    # leaving it in makes the standalone replay crate name `http_store`, which
+    # this fixture pops, so the scratch build dies on E0433 and every mutant is
+    # scored INVALID (the same transform fails on the 8fd664c47 base).
+    .replace("#[cfg(test)]\npub(crate) use http_store::NODE_408_RESPONSE;\n", "", 1)
 )
 assert "mod tests;" not in originals["mod.rs"]
 assert "http_store" not in originals["mod.rs"]
@@ -97,7 +102,7 @@ mutants = [
         "channel-renew-failure-continues",
         "channel.rs",
         """                Ok(false) | Err(_) => {
-                    finish_poll(&self.inner, request_id, generation);
+                    finish_poll(&self.inner, request_id, registration);
                     return;
                 }""",
         "                Ok(false) | Err(_) => {}",
@@ -151,6 +156,10 @@ mutants = [
         "channel.rs",
         """    if let Some(journal) = &inner.options.journal {
         journal.remove(&state.request_id)?;
+        // Same window as above, one destructive step later.
+        if superseded_by_registration(inner, state) {
+            return Ok(());
+        }
     }
     if let (Some(store), Some(key)) = (&inner.options.store, &inner.options.store_key) {
         store.remove(key, &state.request_id)?;
@@ -160,6 +169,10 @@ mutants = [
     }
     if let Some(journal) = &inner.options.journal {
         journal.remove(&state.request_id)?;
+        // Same window as above, one destructive step later.
+        if superseded_by_registration(inner, state) {
+            return Ok(());
+        }
     }""",
         "journal-remove-fails",
     ),
@@ -283,9 +296,39 @@ uuid = {{ version = "=1.27.0", features = ["v4"] }}
 def stage(scratch: Path) -> None:
     target = scratch / "src/user_dialog"
     target.mkdir(parents=True)
+    # The replay crate only carries `user_dialog` + `test_baseline`, but
+    # `channel_tests.rs` is compiled (cfg(test)) and the #1599 cases import
+    # `crate::negative_assert` / `crate::metadata::object` from the gateway.
+    # Provide the same shapes here: plain assertions (the oracle needs a panic,
+    # not the receipt ledger) and the six-line metadata helper.
     (scratch / "src/lib.rs").write_text(
         '#[path = "user_dialog/mod.rs"] pub mod user_dialog;\n'
         '#[path = "test_baseline.rs"] mod test_baseline;\n'
+        "#[macro_export]\n"
+        "macro_rules! negative_assert_eq {\n"
+        "    ($left:expr, $right:expr, $($message:tt)+) => {{\n"
+        "        let (left, right) = (&$left, &$right);\n"
+        "        assert_eq!(left, right, \"{}\", format!($($message)+));\n"
+        "    }};\n"
+        "}\n"
+        "#[macro_export]\n"
+        "macro_rules! negative_assert {\n"
+        "    ($condition:expr, $($message:tt)+) => {{\n"
+        "        assert!($condition, \"{}\", format!($($message)+));\n"
+        "    }};\n"
+        "}\n"
+        "pub mod metadata {\n"
+        "    use pilotdeck_protocol::{JsObject, JsValue};\n"
+        "    pub fn object(\n"
+        "        fields: impl IntoIterator<Item = (&'static str, JsValue)>,\n"
+        "    ) -> JsValue {\n"
+        "        let mut result = JsObject::new();\n"
+        "        for (key, value) in fields {\n"
+        "            result.insert(key.into(), value);\n"
+        "        }\n"
+        "        JsValue::Object(result)\n"
+        "    }\n"
+        "}\n"
     )
     (scratch / "Cargo.toml").write_text(manifest)
     (scratch / "src/test_baseline.rs").write_text(baseline_helper.read_text())
