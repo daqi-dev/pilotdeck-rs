@@ -802,13 +802,23 @@ impl GatewayUserDialogChannel {
         // they run only after the bus guard drops.
         let (consumed, outbox) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            let consumed = bus.consume(
-                &self.inner.options.session_key,
-                request_id,
-                "cross_gateway_answer",
-            );
+            // #1599: this answer came from the request `state` registered and
+            // is validated by `state.accepts` (dialog kind, schema). A host
+            // callback above (`take_stored_answer`) may reenter the bus and
+            // re-register the same request id with a different contract;
+            // consuming that entry would hand the old answer to the new
+            // waiter, so an unbound entry is left pending instead.
+            let bound =
+                bus.pending_matches(&self.inner.options.session_key, request_id, &state.accepts);
+            let consumed = bound.then(|| {
+                bus.consume(
+                    &self.inner.options.session_key,
+                    request_id,
+                    "cross_gateway_answer",
+                )
+            });
             let outbox = bus.drain_events();
-            (consumed, outbox)
+            (consumed.flatten(), outbox)
         };
         let consumed = match consumed {
             Some(consumed) => consumed,

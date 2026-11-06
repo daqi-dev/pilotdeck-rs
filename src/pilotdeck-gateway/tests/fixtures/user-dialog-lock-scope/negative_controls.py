@@ -3,13 +3,14 @@
 
 #1442/#1599/#1600 negative controls: each mutation puts one host-supplied
 callback (the resolver, the settle hook, the accepts validator, or the change
-observer) back under the GatewayUserDialogBus MutexGuard, or drifts the shared
-`management_tests::setup` fixture back to the retired unconnected bus; the
-matching probe test must turn red. Every mutant keeps the callback call count
-and order of the original code, so the kill evidence is the "runs under the
-guard" probe rather than a duplicated callback. Run with no other
-writers/builds in this worktree. Evidence goes in a new output folder;
-original source bytes and hashes are verified after every mutation.
+observer) back under the GatewayUserDialogBus MutexGuard, drifts the shared
+`management_tests::setup` fixture back to the retired unconnected bus, or
+drops the identity binding that keeps an answer bound to the dialog it was
+validated against. The matching probe test must turn red. Every mutant keeps
+the callback call count and order of the original code, so the kill evidence
+is the "runs under the guard" probe rather than a duplicated callback. Run
+with no other writers/builds in this worktree. Evidence goes in a new output
+folder; original source bytes and hashes are verified after every mutation.
 
 Phases per mutation (specs/negative-controls/README.md): a green baseline for
 the bound test (positive) -> the mutant must die at its own assertion
@@ -55,6 +56,10 @@ FIXTURE_TEST = ('native_process::management_tests::'
                 'setup_assembles_a_connected_user_dialog_bus')
 CHANNEL_TEST = ('user_dialog::channel_tests::'
                 'user_dialog_channel_cancel_reenters_the_bus_lock_free')
+CROSS_TEST = ('user_dialog::channel_tests::'
+              'cross_gateway_answer_is_not_delivered_to_a_dialog_replaced_during_the_take')
+CROSS_ASSERTION = ('#1599 a cross-gateway answer must not be delivered to a '
+                   'dialog replaced during take_stored_answer')
 REPLACED_TEST = ('user_dialog::tests::'
                  'consume_for_response_refuses_a_dialog_replaced_after_the_snapshot')
 REPLACED_ASSERTION = ('#1599 an answer validated against a replaced dialog '
@@ -74,6 +79,7 @@ DECLARED = (
     'channel-cancel-settle-back-under-guard',
     'replaced-dialog-still-consumed',
     'restore-appends-to-the-tail',
+    'cross-gateway-replaced-dialog-still-consumed',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -174,6 +180,15 @@ mutations = [
      '            None => bucket.insert(index.min(bucket.len()), entry),',
      '            None => bucket.push(entry),',
      RESTORE_TEST, RESTORE_ASSERTION),
+    # channel cross-gateway poll: the identity check is dropped, so an answer
+    # taken for one dialog is consumed from whatever is pending under the id.
+    ('cross-gateway-replaced-dialog-still-consumed', 'user_dialog/channel.rs',
+     '            let bound =\n'
+     '                bus.pending_matches(&self.inner.options.session_key, request_id, &state.accepts);',
+     '            let bound = bus\n'
+     '                .peek(&self.inner.options.session_key, request_id)\n'
+     '                .is_some();',
+     CROSS_TEST, CROSS_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]

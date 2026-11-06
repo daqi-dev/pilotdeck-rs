@@ -1585,3 +1585,72 @@ fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
         );
     }
 }
+
+#[test]
+fn cross_gateway_answer_is_not_delivered_to_a_dialog_replaced_during_the_take() {
+    use crate::negative_assert;
+
+    // #1599: `take_stored_answer` is host code. A reentrant host may register
+    // a different dialog under the same request id while the poll holds the
+    // answer for the old one; the answer must not reach the replacement.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-cross-gateway",
+    ))));
+    let resolved = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let replacement_bus = bus.clone();
+    let replacement_resolved = resolved.clone();
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    let uuids = Arc::new(AtomicI64::new(0));
+    options.uuid = Arc::new(move || format!("uuid-{}", uuids.fetch_add(1, Ordering::SeqCst) + 1));
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.take_stored_answer = Some(Arc::new(move |id: &JsString| {
+        let resolve_log = replacement_resolved.clone();
+        replacement_bus.lock().unwrap().register(
+            &"session".into(),
+            PendingDialog {
+                request_id: id.clone(),
+                dialog_kind: "confirm".into(),
+                tool_call_id: "call-replacement".into(),
+                tool_name: "request_user_confirm".into(),
+                event: crate::metadata::object([("requestId", JsValue::String(id.clone()))]),
+                accepts: Arc::new(|value: &JsValue| value.as_bool().is_some()),
+                resolve: Box::new(move |_answer| {
+                    resolve_log.lock().unwrap().push("replacement");
+                }),
+                reject: Box::new(|_error| {}),
+                on_settled: None,
+            },
+        );
+        Ok(Some(StoredAnswer {
+            request_id: id.clone(),
+            result: DialogAnswer::Answered(JsValue::String("old answer".into())),
+            submitted_at: "2026-01-01T00:00:00.000Z".into(),
+        }))
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    let mut request = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Replaced while the answer is taken".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    negative_assert!(
+        resolved.lock().unwrap().is_empty(),
+        "#1599 a cross-gateway answer must not be delivered to a dialog replaced during take_stored_answer"
+    );
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&"session".into()) == 1,
+        "#1599 the replacement dialog must still be pending after the stale answer is dropped"
+    );
+    assert!(
+        request.try_result().is_none(),
+        "the stale answer must not settle the original request either"
+    );
+}

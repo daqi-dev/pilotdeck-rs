@@ -275,6 +275,21 @@ impl GatewayUserDialogBus {
         }
     }
 
+    /// Whether the dialog currently pending under `request` is the one
+    /// `validated` came from. A host callback can reenter the bus between a
+    /// snapshot and a consume and re-register the same request id, which
+    /// replaces the entry and its validator (#1599); a caller holding a
+    /// captured validator must not consume an entry it does not own.
+    pub fn pending_matches(
+        &self,
+        session: &JsString,
+        request: &JsString,
+        validated: &AcceptsFn,
+    ) -> bool {
+        self.peek(session, request)
+            .is_some_and(|pending| Arc::ptr_eq(&pending.accepts, validated))
+    }
+
     /// As in TS this does not validate values: callers must call `accepts`
     /// first. The settle hook does not run here (#1442); the caller runs it
     /// after dropping the guard and restores on failure.
@@ -292,10 +307,10 @@ impl GatewayUserDialogBus {
         reason: &str,
         validated: Option<&AcceptsFn>,
     ) -> ConsumeResult {
-        let Some(pending) = self.peek(session, request) else {
+        if self.peek(session, request).is_none() {
             return ConsumeResult::NotPending;
-        };
-        if validated.is_some_and(|validated| !Arc::ptr_eq(&pending.accepts, validated)) {
+        }
+        if validated.is_some_and(|validated| !self.pending_matches(session, request, validated)) {
             return ConsumeResult::Replaced;
         }
         if let Some(lease) = self.active_lease(session, request)
