@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 136 mutants:
+`JUDGES`, keyed by the same names. The current table has 142 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -672,6 +672,41 @@ cases prove both directions at runtime -- with the registration a SIGQUIT
 outside the window unwinds through `finally` and exits 128+SIGQUIT, without it
 the same signal kills in place and the `finally` never runs).
 
+`fix-r24`+ replaced the "trust the definition name" proof with a module
+binding-graph proof: `_proven_source_names` / `_loader_names` /
+`_function_shared_names` / `_withdrawn_receivers` now read
+`_module_scope_binding_map`, so a name keeps the shared-call credit only while
+every binding of it is the registered definition or the apparatus loader.
+`fix-r25` closed the r24 review's P0/P1 shapes, each with its own mutation:
+a same-named `def` inside a module-level `if`/`try`
+(`calibrate-conditional-def`), a decorator that replaces the function object
+(`calibrate-decorated-source`), a nested `def` and a walrus target rebinding a
+proven source inside a function (`calibrate-nested-def-rebind` /
+`calibrate-walrus-rebind`), a literal `globals()['<registered>'] = <stub>`
+(`calibrate-dynamic-globals-write`), a `sys.modules['_guard']` pre-seed
+(`calibrate-sys-modules-poison`), and a `global common` rebind routed through a
+locally shadowed loader (`calibrate-shadowed-global-loader`).
+
+`fix-r26` closed the r25 review's P0/P1 shapes.  Every module-scope binding
+form now reaches the graph: a module-level walrus or `match` capture
+(`calibrate-module-walrus`; `_module_extra_bindings`), a dynamic write into the
+module namespace from inside a function
+(`calibrate-dynamic-receiver-write`; `_dynamic_write_names` walks the whole
+file, and `_withdrawn_receivers` consumes it), its one-hop-away spellings --
+`globals()`/`vars()` aliases, `globals().update({...})`,
+`setattr(<module object>, ...)` and an `exec` whose source is not a literal
+(`calibrate-exec-nonliteral`) -- and the relay receiver's shared *attribute*
+(`calibrate-setattr-shared-write`, resolved through the literal dict the key
+comes from so the apparatus's own `for name, value in patched.items()` control
+is not withdrawn).  The `sys.modules` rules accept the aliases a real file can
+use (`import sys as _s`, `_s = sys`, `from sys import modules as _m`), and a
+pre-seed only counts as harmless when its value is a *proven* module.  Imports
+inside `if TYPE_CHECKING:` bind nothing.  Two cross-file rules were missing
+their target file entirely: `PROVEN_SHARED_DEFINITIONS` now holds the defining
+file of a cross-file proven source to the same single-undecorated-def shape
+(`calibrate-negative-process-redefine`), and `_guard.py` must keep exactly one
+undecorated `load` (`calibrate-decorated-guard-load`).
+
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
 helper's body is walked for exit calls with the module-level aliases plus its
@@ -690,9 +725,13 @@ followed into the payload's contents; an **attribute receiver**
 (`self.report.update(payload)` / `self.report |= payload`) is only a summary
 write when the payload carries a status literal of its own — the audited tree
 has no classes, so an opaque payload on an attribute is not treated as a
-summary write either way; and the shielded restore window keeps one deferred
-signum, so a second signal arriving inside the same window is dropped rather
-than queued.  The
+summary write either way; `setattr(<module object>, <non-literal key>)` still
+withdraws every name in the file rather than resolving the key, and a
+`setattr` whose key comes from a dict the resolver cannot see is the same
+whole-file withdrawal; `negative_process.py` is not in the
+`aggregation_audit` scan set at all -- only the one registered name is checked
+there; and the shielded restore window keeps one deferred signum, so a second
+signal arriving inside the same window is dropped rather than queued.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
