@@ -1576,6 +1576,28 @@ fn a_hung_cleanup_does_not_hold_the_failure_report() {
     );
 }
 
+/// #1746: the refused owner and the embedding cleanup do not share a clock, so
+/// a slow owner shutdown cannot leave the cleanup with an expired deadline
+/// (which would let `cleanup_ran` suppress the embedding's own fallback while
+/// nothing actually disposed factory/project).
+#[test]
+fn a_slow_refused_owner_does_not_shrink_the_cleanup_bound() {
+    let teardown = std::time::Duration::from_millis(300);
+    let (owner_bound, cleanup_bound) = super::initialization_teardown_bounds(teardown);
+    assert!(
+        owner_bound <= super::INITIALIZATION_TEARDOWN_DEADLINE,
+        "#1746 the refused owner is the host's own resource and stays on the default bound"
+    );
+    assert_eq!(
+        teardown, cleanup_bound,
+        "#1746 the cleanup keeps the full deadline its embedding declared"
+    );
+    assert!(
+        owner_bound + cleanup_bound <= teardown + super::INITIALIZATION_TEARDOWN_DEADLINE,
+        "#1746 the failure path stays bounded by the two bounds together"
+    );
+}
+
 /// #1746: the failure teardown bound comes from the embedding's own teardown
 /// budget, not from the host default. A budget longer than the default must be
 /// waited out — otherwise a legitimate slow cleanup is cut mid-poll — and the
@@ -1594,8 +1616,8 @@ fn a_caller_budget_decides_the_failure_teardown_bound() {
     let elapsed = started.elapsed();
     assert_eq!("#1746 budgeted cleanup fixture", error.to_string());
     assert!(
-        elapsed >= std::time::Duration::from_millis(250),
-        "#1746 the host must wait out the caller's teardown budget, took {elapsed:?}"
+        elapsed >= std::time::Duration::from_millis(290),
+        "#1746 the host must wait out the caller's teardown budget (expected ~310 ms), took {elapsed:?}"
     );
     assert!(
         elapsed < std::time::Duration::from_secs(5),
