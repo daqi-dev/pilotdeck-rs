@@ -255,9 +255,10 @@ Rust 侧的 `src/pilotdeck-gateway/tests/common/permission_faults.rs` 有
   `PASS_WITH_SKIPS` 而不是失败；也没有「本装置必须真跑到、退化即红」的开关可供
   形式宿主导出。
 - 今天靠什么覆盖：形式宿主与本仓 CI 都以非特权用户运行（实测 `id -u`：本机 502、
-  cb8 1000、mbp2 501），`os.geteuid() == 0` 不成立，`unreadable-dir` 探针每次都真
-  物化、真被拒。只要形式宿主保持非 root，权限面就是被对拍的；剩下的风险只有
-  「有人用 root 跑正式对拍」，此时报告仍写 `PASS_WITH_SKIPS` / exit 1 并列出跳过项。
+  cb8 1000、mbp2 501、macmini-01 501），`os.geteuid() == 0` 不成立，`unreadable-dir`
+  探针每次都真物化、真被拒。只要形式宿主保持非 root，权限面就是被对拍的；剩下的
+  风险只有「有人用 root 跑正式对拍」，此时报告仍写 `PASS_WITH_SKIPS` / exit 1 并
+  列出跳过项。
 - 为什么本单不改：`common.py` 是带哈希行的冻结装置源（`specs/gateway-parity/FROZEN.md`
   里 `../../scripts/gateway-parity/common.py` 那一行），按 CLAUDE.md「冻结尺子的变更」
   需要独立 issue、理由、两家评审、真实数据复算（A1 二进制）与重新登记；新增一个
