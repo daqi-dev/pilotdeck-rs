@@ -1177,6 +1177,40 @@ class EnvironmentControls(unittest.TestCase):
                               for row in self.self_check_controls_rows(renamed)], names)
         print('#1843 D self-check control row-renamed: KILLED', flush=True)
 
+    def controls_verdict_pins(self, source):
+        """`--self-check-controls` 的「见证 → 退出码」整条链，逐环节钉一次。"""
+        self.assertEqual(source.count('control_problems = self_check_controls_run()'), 1,
+                         '#1692 r4 the controls verdict is collected exactly once')
+        self.assertEqual(source.count('sys.exit(1 if control_problems else 0)'), 1,
+                         '#1692 r4 the controls verdict decides the exit status')
+        tree = ast.parse(source)
+        function = next((node for node in ast.walk(tree)
+                         if isinstance(node, ast.FunctionDef)
+                         and node.name == 'self_check_controls_run'), None)
+        self.assertIsNotNone(function,
+                             '#1692 r5 the fixture defines self_check_controls_run()')
+        # r5（DeepSeek concurrency P1）：r4 只钉了调用方与出口。被调方**归还**见证的那 4 条
+        # `return problems` 一行都没钉——把最后一条改成 `return []`，见证文本、调用点、出口
+        # 三处钉子全部不变，15 条 meta control 全 SURVIVED 时 `control_problems == []`、
+        # `sys.exit(0)`，CI 那一步照绿。归还语句逐条钉死。
+        returns = [ast.get_source_segment(source, node) for node in ast.walk(function)
+                   if isinstance(node, ast.Return)]
+        self.assertEqual(returns, ['return problems'] * 4,
+                         '#1692 r5 every exit of self_check_controls_run hands the problems back')
+        branch = next((node for node in tree.body
+                       if isinstance(node, ast.If)
+                       and "'--self-check-controls'" in (ast.get_source_segment(source, node.test)
+                                                         or '')), None)
+        self.assertIsNotNone(branch,
+                             '#1692 r5 the fixture dispatches --self-check-controls')
+        exits = [node for node in ast.walk(branch)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == 'exit']
+        # 该分支只该有 3 个出口：arity 用法错误 / `--self-check` 转交 / controls 裁决。
+        # 多一个早退 `sys.exit(0)` 就又是一条假 PASS（文本钉看不见可达性）。
+        self.assertEqual(len(exits), 3,
+                         '#1692 r5 the controls branch has no extra early exit')
+
     def test_self_check_controls_exit_is_pinned(self):
         # r4（MiniMax sibling P1）：r3 把 `self_check_controls_run()` 的三条承重出口改成
         # 走 `problems.append`（理由：`return []` 会让 CI 步骤假 PASS），但**同一条链上
@@ -1184,13 +1218,10 @@ class EnvironmentControls(unittest.TestCase):
         # 改成 `sys.exit(0)`、或者把上一行的调用挪走，全部 `problems.append` 见证文本不变，
         # #1843 C 的 55 条钉子全绿——而 `.github/workflows/ci.yml` 里那一步把「非零退出」
         # 当验收判据，于是它照绿。与 `--self-check` 的 `if problems: return 1` 同层，
-        # 后者已有计数钉 + 变异杀，这里补齐同样的两层。
+        # 后者已有计数钉 + 变异杀，这里补齐同样的三层（调用 / 归还 / 出口）。
         source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
                   'negative_controls.py').read_text()
-        for fragment in ('control_problems = self_check_controls_run()',
-                         'sys.exit(1 if control_problems else 0)'):
-            self.assertEqual(source.count(fragment), 1,
-                             f'#1692 r4 the controls verdict decides the exit status: {fragment}')
+        self.controls_verdict_pins(source)
         for label, old, new in (
                 ('controls-exit-always-zero', 'sys.exit(1 if control_problems else 0)',
                  'sys.exit(0)'),
@@ -1201,11 +1232,25 @@ class EnvironmentControls(unittest.TestCase):
             self.assertNotEqual(mutant, source, f'#1692 r4 the mutant really applied: {label}')
             with self.assertRaises(AssertionError,
                                    msg=f'#1692 r4 controls {label} must be caught'):
-                self.assertEqual(mutant.count('control_problems = self_check_controls_run()'), 1,
-                                 '#1692 r4 the controls verdict is still collected')
-                self.assertEqual(mutant.count('sys.exit(1 if control_problems else 0)'), 1,
-                                 '#1692 r4 the controls verdict still decides the exit status')
+                self.controls_verdict_pins(mutant)
             print(f'#1692 r4 controls exit mutant {label}: KILLED', flush=True)
+        # r5（DeepSeek concurrency P1）：把最后一条归还改成 `return []`。
+        anchor = source.rindex('return problems')
+        dropped = source[:anchor] + 'return []' + source[anchor + len('return problems'):]
+        self.assertNotEqual(dropped, source, '#1692 r5 the dropped return really applied')
+        with self.assertRaises(AssertionError,
+                               msg='#1692 r5 dropping the returned problems must be caught'):
+            self.controls_verdict_pins(dropped)
+        print('#1692 r5 controls verdict mutant controls-verdict-dropped: KILLED', flush=True)
+        # r5 同一条：在裁决前插一个早退 `sys.exit(0)`。
+        early = source.replace('    control_problems = self_check_controls_run()',
+                               '    sys.exit(0)\n    control_problems = '
+                               'self_check_controls_run()', 1)
+        self.assertNotEqual(early, source, '#1692 r5 the early exit really applied')
+        with self.assertRaises(AssertionError,
+                               msg='#1692 r5 an early exit before the verdict must be caught'):
+            self.controls_verdict_pins(early)
+        print('#1692 r5 controls verdict mutant controls-early-exit: KILLED', flush=True)
 
     def write_source_atomic_body(self, source):
         """`write_source_atomic` 的函数体源码（#1692 §9）。"""
