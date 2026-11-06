@@ -2431,6 +2431,19 @@ async fn failed_clear_midway_keeps_the_turn_persistable() {
             .contains("#917 injected mid-clear storage failure"),
         "#917 the clear must fail with the injected mid-clear error, got {error}"
     );
+    // #1298 (review r3, host negative control SURVIVED): the injected failure
+    // is the clear's very first seam, so a bump that ran before the deletion
+    // would have advanced the generation with the rows still present — the
+    // silent-turn-loss shape. Assert it right here: the abort-path re-arm
+    // sets `indexed` back to 0, so the post-heartbeat stats below cannot tell
+    // an early bump apart from a correct one (the file is regenerated either
+    // way), and the mutant that moves the bump in front of the seam passed
+    // this test without this assertion.
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#917 a clear that failed midway must not advance the generation"
+    );
     lab.server.release(1);
     let stats = heartbeat
         .await

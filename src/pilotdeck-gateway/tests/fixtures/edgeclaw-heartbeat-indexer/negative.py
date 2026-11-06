@@ -440,7 +440,11 @@ cases = [
          changes=[(entries, BUMP_AFTER_DELETE, ''),
                   (entries, CLEAR_SESSION_GUARD, CLEAR_SESSION_GUARD + BUMP_BEFORE_SEAM)],
          test='failed_clear_midway_keeps_the_turn_persistable',
-         assertion='#917 a clearSession that failed midway must leave the turn persistable, not silently drop it'),
+         # #1298 r4: the binding moved from the post-heartbeat end state to the
+         # generation assertion — the abort-path re-arm sets `indexed` back to
+         # 0, so the file is regenerated either way and the stats cannot tell
+         # an early bump apart (the mutant SURVIVED on the host until this).
+         assertion='#917 a clear that failed midway must not advance the generation'),
     # #917 fix-r3 (review P1-2, coordinator): the pure fix-r2 rollback —
     # only the bump line moves back in front of the seam, claiming nothing.
     # The parked clear advances the generation while its rows are still
