@@ -37,9 +37,17 @@ KILL_TIMEOUT = 10
 # number used to be copied into every fixture.
 CARGO_SLOTS_WAIT_SECONDS = 600
 
-# Cap for one `cargo-slots.sh` invocation inside wait_for_slot: above the
-# script's cold bootstrap budget, below any caller's total budget, so one slow
-# call cannot swallow the whole wait without a retry chance.
+# Default cap for ONE `cargo-slots.sh` sample inside wait_for_slot (#1692 §2).
+# The total wait budget is only the deadline; a single sample must not hold the
+# caller — and, in the mutating fixtures, the source-tree lock — for the whole
+# budget when the gate hangs.
+CARGO_SLOTS_SAMPLE_SECONDS = 10.0
+
+# Escape hatch for the gate's own cold bootstrap. On the first call of a host
+# `cargo-slots.sh` may spend up to its 240 s BOOTSTRAP_TIMEOUT inside one
+# `--status` du (#1556 r1 P1-2). A 10 s sample would kill that bootstrap
+# forever, so after one short sample times out the next sample may use this
+# larger cap — still bounded, still below any caller's total budget.
 CARGO_SLOTS_CALL_SECONDS = 300.0
 
 
@@ -780,26 +788,39 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
                     restored[0] = True
 
 
-def wait_for_slot(script, *, timeout=900, interval=30, gate_required=False):
+def wait_for_slot(script, *, timeout=900, interval=30, gate_required=False,
+                  sample_timeout=CARGO_SLOTS_SAMPLE_SECONDS):
+    if not math.isfinite(sample_timeout) or sample_timeout <= 0:
+        # A non-positive/infinite cap would recreate the unbounded sample this
+        # parameter exists to remove (#1692 §2). Fail closed like the caller's
+        # own slot guard does.
+        raise ValueError(f'sample_timeout must be finite and positive: {sample_timeout!r}')
     deadline = time.monotonic() + timeout
     stdout, stderr = [], []
     command = ["bash", str(script)]
+    cold_bootstrap = False
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(command, timeout,
                                             "".join(stdout), "".join(stderr))
+        # One sample is bounded by sample_timeout; the total budget only decides
+        # whether another sample may start. After a short sample was killed we
+        # allow one long sample so the gate's documented cold bootstrap can
+        # finish (#1556) without giving every hung call the whole budget.
+        cap = min(remaining, CARGO_SLOTS_CALL_SECONDS if cold_bootstrap else sample_timeout)
         try:
-            result = run_owned(command, timeout=min(remaining, CARGO_SLOTS_CALL_SECONDS))
+            result = run_owned(command, timeout=cap)
         except subprocess.TimeoutExpired:
-            # One call is capped (see CARGO_SLOTS_CALL_SECONDS) so a cold gate
-            # cannot eat the whole budget with no retry. Retry while the total
-            # budget lasts; only then let the timeout out — state/decisions-20261106.md
-            # §5 classifies `TimeoutExpired ... cargo-slots.sh` as "environment
-            # did not produce a verdict", not as a negative-control result.
+            # Retry while the total budget lasts; only then let the timeout out —
+            # state/decisions-20261106.md §5 classifies `TimeoutExpired ...
+            # cargo-slots.sh` as "environment did not produce a verdict", not as
+            # a negative-control result.
             if time.monotonic() >= deadline:
                 raise
+            cold_bootstrap = True
             continue
+        cold_bootstrap = False
         stdout.append(result.stdout)
         stderr.append(result.stderr)
         if result.returncode in (0, 69):
