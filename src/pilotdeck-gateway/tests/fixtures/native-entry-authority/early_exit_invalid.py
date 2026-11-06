@@ -2,7 +2,7 @@
 # anchor-selfcheck: unsupported build-artifact signal injection, no source mutation table
 """#1261 fix-r2 / #1401 item 1: early exits split into INVALID and KILLED.
 
-The bound test (tests/native_process.rs) answers a child that exits with
+The bound tests (tests/native_process.rs) answer a child that exits with
 **neither** the rejection nor its ``native listening`` advertisement on stderr
 -- an environmental early exit (dyld, OOM, assembly) -- with an unmarked panic,
 so it can never fake a kill (INVALID). A child that exits **after** advertising
@@ -11,7 +11,9 @@ authority, so the marked assertion kills (KILLED). This control injects both
 exits without mutating any source: the built gateway binary in the
 caller-supplied ``CARGO_TARGET_DIR`` is atomically replaced by a stub that
 either exits immediately with empty output, or prints
-``native listening 127.0.0.1:1`` to stderr first and then exits.
+``native listening 127.0.0.1:1`` to stderr first and then exits. The scrub
+test gets the INVALID half as well, so its own unjudgeable branch is observed
+rather than assumed (#1401 review, both lineages).
 
 The negative step runs the already-built test executable directly, not
 through cargo: every ``cargo test`` re-publishes ``debug/pilotdeck-gateway``
@@ -25,9 +27,14 @@ KILLED; any other failure is not the proof), every row must have *proved*
 its own verdict -- a row folded to INVALID by an exception is not proof, or
 the eof row would be satisfied by its own failure (#1401 review P0) -- the
 original binary is restored and SHA-256 verified, and the restored positive
-control must pass. No source mutation happens here, so unlike
-``negative_controls.py`` this runs on an uncommitted tree. No ``-q``: the
-judge needs the named per-test lines.
+controls must pass. No source mutation happens here, so unlike
+``negative_controls.py`` this runs on an uncommitted tree.
+
+The stub window rewrites a *shared* ``$CARGO_TARGET_DIR/debug`` path, so the
+whole run holds the same tree lease ``mutating_sources`` takes: another
+control on this tree can neither publish over the stub nor capture it as its
+own binary (#1401 review, both lineages). No ``-q``: the judge needs the
+named per-test lines.
 """
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,80 +47,102 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import panic_evidence
-from negative_process import new_output_directory, run_owned, wait_for_slot
-from negative_suite import classify, passed, publish_summary
+from negative_process import new_output_directory, run_owned, tree_lock, wait_for_slot
+from negative_source import test_body
+from negative_suite import classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
 TEST = 'native_entry_process_rejects_inherited_authority'
+SCRUB_TEST = 'native_entry_scrubs_inherited_process_environment'
 MARKERS = [
     '#1261 native entry rejects inherited PILOTDECK_STORAGE_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
 ]
-# The unmarked early-exit panic below must stay distinct from every kill
-# marker: the shared judge kills only on a marker inside the named test's
-# panic payload, and the INVALID branch deliberately offers none.
+MARKER_TEMPLATE = '#1261 native entry rejects inherited {key}'
+# The unmarked early-exit panics must stay distinct from every kill marker:
+# the shared judge kills only on a marker inside the named test's panic
+# payload, and the INVALID branch deliberately offers none.
 EARLY_EXIT = ('#1261 native entry child exited early; no rejection and '
               'no listening advertisement for')
-# The gate that separates the unmarked early-exit panic from the marked
-# kill, and the observation that the advertisement is watched at all.
+SCRUB_EARLY_EXIT = ('#1261 native entry scrub child neither advertised listening '
+                    'nor exited, cannot judge')
+# The gate that separates the unmarked early-exit panic from the marked kill,
+# and the single call each test makes to observe the advertisement.
 GATE = 'if !stderr.contains(&rejection) {'
-ADVERTISED = 'read_stderr_until(stderr, "native listening"'
-# Two stub shapes, two verdicts (#1401 item 1): an environmental exit prints
+OBSERVE = 'observe_child_stderr(stderr)'
+KEYS = ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT', 'PILOTDECK_MANAGED_CONFIG')
+# One row per stub shape *and* bound test: an environmental exit prints
 # nothing and can only be judged INVALID, while a child that advertised
 # listening before exiting proved the gate accepted the authority, so the
-# marked assertion must kill. The advertisement text is the child's own
-# stderr line ("native listening <addr>"), not the rejection.
-STUBS = (
-    ('eof', '#!/bin/sh\nexit 86\n', 'INVALID'),
-    ('listening', '#!/bin/sh\necho "native listening 127.0.0.1:1" >&2\nexit 86\n',
-     'KILLED'),
+# marked assertion must kill. `payloads` is what must appear in the named
+# test's own panic payload -- a status alone is not proof, or any other
+# failure of a row that expects INVALID would satisfy it. The advertisement
+# text is the child's own stderr line ("native listening <addr>").
+ROWS = (
+    ('eof', TEST, '#!/bin/sh\nexit 86\n', 'INVALID', (EARLY_EXIT,)),
+    ('listening', TEST,
+     '#!/bin/sh\necho "native listening 127.0.0.1:1" >&2\nexit 86\n',
+     'KILLED', tuple(MARKERS)),
+    ('scrub-eof', SCRUB_TEST, '#!/bin/sh\nexit 86\n', 'INVALID', (SCRUB_EARLY_EXIT,)),
 )
-CASE = SimpleNamespace(test=TEST, assertion=MARKERS)
-COMMAND = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-           '-p', 'pilotdeck-gateway', '--test', 'native_process',
-           TEST, '--', '--exact']
+# Both tests need a positive control before and after the injection.
+TESTS = (('rejects', TEST), ('scrub', SCRUB_TEST))
+EXPECTED = {f'child-early-exit-stub-{name}': expected
+            for name, _, _, expected, _ in ROWS}
 TEST_BINARY = re.compile(r'Running tests/native_process\.rs \(([^)]+)\)')
 
 
-def test_body(source, name):
-    """The named test function's body, up to the next test attribute.
-
-    A file-level needle cannot say *which* test observes what: after #1401
-    item 6 added a second test with the same ``native listening`` string, a
-    file-level check passed even with the rejects test's observation deleted
-    (#1401 review P2, found by both lineages).
-    """
-    start = re.search(rf'^async fn {re.escape(name)}\(', source, re.M)
-    if start is None:
-        start = re.search(rf'^fn {re.escape(name)}\(', source, re.M)
-    if start is None:
-        raise SystemExit(f'#1261 test missing from native_process.rs: {name}')
-    following = re.search(r'^#\[(?:tokio::)?test\]', source[start.end():], re.M)
-    end = start.end() + following.start() if following else len(source)
-    return source[start.end():end]
+def command(test):
+    return ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+            '-p', 'pilotdeck-gateway', '--test', 'native_process',
+            test, '--', '--exact']
 
 
 def main():
     if sys.argv[1:] == ['--check']:
+        names = [name for name, *_ in ROWS]
+        if len(set(names)) != len(names):
+            # `proved`, `restored` and the verdict are keyed by mutation name,
+            # so a duplicate row would let one run satisfy both (#1401 review
+            # P3).
+            raise SystemExit(f'#1261 duplicate stub row names: {names}')
         test_source = TEST_FILE.read_text()
-        body = test_body(test_source, TEST)
-        for needle, what in ((EARLY_EXIT, 'early-exit panic template'),
-                             (GATE, 'rejection gate'),
-                             (ADVERTISED, 'listening advertisement observation'),
-                             ('#1261 native entry rejects inherited {key}',
-                              'marker template')):
-            if needle not in body:
-                raise SystemExit(f'#1261 missing {what} from {TEST}')
-        for key in ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT',
-                    'PILOTDECK_MANAGED_CONFIG'):
-            if f'"{key}"' not in body:
+        rejects = test_body(test_source, TEST)
+        scrub = test_body(test_source, SCRUB_TEST)
+        # Each row's proof must live in the test that row names, or the
+        # runtime verdict for that row could never be reached.
+        for name, test, _, _, payloads in ROWS:
+            body = test_body(test_source, test)
+            for payload in payloads:
+                if payload in body:
+                    continue
+                # The kill markers are formatted from one template in the
+                # test, so the source carries the template, not each message.
+                if payload in MARKERS and MARKER_TEMPLATE in body:
+                    continue
+                raise SystemExit(f'#1261 row {name}: missing {test} payload: {payload}')
+        # The runtime judge matches substituted messages, so --check can only
+        # bind the shared template and the key list each test iterates; drift
+        # here fails before any cargo run is needed.
+        if MARKER_TEMPLATE not in rejects:
+            raise SystemExit(f'#1261 marker template missing from {TEST}')
+        for key in KEYS:
+            if f'"{key}"' not in rejects:
                 raise SystemExit(f'#1261 key missing from {TEST}: {key}')
+        for needle, what in ((GATE, 'rejection gate'),
+                             (OBSERVE, 'listening advertisement observation')):
+            if needle not in rejects:
+                raise SystemExit(f'#1261 missing {what} from {TEST}')
+        for needle, what in ((OBSERVE, 'scrub listening advertisement observation'),
+                             (SCRUB_EARLY_EXIT, 'scrub unjudgeable panic')):
+            if needle not in scrub:
+                raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
         for marker in MARKERS:
             if marker in EARLY_EXIT or EARLY_EXIT in marker:
                 raise SystemExit(f'#1261 early-exit panic collides with marker {marker}')
-        print(f'#1261 {TEST} early-exit anchors OK')
+        print(f'#1261 {len(ROWS)} early-exit rows OK')
         return 0
     if len(sys.argv) != 2:
         raise SystemExit('usage: early_exit_invalid.py --check | NEW_OUTPUT')
@@ -127,10 +156,10 @@ def main():
     env.pop('LC_MESSAGES', None)
     binary = Path(env['CARGO_TARGET_DIR']).resolve() / 'debug/pilotdeck-gateway'
 
-    def run_cargo(label):
+    def run_cargo(label, test):
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-        result = run_owned(COMMAND, cwd=ROOT, env=env, timeout=900)
+        result = run_owned(command(test), cwd=ROOT, env=env, timeout=900)
         log = result.stdout + result.stderr
         (out / (label + '.log')).write_text(log)
         return result, log
@@ -163,111 +192,121 @@ def main():
                 pass
             raise
 
+    def new_row(mutation, test):
+        # One schema literal for every row, and only fields the shared
+        # comparator knows: `_negkit` rejects unknown row fields, so the
+        # internal restore bookkeeping below stays out of the row (#1401
+        # review P1).
+        return dict(mutation=mutation, test=test, assertion=MARKERS,
+                    status='INVALID', reason='', restoredPass=False)
+
     rows = []
-    # Per-row expectations live here, not in the published row: the summary
-    # schema is shared with the other fixtures (`_negkit` compares it), so an
-    # ad-hoc `expected` key would be a schema drift (#1401 review).
-    expected_of = {f'child-early-exit-stub-{name}': expected
-                   for name, _, expected in STUBS}
     # Only a row that proved its own verdict counts. Folding a failure into
     # `status` is not enough: the eof row expects INVALID, so any exception
     # (including SURVIVED, i.e. the stub never took effect) would otherwise
     # be indistinguishable from a real INVALID and the control could exit 0
     # without ever observing the early-exit panic (#1401 review P0).
     proved = set()
-    try:
-        positive, positive_log = run_cargo('early-exit-positive')
-        if not passed(positive, TEST):
-            raise RuntimeError('positive control failed')
-        found = TEST_BINARY.search(positive_log)
-        if found is None or not Path(found.group(1)).is_file():
-            raise RuntimeError('could not locate the built native_process test binary')
-        if not binary.is_file():
-            raise RuntimeError(f'missing built gateway binary: {binary}')
-        original = binary.read_bytes()
-        mode = stat.S_IMODE(binary.stat().st_mode)
-        digest = hashlib.sha256(original).hexdigest()
-        for name, stub, expected in STUBS:
-            row = dict(mutation=f'child-early-exit-stub-{name}', test=TEST,
-                       assertion=MARKERS, status='INVALID', reason='',
-                       stubRestored=False, restoredPass=False)
-            rows.append(row)
-            try:
-                publish(stub.encode(), 0o755)
+    restored = set()
+    restored_pass = False
+    # Same tree lease as `mutating_sources`: the stub window below rewrites a
+    # shared binary path, so no other control on this tree may run inside it.
+    with tree_lock(ROOT):
+        try:
+            positive_logs = {}
+            for tag, test in TESTS:
+                positive, log = run_cargo(f'early-exit-positive-{tag}', test)
+                if not passed(positive, test):
+                    raise RuntimeError(f'positive control failed: {test}')
+                positive_logs[tag] = log
+            found = TEST_BINARY.search(positive_logs['rejects'])
+            if found is None or not Path(found.group(1)).is_file():
+                raise RuntimeError('could not locate the built native_process test binary')
+            if not binary.is_file():
+                raise RuntimeError(f'missing built gateway binary: {binary}')
+            original = binary.read_bytes()
+            mode = stat.S_IMODE(binary.stat().st_mode)
+            digest = hashlib.sha256(original).hexdigest()
+            for name, test, stub, expected, payloads in ROWS:
+                mutation = f'child-early-exit-stub-{name}'
+                row = new_row(mutation, test)
+                rows.append(row)
                 try:
-                    # No cargo here (see the module docstring) and therefore
-                    # no slot: this runs one already-built test executable to
-                    # completion.
-                    negative = run_owned([found.group(1), TEST, '--', '--exact'],
-                                         cwd=ROOT, env=env, timeout=900)
-                    log = negative.stdout + negative.stderr
-                    (out / f'early-exit-neg-{name}.log').write_text(log)
-                    status, reason = classify(negative, CASE)
-                    evidence = panic_evidence(log, TEST)
-                    if status != expected:
-                        raise RuntimeError(f'{name} early exit judged {status}, '
-                                           f'not {expected} ({reason})')
-                    if expected == 'INVALID' and EARLY_EXIT not in evidence:
-                        raise RuntimeError('named test did not fail at the early-exit '
-                                           f'panic (evidence: {evidence[:200]!r})')
-                    if expected == 'KILLED' and not any(marker in evidence
-                                                        for marker in MARKERS):
-                        raise RuntimeError('named test did not fail at a bound '
-                                           f'marker (evidence: {evidence[:200]!r})')
-                    row.update(status=status,
-                                reason=f'{name} early exit judged {status} '
-                                        f'at the expected payload')
-                    proved.add(row['mutation'])
-                finally:
-                    publish(original, mode)
-                    # One read, both checks (#1401 item 2): the bytes and their
-                    # digest must come from the same read.
-                    restored_bytes = binary.read_bytes()
-                    if (restored_bytes != original
-                            or hashlib.sha256(restored_bytes).hexdigest() != digest):
-                        raise RuntimeError('gateway binary restoration failed')
-                    row['stubRestored'] = True
-            except Exception as error:
-                row.update(status='INVALID',
-                           reason=f'{type(error).__name__}: {error}')
-        restored, _ = run_cargo('early-exit-restored')
-        restored_pass = passed(restored, TEST)
-        for row in rows:
-            row['restoredPass'] = restored_pass
-        if not restored_pass:
-            # A failed restored positive control makes every recorded KILLED
-            # untrustworthy, exactly like a global failure (#1401 review).
-            for row in rows:
-                row['status'] = 'INVALID'
-                row['reason'] = (row['reason'] + '; ' if row['reason'] else '') \
-                    + 'restored positive control failed'
-    except BaseException as error:
-        # Any global failure (positive control, restore, uplift) invalidates
-        # every verdict already recorded: a KILLED that was observed before a
-        # later breakage is no longer trustworthy as a row of its own
-        # (#1401 item 1 P3).
-        message = f'{type(error).__name__}: {error}'
-        for row in rows:
-            row['status'] = 'INVALID'
-            row['reason'] = (row['reason'] + '; ' if row['reason'] else '') + message
-        if not rows:
-            # Failures before the first stub row (positive control, binary
-            # lookup) must still publish their reason: an empty `controls`
-            # list hides why the control is red (#1401 review).
-            rows.append(dict(mutation='early-exit-global', test=TEST,
-                             assertion=MARKERS, status='INVALID',
-                             reason=message, stubRestored=False,
-                             restoredPass=False))
+                    publish(stub.encode(), 0o755)
+                    try:
+                        # No cargo here (see the module docstring) and
+                        # therefore no slot: this runs one already-built test
+                        # executable to completion.
+                        negative = run_owned([found.group(1), test, '--', '--exact'],
+                                             cwd=ROOT, env=env, timeout=900)
+                        log = negative.stdout + negative.stderr
+                        (out / f'early-exit-neg-{name}.log').write_text(log)
+                        # The judge's assertion list is the *kill* set, never
+                        # the row's expected payload: handing it the
+                        # early-exit message would make the unmarked INVALID
+                        # panic look like a kill (#1401 review P0 -- caught by
+                        # the live eof row).
+                        case = SimpleNamespace(test=test, assertion=MARKERS)
+                        status, reason = classify(negative, case)
+                        evidence = panic_evidence(log, test)
+                        if status != expected:
+                            raise RuntimeError(f'{name} early exit judged {status}, '
+                                               f'not {expected} ({reason})')
+                        if not any(payload in evidence for payload in payloads):
+                            raise RuntimeError(f'{name} early exit did not fail at its '
+                                               f'own payload '
+                                               f'(evidence: {evidence[:200]!r})')
+                        row.update(status=status,
+                                   reason=f'{name} early exit judged {status} '
+                                           f'at the expected payload')
+                        proved.add(mutation)
+                    finally:
+                        publish(original, mode)
+                        # One read, both checks (#1401 item 2): the bytes and
+                        # their digest must come from the same read.
+                        restored_bytes = binary.read_bytes()
+                        if (restored_bytes != original
+                                or hashlib.sha256(restored_bytes).hexdigest() != digest):
+                            raise RuntimeError('gateway binary restoration failed')
+                        restored.add(mutation)
+                except Exception as error:
+                    row.update(status='INVALID',
+                               reason=f'{type(error).__name__}: {error}')
+                if mutation not in restored:
+                    # The stub is still in place: every later row would judge
+                    # a binary nobody chose. Abort the whole run rather than
+                    # publish rows the tree cannot vouch for.
+                    raise RuntimeError('gateway binary not restored; aborting')
+            restored_pass = True
+            for tag, test in TESTS:
+                restored_run, _ = run_cargo(f'early-exit-restored-{tag}', test)
+                if not passed(restored_run, test):
+                    raise RuntimeError(f'restored positive control failed: {test}')
+        except BaseException as error:
+            # Any global failure (positive control, restore, uplift) invalidates
+            # every verdict already recorded: a KILLED that was observed before
+            # a later breakage is no longer trustworthy as a row of its own
+            # (#1401 item 1 P3; single implementation: negative_suite).
+            message = f'{type(error).__name__}: {error}'
+            invalidate_completed(rows, message)
+            if not rows:
+                # Failures before the first stub row (positive control, binary
+                # lookup) must still publish their reason: an empty `controls`
+                # list hides why the control is red (#1401 review).
+                rows.append(new_row('early-exit-global', TEST))
+                invalidate_completed(rows, message)
+    for row in rows:
+        row['restoredPass'] = restored_pass and row['mutation'] in restored
     publish_summary(out, rows)
     for row in rows:
         print(f"{row['mutation']}: {row['status']}: {row['reason']}", flush=True)
-        print(f"stubRestored={row['stubRestored']} restoredPass={row['restoredPass']}",
-              flush=True)
-    return int(not (len(rows) == len(STUBS)
+        print(f"restored={row['mutation'] in restored} "
+              f"restoredPass={row['restoredPass']}", flush=True)
+    return int(not (len(rows) == len(ROWS)
                     and all(row['mutation'] in proved for row in rows)
-                    and all(row['status'] == expected_of[row['mutation']] for row in rows)
-                    and all(row['stubRestored'] and row['restoredPass']
-                            for row in rows)))
+                    and all(row['mutation'] in restored for row in rows)
+                    and all(row['status'] == EXPECTED[row['mutation']] for row in rows)
+                    and all(row['restoredPass'] for row in rows)))
 
 
 if __name__ == '__main__':

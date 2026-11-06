@@ -11,12 +11,15 @@
 （`src/pilotdeck-gateway/tests/native_process.rs`）：用 `CARGO_BIN_EXE_pilotdeck-gateway`
 起真实 `--native` 子进程（完整合法 CLI、`env_clear()` 后注入被测键），断言子进程非零
 退出且 stderr 含 `native isolated mode does not accept inherited <key>`。子进程由
-`kill_on_drop` + 60 秒静默上限界定，stderr 按行读、见到目标行立即返回（#1401 评审 P2：
-原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次白等满 5 秒，慢主机又会被读成「没有
-广播」）。调用点的两种破坏各有专属观察：删除调用时子进程会带着被接受的权限常驻，
-stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是证据）；后移调用时
-装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home` 除自身写入的 config
-外无新增条目。
+`kill_on_drop` + 显式 `kill`/`wait` 回收，stderr 经 `observe_child_stderr` 按行读、见到
+目标**行首**立即返回（#1401 评审 P2：原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次
+白等满 5 秒，慢主机又会被读成「没有广播」）。观察有两重界：单行静默 60 秒，整体预算
+180 秒，另有 64 KiB stderr 上限——逐行超时会在每读到一行时重置，没有总预算则持续输出
+不匹配行的子进程会让测试永久挂起（#1401 评审两家独立提出）。超时读到的一半字节仍计入
+证据，且半行同样按行首判定广告。调用点的两种破坏各有专属观察：删除调用时子进程会带着
+被接受的权限常驻，stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是
+证据）；后移调用时装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home`
+除自身写入的 config 外无新增条目。
 
 判杀集合（MARKERS）只含上述三个键断言消息：launch / stderr 管道 / exit-wait 等
 环境性失败一律落 INVALID。子进程早退分两支（#1401 项 1）：stderr **既无 rejection
@@ -48,11 +51,14 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 
 `python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
 模板、三个键名与 scrub 标记外，还按**测试函数体切段**绑定观察——rejects 测试里的
-`leftover.is_empty()` 与 `read_stderr_until(stderr, "native listening"`，scrub 测试里的
-`Failed to parse default config YAML.` 与同一条广播读取（#1401 项 4 / 评审 P2：整文件
-needle 分不清哪个测试在观察，两个测试都含 `native listening` 后删掉 rejects 那处仍会
-通过）。实际负控命令为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由
-调用方设置 `CARGO_TARGET_DIR`，证据目录走共享 `new_output_directory`（`#953` 非空拒用、
+`leftover.is_empty()` 与 `observe_child_stderr(stderr)`，scrub 测试里的
+`Failed to parse default config YAML.`、同一条广播观察与它自己的「无法判定」panic
+（#1401 项 4 / 评审 P2：整文件 needle 分不清哪个测试在观察，两个测试都含
+`native listening` 后删掉 rejects 那处仍会通过；切段函数由两个脚本共用
+`negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
+函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认）。实际负控命令
+为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方设置
+`CARGO_TARGET_DIR`，证据目录走共享 `new_output_directory`（`#953` 非空拒用、
 `.claim` O_EXCL），使用共享 HEAD 守卫、进程所有权和最终汇总：每项先正控，再
 `--no-run` 确认变异体可编译，再判杀，恢复后复跑；过期锚点与无法编译都是 INVALID，
 任一非 KILLED 即非零退出。未提交源码不能运行（`mutating_sources` 拒跑），不得使用
@@ -61,11 +67,15 @@ needle 分不清哪个测试在观察，两个测试都含 `native listening` �
 `python3 -I early_exit_invalid.py NEW_OUTPUT`（同样必须设置 `CARGO_TARGET_DIR`，
 `--check` 为静态检查）证明早退分支的两半：它把 `CARGO_TARGET_DIR` 里已构建的
 `debug/pilotdeck-gateway` 原子换成 stub（临时名走 `tempfile.mkstemp`，#1401 项 2），
-跑同一个绑定测试并用共享 `negative_suite.classify` 判定——无输出 stub（立即 `exit 86`）
-必须 INVALID 且命名测试的 panic 载荷含早退分支专属消息；`native listening` stub（先向
-stderr 打印 `native listening 127.0.0.1:1` 再 `exit 86`）必须 KILLED 且载荷含绑定
-marker。两个变体的原始输出分别落 `early-exit-neg-eof.log` /
-`early-exit-neg-listening.log`，互不覆盖。随后按 SHA-256 校验恢复原二进制并复跑正控。
-证据目录走共享 `new_output_directory`（`#953` 非空拒用、`.claim` O_EXCL，#1401 项 3）。
-它不变异任何源码，也不经过 `mutating_sources`，所以未提交的树（含本 fixture 所在
-测试文件的改动）上也能运行。任一环节不符即非零退出。
+跑对应的绑定测试并用共享 `negative_suite.classify` 判定——无输出 stub（立即 `exit 86`）
+必须 INVALID 且命名测试的 panic 载荷含该测试自己的早退分支消息（rejects / scrub 各一
+行）；`native listening` stub（先向 stderr 打印 `native listening 127.0.0.1:1` 再
+`exit 86`）必须 KILLED 且载荷含绑定 marker。每行变体的原始输出单独落
+`early-exit-neg-<行名>.log`，互不覆盖。正控与恢复后复跑对两个测试各做一次，随后按
+SHA-256 校验恢复原二进制。stub 窗口改写的是共享 `$CARGO_TARGET_DIR/debug` 路径，整段
+运行持 `negative_process.tree_lock(ROOT)`（与 `mutating_sources` 同一把树锁），别的负控
+既不能在窗口内发布自己的二进制，也不能把 stub 当成自己的产物（#1401 评审两家独立提出）。
+汇总行只发布共享比对器白名单内的字段（`stubRestored` 这类内部记账不外发，#1401 评审
+P1）。证据目录走共享 `new_output_directory`（`#953` 非空拒用、`.claim` O_EXCL，
+#1401 项 3）。它不变异任何源码，也不经过 `mutating_sources`，所以未提交的树（含本
+fixture 所在测试文件的改动）上也能运行。任一环节不符即非零退出。

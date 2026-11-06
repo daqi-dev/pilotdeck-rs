@@ -8,7 +8,7 @@ looked present. The helper may relax syntax whitespace only.
 """
 import unittest
 
-from negative_source import assertion_message_present
+from negative_source import assertion_message_present, test_body
 
 MESSAGE = 'gateway case filter must match at least one scenario'
 SPLIT = f'''
@@ -46,6 +46,48 @@ class ExactLiteralPreflight(unittest.TestCase):
 
     def test_syntax_whitespace_does_not_hide_a_missing_assert(self):
         self.assertFalse(assertion_message_present('fn other() {}', MESSAGE))
+
+
+class TestBodySegmentation(unittest.TestCase):
+    """#1401 review: a needle must be bound to the test that observes it."""
+
+    SOURCE = '''
+#[tokio::test(flavor = "multi_thread")]
+async fn first() {
+    assert!(a);
+}
+
+#[test]
+fn second() {
+    assert!(b);
+}
+
+fn helper_after_the_last_test() {
+    assert!(a);
+}
+'''
+
+    def test_body_stops_at_the_functions_own_brace(self):
+        # Both tests mention ``assert!(a)``; a file-level check would pass
+        # with the first test's observation deleted.
+        body = test_body(self.SOURCE, 'first')
+        self.assertIn('assert!(a);', body)
+        self.assertNotIn('assert!(b);', body)
+
+    def test_non_bare_test_attributes_do_not_widen_the_body(self):
+        # `#[tokio::test(flavor = ...)]` must end the previous body: the old
+        # `^#\\[(?:tokio::)?test\\]$` separator missed it.
+        self.assertNotIn('assert!(b);', test_body(self.SOURCE, 'first'))
+
+    def test_helper_after_the_last_test_is_not_part_of_it(self):
+        self.assertNotIn('helper_after_the_last_test',
+                         test_body(self.SOURCE, 'second'))
+
+    def test_missing_or_unterminated_function_is_reported(self):
+        with self.assertRaises(LookupError):
+            test_body(self.SOURCE, 'absent')
+        with self.assertRaises(LookupError):
+            test_body('async fn open() {\n    let x = 1;\n', 'open')
 
 
 if __name__ == '__main__':
