@@ -1594,8 +1594,7 @@ fn rename_after_open_is_not_found() {
     negative_assert!(
         diagnostics_block(&blocks)
             .contains("(attachment handle is not the lease object approved before the open)."),
-        "#1468 a renamed-in outside handle must be diagnosed not-found, got: {}",
-        diagnostics_block(&blocks)
+        "#1468 a renamed-in outside handle must be diagnosed not-found"
     );
     negative_assert!(
         blocks

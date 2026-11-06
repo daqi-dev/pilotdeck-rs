@@ -122,7 +122,7 @@ mutations = [
                 .unwrap_or(false);''',
      '            let same_object = true;',
      'native_process::services_tests::rename_after_open_is_not_found',
-     '#1468 a renamed-in outside handle must be diagnosed not-found, got: {}'),
+     '#1468 a renamed-in outside handle must be diagnosed not-found'),
     ('handle-path-fail-open-passes', SERVICES,
      '''        // #1468: an unavailable handle path is never approved.
         Err(_) => false,''',
