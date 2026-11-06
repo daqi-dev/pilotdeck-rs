@@ -37,7 +37,30 @@ fn main() -> ExitCode {
     // closed here exactly like the gateway assembly.
     if let Ok(value) = std::env::var(pilotdeck_transport::loop_stimulus::STIMULUS_ENV) {
         match pilotdeck_transport::loop_stimulus::validate_value(&value) {
-            Ok(dir) => eprintln!("native loop stimulus on {}", dir.display()),
+            Ok(dir) => {
+                // Resolve and freeze the plan here, at startup, not on the
+                // first turn: the gateway resolved its own copy before it
+                // launched this process, so a lazy read would let the two
+                // disagree if `loop.json` changes in between and silently
+                // record an uncontrolled turn under a planned cell.
+                match pilotdeck_transport::loop_stimulus::LoopStimulus::global() {
+                    Some(stimulus) => {
+                        if let Err(message) = stimulus.plan() {
+                            eprintln!("{message}");
+                            return ExitCode::from(2);
+                        }
+                    }
+                    // The entry above only exists when the variable is set.
+                    None => {
+                        eprintln!(
+                            "native loop stimulus could not resolve {}.",
+                            pilotdeck_transport::loop_stimulus::STIMULUS_ENV
+                        );
+                        return ExitCode::from(2);
+                    }
+                }
+                eprintln!("native loop stimulus on {}", dir.display());
+            }
             Err(message) => {
                 eprintln!("{message}");
                 return ExitCode::from(2);

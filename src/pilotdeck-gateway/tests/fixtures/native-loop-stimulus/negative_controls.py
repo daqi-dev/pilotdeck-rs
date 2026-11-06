@@ -112,6 +112,16 @@ mutations = [
      ' && ms.fract() == 0.0',
      '',
      'loop_stimulus::tests::malformed_plan_fails_closed', '#1371 unsupported bound fails closed'),
+    # The unknown-first cell must prove the release won the race against the
+    # turn timer. Delaying the release past the 400 ms timeout makes the timer
+    # decide the turn, and the bounded assertion must catch it.
+    ('unknown-first-release-after-timer', PROCESS,
+     '''    await release(control, plan, 'outcome', 'unknown');
+    const {events, at, terminal} = await pump;''',
+     '''    await sleep(600);
+    await release(control, plan, 'outcome', 'unknown');
+    const {events, at, terminal} = await pump;''',
+     EXECUTABLE, '#1371 executable unknown-first before timer'),
     # Only a resolved plan may suppress the automatic title request; arming a
     # directory that carries no plan is inert, and an inert entry must keep the
     # production title request (`#1371 inert turn keeps the title request`).
@@ -229,8 +239,18 @@ def main():
     # comparisons into noise; a fresh codegen unit per build keeps them
     # meaningful.
     env['CARGO_INCREMENTAL'] = '0'
+    # The adjudicator and the shared apparatus decide KILLED/SURVIVED/INVALID
+    # just as much as the product sources do: a loosened `panic_evidence` or
+    # `passed` would turn a sibling panic into a recorded kill without any
+    # product byte changing. Pin them, so `guardedSha256` names the whole ruler.
     guarded = [LOOP, CONTROLLED, COMPLETION, ASSEMBLY, PROCESS_TEST, PROCESS,
-               Path(__file__).resolve()]
+               Path(__file__).resolve(),
+               FIXTURES / 'negative_process.py',
+               FIXTURES / 'negative_panic.py',
+               FIXTURES / 'negative_suite.py',
+               ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               ROOT / 'src/pilotdeck-gateway/src/test_process.rs',
+               ROOT / 'src/pilotdeck-transport/src/lib.rs']
     results = []
     guarded_sha256 = {}
     sidecar_sha256 = None

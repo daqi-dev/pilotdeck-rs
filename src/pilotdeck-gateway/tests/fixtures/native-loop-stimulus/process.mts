@@ -106,6 +106,11 @@ async function client(address: string) {
   return {ws, next};
 }
 
+// The turn timeout every cell arms. A cell that claims "the release decided
+// the turn, not the timer" has to observe its terminal inside this window:
+// a timer-first turn lands past it (the U-T cell records ~432 ms), so the
+// bound separates the two outcomes instead of accepting both.
+const TURN_TIMEOUT_MS = 400;
 // Collector-side control protocol: atomic loop.json / release.json, and a
 // bounded poll over the product's witness directory.
 const writeAtomic = async (path: string, text: string) => { const tmp = path + '.tmp'; await writeFile(tmp, text); await rename(tmp, path); };
@@ -302,7 +307,7 @@ try {
     await arm(control, plan);
     const process = await launch('loop-unknown-first', control);
     const {ws, next} = await client(process.address);
-    const pump = submitUntilFinal(ws, next, 'loop-unknown-first', process, {timeoutMs: 400});
+    const pump = submitUntilFinal(ws, next, 'loop-unknown-first', process, {timeoutMs: TURN_TIMEOUT_MS});
     // A pump that is not awaited yet must not become an unhandled rejection:
     // that would kill the process before the record is written and turn a
     // named failure into an INVALID with no evidence.
@@ -319,7 +324,11 @@ try {
     // (`live.rs` `finish` on a payload that is not a TurnResult), recorded
     // here rather than asserted narrowly.
     assert.equal(terminal.type, 'error', '#1371 unknown-first terminal is an error');
-    assert.ok(at[at.length - 1] < 3000, '#1371 unknown-first precedes the timer');
+    // The turn timeout drops its closing frames (`A19-HOST-001`), so the
+    // absence of a `turn_timeout` code cannot distinguish the two races: the
+    // bounded arrival time can. A timer-first turn terminals past
+    // TURN_TIMEOUT_MS; the release-first turn must terminal inside it.
+    assert.ok(at[at.length - 1] < TURN_TIMEOUT_MS, '#1371 unknown-first precedes the timer');
     assert.ok(!events.some((e: any) => e.type === 'error' && e.code === 'turn_timeout'), '#1371 unknown-first timer cleared');
     await witness(control, 'loop', 'final', 'result_unknown');
     ws.terminate(); await stop(process, 'unknown-first');
