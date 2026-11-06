@@ -29,6 +29,16 @@ MARKERS = [
     '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
 ]
+# #1401 item 6: the environment() call site has its own bound test. The
+# unit tests call options.environment() directly; only the real --native
+# child observes the call site, where a displaced call lets the inherited
+# PILOTDECK_CONFIG_PATH survive, the child loads the injected invalid
+# config, and fails fast with the default-config parse error (the error
+# conversion drops the diagnostics that would carry the path, so the
+# message text is the whole observation). Early exits without that message
+# and deadlines without the advertisement stay unbound (INVALID).
+SCRUB_TEST = 'native_entry_scrubs_inherited_process_environment'
+SCRUB_MARKER = '#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH'
 ANCHOR = (
     '    let inherited = capture_environment(std::env::vars_os());\n'
     '    validate_environment(&inherited)?;\n'
@@ -50,6 +60,12 @@ mutations = [
      '    let host = assembly::start(options.clone(), env).await?;\n'
      '    validate_environment(&inherited)?;\n',
      TEST, MARKERS),
+    ('run-entry-environment-unscoured', ENTRY, ANCHOR,
+     '    let inherited = capture_environment(std::env::vars_os());\n'
+     '    validate_environment(&inherited)?;\n'
+     '    let env = inherited;\n'
+     '    let host = assembly::start(options.clone(), env).await?;\n',
+     SCRUB_TEST, SCRUB_MARKER),
 ]
 
 
@@ -74,6 +90,19 @@ def main():
                     'PILOTDECK_MANAGED_CONFIG'):
             if f'"{key}"' not in test_source:
                 raise SystemExit(f'#1261 key missing from {TEST}: {key}')
+        # #1401 item 4: the bound test's two observations beyond the
+        # rejection itself -- assembly's leftovers under home and the
+        # listening advertisement -- must stay in the source; a drift here
+        # would silently unbind the reorder and omitted mutants.
+        for needle, what in (('leftover.is_empty()', 'home leftover observation'),
+                             ('native listening',
+                              'listening advertisement observation')):
+            if needle not in test_source:
+                raise SystemExit(f'#1261 missing {what} from {TEST}')
+        # #1401 item 6: the scrub mutant's marker must stay in the bound
+        # test, so the runtime kill cannot drift away from the anchor.
+        if SCRUB_MARKER not in test_source:
+            raise SystemExit(f'#1261 scrub marker missing from {SCRUB_TEST}')
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
         return 0
     if len(sys.argv) < 2:
