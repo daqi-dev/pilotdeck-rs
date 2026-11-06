@@ -35,7 +35,7 @@ updated: 2026-11-06 16:10 · by Claude Code 执行者（**按 15:52 所有权审
 - #1351 | impl | doing | native_http 家族：**PR #1753 已合入**（原「draft」已过时）；#1348 / #1383 已 CLOSED；只剩收尾关单；#1394 HTTP store、#1404 共享辅助去重 顺次
 - #1323 | impl | doing | A8 接线 U3 snapshot 生产接线：**PR #1426 已合入**；**接续 PR #1828 OPEN（15:38，「#1431 补 submit 侧 snapshot 接线」），树 `wt-1323` @`a22f90115`**，本单不是「只剩关单」；`delivery-orphan.py` 曾误判成交付孤儿（本地分支名与 PR 分支不一致）；**串行：#1828 × #1457 的 #1830 同改 `native_process/management_tests.rs`，必须串行评审/合并**
 - #1767 | impl | doing | P2-跟进 #1644 选项②：两张 cron 差异登记件补 `-R1` 更正件：**PR #1815 OPEN**（16:04 实测位于合并队列 pos1），树 `wt-1767` @`dd4155f22`；走冻结批准程序（只新增 `<ID>-R1.md`）；前置于 #1325 关单
-- #1352 | impl | ready | A8.5-pr1 describe_server / hello_ok：**真堵点 #1326 已解**（PR #1835 已合入、issue 已关），可派；#1320 / #1328 / #1316 的 PR 均已合入、只剩关单；#1319 / #1321 / #1322 / #1323 已 CLOSED
+- #1352 | impl | blocked | A8.5-pr1 describe_server / hello_ok：**真堵点 #1326 已解**（PR #1835 已合入、issue 已 CLOSED），但**仍不可派**——本单正文列的八个依赖里 **#1316 / #1320 / #1323 / #1328 仍 OPEN**（前三者是「PR 已合、收尾未过」，#1323 还等 #1431）；已 CLOSED 的只有 #1319 / #1321 / #1322 / #1326。19:2x 实测更正：上一版写「#1323 已 CLOSED、可直接派」是错的
 - #1353 | impl | blocked | A8.5-pr2 切换状态机：前置 = **#1352**
 - #1354 | impl | blocked | A8.5-pr3 保留代理启动模式供回滚演练：前置 = **#1353**
 - #1313 | impl | blocked | A7-W7-pr2 always-on：**#1475 人批 A（2026-11-06）**——依赖已摘除，A7 链按 **47 项装配 + always-on 3 项如实 `CAPABILITY_UNAVAILABLE`** 解锁；本单标 `[A 之后]` 暂缓、**不关单**（核心 agent 优先），恢复时重挂 #1316/#1317
@@ -3774,4 +3774,4 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 > **本轮实际改的三处**：fix-r2 让 `run_turn` 把任何终态 `error` 事件转 `Err`（不再把 `workspace_busy` / `CAPABILITY_UNAVAILABLE` / 注册表拒绝 / 中途失败排空成静默成功）；fix-r3 修回能力表扁平字面量，恢复 `session-assembly-1316` 两条负控锚点（上一轮 CI `negative-controls` 就是因此红）；rebase 到 `6f7522f05` 后补 `settings_tests` 的 `cron: None`。
 > **评审**：anthropic 全量 4 角色 PASS；GLM 审 fix 增量 4 角色 PASS；minimax 只出 concurrency / simplify（sibling、boundary 撞 MiniMax **Token Plan 用量上限 429**，已记在 PR 正文与 #1846）。收敛 0 P0 / 0 P1。
 > **新登记**：#1846 追加 6 条（abort 边静默成功——已静态核实 `submit.rs:1355-1362` 的 `aborted()` 无 error 帧，判级取高按 P1 风险、按修复轮上限 3 转跟进；`drain_turn` 提前返回；builder 失败路径不执行 cleanup；`cron.stop()` 与同步 I/O 占 runtime 线程；两处修复行缺接线级回归）。
-> **待下一棒**：① `wt-1326` 可回收（工作区干净、分支已合入）；② #1352 已置 ready，是真堵点解除后的关键路径下一单；③ 宿主负控 12 条脚本在 mbp2 独立树上跑，结果未回，落地后补 PR 正文的「待补」段；④ **#1845**（冻结尺子 `gateway-parity/compare.py:485` 的 `cron_create` 期望集）仍待人批。
+> **待下一棒**：① `wt-1326` 可回收（工作区干净、分支已合入）；② **#1352 仍未解锁**——19:2x 实测 #1316 / #1320 / #1323 / #1328 均 OPEN，先清这四条的收尾，别派实现；③ 宿主负控 12 条脚本在 mbp2 独立树上跑，结果未回，落地后补 PR 正文的「待补」段；④ **#1845 已 CLOSED**（`NOT_PLANNED`，2026-11-06T10:18:10Z；人拍板选 A：关闭本单、冻结尺子零字节改动，`compare.py:485` 的 `cron_create` 期望集**不改**），不要再列为待人项。
