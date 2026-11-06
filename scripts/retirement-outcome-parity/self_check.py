@@ -76,6 +76,12 @@ EXPECTED_ROUNDS = 5
 # 不参与任何判定；判定用的事件是第二个进程打出「等锁」提示。
 LOCK_PROBE_HOLD_SECONDS = 60.0
 LOCK_PROBE_WAIT_TIMEOUT_SECONDS = 60.0
+# 预置敌意锁文件（FIFO / 符号链接 / 目录）时，持锁方必须**很快**失败；这个上限只用来
+# 把「挂起」判成红，正常路径远低于它。
+LOCK_HOSTILE_TIMEOUT_SECONDS = 20.0
+# 与 check_outcome_parity.LOCK_BASENAME 同步的**字面**副本：故意不 import，
+# 这样改了常量却忘了改控件会当场红（下面还有一条源码断言兜住重命名）。
+LOCK_BASENAME_LITERAL = '.retirement-outcome-parity.lock'
 
 # 子进程里持有输出目录锁的最小驱动（与 negative_controls 用**同一个** output_lock）。
 LOCK_HOLDER = r'''
@@ -92,12 +98,16 @@ sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location('check_outcome_parity', sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-with module.output_lock(sys.argv[2]):
-    print('LOCKED', flush=True)
-    # 持到父进程写一行（或 stdin 关闭返回 EOF）为止；argv[3] 只是兜底上限。
-    readable, _, _ = select.select([sys.stdin], [], [], float(sys.argv[3]))
-    if readable:
-        sys.stdin.readline()
+try:
+    with module.output_lock(sys.argv[2]):
+        print('LOCKED', flush=True)
+        # 持到父进程写一行（或 stdin 关闭返回 EOF）为止；argv[3] 只是兜底上限。
+        readable, _, _ = select.select([sys.stdin], [], [], float(sys.argv[3]))
+        if readable:
+            sys.stdin.readline()
+except module.InputError as error:
+    print('INPUT_ERROR', error, file=sys.stderr)
+    raise SystemExit(2)
 '''
 
 
@@ -233,12 +243,41 @@ def _read_until(stream, marker, timeout, label):
     return data
 
 
+def _assert_lock_path_rejected(root, label):
+    """预置敌意锁文件时，持锁方必须**快速**非零退出，绝不能挂起或假装持锁。
+
+    这是 P0 回归钉：锁文件用 `O_RDONLY|O_CREAT` 打开，若不带 `O_NONBLOCK` 且不核
+    `S_ISREG`，预置一个同名 FIFO 就会让 `open` 永久阻塞（Codex r2 实测），整个装置
+    连同 CI job 一起挂死；预置目录 / 符号链接则分别是静默成功与 ELOOP。
+    """
+    process = _spawn_lock_holder(root, 0.0, subprocess.DEVNULL)
+    try:
+        out, err = process.communicate(timeout=LOCK_HOSTILE_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=30)
+        raise CheckFailure(
+            f'{label}: `output_lock` hung on a planted non-regular lock file '
+            f'(no exit within {LOCK_HOSTILE_TIMEOUT_SECONDS:.0f}s)')
+    if b'LOCKED' in out:
+        raise CheckFailure(f'{label}: `output_lock` accepted a planted lock file '
+                           f'(printed LOCKED, rc={process.returncode})')
+    if process.returncode == 0:
+        raise CheckFailure(f'{label}: `output_lock` exited 0 on a planted lock file '
+                           f'(out={out[-200:]!r})')
+    if b'INPUT_ERROR' not in err and b'InputError' not in err:
+        raise CheckFailure(f'{label}: rejection was not the documented InputError '
+                           f'(rc={process.returncode}, err={err[-300:]!r})')
+    return process.returncode
+
+
 def check_lock():
     """两个进程抢同一输出目录：第二个必须等（不是静默并行写）。
 
     时序**事件驱动**，不靠固定秒数：第一个取锁后停在那里等释放信号，第二个启动后
     必须打出「等锁」提示——那行只有在第一个真的抱着锁时才可能出现——父进程看到它
     才放开第一个。因此慢机、冷启动、runner 抖动都不会把这个守卫推成假红。
+    之后再验一遍**敌意锁文件**路径：预置 FIFO / 目录 / 符号链接时必须快速失败。
     """
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-lock-') as tmp:
         root = Path(tmp) / 'out'
@@ -273,13 +312,50 @@ def check_lock():
         if second_rc != 0:
             raise CheckFailure(f'second lock holder rc={second_rc}: '
                                f'{second.stderr.read()[:400]!r}')
-    return f'second waited {waited:.2f}s for the output lock'
+
+        # 敌意预置：锁路径上放 FIFO / 目录 / 指向别处的符号链接，都必须被拒。
+        if LOCK_BASENAME_LITERAL not in CHECKER.read_text(encoding='utf-8'):
+            raise CheckFailure(
+                f'{CHECKER.name} no longer uses the lock basename '
+                f'{LOCK_BASENAME_LITERAL!r}; update this control with it')
+        hostile_rcs = []
+        for label, plant in (
+                ('planted FIFO', os.mkfifo),
+                ('planted directory', os.mkdir),
+                ('planted symlink', lambda path: os.symlink('/etc/hosts', path))):
+            hostile = Path(tempfile.mkdtemp(prefix='pdrs-retirement-lock-bad-', dir=tmp))
+            plant(hostile / LOCK_BASENAME_LITERAL)
+            hostile_rcs.append(_assert_lock_path_rejected(hostile, label))
+    return (f'second waited {waited:.2f}s for the output lock; '
+            f'non-regular lock paths rejected with rc={hostile_rcs}')
 
 
 JOB_HEADER = re.compile(r'^  ([\w-]+):\s*$')
 STEP_ITEM = re.compile(r'^      - +(\S.*)$')
-STEP_IF = re.compile(r'^        if:\s*(.*)$')
+# YAML 允许引号键（`"if": false` 与 `if: false` 等价），缩进也可能不是恰好 8 空格；
+# 只认「键名叫 if」会漏掉这两种写法，而漏掉一次就是闸门被跳过而 job 仍 success。
+STEP_IF = re.compile(r'''^ {8,}(?:if|'if'|"if")\s*:\s*(.*)$''')
+STEP_IGNORE_FAILURE = re.compile(
+    r'''^ {8,}(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''')
 RETIREMENT_JOB = 'retirement-outcome-parity'
+AGGREGATE_JOB = 'check'
+REQUIRE_STEP_NAME = 'Require retirement outcome-parity success'
+# 聚合闸门的 Require step 本来就该带 `always()` 条件，所以不能像 job 内 step 那样
+# 一律拒 `if:`；只要求它仍是「恒执行 + 依赖本 job 结果」的那一条。
+REQUIRE_IF_PREFIX = 'always()'
+REQUIRE_IF_NEEDLE = f'needs.{RETIREMENT_JOB}.result != \'success\''
+
+
+def _step_conditions(step):
+    return [match[1].strip() for match in (STEP_IF.match(line) for line in step)
+            if match]
+
+
+def _reject_ignored_failure(path, step):
+    if any(STEP_IGNORE_FAILURE.match(line) for line in step):
+        raise CheckFailure(
+            f'{path}: a retirement gate step sets `continue-on-error`; its failure '
+            'would be ignored and the job would still be success')
 
 
 def _live_lines(text):
@@ -314,8 +390,10 @@ def _steps(block):
 def check_wiring(workflow=None):
     """CI 里这几件事必须真的接着：job 存在、三步都在、`check` 依赖它。
 
-    只认**活配置**：整行注释先剥掉；再核 retirement job 的 step 没有被 `if:` 挡掉
-    （`if: false` 会让 step 全跳过而 job 结果仍是 success，聚合闸门就放行了）。
+    只认**活配置**：整行注释先剥掉；再核 retirement job 的 step 没有被 `if:`
+    （含 YAML 引号键 `"if": false`）或 `continue-on-error` 挡掉，聚合 `check` job 的
+    Require step 也仍在「恒执行 + 依赖本 job 结果」的条件上——否则 step 不生效而
+    job 结果仍是 success，聚合闸门就放行了。
     """
     path = Path(workflow or WORKFLOW)
     try:
@@ -330,8 +408,9 @@ def check_wiring(workflow=None):
         ('check step', 'check_outcome_parity.py check'),
         ('negative controls step', 'retirement-outcome-parity/negative_controls.py'),
         ('self-check step', 'retirement-outcome-parity/self_check.py'),
+        ('self-check controls step', 'retirement-outcome-parity/self_check.py --self-check-controls'),
         ('aggregate needs', f'negative-controls, {RETIREMENT_JOB}]'),
-        ('aggregate require step', 'Require retirement outcome-parity success'),
+        ('aggregate require step', REQUIRE_STEP_NAME),
     )
     missing = [label for label, needle in required if needle not in live]
     if missing:
@@ -340,17 +419,36 @@ def check_wiring(workflow=None):
     if not steps:
         raise CheckFailure(f'{path}: `{RETIREMENT_JOB}` has no steps')
     for step in steps:
-        labels = [match[1] for match in (STEP_IF.match(line) for line in step) if match]
-        if not labels:
+        gate = '\n'.join(step)
+        if not any(needle in gate for _, needle in required[1:6]):
             continue
-        guarded = any('emit' in line or 'check_outcome_parity.py check' in line
-                      or 'negative_controls.py' in line or 'self_check.py' in line
-                      for line in step)
-        if guarded:
+        conditions = _step_conditions(step)
+        if conditions:
             raise CheckFailure(
-                f'{path}: a retirement gate step is guarded by `if: {labels[0]}`; '
+                f'{path}: a retirement gate step is guarded by `if: {conditions[0]}`; '
                 'a skipped step still leaves the job success, so the gate would be '
                 'silently disabled')
+        _reject_ignored_failure(path, step)
+    # 聚合闸门那一侧同样要守：`check` job 的 Require step 被 `if: false` 挡掉时，
+    # retirement job 照跑照过、needle 照命中，只扫本 job 的 step 会假 PASS。
+    require = next((step for step in _steps(_job_block(lines, AGGREGATE_JOB))
+                    if any(REQUIRE_STEP_NAME in line for line in step)), None)
+    if require is None:
+        raise CheckFailure(f'{path}: `{AGGREGATE_JOB}` has no retirement Require step')
+    _reject_ignored_failure(path, require)
+    conditions = _step_conditions(require)
+    if len(conditions) != 1:
+        raise CheckFailure(
+            f'{path}: the aggregate Require step must carry exactly one `if:` '
+            f'({len(conditions)} found); without it the gate is unconditional or '
+            'unspecified')
+    expression = conditions[0].removeprefix('${{').removesuffix('}}').strip()
+    if not expression.startswith(REQUIRE_IF_PREFIX) or REQUIRE_IF_NEEDLE not in expression:
+        raise CheckFailure(
+            f'{path}: the aggregate Require step condition `if: {conditions[0]}` no '
+            f'longer starts with `{REQUIRE_IF_PREFIX}` and tests '
+            f'`{REQUIRE_IF_NEEDLE}`; a false / weakened condition silently disables '
+            'the gate')
     return f'{len(required)} wiring anchors live in {path.name}'
 
 
@@ -411,18 +509,20 @@ def control_budget():
 
 
 def control_lock():
-    """两个持锁进程必须串行；守卫被拆掉时第二个不再等待，本控件即红。
+    """锁守卫的两个方向都要能红：并发不串行、敌意锁文件被接受。
 
-    与另两个控件不同，这里**没有独立的违反样本**：把 `output_lock` 里的 flock 删掉，
-    `check_lock` 行为上就会红（第二个不再打「等锁」），所以重跑正向检查就是变异
-    证据。另两个控件造的是真违反样本（超限文件 / 被剥的 workflow），本控件靠行为。
+    * 串行性没有独立违反样本：把 `output_lock` 里的 `flock` 删掉，`check_lock`
+      行为上就会红（第二个不再打「等锁」），所以重跑正向检查就是变异证据。
+    * 敌意锁文件**有**违反样本：`check_lock` 后半段真的预置 FIFO / 目录 / 符号
+      链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定就会挂起 / 假通过 → 本控件红。
     """
     detail = check_lock()
     return detail
 
 
 def control_wiring():
-    """三种拆法都必须让接线守卫变红：删行、整段注释、给闸门 step 加 `if: false`。"""
+    """六种拆法都必须让接线守卫变红：删行、整段注释、job 内 step 三种挡法、
+    聚合 Require step 三种挡法。"""
     text = WORKFLOW.read_text(encoding='utf-8')
     original = text.splitlines(keepends=True)
     samples = []
@@ -456,12 +556,43 @@ def control_wiring():
                  for index, line in enumerate(raw)]
     samples.append(('commented-out', ''.join(commented)))
 
-    # step 级 `if: false`：step 全跳过，job 结果仍是 success → 聚合闸门放行。
+    # step 级 `if: false` / 引号键 `"if": false` / `continue-on-error`：三种都能让闸门
+    # step 不生效，而 job 结果仍是 success → 聚合闸门放行。
     anchor = '      - name: check 5 轮\n'
     if text.count(anchor) != 1:
         raise CheckFailure(f'CI workflow has no unique anchor to disable: {anchor!r}')
-    samples.append(('disabled-step',
-                    text.replace(anchor, anchor + '        if: false\n', 1)))
+    for label, injected in (
+            ('disabled-step', '        if: false\n'),
+            ('quoted-if-step', '        "if": false\n'),
+            ('continue-on-error-step', '        continue-on-error: true\n')):
+        samples.append((label, text.replace(anchor, anchor + injected, 1)))
+
+    # 聚合闸门那一侧的同型拆法：Require step 被禁用 / 条件被改弱 / 失败被忽略，
+    # retirement job 本身照跑照过，只扫本 job step 的守卫会假 PASS。
+    lines = text.splitlines(keepends=True)
+    require_start = next((index for index, line in enumerate(lines)
+                          if line.rstrip('\n') == f'      - name: {REQUIRE_STEP_NAME}'),
+                         None)
+    if require_start is None:
+        raise CheckFailure(
+            f'CI workflow has no Require step to disable: {REQUIRE_STEP_NAME!r}')
+    require_end = next((index for index in range(require_start + 1, len(lines))
+                        if STEP_ITEM.match(lines[index])
+                        or JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+    if_index = next((index for index in range(require_start, require_end)
+                     if STEP_IF.match(lines[index])), None)
+    if if_index is None:
+        raise CheckFailure('the aggregate Require step has no `if:` line to weaken')
+    for label, replacement in (
+            ('disabled-require-step', '        if: false\n'),
+            ('weakened-require-step',
+             "        if: ${{ needs.retirement-outcome-parity.result == 'failure' }}\n")):
+        mutated = list(lines)
+        mutated[if_index] = replacement
+        samples.append((label, ''.join(mutated)))
+    ignored = list(lines)
+    ignored.insert(require_start + 1, '        continue-on-error: true\n')
+    samples.append(('continue-on-error-require-step', ''.join(ignored)))
 
     survived = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
