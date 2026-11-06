@@ -929,6 +929,13 @@ def native_deadline_case(name, output):
                 if (row['direction'] == 'receive' and isinstance(frame, dict)
                         and frame.get('type') == 'event'):
                     groups.setdefault(frame.get('id'), []).append(row)
+            # Only the fallback terminal carries a JSON boolean in the synthetic
+            # capture (the registered expectation frames carry none, and they
+            # are a scoring input this control must not edit), so the drift is
+            # observable on the empty-stream fallback branch.  The "repeat
+            # lastError ?? lastCompleted" branch is pinned by
+            # test_safety.WsProjection.test_terminal_types_are_not_coerced,
+            # whose hand-built frames do carry booleans and numbers.
             target = next((group[-1] for group in groups.values()
                            if group and group[-1]['frame'].get('final') is True
                            and booleans(group[-1]['frame']['event'])), None)

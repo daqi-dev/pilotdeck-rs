@@ -611,7 +611,7 @@ def session_chain(contract, rows, observer, provider, driver, sources, cases):
             registry = observation.get('registry', {})
             need(registry.get('applicable') is not False or not (registry.get('events') or registry.get('record')),
                  'inapplicable registry carries records')
-            need(observation == original, 'case observation disagrees with retained originals')
+            need(same_json(observation, original), 'case observation disagrees with retained originals')
     return [row['identity']['transcriptPath'] for row in rows]
 
 
