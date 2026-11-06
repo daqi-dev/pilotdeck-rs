@@ -1216,12 +1216,21 @@ class WitnessTests(unittest.TestCase):
 
     def test_shutdown_cancel_unwind(self):
         marker = '#1194 shutdown preserves first cancellation and cleanup'
-        previous = signal.getsignal(signal.SIGTERM)
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
         try:
             c.common.install_shutdown()
-            self._assert_cancel_unwind(signal.SIGTERM, signal.SIGTERM, marker)
+            # #1398: install_shutdown registers both signals now; each direction
+            # must suppress the second signal during cleanup, and an unrelated
+            # in-flight exception must still honour the new signal.  Same-signal
+            # repeats stay covered (the guard is signal-agnostic).
+            for first, second in ((signal.SIGINT, signal.SIGINT),
+                                  (signal.SIGINT, signal.SIGTERM),
+                                  (signal.SIGTERM, signal.SIGINT),
+                                  (signal.SIGTERM, signal.SIGTERM)):
+                self._assert_cancel_unwind(first, second, marker)
         finally:
-            signal.signal(signal.SIGTERM, previous)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler if handler is not None else signal.SIG_DFL)
 
     def test_capture_cancel_unwind(self):
         marker = '#1194 capture preserves first cancellation and cleanup'

@@ -56,6 +56,7 @@ A1_TEST = ROOT / 'scripts/parity/controls/lock_release.py'
 ROUND = ROOT / 'scripts/parity/round.py'
 B2_TEST = ROOT / 'src/pilotdeck-gateway/tests/fixtures/parity-lock-release/test_lock_release.py'
 B2_SHELL = ROOT / 'scripts/ui-server-parity/calibrate.sh'
+GATEWAY = ROOT / 'scripts/gateway-parity/common.py'
 RUNNER = Path(__file__).resolve()
 
 MUTATIONS = [
@@ -134,6 +135,32 @@ MUTATIONS = [
      '            raise FileExistsError(str(lock))',
      '        if lock.exists() or lock.is_symlink():\n'
      '            shutil.rmtree(lock)'),
+    # #1194/#1398: the three apparatus guards against a second signal during
+    # KeyboardInterrupt unwinding are removed; the bound test requires the
+    # in-flight exception to survive the second signal.
+    ('a1-second-signal-not-suppressed', ROUND,
+     '        if isinstance(sys.exception(), KeyboardInterrupt):',
+     '        if False:'),
+    ('b2-second-signal-not-suppressed', B2_SHELL,
+     '    if isinstance(sys.exception(), KeyboardInterrupt):',
+     '    if False:'),
+    ('gateway-second-signal-not-suppressed', GATEWAY,
+     '        if isinstance(sys.exception(), KeyboardInterrupt):',
+     '        if False:'),
+    # #1398: SIGINT routed around the guarded handler is the other half of the
+    # change; dropping the registration must turn the bound test red.
+    ('a1-sigint-registration-removed', ROUND,
+     '    signal.signal(signal.SIGINT, interrupted)\n'
+     '    signal.signal(signal.SIGTERM, interrupted)',
+     '    signal.signal(signal.SIGTERM, interrupted)'),
+    ('b2-sigint-registration-removed', B2_SHELL,
+     '    signal.signal(signal.SIGINT, _interrupted)\n'
+     '    signal.signal(signal.SIGTERM, _interrupted)',
+     '    signal.signal(signal.SIGTERM, _interrupted)'),
+    ('gateway-sigint-registration-removed', GATEWAY,
+     '    signal.signal(signal.SIGINT, interrupt)\n'
+     '    signal.signal(signal.SIGTERM, interrupt)',
+     '    signal.signal(signal.SIGTERM, interrupt)'),
     # B2: calibrate.sh gets its unconditional EXIT release back.
     ('b2-shell-unconditional-trap', B2_SHELL,
      'exec python3 -I - "$B2_SCRIPT_DIR/calibrate.py" "$@" <<\'PY\'',
@@ -220,6 +247,24 @@ CHECKS = {
                             '#209 B2 never steals a lease'),
     'b2-shell-unconditional-trap': ('LockGateControls.test_shell_has_no_unconditional_release',
                                     '#209 calibrate.sh must not release on every EXIT'),
+    'a1-second-signal-not-suppressed': (
+        'SignalUnwindControls.test_round_second_signal_ignored_during_cleanup',
+        '#1194 round.py must ignore a second signal during cleanup unwinding'),
+    'b2-second-signal-not-suppressed': (
+        'SignalUnwindControls.test_calibrate_second_signal_ignored_during_cleanup',
+        '#1194 calibrate.sh must ignore a second signal during cleanup unwinding'),
+    'gateway-second-signal-not-suppressed': (
+        'SignalUnwindControls.test_gateway_second_signal_ignored_during_cleanup',
+        '#1194 common.py must ignore a second signal during cleanup unwinding'),
+    'a1-sigint-registration-removed': (
+        'SignalUnwindControls.test_round_second_signal_ignored_during_cleanup',
+        '#1194 round.py must route SIGINT and SIGTERM to one handler'),
+    'b2-sigint-registration-removed': (
+        'SignalUnwindControls.test_calibrate_second_signal_ignored_during_cleanup',
+        '#1194 calibrate.sh must route SIGINT and SIGTERM to one handler'),
+    'gateway-sigint-registration-removed': (
+        'SignalUnwindControls.test_gateway_second_signal_ignored_during_cleanup',
+        '#1194 common.py must route SIGINT and SIGTERM to one handler'),
     'runner-baseexception-narrowed': (
         'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
         '#1059 P0-2 a cancellation after the last row must not keep KILLED'),

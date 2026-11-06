@@ -176,6 +176,17 @@ def _audit(proc):
 
 def _interrupted(signum, frame):
     global RECEIVED
+    # #1194：KeyboardInterrupt 正在展开时收到的第二次信号不得截断 finally 里的
+    # release(lock, mine)。先判再记，第一次信号的 RECEIVED 不被第二次覆盖。
+    if isinstance(sys.exception(), KeyboardInterrupt):
+        # 诊断行本身绝不能在展开期抛异常：stderr 管道已关闭时 print 会抛
+        # OSError/ValueError，那会替代在飞异常，重现本守卫要防的截断。
+        try:
+            print(f'#1194 second signal {signum} ignored during cleanup',
+                  file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            pass
+        return
     RECEIVED = signum
     raise KeyboardInterrupt(f'signal {signum}')
 

@@ -314,6 +314,202 @@ class LockGateControls(unittest.TestCase):
                       '#209 calibrate.sh must execute the gated supervisor')
 
 
+ROUND = ROOT / 'scripts/parity/round.py'
+GATEWAY_COMMON = ROOT / 'scripts/gateway-parity/common.py'
+
+
+class _SignalRecorder:
+    """Record ``signal.signal`` registrations instead of touching the process.
+
+    The three apparatus blocks are executed from their real bytes with this
+    recorder standing in for the ``signal`` module, so a test never leaves a
+    handler installed in the unittest process.
+    """
+
+    def __init__(self):
+        self.registered = {}
+        for name in ('SIGINT', 'SIGTERM', 'SIG_BLOCK', 'SIG_UNBLOCK', 'SIG_SETMASK'):
+            setattr(self, name, getattr(signal, name))
+
+    def pthread_sigmask(self, *args):
+        return signal.pthread_sigmask(*args)
+
+    def signal(self, signum, handler):
+        # Mirrors signal.signal's return contract (the previous handler) so a
+        # future caller that saves/restores handlers is not silently given None.
+        previous = self.registered.get(signum, signal.SIG_DFL)
+        self.registered[signum] = handler
+        return previous
+
+
+class _BrokenStderr:
+    """A stderr whose every write raises, as a closed pipe does in production."""
+
+    def write(self, *_args):
+        raise BrokenPipeError('#1398 stderr gone')
+
+    def flush(self):
+        raise BrokenPipeError('#1398 stderr gone')
+
+
+class _Exited(Exception):
+    """Stands in for ``sys.exit`` so round.py's ``__main__`` block can be exec'd."""
+
+
+class _SysShim:
+    """``sys`` proxy for round.py's ``__main__`` block: real exception()/stderr."""
+
+    exception = staticmethod(sys.exception)
+    stderr = sys.stderr
+
+    def __init__(self):
+        self.exits = []
+
+    def exit(self, code=None):
+        self.exits.append(code)
+        raise _Exited(code)
+
+
+def _main_if(path):
+    for node in ast.parse(path.read_text()).body:
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == '__name__'):
+            return node
+    raise AssertionError(f'#1194 no __main__ guard in {path}')
+
+
+def load_round_shutdown():
+    """Exec round.py's real ``__main__`` block against recording shims."""
+    block = _main_if(ROUND)
+    recorder = _SignalRecorder()
+    shim = _SysShim()
+    namespace = {'__name__': '__main__', 'sys': shim, 'signal': recorder,
+                 'main': lambda: 0}
+    body = ast.Module(body=block.body, type_ignores=[])
+    try:
+        exec(compile(ast.fix_missing_locations(body), str(ROUND) + ':main', 'exec'),
+             namespace)
+    except _Exited:
+        pass
+    return namespace['interrupted'], recorder, shim
+
+
+def load_gateway_shutdown():
+    """Exec common.py's real ``install_shutdown`` against a recording shim."""
+    tree = ast.parse(GATEWAY_COMMON.read_text())
+    node = next(node for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == 'install_shutdown')
+    recorder = _SignalRecorder()
+    namespace = {'sys': sys, 'signal': recorder}
+    module = ast.Module(body=[node], type_ignores=[])
+    exec(compile(ast.fix_missing_locations(module), str(GATEWAY_COMMON), 'exec'),
+         namespace)
+    namespace['install_shutdown']()
+    return recorder.registered
+
+
+class SignalUnwindControls(unittest.TestCase):
+    """#1194/#1398: a second signal during KeyboardInterrupt unwinding must be
+    ignored.  It would otherwise replace the in-flight exception and cut the
+    ``finally`` cleanup (owned-group stop, lease release) short."""
+
+    def _assert_second_signal_ignored(self, handler, message):
+        # The guard is signal-agnostic, so prove both delivery directions: the
+        # second signal may be the same one or the other one.
+        for second in (signal.SIGINT, signal.SIGTERM):
+            first = KeyboardInterrupt(f'#1194 first signal, second {second}')
+            try:
+                try:
+                    raise first
+                except KeyboardInterrupt:
+                    # Second signal delivered while the first is being handled:
+                    # this is exactly the window the guard covers.  #1398: the
+                    # production shape is the same frame state — inside a
+                    # propagating ``finally`` sys.exception() is the in-flight
+                    # KeyboardInterrupt too (verified against CPython 3.14).
+                    handler(second, None)
+                    raise
+            except KeyboardInterrupt as caught:
+                self.assertIs(caught, first, f'{message} (second={second})')
+            else:
+                self.fail(f'{message} (second={second}, no KeyboardInterrupt propagated)')
+
+    def test_round_guard_holds_for_real_second_signal(self):
+        """#1398: real OS delivery while the first cancellation unwinds."""
+        handler, _recorder, _shim = load_round_shutdown()
+        previous = {sig: signal.getsignal(sig)
+                    for sig in (signal.SIGINT, signal.SIGTERM)}
+        reached = []
+        try:
+            signal.signal(signal.SIGINT, handler)
+            signal.signal(signal.SIGTERM, handler)
+            caught = None
+            try:
+                try:
+                    raise KeyboardInterrupt('signal 2: first cancellation')
+                finally:
+                    # Cleanup is in progress; a second Ctrl-C must not replace
+                    # the in-flight exception and truncate the rest of finally.
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    reached.append('cleanup-completed')
+            except KeyboardInterrupt as error:
+                caught = error
+            self.assertEqual(reached, ['cleanup-completed'],
+                             '#1194 cleanup must run past a real second signal')
+            self.assertIsNotNone(caught, '#1194 the first cancellation must propagate')
+            self.assertIn('first cancellation', str(caught),
+                          '#1194 the first cancellation must survive unchanged')
+        finally:
+            for sig, previous_handler in previous.items():
+                signal.signal(sig, previous_handler
+                              if previous_handler is not None else signal.SIG_DFL)
+
+    def test_round_guard_survives_broken_stderr(self):
+        """#1398: the diagnostic line must never re-break the guard."""
+        handler, _recorder, shim = load_round_shutdown()
+        shim.stderr = _BrokenStderr()
+        self._assert_second_signal_ignored(
+            handler, '#1194 a failing stderr must not re-break the guard')
+
+    def test_round_second_signal_ignored_during_cleanup(self):
+        handler, recorder, shim = load_round_shutdown()
+        self.assertEqual(set(recorder.registered), {signal.SIGINT, signal.SIGTERM},
+                         '#1194 round.py must route SIGINT and SIGTERM to one handler')
+        for registered in recorder.registered.values():
+            self.assertIs(registered, handler,
+                          '#1194 round.py must use one handler for both signals')
+        self.assertEqual(shim.exits, [0], '#1194 the __main__ block must exit main()')
+        self._assert_second_signal_ignored(
+            handler, '#1194 round.py must ignore a second signal during cleanup unwinding')
+
+    def test_calibrate_second_signal_ignored_during_cleanup(self):
+        recorder = _SignalRecorder()
+        with patch.dict(L, {'signal': recorder, 'run': lambda *args, **kwargs: 0}):
+            self.assertEqual(L['main']([str(CALIBRATE)]), 0,
+                             '#1194 calibrate.sh main must return the supervisor code')
+        self.assertEqual(set(recorder.registered), {signal.SIGINT, signal.SIGTERM},
+                         '#1194 calibrate.sh must route SIGINT and SIGTERM to one handler')
+        handler = L['_interrupted']
+        self.assertIs(recorder.registered[signal.SIGINT], handler,
+                      '#1194 calibrate.sh must install _interrupted for SIGINT')
+        L['RECEIVED'] = signal.SIGINT
+        self._assert_second_signal_ignored(
+            handler, '#1194 calibrate.sh must ignore a second signal during cleanup unwinding')
+        self.assertEqual(L['RECEIVED'], signal.SIGINT,
+                         '#1194 the first signal record must survive the second signal')
+
+    def test_gateway_second_signal_ignored_during_cleanup(self):
+        registered = load_gateway_shutdown()
+        self.assertEqual(set(registered), {signal.SIGINT, signal.SIGTERM},
+                         '#1194 common.py must route SIGINT and SIGTERM to one handler')
+        handler = registered[signal.SIGINT]
+        self.assertIs(registered[signal.SIGTERM], handler,
+                      '#1194 common.py must use one handler for both signals')
+        self._assert_second_signal_ignored(
+            handler, '#1194 common.py must ignore a second signal during cleanup unwinding')
+
+
 GUARD_RAISE = "    raise SystemExit(f'run with -I: python3 -I {__file__}')"
 
 

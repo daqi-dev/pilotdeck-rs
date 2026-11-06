@@ -768,7 +768,18 @@ def verified_parity_lock(timeout=600, takeovers=None, lock=LOCK):
 
 def install_shutdown():
     def interrupt(signum, frame):
+        # #1194：KeyboardInterrupt 正在展开时收到的第二次信号不得截断 finally
+        # 里的 owned-group 回收与锁释放。留一行 stderr，便于事后定位。
         if isinstance(sys.exception(), KeyboardInterrupt):
+            # 诊断行本身绝不能在展开期抛异常：stderr 管道已关闭时 print 会抛
+            # OSError/ValueError，那会替代在飞异常，重现本守卫要防的截断。
+            try:
+                print(f'#1194 second signal {signum} ignored during cleanup',
+                      file=sys.stderr, flush=True)
+            except (OSError, ValueError):
+                pass
             return
         raise KeyboardInterrupt(f'signal {signum}: cleaning owned groups and releasing lock')
+    # #1194/#1398：SIGINT 与 SIGTERM 同路，默认处理器没有展开期守卫。
+    signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
