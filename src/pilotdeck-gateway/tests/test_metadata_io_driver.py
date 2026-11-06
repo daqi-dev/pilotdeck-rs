@@ -1203,13 +1203,143 @@ class EnvironmentControls(unittest.TestCase):
                                                          or '')), None)
         self.assertIsNotNone(branch,
                              '#1692 r5 the fixture dispatches --self-check-controls')
-        exits = [node for node in ast.walk(branch)
-                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                 and node.func.attr == 'exit']
-        # 该分支只该有 3 个出口：arity 用法错误 / `--self-check` 转交 / controls 裁决。
-        # 多一个早退 `sys.exit(0)` 就又是一条假 PASS（文本钉看不见可达性）。
-        self.assertEqual(len(exits), 3,
-                         '#1692 r5 the controls branch has no extra early exit')
+        # r6（GLM boundary P1 / DeepSeek concurrency P1）：数出口形态是钉不住的——r5 只数
+        # `X.exit(...)` 这一个形态，`raise SystemExit(0)`（该夹具自己就在 480/599/1501 用
+        # 这个写法）、`os._exit(0)`、`exit(0)` 全都不是 `Attribute(attr='exit')`；而在调用
+        # 与裁决之间插一句 `control_problems = []` / `.clear()` 更是四个计数一动不动。
+        # 改成钉**语句序列**：这个分支里能出现哪五条语句、顺序如何，逐条钉死。
+        self.assertEqual([type(statement).__name__ for statement in branch.body],
+                         ['If', 'If', 'Assign', 'For', 'Expr'],
+                         '#1692 r6 the controls branch is exactly five statements')
+        self.assertEqual([self.statement_text(source, statement) for statement in branch.body], [
+            "if arguments:\n"
+            "sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')",
+            "if mode == '--self-check':\n"
+            'sys.exit(self_check())',
+            'control_problems = self_check_controls_run()',
+            'for problem in control_problems:\n'
+            "print('self-check control FAILED: ' + problem, file=sys.stderr)",
+            'sys.exit(1 if control_problems else 0)',
+        ], '#1692 r6 the controls branch carries no other statement')
+        # r6（DeepSeek sibling P1×2）：被调方自己也能假 PASS。在
+        # `self_check_controls_run` 第一句插 `sys.exit(0)`，或者在 `return problems`
+        # 前补一句 `problems = []`，上面这些钉子一条都不动——进程直接退 0，15 条 meta
+        # control 一条没跑，CI 那一步照绿。被调方自己不许有出口，且累加器只许初始化一次。
+        self.assertEqual(self.exit_calls(source, function), [],
+                         '#1692 r6 self_check_controls_run cannot exit by itself')
+        self.assert_accumulator_pinned(source, function, 'problems')
+        # 全文件的出口清单：任何位置新增一个 `sys.exit` / `raise SystemExit`（例如主路径
+        # 变异循环里的早退 `sys.exit(0)`）都会让这张清单变长，逼着重新过一遍链。
+        inventory = self.exit_calls(source, tree)
+        self.assertEqual(inventory.count('sys.exit(…)'), 20,
+                         '#1692 r6 the fixture has exactly the 20 reviewed sys.exit calls')
+        self.assertEqual(inventory.count('raise SystemExit(…)'), 3,
+                         '#1692 r6 the fixture has exactly the 3 reviewed SystemExit raises')
+
+    def main_verdict_pins(self, source):
+        """主路径的「见证 → 退出码」链：`failures` / `timed_out` → `sys.exit(1)`。
+
+        r6（GLM sibling P1）：r4/r5 只钉了 `--self-check-controls` 那条链，真正跑
+        mutation 的主路径一句没钉——把 `if failures: sys.exit(1)` 改成 `sys.exit(0)`，
+        或者把 `failures.append` 挪走，夹具照样打完 SURVIVED、写完 summary.json、退 0，
+        `.github/workflows/ci.yml` 的「负控夹具执行」步骤照绿。同一签名、同一文件、同一
+        CI job，按同一套钉法补齐。
+        """
+        tree = ast.parse(source)
+        tail = tree.body[-6:]
+        self.assertEqual([self.statement_text(source, statement) for statement in tail], [
+            'counts = publish_summary(summary, timed_out=timed_out)',
+            "append_progress(event='published', **counts)",
+            'progress.close()',
+            "if timed_out:\n"
+            "print(f'not finished: {timed_out}', file=sys.stderr)\n"
+            'sys.exit(1)',
+            'if failures:\n'
+            'print(f\'not killed: {", ".join(failures)}\', file=sys.stderr)\n'
+            'sys.exit(1)',
+            "print(f'{len(summary)}/{len(mutations)} killed; every source restored "
+            "byte-for-byte', flush=True)",
+        ], '#1692 r6 the main verdict is exactly these six statements')
+        # 见证侧同样钉死：`failures` 只许初始化一次、之后只 `append`，裁决语句里的读取
+        # 逐字钉在上面那段里。
+        self.assert_accumulator_pinned(source, tree, 'failures', extra=tail[3:])
+        self.assertEqual(source.count('failures.append('), 3,
+                         '#1692 r6 every main-path failure mode reports through failures')
+        # 同族的第三条链（r6 GLM sibling P2）：`--self-check` 自己的归还层。
+        # `sys.exit(self_check())` 已被上面钉住，但 `self_check()` 内部把 `return 1`
+        # 改成 `return 0` 同样让 CI 那一步照绿。裁决两句话 + 累加器一起钉死。
+        self_check = next((node for node in ast.walk(tree)
+                           if isinstance(node, ast.FunctionDef)
+                           and node.name == 'self_check'), None)
+        self.assertIsNotNone(self_check, '#1692 r6 the fixture defines self_check()')
+        verdict = [self_check.body[-3], self_check.body[-1]]
+        self.assertEqual([self.statement_text(source, node) for node in verdict],
+                         ['if problems:\nreturn 1', 'return 0'],
+                         '#1692 r6 --self-check still exits 1 on a surviving guard')
+        self.assert_accumulator_pinned(source, self_check, 'problems', extra=verdict)
+
+    @staticmethod
+    def statement_text(source, statement):
+        """语句源码，去缩进、逐行保序；多行语句（If/For）保留其整块。"""
+        segment = ast.get_source_segment(source, statement) or ''
+        return '\n'.join(line.strip() for line in segment.splitlines())
+
+    _EXIT_TARGETS = ('sys.exit', 'exit', 'quit', 'os._exit', 'builtins.exit')
+
+    def exit_calls(self, source, scope):
+        """作用域内所有「直接结束进程」的写法：`X.exit(...)` 与 `raise SystemExit(...)`。"""
+        found = []
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Call):
+                target = ast.get_source_segment(source, node.func) or ''
+                if target in self._EXIT_TARGETS:
+                    found.append(f'{target}(…)')
+            elif isinstance(node, ast.Raise) and node.exc is not None:
+                exception = node.exc
+                named = (ast.get_source_segment(source, exception.func)
+                         if isinstance(exception, ast.Call)
+                         else ast.get_source_segment(source, exception)) or ''
+                if named == 'SystemExit':
+                    found.append('raise SystemExit(…)')
+        return found
+
+    def assert_accumulator_pinned(self, source, scope, name, extra=()):
+        """`name` 这个见证累加器只许初始化一次，之后只 `append` 或整份交出。
+
+        r6（DeepSeek sibling P1 / DeepSeek concurrency P1）：只钉 `return problems`
+        的文本挡不住「重置」——在归还前补一句 `problems = []`（或 `.clear()` /
+        `del problems[:]` / `problems[:] = []`），归还语句与出口一字不动，退出码却拿到
+        空列表。这里反过来枚举：这个标识符允许出现在哪些位置，别处出现一律红。
+        """
+        assignments = [node for node in ast.walk(scope)
+                       if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == name
+                               for target in node.targets)]
+        self.assertEqual([self.statement_text(source, node) for node in assignments],
+                         [f'{name} = []'],
+                         f'#1692 r6 {name} is initialised exactly once, empty')
+        allowed = {id(assignments[0].targets[0])}
+        appends = [node for node in ast.walk(scope)
+                   if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                   and node.func.attr in ('append', 'extend')
+                   and isinstance(node.func.value, ast.Name) and node.func.value.id == name]
+        self.assertGreater(len(appends), 0, f'#1692 r6 {name} witnesses go through append')
+        allowed.update(id(node.func.value) for node in appends)
+        allowed.update(id(node.value) for node in ast.walk(scope)
+                       if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
+                       and node.value.id == name)
+        # `for problem in problems:` / `if problems:` 是对累加器的只读消费。
+        allowed.update(id(node.iter) for node in ast.walk(scope)
+                       if isinstance(node, ast.For) and isinstance(node.iter, ast.Name)
+                       and node.iter.id == name)
+        for statement in extra:
+            allowed.update(id(node) for node in ast.walk(statement)
+                           if isinstance(node, ast.Name) and node.id == name)
+        offenders = [node.lineno for node in ast.walk(scope)
+                     if isinstance(node, ast.Name) and node.id == name
+                     and id(node) not in allowed]
+        self.assertEqual(offenders, [],
+                         f'#1692 r6 {name} is never rebound, filtered or cleared')
 
     def test_self_check_controls_exit_is_pinned(self):
         # r4（MiniMax sibling P1）：r3 把 `self_check_controls_run()` 的三条承重出口改成
@@ -1222,6 +1352,7 @@ class EnvironmentControls(unittest.TestCase):
         source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
                   'negative_controls.py').read_text()
         self.controls_verdict_pins(source)
+        self.main_verdict_pins(source)
         for label, old, new in (
                 ('controls-exit-always-zero', 'sys.exit(1 if control_problems else 0)',
                  'sys.exit(0)'),
@@ -1251,6 +1382,63 @@ class EnvironmentControls(unittest.TestCase):
                                msg='#1692 r5 an early exit before the verdict must be caught'):
             self.controls_verdict_pins(early)
         print('#1692 r5 controls verdict mutant controls-early-exit: KILLED', flush=True)
+        # r6 变异：四条各打一个 r6 钉住的洞。
+        for label, old, new, pin, anchor in (
+                # GLM boundary P1：`raise SystemExit(0)` 不是 `X.exit(...)` 形态。
+                ('controls-raise-system-exit',
+                 '    control_problems = self_check_controls_run()',
+                 '    raise SystemExit(0)\n    control_problems = self_check_controls_run()',
+                 self.controls_verdict_pins,
+                 '    control_problems = self_check_controls_run()'),
+                # DeepSeek sibling P1-1：被调方自己早退（锚点取它的 docstring，避免撞上
+                # 文件里另外 5 个同样以 `problems = []` 开头的自检函数）。
+                ('controls-callee-early-exit',
+                 '    """Prove every self-check guard is load-bearing; returns process '
+                 'problems."""\n    problems = []',
+                 '    """Prove every self-check guard is load-bearing; returns process '
+                 'problems."""\n    problems = []\n    sys.exit(0)',
+                 self.controls_verdict_pins,
+                 '    """Prove every self-check guard is load-bearing; returns process '
+                 'problems."""\n    problems = []'),
+                # DeepSeek sibling P1-2：归还前把累加器重置。
+                ('controls-accumulator-reset',
+                 '    return problems\n\n\n# #1692 r15-4',
+                 '    problems = []\n    return problems\n\n\n# #1692 r15-4',
+                 self.controls_verdict_pins,
+                 '    return problems\n\n\n# #1692 r15-4'),
+                # DeepSeek concurrency P1：调用与裁决之间清空见证。
+                ('controls-verdict-cleared',
+                 '    control_problems = self_check_controls_run()\n',
+                 '    control_problems = self_check_controls_run()\n'
+                 '    control_problems = []\n',
+                 self.controls_verdict_pins,
+                 '    control_problems = self_check_controls_run()\n'),
+                # GLM sibling P1：主路径裁决改成永远绿。
+                ('main-verdict-always-zero',
+                 "if failures:\n    print(f'not killed:",
+                 "if failures:\n    sys.exit(0)\n    print(f'not killed:",
+                 self.main_verdict_pins,
+                 "if failures:\n    print(f'not killed:"),
+                # GLM sibling P1 的见证侧：主路径不再记录失败。
+                ('main-witness-dropped',
+                 "                failures.append(name)\n",
+                 '                pass\n',
+                 self.main_verdict_pins,
+                 "                failures.append(name)\n"),
+                # r6 GLM sibling P2：`--self-check` 自己的归还层永远绿。
+                ('self-check-verdict-always-zero',
+                 '    if problems:\n        return 1\n',
+                 '    if problems:\n        return 0\n',
+                 self.main_verdict_pins,
+                 '    if problems:\n        return 1\n'),
+        ):
+            self.assertIn(anchor, source, f'#1692 r6 verdict anchor: {label}')
+            mutant = source.replace(old, new, 1)
+            self.assertNotEqual(mutant, source, f'#1692 r6 the mutant really applied: {label}')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1692 r6 verdict hole must be caught: {label}'):
+                pin(mutant)
+            print(f'#1692 r6 verdict mutant {label}: KILLED', flush=True)
 
     def write_source_atomic_body(self, source):
         """`write_source_atomic` 的函数体源码（#1692 §9）。"""
