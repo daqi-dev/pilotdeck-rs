@@ -48,6 +48,7 @@ class EnvironmentControls(unittest.TestCase):
         'test(=real_ts_tool_budget_and_apply_tool_results_replay) | '
         'test(=skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore) | '
         'test(=skills::tests::real_ts_scenarios_match_outcomes_and_file_trees) | '
+        'test(=skills::tests::real_ts_and_rust_read_each_others_skill_trees) | '
         'test(=runtime::tools::builtin::grep::tests::files_sort_keeps_submillisecond_mtime_precision) | '
         'test(=project_files::tests::node_round4_unreadable_huge_file_reports_open_error_first) | '
         'test(=project_files::tests::special_files_do_not_block_and_unreadable_files_still_list) | '
@@ -2087,8 +2088,7 @@ self_check_controls_run | return | return problems
         entries = re.findall(r'test\(([^)]*)\)', filter_text)
         self.assertTrue(entries, '#922 the success-output filter names its tests')
         crate = Path(__file__).resolve().parents[1]
-        sources = {source: source.read_text(errors='replace')
-                   for source in crate.rglob('*.rs') if 'target' not in source.parts}
+        sources = self.read_crate_sources(crate)
         for entry in entries:
             # `[^)]*` also catches a name the old `[A-Za-z0-9_:]+` regex
             # silently truncated at a `-` or a space.
@@ -2097,12 +2097,35 @@ self_check_controls_run | return | return problems
                              f'plain `test(=name)` matcher')
             name = entry[1:]
             leaf = name.rsplit('::', 1)[-1]
-            defining = [source for source, text in sources.items() if f'fn {leaf}(' in text]
+            defining = [source for source, text in sources.items()
+                        if self.fn_name_exists(text, leaf)]
             self.assertTrue(defining, f'#922 the success-output filter names the real test {name}')
             expected = {self.nextest_visible_name(crate, source, leaf) for source in defining}
             self.assertIn(name, expected,
                           f'#922 the success-output filter must use the nextest-visible name '
                           f'for {leaf}: {sorted(expected)}, not {name}')
+
+    @staticmethod
+    def read_crate_sources(crate):
+        # #1900 simplify P3: both guards scan the same tree; read it once.
+        return {source: source.read_text(errors='replace')
+                for source in crate.rglob('*.rs') if 'target' not in source.parts}
+
+    @classmethod
+    def call_sites(cls, text, name):
+        # Line index of every `<name>(` in `text`, matched over the whole file
+        # rather than line by line: a call whose name and `(` straddle a line
+        # break would otherwise be invisible to both guards (#1900 concurrency
+        # P3 — a fail-open scan in the check whose job is to catch silent skips).
+        return [text.count('\n', 0, found.start())
+                for found in re.finditer(rf'\b{re.escape(name)}\s*\(', text)]
+
+    @staticmethod
+    def fn_name_exists(text, leaf):
+        # One matcher for both guards (#1900 simplify P3): the forward check and
+        # the exception check must accept the same spellings, or a generic
+        # `fn foo<T>(` passes one and fails the other.
+        return re.search(rf'\bfn\s+{re.escape(leaf)}\s*[(<]', text) is not None
 
     @staticmethod
     def nextest_visible_name(crate, source, leaf):
@@ -2140,14 +2163,20 @@ self_check_controls_run | return | return problems
     # (`success-output = "final"`). A call site outside that list is captured and
     # lost again — #1263's silent skip coming back through a test nobody
     # registered. Key is `path::fn`; the value is (why it needs no entry, the
-    # filter entries that cover it). Coverage is checked against the filter, so
-    # a stale "covered by" cannot rot silently, and an entry whose call site is
-    # gone fails as stale.
+    # filter entries that cover it[, relay helpers the note also travels
+    # through]). Coverage is checked against the filter, so a stale "covered
+    # by" cannot rot silently, and an entry whose call site is gone fails as
+    # stale.
     #
-    # Known blind spot: the scan matches the literal `stderr_skip_line(`, so a
-    # hand-rolled writer (e.g. `tests/unsafe_boundary.rs`'s
-    # `stderr_boundary_line`, which carries the same #448 contract) is outside
-    # it. Anything new should call the shared writer, not copy it.
+    # Known blind spots — both registered, neither excused:
+    #  * a hand-rolled writer (`tests/unsafe_boundary.rs`'s
+    #    `stderr_boundary_line`, which carries the same #448 contract);
+    #  * a skip note still written with `eprintln!` (`channel/sms/tests.rs` has
+    #    three `#1339 skipped:` macro writes; that file is in flight in five
+    #    other lanes, so #1525 — whose title already lists 同形 eprintln! skip —
+    #    carries the conversion).
+    # The writers are collected by #1937. Anything new should call the shared
+    # writer, not copy it.
     skip_line_exceptions = {
         'src/module_host/tests.rs::process_audit_is_linux_only': (
             '#1349 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
@@ -2158,20 +2187,30 @@ self_check_controls_run | return | return problems
         'src/skills/tests.rs::permission_not_run': (
             '#1525 helper: the note is printed on behalf of the test that calls it',
             ('skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore',
-             'skills::tests::real_ts_scenarios_match_outcomes_and_file_trees')),
+             'skills::tests::real_ts_scenarios_match_outcomes_and_file_trees'),
+            # The helper is also reached through `replay`, and one more test
+            # calls that relay; naming only the callers the author remembered
+            # would make the covered list a claim, not a check (#1900 boundary
+            # P2). Every caller of a declared relay must be in the filter too.
+            ('replay',)),
         'tests/workspace_snapshot.rs::replay_scenario': (
             '#1263 helper: the note is printed on behalf of the scenario it replays',
             ('scenarios_match_ts_outcomes_and_trees',)),
     }
     defining_function = re.compile(
-        r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*[<(]')
+        r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?'
+        r'(?:extern\s+"[^"]*"\s+)?fn\s+([A-Za-z0-9_]+)\s*[<(]')
 
-    def assert_every_skip_line_reaches_nextest(self, filter_text, crate=None):
+    def assert_every_skip_line_reaches_nextest(self, filter_text, crate=None, sources=None):
         # #1900: forward check = every filter entry names a real test. This is
         # the mirror: every test that prints a skip line must be named by the
         # filter (or be a documented exception), otherwise the note it writes to
         # the stderr handle is thrown away with the rest of the captured output.
+        # A covering test has to live in the call site's own file: the existence
+        # check below is file-local, so an exception that points somewhere else
+        # fails loudly (false red) instead of passing quietly.
         crate = crate or Path(__file__).resolve().parents[1]
+        sources = sources if sources is not None else self.read_crate_sources(crate)
         # Only the one shared writer is exempt: it *defines* `stderr_skip_line`,
         # so its signature line matches the scan. Excluding by bare filename
         # would silently excuse any future same-named copy (#1900 boundary P2).
@@ -2180,19 +2219,21 @@ self_check_controls_run | return | return problems
                  if entry.startswith('=')}
         seen = set()
         unregistered = []
-        for source in sorted(crate.rglob('*.rs')):
-            if 'target' in source.parts or source == writer:
+        for source in sorted(sources):
+            if source == writer:
                 continue
-            lines = source.read_text(errors='replace').splitlines()
-            for index, line in enumerate(lines):
-                if 'stderr_skip_line(' not in line:
-                    continue
+            text = sources[source]
+            lines = text.splitlines()
+            for index in self.call_sites(text, 'stderr_skip_line'):
                 owner = self.defining_function_at(lines, index)
                 key = f'{source.relative_to(crate)}::{owner}'
                 seen.add(key)
                 exception = self.skip_line_exceptions.get(key)
                 if exception is not None:
-                    reason, covered = exception
+                    self.assertIn(len(exception), (2, 3),
+                                  f'#1900 the exception for {key} is (why, covered[, relays])')
+                    reason, covered = exception[0], exception[1]
+                    relays = tuple(exception[2]) if len(exception) > 2 else ()
                     self.assertTrue(reason, f'#1900 the exception for {key} states why')
                     for name in covered:
                         self.assertIn(name, named,
@@ -2203,10 +2244,14 @@ self_check_controls_run | return | return problems
                         # a rename would leave the exception excusing nothing
                         # while the guard stays green.
                         leaf = name.rsplit('::', 1)[-1]
-                        self.assertRegex(
-                            '\n'.join(lines), rf'\bfn\s+{re.escape(leaf)}\s*[(<]',
+                        self.assertTrue(
+                            self.fn_name_exists(text, leaf),
                             f'#1900 the exception for {key} claims {name} covers it, but no '
                             f'`fn {leaf}` exists in {source.relative_to(crate)}')
+                    # #1900 boundary P2: a helper's covered list is hand-kept, so
+                    # on its own it proves nothing about the callers the author
+                    # did not think of. Walk the declared relays instead.
+                    self.assert_relay_callers_are_named(crate, text, source, key, relays, named)
                     continue
                 visible = self.nextest_visible_name(crate, source, owner)
                 if visible not in named:
@@ -2227,6 +2272,38 @@ self_check_controls_run | return | return problems
                          '#1900 these skip_line_exceptions entries no longer match a '
                          'stderr_skip_line call site, so they would excuse nothing: '
                          + ', '.join(stale))
+
+    def assert_relay_callers_are_named(self, crate, text, source, key, relays, named):
+        # #1900 boundary P2: `key` is a helper that prints on someone else's
+        # behalf. Each declared relay must still exist, and every test that
+        # reaches the helper — directly or through a relay — has to be in the
+        # filter, or the note is silently captured when that test runs.
+        if not relays:
+            return
+        lines = text.splitlines()
+        pending, visited = list(relays), set()
+        while pending:
+            relay = pending.pop()
+            if relay in visited:
+                continue
+            visited.add(relay)
+            callers = {self.defining_function_at(lines, index)
+                       for index in self.call_sites(text, relay)
+                       if not self.defining_function.match(lines[index])}
+            self.assertTrue(
+                callers,
+                f'#1900 the exception for {key} declares {relay} as a relay, but nothing in '
+                f'{source.relative_to(crate)} calls `{relay}(` any more')
+            for caller in sorted(callers):
+                if caller in relays:
+                    pending.append(caller)
+                    continue
+                visible = self.nextest_visible_name(crate, source, caller)
+                self.assertIn(
+                    visible, named,
+                    f'#1900 the exception for {key} only holds while every caller is '
+                    f'registered too: {caller} reaches the note through {relay}, but '
+                    f'`{visible}` is not in the success-output filter')
 
     @classmethod
     def defining_function_at(cls, lines, index):
@@ -2298,6 +2375,58 @@ self_check_controls_run | return | return problems
                                     'covers these skip-line call sites.*hidden_in_a_copy'):
             self.assert_every_skip_line_reaches_nextest(
                 'test(=registered) | test(=unregistered)', crate=crate)
+        # A call whose name and `(` straddle a line break must still be seen;
+        # the line-by-line scan was fail-open (#1900 concurrency P3).
+        multiline = self.root/'multiline-crate'
+        (multiline/'tests').mkdir(parents=True)
+        (multiline/'tests'/'split.rs').write_text(
+            'fn split_call() {\n'
+            '    skip_line::stderr_skip_line\n'
+            '        ("skip: split\\n");\n'
+            '}\n')
+        with self.assertRaisesRegex(AssertionError,
+                                    'covers these skip-line call sites.*split_call'):
+            self.assert_every_skip_line_reaches_nextest('test(=other)', crate=multiline)
+        self.assert_every_skip_line_reaches_nextest('test(=split_call)', crate=multiline)
+        # A helper's `covered` list is a claim about the callers the author
+        # thought of; the declared relays turn it into a check. A relay caller
+        # that is not registered must fail even though the covered entry is
+        # (#1900 boundary P2).
+        relay_crate = self.root/'relay-crate'
+        (relay_crate/'tests').mkdir(parents=True)
+        (relay_crate/'tests'/'relay.rs').write_text(
+            'fn helper_note() {\n'
+            '    skip_line::stderr_skip_line("skip: helper\\n");\n'
+            '}\n'
+            '\n'
+            'fn relay() {\n'
+            '    helper_note();\n'
+            '}\n'
+            '\n'
+            'fn covered_test() {\n'
+            '    relay();\n'
+            '}\n'
+            '\n'
+            'fn unregistered_test() {\n'
+            '    relay();\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/relay.rs::helper_note': ('helper', ('covered_test',),
+                                                           ('relay',))}):
+            with self.assertRaisesRegex(AssertionError,
+                                        'every caller is registered too.*unregistered_test'):
+                self.assert_every_skip_line_reaches_nextest('test(=covered_test)',
+                                                            crate=relay_crate)
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=covered_test) | test(=unregistered_test)', crate=relay_crate)
+            # A relay nobody calls any more is stale data, not a pass.
+            with self.assertRaisesRegex(AssertionError, 'but nothing in .* calls .relay.'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=covered_test) | test(=unregistered_test)',
+                    crate=relay_crate,
+                    sources={relay_crate/'tests'/'relay.rs':
+                             (relay_crate/'tests'/'relay.rs').read_text()
+                             .replace('    relay();\n', '')})
         # A call site above no `fn` at all must not be silently skipped.
         (crate/'tests'/'other'/'skip_line.rs').unlink()
         (crate/'tests'/'sample.rs').write_text(
