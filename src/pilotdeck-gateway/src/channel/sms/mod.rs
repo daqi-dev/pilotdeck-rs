@@ -602,6 +602,7 @@ async fn bind_dual_stack(port: u16) -> std::io::Result<TcpListener> {
 }
 
 /// What a bind to `127.0.0.1:<port>` learned about the wildcard above.
+#[derive(Debug, PartialEq, Eq)]
 enum V4Port {
     /// The bind collided: something already holds `127.0.0.1:<port>` — our own
     /// `::` listener, a third party, or a socket merely bound without ever
@@ -635,10 +636,27 @@ fn v4_port_state(port: u16) -> V4Port {
     let Ok(socket) = tokio::net::TcpSocket::new_v4() else {
         return V4Port::Unknown;
     };
-    match socket.bind(address) {
+    classify_v4_probe(&socket.bind(address))
+}
+
+/// What the `127.0.0.1:<port>` bind result says about the `::` wildcard above.
+/// A pure function on purpose (#1589 issue #6): the `Err(_) => Unknown` arm a
+/// healthy host never reaches has an observable injection point here, pinned by
+/// `classify_v4_probe_other_errors_stay_unknown`.
+fn classify_v4_probe(result: &std::io::Result<()>) -> V4Port {
+    match result {
         Ok(()) => V4Port::Unshared,
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => V4Port::Shared,
-        Err(_) => V4Port::Unknown,
+        Err(_) => {
+            if crate::mutants::on("sms-v4-probe-unknown-as-unshared") {
+                // The fix-r5 shape: any failure that is not `EADDRINUSE` was
+                // read as a free port, demoting a working wildcard to the
+                // IPv4-only fallback.
+                V4Port::Unshared
+            } else {
+                V4Port::Unknown
+            }
+        }
     }
 }
 
@@ -1028,15 +1046,36 @@ async fn handle_incoming(
     chat_id: JsString,
     text: JsString,
 ) -> Result<(), ChannelError> {
-    // #1339 fix-r1: `hasPending` + `take` in one lock section — TS runs the
-    // same stretch synchronously, and two sections would let another
-    // webhook turn slip a `clear` between the check and the take.
-    let pending_elicitation = {
+    // #1589 (issue #1): the switch restores the pre-fix two-section shape —
+    // `hasPending` in one lock section, `take` in another — with one
+    // `yield_now()` between them so the concurrent case interleaves
+    // deterministically. It exists only to make the old shape judgeable red
+    // (`sms_elicit_lock_split`); it is not a production path.
+    let pending_elicitation = if crate::mutants::on("sms-elicit-lock-split") {
+        let has_pending = {
+            let runtime = shared.runtime.lock().await;
+            runtime.elicitation.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
+        };
+        tokio::task::yield_now().await;
         let mut runtime = shared.runtime.lock().await;
-        if runtime.elicitation.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
+        if has_pending {
+            // A `clear` that landed between the sections empties the entry;
+            // the stale check lets the message fall through to the turn.
             runtime.elicitation.take(&chat_id)
         } else {
             None
+        }
+    } else {
+        // #1339 fix-r1: `hasPending` + `take` in one lock section — TS runs the
+        // same stretch synchronously, and two sections would let another
+        // webhook turn slip a `clear` between the check and the take.
+        {
+            let mut runtime = shared.runtime.lock().await;
+            if runtime.elicitation.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
+                runtime.elicitation.take(&chat_id)
+            } else {
+                None
+            }
         }
     };
     if let Some(entry) = pending_elicitation {
@@ -1074,13 +1113,36 @@ async fn handle_incoming(
         return Ok(());
     }
 
-    // #1339 fix-r1: same fusion for `hasPending` + `beginAnswer`.
-    let began = {
+    // #1589 (issue #1): same two-section restoration as the elicitation
+    // switch above — not a production path, only the negative control's
+    // observable (`sms_permission_lock_split`).
+    let began = if crate::mutants::on("sms-permission-lock-split") {
+        let has_pending = {
+            let runtime = shared.runtime.lock().await;
+            runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
+        };
+        tokio::task::yield_now().await;
         let mut runtime = shared.runtime.lock().await;
-        if runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
-            Some(runtime.permissions.begin_answer(&chat_id, &text))
-        } else {
+        if !has_pending {
             None
+        } else {
+            match runtime.permissions.begin_answer(&chat_id, &text) {
+                // A `clear` that landed between the sections emptied the
+                // state; the stale check lets the message fall through to
+                // the turn instead of the early `None` return.
+                BeginAnswer::None => None,
+                answer => Some(answer),
+            }
+        }
+    } else {
+        // #1339 fix-r1: same fusion for `hasPending` + `beginAnswer`.
+        {
+            let mut runtime = shared.runtime.lock().await;
+            if runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
+                Some(runtime.permissions.begin_answer(&chat_id, &text))
+            } else {
+                None
+            }
         }
     };
     if let Some(begin) = began {
@@ -1162,34 +1224,65 @@ async fn handle_incoming(
         return Ok(());
     }
 
-    // #1339 fix-r1: `activeChats.has` → `sessionMapper.resolve` → `add` in
-    // one lock section — TS runs the same stretch synchronously; separate
-    // sections could let a parallel webhook for the same chat resolve twice
-    // and double-dispatch. The "already active" log and the `/new` reply
-    // stay outside the lock.
     enum ActiveOutcome {
         Skip,
         NewChat,
         EmptyMessage,
         Dispatch(MappedSession),
     }
-    let (already_active, outcome) = {
+    /// The mapper→outcome mapping both lock shapes share (#1589 issue #1 kept
+    /// it one function so the switch branch cannot drift from the fused path).
+    fn dispatch_outcome(
+        runtime: &mut SmsRuntime,
+        chat_id: &JsString,
+        text: &JsString,
+    ) -> ActiveOutcome {
+        let mapped = runtime.mapper.resolve(chat_id, text);
+        if mapped.command_new && mapped.message.is_empty() {
+            ActiveOutcome::NewChat
+        } else if mapped.message.is_empty() {
+            // TS: `if (!mapped.message) return;`
+            ActiveOutcome::EmptyMessage
+        } else {
+            runtime.active_chats.insert(chat_id.clone());
+            ActiveOutcome::Dispatch(mapped)
+        }
+    }
+    // #1589 (issue #1): same two-section restoration — `contains` in one lock
+    // section, `resolve` + `insert` in another — not a production path, only
+    // the negative control's observable (`sms_active_insert_split`). The
+    // dedupe switch is read once here so both shapes share it.
+    let dedupe_off = crate::mutants::on("sms-active-dedupe-off");
+    let (already_active, outcome) = if crate::mutants::on("sms-active-insert-split") {
+        let already_active = {
+            let runtime = shared.runtime.lock().await;
+            runtime.active_chats.contains(&chat_id)
+        };
+        tokio::task::yield_now().await;
         let mut runtime = shared.runtime.lock().await;
-        let already_active = runtime.active_chats.contains(&chat_id);
-        if already_active && !crate::mutants::on("sms-active-dedupe-off") {
+        if already_active && !dedupe_off {
             (already_active, ActiveOutcome::Skip)
         } else {
-            let mapped = runtime.mapper.resolve(&chat_id, &text);
-            let outcome = if mapped.command_new && mapped.message.is_empty() {
-                ActiveOutcome::NewChat
-            } else if mapped.message.is_empty() {
-                // TS: `if (!mapped.message) return;`
-                ActiveOutcome::EmptyMessage
-            } else {
-                runtime.active_chats.insert(chat_id.clone());
-                ActiveOutcome::Dispatch(mapped)
-            };
-            (already_active, outcome)
+            (
+                already_active,
+                dispatch_outcome(&mut runtime, &chat_id, &text),
+            )
+        }
+    } else {
+        // #1339 fix-r1: `activeChats.has` → `sessionMapper.resolve` → `add` in
+        // one lock section — TS runs the same stretch synchronously; separate
+        // sections could let a parallel webhook for the same chat resolve twice
+        // and double-dispatch. The "already active" log and the `/new` reply
+        // stay outside the lock.
+        let mut runtime = shared.runtime.lock().await;
+        let already_active = runtime.active_chats.contains(&chat_id);
+        if already_active && !dedupe_off {
+            (already_active, ActiveOutcome::Skip)
+        } else {
+            (
+                already_active,
+                dispatch_outcome(&mut runtime, &chat_id, &text),
+            )
         }
     };
     if already_active {
