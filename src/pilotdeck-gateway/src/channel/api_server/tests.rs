@@ -1663,9 +1663,17 @@ async fn partial_body_is_answered_at_the_body_read_deadline() {
         "#1333 the requestTimeout 408 must not gain a Date header, got {:?}",
         headers
     );
-    assert!(
-        dechunk(&response[end..]).is_empty(),
-        "#1333 the requestTimeout 408 body is empty"
+    // Compare the raw framing, not `dechunk(..).is_empty()`: `dechunk` returns
+    // an empty vector for anything that does not start with a valid hex
+    // chunk-size line, so "could not de-frame" would pass as "empty body"
+    // (GLM boundary P2). Node's 51 bytes carry no body and hyper frames an
+    // unknown-length empty body as the bare terminator, which
+    // `A8.3-API-SERVER-004` registers as this lane's on-the-wire shape.
+    assert_eq!(
+        &response[end..],
+        b"0\r\n\r\n".as_slice(),
+        "#1333 the requestTimeout 408 body is the empty chunked terminator, got {:?}",
+        String::from_utf8_lossy(&response[end..])
     );
     tokio::time::timeout(DEADLINE, stopping)
         .await
