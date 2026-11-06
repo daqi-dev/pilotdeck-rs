@@ -1284,23 +1284,23 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
     };
     let peer = read_pid("fixture.pid");
     // The peer writes this before it answers the handshake, so the probe cannot
-    // have died before the descendant existed.
+    // have died before the descendant existed. That, plus the arithmetic, is
+    // what keeps this test from being vacuous: the descendant sleeps 60 s from
+    // that moment, and the peer must be gone within 5 s of the probe's death,
+    // so a reaped descendant cannot have expired on its own -- it was killed.
+    // The window is *not* asserted with a liveness probe here on purpose: the
+    // watchdog kills the descendant within one 0.1 s poll of the probe's death,
+    // so a `kill(pid, 0)` at this point races the very fix it means to prove
+    // and would fail a correct implementation whenever the test thread stalls
+    // (#1779 review).
     let grandchild = read_pid(&format!("{mode}.pid"));
-    // The descendant sleeps 60 s (`fixture.py`). Prove it was still alive when
-    // the host died -- "already gone" would make the assertion below vacuous.
-    rustix::process::test_kill_process(rustix::process::Pid::from_raw(grandchild as i32).unwrap())
-        .unwrap_or_else(|error| {
-            panic!("grandchild {grandchild} was not alive after the kill: {error}")
-        });
     for (role, pid) in [("peer", peer), ("grandchild", grandchild)] {
         timeout(Duration::from_secs(5), assert_reaped(pid))
             .await
             .unwrap_or_else(|_| panic!("{role} {pid} outlived its host (#1779)"));
     }
-    // A pass that took anywhere near the descendant's own 60 s lifetime proves
-    // nothing: it may have expired instead of being killed. The window above is
-    // 5 s, so this only trips on a stalled test host, and it fails loudly
-    // instead of turning a starved run into silent evidence.
+    // Two sequential 5 s windows plus startup must stay well under the
+    // descendant's own 60 s lifetime, or a pass could be natural expiry.
     assert!(
         started.elapsed() < Duration::from_secs(50),
         "the observation window took {:?}; the 60 s descendant may have expired on its own",

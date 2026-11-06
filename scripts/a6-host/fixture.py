@@ -10,6 +10,14 @@ from pathlib import Path
 
 import lifetime  # #1779: parent-death + lifetime watchdog, same directory
 
+# The `grandchild-*` sleeper runs this: the same watchdog, one level down, so it
+# exits within one poll interval of *its* parent (this process) dying however
+# that happens -- including SIGKILL, where no code of ours runs (#1779).
+_GRANDCHILD_WATCH = (
+    'import sys, time; sys.path.insert(0, {!r}); '
+    'import lifetime; lifetime.install(None, "grandchild"); time.sleep(60)'
+)
+
 mode = sys.argv[1]
 if mode.startswith('reconnect-'):
     import runpy
@@ -145,14 +153,14 @@ if mode in ('host-cancel-after-acceptance-hang', 'host-cancel-late-terminal'):
     methods.append(dict(name='cancel', enabled=True))
 if mode.startswith('grandchild-'):
     # Inherits the sidecar process group and stderr/stdout descriptors.
-    # #1779: a killed host never reaches its killpg, so the watchdog has to take
-    # this descendant down with it instead of leaving a 60 s orphan behind. The
-    # spawn and the registration share one `spawning()` block: the watchdog
-    # waits for it to finish before it reads the registry, so a host that dies
-    # inside this window still cannot leave the descendant behind.
-    with lifetime.spawning():
-        descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
-        lifetime.track(descendant)
+    # #1779: a killed host never reaches its killpg, so the descendant has to go
+    # down on its own. It carries the same parent-death watchdog as this process
+    # (`lifetime.install`), which makes the cleanup independent of anything this
+    # process does -- it works even when *this* process is SIGKILLed, where none
+    # of our code runs at all. A registry on this side would need the host to die
+    # while we are still scheduled, which is the race that cost three rounds.
+    descendant = subprocess.Popen([sys.executable, '-c', _GRANDCHILD_WATCH.format(
+        str(Path(__file__).resolve().parent))])
     assert receipt is not None
     receipt.with_suffix('.pid').write_text(str(descendant.pid))
 if mode == 'no-streaming':
