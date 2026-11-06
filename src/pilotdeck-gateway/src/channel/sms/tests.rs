@@ -3113,15 +3113,26 @@ struct ProbeSender {
     sends: Arc<SyncMutex<Vec<String>>>,
     panic_on_marker: Option<&'static str>,
     panicked: Arc<SyncMutex<bool>>,
+    /// Runs once, right before the injected panic — lets a test interleave a
+    /// second event (e.g. a permission captured mid-send).
+    before_panic: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ProbeSender {
     fn new(panic_on_marker: Option<&'static str>) -> (Self, Arc<SyncMutex<Vec<String>>>) {
+        Self::with_hook(panic_on_marker, None)
+    }
+
+    fn with_hook(
+        panic_on_marker: Option<&'static str>,
+        before_panic: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> (Self, Arc<SyncMutex<Vec<String>>>) {
         let sends = Arc::new(SyncMutex::new(Vec::new()));
         let sender = Self {
             sends: sends.clone(),
             panic_on_marker,
             panicked: Arc::new(SyncMutex::new(false)),
+            before_panic,
         };
         (sender, sends)
     }
@@ -3133,6 +3144,7 @@ impl SmsSender for ProbeSender {
         let sends = self.sends.clone();
         let marker = self.panic_on_marker;
         let panicked = self.panicked.clone();
+        let before_panic = self.before_panic.clone();
         Box::pin(async move {
             sends.lock().expect("#1790 sends mutex").push(body.clone());
             let should_panic = marker.is_some_and(|marker| body.contains(marker));
@@ -3141,6 +3153,9 @@ impl SmsSender for ProbeSender {
                 if !*flag {
                     *flag = true;
                     drop(flag);
+                    if let Some(hook) = before_panic {
+                        hook();
+                    }
                     panic!("#1790 injected prompt-send panic");
                 }
             }
@@ -3151,7 +3166,7 @@ impl SmsSender for ProbeSender {
 
 /// Install `sender` as the channel's Twilio boundary; `send_reply` then
 /// reaches it instead of returning the "twilio not installed" false.
-async fn install_sender(shared: &Arc<SmsShared>, sender: ProbeSender) {
+async fn install_sender(shared: &Arc<SmsShared>, sender: impl SmsSender + 'static) {
     shared.runtime.lock().await.client = Some(Arc::new(sender));
 }
 
@@ -3497,6 +3512,185 @@ async fn a_panicking_confirmation_send_does_not_lock_the_chat() {
     );
 }
 
+/// #1790 (review P1): a permission captured *while* the confirmation is being
+/// sent is queued in `pending` with no prompt of its own (`capture` returns
+/// `None` once `answering` is set) and `confirm_answer` bails on the non-empty
+/// queue. A panic on that send used to leave `answering` set with nothing
+/// delivering and nothing queued — every later message dropped as
+/// `BeginAnswer::None`. The guard's recovery promotes the queued head to a
+/// retry prompt instead.
+#[tokio::test]
+async fn a_permission_captured_during_the_confirmation_send_is_not_dropped() {
+    let shared = channel_with_gateway(Arc::new(DecideOkGateway::new()));
+    let chat = JsString::from("+15550019");
+    seed_pending_permission(&shared, &chat, "req-1790-during-first");
+    let inject = {
+        let shared = shared.clone();
+        let chat = chat.clone();
+        Arc::new(move || {
+            let session = JsString::from(format!(
+                "sms:chat={}:general",
+                String::from_utf16_lossy(chat.units())
+            ));
+            let event = to_js(&json!({
+                "requestId": "req-1790-during-second",
+                "toolName": "Bash",
+                "payload": {"command": "ls"},
+            }));
+            // Mid-send: `answering` is set, so this only queues the request.
+            let prompt = shared.lock_permissions().capture(&chat, &session, &event);
+            crate::negative_assert!(
+                prompt.is_none(),
+                "#1790 capture during the confirmation send must only queue"
+            );
+        }) as Arc<dyn Fn() + Send + Sync>
+    };
+    let (sender, sends) = ProbeSender::with_hook(Some("已允许一次"), Some(inject));
+    install_sender(&shared, sender).await;
+
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    })
+    .await;
+    let error = joined.expect_err("#1790 the injected confirmation panic must fail the task");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1790 the confirmation spawn must end in the panic"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            permissions.is_answering(&chat),
+            "#1790 the answered permission is settled but the queued one is not"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 the permission captured mid-send must still be queued"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive the confirmation-send panic"
+        );
+        crate::negative_assert!(
+            !permissions.is_prompt_delivering(&chat),
+            "#1790 prompt_delivering must not survive the confirmation-send panic"
+        );
+    }
+    // The queued request must reach the user on the next message instead of
+    // being dropped with the chat locked.
+    handle_incoming(&shared, chat.clone(), JsString::from("hello"))
+        .await
+        .expect("#1790 the message after the confirmation panic returns Ok");
+    crate::negative_assert_eq!(
+        prompt_sends(&sends),
+        1,
+        "#1790 the permission captured mid-send must be re-sent after the panic"
+    );
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 the retried prompt must release the answer lock"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 the retried request must stay queued until it is answered"
+        );
+    }
+}
+
+/// Fails the confirmation send (the `!delivered` branch) after running a hook,
+/// so a test can queue a second permission into that window.
+struct FailingConfirmationSender {
+    sends: Arc<SyncMutex<Vec<String>>>,
+    hook: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl SmsSender for FailingConfirmationSender {
+    fn send(&self, message: SmsOutgoingMessage) -> BoxFuture<Result<(), ChannelError>> {
+        let body = String::from_utf16_lossy(message.body.units());
+        self.sends
+            .lock()
+            .expect("#1790 sends mutex")
+            .push(body.clone());
+        let hook = self.hook.clone();
+        Box::pin(async move {
+            if body.contains("已允许一次") {
+                hook();
+                return Err(ChannelError::Plain(
+                    "#1790 injected send failure".to_owned(),
+                ));
+            }
+            Ok(())
+        })
+    }
+}
+
+/// #1790: the `!delivered` branch has the same residue as the guard path — an
+/// undelivered confirmation with a permission captured meanwhile must still be
+/// re-sent instead of wedging the chat.
+#[tokio::test]
+async fn an_undelivered_confirmation_does_not_lock_the_chat() {
+    let shared = channel_with_gateway(Arc::new(DecideOkGateway::new()));
+    let chat = JsString::from("+15550023");
+    seed_pending_permission(&shared, &chat, "req-1790-undelivered-first");
+    let sends = Arc::new(SyncMutex::new(Vec::new()));
+    let inject = {
+        let shared = shared.clone();
+        let chat = chat.clone();
+        Arc::new(move || {
+            let session = JsString::from(format!(
+                "sms:chat={}:general",
+                String::from_utf16_lossy(chat.units())
+            ));
+            let event = to_js(&json!({
+                "requestId": "req-1790-undelivered-second",
+                "toolName": "Bash",
+                "payload": {"command": "ls"},
+            }));
+            let prompt = shared.lock_permissions().capture(&chat, &session, &event);
+            crate::negative_assert!(
+                prompt.is_none(),
+                "#1790 capture during the confirmation send must only queue"
+            );
+        }) as Arc<dyn Fn() + Send + Sync>
+    };
+    install_sender(
+        &shared,
+        FailingConfirmationSender {
+            sends: sends.clone(),
+            hook: inject,
+        },
+    )
+    .await;
+
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the failed confirmation still returns Ok");
+    handle_incoming(&shared, chat.clone(), JsString::from("hello"))
+        .await
+        .expect("#1790 the message after the failed confirmation returns Ok");
+    crate::negative_assert_eq!(
+        prompt_sends(&sends),
+        1,
+        "#1790 the permission captured mid-send must be re-sent after the send failure"
+    );
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 the retried prompt must release the answer lock"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 the retried request must stay queued until it is answered"
+        );
+    }
+}
+
 /// #1790: a panic while the *initial* permission prompt is being sent must
 /// release `initial_prompt_pending`. Pre-fix every later message gets
 /// "权限提示发送中，请稍候。" forever.
@@ -3552,6 +3746,58 @@ async fn a_panicking_initial_prompt_delivery_does_not_lock_the_chat() {
         prompt_sends(&sends),
         2,
         "#1790 the panic and the retry each send one prompt"
+    );
+}
+
+/// #1790 (review P2 #2): the initial-prompt guard's cancel path — the adapter
+/// stopping while the first prompt send is parked must still run
+/// `confirm_initial_prompt(false)`, otherwise every later message keeps
+/// getting "权限提示发送中，请稍候。".
+#[tokio::test]
+async fn cancelled_initial_prompt_delivery_does_not_lock_the_chat() {
+    let shared = channel_with_gateway(Arc::new(PermissionRequestGateway {
+        request_id: "req-1790-initial-cancel",
+    }));
+    let chat = JsString::from("+15550022");
+    let sends = Arc::new(SyncMutex::new(Vec::new()));
+    install_sender(
+        &shared,
+        ParkingSender {
+            sends: sends.clone(),
+        },
+    )
+    .await;
+
+    let handle = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("hello")).await }
+    });
+    until("the initial prompt send is parked", || {
+        sends.lock().expect("#1790 sends mutex").len() == 1
+    })
+    .await;
+    handle.abort();
+    let error = handle
+        .await
+        .expect_err("#1790 the aborted task must not complete");
+    crate::negative_assert!(
+        error.is_cancelled(),
+        "#1790 the aborted initial-prompt send must report cancellation"
+    );
+
+    let permissions = shared.lock_permissions();
+    crate::negative_assert!(
+        !permissions.is_initial_prompt_pending(&chat),
+        "#1790 initial_prompt_pending must not survive the initial-prompt-send cancellation"
+    );
+    crate::negative_assert!(
+        !permissions.is_in_flight(&chat),
+        "#1790 in_flight must not survive the initial-prompt-send cancellation"
+    );
+    crate::negative_assert!(
+        permissions.has_pending(&chat),
+        "#1790 the captured request must stay queued after the cancelled prompt send"
     );
 }
 
@@ -3733,6 +3979,115 @@ async fn timed_out_permission_decide_does_not_lock_the_chat() {
         decides.lock().expect("#1790 decides mutex").len(),
         2,
         "#1790 the chat must be able to decide again after the timeout"
+    );
+}
+
+/// #1790 (review P2 #2): the answer guard's cancel/timeout paths are covered
+/// above; the prompt guard shares the same `Drop` shape and only had panic
+/// tests. A send that parks forever models the adapter stopping mid-send.
+struct ParkingSender {
+    sends: Arc<SyncMutex<Vec<String>>>,
+}
+
+impl SmsSender for ParkingSender {
+    fn send(&self, message: SmsOutgoingMessage) -> BoxFuture<Result<(), ChannelError>> {
+        let body = String::from_utf16_lossy(message.body.units());
+        let sends = self.sends.clone();
+        Box::pin(async move {
+            sends.lock().expect("#1790 sends mutex").push(body);
+            std::future::pending::<Result<(), ChannelError>>().await
+        })
+    }
+}
+
+async fn park_confirmation(
+    chat_id: &str,
+    request_id: &str,
+) -> (Arc<SmsShared>, JsString, Arc<SyncMutex<Vec<String>>>) {
+    let shared = channel_with_gateway(Arc::new(DecideOkGateway::new()));
+    let chat = JsString::from(chat_id);
+    seed_pending_permission(&shared, &chat, request_id);
+    let sends = Arc::new(SyncMutex::new(Vec::new()));
+    install_sender(
+        &shared,
+        ParkingSender {
+            sends: sends.clone(),
+        },
+    )
+    .await;
+    (shared, chat, sends)
+}
+
+/// #1790: aborting the task while the confirmation send is parked must settle
+/// the answer — the cancel path of the prompt guard.
+#[tokio::test]
+async fn cancelled_confirmation_send_does_not_lock_the_chat() {
+    let (shared, chat, sends) = park_confirmation("+15550020", "req-1790-cancel-confirm").await;
+    let handle = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    });
+    until("the confirmation send is parked", || {
+        sends.lock().expect("#1790 sends mutex").len() == 1
+    })
+    .await;
+    handle.abort();
+    let error = handle
+        .await
+        .expect_err("#1790 the aborted task must not complete");
+    crate::negative_assert!(
+        error.is_cancelled(),
+        "#1790 the aborted confirmation send must report cancellation"
+    );
+
+    let permissions = shared.lock_permissions();
+    crate::negative_assert!(
+        !permissions.is_answering(&chat),
+        "#1790 answering must not survive the confirmation-send cancellation"
+    );
+    crate::negative_assert!(
+        !permissions.is_in_flight(&chat),
+        "#1790 in_flight must not survive the confirmation-send cancellation"
+    );
+    crate::negative_assert!(
+        !permissions.has_pending(&chat),
+        "#1790 the cancelled confirmation must settle the answered permission"
+    );
+}
+
+/// #1790: the same release must run when the caller times out a parked
+/// confirmation send instead of aborting the task.
+#[tokio::test]
+async fn timed_out_confirmation_send_does_not_lock_the_chat() {
+    let (shared, chat, sends) = park_confirmation("+15550021", "req-1790-timeout-confirm").await;
+    let timed_out = tokio::time::timeout(
+        Duration::from_millis(50),
+        handle_incoming(&shared, chat.clone(), JsString::from("1")),
+    )
+    .await;
+    crate::negative_assert!(
+        timed_out.is_err(),
+        "#1790 the parked confirmation send must time out"
+    );
+    crate::negative_assert_eq!(
+        sends.lock().expect("#1790 sends mutex").len(),
+        1,
+        "#1790 the timed-out confirmation reached the sender once"
+    );
+
+    let permissions = shared.lock_permissions();
+    crate::negative_assert!(
+        !permissions.is_answering(&chat),
+        "#1790 answering must not survive the confirmation-send timeout"
+    );
+    crate::negative_assert!(
+        !permissions.is_in_flight(&chat),
+        "#1790 in_flight must not survive the confirmation-send timeout"
+    );
+    crate::negative_assert!(
+        !permissions.has_pending(&chat),
+        "#1790 the timed-out confirmation must settle the answered permission"
     );
 }
 
