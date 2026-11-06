@@ -112,6 +112,35 @@ fn pad_size(id: &str, entry: &Value) -> usize {
     pad_size_checked(id, entry).unwrap_or_else(|error| panic!("{error}"))
 }
 
+/// #1696: the pad marker must be non-empty and appear exactly once. An empty
+/// marker makes `str::replace` splice the pad between every character, and a
+/// repeated marker multiplies the padding — either way the allocation, not the
+/// recording, would decide the replay.
+fn pad_marker_checked<'a>(id: &str, entry: &'a Value, request: &str) -> Result<&'a str, String> {
+    let marker = entry["pad"]["marker"]
+        .as_str()
+        .ok_or_else(|| format!("#1349 cell {id} pad marker must be a string"))?;
+    // #1696: same shape as `pad_size_checked` — the switch restores the old
+    // unchecked read rather than the field checks.
+    if crate::mutants::on("module-host-oracle-pad-marker") {
+        return Ok(marker);
+    }
+    if marker.is_empty() {
+        return Err(format!("#1349 cell {id} pad marker must not be empty"));
+    }
+    let hits = request.matches(marker).count();
+    if hits != 1 {
+        return Err(format!(
+            "#1349 cell {id} pad marker appears {hits} times in its request, expected exactly 1"
+        ));
+    }
+    Ok(marker)
+}
+
+fn pad_marker<'a>(id: &str, entry: &'a Value, request: &str) -> &'a str {
+    pad_marker_checked(id, entry, request).unwrap_or_else(|error| panic!("{error}"))
+}
+
 #[test]
 fn recorded_pad_size_rejects_drift() {
     crate::negative_assert!(
@@ -130,6 +159,48 @@ fn recorded_pad_size_panics_on_drift() {
     pad_size(
         "budget-exact",
         &serde_json::json!({"pad":{"size": u64::MAX}}),
+    );
+}
+
+#[test]
+fn recorded_pad_marker_rejects_drift() {
+    let request = "POST / HTTP/1.1\r\n\r\nAAA";
+    crate::negative_assert!(
+        pad_marker_checked(
+            "budget-exact",
+            &serde_json::json!({"pad":{"marker": ""}}),
+            request
+        )
+        .is_err(),
+        "#1349 #1696 rejects pad marker drift"
+    );
+    crate::negative_assert!(
+        pad_marker_checked(
+            "budget-exact",
+            &serde_json::json!({"pad":{"marker": "A"}}),
+            request
+        )
+        .is_err(),
+        "#1349 #1696 rejects pad marker drift"
+    );
+    crate::negative_assert!(
+        pad_marker_checked(
+            "budget-exact",
+            &serde_json::json!({"pad":{"marker": "__PDRS_PAD__"}}),
+            request
+        )
+        .is_err(),
+        "#1349 #1696 rejects pad marker drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "pad marker must not be empty")]
+fn recorded_pad_marker_panics_on_drift() {
+    pad_marker(
+        "budget-exact",
+        &serde_json::json!({"pad":{"marker": ""}}),
+        "POST / HTTP/1.1\r\n\r\n",
     );
 }
 
@@ -183,13 +254,9 @@ fn cell(id: &str) -> Cell {
                 .to_owned();
             // The budget cells carry the pad marker plus a size; the replay
             // writes the real 'a' padding the recorder wrote.
-            if let Some(pad) = entry.get("pad").filter(|pad| !pad.is_null()) {
-                let marker = pad["marker"].as_str().expect("#1349 oracle pad marker");
+            if entry.get("pad").is_some_and(|pad| !pad.is_null()) {
+                let marker = pad_marker(id, entry, &request);
                 let size = pad_size(id, entry);
-                assert!(
-                    request.contains(marker),
-                    "#1349 cell {id} pad marker missing from its request"
-                );
                 request = request.replace(marker, &"a".repeat(size));
             }
             return Cell {

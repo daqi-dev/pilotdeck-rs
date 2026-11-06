@@ -26,4 +26,4 @@ Rust 重放在 `src/module_host/approvals/tests.rs`：同一请求字节经真�
 
 重生成守卫（`#[ignore]`）：`PDRS_BASELINE=… cargo test -p pilotdeck-gateway --lib module_host::approvals::tests::regenerates_identically -- --exact --ignored --show-output`。生成器输出目录递归创建，oracle.json 以 `flag:'wx'` 独占创建。除 Date 掩码外无时钟 / PID 依赖（stateRoot 目录名含 PID 但只在 tmpdir），未登记 regeneration mask。
 
-负控：`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器，26 个开关，每个绑定一个 replay cell 的单行专属断言、一个组件直测的单行断言或 #1696 的录制守卫单测）。#1813 起 `halfClose` 按必填字段读取：键缺席即失败（不再静默回落 `false`），错型诊断带字段名与实际值。新增 cell 时同步更新 `src/module_host/approvals/tests.rs` 的 `replay_tests!` 表与 `negative_controls.py` 的开关绑定。
+负控：`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器，27 个开关，每个绑定一个 replay cell 的单行专属断言、一个组件直测的单行断言或 #1696 的录制守卫单测）。#1813 起 `halfClose` 按必填字段读取：键缺席即失败（不再静默回落 `false`），错型诊断带字段名与实际值。新增 cell 时同步更新 `src/module_host/approvals/tests.rs` 的 `replay_tests!` 表与 `negative_controls.py` 的开关绑定。
