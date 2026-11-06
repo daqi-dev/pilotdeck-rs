@@ -171,6 +171,7 @@ def writer(out, hold):
     mutating a mutated baseline.
     """
     armed = [True]
+    entered = [False]
 
     def stop(_signum, _frame):
         if armed[0]:
@@ -181,6 +182,7 @@ def writer(out, hold):
     try:
         with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
             try:
+                entered[0] = True
                 capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
                 # Publish the window atomically: a reader that sees the file must
                 # also see the mutant bytes (#166 tmp-and-rename).
@@ -201,9 +203,13 @@ def writer(out, hold):
         # process can acquire it. Published on the normal path *and* on the
         # SIGTERM unwind, so each run can show, rather than argue, that the
         # recorded ``end_ms`` lies strictly inside the real hold
-        # (#1662 review r7 arbitration evidence).
-        publish(out / 'writer-released.json',
-                json.dumps({'released_ms': epoch_ms()}) + '\n')
+        # (#1662 review r7 arbitration evidence). Only when the window was
+        # actually entered: a SIGTERM during lock acquisition never held the
+        # lock, and a "released" record there would be fake evidence
+        # (#1662 review r7 P3).
+        if entered[0]:
+            publish(out / 'writer-released.json',
+                    json.dumps({'released_ms': epoch_ms()}) + '\n')
     return 0
 
 
@@ -229,13 +235,15 @@ def force_stop(process, out):
         pass
     except Exception:
         # Something other than a timeout (an IPC error, a closed pipe). The
-        # writer may still be restoring, so give it the same bound instead of
-        # killing it outright.
-        try:
-            process.wait(timeout=WRITER_EXIT_BUDGET)
+        # writer may still be restoring, so poll it to the same bound instead of
+        # killing it outright; ``poll()`` cannot raise the way ``wait()`` can, so
+        # this path still ends in a *confirmed* timeout before any kill
+        # (#1662 review r6/r7 P0-2).
+        deadline = time.monotonic() + WRITER_EXIT_BUDGET
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.5)
+        if process.poll() is not None:
             return True
-        except Exception:
-            pass
     try:
         _kill_group(process)
     finally:
@@ -245,20 +253,33 @@ def force_stop(process, out):
 
 
 def stop_writer(process, out):
-    """Bounded stop: let the writer restore first, then terminate, then kill."""
+    """Bounded stop: let the writer restore first, then terminate, then kill.
+
+    Only a *self-inflicted* failure is judged by the exit status: once we
+    terminate the writer ourselves its SIGTERM handler raises ``SystemExit``, so
+    it exits non-zero **by design** after restoring every guarded byte -- the
+    same reason ``force_stop`` ignores the status (#1662 review r7 P1).
+    """
+    terminated = False
+    killed = False
     try:
         stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
     except subprocess.TimeoutExpired:
         # Graceful first: the handler unwinds mutating_sources and restores.
+        terminated = True
         process.terminate()
         try:
             stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
         except subprocess.TimeoutExpired:
+            killed = True
             _kill_group(process)
             stdout, stderr = _collect(process, 30)
     exclusive_write(out / 'writer.stdout', stdout or '')
     exclusive_write(out / 'writer.stderr', stderr or '')
-    if process.returncode != 0:
+    if killed:
+        raise RuntimeError('#1662 writer had to be killed; '
+                           'source restoration is NOT confirmed')
+    if not terminated and process.returncode != 0:
         raise RuntimeError(f'#1662 writer exited {process.returncode}')
 
 
@@ -348,12 +369,21 @@ def green(out):
             if not isinstance(error, Exception):
                 hard_interrupt = error
             # The stop itself can be interrupted (SIGINT during communicate).
-            # Recover gracefully and only kill as a last resort; ``restored``
+            # Recover gracefully and only kill as a last resort; ``stopped``
             # records whether we can still claim the sources were restored.
-            if not force_stop(process, out):
+            try:
+                stopped = force_stop(process, out)
+            except BaseException as stop_failure:
+                # The fallback itself failed (kill or reap raised). Keep both
+                # errors and, above all, still re-raise an interrupt below
+                # instead of losing it here (#1662 review r7 P1).
+                stopped = False
+                if not isinstance(stop_failure, Exception) and hard_interrupt is None:
+                    hard_interrupt = stop_failure
+            if not stopped:
                 stop_error = RuntimeError(
-                    f'{type(error).__name__}: {error}; writer had to be killed, '
-                    f'source restoration is NOT confirmed')
+                    f'{type(error).__name__}: {error}; the writer had to be killed or '
+                    f'could not be stopped, source restoration is NOT confirmed')
     for interrupt in (failure, hard_interrupt):
         if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
             # Interrupts still abort the run; the writer is already stopped above.
@@ -395,7 +425,13 @@ def green(out):
         return 'INVALID', (f'resident test was refused at {blocked} ms, outside the writer '
                            f'hold [{start_ms}, {end_ms}]: that refusal was not this writer')
     released = read_released(out)
-    if released is not None and released <= end_ms:
+    if released is None:
+        # The writer never published the instant it released the lock, so the
+        # hold interval cannot be shown to be conservative. Missing evidence is
+        # not evidence (#1662 review r7 P1).
+        return 'INVALID', ('the writer never published writer-released.json; the hold '
+                           'interval cannot be shown to end before the real release')
+    if released <= end_ms:
         # Would mean the writer released the lock at or before the instant it
         # recorded as inside its hold; the whole boundary argument rests on this
         # being false, so refuse to publish a verdict if it ever is not.
