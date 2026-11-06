@@ -1524,11 +1524,15 @@ class AuditBindingTests(unittest.TestCase):
         self.assertTrue(suite.declares_test('case!(case_a,);', 'case_a', 'case!'))
 
     def test_declares_test_needs_the_exact_name(self):
+        # #1890: every assertion carries the message its mutant is bound to; a
+        # bare assertFalse makes the kill indistinguishable from an unrelated
+        # failure (the shared-runner audit classified it INVALID, not KILLED).
+        message = '#1890 a missing declaration must be refused'
         # A declaration that merely starts with the short name must not count.
-        self.assertFalse(suite.declares_test('fn case_ab() {', 'case_a'))
+        self.assertFalse(suite.declares_test('fn case_ab() {', 'case_a'), message)
         # The macro form is only accepted when the caller names the macro.
-        self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'))
-        self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'))
+        self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'), message)
+        self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'), message)
 
 
 BASELINE_DEFAULTS = (
