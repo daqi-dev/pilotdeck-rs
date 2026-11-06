@@ -3921,6 +3921,53 @@ MUTATIONS = [
      "                        h = operator.setitem\n"
      "                        h(report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
+    ('calibrate-handle-container-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _other = _hs\n"
+     "    _other[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-mapping-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _hs[0]['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-list-const-subscript-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _keys = ['__doc__']\n"
+     "    _keys[0] = '__setattr__'\n"
+     "    getattr(md, _keys[0])('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comprehension-filter-write', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import operator\n"
+     "                        [_r for _r in (1,)\n"
+     "                         if operator.setitem(report, 'status', 'PASS')]\n"
+     "                    report['status'] = overall\n"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4495,6 +4542,39 @@ def calibrate_mixed_alias_binding(rows):
     """#1953 fix-r1 P: a name with both a non-write and a write binding made
     the resolution non-unique and it was dropped instead of failing closed."""
     return _unrouted_status(rows, 'calibrate-mixed-alias-binding')
+
+
+def calibrate_handle_container_alias(rows):
+    """#1953 fix-r1 r1b: ``other = hs`` hands the whole container over, and
+    ``other[0](...)`` takes the same handle out of the second name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-container-alias flagged, '
+        'passed=False')
+
+
+def calibrate_handle_mapping_write(rows):
+    """#1953 fix-r1 r1b: the handle is not only called -- writing a mapping or
+    attribute through ``hs[0]`` writes the object it was taken from."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-mapping-write flagged, '
+        'passed=False')
+
+
+def calibrate_list_const_subscript_write(rows):
+    """#1953 fix-r1 r1b: a list literal is mutable, so folding ``_keys[0]``
+    into its initial value hid the write that replaced it."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-list-const-subscript-write flagged, '
+        'passed=False')
+
+
+def calibrate_comprehension_filter_write(rows):
+    """#1953 fix-r1 r1b: the write sat in a comprehension filter, which is
+    neither the element nor a statement."""
+    return _unrouted_status(rows, 'calibrate-comprehension-filter-write')
 
 
 def _unrouted_status(rows, name):
@@ -5165,6 +5245,14 @@ JUDGES = {
         'aggregation-audit', calibrate_comprehension_write_helper, False, ()),
     'calibrate-mixed-alias-binding': (
         'aggregation-audit', calibrate_mixed_alias_binding, False, ()),
+    'calibrate-handle-container-alias': (
+        'aggregation-audit', calibrate_handle_container_alias, False, ()),
+    'calibrate-handle-mapping-write': (
+        'aggregation-audit', calibrate_handle_mapping_write, False, ()),
+    'calibrate-list-const-subscript-write': (
+        'aggregation-audit', calibrate_list_const_subscript_write, False, ()),
+    'calibrate-comprehension-filter-write': (
+        'aggregation-audit', calibrate_comprehension_filter_write, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
