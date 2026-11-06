@@ -1117,9 +1117,8 @@ _MUTATOR_ATTRS = frozenset({'update', 'setdefault', 'pop', 'popitem', 'clear',
                             'symmetric_difference_update', 'sort', 'reverse',
                             '__setitem__', '__delitem__'})
 # A ``lambda`` that reaches its parameters without ever being bound to a name
-# (``sorted(xs, key=lambda o: o.update(...))``) cannot be followed at all, so
-# it is recorded under this sentinel and anything that sees it fails closed.
-_OWNERLESS_LAMBDA = '\x00ownerless-lambda'
+# (``sorted(xs, key=lambda o: o.update(...))``) is decided at the call site that
+# receives it; ``_mutating_functions`` returns its id separately for that.
 
 
 def _root_name(node):
@@ -1148,6 +1147,26 @@ def _target_names(target):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)}
 
 
+def _literal_values(value):
+    """``(elements, exact)`` for a literal whose values the file spells out.
+
+    ``elements`` lists the possible values in the order the file fixes it, or
+    ``None`` when ``value`` is not a literal this model can enumerate.  ``exact``
+    is False when a ``*`` / ``**`` part hides values: the file does not say what
+    they are, so a caller that reads the visible elements as the whole story
+    would follow one value too few and let a renamed write through.
+    """
+    if isinstance(value, ast.Dict):
+        # A dict literal iterates (and unpacks to) its keys, and a literal's key
+        # order is fixed by the file.
+        return ([key for key in value.keys if key is not None],
+                all(key is not None for key in value.keys))
+    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        elements = list(value.elts)
+        return elements, not any(isinstance(item, ast.Starred) for item in elements)
+    return None, True
+
+
 def _bound_pairs(node):
     """``(target, value)`` pairs this model can follow for an alias binding.
 
@@ -1171,14 +1190,7 @@ def _bound_pairs(node):
     elif isinstance(node, ast.NamedExpr):
         yield node.target, node.value
     elif isinstance(node, (ast.For, ast.AsyncFor)):
-        if isinstance(node.iter, (ast.Tuple, ast.List, ast.Set)):
-            elements = list(node.iter.elts)
-        elif isinstance(node.iter, ast.Dict):
-            # A ``dict`` literal iterates its keys, and which key comes first is
-            # not fixed by the file -- every key is a possible value.
-            elements = [key for key in node.iter.keys if key is not None]
-        else:
-            elements = None
+        elements, exact = _literal_values(node.iter)
         if elements is not None:
             # The loop variable takes each element of the literal in turn, so
             # every element is a possible value for the target -- including when
@@ -1187,6 +1199,11 @@ def _bound_pairs(node):
             # considered on its own.
             for element in elements:
                 yield node.target, element
+            if not exact:
+                # ``for _k in [*_xs]`` / ``for _k in {**m}``: the expansion
+                # contributes values the file never spells out, so the target
+                # may stand for anything.  ``None`` says so to every reader.
+                yield node.target, None
     elif isinstance(node, (ast.With, ast.AsyncWith)):
         for item in node.items:
             if item.optional_vars is not None:
@@ -1243,6 +1260,13 @@ def _sys_aliases(tree, span=None):
             if _in_block(node, span):
                 continue
             for target, value in _bound_pairs(node):
+                if value is None:
+                    # An expansion the file does not spell out can contribute
+                    # any value, so every name on the left may carry ``sys`` or
+                    # one of its tables.
+                    added_modules |= _target_names(target)
+                    added_tables |= _target_names(target)
+                    continue
                 if isinstance(target, ast.Name):
                     if isinstance(value, ast.Name):
                         if value.id in modules:
@@ -1256,15 +1280,19 @@ def _sys_aliases(tree, span=None):
                     continue
                 # An unpacking target this model cannot line up: any table on
                 # the right makes every name on the left a possible table.
-                values = (list(value.elts)
-                          if isinstance(value, (ast.Tuple, ast.List, ast.Set))
-                          else [value])
-                # A table can arrive as ``sys.modules`` or as a name already
-                # bound to it (``from sys import modules as _m`` puts ``_m``
-                # among the tables, not the modules).
-                if any(_sys_table(item, modules)
-                       or (isinstance(item, ast.Name) and item.id in tables)
-                       for item in values):
+                values, exact = _literal_values(value)
+                if values is None:
+                    values, exact = [value], True
+                # A table can arrive as ``sys.modules``, as a name already bound
+                # to it (``from sys import modules as _m`` puts ``_m`` among the
+                # tables, not the modules), or as a key unpacked out of a dict
+                # literal.  A name that is also a *module* stays a module: the
+                # two questions are kept apart on purpose.
+                if not exact \
+                        or any(_sys_table(item, modules)
+                               or (isinstance(item, ast.Name) and item.id in tables
+                                   and item.id not in modules)
+                               for item in values):
                     added_tables |= _target_names(target)
         if added_modules <= modules and added_tables <= tables:
             return modules, tables
@@ -1299,10 +1327,21 @@ def _alias_roots(tree, seeds, span=None):
             if _in_block(node, span):
                 continue
             for target, value in _bound_pairs(node):
-                values = (list(value.elts) if isinstance(value, (ast.Tuple, ast.List, ast.Set))
-                          else [value])
+                if value is None:
+                    # An expansion the file does not spell out can contribute
+                    # any value, so every name on the left may reach a seed.
+                    added |= _target_names(target)
+                    continue
+                values, exact = _literal_values(value)
+                if values is None:
+                    values, exact = [value], True
                 if isinstance(target, (ast.Tuple, ast.List)):
                     names = _target_names(target)
+                    if not exact:
+                        # ``a, b = (*xs,)``: which element lands in which name
+                        # is exactly what the file does not say.
+                        added |= names
+                        continue
                     # A ``set`` literal has no order the file fixes, so the
                     # one-for-one pairing below only applies to sequences.
                     if len(values) == len(target.elts) \
@@ -1410,6 +1449,24 @@ def _local_aliases(function, names):
         for child in ast.walk(function):
             for target, value in _bound_pairs(child):
                 if not isinstance(target, ast.Name):
+                    if isinstance(target, (ast.Tuple, ast.List)):
+                        # ``_a, _b = x, None`` renames a parameter through an
+                        # unpacking target.  Only a literal the file spells out
+                        # says which element lands in which name, so anything
+                        # else -- a call's result, an expanded sequence -- is
+                        # left alone exactly as before.
+                        values, exact = _literal_values(value)
+                        if exact and values is not None \
+                                and not isinstance(value, ast.Set) \
+                                and len(values) == len(target.elts):
+                            for name, item in zip(target.elts, values):
+                                if not isinstance(name, ast.Name):
+                                    continue
+                                reached = set()
+                                for read in _names_read(item, local):
+                                    reached |= local[read]
+                                if reached and not reached <= local.get(name.id, set()):
+                                    added[name.id] = local.get(name.id, set()) | reached
                     continue
                 root = _root_name(value)
                 if root not in local:
@@ -1449,11 +1506,15 @@ def _mutating_functions(tree, span):
     parameter whose default is a watched object (``def _swap(x=common)``).
     Records ``{name: (positional names, star names, mutated names, defaults)}``;
     the positional list is ``None`` when the name is defined more than once, and
-    then any watched argument counts.  ``lambda`` bodies are recorded under the
-    name they are assigned to.  Attribute and subscript targets on a parameter
-    are already caught by ``_foreign_writes``' own store rule.
+    then any watched argument counts.  ``lambda`` bodies are recorded under every
+    name they are bound to (chained assignment and walrus included); one that is
+    handed straight to a call has no name, so its id is returned separately and
+    the call site decides whether it can receive a watched object.  Attribute
+    and subscript targets on a parameter are already caught by
+    ``_foreign_writes``' own store rule.
     """
     records = []
+    unbound = set()
     lambda_owners = {}
     for node in ast.walk(tree):
         if _in_block(node, span):
@@ -1470,10 +1531,10 @@ def _mutating_functions(tree, span):
             arguments, body = node.args, node.body
             # A lambda reaches its parameters only through a name it is bound
             # to, and every binding form ``_bound_pairs`` reads counts.  One
-            # handed straight to a call cannot be named at all: record it under
-            # a sentinel that makes the model undecidable rather than drop the
-            # write silently.
-            owners = sorted(lambda_owners.get(id(node), ())) or [_OWNERLESS_LAMBDA]
+            # handed straight to a call cannot be named at all: collect its id
+            # so the call site decides whether it can be handed a watched
+            # object (``sorted(rows, key=lambda r: r.setdefault(...))`` cannot).
+            owners = sorted(lambda_owners.get(id(node), ()))
         else:
             continue
         order = [arg.arg for arg in arguments.posonlyargs + arguments.args]
@@ -1491,6 +1552,14 @@ def _mutating_functions(tree, span):
                     and _root_name(child.func) in local:
                 mutated |= local[_root_name(child.func)]
         defaults = _defaults(arguments)
+        if not owners:
+            # Nobody can call this lambda by name; it only matters when the call
+            # it sits in can hand its parameter a watched object.  That is the
+            # call site's question, so remember the node instead of failing the
+            # whole file for a ``lambda r: r.setdefault(...)`` over plain rows.
+            if mutated:
+                unbound.add(id(node))
+            continue
         for name in owners:
             records.append({'name': name, 'order': order, 'stars': stars,
                             'mutated': set(mutated), 'defaults': defaults,
@@ -1514,6 +1583,8 @@ def _mutating_functions(tree, span):
                         # and an expanded argument cannot be pinned either: then
                         # any parameter the argument reads may be the written
                         # one, so the write counts against all of them.
+                        if not target_record['mutated']:
+                            continue  # the callee writes nothing to pass on
                         if target is not None \
                                 and not isinstance(child.func, ast.Attribute) \
                                 and target not in target_record['mutated']:
@@ -1538,7 +1609,7 @@ def _mutating_functions(tree, span):
         else:
             found[name] = (record['order'], record['stars'],
                            set(record['mutated']), dict(record['defaults']))
-    return found
+    return found, unbound
 
 
 def _names_read(node, local):
@@ -1571,8 +1642,14 @@ def _watched_argument(call, entry, roots):
         # arguments counts as handed to it.
         if _contains_root(call.func.value, roots):
             return True
-        return any(_contains_root(value, roots)
-                   for _, value in _argument_pairs(call, order, stars))
+        pairs = list(_argument_pairs(call, order, stars))
+        if any(name is None or _contains_root(value, roots) for name, value in pairs):
+            return True
+        # Without the instance offset the positional arguments may leave the
+        # last parameters unsupplied, so a watched default can still be the
+        # object that is written (``_C()._swap()`` with ``def _swap(self, x=common)``).
+        return len(pairs) < len(order) and any(_contains_root(value, roots)
+                                               for value in defaults.values())
     supplied = set()
     for name, value in _argument_pairs(call, order, stars):
         if name is None:
@@ -1586,6 +1663,56 @@ def _watched_argument(call, entry, roots):
         if name not in supplied and name in defaults \
                 and _contains_root(defaults[name], roots):
             return True  # def _swap(x=common): x.update(...)  ->  _swap()
+    return False
+
+
+def _call_values(call):
+    """Every argument expression of ``call``, spreads included."""
+    values = list(call.args)
+    values.extend(word.value for word in call.keywords if word.value is not None)
+    return values
+
+
+def _unbound_lambda_reaches(tree, unbound, roots, span):
+    """True when a nameless lambda that edits a parameter may get a watched object.
+
+    ``sorted(rows, key=lambda r: r.setdefault('k', 0))`` edits only the rows it
+    is handed and never sees anything the bootstrap bound, while
+    ``map(lambda o: o.update(...), (common,))`` hands it the module object.  The
+    lambda has no name, so the call it appears in is the only evidence there is:
+    fail closed when a watched root sits in the receiver or in another argument
+    of that call.  A lambda this model cannot place in a call at all cannot be
+    cleared either.
+    """
+    unplaced = set(unbound)
+    for node in ast.walk(tree):
+        if _in_block(node, span) or not isinstance(node, ast.Call):
+            continue
+        values = _call_values(node)
+        for value in values:
+            for child in ast.walk(value):
+                if isinstance(child, ast.Lambda) and id(child) in unplaced:
+                    unplaced.discard(id(child))
+                    if _contains_root(node.func, roots) or any(
+                            _contains_root(other, roots) for other in values):
+                        return True
+    return bool(unplaced)
+
+
+def _aliased_mutator(tree, mutating, span):
+    """True when a name is bound to an attribute of a function that edits a parameter.
+
+    ``_g = _C()._swap`` then ``_g(common)``: the callee is spelled ``_g``, so the
+    attribute-call rule never sees it, and the definition it points at does edit
+    its argument.  Which object owns the attribute is not modelled, so this
+    fails closed.
+    """
+    for node in ast.walk(tree):
+        if _in_block(node, span):
+            continue
+        for _, value in _bound_pairs(node):
+            if isinstance(value, ast.Attribute) and value.attr in mutating:
+                return True
     return False
 
 
@@ -1612,9 +1739,11 @@ def _foreign_writes(tree, watched, span):
     module_roots, table_roots = _sys_aliases(tree, span)
     roots = watched_roots | table_roots
     parameters = _parameters(tree, span)
-    mutating = _mutating_functions(tree, span)
-    if _OWNERLESS_LAMBDA in mutating:
-        return True  # a lambda that edits a parameter, with no name to follow
+    mutating, unbound = _mutating_functions(tree, span)
+    if _aliased_mutator(tree, mutating, span):
+        return True  # _g = _C()._swap; _g(common): the callee is only a name
+    if unbound and _unbound_lambda_reaches(tree, unbound, roots, span):
+        return True  # a nameless lambda this call site can feed a watched object
     for node in ast.walk(tree):
         if _in_block(node, span):
             continue
@@ -2013,18 +2142,20 @@ def _ui_required_names(tree):
                 and _root_name(func) in aliases:
             return None
         if _call_name(func) in ('setattr', 'delattr') and node.args \
-                and _root_name(node.args[0]) in aliases:
+                and _contains_root(node.args[0], aliases):
             return None
         if _call_name(func) == 'getattr' and len(node.args) >= 2 \
-                and _root_name(node.args[0]) in aliases \
+                and _contains_root(node.args[0], aliases) \
                 and isinstance(node.args[1], ast.Constant) \
                 and node.args[1].value in _MUTATOR_ATTRS:
             return None
         # Handing the set to a function is handing it a way to edit: the callee
         # body may be ``def _swap(x): x.update(...)``.  The real reader only
         # iterates ``REQUIRED`` in place, so nothing legitimate is passed on.
-        if any(_root_name(arg) in aliases for arg in node.args) \
-                or any(_root_name(word.value) in aliases for word in node.keywords):
+        # ``_swap(*[REQUIRED])`` / ``_swap(**{'x': REQUIRED})`` reach the callee
+        # through an expansion, so the whole argument expression is searched.
+        if any(_contains_root(arg, aliases) for arg in node.args) \
+                or any(_contains_root(word.value, aliases) for word in node.keywords):
             return None
     for node in tree.body:
         targets, value = [], None
