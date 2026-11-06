@@ -403,6 +403,11 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
 /// The generated oracle writes `null` for the unconfigured optional fields and
 /// `true` for an unconfigured `permissionDelivered`; a hand-edited oracle that
 /// spells absence as `null` must not turn into a type error on one field only.
+///
+/// Scope: the six scalar fields whose recorder default is `?? null` / `?? true`.
+/// The collection defaults (`sendFailAt ?? []`, `env ?? {}`) stay fail-closed on
+/// an explicit `null` — see the P2 follow-up filed from this issue's review,
+/// which is preposed to `#1339` closeout.
 #[test]
 fn null_sentinels_are_absence_for_every_sentinel_field() {
     let nulls = json!({
