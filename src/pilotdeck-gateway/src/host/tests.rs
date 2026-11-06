@@ -1219,14 +1219,26 @@ async fn peer_exits_when_its_host_is_killed() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     let mut probe = probe.spawn().unwrap();
-    probe.wait().await.unwrap();
+    let status = probe.wait().await.unwrap();
+    // Pin the shape of the death: a probe that gave up (or crashed) also leaves
+    // the peer parentless, which would make this pass for the wrong reason.
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(9),
+        "the probe must die by SIGKILL, like a killed test process: {status:?}"
+    );
     let pid: u32 = std::fs::read_to_string(owned.join("fixture.pid"))
         .expect("probe records the peer pid before dying")
         .trim()
         .parse()
         .unwrap();
-    // The watchdog polls the parent every 100 ms; assert_reaped allows 10 s.
-    assert_reaped(pid).await;
+    // Tighter than assert_reaped's own 10 s anti-hang window on purpose: the
+    // parent poll is 100 ms, so anything that only ends at the 30 s close
+    // ceiling (for example a watchdog that died on a broken stderr pipe) has
+    // to fail here instead of quietly passing as "eventually reaped".
+    timeout(Duration::from_secs(5), assert_reaped(pid))
+        .await
+        .expect("peer outlived its host: the parent-death watch did not fire within 5 s");
     // Exiting is not the whole claim: it must be the parent-death path, not a
     // signal that happened to arrive from the test's own process group.
     let reason = std::fs::read_to_string(receipt.0.with_extension("orphan"))

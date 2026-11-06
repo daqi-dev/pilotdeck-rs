@@ -21,11 +21,15 @@ import sys
 
 def main() -> int:
     fixture, mode, receipt, pid_dir = sys.argv[1:5]
+    # stderr must be a real pipe with no reader after this process dies: that is
+    # what `connection.rs:71` `Stdio::piped()` gives the peer, and it is the only
+    # way the watchdog's own diagnostics can raise BrokenPipeError. DEVNULL here
+    # would hide exactly the failure this probe exists to catch (#1779).
     child = subprocess.Popen(
         [sys.executable, fixture, mode, receipt],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
         preexec_fn=os.setpgrp,  # connection.rs:65 `command.process_group(0)`
