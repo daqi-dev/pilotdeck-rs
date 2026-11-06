@@ -329,7 +329,10 @@ cases = [
                 .storage
                 .list_unindexed_l0_by_session(&session_key)?
             {
-                processed_ids.push(pending.l0_index_id);
+                // #1656: `processed_ids` carries `(id, persist_generation)`;
+                // `u64::MAX` keeps this mutant's meaning (an id collected here
+                // is marked unconditionally, no clear record can filter it).
+                processed_ids.push((pending.l0_index_id, u64::MAX));
             }
             if !processed_ids.is_empty() {
 ''',
