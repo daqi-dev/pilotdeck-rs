@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 120 mutants:
+`JUDGES`, keyed by the same names. The current table has 125 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -365,7 +365,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-subscript-exit-code`, `calibrate-attr-code-relay`,
 `calibrate-try-else-completes`, `calibrate-exit-call-attribute`,
 `calibrate-exit-call-subscript`, `calibrate-shadowed-common`,
-`calibrate-computed-status-write`, `calibrate-local-exit-alias-chain`.
+`calibrate-computed-status-write`, `calibrate-local-exit-alias-chain`,
+`calibrate-computed-status-key`, `calibrate-computed-status-key-write`,
+`calibrate-shadowed-common-local`, `calibrate-shadowed-receiver-local`,
+`calibrate-shadowed-common-global`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -551,8 +554,12 @@ falls off its own end while `else` returns, which the old `_body_completes`
 folded into one flag so the `else` branch cancelled the completing handler
 (MiniMax boundary r18 P0-1).  An exit code is now judged the same way whether
 it is spelled as a bare name, an attribute or a subscript: an origin no local
-binding can prove is fail-closed, and a subscript whose value contains the
-shared aggregator stays legal (`shared-subscript-control`).
+binding can prove is fail-closed (`calibrate-subscript-exit-code`,
+`calibrate-exit-call-subscript`), and a subscript whose base routes through
+the shared call stays legal -- the skip `_exit_call_violation` makes for
+`_calls_aggregate`, which the healthy tree's own
+`common.aggregate_status(...)[1]` spellings exercise on every run (GLM sibling
+r20 P2-3, a stale name pointed at no registered control).
 
 The restore window is shielded by `fix-r18`: `terminate_cleanly` raises
 `SystemExit` from the signal handler so the restore `finally` unwinds, and a
@@ -563,23 +570,25 @@ makes the handler record the signum instead (`defer_signal_exit`), and the
 pending exit is taken once after the restore and its byte verification
 (`take_deferred_signal`).  `fix-r19` moved the protection into the window
 itself: a consumer-side call can only protect the one fixture that remembers to
-make it, so `restore_critical()` now swaps the SIGINT / SIGTERM / SIGHUP
-handlers for its own recorder while the window is open and puts them back
-afterwards (a handler that is `SIG_IGN` stays ignored, and a handler installed
-*inside* the window survives it).  That closes a plain Ctrl-C, for which no
-fixture installed a handler at all, and every sibling handler on those three
-signals -- including one that raises `SystemExit` directly -- because the
-window owns SIGINT / SIGTERM / SIGHUP while it is open, whatever was installed
-before (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
+make it, so `restore_critical()` now swaps the SIGINT / SIGTERM / SIGHUP /
+SIGQUIT handlers for its own recorder while the window is open and puts them
+back afterwards (a handler that is `SIG_IGN` stays ignored, and a handler
+installed *inside* the window survives it).  That closes a plain Ctrl-C, for
+which no fixture installed a handler at all, and every sibling handler on those
+four signals -- including one that raises `SystemExit` directly -- because the
+window owns SIGINT / SIGTERM / SIGHUP / SIGQUIT while it is open, whatever was
+installed before (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
 deferral protocol is checked deterministically on every import of
-`negative_controls.py`, and the real-signal path is covered by six
+`negative_controls.py`, and the real-signal path is covered by eight
 `test_negative_process.RestoreWindowSignals` cases: SIGINT with the default and
 with a fixture handler, SIGTERM with a fixture handler, SIGHUP with the default
-handler, an ignored signal staying ignored, and the handlers being put back
-afterwards (the SIGTERM / SIGINT / SIGHUP matrix is not fully crossed -- the
-three signal/processor combinations the fixture actually exercises are the ones
-listed); the arbitrary bytecode boundary is not reproducible by construction
-and is recorded as such in the PR.
+handler, SIGQUIT with the default handler (``^\`` is catchable like the rest;
+GLM sibling r20 P2-4), the first of two signals inside one window winning
+(anthropic concurrency r20 P2-1), an ignored signal staying ignored, and the
+handlers being put back afterwards (the signal/processor matrix is not fully
+crossed -- the signal/processor combinations the fixture actually exercises are
+the ones listed); the arbitrary bytecode boundary is not reproducible by
+construction and is recorded as such in the PR.
 
 `fix-r20` closed four r19 review findings, each with its own mutation:
 `calibrate-exit-call-attribute` / `calibrate-exit-call-subscript` show that the
@@ -600,6 +609,31 @@ bail` alias the function-level pass resolved only in a favourable source order
 timeout: it runs inside the shielded restore window, where an interrupt cannot
 land, so a blocked git would have held the window open forever (MiniMax
 concurrency r19 P1).
+
+`fix-r21` closed the three r20 P1 findings, each with its own mutation:
+`_status_key` now judges every *key-side* spelling of a status word through
+the same `_folded_string` the value side already used, so `{'sta' + 'tus':
+'PASS'}` and `report['sta' + 'tus'] = 'PA' + 'SS'` reach all eight key
+judgement sites the plain `Constant` spelling did
+(`calibrate-computed-status-key` / `calibrate-computed-status-key-write`, GLM
+sibling r20 P1-1); and trust withdrawal for a shadowed `common` moved from
+module scope into each function body -- a function-scope
+`common = SimpleNamespace(...)`, over the parameter itself included, a
+locally rebound relay receiver (`md = <stub>` then
+`md.common.aggregate_status`), and a `global common` rebind that poisons the
+module binding file-wide all lose the shared-call credit
+(`calibrate-shadowed-common-local` / `calibrate-shadowed-receiver-local` /
+`calibrate-shadowed-common-global`, GLM sibling r20 P1-2 / boundary r20 P1-1).
+The two shapes the healthy tree legitimately keeps are registered in
+`PROVEN_SHARED_SOURCES` (negative_controls.py's committed-HEAD loader and
+pristine-common loader) and the loader spelling, and `check_cleanup.main`'s
+`global md` is carved out because it rebinds a receiver, not a shared module.
+The same round hardened the harness on four r20 P2s: SIGQUIT joined
+`_SHIELDED_SIGNALS` (with its own `RestoreWindowSignals` case), the deferred
+signum is now keep-first so a second signal never overwrites the first (with
+the two-signal case), `_git`'s timeout arm group-kills and collects boundedly
+like `run_owned`, and the restored-positive check applies the same strict
+`is True` / `is None` predicate on non-Darwin that Darwin always did.
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the

@@ -1609,20 +1609,23 @@ import os, pathlib, signal, sys, time
 sys.path.insert(0, sys.argv[1])
 from negative_process import restore_critical, take_deferred_signal
 sentinel = pathlib.Path(sys.argv[2])
-which = getattr(signal, sys.argv[3])
+names = ("SIGTERM", "SIGINT") if sys.argv[3] == "double" else (sys.argv[3],)
+signals_ = [getattr(signal, name) for name in names]
 disposition = sys.argv[4]
-if disposition == "default":
-    # A background-launched parent inherits SIGINT=SIG_IGN; reset it so the
-    # case exercises the shield and not the inherited disposition.
-    signal.signal(which, signal.SIG_DFL)
-elif disposition == "fixture":
-    def handler(signum, _frame):
-        raise SystemExit(128 + signum)
-    signal.signal(which, handler)
-elif disposition == "ignore":
-    signal.signal(which, signal.SIG_IGN)
+for which in signals_:
+    if disposition == "default":
+        # A background-launched parent inherits SIGINT=SIG_IGN; reset it so the
+        # case exercises the shield and not the inherited disposition.
+        signal.signal(which, signal.SIG_DFL)
+    elif disposition == "fixture":
+        def handler(signum, _frame):
+            raise SystemExit(128 + signum)
+        signal.signal(which, handler)
+    elif disposition == "ignore":
+        signal.signal(which, signal.SIG_IGN)
 with restore_critical():
-    os.kill(os.getpid(), which)
+    for which in signals_:
+        os.kill(os.getpid(), which)
     time.sleep(0.05)
     sentinel.write_text("restore finished\n", encoding="utf-8")
 pending = take_deferred_signal()
@@ -1671,6 +1674,24 @@ class RestoreWindowSignals(unittest.TestCase):
         cp, sentinel = self._run("SIGHUP", "default")
         self.assertTrue(sentinel, "SIGHUP unwound inside the window: " + cp.stderr)
         self.assertEqual(cp.returncode, 128 + signal.SIGHUP)
+
+    def test_sigquit_with_the_default_handler_still_finishes_the_restore(self):
+        # ``^\`` is catchable and deferrable like the other three; a restore
+        # killed by a core-dumping SIGQUIT would leave a mutant behind (GLM
+        # sibling r20 P2-4).  The case itself is the runtime probe of the
+        # disposition the reviewer asked to verify.
+        cp, sentinel = self._run("SIGQUIT", "default")
+        self.assertTrue(sentinel, "SIGQUIT unwound inside the window: " + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGQUIT)
+
+    def test_the_first_of_two_signals_inside_one_window_wins(self):
+        # The window keeps one deferred signum: the *second* signal is the one
+        # dropped, so the first never gets overwritten (anthropic concurrency
+        # r20 P2-1 / boundary r20 P2-2).
+        cp, sentinel = self._run("double", "default")
+        self.assertTrue(sentinel, "the second signal unwound inside the window: "
+                        + cp.stderr)
+        self.assertEqual(cp.returncode, 128 + signal.SIGTERM)
 
     def test_an_ignored_signal_stays_ignored(self):
         cp, sentinel = self._run("SIGTERM", "ignore")
