@@ -7,16 +7,16 @@
 //! `model-selection-clear` transcript entries through the session storage
 //! (NativeSessionModelSelectionPort.write/clear). `output_styles_list` reads
 //! the project runtime's plugin styles. The three selection methods
-//! (`set_permission_mode`, `set_session_thinking`, `set_output_style`) keep
-//! the TS gate order and payload validation verbatim, then answer
-//! `CAPABILITY_UNAVAILABLE`: their TS callbacks write the per-gateway
-//! `registry` (`sessionOverrides`, `sdkThinkingOverrides`,
-//! `sdkSessionConfigs.outputStyle`), a registry the native process never
-//! instantiates, so a local store here would be write-only and every
-//! `applied: true` a false positive (#1457 fix-r1 P1; deviation registered as
-//! A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R4). `seed_read_state` routes
-//! through the owner's maintenance fence onto the live session's tool
-//! checkpoint.
+//! (`set_permission_mode`, `set_session_thinking`, `set_output_style`)
+//! store their selection on the per-gateway #1864 store
+//! ([`crate::native_process::SessionOverrides`], the counterpart of the TS
+//! `sessionOverrides` / `sdkThinkingOverrides` / `sdkSessionConfigs.outputStyle`
+//! maps) that the session factory's prepare closure composes the next session
+//! from: thinking and output style close the session first (the TS callbacks
+//! close after storing), permission mode does not — TS re-reads it on every
+//! run (InProcessGateway.ts:1443), so the live adapter's submit applies it
+//! through its `permission_mode_source`. `seed_read_state` routes through the
+//! owner's maintenance fence onto the live session's tool checkpoint.
 use super::super::requests::Requests;
 use crate::{
     config::{self, Env},
@@ -163,20 +163,6 @@ fn native_metadata(home: &std::path::Path) -> Metadata<crate::metadata::NativeFi
         cwd: PathBuf::new(),
         files: crate::metadata::NativeFiles,
     }
-}
-
-/// #1457 fix-r1 (P1): the TS callbacks store their selection on the
-/// per-gateway `registry` (`sessionOverrides` / `sdkThinkingOverrides` /
-/// `sdkSessionConfigs.outputStyle`) and the next session reads it back. The
-/// native process has no such registry instance — `SdkSessionRegistry` is a
-/// ported module with no production binding — so a store here would be
-/// written and never read. A validated request answers honestly instead of
-/// claiming `applied: true`.
-fn session_config_unavailable(method: &str) -> RequestError {
-    gateway_error(
-        "CAPABILITY_UNAVAILABLE",
-        format!("Native gateway method {method} is not configured."),
-    )
 }
 
 impl Requests {
@@ -411,9 +397,10 @@ impl Requests {
 
     /// InProcessGateway.ts:2321-2329 + createLocalGateway.ts:1371-1382: the
     /// mode gate, then the busy gate on the raw key (a blank key can hold a
-    /// reserved turn), then the callback's sessionKey gate. The
-    /// sessionOverrides spread has no native counterpart
-    /// ([`session_config_unavailable`]).
+    /// reserved turn), then the callback's sessionKey gate. The callback
+    /// stores the selection on the #1864 store; the next run re-reads it
+    /// (InProcessGateway.ts:1443), so — like the TS `sessionOverrides`
+    /// spread — no close is needed.
     async fn set_permission_mode(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let mode = params.get("mode").unwrap_or(&UNDEFINED);
         let mode_ok = mode.as_string().is_some_and(|m| {
@@ -436,14 +423,20 @@ impl Requests {
                 "Cannot change permission mode during an active turn.",
             ));
         }
-        require_session_key(params)?;
-        Err(session_config_unavailable("set_permission_mode"))
+        let session_key = require_session_key(params)?;
+        let mode = match mode.as_string() {
+            Some(mode) => mode.clone(),
+            None => unreachable!("the mode gate validated a string"),
+        };
+        self.session_overrides
+            .set_permission_mode(&session_key, mode);
+        Ok(object([("applied", JsValue::Bool(true))]))
     }
 
     /// InProcessGateway.ts:2364-2372: sessionKey → busy →
-    /// validateThinkingConfig. The callback's thinking override lives on the
-    /// native-absent registry ([`session_config_unavailable`]), so the store
-    /// and the `close` stop here.
+    /// validateThinkingConfig. The callback deletes on a missing/undefined
+    /// thinking, stores anything else (null included), then closes the
+    /// session so the next one composes the change.
     async fn set_session_thinking(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let session_key = require_session_key(params)?;
         if self.owner.has_active_turn(&session_key) {
@@ -452,8 +445,19 @@ impl Requests {
                 "Cannot change thinking while a turn is active.",
             ));
         }
-        validate_thinking(params.get("thinking").unwrap_or(&UNDEFINED))?;
-        Err(session_config_unavailable("set_session_thinking"))
+        let thinking = params.get("thinking").unwrap_or(&UNDEFINED);
+        validate_thinking(thinking)?;
+        match thinking {
+            JsValue::Undefined => self.session_overrides.clear_thinking(&session_key),
+            thinking => self
+                .session_overrides
+                .set_thinking(&session_key, thinking.clone()),
+        }
+        self.owner
+            .close(&session_key)
+            .await
+            .map_err(runtime_error)?;
+        Ok(object([("applied", JsValue::Bool(true))]))
     }
 
     /// InProcessGateway.ts:2374-2377 has no params gate;
@@ -483,9 +487,14 @@ impl Requests {
         }
         let mut result = pilotdeck_protocol::JsObject::new();
         result.insert("styles".into(), JsValue::Array(style_values));
-        // No `selected`: the only writer (`set_output_style`) answers
-        // [`session_config_unavailable`], so the project view is the whole
-        // answer here.
+        // ProjectRuntimeRegistry.outputStylesListForSdk reads the session's
+        // stored selection from `sdkSessionConfigs`: the field appears only
+        // when a sessionKey was given and a selection is stored.
+        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
+            && let Some(selected) = self.session_overrides.output_style(key)
+        {
+            result.insert("selected".into(), JsValue::String(selected));
+        }
         Ok(JsValue::Object(result))
     }
 
@@ -537,7 +546,24 @@ impl Requests {
                 ));
             }
         }
-        Err(session_config_unavailable("set_output_style"))
+        match &name {
+            Some(name) => self
+                .session_overrides
+                .set_output_style(&session_key, name.clone()),
+            None => self.session_overrides.clear_output_style(&session_key),
+        }
+        // The TS callback closes with `sdk_output_style_changed` so the next
+        // session composes the style's appendSystemPrompt.
+        self.owner
+            .close(&session_key)
+            .await
+            .map_err(runtime_error)?;
+        let mut result = pilotdeck_protocol::JsObject::new();
+        result.insert("applied".into(), JsValue::Bool(true));
+        if let Some(name) = &name {
+            result.insert("selected".into(), JsValue::String(name.clone()));
+        }
+        Ok(JsValue::Object(result))
     }
 
     /// The plugin runtime's output styles, after the refresh the TS callback
@@ -1169,12 +1195,14 @@ mod tests {
     // ─────────────────────────────────────────────── set_permission_mode
 
     #[tokio::test]
-    async fn set_permission_mode_validates_then_reports_unavailable() {
+    async fn set_permission_mode_applies_and_validates() {
         let (_scratch, r) = setup_fixture();
-        // fix-r1 P1: every TS mode passes the wire gates, then the request
-        // answers honestly — nothing reads a local override (#1457-R4).
+        // #1864: every TS mode passes the wire gates and is stored on the
+        // per-gateway session-override store. Negative control: deleting the
+        // `set_permission_mode` store write makes the read-back below fail
+        // (`None` instead of `Some("plan")`).
         for mode in crate::runtime::permission::PERMISSION_MODES {
-            let error = r
+            let result = r
                 .session_config_request(
                     "set_permission_mode".into(),
                     object([
@@ -1183,18 +1211,32 @@ mod tests {
                     ]),
                 )
                 .await
-                .expect_err("#1457 set_permission_mode is not wired");
+                .expect("#1864 set_permission_mode applies the fixture mode");
             negative_assert_eq!(
-                error.code.as_str(),
-                "CAPABILITY_UNAVAILABLE",
-                "#1457 set_permission_mode unavailable code"
-            );
-            negative_assert_eq!(
-                error_text(&error),
-                "Native gateway method set_permission_mode is not configured.",
-                "#1457 set_permission_mode unavailable message"
+                result.get("applied"),
+                Some(&JsValue::Bool(true)),
+                "#1864 set_permission_mode reports applied for {mode}"
             );
         }
+        let result = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "cfg-pm-1".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect("#1864 set_permission_mode applies plan");
+        negative_assert_eq!(
+            result.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 set_permission_mode reports applied"
+        );
+        negative_assert_eq!(
+            r.session_overrides
+                .permission_mode(&"cfg-pm-1".into())
+                .as_ref(),
+            Some(&JsString::from("plan")),
+            "#1864 the plan selection is stored for the next run to read"
+        );
         for (label, params, code, message) in [
             (
                 "unknown mode",
@@ -1263,35 +1305,60 @@ mod tests {
     // ─────────────────────────────────────────────── set_session_thinking
 
     #[tokio::test]
-    async fn set_session_thinking_validates_then_reports_unavailable() {
+    async fn set_session_thinking_applies_and_validates() {
         let (_scratch, r) = setup_fixture();
-        // fix-r1 P1: valid payloads (including the explicit null) pass
-        // validate_thinking, then answer honestly (#1457-R4).
-        for (label, thinking) in [
-            (
-                "mode object",
-                object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
-            ),
-            ("explicit null", JsValue::Null),
-        ] {
-            let error = r
-                .session_config_request(
-                    "set_session_thinking".into(),
-                    object([("sessionKey", "cfg-th-1".into()), ("thinking", thinking)]),
-                )
-                .await
-                .expect_err("#1457 set_session_thinking is not wired");
-            negative_assert_eq!(
-                error.code.as_str(),
-                "CAPABILITY_UNAVAILABLE",
-                "#1457 thinking unavailable code for {label}"
-            );
-            negative_assert_eq!(
-                error_text(&error),
-                "Native gateway method set_session_thinking is not configured.",
-                "#1457 thinking unavailable message for {label}"
-            );
-        }
+        // #1864: valid payloads (including the explicit null) pass
+        // validate_thinking and are stored. Negative control: deleting the
+        // `set_thinking` call makes the stored-mode read-back below fail
+        // (None instead of the mode object).
+        let result = r
+            .session_config_request(
+                "set_session_thinking".into(),
+                object([
+                    ("sessionKey", "cfg-th-obj".into()),
+                    (
+                        "thinking",
+                        object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+                    ),
+                ]),
+            )
+            .await
+            .expect("#1864 set_session_thinking stores the mode object");
+        negative_assert_eq!(
+            result.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 set_session_thinking reports applied"
+        );
+        let stored = r
+            .session_overrides
+            .thinking(&"cfg-th-obj".into())
+            .expect("#1864 the mode object is stored");
+        negative_assert_eq!(
+            stored.get("mode").and_then(JsValue::as_string),
+            Some(&JsString::from("high")),
+            "#1864 the stored thinking keeps its mode"
+        );
+        let result = r
+            .session_config_request(
+                "set_session_thinking".into(),
+                object([
+                    ("sessionKey", "cfg-th-null".into()),
+                    ("thinking", JsValue::Null),
+                ]),
+            )
+            .await
+            .expect("#1864 set_session_thinking stores the explicit null");
+        negative_assert_eq!(
+            result.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 set_session_thinking reports applied for null"
+        );
+        // TS deletes only on undefined: a stored JS null is a value.
+        negative_assert_eq!(
+            r.session_overrides.thinking(&"cfg-th-null".into()),
+            Some(JsValue::Null),
+            "#1864 a stored null thinking stays a value"
+        );
         for (label, params, code, message) in [
             (
                 "non-object thinking",
@@ -1401,9 +1468,11 @@ mod tests {
             "#1457 the probe style is absent before the plugin exists"
         );
         write_probe_plugin(&r);
-        // fix-r1 P1: a style the project really contributes passes the name
-        // gate, then the request answers honestly (#1457-R4).
-        let error = r
+        // #1864: a style the project really contributes passes the name
+        // gate, is stored and closes the session. Negative control: deleting
+        // the `selected` insert in `output_styles_list` makes the final
+        // assertion fail (None instead of Some("probe:compact")).
+        let applied = r
             .session_config_request(
                 "set_output_style".into(),
                 object([
@@ -1412,16 +1481,16 @@ mod tests {
                 ]),
             )
             .await
-            .expect_err("#1457 set_output_style is not wired");
+            .expect("#1864 set_output_style applies the probe style");
         negative_assert_eq!(
-            error.code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1457 set_output_style unavailable code"
+            applied.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 set_output_style reports applied"
         );
         negative_assert_eq!(
-            error_text(&error),
-            "Native gateway method set_output_style is not configured.",
-            "#1457 set_output_style unavailable message"
+            applied.get("selected"),
+            Some(&JsValue::String("probe:compact".into())),
+            "#1864 set_output_style echoes the selected name"
         );
         let listed = r
             .session_config_request(
@@ -1454,8 +1523,29 @@ mod tests {
         );
         negative_assert_eq!(
             listed.get("selected"),
+            Some(&JsValue::String("probe:compact".into())),
+            "#1864 the list echoes the stored selection for the session"
+        );
+        let bare = r
+            .session_config_request("output_styles_list".into(), object([]))
+            .await
+            .expect("#1864 output_styles_list without a sessionKey");
+        negative_assert_eq!(
+            bare.get("selected"),
             None,
-            "#1457 no selection can be stored, so the list omits selected"
+            "#1864 no sessionKey means no selected field"
+        );
+        let other = r
+            .session_config_request(
+                "output_styles_list".into(),
+                object([("sessionKey", "cfg-style-other".into())]),
+            )
+            .await
+            .expect("#1864 output_styles_list for an unselected session");
+        negative_assert_eq!(
+            other.get("selected"),
+            None,
+            "#1864 a session without a stored selection omits selected"
         );
         teardown(&r).await;
     }
@@ -1533,6 +1623,292 @@ mod tests {
         );
         r.owner
             .end_turn(&session.into(), Some(&run), Some(&reservation));
+        // #1864: name null clears a stored selection. Negative control:
+        // deleting the `clear_output_style` branch leaves the read-back as
+        // `Some("probe:compact")`.
+        let applied = r
+            .session_config_request(
+                "set_output_style".into(),
+                object([
+                    ("sessionKey", "cfg-style-clear".into()),
+                    ("name", "probe:compact".into()),
+                ]),
+            )
+            .await
+            .expect("#1864 set_output_style stores the probe style");
+        negative_assert_eq!(
+            applied.get("selected"),
+            Some(&JsValue::String("probe:compact".into())),
+            "#1864 set_output_style echoes the selected name"
+        );
+        let cleared = r
+            .session_config_request(
+                "set_output_style".into(),
+                object([
+                    ("sessionKey", "cfg-style-clear".into()),
+                    ("name", JsValue::Null),
+                ]),
+            )
+            .await
+            .expect("#1864 a null name clears the selection");
+        negative_assert_eq!(
+            cleared.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 clearing reports applied"
+        );
+        negative_assert_eq!(
+            cleared.get("selected"),
+            None,
+            "#1864 clearing omits selected"
+        );
+        negative_assert_eq!(
+            r.session_overrides.output_style(&"cfg-style-clear".into()),
+            None,
+            "#1864 the null name cleared the stored selection"
+        );
+        teardown(&r).await;
+    }
+
+    // ─────────────────────────────────────────────── #1864 next-turn effect
+
+    /// #1864: the TS callbacks close the session after storing thinking and
+    /// output style (so the next session composes the change); permission
+    /// mode does not — InProcessGateway.ts:1443 re-reads the map on every
+    /// run, so the live adapter applies it per turn. Negative control:
+    /// deleting an `owner.close` call in `set_session_thinking` /
+    /// `set_output_style` turns its `is_none` assertion red; adding one to
+    /// `set_permission_mode` turns the `is_some` assertion red.
+    #[tokio::test]
+    async fn thinking_and_style_close_the_session_permission_mode_does_not() {
+        let (_scratch, r) = setup_fixture();
+        let live = |key: &str| SessionContext {
+            session_key: key.into(),
+            project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        r.owner
+            .get_or_create(live("cfg-close-pm"))
+            .await
+            .expect("#1864 the permission-mode session is created");
+        r.session_config_request(
+            "set_permission_mode".into(),
+            object([
+                ("sessionKey", "cfg-close-pm".into()),
+                ("mode", "plan".into()),
+            ]),
+        )
+        .await
+        .expect("#1864 set_permission_mode applies plan");
+        negative_assert!(
+            r.owner.current_handle(&"cfg-close-pm".into()).is_some(),
+            "#1864 permission mode leaves the live session in place"
+        );
+        r.owner
+            .get_or_create(live("cfg-close-th"))
+            .await
+            .expect("#1864 the thinking session is created");
+        r.session_config_request(
+            "set_session_thinking".into(),
+            object([
+                ("sessionKey", "cfg-close-th".into()),
+                (
+                    "thinking",
+                    object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1864 set_session_thinking applies high");
+        negative_assert!(
+            r.owner.current_handle(&"cfg-close-th".into()).is_none(),
+            "#1864 thinking closes the session for the next compose"
+        );
+        write_probe_plugin(&r);
+        r.owner
+            .get_or_create(live("cfg-close-style"))
+            .await
+            .expect("#1864 the output-style session is created");
+        r.session_config_request(
+            "set_output_style".into(),
+            object([
+                ("sessionKey", "cfg-close-style".into()),
+                ("name", "probe:compact".into()),
+            ]),
+        )
+        .await
+        .expect("#1864 set_output_style applies the probe style");
+        negative_assert!(
+            r.owner.current_handle(&"cfg-close-style".into()).is_none(),
+            "#1864 output style closes the session for the next compose"
+        );
+        teardown(&r).await;
+    }
+
+    /// #1864 read-back: the compose step the prepare closure runs after
+    /// reading the store, as a pure function. Negative control: deleting a
+    /// branch of `apply_session_overrides` makes its matching assertion fail
+    /// (permissionMode falls back to "default", thinking stays absent,
+    /// appendSystemPrompt stays untouched or undefined).
+    #[test]
+    fn apply_session_overrides_composes_the_selections() {
+        use crate::native_process::assembly::apply_session_overrides;
+        let mode_of = |config: &pilotdeck_protocol::JsObject| {
+            config
+                .get("permissionMode")
+                .and_then(JsValue::as_string)
+                .cloned()
+        };
+        let mut config = pilotdeck_protocol::JsObject::new();
+        apply_session_overrides(&mut config, None, None, None);
+        negative_assert_eq!(
+            mode_of(&config),
+            Some(JsString::from("default")),
+            "#1864 no stored selection composes the default mode"
+        );
+        apply_session_overrides(&mut config, Some(&JsString::from("plan")), None, None);
+        negative_assert_eq!(
+            mode_of(&config),
+            Some(JsString::from("plan")),
+            "#1864 the stored mode wins over the default"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        config.insert(
+            "managedPermissions".into(),
+            object([("defaultMode", "bypassPermissions".into())]),
+        );
+        apply_session_overrides(&mut config, Some(&JsString::from("plan")), None, None);
+        negative_assert_eq!(
+            mode_of(&config),
+            Some(JsString::from("bypassPermissions")),
+            "#1864 a non-empty managed defaultMode wins over the store"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        config.insert(
+            "managedPermissions".into(),
+            object([("defaultMode", "  ".into())]),
+        );
+        apply_session_overrides(&mut config, Some(&JsString::from("plan")), None, None);
+        negative_assert_eq!(
+            mode_of(&config),
+            Some(JsString::from("plan")),
+            "#1864 a blank managed defaultMode falls back to the store"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        config.insert("thinking".into(), JsValue::String("project-default".into()));
+        apply_session_overrides(&mut config, None, None, None);
+        negative_assert_eq!(
+            config.get("thinking").and_then(JsValue::as_string).cloned(),
+            Some(JsString::from("project-default")),
+            "#1864 no stored thinking leaves the config's own value"
+        );
+        apply_session_overrides(&mut config, None, Some(&JsValue::Null), None);
+        negative_assert_eq!(
+            config.get("thinking"),
+            Some(&JsValue::Null),
+            "#1864 a stored null thinking is written, not skipped"
+        );
+        let thinking = object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]);
+        apply_session_overrides(&mut config, None, Some(&thinking), None);
+        negative_assert_eq!(
+            config
+                .get("thinking")
+                .and_then(|value| value.get("mode"))
+                .and_then(JsValue::as_string)
+                .cloned(),
+            Some(JsString::from("high")),
+            "#1864 the stored thinking object is written"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        apply_session_overrides(&mut config, None, None, None);
+        negative_assert_eq!(
+            config.get("appendSystemPrompt"),
+            None,
+            "#1864 no style leaves appendSystemPrompt untouched"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        config.insert(
+            "appendSystemPrompt".into(),
+            JsValue::String("keep this".into()),
+        );
+        apply_session_overrides(&mut config, None, None, Some("# Compact"));
+        negative_assert_eq!(
+            config
+                .get("appendSystemPrompt")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            Some(JsString::from("keep this\n\n# Compact")),
+            "#1864 the style content joins the existing prompt"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        apply_session_overrides(&mut config, None, None, Some("# Compact"));
+        negative_assert_eq!(
+            config
+                .get("appendSystemPrompt")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            Some(JsString::from("# Compact")),
+            "#1864 the style content alone when nothing existed"
+        );
+        let mut config = pilotdeck_protocol::JsObject::new();
+        config.insert("appendSystemPrompt".into(), JsValue::String("   ".into()));
+        apply_session_overrides(&mut config, None, None, Some("  "));
+        negative_assert_eq!(
+            config.get("appendSystemPrompt"),
+            Some(&JsValue::Undefined),
+            "#1864 both blank writes undefined"
+        );
+    }
+
+    /// #1864 read-back end to end: the three selector methods write the very
+    /// store the prepare closure reads, and the compose step turns the
+    /// stored values into agent-config fields. Negative control: storing
+    /// under a different key (or a store instance the factory does not
+    /// share) makes the composed values revert to the defaults.
+    #[tokio::test]
+    async fn selector_writes_reach_the_compose_step() {
+        use crate::native_process::assembly::apply_session_overrides;
+        let (_scratch, r) = setup_fixture();
+        r.session_config_request(
+            "set_permission_mode".into(),
+            object([("sessionKey", "cfg-rb".into()), ("mode", "plan".into())]),
+        )
+        .await
+        .expect("#1864 set_permission_mode applies plan");
+        r.session_config_request(
+            "set_session_thinking".into(),
+            object([
+                ("sessionKey", "cfg-rb".into()),
+                (
+                    "thinking",
+                    object([("enabled", JsValue::Bool(true)), ("mode", "high".into())]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1864 set_session_thinking applies high");
+        let mut config = pilotdeck_protocol::JsObject::new();
+        let permission = r.session_overrides.permission_mode(&"cfg-rb".into());
+        let thinking = r.session_overrides.thinking(&"cfg-rb".into());
+        apply_session_overrides(&mut config, permission.as_ref(), thinking.as_ref(), None);
+        negative_assert_eq!(
+            config
+                .get("permissionMode")
+                .and_then(JsValue::as_string)
+                .cloned(),
+            Some(JsString::from("plan")),
+            "#1864 the stored permission mode reaches the agent config"
+        );
+        negative_assert_eq!(
+            config
+                .get("thinking")
+                .and_then(|value| value.get("mode"))
+                .and_then(JsValue::as_string)
+                .cloned(),
+            Some(JsString::from("high")),
+            "#1864 the stored thinking reaches the agent config"
+        );
         teardown(&r).await;
     }
 

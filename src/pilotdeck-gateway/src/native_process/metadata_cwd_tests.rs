@@ -186,6 +186,7 @@ async fn observe(name: &str) -> (Value, Value) {
         prepare_weixin_login: None,
         cron: None,
         settings: requests::Requests::stub_settings(&owner),
+        session_overrides: Arc::default(),
     };
     let services = services::Services {
         options: options.clone(),
@@ -553,6 +554,7 @@ async fn observe_archive(name: &str) {
         prepare_weixin_login: None,
         cron: None,
         settings: requests::Requests::stub_settings(&owner),
+        session_overrides: Arc::default(),
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

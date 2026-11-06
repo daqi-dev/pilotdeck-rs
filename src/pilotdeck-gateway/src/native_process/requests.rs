@@ -1,4 +1,4 @@
-use super::{Options, assembly::Recorders, methods};
+use super::{Options, SessionOverrides, assembly::Recorders, methods};
 use crate::{
     metadata::object,
     runtime::{
@@ -59,6 +59,11 @@ pub struct Requests {
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].
     pub settings: Arc<SettingsGateway>,
+    /// #1864: the per-gateway session selection store the three selector
+    /// methods (`set_permission_mode` / `set_session_thinking` /
+    /// `set_output_style`) write and the session factory's prepare closure
+    /// reads back. One instance shared with the factory.
+    pub session_overrides: Arc<SessionOverrides>,
 }
 
 #[cfg(test)]

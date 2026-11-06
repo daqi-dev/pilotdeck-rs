@@ -963,6 +963,7 @@ async fn requests_registry_switch_gates_run_reads() {
             prepare_weixin_login: None,
             cron: None,
             settings: requests::Requests::stub_settings(&owner),
+            session_overrides: Arc::default(),
         };
         let described = requests
             .describe_server()

@@ -76,6 +76,10 @@ pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
+    /// #1864 (b): re-read on every run, like InProcessGateway.ts:1443's
+    /// `livePermissionMode` — the stored permission-mode selection takes
+    /// effect on the next turn without a session close.
+    permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -114,6 +118,7 @@ impl LiveSessionAdapter {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            permission_mode_source: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -138,6 +143,16 @@ impl LiveSessionAdapter {
     /// Session-owned serialized AgentRuntimeConfig for the real sidecar.
     pub fn with_agent_config(mut self, config: JsObject) -> Self {
         self.agent_config = Some(config);
+        self
+    }
+
+    /// #1864 (b): the live permission-mode source, consulted on every
+    /// submit. `None` keeps the composed agent config as-is.
+    pub fn with_permission_mode_source(
+        mut self,
+        source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
+    ) -> Self {
+        self.permission_mode_source = Some(source);
         self
     }
 
@@ -192,6 +207,7 @@ impl LiveSessionAdapter {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            permission_mode_source: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -275,9 +291,26 @@ impl LiveSession for LiveSessionAdapter {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         if let Some(config) = &self.agent_config {
+            let mut config = config.clone();
+            // #1864 (b): the stored permission-mode selection is re-read on
+            // every run (InProcessGateway.ts:1443). A non-empty
+            // managedPermissions.defaultMode still wins — compose priority.
+            if let Some(source) = &self.permission_mode_source
+                && !config
+                    .get("managedPermissions")
+                    .and_then(|value| value.get("defaultMode"))
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|mode| {
+                        !crate::metadata::js_trim(&String::from_utf16_lossy(mode.units()))
+                            .is_empty()
+                    })
+                && let Some(mode) = source()
+            {
+                config.insert("permissionMode".into(), JsValue::String(mode));
+            }
             request
                 .payload
-                .insert("agent".into(), JsValue::Object(config.clone()));
+                .insert("agent".into(), JsValue::Object(config));
         }
         let cancellation = Cancellation::default();
         let signal = crate::runtime::hooks::Cancellation::new();

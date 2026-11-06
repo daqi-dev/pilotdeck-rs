@@ -769,6 +769,7 @@ async fn project_path_boundaries_worker() {
         prepare_weixin_login: None,
         cron: None,
         settings: requests::Requests::stub_settings(&owner),
+        session_overrides: Arc::default(),
     };
     let services = services::Services {
         options: options.clone(),
