@@ -276,8 +276,8 @@ fn gateway_from_refuses_a_non_object_turn() {
 }
 
 // #1606 r6 (MiniMax sibling): r4/r5 added three more fail-closed readers with
-// no test of their own. Reverting any of them to `unwrap_or` keeps all 14
-// cells green — the three cells that record CORS / an api key record the
+// no test of their own. Reverting any of them to `unwrap_or` keeps every cell
+// green — the three cells that record CORS / an api key record the
 // correct types — so nothing else would notice the ruler going quiet.
 #[test]
 #[should_panic(expected = "options.apiKey must be a string")]
@@ -608,15 +608,30 @@ fn actual_headers(response: &RawResponse) -> BTreeMap<String, String> {
     out
 }
 
-/// #1759: one rule for every recorded connection error, selected by *shape*
-/// rather than by cell id. r8 made the generator record the measured byte
-/// count and any status line it saw on the error path, but the pins that read
-/// those fields lived only in the `oversized-*` branch — a renamed or newly
-/// added error cell would leave the measurements uncompared. `bytes` is a
+/// #1759: one rule for every recorded expectation, selected by *shape* rather
+/// than by cell id. r8 made the generator record the measured byte count and
+/// any status line it saw on the error path, but the pins that read those
+/// fields lived only in the `oversized-*` branch — a renamed or newly added
+/// error cell would leave the measurements uncompared. `bytes` is a
 /// measurement: a clean close delivered zero bytes and no status line, so any
 /// other shape is fixture (or baseline) drift and panics here.
+///
+/// The entry itself is tri-state like every other reader in this file: a
+/// non-object is a fixture bug, not an expectation with "no error key". And
+/// the two recorded shapes are mutually exclusive — an error close has no
+/// status line, an answered request has one — so a cell cannot silently lose
+/// its `error` key and leave the rest uncompared (#1759 r1 boundary P1).
 fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
+    assert!(
+        expected.is_object(),
+        "#1333 {case} request {index}: a recorded expectation must be an object, got {expected}"
+    );
     if expected.get("error").is_none() {
+        assert!(
+            expected.get("status").is_some(),
+            "#1333 {case} request {index}: a recorded expectation with no `error` must carry a \
+             status line, got {expected}"
+        );
         return;
     }
     assert!(
@@ -1174,9 +1189,18 @@ async fn replays_real_ts_api_server_cells() {
             // here while the placeholder and the Rust cap stay at 1_000_001 —
             // the whole surface green and the two sides disagreeing.
             //
-            // #1759: the recorded shape is pinned for *every* error
-            // expectation by `assert_recorded_error_shape` above, not here, so
-            // this branch is back to what its name says: skip the replay.
+            // #1759: the recorded fields are pinned for *every* error
+            // expectation by `assert_recorded_error_shape` above. What stays
+            // here is the cell's own claim — this surface must be a connection
+            // error at all, not an answered `400` — because the replay skips
+            // the comparison and nothing else would notice the whole response
+            // turning into a normal one (#1759 r1 boundary P1).
+            assert!(
+                case["expect"][0].get("error").is_some(),
+                "#1333 {id}: an oversized body must record a connection error, not a response, \
+                 got {}",
+                case["expect"][0]
+            );
             continue;
         }
         let dropped = Arc::new(AtomicBool::new(false));
