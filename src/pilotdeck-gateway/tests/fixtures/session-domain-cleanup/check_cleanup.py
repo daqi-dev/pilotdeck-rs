@@ -3060,6 +3060,29 @@ def _scoped_alias_assignments(tree):
                 for name in _target_names(node.target):
                     pairs.append((binding_scope(scope, name), name,
                                   ast.Constant(value=None), scope))
+        elif isinstance(node, ast.Match):
+            # #1953 fix-r1 round 2 (GLM sibling r1b P1): ``match md: case h:``
+            # binds the capture to (a part of) the subject, but this is the
+            # table the *receiver* rules read -- the same branch added to
+            # ``_alias_assignments`` alone left ``h.common = <stub>`` trusted.
+            for name in _match_capture_names(node):
+                pairs.append((binding_scope(scope, name), name, node.subject,
+                              scope))
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                               ast.DictComp)):
+            # Same table, same gap: a comprehension target bound to a literal
+            # element (``[h for h in (md,)]; h.common = <stub>``) is the
+            # receiver under another spelling (#1953 fix-r1 round 2).
+            for generator in node.generators:
+                if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
+                    elements = generator.iter.elts
+                else:
+                    elements = _iter_literal_elements(generator.iter)
+                for element in elements:
+                    for name, value in _target_value_pairs(generator.target,
+                                                           element, simple):
+                        pairs.append((binding_scope(scope, name), name, value,
+                                      scope))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is None:
@@ -3195,6 +3218,14 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # and through an alias (``_d = getattr(md, '__dict__')``).
         if _getattr_literal(node, kinds) == '__dict__':
             return receiver_roots(node.args[0], scope)
+        # #1953 fix-r1 round 2 (GLM sibling r1b P1): the attribute spelling of
+        # the same hand-over -- ``md.__getattribute__('__dict__')['common'] =
+        # <stub>`` names the mapping just as ``getattr`` does, and only the
+        # ``getattr`` spelling was decoded.
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == '__getattribute__' and node.args
+                and _constant_string(node.args[0], None) == '__dict__'):
+            return receiver_roots(node.func.value, scope)
         if isinstance(node, ast.Name):
             return _lookup(dict_roots, node.id, scope)
         return set()
@@ -3300,14 +3331,26 @@ def _receiver_attribute_writes(tree, receivers, shared):
     for scope, node in _walk_scoped(tree):
         if not isinstance(node, (ast.For, ast.AsyncFor)):
             continue
-        if not isinstance(node.iter, ast.Name):
+        # #1953 fix-r1 round 2 (GLM concurrency r1b P1): the call position
+        # already decodes ``list(hs)`` / ``iter(hs)`` wrappers, the iteration
+        # position only accepted a bare name, so ``for h in list(hs):`` escaped
+        # with the same handle.
+        iter_name = node.iter.id if isinstance(node.iter, ast.Name) else None
+        if (iter_name is None and isinstance(node.iter, ast.Call)
+                and isinstance(node.iter.func, ast.Name)
+                and node.iter.func.id in ('list', 'tuple', 'sorted', 'iter',
+                                          'reversed')
+                and len(node.iter.args) == 1
+                and isinstance(node.iter.args[0], ast.Name)):
+            iter_name = node.iter.args[0].id
+        if iter_name is None:
             continue
         for level in _chain(scope):
-            if (level, node.iter.id) in handle_containers:
+            if (level, iter_name) in handle_containers:
                 # ``for h in hs: h('common', <stub>)`` takes the same handles
                 # out one at a time; iterating a container of dynamic handles
                 # is a use like any other (#1953 fix-r1).
-                for root in handle_containers[(level, node.iter.id)]:
+                for root in handle_containers[(level, iter_name)]:
                     poisoned |= (receiver_roots(root, scope)
                                  | namespace_dict_roots(root, scope))
                 break
