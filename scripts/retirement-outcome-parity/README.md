@@ -57,7 +57,8 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   fail-closed，绝不当 PASS。
 - 报告含 `p7Rounds` / `p7Evaluated`：只跑 1 轮时 P7 是空判，`status: PASS` 不得当作
   「跨轮稳定已核」的证据。
-- 两个入口都要求 `python3 -I`（首个语句断言 `sys.flags.isolated`，同装置族其它入口）。
+- 两个入口都要求 `python3 -I`（断言 `sys.flags.isolated`，同装置族其它入口）；缺 `-I` 与
+  其它入口级失败一律 rc=2（输入不可用），不是 rc=1。
 - **Rust 轮必须显式跑本装置**：判据尚未接进冻结装置 `session_domain.py`（见「容差与残余」③）。
 
 ## 容差与残余（登记在差异条目里，此处只摘要）
@@ -100,15 +101,19 @@ N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响�
 执行器**第一件事**是失效同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
 为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
 的 PASS。因此这段写在**模块体最前面**，早于 `-I` 断言、早于 `load_checker()`、早于 pycache
-前缀设置（这三者都可能让进程起不来），且只依赖 `os` / `sys`。
+前缀设置（这三者都可能让进程起不来），且只依赖 `os` / `sys`；它只在 `__main__` 下执行——被
+import 时不得拿宿主的 `sys.argv` 去删任何东西。
 
 输出目录只从**显式** `--output` 取：解析器 `allow_abbrev=False`，选项名精确匹配，解析前即可
-无歧义地取出（取最后一次出现，同 argparse `store` 语义）。不按「哪些 token 可能是位置参数」
-猜候选——未知选项带不带值在解析前不可判定，猜错的代价是删掉别人的证据（误删同样算丢数据）。
-取不到就一个都不删：`--` 之后的 `--output` 按 argparse 语义只是位置参数，而本执行器没有位置
-参数（命令直接 rc=2），此时不做任何猜测；`-h` / `--help` 路径不失效（没有跑），且判定与
-argparse 一致——被带值选项吃掉的 `-h`（如 `--data -h`）**不是**帮助，argparse 报
-`expected one argument`，旧结果必须已失效。
+无歧义地取出。不按「哪些 token 可能是位置参数」猜候选——未知选项带不带值在解析前不可判定，
+猜错的代价是删掉别人的证据（误删同样算丢数据）。**没有 `--output` 就一个都不删**：`--` 之后的
+`--output` 按 argparse 语义只是位置参数，而本执行器没有位置参数（命令直接 rc=2），此时不做任何
+猜测。**帮助路径同样失效**：命令里显式点了输出目录，之后无论是跑、是 `-h` / `-hh`、还是
+argparse 报错，该目录的旧 PASS 都已报废——「跳过帮助」等于把「哪些形状算帮助」再猜一遍，猜错的
+方向永远是留旧 PASS 冒充本轮。重复写多次时每个非空值都失效（argparse 只有最后一个生效，但这条
+命令终究没跑完）。值接受规则照 argparse：非选项样式的下一个 token 即值，`-1` / `-1.5` 与单字符
+`-` 也算值。空值（`--output=`）不失效且判参数错误 rc=2——`Path('')` 就是当前工作目录，否则会删掉
+调用者 CWD 里的 `summary.json`。
 
 失效只碰本执行器自己的产物名（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：
 `summary.json.backup` 之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的
@@ -121,6 +126,9 @@ argparse 一致——被带值选项吃掉的 `-h`（如 `--data -h`）**不是*
 （PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」；没有可写临时目录时回退到
 一个**核实不存在**、名字带 16 位随机字节的目录（固定的 `.no-pycache-<pid>` 可预测，等于给
 unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于旧结果失效**。
+
+入口级失败一律 **rc=2**（输入不可用，不是判据 FAIL）：缺 `-I`、checker 缺失 / 不可读、pycache
+前缀候选耗尽。`raise SystemExit('消息')` 返回的是 **1**，会被下游当成「判据 FAIL」。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
