@@ -13,9 +13,9 @@ statuses determine the exit code; never bypass HEAD.
 #1864 wires the three selectors to a store the next session reads. A
 stub-revert alone cannot see that, so each write site (permission, thinking,
 output style), each compose-step read (permission, thinking, style merge),
-the live adapter's per-turn permission-mode source, and the
-`output_styles_list` selected echo each carry their own function-internal
-mutant.
+the live adapter's per-turn permission-mode source, the host session tools'
+per-turn admission source, and the `output_styles_list` selected echo each
+carry their own function-internal mutant.
 """
 from pathlib import Path
 import os
@@ -33,6 +33,11 @@ SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_d
 # adapter. Both are mutated below so "stored but never read" cannot come back.
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
+# #1864 fix-r2: the host session tools' admission source — `turn()` writes
+# the stored selection back into `Permissions` *and* this turn's local
+# `permissionMode` (the copy `tool_context` / `resolve_workspace_path` read),
+# so both read points die together when the write-back is removed.
+TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
 CFG = 'native_process::methods::config::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -261,6 +266,15 @@ mutations = [
      '            if let Some(source) = &None::<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>',
      'runtime::turn::live::stream_tests::permission_mode_source_rewrites_the_agent_config_each_turn',
      "#1864 the stored mode reaches the live session's next turn"),
+    ('tools-admission-source-removed', TOOLS,
+     '            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {\n'
+     '                self.permission_mode_source\n'
+     '                    .as_ref()\n'
+     '                    .and_then(|source| source())\n'
+     '            }) {',
+     '            if let Some(mode) = None::<JsString> {',
+     'native_process::tests::review::session_tools_admission_mode_follows_the_store_each_turn',
+     '#1864 the stored mode reaches the host admission context'),
 ]
 
 

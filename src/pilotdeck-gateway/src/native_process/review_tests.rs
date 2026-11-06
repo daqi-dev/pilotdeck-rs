@@ -61,11 +61,16 @@ fn production_turn_ports_share_cancellation() {
     );
 }
 
-/// #1864 (b): the host-side admission context follows the store
-/// `set_permission_mode` wrote, on every turn — the same store, key and
-/// priority the prepare closure and the live adapter's per-turn source use
-/// (`managedPermissions.defaultMode` still wins), so a turn never runs one
-/// mode for the sidecar and another for native tool admission.
+/// #1864 (b): the host-side permission *contexts* — the admission
+/// `PermissionContext`, the emitted `permissionContext` and the turn config's
+/// `permissionMode` (the copy `tool_context` and `resolve_workspace_path`
+/// read) — follow the store `set_permission_mode` wrote, on every turn, with
+/// the same store, key and priority the prepare closure and the live
+/// adapter's per-turn source use (`managedPermissions.defaultMode` still
+/// wins), so a turn never runs one mode for the sidecar and another for
+/// native tool admission. What is pinned is the contexts, not the
+/// decisions: the registry only carries read-only tools, which `decide`
+/// allows under all three modes.
 #[test]
 fn session_tools_admission_mode_follows_the_store_each_turn() {
     use crate::host::modules::tool_context::HostToolCheckpoint;
@@ -115,7 +120,7 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         let key = key.clone();
         move || overrides.permission_mode(&key)
     }));
-    let mode_of = |ports: &crate::runtime::turn::host_factory::SessionPorts| {
+    let admission_context_mode = |ports: &crate::runtime::turn::host_factory::SessionPorts| {
         ports
             .interaction
             .permission
@@ -132,9 +137,16 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
             .and_then(JsValue::as_string)
             .cloned()
     };
+    let turn_config_mode = |ports: &crate::runtime::turn::host_factory::SessionPorts| {
+        ports
+            .context_config
+            .get("permissionMode")
+            .and_then(JsValue::as_string)
+            .cloned()
+    };
     let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
     negative_assert_eq!(
-        mode_of(&ports),
+        admission_context_mode(&ports),
         JsString::from("default"),
         "#1864 no stored selection keeps the default admission mode"
     );
@@ -143,12 +155,17 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         Some(JsString::from("default")),
         "#1864 the emitted permissionContext carries the default mode"
     );
-    // The selector's write: the next turn's admission context and emitted
-    // permissionContext both carry the stored mode.
+    negative_assert_eq!(
+        turn_config_mode(&ports),
+        Some(JsString::from("default")),
+        "#1864 the turn config carries the default admission mode"
+    );
+    // The selector's write: the next turn's admission context, emitted
+    // permissionContext and turn config all carry the stored mode.
     overrides.set_permission_mode(&key, "plan".into());
     let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
     negative_assert_eq!(
-        mode_of(&ports),
+        admission_context_mode(&ports),
         JsString::from("plan"),
         "#1864 the stored mode reaches the host admission context"
     );
@@ -156,6 +173,11 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         emitted_mode(&ports),
         Some(JsString::from("plan")),
         "#1864 the emitted permissionContext carries the stored mode"
+    );
+    negative_assert_eq!(
+        turn_config_mode(&ports),
+        Some(JsString::from("plan")),
+        "#1864 the stored mode reaches the turn config permissionMode"
     );
     // A non-empty managedPermissions.defaultMode wins over the store.
     let mut managed = JsObject::new();
@@ -185,9 +207,14 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
     }));
     let ports = assembly::turn_ports(&tools, &identity, recorder, Cancellation::new());
     negative_assert_eq!(
-        mode_of(&ports),
+        admission_context_mode(&ports),
         JsString::from("bypassPermissions"),
         "#1864 a non-empty managed defaultMode wins over the stored mode"
+    );
+    negative_assert_eq!(
+        turn_config_mode(&ports),
+        Some(JsString::from("bypassPermissions")),
+        "#1864 a non-empty managed defaultMode wins in the turn config too"
     );
 }
 

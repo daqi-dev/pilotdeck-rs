@@ -93,22 +93,22 @@ impl SessionTools {
         // #1864 (b): the effective mode — a non-empty
         // `managedPermissions.defaultMode` wins, else the stored selection —
         // is written back before the context is emitted, so `Permissions::
-        // decide` (which clones the current value per call) and the emitted
-        // `permissionContext` agree with the sidecar's payload this turn.
-        // A `None` source leaves the previous mode and the plan-round-trip
-        // stack below untouched.
-        if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
-            self.permission_mode_source
-                .as_ref()
-                .and_then(|source| source())
-        }) {
-            self.permission
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .0
-                .mode = crate::config::permission::PermissionMode::from(mode);
-        }
+        // decide` (which clones the current value per call), the emitted
+        // `permissionContext` and this turn's local `config.permissionMode`
+        // (`tool_context` and `resolve_workspace_path` read that copy) all
+        // agree with the sidecar's payload this turn. A `None` source leaves
+        // the previous mode and the plan-round-trip stack below untouched.
+        let (permission_context, permission_mode) = {
+            let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
+                self.permission_mode_source
+                    .as_ref()
+                    .and_then(|source| source())
+            }) {
+                state.0.mode = crate::config::permission::PermissionMode::from(mode);
+            }
+            (state.0.to_value(), state.0.mode.as_js_string().clone())
+        };
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
@@ -121,15 +121,8 @@ impl SessionTools {
         ));
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
-        config.insert(
-            "permissionContext".into(),
-            self.permission
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .0
-                .to_value(),
-        );
+        config.insert("permissionMode".into(), JsValue::String(permission_mode));
+        config.insert("permissionContext".into(), permission_context);
         let binding = TurnBinding {
             config: config.clone(),
             input: value([
