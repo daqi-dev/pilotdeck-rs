@@ -35,7 +35,7 @@ if not env.get('CARGO_TARGET_DIR'):
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
 run = partial(run, root=root, out=out, command=command, env=env)
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 with mutating_sources(root, [source], baseline=baseline) as originals:
     original = originals[source].decode()
     assert run('positive').returncode == 0

@@ -12,7 +12,7 @@ root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
 env = target_environment(root)
 
 def mutate(text, name):

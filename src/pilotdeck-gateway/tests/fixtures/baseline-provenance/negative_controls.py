@@ -63,7 +63,7 @@ if not rows:
 env = os.environ.copy()
 if not env.get("CARGO_TARGET_DIR"):
     raise SystemExit("CARGO_TARGET_DIR must be supplied by the caller")
-baseline = env.get("PDRS_NEGATIVE_BASELINE", "HEAD")
+baseline = env.get("PDRS_NEGATIVE_BASELINE") or "HEAD"
 
 
 def run(label, command, *, timeout=300):

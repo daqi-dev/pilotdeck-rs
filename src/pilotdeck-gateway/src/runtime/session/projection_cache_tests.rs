@@ -618,6 +618,75 @@ fn generator_cleans_owned_work() {
     }
 }
 
+#[test]
+#[ignore = "requires the pinned Node v22.22.0 TS baseline"]
+fn generator_deadline_cleans_owned_work() {
+    // #1890: the hard-deadline exit skips the lexical finally, so the deadline
+    // branch is the only thing that removes the owned work root on that path.
+    // The generator holds inside the matrix so a forced 1 s deadline is
+    // guaranteed to expire while that root exists.
+    let scratch = std::env::temp_dir().join(format!("pdrs-1011-deadline-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&scratch).expect("#1011 deadline scratch");
+    // Foreign work directories must survive: only the generator's own root is removable.
+    std::fs::create_dir(scratch.join("work-foreign")).expect("#1011 foreign work sentinel");
+    let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
+    let mut command = std::process::Command::new("node");
+    command
+        .arg("--disable-warning=ExperimentalWarning")
+        .arg("--import")
+        .arg(format!("{base}/node_modules/tsx/dist/loader.mjs"))
+        .arg(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
+        )
+        .arg(&scratch)
+        .env("PDRS_1011_DEADLINE_MS", "1000")
+        .env("PDRS_1011_DEADLINE_HOLD_MS", "60000");
+    let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+        &mut command,
+        "session-factory/projection-cache",
+        Duration::from_secs(180),
+    )
+    .expect("#1011 generator deadline bounded run");
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    // A completed matrix means the injected deadline never fired; the deadline
+    // report below would then be missing and the cell would fail for the wrong
+    // reason, so pin the exit first.
+    assert!(
+        !status.success(),
+        "#1011 generator deadline exits non-zero: {output}"
+    );
+    assert!(
+        output.contains("#1011 generator exceeded 1000 ms"),
+        "#1011 generator reports the injected deadline: {output}"
+    );
+    assert!(
+        !output.contains("#1011 generator deadline cleanup failed"),
+        "#1011 generator deadline cleanup reports no failure: {output}"
+    );
+    let mut names: Vec<_> = std::fs::read_dir(&scratch)
+        .expect("#1011 inspect deadline OUT")
+        .map(|entry| {
+            entry
+                .expect("#1011 deadline OUT entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [".generation-owner", "work-foreign"],
+        "#1011 deadline exit leaves no work-* behind"
+    );
+    std::fs::remove_dir_all(scratch).expect("#1011 remove deadline scratch");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_append_keeps_both_commits() {
     let row = case("concurrent-append");

@@ -54,4 +54,4 @@ host = 'runtime::turn::host_factory::tests::'
 cases = [Case(n, p, o, v, (host if n == 'host-factory-recorder' else stream) + t, a, s)
          for n, p, s, o, v, t, a in chosen]
 raise SystemExit(run_cases(root, cases, out, env, mutate,
-                           baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')))
+                           baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))

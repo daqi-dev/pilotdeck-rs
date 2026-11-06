@@ -8,7 +8,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-from negative_suite import Case, run_cases
+from negative_suite import Case, bind_module_file, declares_test, run_cases
 from _negative_common import mutate
 
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
@@ -68,22 +68,15 @@ def audit():
     modules = (('runtime::turn::live::stream_tests::forwarding::', live.with_name('forward_tests.rs'), 'case!'),
                ('runtime::turn::live::stream_tests::', tests, None),
                ('runtime::turn::live::tests::', live, None))
-    bodies = {path: path.read_text() for _, path, _ in modules}
+    sources = {path: path.read_text() for _, path, _ in modules}
+    macros = {path: macro for _, path, macro in modules}
     for name, path, old, new, scope, test, panic in cases:
         mutate(path.read_text(), scope, [(old, new)])
-        matched = next(((file, macro) for prefix, file, macro in modules
-                        if test.startswith(prefix)), None)
-        assert matched is not None, f'bound test module not audited: {test}'
-        file, macro = matched
-        prefix = next(prefix for prefix, candidate, _ in modules if candidate == file
-                      and test.startswith(prefix))
-        short = test[len(prefix):]
-        assert '::' not in short, f'bound test has an extra module level: {test}'
-        body = bodies[file]
-        found = ('fn ' + short + '(') in body
-        if macro and not found:
-            found = (macro + '(' + short + ',') in body
-        assert found, test
+        # #1890: one shared binding rule (this copy required the spaced
+        # `fn name(` spelling and carried the macro form inline).
+        file, short = bind_module_file(test, [(prefix, source) for prefix, source, _ in modules])
+        if not declares_test(sources[file], short, macros[file]):
+            raise ValueError('bound test not found: ' + test)
     return [{'mutation': n, 'test': t, 'panic': a} for n, _, _, _, _, t, a in cases]
 
 
@@ -109,4 +102,4 @@ out.mkdir(parents=True, exist_ok=False)
 raise SystemExit(run_cases(root,
     [Case(name, path, old, new, test, panic, scope)
      for name, path, old, new, scope, test, panic in chosen],
-    out, env, mutate, timeout=600, baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')))
+    out, env, mutate, timeout=600, baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))

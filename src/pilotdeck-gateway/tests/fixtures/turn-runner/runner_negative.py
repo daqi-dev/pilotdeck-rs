@@ -105,7 +105,7 @@ except ValueError as error:
 out = claim_dir(sys.argv[1])
 run = partial(run, root=root, out=out, command=command, env=env)
 verdicts = []
-with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
+with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:
     original = originals[source].decode()
     if run('positive').returncode != 0:
         raise RuntimeError('unmutated baseline did not pass')

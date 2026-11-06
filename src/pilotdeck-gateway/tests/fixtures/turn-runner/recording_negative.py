@@ -62,7 +62,7 @@ if sys.argv[2:]:
     assert selected <= {m[0] for m in mutations}
     mutations = [m for m in mutations if m[0] in selected]
 run = partial(run, root=root, out=out, command=command, env=env)
-with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
+with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:
     assert run('positive').returncode == 0
     for name, path, old, new in mutations:
         original = originals[path].decode()

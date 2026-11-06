@@ -180,7 +180,7 @@ def main():
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+    baseline = env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
     selected = [row for row in mutants if sys.argv[2:] == []
                 or row[0] in sys.argv[2:]]
     if not selected or (sys.argv[2:] and len(selected) != len(sys.argv[2:])):

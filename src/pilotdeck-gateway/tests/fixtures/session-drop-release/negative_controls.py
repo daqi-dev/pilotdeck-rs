@@ -14,7 +14,7 @@ root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
-from negative_suite import Case, classify, invalidate_completed, passed
+from negative_suite import Case, bind_module_file, classify, declares_test, invalidate_completed, passed
 from _negative_common import mutate
 
 handle = root / 'src/pilotdeck-gateway/src/runtime/session/handle.rs'
@@ -369,16 +369,12 @@ def audit():
             changed = mutate(original, scope, [(old, new)])
             if changed == original:
                 raise ValueError('mutation leaves source unchanged')
-            matched = next(((prefix, file) for prefix, file in modules
-                            if test.startswith(prefix)), None)
-            if matched is None:
-                raise ValueError('bound test module not audited: ' + test)
-            prefix, file = matched
-            test_name = test[len(prefix):]
-            if '::' in test_name:
-                raise ValueError('bound test has an extra module level: ' + test)
+            # #1890: one shared binding rule; this copy used to require the
+            # spaced spellings `fn name(` / `name =>`, so a rustfmt change
+            # could silently unship the audit.
+            file, test_name = bind_module_file(test, modules)
             body = sources[file]
-            if ('fn ' + test_name + '(') not in body and (test_name + ' =>') not in body:
+            if not declares_test(body, test_name):
                 raise ValueError('bound test not found: ' + test)
             if not test_name.endswith('regenerates_identically'):
                 literals = [piece.split('"')[0] for piece in body.split('"#')[1:]]

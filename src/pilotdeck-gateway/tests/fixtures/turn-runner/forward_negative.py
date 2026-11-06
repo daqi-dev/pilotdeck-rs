@@ -3,7 +3,7 @@
 import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_suite import Case, run_cases
+from negative_suite import Case, bind_module_file, declares_test, run_cases
 from _negative_common import mutate
 root=Path(__file__).resolve().parents[5]
 base=root/'src/pilotdeck-gateway/src/runtime/turn'
@@ -184,9 +184,15 @@ cases = [
 ]
 
 def audit():
+    # #1890: bind every row to the file that declares its module and accept the
+    # `case!` table form; the old `short in forward_tests.rs` scan had no
+    # module or level check at all.
+    modules = ((test_prefix, base / 'forward_tests.rs'),)
     for name,path,old,new,scope,test,anchor in cases:
         mutate(path.read_text(),scope,[(old,new)])
-        assert test.rsplit('::',1)[1] in (base/'forward_tests.rs').read_text(),test
+        file, short = bind_module_file(test, modules)
+        if not declares_test(file.read_text(), short, 'case!'):
+            raise ValueError('bound full test not found: ' + test)
     return [{'mutation':n,'test':t,'assertion':a} for n,_,_,_,_,t,a in cases]
 if sys.argv[1:] == ['--audit']:
     print(json.dumps(audit(),indent=2));raise SystemExit()
@@ -204,4 +210,4 @@ if sys.argv[2:] and sys.argv[2:] != ['--sample']:
 # build allowance; runtime progress/cleanup assertions retain their own bounds.
 raise SystemExit(run_cases(root,
     [Case(n,p,old,new,test,anchor,scope) for n,p,old,new,scope,test,anchor in selected],
-    out,env,mutate,timeout=900,baseline=env.get('PDRS_NEGATIVE_BASELINE','HEAD')))
+    out,env,mutate,timeout=900,baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))
