@@ -299,16 +299,18 @@ impl Requests {
         selection: Option<&JsValue>,
         project_root: &str,
     ) -> Result<(), RequestError> {
-        // #1457 fix-r1: one writer at a time per session — the rename/tag path
-        // numbers its append from the tail it just read, so two concurrent
-        // writers would both claim `sequence + 1` and brick the transcript.
+        // #1457 fix-r1: one writer at a time per session — this path numbers its
+        // append from the tail it just read, so two concurrent cold writers
+        // would both claim `sequence + 1` and brick the transcript.
         let write_fence = super::transcript_locks::acquire(project_root, session_key).await;
-        // Retire a live writer while the fence is held: its in-memory sequence
-        // would otherwise replay `sequence + 1` from the tail we are about to
-        // extend (`session_record_status` takes the same fence before appending,
-        // so an in-flight live append either finished before us or sees a closed
-        // recorder). Closing first keeps the tail we restore authoritative.
-        self.owner.close(session_key).await.map_err(runtime_error)?;
+        // #1457 fix-r2: when the session is loaded its recorder owns the writer
+        // (and the writer lease) with an in-memory sequence, so the entry is
+        // appended *through* it. Closing it first aborted an admitted turn and
+        // left a second writer numbering from the same tail; routing through the
+        // one writer does neither. With no loaded session the fence is the only
+        // writer, and a session created while we hold it restores the tail after
+        // this append.
+        let live = super::transcript_locks::live_recorder(&self.recorders, session_key);
         let home = self.options.home.clone();
         let key = session_key.clone();
         let mut metadata = pilotdeck_protocol::JsObject::new();
@@ -334,6 +336,14 @@ impl Requests {
             // not stop a blocking closure that already started, so the guard
             // travels with the write instead of dropping at the await.
             let _write = write_fence;
+            let turn = JsString::from(turn_id);
+            let entry = JsValue::Object(metadata);
+            if let Some(recorder) = live {
+                return recorder
+                    .writer()
+                    .record_session_metadata(&key, &turn, entry)
+                    .map_err(|e| RequestError::new(e.to_string()));
+            }
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new()),
@@ -360,7 +370,7 @@ impl Requests {
             }
             storage
                 .transcript
-                .record_session_metadata(&key, &JsString::from(turn_id), JsValue::Object(metadata))
+                .record_session_metadata(&key, &turn, entry)
                 .map_err(|e| RequestError::new(e.to_string()))
         })
         .await
@@ -1706,8 +1716,13 @@ mod tests {
                 r.session_config_request("session_model_set".into(), set_params),
                 r.session_dir_request("rename_session".into(), rename_params),
             );
-            written.expect("#1457 session_model_set succeeds");
-            renamed.expect("#1457 rename_session succeeds");
+            // The requests succeed only if each append claimed the next number
+            // under the fence, so a lost fence shows up here as the store's
+            // `sequence_not_increasing` rejection (#1457 fix-r2: the negative
+            // controls bind to `#1457 transcript sequences strictly increase`,
+            // and this is one of the sites where that invariant breaks first).
+            written.expect("#1457 transcript sequences strictly increase (session_model_set)");
+            renamed.expect("#1457 transcript sequences strictly increase (rename_session)");
         }
         let entries = transcript_entries(&r, session);
         let sequences: Vec<f64> = entries

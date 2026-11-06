@@ -307,15 +307,13 @@ impl Requests {
         // leave the transcript unloadable.
         let write_fence =
             super::transcript_locks::acquire(&project_root.to_string_lossy(), &key).await;
-        // Retire a live writer while the fence is held: it keeps its own
-        // in-memory sequence, so an out-of-band append followed by its next
-        // write would replay `sequence + 1` from a stale tail. The factory
-        // refuses that rather than corrupting the file, but the session breaks
-        // until it is re-created; closing lets the next turn re-hydrate.
-        self.owner
-            .close(&key)
-            .await
-            .map_err(|e| RequestError::new(e.to_string()))?;
+        // #1457 fix-r2: a loaded session owns the transcript writer (and the
+        // writer lease) with an in-memory sequence, so the metadata entry goes
+        // *through* its recorder. Closing it first retired an idle session the
+        // user did not ask to close and could abort a turn admitted between the
+        // busy check and the close. With no loaded session the fence below is
+        // the only writer.
+        let live = super::transcript_locks::live_recorder(&self.recorders, &key);
         let home = self.options.home.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
         let value_str: Option<String> = match &value_field {
@@ -337,6 +335,29 @@ impl Requests {
             // Held inside the closure: a cancelled request drops the future but
             // not the blocking append, so the fence has to travel with the write.
             let _write = write_fence;
+            let updated_at = pilotdeck_transport::system_clock::format_epoch_iso(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64,
+            );
+            let mut meta = pilotdeck_protocol::JsObject::new();
+            let field_name = if is_tag { "tag" } else { "title" };
+            meta.insert(
+                field_name.into(),
+                value_str
+                    .map(|s| JsValue::String(s.into()))
+                    .unwrap_or(JsValue::Undefined),
+            );
+            meta.insert("updatedAt".into(), JsValue::String(updated_at.into()));
+            let turn_id = JsString::from(if is_tag { "sdk-tag" } else { "sdk-rename" });
+            let entry = JsValue::Object(meta);
+            if let Some(recorder) = live {
+                return recorder
+                    .writer()
+                    .record_session_metadata(&key_clone, &turn_id, entry)
+                    .map_err(|e| RequestError::new(e.to_string()));
+            }
             let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
                 Arc::new(JsonlTranscriptStore::new()),
@@ -363,29 +384,9 @@ impl Requests {
                     .restore()
                     .map_err(|e| RequestError::new(e.to_string()))?;
             }
-            let updated_at = pilotdeck_transport::system_clock::format_epoch_iso(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as i64,
-            );
-            let mut meta = pilotdeck_protocol::JsObject::new();
-            let field_name = if is_tag { "tag" } else { "title" };
-            meta.insert(
-                field_name.into(),
-                value_str
-                    .map(|s| JsValue::String(s.into()))
-                    .unwrap_or(JsValue::Undefined),
-            );
-            meta.insert("updatedAt".into(), JsValue::String(updated_at.into()));
-            let turn_id = if is_tag { "sdk-tag" } else { "sdk-rename" };
             storage
                 .transcript
-                .record_session_metadata(
-                    &key_clone,
-                    &JsString::from(turn_id),
-                    JsValue::Object(meta),
-                )
+                .record_session_metadata(&key_clone, &turn_id, entry)
                 .map_err(|e| RequestError::new(e.to_string()))
         })
         .await
@@ -442,23 +443,21 @@ impl Requests {
             .ok_or_else(|| RequestError::new("turnId must be a string."))?;
         let status = params.get("status").cloned().unwrap_or(JsValue::Undefined);
 
-        // Live path: recorder registered by the active session writer.
-        let live_recorder = self
-            .recorders
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&session_key)
-            .and_then(std::sync::Weak::upgrade);
+        // #1457 fix-r2: take the fence before deciding who writes. The lookup
+        // and the append then see one state — either a live writer exists and
+        // the entry goes through it, or it does not and this path is the only
+        // writer for the tail it restores. Looking the recorder up first left a
+        // window where a concurrent close retired it between lookup and append,
+        // and the retired writer's no-op append reported `recorded: true`.
+        let write_fence =
+            super::transcript_locks::acquire(&self.options.project.to_string_lossy(), &session_key)
+                .await;
+        let live_recorder = super::transcript_locks::live_recorder(&self.recorders, &session_key);
         if let Some(recorder) = live_recorder {
-            // #1457 fix-r1: the live writer numbers its append from its own
-            // in-memory sequence, so it has to take the same fence the fresh
-            // writers do — otherwise it can append while `record_model_selection`
+            // The live writer numbers its append from its own in-memory
+            // sequence, so it appends under the same fence the fresh writers
+            // hold — otherwise it can append while `record_model_selection`
             // holds a tail both of them read as `N`.
-            let write_fence = super::transcript_locks::acquire(
-                &self.options.project.to_string_lossy(),
-                &session_key,
-            )
-            .await;
             let session_key2 = session_key.clone();
             let turn_id2 = turn_id.clone();
             let status2 = status.clone();
@@ -476,12 +475,6 @@ impl Requests {
         }
 
         // Cold path: write to the durable transcript directly.
-        // #1457 fix-r1: this path also builds a fresh writer and numbers its
-        // append from the tail it restores, so it shares the same per-session
-        // single-writer fence as rename/tag and the model-selection writes.
-        let write_fence =
-            super::transcript_locks::acquire(&self.options.project.to_string_lossy(), &session_key)
-                .await;
         let home = self.options.home.clone();
         let project_root = self.options.project.clone();
         let recorded = tokio::task::spawn_blocking(move || {
@@ -533,6 +526,90 @@ impl Requests {
 mod tests {
     use super::*;
     use crate::negative_assert_eq;
+    use crate::storage::recorder::Recorder;
+
+    /// #1457 fix-r2: a loaded session owns the transcript writer, so the rename
+    /// append goes through its recorder instead of a second writer restored
+    /// from the tail. The request spells the key as an alias (`a8/session` and
+    /// `a8-session` are one file after `sanitize_session_id`), which is exactly
+    /// the case a raw-key lookup missed: the recorder would keep a stale
+    /// sequence and its next append would duplicate `sequence + 1`.
+    #[tokio::test]
+    async fn rename_appends_through_the_loaded_writer() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let open = |session_id: &str| {
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: project.clone(),
+                    pilot_home: requests.options.home.clone(),
+                    session_id: session_id.into(),
+                    now: None,
+                })
+                .expect("#1457 the transcript storage opens")
+        };
+        let loaded = open("a8/session");
+        loaded
+            .restore()
+            .expect("#1457 the seeded transcript restores");
+        let writer = Arc::new(loaded.transcript);
+        let recorder = Arc::new(Recorder::from_writer(writer.clone()));
+        requests
+            .recorders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("a8/session".into(), Arc::downgrade(&recorder));
+
+        let updated = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "rename_session".into(),
+            crate::metadata::object([
+                ("sessionKey", "a8-session".into()),
+                ("value", "renamed-through-the-recorder".into()),
+            ]),
+        )
+        .await
+        .expect("#1457 the rename resolves over a loaded session");
+        negative_assert_eq!(
+            updated
+                .get("updated")
+                .and_then(pilotdeck_protocol::JsValue::as_bool),
+            Some(true),
+            "#1457 the rename reports the metadata write"
+        );
+
+        // The loaded writer still holds the only sequence: this append continues
+        // the chain the rename extended. A second writer on the same tail would
+        // have duplicated `sequence + 1` and this call would be rejected.
+        writer
+            .record_agent_status_message(
+                &"a8/session".into(),
+                &"after-rename".into(),
+                &JsValue::Undefined,
+            )
+            .expect("#1457 the loaded writer keeps numbering the chain");
+        let reread = open("a8-session");
+        reread.restore().expect("#1457 the transcript still loads");
+        let text = std::fs::read_to_string(&reread.transcript_path)
+            .expect("#1457 the written transcript is readable");
+        negative_assert_eq!(
+            text.contains("renamed-through-the-recorder"),
+            true,
+            "#1457 the rename entry reached the loaded session's transcript"
+        );
+        negative_assert_eq!(
+            text.contains("after-rename"),
+            true,
+            "#1457 the loaded writer kept appending after the rename"
+        );
+    }
 
     // #1455 r1: the same gate serves resume / close / delete / rename / tag;
     // a guard-level case pins the predicate once for all five callers instead
