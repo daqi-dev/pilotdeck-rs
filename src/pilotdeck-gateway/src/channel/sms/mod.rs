@@ -1175,12 +1175,11 @@ async fn handle_incoming(
                 generation,
                 shifted_rest,
             } => {
-                let gateway = boundaries(shared)
-                    .gateway
-                    .expect("#1339 checked before begin");
                 // #1790: own the `answering`/`in_flight` release across the
                 // decide await; a gateway panic or a cancelled/timed-out task
                 // then unwinds through the guard instead of wedging the chat.
+                // Armed before the `expect` below so no fallible statement sits
+                // between `begin_answer` arming the flags and this guard.
                 let mut guard = AnswerGuard::new(
                     shared.permissions.clone(),
                     chat_id.clone(),
@@ -1188,6 +1187,9 @@ async fn handle_incoming(
                     entry.clone(),
                     shifted_rest.clone(),
                 );
+                let gateway = boundaries(shared)
+                    .gateway
+                    .expect("#1339 checked before begin");
                 // #1339 fix-r1: a missing event `requestId` stays real
                 // `undefined` (the JSON record then omits the key), not the
                 // string "undefined".
@@ -1449,17 +1451,22 @@ async fn process_message(
                 continue;
             }
             if is("permission_request") {
+                // #1790: `js_string_of` can panic on pathological nesting, and
+                // `capture` has already armed `answering`/`initial_prompt_pending`
+                // by then. Convert first (`capture` performs the same conversion
+                // on the same value), so no fallible statement sits between the
+                // flags and the guard.
+                let expected = event
+                    .get("requestId")
+                    .cloned()
+                    .and_then(|value| match value {
+                        JsValue::Undefined | JsValue::Null => None,
+                        value => Some(js_string_of(&value)),
+                    });
                 let question = shared
                     .lock_permissions()
                     .capture(chat_id, session_key, &event);
                 if let Some(question) = question {
-                    let expected = event
-                        .get("requestId")
-                        .cloned()
-                        .and_then(|value| match value {
-                            JsValue::Undefined | JsValue::Null => None,
-                            value => Some(js_string_of(&value)),
-                        });
                     // #1790: own the `answering`/`initial_prompt_pending` set
                     // by `capture` across the prompt send; a panic or
                     // cancellation then records the not-delivered retry

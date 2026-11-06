@@ -3,10 +3,11 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 65: the
-fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1; the
-switches table is the truth source). Run one sample in the authoring
-session; the coordinator runs the complete list after the patch is committed.
+cell or dedicated test that pins that behavior's TS bytes (26 → 69: the
+fix-r1 round added 11, #1589 added 4, #1729 added 39, #1813 added 1, #1790
+added 3; the switches table is the truth source). Run one sample in the
+authoring session; the coordinator runs the complete list after the patch is
+committed.
 
 `mutating_sources` cannot be used for a pre-commit change (it requires
 src/ == HEAD), so the controls are the #996 compile-time switches the
@@ -237,14 +238,22 @@ switches = [
     # and the chat drops every later message.
     ('sms-permission-prompt-guard-off', SMS / 'permission.rs',
      ['a_panicking_prompt_delivery_does_not_lock_the_chat',
-      'a_panicking_confirmation_send_does_not_lock_the_chat'],
+      'a_panicking_confirmation_send_does_not_lock_the_chat',
+      'a_permission_captured_during_the_confirmation_send_is_not_dropped',
+      'cancelled_confirmation_send_does_not_lock_the_chat',
+      'timed_out_confirmation_send_does_not_lock_the_chat'],
      ['#1790 prompt_delivering must not survive the prompt-send panic',
-      '#1790 answering must not survive the confirmation-send panic']),
+      '#1790 answering must not survive the confirmation-send panic',
+      '#1790 the permission captured mid-send must be re-sent after the panic',
+      '#1790 answering must not survive the confirmation-send cancellation',
+      '#1790 answering must not survive the confirmation-send timeout']),
     # #1790: the initial-prompt guard is disarmed — a panic during the first
     # prompt send leaves `initial_prompt_pending` set ("权限提示发送中").
     ('sms-permission-initial-guard-off', SMS / 'permission.rs',
-     'a_panicking_initial_prompt_delivery_does_not_lock_the_chat',
-     '#1790 initial_prompt_pending must not survive the prompt-send panic'),
+     ['a_panicking_initial_prompt_delivery_does_not_lock_the_chat',
+      'cancelled_initial_prompt_delivery_does_not_lock_the_chat'],
+     ['#1790 initial_prompt_pending must not survive the prompt-send panic',
+      '#1790 initial_prompt_pending must not survive the initial-prompt-send cancellation']),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',
