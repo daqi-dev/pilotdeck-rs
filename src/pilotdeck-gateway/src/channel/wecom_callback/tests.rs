@@ -1078,32 +1078,36 @@ fn message_body_truncates_at_2048_utf16_units() {
 #[tokio::test]
 async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
     const PORT: u16 = 18996;
+    // Destructure by name: the tuple grew a middle `complete` flag for the 408
+    // half, and a positional `.1` here would silently assert EOF instead of
+    // `stop()` draining — both are `bool`, so nothing but this comment catches
+    // the swap (#1336 r7 sibling/concurrency/boundary/Codex P1).
+    let (_, _, drained) = stop_after_stalled_request(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_millis(300),
+            request: Duration::from_secs(30),
+        },
+        b"POST /cb HTTP/1.1\r\nHost: x\r\n",
+        Duration::from_secs(5),
+    )
+    .await;
     crate::negative_assert!(
-        stop_after_stalled_request(
-            PORT,
-            http::Timeouts {
-                headers: Duration::from_millis(300),
-                request: Duration::from_secs(30),
-            },
-            b"POST /cb HTTP/1.1\r\nHost: x\r\n",
-            Duration::from_secs(5),
-        )
-        .await
-        .1,
+        drained,
         "#1336 headersTimeout lets stop() retire a half-sent request"
     );
+    let (_, _, drained) = stop_after_stalled_request(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_secs(30),
+            request: Duration::from_secs(30),
+        },
+        b"POST /cb HTTP/1.1\r\nHost: x\r\n",
+        Duration::from_secs(1),
+    )
+    .await;
     crate::negative_assert!(
-        !stop_after_stalled_request(
-            PORT,
-            http::Timeouts {
-                headers: Duration::from_secs(30),
-                request: Duration::from_secs(30),
-            },
-            b"POST /cb HTTP/1.1\r\nHost: x\r\n",
-            Duration::from_secs(1),
-        )
-        .await
-        .1,
+        !drained,
         "#1336 without the header timeout a half-sent request still pins stop()"
     );
 }
@@ -1164,7 +1168,7 @@ async fn request_timeout_answers_408_and_releases_stop() {
         drained,
         "#1336 requestTimeout lets stop() retire a stalled body"
     );
-    let (response, _, drained) = stop_after_stalled_request(
+    let (response, complete, drained) = stop_after_stalled_request(
         PORT,
         http::Timeouts {
             headers: Duration::from_secs(30),
@@ -1174,9 +1178,15 @@ async fn request_timeout_answers_408_and_releases_stop() {
         Duration::from_secs(1),
     )
     .await;
-    // `None` is "not one byte arrived in 1 s", not "the read returned": the
+    // `None` is "not one byte arrived in 3 s", not "the read returned": the
     // helper keeps partial bytes even when its deadline expires, so an early
-    // answer that never reaches EOF still fails this half.
+    // answer that never reaches EOF still fails this half. `!complete` pins the
+    // other direction too — a server that silently closed the socket inside the
+    // deadline would also read as "no answer" (#1336 r7 concurrency P2).
+    crate::negative_assert!(
+        !complete,
+        "#1336 the long-timeout half is answered by no EOF either"
+    );
     crate::negative_assert!(response.is_none(), "#1336 no answer before requestTimeout");
     crate::negative_assert!(
         !drained,
@@ -1216,7 +1226,7 @@ async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
 }
 
 /// One client, one stalled request, one `stop()`: returns every byte the
-/// client received within a fixed 1 s read deadline (empty ⇒ it received
+/// client received within a fixed 3 s read deadline (empty ⇒ it received
 /// nothing), whether that read reached a clean EOF inside the deadline, and
 /// whether `stop()` returned within `budget`. Always releases the
 /// client and waits for the port, so the two halves of an A/B can share one
@@ -1248,8 +1258,11 @@ async fn stop_after_stalled_request(
     // answer" in the long-timeout half, the same false pass from the other
     // side. The EOF flag is what makes the `408` half complete: bytes that
     // stop at the header terminator because the deadline expired look exactly
-    // like a bodyless response (#1336 r6 Codex P1).
-    let read = timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await;
+    // like a bodyless response (#1336 r6 Codex P1). The deadline is 3 s, not
+    // the 300 ms request timeout plus a thin margin: this crate runs thousands
+    // of tests in parallel and a loaded host must not turn a correct 408 into a
+    // false red (#1336 r7 boundary P2).
+    let read = timeout(Duration::from_secs(3), client.read_to_end(&mut buf)).await;
     let complete = matches!(read, Ok(Ok(_)));
     let response = if buf.is_empty() { None } else { Some(buf) };
     let drained = timeout(budget, listener.stop()).await.is_ok();

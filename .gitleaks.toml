@@ -1,5 +1,5 @@
 # gitleaks 配置：继承默认规则，按值放行已知非密钥。
-# 8 条值级条目（7 条哈希 + 1 条 RFC 6455 nonce）用 regexTarget="secret" + ^…$ 精确放行；
+# 9 条值级条目（7 条哈希 + 1 条 RFC 6455 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
 # 5 条 PEM 片段条目是唯一例外，只用 match 子串语义——判据是「解码后真是私钥 DER 的开头」
 # （SEQUENCE + INTEGER 版本号 0/1 + AlgorithmIdentifier/私钥 OCTET STRING），不是按值的形状或前缀分桶，
 # 所以大写 hex / 128-hex / 带前缀的 sha256:… / 普通长 base64 都进不了这个桶。
@@ -94,7 +94,7 @@ regexTarget = "secret"
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 
 [[allowlists]]
-description = "A8.3-ch-wecom-callback（#1336）夹具 wecom-callback：generate.mts:38 把字面量 '0123456789abcdefghijklmnopqrstuv'（顺序字母表，明显不是密钥）当作测试 aesKey，及其 base64 形式（去 padding）；只用于本地 loopback 假 qyapi 的信封解密对拍，不连任何真实服务，不是凭据。按 Secret 值两端锚定（regexTarget=secret），只放行 gitleaks 抽出的 Secret 恰为这两个固定字面量的命中（按值匹配、不限出现位置）；Secret 不等于它们的命中（更长值、同头不同值）仍会命中"
+description = "A8.3-ch-wecom-callback（#1336）夹具 wecom-callback：generate.mts:55 把字面量 '0123456789abcdefghijklmnopqrstuv'（顺序字母表，明显不是密钥）当作测试 aesKey，及其 base64 形式（去 padding）；只用于本地 loopback 假 qyapi 的信封解密对拍，不连任何真实服务，不是凭据。按 Secret 值两端锚定（regexTarget=secret），只放行 gitleaks 抽出的 Secret 恰为这两个固定字面量的命中（按值匹配、不限出现位置）；Secret 不等于它们的命中（更长值、同头不同值）仍会命中"
 regexTarget = "secret"
 regexes = [
   '''^0123456789abcdefghijklmnopqrstuv$''',
