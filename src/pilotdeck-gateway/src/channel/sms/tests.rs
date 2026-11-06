@@ -1948,6 +1948,23 @@ fn recorded_boundary_body_length_panics_on_drift() {
     );
 }
 
+/// #1984 repro (commit 1 of the fix): the boundary check keys off the case
+/// *name*, so every other name -- a renamed cell, a newly added boundary cell,
+/// or any name outside `payload-*` -- returned `Ok(())` without ever looking at
+/// the recorded body. This assertion passing on `origin/main` is the fail-open;
+/// the fix flips it to `is_err()` and binds it to a negative control.
+#[test]
+fn unregistered_boundary_case_passes_today() {
+    assert!(
+        assert_boundary_body_len_checked(
+            "payload-too-large-renamed",
+            &case_by_name("payload-too-large"),
+        )
+        .is_ok(),
+        "#1339 #1984 fail-open repro: an undeclared case name is not checked"
+    );
+}
+
 #[test]
 fn recorded_env_value_rejects_drift() {
     crate::negative_assert!(
