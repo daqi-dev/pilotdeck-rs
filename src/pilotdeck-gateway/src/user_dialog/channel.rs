@@ -713,6 +713,13 @@ impl GatewayUserDialogChannel {
         request_event: &JsValue,
         stored: &StoredDialog,
     ) -> Result<()> {
+        // #1599: every host callback before this point (`uuid`, `now_ms`, the
+        // abort signal, the change observer) may have registered a same-id
+        // replacement that already wrote its own rows. Stop before the first
+        // write instead of overwriting them and only noticing afterwards.
+        if replaced(&self.inner, state) {
+            return Err(DialogError::Invalid(replaced_during("registration")));
+        }
         if let Some(journal) = &self.inner.options.journal {
             journal.record(request_event)?;
             // `record` is host code and may have registered a same-id
@@ -1157,17 +1164,16 @@ fn finish_poll(inner: &Inner, request_id: &JsString, registration: u64) {
         entry.polling = false;
     }
 }
-/// Whether a *different* registration owns `state`'s request id. An absent
-/// entry is not supersession: `complete` removes it before the settle hook
-/// runs, and that hook still owns the journal/store/lease cleanup.
 /// Whether a *different* registration owns `state`'s request id (or owned it
 /// and has since completed). See `RequestState::replaced` (#1599).
 fn replaced(inner: &Inner, state: &RequestState) -> bool {
+    // #1599: read the sticky flag and the table under one lock. A replacement
+    // sets the flag and publishes its entry under this same lock, so a reader
+    // that sees `false` here cannot have missed a replacement: either it
+    // already published (flag visible) or its entry is still in the table.
+    let requests = inner.requests.lock().unwrap();
     state.replaced.load(Ordering::SeqCst)
-        || inner
-            .requests
-            .lock()
-            .unwrap()
+        || requests
             .get(&state.request_id)
             .is_some_and(|current| !std::ptr::eq(Arc::as_ptr(current), state))
 }
