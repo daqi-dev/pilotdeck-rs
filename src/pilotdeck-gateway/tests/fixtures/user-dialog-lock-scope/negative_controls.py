@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Temporary product mutations; require an oracle assertion failure, then restore.
 
-#1442/#1599 negative controls: each mutation moves one host-supplied callback
-(the resolver, the settle hook, or the change observer) back under the
-GatewayUserDialogBus MutexGuard, and the #1442 try_lock probe tests must turn
-red. Run with no other writers/builds in this worktree. Evidence goes in a new
-output folder; original source bytes and hashes are verified after every
-mutation.
+#1442/#1599 negative controls: each mutation puts one host-supplied callback
+(the resolver, the settle hook, the accepts validator, or the change observer)
+back under the GatewayUserDialogBus MutexGuard, and the #1442 try_lock probe
+tests must turn red. Every mutant keeps the callback call count and order of
+the original code, so the kill evidence is the "runs under the guard" probe
+rather than a duplicated callback. Run with no other writers/builds in this
+worktree. Evidence goes in a new output folder; original source bytes and
+hashes are verified after every mutation.
 
 Remote-host mode keeps the delivery uncommitted, so the baseline is supplied
 by the caller (argv[2]): a `git stash create` commit of the staged delivery
@@ -17,14 +19,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
 from negative_selection import baseline_passed
-from negative_process import mutating_sources, run_owned
+from negative_process import mutating_sources, run_owned, wait_for_slot as gate_wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
@@ -43,19 +43,35 @@ mutations = [
      '                                .lock()\n'
      '                                .unwrap_or_else(|e| e.into_inner());\n'
      '                            (consumed.entry.resolve)(answer);'),
-    # consume: the settle hook runs inside the bus method again.
-    ('settle-hook-back-under-guard', 'user_dialog/bus.rs',
-     '        let entry = bucket.remove(index);\n'
-     '        if bucket.is_empty() {\n'
-     '            self.pending.remove(session);\n'
-     '        }\n'
-     '        let lease = self.leases.remove(&(session.clone(), request.clone()));',
-     '        let entry = bucket.remove(index);\n'
-     '        if bucket.is_empty() {\n'
-     '            self.pending.remove(session);\n'
-     '        }\n'
-     '        let lease = self.leases.remove(&(session.clone(), request.clone()));\n'
-     '        let _ = entry.on_settled.as_ref().map_or(Ok(()), |hook| hook());'),
+    # consume: the settle hook runs with a guard alive again (called once).
+    ('settle-hook-back-under-guard', 'native_process/methods/user_dialog.rs',
+     '                            let settled = consumed\n'
+     '                                .entry\n'
+     '                                .on_settled\n'
+     '                                .as_ref()\n'
+     '                                .map_or(Ok(()), |hook| hook());',
+     '                            let settled = {\n'
+     '                                let _guard = self\n'
+     '                                    .user_dialog_bus\n'
+     '                                    .lock()\n'
+     '                                    .unwrap_or_else(|e| e.into_inner());\n'
+     '                                consumed\n'
+     '                                    .entry\n'
+     '                                    .on_settled\n'
+     '                                    .as_ref()\n'
+     '                                    .map_or(Ok(()), |hook| hook())\n'
+     '                            };'),
+    # respond: the accepts validator runs with a guard alive again (called once).
+    ('accepts-back-under-guard', 'native_process/methods/user_dialog.rs',
+     '                        if !(snapshot.accepts)(&value) {',
+     '                        let accepted = {\n'
+     '                            let _guard = self\n'
+     '                                .user_dialog_bus\n'
+     '                                .lock()\n'
+     '                                .unwrap_or_else(|e| e.into_inner());\n'
+     '                            (snapshot.accepts)(&value)\n'
+     '                        };\n'
+     '                        if !accepted {'),
     # emit: the observer is invoked in place instead of being queued.
     ('observer-delivery-back-under-guard', 'user_dialog/bus.rs',
      '    fn emit(&mut self, change: JsValue) {\n'
@@ -82,22 +98,16 @@ failures = []
 def target_test(name):
     if name == 'observer-delivery-back-under-guard':
         return 'user_dialog_observer_reenters_the_bus_lock_free'
+    if name == 'accepts-back-under-guard':
+        return 'user_dialog_accepts_reenters_the_bus_lock_free'
     return 'user_dialog_settle_and_resolve_reenter_the_bus_lock_free'
 
 
 def wait_for_slot(name):
-    # Required resource check; do not interpret the output as a concurrency
-    # guarantee if the sandbox denies ps. Its raw output is retained.
-    slot_deadline = time.monotonic() + 1800
-    while True:
-        slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root,
-                               capture_output=True, text=True, timeout=300)
-        (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-        if slots.returncode in (0, 69):
-            break
-        assert slots.returncode == 1, slots.stdout + slots.stderr
-        assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-        time.sleep(5)
+    # Single source of truth for the gate contract (retries inside one budget,
+    # no bare subprocess timeout); its raw output is retained per mutation.
+    slot = gate_wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=1800, interval=5)
+    (out / f'{name}.slots.log').write_text(slot.stdout + slot.stderr)
 
 
 with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations}),

@@ -774,11 +774,17 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                 "check" => {
                     let id = slot_id(action, &slots);
                     let value = field(action, "value");
-                    let bus = bus_observer.lock().unwrap();
-                    let accepted = bus
-                        .peek(&session, &id)
-                        .map_or(JsValue::Null, |entry| JsValue::Bool((entry.accepts)(value)));
-                    let pending = bus.pending_count(&session);
+                    // #1442: `accepts` is host code, so it runs on the
+                    // snapshot's cloneable handle, never under the guard.
+                    let (accepts, pending) = {
+                        let bus = bus_observer.lock().unwrap();
+                        (
+                            bus.peek(&session, &id).map(|entry| entry.accepts.clone()),
+                            bus.pending_count(&session),
+                        )
+                    };
+                    let accepted =
+                        accepts.map_or(JsValue::Null, |accepts| JsValue::Bool((accepts)(value)));
                     object([
                         ("accepted", accepted),
                         ("pending", JsValue::Number(pending as f64)),
@@ -979,13 +985,17 @@ fn channel_observation(
             slot.outcome.clone().unwrap_or(JsValue::Null),
         );
     }
-    let (pending, pending_count) = {
+    // #1442: `list` can expire leases and queue broadcasts, so the events
+    // leave the guard with the observation and are delivered right after it.
+    let (pending, pending_count, outbox) = {
         let mut bus = bus.lock().unwrap();
         (
             JsValue::Array(bus.list(session)),
             JsValue::Number(bus.pending_count(session) as f64),
+            bus.drain_events(),
         )
     };
+    outbox.deliver();
     let bytes = match fs::read(journal_path) {
         Ok(bytes) => JsValue::String(String::from_utf8_lossy(&bytes).into_owned().into()),
         Err(_) => JsValue::Null,

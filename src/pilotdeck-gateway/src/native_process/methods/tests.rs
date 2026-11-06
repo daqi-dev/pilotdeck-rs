@@ -3013,18 +3013,20 @@ type ReentryLog1442 = std::sync::Arc<std::sync::Mutex<Vec<(&'static str, bool)>>
 
 fn assert_lock_free_1442(log: &ReentryLog1442, expected: &[&'static str]) {
     let recorded = log.lock().unwrap().clone();
+    // Guard sensitivity first: a callback that ran under the guard must report
+    // *that*, even when the mutant also shifts the probe sequence.
+    for (name, reentered) in &recorded {
+        negative_assert!(
+            *reentered,
+            "#1442 the {name} callback re-acquired the bus lock; it must not run under the guard"
+        );
+    }
     let names: Vec<&'static str> = recorded.iter().map(|(name, _)| *name).collect();
     negative_assert_eq!(
         names.as_slice(),
         expected,
         "#1442 every probe fires exactly once, in order"
     );
-    for (name, reentered) in recorded {
-        negative_assert!(
-            reentered,
-            "#1442 the {name} callback re-acquired the bus lock; it must not run under the guard"
-        );
-    }
 }
 
 /// Wires a bus whose observer records try_lock re-acquisition (#1442).

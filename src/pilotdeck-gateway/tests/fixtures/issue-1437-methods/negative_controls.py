@@ -194,14 +194,16 @@ mutations = [
      '#1437 respond without a lease domain code'),
     # respond on an unwired bus stays Ok({delivered:false}).
     ('notpending-delivered-true', USER_DIALOG,
-     'ConsumeResult::NotPending => Ok(crate::metadata::object([(\n'
-     '                            "delivered",\n'
-     '                            JsValue::Bool(false),\n'
-     '                        )])),',
-     'ConsumeResult::NotPending => Ok(crate::metadata::object([(\n'
-     '                            "delivered",\n'
-     '                            JsValue::Bool(true),\n'
-     '                        )])),',
+     'ConsumeResult::NotPending => {\n'
+     '                            outbox.deliver();\n'
+     '                            Ok(crate::metadata::object([(\n'
+     '                                "delivered",\n'
+     '                                JsValue::Bool(false),\n',
+     'ConsumeResult::NotPending => {\n'
+     '                            outbox.deliver();\n'
+     '                            Ok(crate::metadata::object([(\n'
+     '                                "delivered",\n'
+     '                                JsValue::Bool(true),\n',
      TEST + 'user_dialog_respond_unwired_bus_returns_delivered_false',
      '#1437 respond answered on an unwired bus reports delivered:false'),
     # the two families stay outside LOCAL_METHODS.
