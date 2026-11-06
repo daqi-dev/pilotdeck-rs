@@ -35,6 +35,36 @@ def blank_target(environ=None):
     return 'CARGO_TARGET_DIR' in env and not env['CARGO_TARGET_DIR'].strip()
 
 
+def unusable_target(environ=None):
+    """The shared target rule's refusal message for ``CARGO_TARGET_DIR``, or None.
+
+    ``missing_target`` is the presence half; this is the value half. The values
+    are not re-listed here: they are delegated to
+    ``negative_process.target_environment``, which is the one place that defines
+    blank / dot / filesystem root / repository root / inside-``src`` (#1166).
+    Re-listing them would rebuild exactly the family drift that let a dot target
+    claim the evidence directory and then die on exit 1 in some entries while
+    two others refused it (#1666 fix-r9).
+
+    An *absent* variable is not a refusal here: the helper applies the shared
+    default, so entries that require a caller-supplied tree still refuse
+    "absent" with :func:`missing_target` themselves.
+    """
+    from negative_process import target_environment
+    try:
+        target_environment(Path(__file__).resolve().parents[4], environ)
+    except RuntimeError as error:
+        return str(error)
+    return None
+
+
+def refuse_unusable_target(environ=None):
+    """Refuse a target value the shared rule rejects, before claiming any directory."""
+    message = unusable_target(environ)
+    if message:
+        refuse(message)
+
+
 def baseline_passed(raw, test_name):
     """The named test ran and libtest reported it green.
 

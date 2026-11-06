@@ -38,13 +38,14 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, missing_target, refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 # #1734: caller-owned preconditions are checked before the evidence directory
 # exists, so "never started" (2) really leaves nothing behind.
 if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
+refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 
 # Local rehearsals of an uncommitted fix point this at ``git stash create``,
 # the same pre-commit escape hatch used by the other fixtures' controls

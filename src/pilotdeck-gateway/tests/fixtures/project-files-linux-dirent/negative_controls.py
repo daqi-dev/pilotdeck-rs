@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, registered, select,
+from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, refuse_unusable_target, registered, select,
                                verdict_exit)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
@@ -106,6 +106,7 @@ except ValueError as error:
     refuse(str(error))
 if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 if not (os.environ.get('PDRS_BASELINE') or '').strip():
     # #1666: absent, empty and all-space are one caller error, the same three
     # modes as the target guard above (#1666 fix-r8).

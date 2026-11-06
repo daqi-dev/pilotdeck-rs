@@ -29,14 +29,17 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 `summary.json` 只在守卫成功退出后原子发布一次；取消或恢复失败时发布的是全 INVALID 总结，第二次中断允许没有总结——**缺失即失败关闭**，不得把“没有 summary”读成通过。
 
 `negative_suite.matrix_main` 的启动拒跑同属「从未开跑」（#1734 fix-r7）：缺参数 usage、未知或
-重复变异名、`CARGO_TARGET_DIR` 未设置 / 空串 / 纯空白、输出目录已存在，一律 `refuse()` → rc 2
+重复变异名、`CARGO_TARGET_DIR` 未设置 / 空串 / 纯空白 / 被共享 target 规则拒绝的取值
+（dot / 文件系统或仓库根 / `src` 内）、输出目录已存在，一律 `refuse()` → rc 2
 且不创建证据目录；它不发布 `summary.json` 失败总结，因为这些分支一行变异都没跑。其余运行期结果
 仍按该函数的既有语义（SURVIVED / INVALID → 1）。
 
 契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
 `_shared.negative_control.mutation_suite` 另有一条启动期规则（#1666/#1734）：它先占证据目录再取环境，
-所以 `CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白，统一走 `negative_selection.missing_target()`）
+所以 `CARGO_TARGET_DIR` 不可用（未设置 / 空串 / 纯空白走 `negative_selection.missing_target()`；
+dot / 根 / `src` 内走 `negative_selection.refuse_unusable_target()`，后者只把
+`negative_process.target_environment` 的判据折算成 rc 2，不另列取值）
 的拒跑放在占目录之前，并同样走 `negative_selection.refuse()`——rc=2、
 原因进 stderr；若启动期 `refuse()` 从更深处（如脚本自己的 oracle 读取）抛出，且**目录仍为空**，
 执行器不发布 `summary.json` 并撤掉它；目录已有文件时撤不掉，此时在 stderr 打出残留路径，按 rc=2

@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, missing_target, refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 from _negative_common import mutate, run, check_mutations
 
 root = Path(__file__).resolve().parents[5]
@@ -94,6 +94,7 @@ if sys.argv[1:] == ['--check']:
     raise SystemExit(check_mutations((n, source, s, r) for n, s, r in mutations))
 if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
     refuse('CARGO_TARGET_DIR must be supplied by the caller')
+refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 # Every startup guard runs before the evidence directory exists, so a
 # `refuse()` ("never started", exit 2) really leaves nothing behind.
 try:

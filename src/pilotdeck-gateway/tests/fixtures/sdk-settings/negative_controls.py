@@ -13,7 +13,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, judge, passed
-from negative_selection import claim_dir, missing_target, refuse, registered
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered
 
 root = Path(__file__).resolve().parents[5]
 settings = root / 'src/pilotdeck-cli/src/sdk/settings.rs'
@@ -131,6 +131,7 @@ def main():
     env = dict(os.environ)
     if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
     out = claim_dir(args[0])
