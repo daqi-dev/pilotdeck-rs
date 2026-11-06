@@ -11,12 +11,17 @@
 （`src/pilotdeck-gateway/tests/native_process.rs`）：用 `CARGO_BIN_EXE_pilotdeck-gateway`
 起真实 `--native` 子进程（完整合法 CLI、`env_clear()` 后注入被测键），断言子进程非零
 退出且 stderr 含 `native isolated mode does not accept inherited <key>`。子进程由
-`kill_on_drop` + 显式 `kill`/`wait` 回收，stderr 经 `observe_child_stderr` 按行读、见到
-目标**行首**立即返回（#1401 评审 P2：原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次
-白等满 5 秒，慢主机又会被读成「没有广播」）。观察有两重界：单行静默 60 秒，整体预算
-180 秒，另有 64 KiB stderr 上限——逐行超时会在每读到一行时重置，没有总预算则持续输出
-不匹配行的子进程会让测试永久挂起（#1401 评审两家独立提出）。超时读到的一半字节仍计入
-证据，且半行同样按行首判定广告。调用点的两种破坏各有专属观察：删除调用时子进程会带着
+`kill_on_drop` + 显式 `kill`/`wait` 回收，stderr 经 `observe_child_stderr` 按行读，读到
+**整行恰好是产品广播形状**立即返回：`native listening` + 一个空格 + 非空且不含空白的地址，
+与 `src/native_process.rs` 的 `eprintln!("native listening {address}")` 一致（#1401 评审
+P2：原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次白等满 5 秒，慢主机又会被读成「没有
+广播」）。观察有三重界：单行静默 60 秒、整体预算 180 秒，以及直接套在流上的 64 KiB
+`take`——逐行超时会在每读到一行时重置，没有总预算则持续输出不匹配行的子进程会让测试永久
+挂起（#1401 评审两家独立提出）；`read_until` 见到换行前会一直往同一个缓冲追加，只在读完后
+检查字节数挡不住单行无换行的持续输出，所以上限必须套在流本身（#1401 评审 P0）。**没有读完
+的行一律不算广告**：子进程只打出半行前缀就卡住或退出时，超时 / EOF 分支返回 `false`（半行
+字节仍作为证据返回，供调用方自己的 needle 检查），scrub 测试因此不会把「喊了半句」当成正控
+通过（#1401 评审 P0）。调用点的两种破坏各有专属观察：删除调用时子进程会带着
 被接受的权限常驻，stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是
 证据）；后移调用时装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home`
 除自身写入的 config 外无新增条目。
@@ -51,10 +56,13 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 
 `python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
 模板、三个键名与 scrub 标记外，还按**测试函数体切段**绑定观察——rejects 测试里的
-`leftover.is_empty()` 与 `observe_child_stderr(stderr)`，scrub 测试里的
-`Failed to parse default config YAML.`、同一条广播观察与它自己的「无法判定」panic
+`leftover.is_empty()`、`observe_child_stderr(stderr)` 与判广告的断言调用本身
+（`negative_assert!(!advertised,`），scrub 测试里的 `Failed to parse default config YAML.`、
+同一条广播观察、判继承键的那条断言（`!leaked_parse,`）与它自己的「无法判定」panic
 （#1401 项 4 / 评审 P2：整文件 needle 分不清哪个测试在观察，两个测试都含
-`native listening` 后删掉 rejects 那处仍会通过；切段函数由两个脚本共用
+`native listening` 后删掉 rejects 那处仍会通过；只绑 marker 模板也不够——子进程早退 / 退出
+码 / 残留三处断言复用同一句消息，删掉判广告那条后模板仍在，`--check` 仍会通过；切段函数由
+两个脚本共用
 `negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
 函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认）。实际负控命令
 为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方设置

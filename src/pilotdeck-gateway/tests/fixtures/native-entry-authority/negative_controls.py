@@ -98,9 +98,15 @@ def main():
         # rejection itself -- assembly's leftovers under home and the
         # listening advertisement -- must stay in the source; a drift here
         # would silently unbind the reorder and omitted mutants.
+        # The marked assertion itself, not just its message: the same
+        # template is repeated by the sibling assertions, so binding the
+        # message alone leaves the advertisement kill deletable without a
+        # --check failure (#1401 review P2).
         for needle, what in (('leftover.is_empty()', 'home leftover observation'),
                              ('observe_child_stderr(stderr)',
-                              'listening advertisement observation')):
+                              'listening advertisement observation'),
+                             ('negative_assert!(!advertised,',
+                              'listening advertisement assertion')):
             if needle not in rejects:
                 raise SystemExit(f'#1261 missing {what} from {TEST}')
         # #1401 item 6: the scrub mutant's marker and the three observations
@@ -114,6 +120,8 @@ def main():
                               'inherited config parse observation'),
                              ('observe_child_stderr(stderr)',
                               'scrub listening observation'),
+                             ('!leaked_parse,',
+                              'scrub inherited config assertion'),
                              ('#1261 native entry scrub child neither advertised '
                               'listening nor exited',
                               'scrub unjudgeable panic')):

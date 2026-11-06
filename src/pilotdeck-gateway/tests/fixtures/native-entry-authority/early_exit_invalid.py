@@ -72,6 +72,10 @@ SCRUB_EARLY_EXIT = ('#1261 native entry scrub child neither advertised listening
 # and the single call each test makes to observe the advertisement.
 GATE = 'if !stderr.contains(&rejection) {'
 OBSERVE = 'observe_child_stderr(stderr)'
+# The two marked assertions the runtime verdicts rest on, as they appear in
+# the test source: the advertisement kill and the scrub kill's polarity.
+ADVERTISED_ASSERT = 'negative_assert!(!advertised,'
+LEAKED_ASSERT = '!leaked_parse,'
 KEYS = ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT', 'PILOTDECK_MANAGED_CONFIG')
 # One row per stub shape *and* bound test: an environmental exit prints
 # nothing and can only be judged INVALID, while a child that advertised
@@ -131,11 +135,20 @@ def main():
         for key in KEYS:
             if f'"{key}"' not in rejects:
                 raise SystemExit(f'#1261 key missing from {TEST}: {key}')
+        # The template alone is not enough: the same message is repeated by
+        # the sibling assertions below it, so deleting the advertisement
+        # assertion (#1401 review P2, demonstrated by dropping the line and
+        # still exiting 0) has to be caught by the call itself. The scrub
+        # assertion's polarity is bound the same way: inverting it would leave
+        # its message in place while the inherited key no longer kills.
         for needle, what in ((GATE, 'rejection gate'),
-                             (OBSERVE, 'listening advertisement observation')):
+                             (OBSERVE, 'listening advertisement observation'),
+                             (ADVERTISED_ASSERT,
+                              'listening advertisement assertion')):
             if needle not in rejects:
                 raise SystemExit(f'#1261 missing {what} from {TEST}')
         for needle, what in ((OBSERVE, 'scrub listening advertisement observation'),
+                             (LEAKED_ASSERT, 'scrub inherited config assertion'),
                              (SCRUB_EARLY_EXIT, 'scrub unjudgeable panic')):
             if needle not in scrub:
                 raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
@@ -277,11 +290,14 @@ def main():
                     # a binary nobody chose. Abort the whole run rather than
                     # publish rows the tree cannot vouch for.
                     raise RuntimeError('gateway binary not restored; aborting')
-            restored_pass = True
             for tag, test in TESTS:
                 restored_run, _ = run_cargo(f'early-exit-restored-{tag}', test)
                 if not passed(restored_run, test):
                     raise RuntimeError(f'restored positive control failed: {test}')
+            # Only after both controls passed: raising with the flag already
+            # set would let the summary line publish `restoredPass: true` for
+            # a run whose restored binary does not pass (#1401 review P1).
+            restored_pass = True
         except BaseException as error:
             # Any global failure (positive control, restore, uplift) invalidates
             # every verdict already recorded: a KILLED that was observed before

@@ -139,9 +139,11 @@ async fn explicit_entry_selects_parser() {
     }
 }
 
-// The child's own stderr line once it is serving. Observations anchor on the
-// whole line (see read_stderr_until): a substring match would also fire on a
-// diagnostic that merely mentions the phrase.
+// The child's own stderr line once it is serving, exactly as the product
+// writes it (`eprintln!("native listening {address}")` in
+// src/native_process.rs). Observations anchor on the whole line (see
+// `advertises`): a substring match would also fire on a diagnostic that merely
+// mentions the phrase.
 const NATIVE_LISTENING: &str = "native listening";
 // How long a child may say nothing at all, and the absolute budget for one
 // observation. The silence bound alone would let a child that logs once a
@@ -159,72 +161,100 @@ const CHILD_EXIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
 // bound.
 const CHILD_STDERR_LIMIT: usize = 64 * 1024;
 
-// Reads a child's stderr line by line and returns as soon as a line starts
-// with `needle`, so a child that stays up after advertising listening costs
-// one line, not a whole deadline (#1401 review P2: `read_to_end` under a 5 s
-// deadline spent all 5 s on every intact run and read a slow host as a
-// missing advertisement). Otherwise the bytes collected before EOF, a read
-// error, the silence bound or the total budget come back with `false`.
-//
-// `read_until` is not cancel safe, so a cancelled read may leave the line it
-// was building half-filled; those bytes are part of what the child said and
-// are returned with the rest (a final line without a newline therefore still
-// reaches the caller's own needle checks), and the same line is judged for
-// the advertisement -- fail-closed either way, never a false kill.
-async fn read_stderr_until(
-    stderr: tokio::process::ChildStderr,
-    needle: &str,
-    silence: std::time::Duration,
-    budget: std::time::Duration,
-) -> (Vec<u8>, bool) {
-    use tokio::io::AsyncBufReadExt;
-    let started = std::time::Instant::now();
-    let mut reader = tokio::io::BufReader::new(stderr);
-    let mut line = Vec::new();
-    let mut collected = Vec::new();
-    loop {
-        let left = budget.saturating_sub(started.elapsed());
-        if left.is_zero() {
-            return (collected, false);
-        }
-        line.clear();
-        match tokio::time::timeout(silence.min(left), reader.read_until(b'\n', &mut line)).await {
-            // EOF, read error, silence and budget are one case: no more
-            // observations and no advertisement, which every caller judges as
-            // INVALID. Whatever the cancelled read already appended is kept
-            // (`read_until` appends block by block), so a child that prints
-            // its last line without a newline still leaves its evidence with
-            // the caller instead of turning a judgeable exit into silence.
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
-                collected.extend_from_slice(&line);
-                let advertised = line.starts_with(needle.as_bytes());
-                return (collected, advertised);
-            }
-            Ok(Ok(_)) => {
-                if line.starts_with(needle.as_bytes()) {
-                    collected.extend_from_slice(&line);
-                    return (collected, true);
-                }
-                if collected.len() + line.len() > CHILD_STDERR_LIMIT {
-                    return (collected, false);
-                }
-                collected.extend_from_slice(&line);
-            }
-        }
+// Whether one *finished* stderr line is the product's listening
+// advertisement: the phrase, a space, then a non-empty address with no
+// whitespace of its own. Anything else -- the bare phrase, a longer
+// diagnostic that merely begins with it, junk after the address -- is not
+// proof that something is serving (#1401 review P0).
+fn advertises(line: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(line);
+    let text = text.trim_end_matches(&['\r', '\n'][..]);
+    match text
+        .strip_prefix(NATIVE_LISTENING)
+        .map(|rest| rest.strip_prefix(' '))
+    {
+        Some(Some(address)) => !address.is_empty() && !address.contains(char::is_whitespace),
+        _ => false,
+    }
+}
+
+// Pins the shape `advertises` accepts, so the P0 above cannot come back as a
+// silent loosening: every line in the second list was, at some point in this
+// branch's history, judged as an advertisement.
+#[test]
+fn native_listening_advertisement_shape() {
+    for line in [
+        "native listening 127.0.0.1:4321\n",
+        "native listening [::1]:4321\r\n",
+        "native listening ::1:4321",
+    ] {
+        assert!(
+            advertises(line.as_bytes()),
+            "must count as an advertisement: {line:?}"
+        );
+    }
+    for line in [
+        "native listening\n",
+        "native listening \n",
+        "native listening 127.0.0.1:4321 extra\n",
+        "native listening: 127.0.0.1:4321\n",
+        "warn: native listening 127.0.0.1:4321\n",
+        "",
+    ] {
+        assert!(
+            !advertises(line.as_bytes()),
+            "must not count as an advertisement: {line:?}"
+        );
     }
 }
 
 // The observation both tests wait for: the child's own listening
 // advertisement, under the shared bounds. Kept as one unformatted call per
 // test because the fixture's `--check` binds this call inside each test body.
+//
+// Returns as soon as a line is an advertisement, so a child that stays up
+// afterwards costs one line, not a whole deadline (#1401 review P2:
+// `read_to_end` under a 5 s deadline spent all 5 s on every intact run and
+// read a slow host as a missing advertisement). Otherwise the bytes collected
+// before EOF, a read error, the silence bound, the total budget or the byte
+// bound come back with `false`.
 async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, bool) {
-    read_stderr_until(
-        stderr,
-        NATIVE_LISTENING,
-        CHILD_SILENCE_LIMIT,
-        CHILD_OBSERVATION_BUDGET,
-    )
-    .await
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt};
+    let started = std::time::Instant::now();
+    // `take` bounds the stream itself, not just what this loop keeps:
+    // `read_until` appends to its buffer until it sees a newline or EOF, so a
+    // child that streams one unterminated line would otherwise grow that
+    // single buffer without limit until the deadline (#1401 review P0).
+    let mut reader = tokio::io::BufReader::new(stderr).take(CHILD_STDERR_LIMIT as u64);
+    let mut line = Vec::new();
+    let mut collected = Vec::new();
+    loop {
+        let left = CHILD_OBSERVATION_BUDGET.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            return (collected, false);
+        }
+        line.clear();
+        let read = reader.read_until(b'\n', &mut line);
+        match tokio::time::timeout(CHILD_SILENCE_LIMIT.min(left), read).await {
+            // EOF, read error, silence, budget and the byte bound are one
+            // case: nothing more will be observed, and a line this read did
+            // not finish is not an advertisement. A child that prints the
+            // phrase and then hangs (or dies) has proven nothing (#1401
+            // review P0). What the cancelled read already appended is kept as
+            // evidence for the caller's own checks.
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
+                collected.extend_from_slice(&line);
+                return (collected, false);
+            }
+            Ok(Ok(_)) => {
+                let advertised = advertises(&line);
+                collected.extend_from_slice(&line);
+                if advertised {
+                    return (collected, true);
+                }
+            }
+        }
+    }
 }
 
 // One complete valid profile for both child tests: with the entry gate or the
