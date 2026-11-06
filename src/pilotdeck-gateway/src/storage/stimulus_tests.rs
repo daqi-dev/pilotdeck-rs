@@ -188,28 +188,34 @@ impl Drop for BarrierRelease {
         // barrier while this guard is already spinning has not written its
         // `block` receipt yet, and a one-shot sample would then skip the release
         // entirely — the leak this guard exists to stop.
+        let observe = |phase: &str| receipt_seq(&self.control, self.site, phase, self.key);
         let mut deadline = Instant::now() + Duration::from_secs(2);
+        let mut observed = (observe("release"), observe("block"));
         loop {
-            if receipt_seq(&self.control, self.site, "release", self.key).is_none()
-                && let Some(seq) = receipt_seq(&self.control, self.site, "block", self.key)
+            if observed.0.is_none()
+                && let Some(seq) = observed.1
             {
                 // Non-panicking release: a `.unwrap()` here could abort during unwind.
                 let temporary = self.control.join("release.json.tmp");
                 if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
                     let _ = fs::rename(&temporary, self.control.join("release.json"));
                 }
-                // Fresh budget for the durable write this release unblocks: a
-                // barrier the worker only reaches late must not leave that write
-                // with whatever is left of the block-receipt wait.
+            }
+            // Only a receipt that actually advanced earns the durable write behind
+            // it a fresh budget — the barrier the worker reaches late must not
+            // leave that write with whatever is left of the block-receipt wait.
+            // A stalled or failing barrier extends nothing, so `Drop` still ends:
+            // at most the `block` and `release` transitions can push it out.
+            let current = (observe("release"), observe("block"));
+            if current != observed {
+                observed = current;
                 deadline = Instant::now() + Duration::from_secs(2);
             }
             // The durable write behind the barrier lands after the release; wait
             // for its `complete` receipt so `Scratch` does not remove the
             // directory (and race the worker into re-creating it) before that
             // write finishes.
-            if receipt_seq(&self.control, self.site, "complete", self.key).is_some()
-                || Instant::now() >= deadline
-            {
+            if observe("complete").is_some() || Instant::now() >= deadline {
                 break;
             }
             thread::sleep(POLL);
