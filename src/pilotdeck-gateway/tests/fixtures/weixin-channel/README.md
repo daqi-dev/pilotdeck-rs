@@ -113,7 +113,7 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 
 负控（`negative_controls.py`，全部 KILLED）：
 
-`exact=True` 的判定器要求「命名测试 FAILED」**且**收到该断言的 nonce 收据，收据只由 `negative_assert*` 与 `test_negative_receipt::expect_err` / `expect_ok` / `expect_some` 写出（即所有调用 `record_failure` 的断言助手）。所以每格变异的死亡路径都必须落在这些断言上：先 std `expect`/`expect_err` 再断言会让测试在收据之前 panic，判定器只能报 `NO_RECEIPT`（INVALID）。下载三格因此改为先取`Result`、再用 `outcome_summary` 断言（也避免把 50 MiB 载荷 Debug 进日志）。
+`exact=True` 的判定器要求「命名测试 FAILED」**且**收到该断言的 nonce 收据，收据只由 `negative_assert*` 与 `test_negative_receipt::expect_err` / `expect_ok` / `expect_some` 写出（即所有调用 `record_failure` 的断言助手）。所以每格变异的死亡路径都必须落在这些断言上（收据只由调用 `record_failure` 的断言助手写：`negative_assert*` 与 `expect_err` / `expect_ok` / `expect_some`）。先 std `expect`/`expect_err` 再断言会让测试在收据之前 panic，判定器只能报 `NO_RECEIPT`（INVALID）。下载格因此一律先取 `Result` 再断言：超限 / 断流 / 取头三格比 `outcome_summary` 摘要（也避免把 50 MiB 载荷 Debug 进日志），慢正文格只返回 3 字节，直接逐字节比对载荷。
 
 | 变异 | 死点 |
 |---|---|
