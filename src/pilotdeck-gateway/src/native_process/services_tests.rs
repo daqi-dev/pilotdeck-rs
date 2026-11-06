@@ -2054,6 +2054,26 @@ async fn settings_store_anchors_at_pilot_home_env() {
     };
     let pilot_reference = reference(&pilot_home);
     let flag_reference = reference(&flag_home);
+    // #1320 non-vacuous: both sides must carry the compared fields before any
+    // comparison runs. A projection that stopped producing `sources` or
+    // `contentHash` would otherwise pass vacuously (`[] == []`,
+    // `Undefined == Undefined`) and silently retire this, the F3 production
+    // anchor's only guard — a missing field must fail explicitly here.
+    for (side, value) in [
+        ("resolved", &resolved),
+        ("pilot_reference", &pilot_reference),
+    ] {
+        negative_assert!(
+            matches!(value.get("sources"), Some(JsValue::Array(sources)) if !sources.is_empty()),
+            "#1320 non-vacuous: {side} must carry a non-empty sources array — a missing \
+             field must fail explicitly, not pass vacuously as [] == []"
+        );
+        negative_assert!(
+            matches!(value.get("contentHash"), Some(JsValue::String(_))),
+            "#1320 non-vacuous: {side} must carry a string contentHash — a missing field \
+             must fail explicitly, not pass vacuously as Undefined == Undefined"
+        );
+    }
     negative_assert_eq!(
         resolved
             .get("contentHash")
@@ -2079,6 +2099,13 @@ async fn settings_store_anchors_at_pilot_home_env() {
 
 /// `(kind, path, contentHash)` per source: the fields that identify WHICH
 /// copy was loaded, unlike `loadedAt` (a per-load timestamp).
+///
+/// #1320 non-vacuous: a missing or non-array `sources` is an explicit
+/// failure, not `Vec::new()`. The empty return used to let the anchor
+/// comparison above pass vacuously when the projection stopped producing
+/// the field; the non-vacuous pre-assertions run first, and this fallback
+/// backstops them for the `--home` reference too, which only appears in
+/// the inequality comparison.
 fn source_triples(resolved: &JsValue) -> Vec<(String, String, String)> {
     match resolved.get("sources") {
         Some(JsValue::Array(sources)) => sources
@@ -2091,7 +2118,10 @@ fn source_triples(resolved: &JsValue) -> Vec<(String, String, String)> {
                 )
             })
             .collect(),
-        _ => Vec::new(),
+        _ => panic!(
+            "#1320 non-vacuous: sources must be present as an array before its triples are \
+             compared — a missing field must fail explicitly, not pass vacuously"
+        ),
     }
 }
 
