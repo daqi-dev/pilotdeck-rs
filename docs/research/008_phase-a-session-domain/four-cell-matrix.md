@@ -127,7 +127,8 @@ E1 calibrate 的**边界必须一起写**：它是 `topology=ts-in-process-contr
 
 `native-topology/run.py` 的 `Rust-sidecar-ts` 格：`status=PASS`，`executedCases` = `model-stream` / `provider-error` /
 `provider-unconfigured` / `token-saver-judge` 四案全跑、每案 5 轮。证据 `_tmp/20261106-issue-590/native-topology-001/report.json`。
-（**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 的 status，见 §七.2。）
+（**`run.py` 顶层退出码未留痕**，本行结论只依据 `report.json` 里 **`cells[].status`**（该格 `Rust-sidecar-ts` 的 PASS），
+不是顶层 `status`——顶层恒为 `NOT_RUN`，见下段；见 §七.2。）
 
 边界：整份报告 `status=NOT_RUN`、`moduleMatrixStatus=PASS`。`NOT_RUN` 来自 `entryCoverage`（生产入口
 `production native request adapter not connected`）与 `retirement`（`complete exec/egress and storage observers absent`），
@@ -259,8 +260,10 @@ EXIT=3
 | `model_runtime_stream_cancel`（stream-cancel） | **PASS** | 1 | 不适用 | 首个 stream delta 后即中止，Anthropic Messages 的 usage 块在流尾，结构性缺席（`limits.usageNotApplicable` 有记录） |
 | `model_runtime_tool`（tool） | **PASS** | 1 | 43 | 工具轮完整 |
 
-合计 **3 次请求 / 49 输出 token**（是否超限只看 `report.json` 的 `limits.violations=[]`，不在此复述上限数字），
-`usageMissing=[]`、`echoMissing=[]`；
+合计 **3 次请求 / 49 输出 token**（不在此复述上限数字）。`limits.violations=[]` 单独看**不足以**证明没超限：
+那两条上限项只在拿到 usage 时才写入，usage 缺席时 `violations` 仍是 `[]` 而 `capsVerified=false`。
+**没超限 = `capsVerified=true`（证明检查确实做过：`usageMissing=[]` 且 `echoMissing=[]`）且 `violations=[]`（数值没超）**，
+本 run 两者都成立；
 `secretSelfCheck.finalPass=true`（三个 key 名与本机 generic 模式零命中）。
 provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key 只从 `/Users/da/ws/pilotdeck-rs/.env.local` 读，
 证据目录独占（`fcntl.flock`，`evidenceLock.holder.pid=67214`），跑前 `cargo-slots` 为「在跑 1 / 上限 2」。
@@ -310,8 +313,10 @@ provider 是 llm-center `deepseek-v4.1-flash-mb`（`protocol=anthropic`），key
      `sidecar_one_shot_parent_close_after_admission` 四条取消场景是「TS 宿主眼里观测到的 sidecar 侧差异」，
      **仍按 sidecar 侧信号记 —— ② 的 sidecar 侧信号为 23 条，不降**。
      作为对照：广读会把这四条全部豁免，② 的 sidecar 侧信号降到 **19–21 条（最少 19）**——
-     只豁免前两条为 21（降幅下限），连同两条名字带 abort/close 的 one-shot 场景一起豁免为 19（降幅上限）；
-     R3 原文没有枚举「涉及取消」的边界，19 与 21 分别是豁免最多与最少的两端。
+     只豁免前两条为 21（降幅下限），连同两条名字带 abort/close 的 one-shot 场景一起豁免为 19（降幅上限）。
+     **这个区间不是封闭端点**：R3 原文没有枚举「涉及取消」的边界，22 条名单里的 `deadline_during_tool`
+     （`durableStopReason=aborted_streaming`，同属中止路径）是否算第五条候选没有裁决，计入则广读下限还要再降。
+     本页只按 #1722 第 1 条给出 19–21 这个已知范围，**窄读的 23 条不受这些候选影响**。
      口径正本见 `A7-HOST-POST-CANCEL-EXIT-001-R5`；本页按 #1722 第 1 条保留四条场景名与 19–21 的对照数字，
      除此之外不重复 R5 的范围论证。
      这不是判分语义变更，不动冻结件，只影响本页一处计数。
@@ -382,9 +387,11 @@ python3 -I scripts/gateway-parity/session_domain.py --suite deadline \
    （calibrate 那次只留了单行 JSON 的 `calibrate-ts-ts.stdout.log` 与空的 `calibrate-ts-ts.stderr.log`，
    没有 `EXIT=` 行；①② 只有内层 `run.py` 的 `run_py_exit`；③④ 只有 report 级 `status`）。因此 §二 各格的结论**只依据 `report.json` / `run.json` 的 status**，
    不引用、也不推断这三个顶层退出码；复跑时按上面的写法补齐。
-   **补齐 ③④ 时注意它的退出码语义**：`native-topology/run.py` 的 `main` 是
-   `return 1 if report['status'] == 'FAIL' else 2`——**没有 0**，四案全过也 exit 2。所以那个 2
+   **补齐 ③④ 时注意它的退出码语义**：`native-topology/run.py` 的 `run()` 返回
+   `1 if report['status'] == 'FAIL' else 2`——**没有 0**，四案全过也 exit 2；所以那个 2
    **不是 BLOCKED**（与 `collect.py` / `session_domain.py` 的 exit 2 含义不同），只能用来区分 1 / 2。
+   而且 **exit 1 不等于 FAIL**：`main()` 只接 `KeyboardInterrupt`（`return 1`），锁等 600 s 抛的 `TimeoutError`
+   没被捕获 → traceback / exit 1；`FAIL` 只是 exit 1 的一种。判成败看 `report.json`，不看这个码。
 3. **采集与判分之间不要重建 ELF**：`capture/prelaunch.json` 记的是二进制绝对路径 + sha256（本单 gateway
    sha256 `f2ad413665f3ac12127260d17db78d4648ff063d41826847278ebb408f280679`），判分侧按原路径复核字节。
    中途 `cargo build` 换掉二进制 ⇒ 判分 `BLOCKED / APPARATUS_IMPORTS`。

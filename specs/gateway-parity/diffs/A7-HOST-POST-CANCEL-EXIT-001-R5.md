@@ -9,11 +9,11 @@ original: A7-HOST-POST-CANCEL-EXIT-001
 
 ## 基线依据
 
-同 R3「TS 依据」：`cc7c4e6 src/agent/modules/transport/agentLoopSidecarClient.ts:931-958` 的 abort 只置 `cancelRequested` 并发一次 cancel 帧，没有取消后计时器；消费方慢时生成器停住，恢复后按序交付。TS 宿主不存在 5 s 取消后期限。本更正不改该依据。
+同最新条目 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的「TS 依据」，本更正不改该依据。
 
 ## Rust 行为
 
-同 R3「Rust 行为」：`src/pilotdeck-gateway/src/host/execution.rs` 的 `POST_CANCEL_EXIT_TIMEOUT`（5 s，唯一绝对期限）到点执行 `callbacks.shutdown(); events.clear();`，到点仍有未交付的合法 lifecycle 时报错（fail-closed，不会假成功）。本更正不改该行为。
+同最新条目 `A7-HOST-POST-CANCEL-EXIT-001-R3` 的「Rust 行为」（`POST_CANCEL_EXIT_TIMEOUT` 5 s，到点 fail-closed），本更正不改该行为。
 
 ## 范围
 
@@ -33,4 +33,7 @@ original: A7-HOST-POST-CANCEL-EXIT-001
 
 ## 批准记录
 
-2026-11-06 人批「按窄读」（#1716 评论 2026-11-06T02:58:40Z），作为四格矩阵（#590）的适用口径。原偏离批准见 `state/decisions-20261025.md`「#643 取消退出到点后的有界收尾：选 A」；R4 登记见 `state/decisions-20261031-ledger-batch.md`。仅覆盖上文「范围」所列情况。
+2026-11-06 人批「按窄读」（#1716 评论 2026-11-06T02:58:40Z），作为四格矩阵（#590）的适用口径；
+仓内留档 `state/decisions-20261106-narrow-read-1716.md`（含评论 URL、时间、作者与正文原文）。
+原偏离批准见 `state/decisions-20261025.md`「#643 取消退出到点后的有界收尾：选 A」；R4 登记见
+`state/decisions-20261031-ledger-batch.md`。仅覆盖上文「范围」所列情况。

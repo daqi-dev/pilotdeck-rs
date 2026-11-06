@@ -31,6 +31,7 @@
 - **原话**：「#643 选 A」
 - **决定**：维持现状（选项 A）。取消被观察到后 5 s 期限到点时仍有未交付的合法 lifecycle、因而报错（fail-closed，不会假成功）的情况，登记为已接受的已知偏离，归入 A7-HOST-POST-CANCEL-EXIT-001（TS 取消后无限等待，Rust 有界）。R1 的「唯一绝对期限，不重算」不变。**受影响情况的机制与清单以 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md` 为唯一正本**，本卡不另列，避免两处不同步。
 - **落地**：账本更正 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R3.md`；#590 四格矩阵中涉及「取消 + 慢消费方」的场景按此偏离判定；#643 随本记录合入后关闭。选项分析见 #643 评论（`_tmp/20261025-claude-loop/issue-643-options.md`）。
+- **后续 · 2026-11-06**：R3 末句「#590 四格矩阵中涉及取消的场景按本偏离判定」的适用范围，人已在 #1716 裁决「按窄读」（只覆盖宿主为 Rust 的格③④），见 `state/decisions-20261106-narrow-read-1716.md` 与 `specs/gateway-parity/diffs/A7-HOST-POST-CANCEL-EXIT-001-R5.md`。本卡其余内容不变。
 - **可复用原则**：有界期限只防对端拖延；消费方自身导致的延迟造成的 fail-closed 结果，登记为已知偏离，不为它重算期限。
 
 ## 人定 · 2026-10-25 · #590 A7.2-pr6b 四格矩阵：授权修改冻结装置

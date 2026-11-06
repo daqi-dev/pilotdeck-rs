@@ -33,14 +33,14 @@ printed. An empty key set is **not** a pass: the self-check prints
 `0 keys loaded, cannot verify` and returns non-zero.
 
 Limits (constants in `real_provider.py`, echoed by the probe in
-`PROBE_RESULT`). The concrete numbers below are a snapshot at writing time:
-the authoritative values are the constants in `real_provider.py`; each run
-echoes them in `report.json`'s flat `limits` object and in `limits.json`'s
-`declared`/`actual`, so check those before quoting a limit.
+`PROBE_RESULT`). Do not quote a limit from this page: the authoritative values
+are the constants in `real_provider.py`, and each run echoes them in
+`report.json`'s flat `limits` object and in `limits.json`'s
+`declared`/`actual`.
 
-- 3 requests (one per scenario; `MAX_REQUESTS == len(SCENARIOS)`).
-- 128 output tokens per request; 384 total. The probe receives the per-request
-  cap as argv and echoes it back; the harness also records the summed usage.
+- One request per scenario (`MAX_REQUESTS == len(SCENARIOS)`).
+- A per-request output-token cap. The probe receives the cap as argv and echoes
+  it back; the harness also records the summed usage.
   The probe records the last `usage` event in the stream callback, before the
   200-event report cap, so a late usage event is not lost. If no usage
   arrives, the scenario is marked `usage: missing`, the id is listed in
