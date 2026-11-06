@@ -437,7 +437,7 @@ impl UploadStore {
         // orphan branch below would delete directories outside the project.
         // `read_at`'s containment check never sees those directories (no
         // metadata.json), so gate the whole record sweep on a plain root.
-        let root = match plain_root(project, "chat-uploads") {
+        let root_real = match plain_root(project, "chat-uploads") {
             PlainRoot::Plain(root) => root,
             // No uploads yet: the ordinary empty state, as silent as the old
             // `names()` on a missing directory.
@@ -450,20 +450,12 @@ impl UploadStore {
                 return;
             }
         };
-        // Resolve the root once and keep this value for the whole round: every
+        // `root` is already resolved and already checked to be exactly
+        // `<project>/.tmp/chat-uploads`; keep it for the whole round. Every
         // containment check below compares a *freshly* resolved entry against
-        // it. Re-canonicalizing the root per entry would resolve through a
-        // symlink swapped in mid-sweep and make both sides of the check agree,
-        // turning the guard into a no-op for the rest of the round.
-        let Ok(root_real) = fs::canonicalize(&root) else {
-            return;
-        };
-        // Anchor the snapshot inside the project: `.tmp` or `chat-uploads`
-        // could already be a symlink that `plain_root` saw as a real directory
-        // only because it was swapped between the two stats above.
-        if !root_real.starts_with(project) {
-            return;
-        }
+        // it. Re-resolving the root per entry would follow a symlink swapped
+        // in mid-sweep and make both sides of the check agree, turning the
+        // guard into a no-op for the rest of the round.
         for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
             let dir = root_real.join(&id);
             let record = match self.read_at(project, &id) {
@@ -1008,7 +1000,7 @@ impl UploadStore {
         // means expired" makes deletion the default action, so a symlinked
         // `.tmp` or `.tmp/chat-upload-leases` would delete lease trees outside
         // the project. Missing is the ordinary empty state and stays silent.
-        let root = match plain_root(project, "chat-upload-leases") {
+        let root_real = match plain_root(project, "chat-upload-leases") {
             PlainRoot::Plain(root) => root,
             PlainRoot::Missing => return Ok(()),
             PlainRoot::Blocked => {
@@ -1021,12 +1013,6 @@ impl UploadStore {
         };
         // Snapshot once, like the record half: the entry checks below resolve
         // against this value for the whole round.
-        let Ok(root_real) = fs::canonicalize(&root) else {
-            return Ok(());
-        };
-        if !root_real.starts_with(project) {
-            return Ok(());
-        }
         for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
             let leases = root_real.join(id);
             for lease in names(&leases).into_iter().filter(|id| safe_id(id)) {
@@ -1218,7 +1204,25 @@ impl UploadArtifactLease {
         self.released
             .lock()
             .unwrap()
-            .get_or_insert_with(|| remove_tree(&self.dir))
+            .get_or_insert_with(|| {
+                // The same guard as the lease sweep, applied late: `dir` was
+                // built from the record's canonical project at acquire time,
+                // and the lease can live for many turns. If `.tmp` or
+                // `chat-upload-leases` was swapped for a symlink since, the
+                // recursive delete would follow it out of the project. Require
+                // the root to still resolve to exactly the plain path, then the
+                // entry to still be strictly inside it.
+                let Some(root) = self.dir.parent().and_then(Path::parent) else {
+                    return Ok(());
+                };
+                let Ok(root_real) = fs::canonicalize(root) else {
+                    return Ok(());
+                };
+                if root_real != root || !inside_root(&root_real, &self.dir) {
+                    return Ok(());
+                }
+                remove_tree(&self.dir)
+            })
             .clone()
     }
 }
@@ -1433,7 +1437,9 @@ fn remove_tree(path: &Path) -> Result<()> {
 }
 /// Whether `<project>/.tmp/<leaf>` may be swept at all.
 enum PlainRoot {
-    /// Both `<project>/.tmp` and `<project>/.tmp/<leaf>` are plain directories.
+    /// `<project>/.tmp/<leaf>` resolves to exactly itself: no component on the
+    /// path is a symlink, not even one pointing elsewhere inside the project.
+    /// Carries the resolved path, which is also the round's snapshot.
     Plain(PathBuf),
     /// There is no such tree yet (never uploaded / no live lease): nothing to
     /// clean, and nothing worth logging every interval.
@@ -1444,7 +1450,9 @@ enum PlainRoot {
     Blocked,
 }
 
-/// Gate a cleanup half on `<project>/.tmp/<leaf>` being a plain directory.
+/// Gate a cleanup half on `<project>/.tmp/<leaf>` being a plain directory, and
+/// return its resolved path — the snapshot the round measures every entry
+/// against.
 fn plain_root(project: &Path, leaf: &str) -> PlainRoot {
     let dot_tmp = project.join(".tmp");
     let root = dot_tmp.join(leaf);
@@ -1456,7 +1464,17 @@ fn plain_root(project: &Path, leaf: &str) -> PlainRoot {
             Err(_) => return PlainRoot::Blocked,
         }
     }
-    PlainRoot::Plain(root)
+    // Both stats can pass and the path can still be swapped before this
+    // resolve, so require the plain path back. Equality — not "inside the
+    // project" — is the point: a `.tmp` symlinked to another directory
+    // *within* the project would still be inside, and the sweep would then
+    // treat that directory's children as uploads (or leases) to delete.
+    match fs::canonicalize(&root) {
+        Ok(real) if real == root => PlainRoot::Plain(real),
+        Ok(_) => PlainRoot::Blocked,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => PlainRoot::Missing,
+        Err(_) => PlainRoot::Blocked,
+    }
 }
 
 fn names(path: &Path) -> Vec<String> {

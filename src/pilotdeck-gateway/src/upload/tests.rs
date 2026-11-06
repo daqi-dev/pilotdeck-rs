@@ -1738,6 +1738,38 @@ fn upload_lease_cleanup_never_deletes_through_a_symlinked_root() {
     );
 }
 
+// #1646 review r3: the third delete point on the leases tree is `release`, and
+// it fires long after acquire — the swap window is the whole lease lifetime,
+// not a few instructions, so no timing luck is needed.
+#[test]
+fn upload_lease_release_does_not_follow_a_swapped_leases_root() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let outside = scratch.dir("outside-release");
+    let h = golden_store(&project);
+    completed(&h);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let root = project.join(".tmp/chat-upload-leases");
+    let dir = PathBuf::from(string(&lease.attachments[0], "path").unwrap())
+        .parent()
+        .unwrap()
+        .to_owned();
+    assert!(dir.starts_with(&root));
+    // Move the whole lease tree out of the project and leave the root behind
+    // as a symlink to it: `release` would now delete outside the project.
+    let leaked = outside.join("chat-upload-leases");
+    fs::rename(&root, &leaked).unwrap();
+    std::os::unix::fs::symlink(&leaked, &root).unwrap();
+    lease.release().unwrap();
+    assert!(
+        leaked.join(dir.strip_prefix(&root).unwrap()).exists(),
+        "a lease release must not follow a swapped leases root"
+    );
+}
+
 // #1646: a failed record removal is a logged skip too — the rest of the sweep
 // (and the lease sweep after it) still runs.
 #[test]
