@@ -532,10 +532,14 @@ impl crate::channel::weixin::WeixinGatewayPort for HarnessPort {
         &'a self,
         session_key: &'a JsString,
         run_id: Option<&'a JsString>,
+        reason: Option<&'a str>,
     ) -> super::WeixinAbortFuture<'a> {
         let mut value = json!({"sessionKey": js_text(session_key)});
         if let Some(run_id) = run_id {
             value["runId"] = json!(js_text(run_id));
+        }
+        if let Some(reason) = reason {
+            value["reason"] = json!(reason);
         }
         self.aborts
             .lock()
@@ -726,6 +730,9 @@ async fn replay_case(case: &Value) -> Value {
                     on_state_change: None,
                     gateway: None,
                     runtime_status: None,
+                    // The weixin defaults the generator's compiled channel
+                    // uses (no watchdog inside the replay scenarios).
+                    live_reply: super::weixin_live_reply_options(),
                 };
                 let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
                     pilot_home: pilot_home.clone(),

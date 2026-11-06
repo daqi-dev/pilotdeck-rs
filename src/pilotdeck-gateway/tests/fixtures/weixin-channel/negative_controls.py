@@ -99,6 +99,36 @@ MUTATIONS = [
      '!id.units().is_empty());',
      '                let account_id = string_field(&status, "ilink_bot_id");',
      REPLAY, '#1328 weixin harness gate did not resolve'),
+    # #1821 live-reply controller mutants (controller-level mock tests and the
+    # weixin watchdog integration tests in channel/weixin/tests.rs; each row
+    # binds every named killer cell, exact mode requires all of them to fail).
+    ('live-reply-edit-dropped', weixin / 'live_reply.rs',
+     'if self.current_segment.handle.is_some() && self.transport.edit.is_some() {',
+     'if self.current_segment.handle.is_some() && self.transport.edit.is_none() {',
+     [('channel::weixin::live_reply::tests::'
+       'edit_intermediate_updates_follow_the_ts_request_sequence',
+       '#1821 edit intermediate updates follow the ts request sequence')]),
+    ('live-reply-watchdog-not-armed', weixin / 'live_reply.rs',
+     'self.turn_timer =\n'
+     '            Some(Instant::now() + Duration::from_millis(self.options.turn_timeout_ms));',
+     'self.turn_timer = None;',
+     [('channel::weixin::live_reply::tests::'
+       'turn_timeout_marks_timed_out_and_reports_the_timer',
+       '#1821 turn timeout watchdog fires '
+       'turn-timeout-marks-timed-out-and-reports-the-timer'),
+      ('channel::weixin::tests::turn_timeout_watchdog_aborts_with_system_timeout_reason',
+       '#1821 weixin turn timeout watchdog aborts with the system timeout reason')]),
+    ('live-reply-activity-not-pulsed', weixin / 'live_reply.rs',
+     'if let Some(pulse) = self.transport.pulse_activity.clone() {',
+     'if let Some(pulse) = self.transport.pulse_activity.clone().filter(|_| false) {',
+     [('channel::weixin::live_reply::tests::'
+       'activity_pulses_fire_after_the_delay_and_respect_max_updates',
+       '#1821 activity pulses must fire '
+       'activity-pulses-fire-after-the-delay-and-respect-max-updates'),
+      ('channel::weixin::live_reply::tests::'
+       'activity_delay_is_silent_just_before_ten_minutes',
+       '#1821 activity pulses must fire '
+       'activity-delay-is-silent-just-before-ten-minutes')]),
 ]
 
 

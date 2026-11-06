@@ -34,6 +34,23 @@
 （`#1328 weixin harness gate did not resolve`）—— 空凭证被接受后登录不再
 `failed`，回放走不到比对，与 `credentials-fallback` 同形。
 
+## #1821 live-reply 负控（控制器级 mock 测试 + weixin 超时集成）
+
+`live_reply.rs`（`ImLiveReplyController.ts` 全量移植）的三条变异，
+killer 是 `channel::weixin::live_reply::tests` 的控制器级 mock 测试与
+`channel::weixin::tests` 的超时集成用例（假 `WeixinGatewayPort` 流在
+`turn_started` 后挂起，暂停时钟上只有看门狗能让 turn 收尾）：
+
+| 变异 | 死点 |
+|---|---|
+| `live-reply-edit-dropped`（`flush_current_now` 不走 edit） | EDIT 金样序列比对 |
+| `live-reply-watchdog-not-armed`（`arm_turn_timer` 不写 deadline） | 单元看门狗格 + weixin 集成 abort 记录；`zero_turn_timeout_never_aborts_the_turn` 保持绿（=0 不起看门狗是正行为） |
+| `live-reply-activity-not-pulsed`（`flush_activity_now` 不调 `pulse_activity`） | ACTIVITY 金样序列 + 十分钟静默边界两侧两格 |
+
+weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
+`WeixinChannel.ts:786-800`），这两条能力由控制器级 mock 测试钉住；
+`turnTimeoutMs` weixin 默认 0（生产不起看门狗），超时格由选项打开后测。
+
 ## 确定性
 
 - getupdates 长轮询保持到脚本下一条，且**在响应时刻**才记录（消除 poll 到达与

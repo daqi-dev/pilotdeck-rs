@@ -2,6 +2,7 @@
 //! channel flows against the TS golden and the mock ilink server live with
 //! the fixture under `tests/fixtures/weixin-channel/`.
 use super::*;
+use pilotdeck_protocol::parse_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn js(text: &str) -> JsString {
@@ -239,5 +240,158 @@ fn credentials_defaults_follow_ts_path() {
     assert!(
         text.ends_with(".pilotdeck/weixin-credentials.json"),
         "#1328 default credentials path: {text}"
+    );
+}
+
+// ── #1821 turn-timeout watchdog integration ────────────────────────────────
+
+/// One recorded `abortTurn` call: `(sessionKey, runId, reason)`.
+type AbortRecord = (String, Option<String>, Option<String>);
+
+/// A gateway port whose `submitTurn` streams `turn_started` and then never
+/// resolves: the only way the turn can end is the live-reply watchdog firing
+/// on the paused clock, so the recorded `abortTurn` calls observe the wiring
+/// alone (`WeixinChannel.ts:692-702`).
+struct TimeoutPort {
+    aborts: Mutex<Vec<AbortRecord>>,
+    senders: Mutex<Vec<tokio::sync::mpsc::UnboundedSender<WeixinStreamItem>>>,
+}
+
+impl TimeoutPort {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            aborts: Mutex::new(Vec::new()),
+            senders: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn aborts(&self) -> Vec<AbortRecord> {
+        self.aborts.lock().expect("#1821 aborts lock").clone()
+    }
+}
+
+impl WeixinGatewayPort for TimeoutPort {
+    fn submit_turn(&self, _input: JsValue) -> WeixinTurnStream {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        sender
+            .send(WeixinStreamItem::Event(
+                parse_json(r#"{"type":"turn_started","runId":"run-9"}"#)
+                    .expect("#1821 turn_started event json"),
+            ))
+            .expect("#1821 turn_started handoff");
+        // The sender stays alive in `senders`, so the stream stays open and
+        // `next()` never resolves after the first event.
+        self.senders
+            .lock()
+            .expect("#1821 senders lock")
+            .push(sender);
+        WeixinTurnStream {
+            receiver,
+            receipt: None,
+        }
+    }
+
+    fn abort_turn<'a>(
+        &'a self,
+        session_key: &'a JsString,
+        run_id: Option<&'a JsString>,
+        reason: Option<&'a str>,
+    ) -> WeixinAbortFuture<'a> {
+        let record = (
+            text_of(session_key),
+            run_id.map(text_of),
+            reason.map(str::to_string),
+        );
+        self.aborts.lock().expect("#1821 aborts lock").push(record);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn timeout_channel(port: Arc<TimeoutPort>, turn_timeout_ms: u64, root: &Root) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("weixin-credentials.json");
+    options.credentials_dir = Some(root.path());
+    options.gateway = Some(port);
+    options.live_reply = LiveReplyOptions {
+        turn_timeout_ms,
+        ..weixin_live_reply_options()
+    };
+    WeixinChannel::new(options)
+}
+
+/// A pr1 text message from `chat-1` (message_type 1, one text item).
+fn inbound_text_message(text: &str) -> JsValue {
+    parse_json(&format!(
+        r#"{{"from_user_id":"chat-1","context_token":"tok-1","message_type":1.0,
+            "item_list":[{{"type":1.0,"text_item":{{"text":"{text}"}}}}]}}"#
+    ))
+    .expect("#1821 inbound message json")
+}
+
+/// Give the spawned turn enough scheduler rounds to reach its parked select
+/// (the paused runtime fires or skips the armed watchdog on its own once no
+/// task is runnable, so the assertions below never depend on poll order).
+async fn let_the_turn_settle() {
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn turn_timeout_watchdog_aborts_with_system_timeout_reason() {
+    let root = Root::new();
+    let port = TimeoutPort::new();
+    let channel = timeout_channel(port.clone(), 20, &root);
+    let Some(start) = channel.dispatch_sync_prefix(&inbound_text_message("hello")) else {
+        panic!("#1821 the inbound message dispatches a turn");
+    };
+    channel.spawn_dispatch(start);
+    let_the_turn_settle().await;
+    tokio::time::advance(Duration::from_millis(20)).await;
+    let_the_turn_settle().await;
+    crate::negative_assert_eq!(
+        port.aborts(),
+        vec![(
+            "weixin:chat=chat-1:general".to_string(),
+            Some("run-9".to_string()),
+            Some("system:timeout".to_string()),
+        )],
+        "#1821 weixin turn timeout watchdog aborts with the system timeout reason"
+    );
+    // `markTimedOut` sends the weixin timeout notice through the transport
+    // `send` (queue-on-failure); with no client it parks in pendingReplies.
+    let pending = channel
+        .lock_inner()
+        .pending_replies
+        .get(&js("chat-1"))
+        .expect("#1821 timeout notice queued")
+        .clone();
+    crate::negative_assert_eq!(
+        pending.len(),
+        1,
+        "#1821 weixin turn timeout watchdog queues exactly one timeout notice"
+    );
+    crate::negative_assert_eq!(
+        text_of(&pending[0]),
+        WEIXIN_TIMEOUT_FINAL_TEXT.to_string(),
+        "#1821 weixin turn timeout watchdog queues the weixin timeout notice"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn zero_turn_timeout_never_aborts_the_turn() {
+    let root = Root::new();
+    let port = TimeoutPort::new();
+    let channel = timeout_channel(port.clone(), 0, &root);
+    let Some(start) = channel.dispatch_sync_prefix(&inbound_text_message("hello")) else {
+        panic!("#1821 the inbound message dispatches a turn");
+    };
+    channel.spawn_dispatch(start);
+    let_the_turn_settle().await;
+    tokio::time::advance(Duration::from_millis(60_000)).await;
+    let_the_turn_settle().await;
+    crate::negative_assert!(
+        port.aborts().is_empty(),
+        "#1821 weixin zero turn timeout never aborts the turn"
     );
 }

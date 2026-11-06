@@ -379,6 +379,7 @@ impl WeixinGatewayPort for ProbePort {
         &'a self,
         _session_key: &'a JsString,
         _run_id: Option<&'a JsString>,
+        _reason: Option<&'a str>,
     ) -> WeixinAbortFuture<'a> {
         unreachable!("#1328 probe port never aborts")
     }
