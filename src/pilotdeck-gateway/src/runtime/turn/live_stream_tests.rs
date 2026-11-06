@@ -2191,6 +2191,13 @@ async fn permission_mode_source_rewrites_the_agent_config_each_turn() {
         Some(JsValue::String("plan".into())),
         "#1864 the stored mode reaches the live session's next turn"
     );
+    // #1864 fix-r1: the same priority backs `seed_read_state`'s admission
+    // context — the managed leg, else the source, else the composed mode.
+    assert_eq!(
+        session.permission_mode(),
+        "plan".into(),
+        "#1864 permission_mode reports the stored selection for the next seed"
+    );
     // A non-empty managedPermissions.defaultMode wins over the source.
     let guarded_handler = Arc::new(Handler::default());
     let recorded = guarded_handler.clone();
@@ -2226,6 +2233,11 @@ async fn permission_mode_source_rewrites_the_agent_config_each_turn() {
         agent_permission_mode(&guarded_handler),
         Some(JsValue::String("bypassPermissions".into())),
         "#1864 the guarded session keeps its composed mode"
+    );
+    assert_eq!(
+        guarded.permission_mode(),
+        "bypassPermissions".into(),
+        "#1864 permission_mode keeps the managed default over the store"
     );
 }
 

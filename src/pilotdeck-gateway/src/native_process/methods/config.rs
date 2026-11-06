@@ -1554,6 +1554,40 @@ mod tests {
     async fn set_output_style_validates_names_and_key() {
         let (_scratch, r) = setup_fixture();
         write_probe_plugin(&r);
+        // #1864: the success path — a project style passes the name gate,
+        // answers `applied: true` with the `selected` echo, and lands in the
+        // store the next session composes from. Negative control: a stub
+        // revert dies on the request expect, a dropped store write dies on
+        // the read-back expect; both carry this anchor.
+        let applied = r
+            .session_config_request(
+                "set_output_style".into(),
+                object([
+                    ("sessionKey", "cfg-style-3".into()),
+                    ("name", "probe:compact".into()),
+                ]),
+            )
+            .await
+            .expect("#1864 set_output_style applies the probe style");
+        negative_assert_eq!(
+            applied.get("applied"),
+            Some(&JsValue::Bool(true)),
+            "#1864 set_output_style reports applied on the success path"
+        );
+        negative_assert_eq!(
+            applied.get("selected"),
+            Some(&JsValue::String("probe:compact".into())),
+            "#1864 set_output_style echoes the selected name on the success path"
+        );
+        let stored = r
+            .session_overrides
+            .output_style(&"cfg-style-3".into())
+            .expect("#1864 set_output_style applies the probe style");
+        negative_assert_eq!(
+            stored,
+            JsString::from("probe:compact"),
+            "#1864 the probe style selection is stored for the next compose"
+        );
         for (label, params, code, message) in [
             (
                 "unknown style",

@@ -61,6 +61,136 @@ fn production_turn_ports_share_cancellation() {
     );
 }
 
+/// #1864 (b): the host-side admission context follows the store
+/// `set_permission_mode` wrote, on every turn — the same store, key and
+/// priority the prepare closure and the live adapter's per-turn source use
+/// (`managedPermissions.defaultMode` still wins), so a turn never runs one
+/// mode for the sidecar and another for native tool admission.
+#[test]
+fn session_tools_admission_mode_follows_the_store_each_turn() {
+    use crate::host::modules::tool_context::HostToolCheckpoint;
+    use crate::runtime::{
+        hooks::Cancellation,
+        session::{SessionContext, factory::SessionBinding},
+    };
+    use pilotdeck_protocol::admission::ExecutionIdentity;
+
+    let scratch = Scratch::new();
+    let options = Options::parse(scratch.args()).expect("#1864 admission options");
+    let recorder = crate::runtime::turn::live::test_recorder();
+    let overrides = Arc::new(SessionOverrides::default());
+    let key: JsString = "session".into();
+    let identity = ExecutionIdentity {
+        run_id: "run".into(),
+        operation_id: "operation".into(),
+        request_id: "request".into(),
+        session_id: "session".into(),
+        turn_id: "turn".into(),
+    };
+    let binding = || SessionBinding {
+        context: SessionContext {
+            session_key: "session".into(),
+            project_key: None,
+            channel_key: "probe".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        },
+        recorder: recorder.clone(),
+        checkpoint: HostToolCheckpoint::new(None, &[]).expect("#1864 admission checkpoint"),
+        projection: Arc::default(),
+    };
+    let mut config = JsObject::new();
+    config.insert("permissionMode".into(), JsValue::String("default".into()));
+    let tools = tools::SessionTools::new(
+        &options,
+        &Env::new(),
+        binding(),
+        config,
+        Arc::default(),
+        Arc::default(),
+    )
+    .expect("#1864 admission session tools")
+    .with_permission_mode_source(Arc::new({
+        let overrides = overrides.clone();
+        let key = key.clone();
+        move || overrides.permission_mode(&key)
+    }));
+    let mode_of = |ports: &crate::runtime::turn::host_factory::SessionPorts| {
+        ports
+            .interaction
+            .permission
+            .context
+            .mode
+            .as_js_string()
+            .clone()
+    };
+    let emitted_mode = |ports: &crate::runtime::turn::host_factory::SessionPorts| {
+        ports
+            .context_config
+            .get("permissionContext")
+            .and_then(|value| value.get("mode"))
+            .and_then(JsValue::as_string)
+            .cloned()
+    };
+    let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
+    negative_assert_eq!(
+        mode_of(&ports),
+        JsString::from("default"),
+        "#1864 no stored selection keeps the default admission mode"
+    );
+    negative_assert_eq!(
+        emitted_mode(&ports),
+        Some(JsString::from("default")),
+        "#1864 the emitted permissionContext carries the default mode"
+    );
+    // The selector's write: the next turn's admission context and emitted
+    // permissionContext both carry the stored mode.
+    overrides.set_permission_mode(&key, "plan".into());
+    let ports = assembly::turn_ports(&tools, &identity, recorder.clone(), Cancellation::new());
+    negative_assert_eq!(
+        mode_of(&ports),
+        JsString::from("plan"),
+        "#1864 the stored mode reaches the host admission context"
+    );
+    negative_assert_eq!(
+        emitted_mode(&ports),
+        Some(JsString::from("plan")),
+        "#1864 the emitted permissionContext carries the stored mode"
+    );
+    // A non-empty managedPermissions.defaultMode wins over the store.
+    let mut managed = JsObject::new();
+    managed.insert(
+        "defaultMode".into(),
+        JsValue::String("bypassPermissions".into()),
+    );
+    let mut guarded = JsObject::new();
+    guarded.insert(
+        "permissionMode".into(),
+        JsValue::String("bypassPermissions".into()),
+    );
+    guarded.insert("managedPermissions".into(), JsValue::Object(managed));
+    let tools = tools::SessionTools::new(
+        &options,
+        &Env::new(),
+        binding(),
+        guarded,
+        Arc::default(),
+        Arc::default(),
+    )
+    .expect("#1864 guarded session tools")
+    .with_permission_mode_source(Arc::new({
+        let overrides = overrides.clone();
+        let key = key.clone();
+        move || overrides.permission_mode(&key)
+    }));
+    let ports = assembly::turn_ports(&tools, &identity, recorder, Cancellation::new());
+    negative_assert_eq!(
+        mode_of(&ports),
+        JsString::from("bypassPermissions"),
+        "#1864 a non-empty managed defaultMode wins over the stored mode"
+    );
+}
+
 #[tokio::test]
 async fn production_cleanup_matrix() {
     for mode in [

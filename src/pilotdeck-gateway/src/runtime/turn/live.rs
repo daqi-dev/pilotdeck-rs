@@ -158,10 +158,22 @@ impl LiveSessionAdapter {
 
     /// #1457 seedReadState builds its tool context from the same
     /// AgentRuntimeConfig the sidecar sees; the permission mode decides
-    /// workspace-path admission exactly like a read_file call.
+    /// workspace-path admission exactly like a read_file call. #1864: a
+    /// non-empty `managedPermissions.defaultMode` still wins, else the
+    /// per-turn source (the store `set_permission_mode` wrote), else the
+    /// composed `permissionMode` — so `seed_read_state` admits with the same
+    /// mode the sidecar's next turn runs.
     pub fn permission_mode(&self) -> JsString {
-        self.agent_config
-            .as_ref()
+        let config = self.agent_config.as_ref();
+        if let Some(mode) = config.and_then(crate::runtime::permission::managed_default_mode) {
+            return mode;
+        }
+        if let Some(source) = &self.permission_mode_source
+            && let Some(mode) = source()
+        {
+            return mode;
+        }
+        config
             .and_then(|config| config.get("permissionMode"))
             .and_then(pilotdeck_protocol::JsValue::as_string)
             .cloned()
@@ -294,16 +306,10 @@ impl LiveSession for LiveSessionAdapter {
             let mut config = config.clone();
             // #1864 (b): the stored permission-mode selection is re-read on
             // every run (InProcessGateway.ts:1443). A non-empty
-            // managedPermissions.defaultMode still wins — compose priority.
+            // managedPermissions.defaultMode still wins — compose priority
+            // (shared: runtime::permission::managed_default_mode).
             if let Some(source) = &self.permission_mode_source
-                && !config
-                    .get("managedPermissions")
-                    .and_then(|value| value.get("defaultMode"))
-                    .and_then(JsValue::as_string)
-                    .is_some_and(|mode| {
-                        !crate::metadata::js_trim(&String::from_utf16_lossy(mode.units()))
-                            .is_empty()
-                    })
+                && crate::runtime::permission::managed_default_mode(&config).is_none()
                 && let Some(mode) = source()
             {
                 config.insert("permissionMode".into(), JsValue::String(mode));
