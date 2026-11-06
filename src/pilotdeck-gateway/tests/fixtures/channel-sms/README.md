@@ -100,4 +100,6 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
 
-#1879：不新增开关，只改写已有读取点。`wait-log.level` / `wait-log.text` 改为必填（缺席即报字段级错误，不再读成空串静默比较）；`env` / `sendFailAt` / `turn.gate` / `turn.error` / `turn.events` / `turn.holdAfter` 改走 `recorded_present`，显式 `null` 与生成器的 `?? {}` / `?? []` / falsy 判断同义（缺席），`sms-oracle-null-sentinel` 开关恢复旧的 fail-closed 读取。
+#1879：不新增开关，只改写已有读取点。`wait-log.level` / `wait-log.text` 改为必填（缺席即报字段级错误，不再读成空串静默比较）；`env` / `sendFailAt` / `turn.gate` / `turn.error` / `turn.events` / `turn.holdAfter` / `truncate` / `halfClose` 改走 `recorded_present`，显式 `null` 与生成器的 `?? {}` / `?? []` / `?? 0` / `=== true` / falsy 判断同义（缺席），`sms-oracle-null-sentinel` 开关经 `OLD_NULL_REJECTING_FIELDS` 恢复旧的 fail-closed 读取。该开关随之改为**逐字段列表绑定**（9 条测试各配一条断言）：合成一个测试时变异只会死在第一条断言上，其余字段有没有恢复旧读取无从证明。
+
+同一行的 `body` / `method` / `path` 在 TS 侧没有 `??` 默认（`REQUEST` 直接把它们拼进模板串，`body` 为 `null` 会直接抛），`headers` 由 `effectiveSteps` 先归一成对象，所以 `generate.mts:887-888` 只剩 `truncate`（形参默认 `= 0`）与 `halfClose`（`=== true`）需要按「null = 缺席」处理；`body` / `method` / `path` / `headers` 保持 fail-closed。

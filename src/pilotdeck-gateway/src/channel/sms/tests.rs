@@ -389,8 +389,8 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
     let present = value.get(field);
     // #1813 negative control: the switch restores the old reads, in which
     // `permissionDelivered` had no null filter and the #1879 fields (`env`,
-    // `sendFailAt`, and the `turn.*` members) still rejected an explicit null
-    // as a type drift.
+    // `sendFailAt`, the `turn.*` members, and the per-step `truncate` /
+    // `halfClose`) still rejected an explicit null as a type drift.
     if crate::mutants::on("sms-oracle-null-sentinel") {
         return if field == "permissionDelivered" || OLD_NULL_REJECTING_FIELDS.contains(&field) {
             present
@@ -402,21 +402,35 @@ fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
 }
 
 /// #1879: fields whose pre-#1879 read did not filter an explicit JSON `null`.
-/// The recorder writes `?? {}` / `?? []` / a falsy check for them, so absence
-/// spelled as `null` must not become a type error on one field only.
-const OLD_NULL_REJECTING_FIELDS: [&str; 6] =
-    ["env", "sendFailAt", "gate", "error", "events", "holdAfter"];
+/// The recorder writes `?? {}` / `?? []` / `?? 0` / `=== true` / a falsy check
+/// for them, so absence spelled as `null` must not become a type error on one
+/// field only. Names match the JSON key the selected object carries at the
+/// read site — every one of them is unique in the sms fixture today, so the
+/// switch still restores exactly one behaviour per field.
+const OLD_NULL_REJECTING_FIELDS: [&str; 8] = [
+    "env",
+    "sendFailAt",
+    "gate",
+    "error",
+    "events",
+    "holdAfter",
+    "truncate",
+    "halfClose",
+];
 
 /// #1813: every sentinel-bearing field must read explicit `null` the same way.
 /// The generated oracle writes `null` for the unconfigured optional fields and
 /// `true` for an unconfigured `permissionDelivered`; a hand-edited oracle that
 /// spells absence as `null` must not turn into a type error on one field only.
 ///
-/// Scope: every sentinel-bearing field. The scalar sentinels are `?? null` /
+/// Scope: the top-level sentinel fields. The scalar sentinels are `?? null` /
 /// `?? true` in the recorder; the two collections are `?? {}` / `?? []`
 /// (`generate.mts:1041` / `:1048`), so a hand-edited explicit `null` is
-/// absence there too (#1879, each collection has its own switch that restores
-/// the old fail-closed read).
+/// absence there too (#1879: the shared `sms-oracle-null-sentinel` switch
+/// restores the old fail-closed read for both, via `OLD_NULL_REJECTING_FIELDS`).
+/// The `turn.*` members and the per-step `truncate` / `halfClose` have their
+/// own tests (`null_turn_*_is_absence`, `recorded_{truncate,half_close}_null_is_absence`),
+/// because a single aggregate would stop at its first failing assertion.
 #[test]
 fn null_sentinels_are_absence_for_every_sentinel_field() {
     let nulls = json!({
@@ -466,23 +480,37 @@ fn null_sentinels_are_absence_for_every_sentinel_field() {
 /// #1879: the TS replay never reads a `turn.*` member through `?? null`; it
 /// falsy-checks `gate` / `error` and falls back with `?? []` / string equality
 /// for `events` / `holdAfter`, so an explicit `null` is absence on all four.
+/// One test per member: `sms-oracle-null-sentinel` binds all four as an
+/// all-cells row, and a shared test would stop at its first failing assertion
+/// and leave the other three fields unproven.
 #[test]
-fn null_turn_members_are_absence() {
-    let turn = json!({"gate": null, "error": null, "events": null, "holdAfter": null});
+fn null_turn_gate_is_absence() {
     crate::negative_assert!(
-        recorded_turn_gate(&turn).is_none(),
+        recorded_turn_gate_checked(&json!({"gate": null})).is_ok_and(|value| value.is_none()),
         "#1339 #1879 null turn.gate is absence"
     );
+}
+
+#[test]
+fn null_turn_error_is_absence() {
     crate::negative_assert!(
-        recorded_turn_error(&turn).is_none(),
+        recorded_turn_error_checked(&json!({"error": null})).is_ok_and(|value| value.is_none()),
         "#1339 #1879 null turn.error is absence"
     );
+}
+
+#[test]
+fn null_turn_events_is_absence() {
     crate::negative_assert!(
-        recorded_turn_events(&turn).is_none(),
+        recorded_turn_events_checked(&json!({"events": null})).is_ok_and(|value| value.is_none()),
         "#1339 #1879 null turn.events is absence"
     );
+}
+
+#[test]
+fn null_turn_hold_is_absence() {
     crate::negative_assert!(
-        recorded_turn_hold(&turn).is_none(),
+        recorded_turn_hold_checked(&json!({"holdAfter": null})).is_ok_and(|value| value.is_none()),
         "#1339 #1879 null turn.holdAfter is absence"
     );
 }
@@ -633,8 +661,10 @@ fn recorded_body_count_panics_on_wrong_type() {
 }
 
 fn recorded_truncate_checked(value: &Value) -> Result<Option<u64>, String> {
+    // #1879: `REQUEST(..., step.truncate ?? 0)` (generate.mts:887) — an
+    // explicit null is the same as an absent `truncate`, i.e. "no truncation".
     recorded_checked(
-        value.get("truncate"),
+        recorded_present(value, "truncate"),
         "truncate",
         "a u64",
         Value::as_u64,
@@ -652,6 +682,14 @@ fn recorded_truncate_rejects_wrong_type() {
     crate::negative_assert!(
         recorded_truncate_checked(&json!({"truncate": []})).is_err(),
         "#1339 #1729 rejects truncate type drift"
+    );
+}
+
+#[test]
+fn recorded_truncate_null_is_absence() {
+    crate::negative_assert!(
+        recorded_truncate_checked(&json!({"truncate": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 null truncate is absence"
     );
 }
 
@@ -839,6 +877,9 @@ fn recorded_turn_gate_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         // #1879: TS reads `script.turn?.gate` with a falsy check
         // (`generate.mts:99`), so an explicit JSON null is absence here too.
+        // Only the null sentinel is aligned: `""` still parses as a gate name
+        // and `false` / `0` stay a type drift, so a hand-edited `""` diverges
+        // from the TS falsy skip by design.
         recorded_present(value, "gate"),
         "turn.gate",
         "a string",
@@ -868,7 +909,11 @@ fn recorded_turn_gate_panics_on_wrong_type() {
 
 fn recorded_turn_error_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        // #1879: `if (script.turn?.error)` is falsy-checked on the TS side.
+        // #1879: `if (script.turn?.error)` is falsy-checked on the TS side, so
+        // an explicit null is absence. Only the null sentinel is aligned: `""`
+        // still parses as an error message and `false` / `0` stay a type
+        // drift, so a hand-edited `""` diverges from the TS falsy skip by
+        // design.
         recorded_present(value, "error"),
         "turn.error",
         "a string",
@@ -930,6 +975,8 @@ fn recorded_turn_hold_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         // #1879: `script.turn?.holdAfter === 'elicit'` compares against a
         // string, so an explicit null is absence rather than a type drift.
+        // Any other non-`elicit` value that is not a string (`false`, `0`)
+        // keeps the type error: this unit aligns the null sentinel only.
         recorded_present(value, "holdAfter"),
         "turn.holdAfter",
         "a string",
@@ -1192,8 +1239,10 @@ fn recorded_steps_panics_on_wrong_type() {
 }
 
 fn recorded_half_close_checked(value: &Value) -> Result<Option<bool>, String> {
+    // #1879: `step.halfClose === true` (generate.mts:888) — an explicit null
+    // is falsy there, so it is absence here rather than a type drift.
     recorded_checked(
-        value.get("halfClose"),
+        recorded_present(value, "halfClose"),
         "halfClose",
         "a boolean",
         Value::as_bool,
@@ -1211,6 +1260,14 @@ fn recorded_half_close_rejects_wrong_type() {
     crate::negative_assert!(
         recorded_half_close_checked(&json!({"halfClose": []})).is_err(),
         "#1339 #1729 rejects halfClose type drift"
+    );
+}
+
+#[test]
+fn recorded_half_close_null_is_absence() {
+    crate::negative_assert!(
+        recorded_half_close_checked(&json!({"halfClose": null})).is_ok_and(|value| value.is_none()),
+        "#1339 #1879 null halfClose is absence"
     );
 }
 
@@ -1851,6 +1908,24 @@ fn absent_recording_fields_keep_defaults() {
     // `[]`; a hand-edited explicit `null` is absence for them too (#1879).
     validate_mock_recording(
         &json!({"turn":null,"permissionError":null,"permissionGate":null,"sendBlockAt":null,"sendError":null,"env":null,"sendFailAt":null}),
+    );
+    // #1879: the `turn.*` members and the per-step `truncate` / `halfClose`
+    // reach the real replay path as absence too, not just the `_checked`
+    // helpers — `validate_mock_recording` reads all four members through the
+    // panicking wrappers, and `build_raw` keeps every body byte when
+    // `truncate` is null (TS `?? 0`, `generate.mts:887`).
+    validate_mock_recording(
+        &json!({"turn":{"gate":null,"error":null,"events":null,"holdAfter":null}}),
+    );
+    let null_step = json!({"body": "abc", "truncate": null, "halfClose": null});
+    assert!(
+        recorded_truncate(&null_step).is_none() && recorded_half_close(&null_step).is_none(),
+        "#1339 #1879 null truncate / halfClose are absence"
+    );
+    assert_eq!(
+        build_raw(&null_step),
+        build_raw(&json!({"body": "abc"})),
+        "#1339 #1879 null truncate sends the same bytes as an absent key"
     );
     // #1729 fix-r6: `expected` is no longer an optional recording field, so the
     // old `assert_responses_so_far(&[], &empty, …)` probe (absent `expected`

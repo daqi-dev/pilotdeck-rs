@@ -217,8 +217,26 @@ switches = [
      '#1339 #1729 rejects extra type drift'),
     # #1813: every null-sentinel field must read explicit null as absence, so a
     # hand-edited oracle cannot split one field's convention from its siblings.
-    ('sms-oracle-null-sentinel', SMS / 'tests.rs', 'null_sentinels_are_absence_for_every_sentinel_field',
-     '#1339 #1813 null permissionDelivered is absence'),
+    # #1879: the shared switch now restores the old fail-closed read for nine
+    # fields, so the row is an all-cells binding — one test and one assertion
+    # per field. A single aggregate test would stop at `permissionDelivered`
+    # and never prove that `env` / `sendFailAt` / the four `turn.*` members /
+    # `truncate` / `halfClose` were restored at all.
+    ('sms-oracle-null-sentinel', SMS / 'tests.rs',
+     ['null_sentinels_are_absence_for_every_sentinel_field',
+      'recorded_env_map_null_is_absence', 'recorded_send_fail_null_is_absence',
+      'null_turn_gate_is_absence', 'null_turn_error_is_absence',
+      'null_turn_events_is_absence', 'null_turn_hold_is_absence',
+      'recorded_truncate_null_is_absence', 'recorded_half_close_null_is_absence'],
+     ['#1339 #1813 null permissionDelivered is absence',
+      '#1339 #1879 env null is absence, not type drift',
+      '#1339 #1879 sendFailAt null is absence, not type drift',
+      '#1339 #1879 null turn.gate is absence',
+      '#1339 #1879 null turn.error is absence',
+      '#1339 #1879 null turn.events is absence',
+      '#1339 #1879 null turn.holdAfter is absence',
+      '#1339 #1879 null truncate is absence',
+      '#1339 #1879 null halfClose is absence']),
     ('sms-oracle-header-value', SMS / 'tests.rs', 'recorded_header_value_rejects_drift',
      '#1339 #1729 rejects header_value drift'),
     ('sms-oracle-body-type', SMS / 'tests.rs', 'recorded_body_type_rejects_drift',
