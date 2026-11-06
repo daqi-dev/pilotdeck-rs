@@ -99,7 +99,8 @@ silently degrade a cell into "some short body":
   The containers follow it too: an `options` that is present but not an object
   panics (absent every key takes its default), and so does a `gateway` that is
   present but not an object, a `gateway.turns` that is present but not an array,
-  a turn that is not an object (only absent or `null` means "no turn"), or a turn
+  a turn that is not an object (only an absent `turns` key means "no turn"; a
+  `null` element is drift like any other non-object), or a turn
   `events` / `error` of the wrong type — only absent (or `null`) means
   "no gateway / no turns / no events / no error".
 - The `options` **key set** is closed. Only `apiKey` / `modelName` /
