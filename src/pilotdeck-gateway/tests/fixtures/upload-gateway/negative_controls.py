@@ -72,6 +72,8 @@ ORPHAN = 'upload::tests::upload_cleanup_reclaims_expired_orphan_directories'
 FRESH = 'upload::tests::upload_cleanup_keeps_fresh_orphan_directories'
 LEASE_ATOMIC = 'upload::tests::upload_lease_atomic_rename_failure_keeps_valid_leases'
 SYMLINK_ROOT = 'upload::tests::upload_cleanup_never_deletes_through_a_symlinked_root'
+SWAP = 'upload::tests::upload_cleanup_does_not_follow_a_root_swapped_mid_round'
+LEASE_SYMLINK = 'upload::tests::upload_lease_cleanup_never_deletes_through_a_symlinked_root'
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 
 # (name, source, original, mutant, named test, exclusive failure text)
@@ -321,14 +323,14 @@ mutations = [
      '#1494 the lease entry must be a regular file, never a link'),
     # #1646: sweep robustness — each mutation restores one TS-parity weakness.
     ('cleanup-bad-record-aborts', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&root, &dir);
+                    self.reclaim_orphan(&root_real, &dir);
                     continue;
                 }
                 Err(e) => {
                     self.skip_record(&dir, &e);
                     continue;
                 }''', '''                Ok(None) => {
-                    self.reclaim_orphan(&root, &dir);
+                    self.reclaim_orphan(&root_real, &dir);
                     continue;
                 }
                 Err(e) => {
@@ -336,7 +338,7 @@ mutations = [
                 }''', SWEEP,
      'bad record aborts the sweep'),
     ('cleanup-orphan-reclaim-removed', STORE, '''                Ok(None) => {
-                    self.reclaim_orphan(&root, &dir);
+                    self.reclaim_orphan(&root_real, &dir);
                     continue;
                 }''', '''                Ok(None) => {
                     continue;
@@ -375,12 +377,18 @@ mutations = [
                 .map_err(|e| UploadError::io(e, "fsync", None))?;''', LEASE_ATOMIC,
      'lease.json must appear only through an atomic rename'),
     # #1646 review: the two guards added after the first round.
-    ('cleanup-symlink-root-swept', STORE, '''        let Some(root) = plain_uploads_root(project) else {
-            self.log_cleanup(format!(
-                "[uploads] cleanup skipped {}: uploads root is not a plain directory",
-                project.join(".tmp/chat-uploads").display()
-            ));
-            return;
+    ('cleanup-symlink-root-swept', STORE, '''        let root = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
         };''', '''        let root = project.join(".tmp/chat-uploads");''', SYMLINK_ROOT,
      'a symlinked uploads root must not be swept'),
     ('cleanup-record-rm-aborts', STORE, '''            match self
@@ -397,6 +405,33 @@ mutations = [
                 Err(_) => return,
             }''', RECORD_RM,
      'a failed record removal does not stop the sweep'),
+    # #1646 review r2: the plain-root gate only covers the round start; the
+    # entry must be measured against the root snapshotted when the round began.
+    ('cleanup-orphan-root-recanonicalized', STORE, '''        let Ok(dir_real) = fs::canonicalize(dir) else {
+            return;
+        };
+        if dir_real == root_real || !dir_real.starts_with(root_real) {
+            return;
+        }''', '''        let Ok(dir_real) = fs::canonicalize(dir) else {
+            return;
+        };
+        let root_real = fs::canonicalize(root_real).unwrap_or_default();
+        if dir_real == root_real || !dir_real.starts_with(&root_real) {
+            return;
+        }''', SWAP,
+     'a root swapped mid-round must not be followed'),
+    ('cleanup-lease-symlink-root-swept', STORE, '''        let root = match plain_root(project, "chat-upload-leases") {
+            PlainRoot::Plain(root) => root,
+            PlainRoot::Missing => return Ok(()),
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] lease cleanup skipped {}: leases root is not a plain directory",
+                    project.join(".tmp/chat-upload-leases").display()
+                ));
+                return Ok(());
+            }
+        };''', '''        let root = project.join(".tmp/chat-upload-leases");''', LEASE_SYMLINK,
+     'a symlinked leases root must not be swept'),
 ]
 
 if '--check' in sys.argv[1:]:
