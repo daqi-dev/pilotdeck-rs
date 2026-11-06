@@ -36,8 +36,9 @@ const { transformSync } = createRequire(requireBaseline.resolve('tsx'))('esbuild
 // server had accepted the connection — libuv does not order those two
 // callbacks, and the recorded drain cell then depended on which won. Wrapping
 // the (shared, mutable) builtin `createServer` lets the case wait for the
-// server's own `connection` event, which is the same barrier the Rust replay
-// takes from its per-channel accept counter.
+// server's own `request` event, which is the same barrier the Rust replay
+// takes from its per-channel accept counter (incremented on `service_fn`
+// entry, i.e. once the request head is parsed and the body is still pending).
 const nodeHttp = requireBaseline('node:http') as typeof http;
 const recordedServers: http.Server[] = [];
 const createServer = nodeHttp.createServer;
@@ -340,24 +341,27 @@ async function runCase(index: number, definition: Case): Promise<any> {
       events.push({ stop: step.reason });
     } else if (step.op === 'tcp-open') {
       const server = recordedServers[recordedServers.length - 1];
-      // The server must have accepted this connection before the next step
-      // (`stop-pending`) closes the listener: the client's `connect` callback
-      // and the server's `connection` event are independent libuv events, so
-      // waiting only for the former left the recorded stop/drain order to the
-      // scheduler.
-      const accepted = new Promise<void>(resolve => server.once('connection', () => resolve()));
+      // The next step (`stop-pending`) must not run before the server has
+      // parsed this request head: that is the point the Rust replay waits at
+      // (the `service_fn` entry in `wecom_callback::http`, i.e. headers in,
+      // body still pending). Waiting only for the client's `connect` — or for
+      // the server's `connection` (accept) event, which still precedes header
+      // parsing — left the recorded stop/drain order to libuv: Node >= 19's
+      // `server.close()` reaps a connection it still counts as idle, so the
+      // same case could record a reset instead of the drained 200.
+      const headRead = new Promise<void>(resolve => server.once('request', () => resolve()));
       const socket = net.connect(port, '127.0.0.1');
       const record = { socket, chunks: [] as Buffer[] };
       sockets.set(step.label, record);
       socket.on('data', (c: Buffer) => record.chunks.push(c));
-      // The connection must be established before the next step (stop)
-      // runs, otherwise the listener may close first and the connect fails.
+      // The connection must be established before the request head is written,
+      // otherwise the listener may close first and the connect fails.
       await new Promise<void>((resolve, reject) => {
         socket.once('connect', () => resolve());
         socket.once('error', error => reject(error));
       });
-      await accepted;
       socket.write(step.request);
+      await headRead;
     } else if (step.op === 'tcp-chunk') {
       sockets.get(step.label)!.socket.write(step.chunk);
     } else if (step.op === 'tcp-end') {
@@ -412,7 +416,12 @@ const definitions: Case[] = [
   },
   {
     name: 'missing-outbound-config',
-    config: { corpId: CORP, token: TOKEN, encodingAesKey: AESKEY, port: 18901 },
+    // 18921, not 18901: `channel/sms/tests.rs` binds 18901 as its fixed
+    // `webhookPort`, and both suites share the `pilotdeck-gateway` lib test
+    // binary — an overlap would turn this case's expected `ECONNREFUSED` into
+    // a connection to the sms listener (a false FAIL, or a false PASS for the
+    // missing-config path).
+    config: { corpId: CORP, token: TOKEN, encodingAesKey: AESKEY, port: 18921 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
