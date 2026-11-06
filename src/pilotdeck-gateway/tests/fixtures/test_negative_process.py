@@ -316,6 +316,27 @@ class ProcessControls(unittest.TestCase):
                                 text=True, timeout=60, env=env)
         self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
 
+    def test_cargo_slots_runner_tools_fallback(self):
+        # #589 收尾：远端 runner 宿主没有 ~/ws/pdrs-ops，同一个实现装在
+        # ~/ws/pdrs-runner-tools/bin/cargo。回退必须真的被用上——找不到闸时这里
+        # 是 4/69（fail-closed 或「无共享名额，继续」），都会让名额被跳过。
+        # 桩闸报 999/999（满）→ rc 1 是「确实用上了这个闸」的可判定证据。
+        script = Path(__file__).resolve().parents[4] / "scripts" / "cargo-slots.sh"
+        report = "cargo-slot x host=h 名额 999/999  磁盘 1.0 GiB / 190（cache）"
+        with tempfile.TemporaryDirectory(prefix="pdrs-cargo-slots-runner-") as temp:
+            temp = Path(temp)
+            gate = temp / "home/ws/pdrs-runner-tools/bin/cargo"
+            gate.parent.mkdir(parents=True)
+            gate.write_text(f'#!/bin/bash\necho "{report}"\n')
+            gate.chmod(0o755)
+            env = {k: v for k, v in os.environ.items() if k != "PDRS_CARGO_SLOT_BIN"}
+            env.update(HOME=str(temp / "home"),
+                       PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / "cache"))
+            result = subprocess.run(["bash", str(script)], capture_output=True,
+                                    text=True, timeout=120, env=env)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("没有统一闸", result.stderr, result.stdout + result.stderr)
+
     def test_cargo_slots_judges_by_gate_used(self):
         # #1556 r3 P1：只看本机 ps 数出的 cargo 会假放行——shim 先取槽位、后做冷 du，那几十秒
         # ps 只看到 python。闸报 999/999 时必须判满，哪怕本机一个 cargo 都没有；闸报 0/999
