@@ -130,8 +130,6 @@ PENDING_BARE_ASSERTS = {
     'host-event-pump/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-gateway/negative_controls.py': 'not migrated yet (batch 3)',
     'mcp-hooks-spawn/negative_controls.py': 'not migrated yet (batch 3)',
-    'native-settings/negative/negative_controls.py':
-        'not migrated yet (batch 3); nested one level deeper than the flat entries',
     'pump-order-cases/negative_controls.py': 'not migrated yet (batch 3)',
     'runtime-spawn-panic/negative_controls.py': 'not migrated yet (batch 3)',
     'skills/negative_controls.py': 'not migrated yet (batch 3)',
