@@ -459,6 +459,21 @@ pub(crate) fn unrelated_out_changes_after_regeneration(fixture: &str) -> Vec<Str
 /// may be unbounded.
 const DRAIN_GRACE: Duration = Duration::from_secs(2);
 
+/// Default total deadline for one generator run, per fixture.
+///
+/// `PDRS_REGEN_TIMEOUT_SECS` overrides it for slow hosts. `channel-sms` needs
+/// more than the shared 600 s: its `body-read-timeout` cell waits out Node's
+/// 300 s `requestTimeout` (worst case just under 330 s on the 30 s
+/// connections-checker grid) and the generator replays every case twice, so
+/// that cell alone is ~660 s before the other 55 cases run (#1901).
+#[allow(dead_code)]
+fn default_regen_timeout_secs(fixture: &str) -> u64 {
+    match fixture {
+        "channel-sms" => 1_500,
+        _ => 600,
+    }
+}
+
 /// Run a fixture generator child under a total deadline.
 ///
 /// `Command::output()` waits forever when the fixture parks a cell before its
@@ -467,7 +482,8 @@ const DRAIN_GRACE: Duration = Duration::from_secs(2);
 /// kill *and reap* the child's whole process group before reporting. The
 /// deadline also covers the pipes: a child may exit while a forked descendant
 /// still holds stdout/stderr, so reader joins are bounded too.
-/// `PDRS_REGEN_TIMEOUT_SECS` overrides the 600-second default for slow hosts.
+/// `PDRS_REGEN_TIMEOUT_SECS` overrides the per-fixture default (see
+/// [`default_regen_timeout_secs`]).
 fn run_generator(
     command: &mut Command,
     fixture: &str,
@@ -476,7 +492,7 @@ fn run_generator(
         std::env::var("PDRS_REGEN_TIMEOUT_SECS")
             .ok()
             .and_then(|value| value.parse().ok())
-            .unwrap_or(600),
+            .unwrap_or_else(|| default_regen_timeout_secs(fixture)),
     );
     run_generator_with_deadline(command, fixture, deadline)
 }

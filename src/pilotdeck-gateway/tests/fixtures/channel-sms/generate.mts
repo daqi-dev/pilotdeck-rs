@@ -34,10 +34,11 @@ const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
 const EXPECTED_CASE_COUNT = 56;
 // #1901: the stalled-body cell can only end at Node's default `requestTimeout`
-// (300 s), and the generator runs every case twice. The probe's own deadline
-// sits above that with a margin so a missing server answer fails the run
-// instead of being recorded as a client timeout.
-const STALLED_PROBE_DEADLINE_MS = 340_000;
+// (300 s), whose 408 lands on the 30 s connections-checker grid — worst case
+// just under 330 s. The generator runs every case twice (~1200 s for this cell
+// alone), so the probe deadline and the fixture's regeneration budget in
+// `tests/common/baseline.rs` both sit above that with room for a slow host.
+const STALLED_PROBE_DEADLINE_MS = 360_000;
 
 // ---------------------------------------------------------------------------
 // real module graph, transpiled once, with `twilio` mocked at the require seam

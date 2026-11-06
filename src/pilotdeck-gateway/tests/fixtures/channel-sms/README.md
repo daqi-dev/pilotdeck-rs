@@ -61,7 +61,9 @@ URL — `publicUrl` branch or `http://127.0.0.1:{port}{path}`, without any
 query string — with `Object.keys(params).sort()` concatenation) and
 recorded it, so the Rust replay reuses the TS-computed signature bytes
 instead of re-signing. `truncate` keeps the full Content-Length while the
-wire stops short; `halfClose` finishes the request's write side.
+wire stops short; `halfClose` finishes the request's write side; `stall: true`
+keeps the write side open and lets the probe wait out the server's own
+`requestTimeout` (only the `body-read-timeout` cell uses it).
 
 ## Regenerate
 
