@@ -646,7 +646,9 @@ for name, path, pattern, replacement in mutants:
         self.assertIn('mixed literal/regex', self.run_check(1))
 
     def move_script(self, relative):
-        self.script.unlink()
+        # #1727: a previous subtest may already have removed its scratch script
+        # in a finally block; moving on must not depend on that file existing.
+        self.script.unlink(missing_ok=True)
         self.script = self.fixtures / relative
         self.script.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1641,15 +1643,20 @@ mutants = [('sample', source, text, part + 'after')]
                                   f"{mapping} = {{{key}: {read} for p in [other]}}\n")
                         table = f"mutants = [('sample', {filename!r}, 'before', 'after')]\n"
                         self.write(prefix + table)
-                        self.run_check(label='#827 comprehension-path original')
-                        anchors, _, _ = CHECK.extract(self.script, self.root)
-                        self.assertEqual(len(anchors), 1, '#827 comprehension-path must produce one anchor')
-                        self.assertEqual(anchors[0].path, other, '#827 comprehension-path must follow actual read')
-                        other.write_text('missing\n')
-                        self.assertIn('src/other/example.rs expected=1 actual=0',
-                                      self.run_check(1, label='#827 comprehension-path wrong-origin'),
-                                      '#827 comprehension-path must detect actual source drift')
-                        other.write_text('before\n')
+                        # #1727: the shared source is restored in finally; a
+                        # failed assertion must not leave it drifted for the
+                        # remaining subtest combinations.
+                        try:
+                            self.run_check(label='#827 comprehension-path original')
+                            anchors, _, _ = CHECK.extract(self.script, self.root)
+                            self.assertEqual(len(anchors), 1, '#827 comprehension-path must produce one anchor')
+                            self.assertEqual(anchors[0].path, other, '#827 comprehension-path must follow actual read')
+                            other.write_text('missing\n')
+                            self.assertIn('src/other/example.rs expected=1 actual=0',
+                                          self.run_check(1, label='#827 comprehension-path wrong-origin'),
+                                          '#827 comprehension-path must detect actual source drift')
+                        finally:
+                            other.write_text('before\n')
                         self.run_check(label='#827 comprehension-path restored')
 
     def test_snapshot_comprehension_rejects_ambiguous_or_missing_origins(self):
@@ -1879,15 +1886,20 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
         for filename in ('controls.py', 'mutations.py', 'unusual.py'):
             with self.subTest(filename=filename):
                 destination = self.script.with_name(filename)
-                destination.write_text(self.script.read_text().replace('src/example.rs', 'src/hidden.rs'))
-                self.run_check(label=f'discover-{filename}')
-                hidden_source.write_text('missing\n')
-                report = self.run_check(1, label=f'broken-{filename}')
-                self.assertIn(f'sample/{filename}', report)
-                self.assertIn('actual=0', report)
-                hidden_source.write_text('before\n')
-                self.run_check(label=f'restored-{filename}')
-                destination.unlink()
+                # #1727: restore the shared source and drop the scratch script in
+                # finally, so a failed assertion cannot fail later subtests.
+                try:
+                    destination.write_text(self.script.read_text().replace('src/example.rs', 'src/hidden.rs'))
+                    self.run_check(label=f'discover-{filename}')
+                    hidden_source.write_text('missing\n')
+                    report = self.run_check(1, label=f'broken-{filename}')
+                    self.assertIn(f'sample/{filename}', report)
+                    self.assertIn('actual=0', report)
+                    hidden_source.write_text('before\n')
+                    self.run_check(label=f'restored-{filename}')
+                finally:
+                    hidden_source.write_text('before\n')
+                    destination.unlink(missing_ok=True)
         other = self.fixtures / 'sample/runner.py'
         other.write_text("raise RuntimeError('must never execute')\n")
         self.assertIn('runner.py: no supported mutation anchors', self.run_check(1, label='unregistered-helper'))
@@ -2055,28 +2067,33 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
     def test_each_production_marker_has_a_paired_removal_control(self):
         for name, reason in PRODUCTION_UNSUPPORTED.items():
             with self.subTest(name=name):
-                self.assertTrue(reason.strip())
-                body = (PATH.parent / name).read_text()
-                self.assertIn(MARKER_PREFIX, body[:4096], f'{name} marker')
+                # #1727: cleanup runs in finally. A failing assertion used to
+                # skip it, leaving an unregistered scratch script behind that
+                # turned one real failure into one failure per later subtest.
                 self.script = self.fixtures / name
-                self.script.parent.mkdir(parents=True, exist_ok=True)
-                signals = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
-                if signals:
-                    CHECK.UNSUPPORTED_SIGNALS[name] = signals
-                self.script.write_text(body)
-                self.assertIn(f'UNSUPPORTED {name}: {reason}',
-                              self.run_check(label=f'#977 marker-present-{name}'),
-                              f'#977 {name} must be exempted by its own marker')
-                self.script.write_text(self.strip_marker(body))
-                self.run_check(1, label=f'#977 marker-removed-{name}')
-                self.assertNotIn(f'UNSUPPORTED {name}:',
-                                 self.run_check(1, label=f'#977 marker-removed-confirmed-{name}'),
-                                 f'#977 {name} must stop being exempt without its marker')
-                self.script.write_text(body)
-                self.run_check(label=f'#977 marker-restored-{name}')
-                print(f'MARKER {name}: present=0 removed=1 restored=0')
-                self.script.unlink()
-                CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
+                try:
+                    self.assertTrue(reason.strip())
+                    body = (PATH.parent / name).read_text()
+                    self.assertIn(MARKER_PREFIX, body[:4096], f'{name} marker')
+                    self.script.parent.mkdir(parents=True, exist_ok=True)
+                    signals = PRODUCTION_UNSUPPORTED_SIGNALS.get(name, set())
+                    if signals:
+                        CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                    self.script.write_text(body)
+                    self.assertIn(f'UNSUPPORTED {name}: {reason}',
+                                  self.run_check(label=f'#977 marker-present-{name}'),
+                                  f'#977 {name} must be exempted by its own marker')
+                    self.script.write_text(self.strip_marker(body))
+                    self.run_check(1, label=f'#977 marker-removed-{name}')
+                    self.assertNotIn(f'UNSUPPORTED {name}:',
+                                     self.run_check(1, label=f'#977 marker-removed-confirmed-{name}'),
+                                     f'#977 {name} must stop being exempt without its marker')
+                    self.script.write_text(body)
+                    self.run_check(label=f'#977 marker-restored-{name}')
+                    print(f'MARKER {name}: present=0 removed=1 restored=0')
+                finally:
+                    self.script.unlink(missing_ok=True)
+                    CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
 
     def test_helper_exemption_cannot_hide_mutation_signals(self):
         reason = 'helper without mutation definitions'
@@ -2151,59 +2168,69 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
             with self.subTest(name=name):
                 reason = PRODUCTION_UNSUPPORTED[name]
                 self.move_script(name)
-                CHECK.UNSUPPORTED_SIGNALS[name] = signals
-                fragments = {signal: (f'{value} = []\n' if kind == 'table' else f'{value}()\n')
-                             for signal in signals for kind, value in [signal.split(':')]}
-                body = f'{MARKER_PREFIX} {reason}\n' + ''.join(fragments.values())
-                self.write(body)
-                self.run_check(label=f'exemption-signals-original-{name}')
-                # An empty registration pins the absence of every signal; there
-                # is no signal to remove or to detect without the entry.
-                if signals:
-                    for signal in signals:
-                        self.write(f'{MARKER_PREFIX} {reason}\n'
-                                   + ''.join(fragment for key, fragment in fragments.items() if key != signal))
-                        self.assertIn('unsupported exemption signals',
-                                      self.run_check(1, label='exemption-signal-removed'))
-                    self.write(body + 'mutation()\n')
-                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
-                    self.write(body)
-                    del CHECK.UNSUPPORTED_SIGNALS[name]
-                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
+                # #1727: the registration and scratch script are removed in
+                # finally, so a failed assertion cannot leak them into the next
+                # subtest (which would then fail for an unrelated reason).
+                try:
                     CHECK.UNSUPPORTED_SIGNALS[name] = signals
-                else:
-                    self.write(body + 'mutation()\n')
-                    self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
-                # A registered signal with no marker is stale and fails closed.
-                self.write(''.join(fragments.values()))
-                self.assertIn('stale UNSUPPORTED_SIGNALS', self.run_check(1, label='exemption-signal-stale'))
-                # So is a registered signal whose script is gone.
-                self.script.unlink()
-                self.assertIn('stale UNSUPPORTED_SIGNALS',
-                              self.run_check(1, label='exemption-signal-missing-script'))
-                self.write(body)
-                self.run_check(label=f'exemption-signals-restored-{name}')
-                del CHECK.UNSUPPORTED_SIGNALS[name]
+                    fragments = {signal: (f'{value} = []\n' if kind == 'table' else f'{value}()\n')
+                                 for signal in signals for kind, value in [signal.split(':')]}
+                    body = f'{MARKER_PREFIX} {reason}\n' + ''.join(fragments.values())
+                    self.write(body)
+                    self.run_check(label=f'exemption-signals-original-{name}')
+                    # An empty registration pins the absence of every signal; there
+                    # is no signal to remove or to detect without the entry.
+                    if signals:
+                        for signal in signals:
+                            self.write(f'{MARKER_PREFIX} {reason}\n'
+                                       + ''.join(fragment for key, fragment in fragments.items() if key != signal))
+                            self.assertIn('unsupported exemption signals',
+                                          self.run_check(1, label='exemption-signal-removed'))
+                        self.write(body + 'mutation()\n')
+                        self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
+                        self.write(body)
+                        del CHECK.UNSUPPORTED_SIGNALS[name]
+                        self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-unregistered'))
+                        CHECK.UNSUPPORTED_SIGNALS[name] = signals
+                    else:
+                        self.write(body + 'mutation()\n')
+                        self.assertIn('unsupported exemption signals', self.run_check(1, label='exemption-signal-added'))
+                    # A registered signal with no marker is stale and fails closed.
+                    self.write(''.join(fragments.values()))
+                    self.assertIn('stale UNSUPPORTED_SIGNALS', self.run_check(1, label='exemption-signal-stale'))
+                    # So is a registered signal whose script is gone.
+                    self.script.unlink()
+                    self.assertIn('stale UNSUPPORTED_SIGNALS',
+                                  self.run_check(1, label='exemption-signal-missing-script'))
+                    self.write(body)
+                    self.run_check(label=f'exemption-signals-restored-{name}')
+                finally:
+                    CHECK.UNSUPPORTED_SIGNALS.pop(name, None)
+                    self.script.unlink(missing_ok=True)
 
     def test_each_row_exception_has_a_paired_stale_control(self):
         self.script.unlink()
         for (name, label), reason in CHECK.ROW_EXCEPTIONS.items():
             with self.subTest(name=name):
-                self.assertTrue(reason.strip())
                 self.script = self.fixtures / name
                 self.script.parent.mkdir(parents=True, exist_ok=True)
-                good = "('good', source, 'before', 'after')"
-                oracle = self.root / 'src/oracle.json'
-                oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
-                excluded = f"({label!r}, root / 'src/oracle.json', 'a' * 64, '0' * 64)"
-                self.write(f'mutants = [{good}, {excluded}]\n')
-                self.run_check()
-                self.write(f'mutants = [{good}]\n')
-                self.assertIn('stale row exceptions', self.run_check(1))
-                self.write(f'mutants = [{good}, {excluded}]\n')
-                self.run_check()
-                print(f'ROW_EXCEPTION {name}/{label}: present=0 missing=1 restored=0')
-                self.script.unlink()
+                # #1727: unlink in finally so one failing subtest cannot leave
+                # a stale scratch script that fails every later subtest.
+                try:
+                    self.assertTrue(reason.strip())
+                    good = "('good', source, 'before', 'after')"
+                    oracle = self.root / 'src/oracle.json'
+                    oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
+                    excluded = f"({label!r}, root / 'src/oracle.json', 'a' * 64, '0' * 64)"
+                    self.write(f'mutants = [{good}, {excluded}]\n')
+                    self.run_check()
+                    self.write(f'mutants = [{good}]\n')
+                    self.assertIn('stale row exceptions', self.run_check(1))
+                    self.write(f'mutants = [{good}, {excluded}]\n')
+                    self.run_check()
+                    print(f'ROW_EXCEPTION {name}/{label}: present=0 missing=1 restored=0')
+                finally:
+                    self.script.unlink(missing_ok=True)
 
     def test_sequential_rows_have_independent_stale_and_reason_checks(self):
         # #996: the real turn-gates rows were deleted with the script, so the
@@ -2232,38 +2259,43 @@ originals['alias.rs'] = originals['alias.rs'].replace('unused', 'ignored')
             with self.subTest(filename=filename):
                 self.script = self.fixtures / filename
                 self.script.parent.mkdir(parents=True, exist_ok=True)
-                oracle = self.root / 'src/oracle.json'
-                oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
-                prefix = "oracle = root / 'src/oracle.json'\nold = json.loads(oracle.read_text())['hash']\n"
-                good = "('good', source, 'before', 'after')"
-                exempt = f"({name!r}, oracle, old, '0' * 64)"
-                table = f'mutants = [{good}, {exempt}]\n'
-                self.write(prefix + table)
-                self.run_check(label=f'json-exception-{filename}')
-                for broken, error in (
-                    (exempt.replace(', oracle,', ', source,'), 'JSON hash replacement'),
-                    (exempt.replace(', old,', ", 'before',"), 'JSON hash replacement'),
-                    (exempt.replace(", '0' * 64)", ', None)'), 'JSON hash replacement'),
-                    (exempt.replace(', old,', ', unknown_before,'), 'unresolved name'),
-                    (exempt.replace(", '0' * 64)", ')'), 'expected name/path/before/after'),
-                ):
-                    self.write(prefix + f'mutants = [{good}, {broken}]\n')
-                    self.assertIn(error, self.run_check(1, label=f'bad-exception-shape-{filename}'))
-                self.write(prefix + table)
                 sibling = self.root / 'src/unrelated.rs'
-                sibling.write_text('// ' + 'a' * 64)
-                self.assertIn('exempted before occurs in source src/unrelated.rs', self.run_check(
-                    1, label=f'exempted-source-anchor-{filename}'))
-                sibling.unlink()
-                self.run_check(label=f'exemption-restored-{filename}')
-                oracle.write_text('{"hash": "' + 'b' * 64 + '"}')
-                self.write(prefix + table.replace(', old,', ", 'a' * 64,"))
-                self.assertIn('absent from JSON target', self.run_check(1, label='json-target-anchor-missing'))
-                self.write(prefix + table)
-                self.run_check(label='json-target-anchor-restored')
-                with patch.dict(CHECK.ROW_EXCEPTIONS, {(filename, name): ''}):
-                    self.assertIn('empty row exception reason', self.run_check(1))
-                self.script.unlink()
+                # #1727: both scratch files are removed in finally; a failed
+                # assertion must not leak them into the next subtest.
+                try:
+                    oracle = self.root / 'src/oracle.json'
+                    oracle.write_text('{"hash": "' + 'a' * 64 + '"}')
+                    prefix = "oracle = root / 'src/oracle.json'\nold = json.loads(oracle.read_text())['hash']\n"
+                    good = "('good', source, 'before', 'after')"
+                    exempt = f"({name!r}, oracle, old, '0' * 64)"
+                    table = f'mutants = [{good}, {exempt}]\n'
+                    self.write(prefix + table)
+                    self.run_check(label=f'json-exception-{filename}')
+                    for broken, error in (
+                        (exempt.replace(', oracle,', ', source,'), 'JSON hash replacement'),
+                        (exempt.replace(', old,', ", 'before',"), 'JSON hash replacement'),
+                        (exempt.replace(", '0' * 64)", ', None)'), 'JSON hash replacement'),
+                        (exempt.replace(', old,', ', unknown_before,'), 'unresolved name'),
+                        (exempt.replace(", '0' * 64)", ')'), 'expected name/path/before/after'),
+                    ):
+                        self.write(prefix + f'mutants = [{good}, {broken}]\n')
+                        self.assertIn(error, self.run_check(1, label=f'bad-exception-shape-{filename}'))
+                    self.write(prefix + table)
+                    sibling.write_text('// ' + 'a' * 64)
+                    self.assertIn('exempted before occurs in source src/unrelated.rs', self.run_check(
+                        1, label=f'exempted-source-anchor-{filename}'))
+                    sibling.unlink()
+                    self.run_check(label=f'exemption-restored-{filename}')
+                    oracle.write_text('{"hash": "' + 'b' * 64 + '"}')
+                    self.write(prefix + table.replace(', old,', ", 'a' * 64,"))
+                    self.assertIn('absent from JSON target', self.run_check(1, label='json-target-anchor-missing'))
+                    self.write(prefix + table)
+                    self.run_check(label='json-target-anchor-restored')
+                    with patch.dict(CHECK.ROW_EXCEPTIONS, {(filename, name): ''}):
+                        self.assertIn('empty row exception reason', self.run_check(1))
+                finally:
+                    sibling.unlink(missing_ok=True)
+                    self.script.unlink(missing_ok=True)
 
     def test_function_scoped_row_is_checked_instead_of_exempted(self):
         self.script.unlink()
