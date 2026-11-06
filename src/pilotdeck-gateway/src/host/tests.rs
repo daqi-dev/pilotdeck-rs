@@ -1257,6 +1257,7 @@ async fn peer_exits_when_its_host_is_killed() {
 async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
     let mode = "grandchild-close";
     let (owned, receipt) = owned_receipt(mode);
+    let started = std::time::Instant::now();
     let mut probe = Command::new("python3");
     probe
         .arg(orphan_probe())
@@ -1285,11 +1286,26 @@ async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
     // The peer writes this before it answers the handshake, so the probe cannot
     // have died before the descendant existed.
     let grandchild = read_pid(&format!("{mode}.pid"));
+    // The descendant sleeps 60 s (`fixture.py`). Prove it was still alive when
+    // the host died -- "already gone" would make the assertion below vacuous.
+    rustix::process::test_kill_process(rustix::process::Pid::from_raw(grandchild as i32).unwrap())
+        .unwrap_or_else(|error| {
+            panic!("grandchild {grandchild} was not alive after the kill: {error}")
+        });
     for (role, pid) in [("peer", peer), ("grandchild", grandchild)] {
         timeout(Duration::from_secs(5), assert_reaped(pid))
             .await
             .unwrap_or_else(|_| panic!("{role} {pid} outlived its host (#1779)"));
     }
+    // A pass that took anywhere near the descendant's own 60 s lifetime proves
+    // nothing: it may have expired instead of being killed. The window above is
+    // 5 s, so this only trips on a stalled test host, and it fails loudly
+    // instead of turning a starved run into silent evidence.
+    assert!(
+        started.elapsed() < Duration::from_secs(50),
+        "the observation window took {:?}; the 60 s descendant may have expired on its own",
+        started.elapsed()
+    );
     println!(
         "HOST_PASS killed host: peer {peer} and its descendant {grandchild} exited instead of orphaning"
     );
