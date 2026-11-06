@@ -3479,7 +3479,102 @@ MUTATIONS = [
      "\n"
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),    # #892 fix-r33 (codex boundary r32 P0-1..P0-5/P1-1/P1-2, GLM
+    # boundary r32 P0-1/P1-2/P1-3/P2-5, concurrency r32 P1-1): the
+    # bindings the r32 rules still could not name, the receivers they
+    # withdrew for unrelated objects, and the alias chains they cut at
+    # three hops.
+    ('calibrate-global-walrus-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    def _pdrs_walrus():\n        global md\n        (md := object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-unpack-star-target', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    _m, *_r = (md, None)\n    _m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-unpack-star-value', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    _m, _x = *(md,), None\n    _m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-unpack-iter-for', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    for _m in iter((md,)):\n        _m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-with-handle-name', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    _h = nullcontext(md)\n    with _h as _m:\n        _m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-handle-name', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    _n = '__setattr__'\n    _z = getattr(md, _n)\n    _z('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-handle-dict', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n    _n = '__dict__'\n    _d = getattr(md, _n)\n    _d['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-nonlocal-common-rebind', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n                        def _pdrs_outer(common):\n                            def _pdrs_inner():\n                                nonlocal common\n                                common = object()\n                            _pdrs_inner()\n                            return common.aggregate_status('PASS')\n                        _, _c = _pdrs_outer(common)\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-builtin-last-binding', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n                        dict = builtins.dict\n                        dict = report\n                        dict.update({'status': 'PASS'})\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-partial-prebound', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n                        import functools, operator\n                        functools.partial(operator.setitem, report, 'status')('PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-partial-name-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n                        import functools\n                        p = functools.partial(setattr, report)\n                        p('status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-builtins-chain-four', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n                        bi1 = __builtins__\n                        bi2 = bi1\n                        bi3 = bi2\n                        bi4 = bi3\n                        bi4['setattr'](report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -3847,6 +3942,85 @@ def calibrate_globals_alias_augassign(rows):
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-globals-alias-augassign flagged, passed=False')
 
+
+def _unrouted_status(rows, name):
+    """#892 fix-r33: a status write the slot rule no longer sees as shared."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    needle = ('aggregation-audit: scripts/gateway-parity/session_domain.py:main '
+              'must route every batch status/exit computation through '
+              'common.aggregate_status')
+    if not any(needle in failure for failure in (row.get('failures') or [])):
+        return False, (f'failures={row.get("failures")!r}, want the {needle!r} '
+                       'failure')
+    return True, f'aggregation-audit: {name} flagged, passed=False'
+
+
+def calibrate_global_walrus_rebind(rows):
+    """#892 fix-r33: global walrus rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-global-walrus-rebind flagged, passed=False')
+
+def calibrate_unpack_star_target(rows):
+    """#892 fix-r33: unpack star target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-unpack-star-target flagged, passed=False')
+
+def calibrate_unpack_star_value(rows):
+    """#892 fix-r33: unpack star value."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-unpack-star-value flagged, passed=False')
+
+def calibrate_unpack_iter_for(rows):
+    """#892 fix-r33: unpack iter for."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-unpack-iter-for flagged, passed=False')
+
+def calibrate_with_handle_name(rows):
+    """#892 fix-r33: with handle name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-with-handle-name flagged, passed=False')
+
+def calibrate_getattr_handle_name(rows):
+    """#892 fix-r33: getattr handle name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattr-handle-name flagged, passed=False')
+
+def calibrate_getattr_handle_dict(rows):
+    """#892 fix-r33: getattr handle dict."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattr-handle-dict flagged, passed=False')
+
+def calibrate_nonlocal_common_rebind(rows):
+    """#892 fix-r33: nonlocal common rebind."""
+    return _unrouted_status(rows, 'calibrate-nonlocal-common-rebind')
+
+def calibrate_builtin_last_binding(rows):
+    """#892 fix-r33: builtin last binding."""
+    return _unrouted_status(rows, 'calibrate-builtin-last-binding')
+
+def calibrate_partial_prebound(rows):
+    """#892 fix-r33: partial prebound."""
+    return _unrouted_status(rows, 'calibrate-partial-prebound')
+
+def calibrate_partial_name_status(rows):
+    """#892 fix-r33: partial name status."""
+    return _unrouted_status(rows, 'calibrate-partial-name-status')
+
+def calibrate_builtins_chain_four(rows):
+    """#892 fix-r33: builtins chain four."""
+    return _unrouted_status(rows, 'calibrate-builtins-chain-four')
 
 JUDGES = {
     'empty-group-probe-removed': (
@@ -4329,6 +4503,30 @@ JUDGES = {
         'aggregation-audit', calibrate_getattr_dynamic_call, False, ()),
     'calibrate-globals-alias-augassign': (
         'aggregation-audit', calibrate_globals_alias_augassign, False, ()),
+    'calibrate-global-walrus-rebind': (
+        'aggregation-audit', calibrate_global_walrus_rebind, False, ()),
+    'calibrate-unpack-star-target': (
+        'aggregation-audit', calibrate_unpack_star_target, False, ()),
+    'calibrate-unpack-star-value': (
+        'aggregation-audit', calibrate_unpack_star_value, False, ()),
+    'calibrate-unpack-iter-for': (
+        'aggregation-audit', calibrate_unpack_iter_for, False, ()),
+    'calibrate-with-handle-name': (
+        'aggregation-audit', calibrate_with_handle_name, False, ()),
+    'calibrate-getattr-handle-name': (
+        'aggregation-audit', calibrate_getattr_handle_name, False, ()),
+    'calibrate-getattr-handle-dict': (
+        'aggregation-audit', calibrate_getattr_handle_dict, False, ()),
+    'calibrate-nonlocal-common-rebind': (
+        'aggregation-audit', calibrate_nonlocal_common_rebind, False, ()),
+    'calibrate-builtin-last-binding': (
+        'aggregation-audit', calibrate_builtin_last_binding, False, ()),
+    'calibrate-partial-prebound': (
+        'aggregation-audit', calibrate_partial_prebound, False, ()),
+    'calibrate-partial-name-status': (
+        'aggregation-audit', calibrate_partial_name_status, False, ()),
+    'calibrate-builtins-chain-four': (
+        'aggregation-audit', calibrate_builtins_chain_four, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
