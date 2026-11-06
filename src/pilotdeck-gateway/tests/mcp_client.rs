@@ -30,8 +30,8 @@ use std::{
 use tokio::sync::watch;
 
 const ORACLE: &str = include_str!("fixtures/mcp-client/oracle.json");
-const SCENARIOS: usize = 26;
-const STEPS: usize = 115;
+const SCENARIOS: usize = 28;
+const STEPS: usize = 121;
 
 fn mock_path() -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))

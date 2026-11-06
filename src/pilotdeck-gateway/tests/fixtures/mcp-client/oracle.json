@@ -2524,6 +2524,270 @@
       ]
     },
     {
+      "id": "tools-list-bad-output-schema",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "good",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "bad",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "outputSchema": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "nope"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_failed",
+            "serverId": "mock",
+            "message": "MCP call failed (server=mock): type must be JSONType or JSONType[]: nope"
+          },
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "ready",
+          "status": "ready"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
+      "id": "tools-list-timeout-shaped-output-schema",
+      "spec": {
+        "id": "mock",
+        "transport": "stdio",
+        "command": "node",
+        "args": [
+          "<mock>"
+        ],
+        "env": {
+          "MOCK_DIR": "<dir>"
+        }
+      },
+      "options": {},
+      "script": {
+        "procs": [
+          {
+            "initialize": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {
+                      "tools": {
+                        "listChanged": true
+                      },
+                      "unknownCap": {}
+                    },
+                    "serverInfo": {
+                      "name": "mock",
+                      "version": "1.0.0"
+                    },
+                    "instructions": "server instructions are not surfaced by McpClient"
+                  }
+                }
+              }
+            ],
+            "tools/list": [
+              {
+                "send": {
+                  "jsonrpc": "2.0",
+                  "id": "$id",
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "good",
+                        "inputSchema": {
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "name": "bad",
+                        "inputSchema": {
+                          "type": "object"
+                        },
+                        "outputSchema": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "timeout"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "orphan": false,
+      "steps": [
+        {
+          "step": {
+            "op": "listTools"
+          },
+          "error": {
+            "name": "McpClientError",
+            "code": "mcp_call_timeout",
+            "serverId": "mock",
+            "message": "MCP call timed out (server=mock): type must be JSONType or JSONType[]: timeout"
+          },
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "status"
+          },
+          "ok": "error",
+          "status": "error"
+        },
+        {
+          "step": {
+            "op": "close"
+          },
+          "ok": null,
+          "status": "idle"
+        }
+      ],
+      "processes": [
+        [
+          {
+            "event": "spawn",
+            "argv": [],
+            "cwd": "<outside>",
+            "env": {}
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"elicitation\":{}},\"clientInfo\":{\"name\":\"pilotdeck\",\"version\":\"0.1.0\"}},\"jsonrpc\":\"2.0\",\"id\":0}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"notifications/initialized\",\"jsonrpc\":\"2.0\"}"
+          },
+          {
+            "event": "frame",
+            "line": "{\"method\":\"tools/list\",\"jsonrpc\":\"2.0\",\"id\":1}"
+          },
+          {
+            "event": "stdin-end"
+          },
+          {
+            "event": "exit"
+          }
+        ]
+      ]
+    },
+    {
       "id": "server-crash",
       "spec": {
         "id": "mock",

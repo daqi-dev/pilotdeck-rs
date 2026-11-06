@@ -398,11 +398,7 @@ impl SdkClient {
         self.wire.notification("notifications/initialized").await
     }
 
-    async fn list_tools(
-        &self,
-        timeout_ms: f64,
-        _server_id: &str,
-    ) -> Result<JsValue, McpClientError> {
+    async fn list_tools(&self, timeout_ms: f64) -> Result<JsValue, McpClientError> {
         let result = self
             .wire
             .request(
@@ -1088,15 +1084,11 @@ impl McpClient {
             return Err(self.not_connected());
         }
         let timeout = self.call_timeout_ms(None);
-        let server_id = self.id().to_owned();
         let result = self
-            .call_with_reconnect(|client| {
-                let server_id = server_id.clone();
-                async move {
-                    match client {
-                        Some(client) => client.list_tools(timeout, &server_id).await,
-                        None => Err(null_property("listTools")),
-                    }
+            .call_with_reconnect(|client| async move {
+                match client {
+                    Some(client) => client.list_tools(timeout).await,
+                    None => Err(null_property("listTools")),
                 }
             })
             .await?;
