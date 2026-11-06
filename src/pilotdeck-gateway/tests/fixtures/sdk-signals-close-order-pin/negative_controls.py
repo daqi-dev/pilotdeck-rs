@@ -78,17 +78,22 @@ the source lock — the #1145 full runner holds it for its whole 75-case run —
 gives up after a short probe rather than the 900 s default, and an abort of
 any kind (busy lock, failed restore, Ctrl-C) still writes the summary, with
 every recorded KILLED row revoked and every unrun control marked INVALID
-(#1508). Exit codes follow `cli-parity-lock-bounded` (#1064 fix-r2 P1-1):
-2 means the device never produced a verdict — an INVALID row (stale anchor,
-unparsable mutant, unproven restore) or an abort of any kind — and 1 is
-reserved for "the device ran and a control survived". The two must not share
-a code, or a coordinator reads "the device never ran" as "a control
-survived". This is this device's contract, not every sibling's: the shared
-`negative_suite` runner keeps 1 for its pre-guard lock rejections. The
-summary is published temp-file-then-rename, so an interrupt during that
-write leaves no summary at all rather than a half-written one. Because
-mutating_sources proves the tree equals HEAD, this must run after the #1382
-patch is committed; a pre-commit working tree is refused on purpose.
+(#1508). A run that could not verify the tree still writes the summary;
+only an interrupt during that accounting itself leaves none, and then rc 2
+says so. Exit codes follow `cli-parity-lock-bounded` (#1064 fix-r2 P1-1) on
+the verdict path: 2 means the device never produced a verdict — an INVALID
+row (stale anchor, unparsable mutant, unproven restore), an abort of any
+kind, or a summary that could not be published — and 1 is reserved for "the
+device ran and a control survived". The two must not share a code, or a
+coordinator reads "the device never ran" as "a control survived". This is
+this device's contract, not every sibling's: pre-run refusals (usage, an
+unknown or repeated selection, a missing `CARGO_TARGET_DIR`, a bad mutation
+table, an empty selection) still exit 1, as do the shared `negative_suite`
+runner's lock and selection refusals. The summary is published temp-file-
+then-rename, so an interrupt during that write leaves no summary at all
+rather than a half-written one. Because mutating_sources proves the tree
+equals HEAD, this must run after the #1382 patch is committed; a pre-commit
+working tree is refused on purpose.
 
 Usage:
   CARGO_TARGET_DIR=<dir> python3 -I negative_controls.py <new-output-dir> [name ...]
@@ -349,6 +354,18 @@ LOCK_TIMEOUT_SECONDS = 60
 results = []
 
 
+def _stderr(message):
+    # #1508 fix-r3: a fail-closed diagnostic must never be the thing that
+    # escapes. `2>&1 | head` or `2>&-` makes stderr unwritable too, and an
+    # exception raised from a handler that was about to exit 2 would hand the
+    # reader whatever code the interpreter picked — the exact misrouting this
+    # contract exists to prevent.
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except BaseException:
+        pass
+
+
 def record(name, status, reason, compiled):
     results.append(
         {
@@ -480,11 +497,7 @@ except BaseException as error:
         for row in mutations[len(results):]:
             record(row[0], "INVALID", f"run aborted: {aborted}", False)
     except BaseException as nested:
-        print(
-            f"#1382 abort accounting failed: {type(nested).__name__}: {nested}",
-            file=sys.stderr,
-            flush=True,
-        )
+        _stderr(f"#1382 abort accounting failed: {type(nested).__name__}: {nested}")
         os._exit(2)
 
 # #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
@@ -492,7 +505,10 @@ except BaseException as error:
 # already refuses an empty registry and the argv check refuses an empty
 # selection, so this only fires if a future path records no row at all.
 if not results:
-    sys.exit("#1506 no control ran: an empty run is not a pass")
+    # #1508 fix-r3: a zero denominator is "no verdict", not "a control
+    # survived" — it shares the INVALID/abort code, not SURVIVED's 1.
+    _stderr("#1506 no control ran: an empty run is not a pass")
+    os._exit(2)
 counts = {
     state: sum(row["status"] == state for row in results)
     for state in ("KILLED", "SURVIVED", "INVALID")
@@ -530,11 +546,7 @@ except BaseException as error:
         summary_tmp.unlink()
     except OSError:
         pass
-    print(
-        f"#1382 summary not published: {type(error).__name__}: {error}",
-        file=sys.stderr,
-        flush=True,
-    )
+    _stderr(f"#1382 summary not published: {type(error).__name__}: {error}")
     os._exit(2)
 try:
     print(
@@ -555,27 +567,38 @@ except BrokenPipeError:
         sys.stdout.close()
     except OSError:
         pass
-if aborted is not None:
-    # #1508 fix-r1: an aborted run is rc 2, not 1 — the sibling devices
-    # (`cli-parity-lock-bounded`, `issue-297`) reserve 1 for "a control ran and
-    # was not killed" (a red run of a working device) and 2 for "the device
-    # never produced a verdict" (busy lock, unverified restore, cancellation).
-    # The INVALID summary is already on disk, so the exit code only routes the
-    # reader; a coordinator must not read "the device never ran" as "a control
-    # survived".
-    print(f"#1382 run did not complete: {aborted}", file=sys.stderr, flush=True)
-    sys.exit(2)
 # #1508 fix-r2: the contract above only held for the abort path. A normal run
 # that recorded an INVALID row fell through to here and exited 1 — the same
 # code as "the device ran and a control survived" — so a coordinator read a
 # broken apparatus as a live control that escaped (#1064 fix-r2 P1-1 shape).
 # INVALID means the device produced no verdict: rc 2. SURVIVED alone is rc 1.
-invalid = [row["mutation"] for row in results if row["status"] == "INVALID"]
-survived = [row["mutation"] for row in results if row["status"] == "SURVIVED"]
-if invalid:
-    print(f"#1382 INVALID controls: {invalid}", file=sys.stderr, flush=True)
+# #1508 fix-r3: the routing itself is guarded. A second SIGINT delivered
+# between the final print and the exit (the window the fix-r2 comments above
+# name as expected) used to escape as the interpreter's own code — 130 — which
+# is neither of the two codes the contract defines. `os._exit` after a
+# best-effort message keeps the routing fixed no matter what interrupts it.
+try:
+    if aborted is not None:
+        # #1508 fix-r1: an aborted run is rc 2, not 1 — `cli-parity-lock-
+        # bounded` reserves 1 for "a control ran and was not killed" (a red run
+        # of a working device) and 2 for "the device never produced a verdict"
+        # (busy lock, unverified restore, cancellation). The INVALID summary is
+        # already on disk, so the exit code only routes the reader; a
+        # coordinator must not read "the device never ran" as "a control
+        # survived".
+        _stderr(f"#1382 run did not complete: {aborted}")
+        os._exit(2)
+    invalid = [row["mutation"] for row in results if row["status"] == "INVALID"]
+    survived = [row["mutation"] for row in results if row["status"] == "SURVIVED"]
+    if invalid:
+        _stderr(f"#1382 INVALID controls: {invalid}")
+        if survived:
+            _stderr(f"#1382 SURVIVED controls: {survived}")
+        os._exit(2)
     if survived:
-        print(f"#1382 SURVIVED controls: {survived}", file=sys.stderr, flush=True)
-    sys.exit(2)
-if survived:
-    sys.exit(f"#1382 SURVIVED controls: {survived}")
+        _stderr(f"#1382 SURVIVED controls: {survived}")
+        os._exit(1)
+except BaseException:
+    # Nothing in the routing may raise; if it somehow does, it is still "the
+    # device never produced a verdict", never a silent green.
+    os._exit(2)
