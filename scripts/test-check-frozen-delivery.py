@@ -1187,6 +1187,34 @@ def run():
          gw_inventory(GW_BOOTSTRAP
                       + "def _swap(x):\n    del x['apparatus']\n"
                         "_swap(sys.modules)\n" + _gw_tail) is None)
+    # 上面两条 `[x][0]` 只用到「字面量容器 + 形参」的直接拼写，拦它们的是
+    # 接收者的包含匹配；下面两条才单独钉住 `_local_aliases` 的容器一跳（形参
+    # 先绑到名字、再按位置取），去掉那条规则这两条会变成可判定。
+    case("gateway 形参先装进字面量容器、按位置取就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    rows = [x]\n"
+                        "    rows[0].update({'A2_SCRIPTS': ()})\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 形参先装进字面量容器、取元素绑名字就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    rows = [x]\n    _t = rows[0]\n"
+                        "    _t.update({'A2_SCRIPTS': ()})\n"
+                        "_swap(common)\n" + _gw_tail) is None)
+    case("gateway 形参只装进容器不写 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    rows = [x]\n    return len(rows)\n"
+                        "_swap(common)\n" + _gw_tail) is not None)
+    # `sys` 在 bootstrap 块里绑过，`_alias_roots` 的容器一跳已经替 `_sys_aliases`
+    # 挡了一层；只有「表从 from-import 来、名字不在被看护集合里」时，才轮到
+    # `_container_sys_kinds` 单独兜底，所以这两条用 `from sys import modules`。
+    case("gateway from-import 的 sys 表装进字面量容器后按位置就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\nrows = [_m]\n"
+                        "rows[0].update({'apparatus': None})\n" + _gw_tail) is None)
+    case("gateway from-import 的 sys 表装进字面量容器后取元素就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from sys import modules as _m\n_m2 = [_m][0]\n"
+                        "_m2.update({'apparatus': None})\n" + _gw_tail) is None)
     case("gateway 消费者名字被文件重绑后不再可信 → 不可判定",
          gw_inventory(GW_BOOTSTRAP
                       + "def _apply(f):\n    return f(common)\n"
