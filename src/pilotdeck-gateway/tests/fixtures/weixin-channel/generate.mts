@@ -929,6 +929,17 @@ decryptCase('media-image-dedupes-identical-keys', encryptEcb(jpegBuffer(), key16
   media: { aes_key: key16.toString('base64') },
 }, true);
 decryptCase('media-image-owner-base64-fallback', encryptEcb(jpegBuffer(), key16), { aeskey: key16.toString('base64') }, true);
+// Node narrows a JS string to **one byte per UTF-16 unit** before decoding:
+// `"\u0141"` contributes 0x41 (`A`) and `"\u013D"` contributes 0x3D (`=`).
+// A skip-non-ASCII reading would keep the base64 intact and recover key16, so
+// these two cells fail on any decoder that drops the character instead.
+const key16Base64 = key16.toString('base64');
+decryptCase('media-image-media-key-bmp-low-byte', encryptEcb(jpegBuffer(), key16), {
+  media: { aes_key: `${key16Base64.slice(0, 4)}\u0141${key16Base64.slice(4)}` },
+}, true);
+decryptCase('media-image-media-key-low-byte-equals', encryptEcb(jpegBuffer(), key16), {
+  media: { aes_key: `${key16Base64.slice(0, 4)}\u013D${key16Base64.slice(4)}` },
+}, true);
 decryptCase('media-image-all-miss-falls-back', seq(64, 3), { aeskey: key16.toString('hex') });
 decryptCase('media-image-not-block-multiple', seq(37, 3), { aeskey: key16.toString('hex') });
 decryptCase('media-summary-bad-keys', seq(16, 9), { aeskey: 'zz', media: { aes_key: '!!!' } });
@@ -1027,8 +1038,8 @@ await downloadCase('media-cdn-download-declared-too-large', [
   { status: 200, headers: { 'content-length': String(50 * 1024 * 1024 + 1) }, declaredOnly: true },
 ]);
 
-// 24 decrypt/URL cases + 5 CDN download cases.
-const EXPECTED_MEDIA_CASE_COUNT = 29;
+// 26 decrypt/URL cases + 5 CDN download cases.
+const EXPECTED_MEDIA_CASE_COUNT = 31;
 assert.equal(mediaCases.length, EXPECTED_MEDIA_CASE_COUNT, '#1823 media generator case count');
 
 await mkdir(process.argv[2], { recursive: true });

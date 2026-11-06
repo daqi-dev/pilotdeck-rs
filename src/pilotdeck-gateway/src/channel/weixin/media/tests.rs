@@ -36,6 +36,16 @@ fn media_cases<'a>(oracle: &'a Value, kind: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+/// One decrypt/download case by the name the fixture declares.
+fn media_case<'a>(oracle: &'a Value, name: &str) -> &'a Value {
+    oracle["cases"]
+        .as_array()
+        .expect("#1823 weixin oracle cases")
+        .iter()
+        .find(|case| case["name"] == name)
+        .unwrap_or_else(|| panic!("#1823 oracle case {name}"))
+}
+
 fn from_hex(text: &str) -> Vec<u8> {
     crate::negative_assert!(
         text.len().is_multiple_of(2),
@@ -86,7 +96,7 @@ fn oracle_declares_the_media_cases() {
         json!(decrypt.len() + download.len()),
         "#1823 generator media declaration"
     );
-    crate::negative_assert_eq!(decrypt.len(), 24, "#1823 decrypt case count");
+    crate::negative_assert_eq!(decrypt.len(), 26, "#1823 decrypt case count");
     crate::negative_assert_eq!(download.len(), 5, "#1823 download case count");
     crate::negative_assert_eq!(
         oracle["cdnBaseUrl"],
@@ -194,8 +204,13 @@ fn strip_pkcs7_padding_matches_the_baseline() {
 
 // ── Node decoders ───────────────────────────────────────────────────────────
 
-/// `Buffer.from(value, "base64")` on Node v22.22.0: skips characters outside
-/// the alphabet, accepts `-`/`_`, and stops at the first `=`.
+/// `Buffer.from(value, "base64")` on Node v22.22.0: each UTF-16 unit narrows
+/// to its low byte, characters outside the alphabet are skipped, `-`/`_` are
+/// accepted, and decoding stops at the first `=`.
+fn base64(text: &str) -> Vec<u8> {
+    node_base64_decode(&text.encode_utf16().collect::<Vec<_>>())
+}
+
 #[test]
 fn node_base64_semantics() {
     for (input, expected) in [
@@ -203,6 +218,13 @@ fn node_base64_semantics() {
             "AAECAwQFBgcICQoLDA0ODw==",
             "000102030405060708090a0b0c0d0e0f",
         ),
+        // Node narrows each UTF-16 unit to its low byte before decoding.
+        (
+            "AAEC\u{0141}AwQFBgcICQoLDA0ODw==",
+            "000102000c1014181c2024282c3034383c",
+        ),
+        ("AAEC\u{013D}AwQFBgcICQoLDA0ODw==", "000102"),
+        ("\u{0141}\u{0142}", "00"),
         ("AAECAwQFBgcICQoLDA0ODw", "000102030405060708090a0b0c0d0e0f"),
         ("AA==AAEC", "00"),
         ("AA EC", "000102"),
@@ -213,11 +235,7 @@ fn node_base64_semantics() {
         ("!", ""),
         ("", ""),
     ] {
-        crate::negative_assert_eq!(
-            to_hex(&node_base64_decode(input)),
-            expected,
-            "#1823 base64 decode"
-        );
+        crate::negative_assert_eq!(to_hex(&base64(input)), expected, "#1823 base64 decode");
     }
 }
 
@@ -266,7 +284,7 @@ fn read_string_and_length_follow_js() {
 #[test]
 fn encode_uri_component_matches_js() {
     crate::negative_assert_eq!(
-        encode_uri_component("a b/c?d=中&x=1-_.!~*'()"),
+        super::super::client::uri_encode_component("a b/c?d=中&x=1-_.!~*'()"),
         "a%20b%2Fc%3Fd%3D%E4%B8%AD%26x%3D1-_.!~*'()",
         "#1823 percent-encoding set"
     );
@@ -336,6 +354,133 @@ fn image_decrypt_failure_carries_the_baseline_message() {
         decrypt_weixin_image_or_throw(&jpeg, &owner).expect("#1823 plaintext image passes"),
         jpeg,
         "#1823 plaintext image is returned unchanged"
+    );
+}
+
+// ── focused cells ───────────────────────────────────────────────────────────
+//
+// The oracle replay aborts at the first mismatching case, so which assertion a
+// negative control kills varies with the mutation. These cells pin one
+// behaviour each against the same fixture inputs, giving every decrypt
+// negative control an exact, deterministic death point.
+
+fn decrypt_case_input(case: &Value) -> (Vec<u8>, JsValue) {
+    let owner = js(&case["input"]["mediaOwner"]);
+    let buffer = from_hex(
+        case["input"]["bufferHex"]
+            .as_str()
+            .expect("#1823 input buffer"),
+    );
+    (buffer, owner)
+}
+
+fn observed_hex(value: Option<Vec<u8>>) -> String {
+    value.map_or_else(|| "<none>".to_owned(), |bytes| to_hex(&bytes))
+}
+
+#[test]
+fn plaintext_passthrough_wins_over_its_own_decryption() {
+    let oracle = oracle();
+    let case = media_case(&oracle, "media-file-plaintext-wins-over-decrypt");
+    let (buffer, owner) = decrypt_case_input(case);
+    // Guard: the decoy decrypts into *another* known file, so dropping the
+    // early return changes the outcome instead of landing on the same one.
+    let keys = extract_weixin_media_keys(&owner);
+    crate::negative_assert_eq!(keys.len(), 1, "#1823 the decoy has exactly one key");
+    let decoys = try_decrypt_weixin_media(&buffer, &keys[0]);
+    crate::negative_assert_eq!(decoys.len(), 1, "#1823 the decoy really decrypts");
+    crate::negative_assert!(
+        is_likely_known_file_buffer(&decoys[0]),
+        "#1823 the decoy decryption is itself a known file"
+    );
+    crate::negative_assert!(
+        try_decrypt_weixin_media_if_needed(&buffer, &owner, is_likely_known_file_buffer).is_none(),
+        "#1823 plaintext passthrough wins over its own decryption"
+    );
+}
+
+#[test]
+fn the_candidate_loop_reaches_the_second_key() {
+    let oracle = oracle();
+    let case = media_case(&oracle, "media-image-second-candidate-hits");
+    let (buffer, owner) = decrypt_case_input(case);
+    crate::negative_assert_eq!(
+        extract_weixin_media_keys(&owner).len(),
+        2,
+        "#1823 the fixture carries two candidates"
+    );
+    crate::negative_assert_eq!(
+        observed_hex(try_decrypt_weixin_media_if_needed(
+            &buffer,
+            &owner,
+            is_known_image_buffer
+        )),
+        case["expected"]["resultHex"]
+            .as_str()
+            .expect("#1823 result"),
+        "#1823 candidate loop reaches the second key"
+    );
+}
+
+#[test]
+fn the_key_length_selects_the_aes_variant() {
+    let oracle = oracle();
+    let case = media_case(&oracle, "media-image-media-base64-aes192");
+    let (buffer, owner) = decrypt_case_input(case);
+    crate::negative_assert_eq!(
+        extract_weixin_media_keys(&owner).first().map(Vec::len),
+        Some(24),
+        "#1823 the fixture key is 24 bytes"
+    );
+    crate::negative_assert_eq!(
+        observed_hex(try_decrypt_weixin_media_if_needed(
+            &buffer,
+            &owner,
+            is_known_image_buffer
+        )),
+        case["expected"]["resultHex"]
+            .as_str()
+            .expect("#1823 result"),
+        "#1823 key length selects aes-192"
+    );
+}
+
+#[test]
+fn an_all_miss_falls_back_to_the_input() {
+    let oracle = oracle();
+    let case = media_case(&oracle, "media-image-all-miss-falls-back");
+    let (buffer, owner) = decrypt_case_input(case);
+    crate::negative_assert_eq!(
+        extract_weixin_media_keys(&owner).len(),
+        1,
+        "#1823 the fixture carries one wrong candidate"
+    );
+    crate::negative_assert_eq!(
+        observed_hex(try_decrypt_weixin_media_if_needed(
+            &buffer,
+            &owner,
+            is_known_image_buffer
+        )),
+        "<none>",
+        "#1823 all-miss falls back to the input"
+    );
+}
+
+#[test]
+fn decryption_strips_the_pkcs7_padding() {
+    let oracle = oracle();
+    let case = media_case(&oracle, "media-image-owner-hex-aes128");
+    let (buffer, owner) = decrypt_case_input(case);
+    crate::negative_assert_eq!(
+        observed_hex(try_decrypt_weixin_media_if_needed(
+            &buffer,
+            &owner,
+            is_known_image_buffer
+        )),
+        case["expected"]["resultHex"]
+            .as_str()
+            .expect("#1823 result"),
+        "#1823 decryption strips the pkcs7 padding"
     );
 }
 
@@ -594,4 +739,42 @@ async fn download_replays_the_oracle_cases() {
             "#1823 {name} download requests"
         );
     }
+}
+
+// The baseline buffers `arrayBuffer()` and only then compares the size, so a
+// CDN that streams without a `content-length` could grow memory without bound.
+// The port stops at the limit; this cell is the negative control's death point.
+#[tokio::test]
+async fn the_received_body_is_capped_at_the_limit() {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("#1823 cap bind");
+    let port = listener.local_addr().expect("#1823 cap addr").port();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("#1823 cap accept");
+        let _ = read_head(&mut stream).await;
+        // No content-length: hyper reads until close, and the client must stop
+        // on its own limit instead of buffering everything.
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+            .await;
+        let chunk = vec![b'A'; 1 << 20];
+        for _ in 0..(WEIXIN_ATTACHMENT_MAX_BYTES / chunk.len()) {
+            if stream.write_all(&chunk).await.is_err() {
+                return;
+            }
+        }
+        let _ = stream.write_all(b"A").await;
+        let _ = stream.shutdown().await;
+    });
+    let error = WeixinCdnClient::new()
+        .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
+        .await
+        .expect_err("#1823 an oversized body must be rejected");
+    task.await.expect("#1823 cap server");
+    crate::negative_assert_eq!(
+        error.formatted(),
+        "Error: Attachment is 52428801 bytes (limit 52428800).",
+        "#1823 received body is capped at the limit"
+    );
 }

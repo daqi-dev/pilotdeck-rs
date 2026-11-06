@@ -20,7 +20,6 @@ fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
 native = root / 'src/pilotdeck-gateway/src/native_process'
 REPLAY = 'channel::weixin::replay_tests::weixin_replays_the_ts_channel_oracle'
-MEDIA_DECRYPT = 'channel::weixin::media::tests::decrypt_replays_the_oracle_media_cases'
 MEDIA_DOWNLOAD = 'channel::weixin::media::tests::download_replays_the_oracle_cases'
 UNSUPPORTED = ('native_process::methods::tests::'
                'prepare_weixin_login_without_callback_answers_unsupported')
@@ -147,25 +146,30 @@ MUTATIONS = [
      'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
      '#1328 #1808 rejects absent expected'),
 
-    # #1823 inbound media. The decrypt rows are killed by the media oracle
-    # replay (`media-file-plaintext-wins-over-decrypt` exists precisely so the
-    # plaintext short-circuit is observable: that buffer's own decryption is
-    # *also* a known file, so skipping the early return adopts the decoy).
+    # #1823 inbound media. The decrypt rows are killed by the focused cells in
+    # `media/tests.rs` (one behaviour each): the oracle replay aborts at the
+    # first mismatching case, which differs per mutation. The plaintext row
+    # exists because the replay's decoy buffer is *itself* a known file and its
+    # own decryption is also one, so skipping the early return adopts the decoy.
     ('media-plaintext-passthrough-dropped', weixin / 'media.rs',
      '    if is_expected(buffer) {\n        return None;\n    }',
      '    if is_expected(buffer) && buffer.is_empty() {\n        return None;\n    }',
-     MEDIA_DECRYPT, '#1823 media-file-plaintext-wins-over-decrypt file changed'),
+     'channel::weixin::media::tests::'
+     'plaintext_passthrough_wins_over_its_own_decryption',
+     '#1823 plaintext passthrough wins over its own decryption'),
     ('media-candidates-first-key-only', weixin / 'media.rs',
      '    for key in extract_weixin_media_keys(media_owner) {\n'
      '        for deciphered in try_decrypt_weixin_media(buffer, &key) {',
      '    for key in extract_weixin_media_keys(media_owner).into_iter().take(1) {\n'
      '        for deciphered in try_decrypt_weixin_media(buffer, &key) {',
-     MEDIA_DECRYPT, '#1823 media-image-second-candidate-hits result'),
+     'channel::weixin::media::tests::the_candidate_loop_reaches_the_second_key',
+     '#1823 candidate loop reaches the second key'),
     ('media-key-length-always-128', weixin / 'media.rs',
      '        24 => decrypt_blocks::<Aes192>(key, &mut padded),',
      '        24 => decrypt_blocks::<Aes128>(key, &mut padded),',
-     MEDIA_DECRYPT, '#1823 media-image-media-base64-aes192 result'),
-    ('media-all-miss-panics', weixin / 'media.rs',
+     'channel::weixin::media::tests::the_key_length_selects_the_aes_variant',
+     '#1823 key length selects aes-192'),
+    ('media-all-miss-returns-empty', weixin / 'media.rs',
      '            if is_expected(&deciphered) {\n'
      '                return Some(deciphered);\n'
      '            }\n'
@@ -177,13 +181,15 @@ MUTATIONS = [
      '            }\n'
      '        }\n'
      '    }\n'
-     '    panic!("#1823 no candidate matched")\n',
-     MEDIA_DECRYPT, '#1823 media-image-all-miss-falls-back'),
+     '    Some(Vec::new())\n',
+     'channel::weixin::media::tests::an_all_miss_falls_back_to_the_input',
+     '#1823 all-miss falls back to the input'),
     ('media-pkcs7-strip-dropped', weixin / 'media.rs',
      '    let stripped = strip_pkcs7_padding(&padded).map(<[u8]>::to_vec);\n'
      '    outputs.push(stripped.unwrap_or(padded));',
      '    outputs.push(padded);',
-     MEDIA_DECRYPT, '#1823 media-image-owner-hex-aes128 result'),
+     'channel::weixin::media::tests::decryption_strips_the_pkcs7_padding',
+     '#1823 decryption strips the pkcs7 padding'),
     # The trailing-single-character guard is what keeps `chunk[1]` in range;
     # `node_base64_semantics` feeds "A" and "!".
     ('media-base64-single-char-guard', weixin / 'media.rs',
@@ -191,10 +197,15 @@ MUTATIONS = [
      '        if chunk.len() < 2 && chunk.is_empty() {\n            break;\n        }',
      'channel::weixin::media::tests::node_base64_semantics',
      '#1823 base64 decode'),
-    ('media-download-redirect-not-followed', weixin / 'media.rs',
-     '                if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)',
-     '                if matches!(status.as_u16(), 301 | 303 | 307 | 308)',
-     MEDIA_DOWNLOAD, '#1823 media-cdn-download-follows-redirect download ok'),
+    # The redirect policy itself now lives in the shared `fetch_redirect`
+    # stack (covered by its own suites); this row guards the 50 MiB cap on the
+    # *received* size, which no oracle case can record (a 50 MiB body would
+    # bloat the fixture), so a dedicated loopback cell kills it.
+    ('media-download-received-cap-removed', weixin / 'media.rs',
+     '            read_body(response.into_body(), WEIXIN_ATTACHMENT_MAX_BYTES, None)',
+     '            read_body(response.into_body(), usize::MAX, None)',
+     'channel::weixin::media::tests::the_received_body_is_capped_at_the_limit',
+     '#1823 received body is capped at the limit'),
 ]
 
 

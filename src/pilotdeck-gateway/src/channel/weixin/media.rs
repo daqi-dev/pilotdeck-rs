@@ -29,8 +29,8 @@ use aes::{
     cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray},
 };
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::{Request, Uri, header};
+use http_body_util::Full;
+use hyper::{HeaderMap, Method, header};
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::TokioExecutor,
@@ -40,6 +40,7 @@ use std::{collections::HashSet, time::Duration};
 use tokio::time::timeout;
 
 use super::WeixinClientError;
+use crate::fetch_redirect::{BodyError, follow, read_body};
 use crate::metadata::js_trim;
 
 /// `WeixinChannel.ts:49` `WEIXIN_CDN_BASE_URL`.
@@ -48,8 +49,6 @@ pub const WEIXIN_CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 pub const WEIXIN_ATTACHMENT_MAX_BYTES: usize = 50 * 1024 * 1024;
 /// `ImAttachmentStore.ts` `DEFAULT_FETCH_TIMEOUT_MS`.
 const WEIXIN_CDN_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
-/// `fetch` follows at most 20 redirects (undici default).
-const MAX_REDIRECTS: usize = 20;
 const AES_BLOCK: usize = 16;
 
 /// `isKnownImageBuffer`: JPEG / PNG / GIF87a / GIF89a / WebP magic.
@@ -176,7 +175,8 @@ pub fn summarize_weixin_media_key_shape(media_owner: &JsValue) -> String {
     };
     let media = owner.get("media").and_then(JsValue::as_object);
     let owner_aes_key = read_string(owner.get("aeskey"));
-    let media_aes_key = read_string(media.and_then(|media| media.get("aes_key")));
+    let media_key = media.and_then(|media| media.get("aes_key"));
+    let media_aes_key = read_string(media_key);
     let parts = [
         format!("ownerAesKeyLen={}", js_len(owner_aes_key.as_deref())),
         format!(
@@ -190,7 +190,7 @@ pub fn summarize_weixin_media_key_shape(media_owner: &JsValue) -> String {
             "mediaAesKeyDecodedLen={}",
             media_aes_key
                 .as_deref()
-                .map_or(0, |key| node_base64_decode(key).len())
+                .map_or(0, |_| node_base64_decode(&read_units(media_key)).len())
         ),
     ];
     format!("keyShape={}", parts.join(","))
@@ -255,8 +255,9 @@ pub fn extract_weixin_media_keys(media_owner: &JsValue) -> Vec<Vec<u8>> {
             push(node_hex_decode(trimmed));
         }
     }
-    if let Some(key) = read_string(media.and_then(|media| media.get("aes_key"))) {
-        let decoded = node_base64_decode(&key);
+    let media_key = media.and_then(|media| media.get("aes_key"));
+    if read_string(media_key).is_some() {
+        let decoded = node_base64_decode(&read_units(media_key));
         push(decoded.clone());
         let text: String = decoded.iter().map(|byte| (byte & 0x7f) as char).collect();
         if is_hex32(&text) {
@@ -266,7 +267,7 @@ pub fn extract_weixin_media_keys(media_owner: &JsValue) -> Vec<Vec<u8>> {
     if let Some(key) = owner_aes_key.as_deref() {
         let trimmed = js_trim(key);
         if !is_hex32(trimmed) {
-            push(node_base64_decode(key));
+            push(node_base64_decode(&read_units(owner.get("aeskey"))));
         }
     }
     keys
@@ -342,7 +343,7 @@ pub fn extract_weixin_media_url(media_owner: &JsValue) -> Option<String> {
     if let Some(param) = read_string(media.get("encrypt_query_param")) {
         return Some(format!(
             "{WEIXIN_CDN_BASE_URL}/download?encrypted_query_param={}",
-            encode_uri_component(&param)
+            super::client::uri_encode_component(&param)
         ));
     }
     ["full_url", "download_url", "url", "cdn_url"]
@@ -374,72 +375,60 @@ impl WeixinCdnClient {
         }
     }
 
-    /// `ImAttachmentStore.saveFromUrl`'s fetch step: GET with a 60 s deadline,
-    /// up to 20 redirects, `response.ok` required, and the 50 MiB limit
-    /// enforced on both the declared and the received size. The attachment
-    /// store itself (paths, names, metadata) belongs to #1822.
+    /// `ImAttachmentStore.saveFromUrl`'s fetch step: GET with a 60 s deadline
+    /// through the shared undici redirect policy
+    /// ([`crate::fetch_redirect::follow`], not a private copy),
+    /// `response.ok` required, and the 50 MiB limit enforced on both the
+    /// declared and the received size. The attachment store itself (paths,
+    /// names, metadata) belongs to #1822.
     pub async fn download(&self, url: &str) -> Result<Vec<u8>, WeixinClientError> {
         let exchange = async {
-            let mut target = url.to_owned();
-            for _ in 0..=MAX_REDIRECTS {
-                let uri: Uri = target.parse().map_err(|_| WeixinClientError {
-                    name: "TypeError".into(),
-                    message: format!("Failed to parse URL from {url}"),
-                })?;
-                let request = Request::builder()
-                    .method("GET")
-                    .uri(uri)
-                    .body(Full::new(Bytes::new()))
-                    .map_err(|_| WeixinClientError::fetch_failed())?;
-                let response = self
-                    .client
-                    .request(request)
-                    .await
-                    .map_err(|_| WeixinClientError::fetch_failed())?;
-                let status = response.status();
-                if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
-                    && let Some(location) = response
-                        .headers()
-                        .get(header::LOCATION)
-                        .and_then(|value| value.to_str().ok())
-                {
-                    let base =
-                        url::Url::parse(&target).map_err(|_| WeixinClientError::fetch_failed())?;
-                    target = base
-                        .join(location)
-                        .map_err(|_| WeixinClientError::fetch_failed())?
-                        .to_string();
-                    continue;
-                }
-                if !status.is_success() {
-                    return Err(WeixinClientError::error(format!(
-                        "Attachment download failed HTTP {}.",
-                        status.as_u16()
-                    )));
-                }
-                if let Some(declared) = response
-                    .headers()
-                    .get(header::CONTENT_LENGTH)
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(js_number)
-                    && declared > WEIXIN_ATTACHMENT_MAX_BYTES as f64
-                {
-                    return Err(WeixinClientError::error(format!(
-                        "Attachment is {declared} bytes (limit {WEIXIN_ATTACHMENT_MAX_BYTES})."
-                    )));
-                }
-                let body = response
-                    .into_body()
-                    .collect()
-                    .await
-                    .map_err(|_| WeixinClientError::fetch_failed())?
-                    .to_bytes();
-                if body.len() > WEIXIN_ATTACHMENT_MAX_BYTES {
-                    return Err(attachment_too_large(body.len()));
-                }
-                return Ok(body.to_vec());
+            let target = url::Url::parse(url).map_err(|_| WeixinClientError {
+                name: "TypeError".into(),
+                message: format!("Failed to parse URL from {url}"),
+            })?;
+            let response = follow(
+                target,
+                Method::GET,
+                HeaderMap::new(),
+                Bytes::new(),
+                WeixinClientError::fetch_failed,
+                |request| async {
+                    self.client
+                        .request(request)
+                        .await
+                        .map_err(|_| WeixinClientError::fetch_failed())
+                },
+            )
+            .await?;
+            let status = response.status();
+            if !status.is_success() {
+                return Err(WeixinClientError::error(format!(
+                    "Attachment download failed HTTP {}.",
+                    status.as_u16()
+                )));
             }
-            Err(WeixinClientError::fetch_failed())
+            if let Some(declared) = response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(js_number)
+                && declared > WEIXIN_ATTACHMENT_MAX_BYTES as f64
+            {
+                return Err(WeixinClientError::error(format!(
+                    "Attachment is {declared} bytes (limit {WEIXIN_ATTACHMENT_MAX_BYTES})."
+                )));
+            }
+            read_body(response.into_body(), WEIXIN_ATTACHMENT_MAX_BYTES, None)
+                .await
+                .map_err(|error| match error {
+                    // The baseline buffers `arrayBuffer()` and only then
+                    // reports the exact size; a hostile CDN could make that
+                    // unbounded, so the port stops at the limit and reports
+                    // the smallest size that must have arrived.
+                    BodyError::TooLong => attachment_too_large(WEIXIN_ATTACHMENT_MAX_BYTES + 1),
+                    BodyError::Terminated | BodyError::Aborted => WeixinClientError::fetch_failed(),
+                })
         };
         timeout(WEIXIN_CDN_FETCH_TIMEOUT, exchange)
             .await
@@ -475,6 +464,15 @@ fn read_string(value: Option<&JsValue>) -> Option<String> {
     } else {
         Some(text)
     }
+}
+
+/// The UTF-16 units of a `readString` value (`&[]` when absent); Node's
+/// `Buffer.from` decoders read one byte per unit, so they must not go through
+/// the lossy `String` (a lone surrogate would collapse into U+FFFD).
+fn read_units(value: Option<&JsValue>) -> Vec<u16> {
+    value
+        .and_then(JsValue::as_string)
+        .map_or_else(Vec::new, |text| text.units().to_vec())
 }
 
 /// JS `String.prototype.length` (UTF-16 code units); `0` for `undefined`.
@@ -525,19 +523,23 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-/// Node `Buffer.from(value, "base64")`: skip characters outside the alphabet
-/// (including whitespace and `!`), accept `-`/`_`, and stop at the first `=`.
-/// A trailing group of two or three characters still yields 1 or 2 bytes.
-fn node_base64_decode(value: &str) -> Vec<u8> {
-    let mut sextets = Vec::with_capacity(value.len());
-    for character in value.chars() {
-        let sextet = match character {
-            'A'..='Z' => character as u8 - b'A',
-            'a'..='z' => character as u8 - b'a' + 26,
-            '0'..='9' => character as u8 - b'0' + 52,
-            '+' | '-' => 62,
-            '/' | '_' => 63,
-            '=' => break,
+/// Node `Buffer.from(value, "base64")`: Node narrows the JS string to **one
+/// byte per UTF-16 code unit** (the low byte) before scanning, so `"\u{0141}"`
+/// decodes as `A` and `"\u{013D}"` stops like `=`. Characters outside the
+/// alphabet (including whitespace and `!`) are skipped, `-`/`_` are accepted,
+/// and decoding stops at the first `=`. A trailing group of two or three
+/// characters still yields 1 or 2 bytes.
+fn node_base64_decode(units: &[u16]) -> Vec<u8> {
+    let mut sextets = Vec::with_capacity(units.len());
+    for unit in units {
+        let byte = *unit as u8;
+        let sextet = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' => break,
             _ => continue,
         };
         sextets.push(sextet);
@@ -560,22 +562,5 @@ fn node_base64_decode(value: &str) -> Vec<u8> {
 }
 
 /// JS `encodeURIComponent` (unreserved set `A-Za-z0-9-_.!~*'()`).
-fn encode_uri_component(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        let keep = byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-            );
-        if keep {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests;

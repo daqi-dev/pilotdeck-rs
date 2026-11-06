@@ -53,7 +53,7 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 
 ## #1823 入站媒体（24 个解密/URL 场景 + 5 个 CDN 下载场景）
 
-`generate.mts` 在同一个基线提交上追加 `expectedMediaCaseCount` 与 29 条
+`generate.mts` 在同一个基线提交上追加 `expectedMediaCaseCount` 与 31 条
 `kind` 标注的用例（`decrypt` / `download`）；渠道 15 条不动。Rust 侧重放在
 `src/pilotdeck-gateway/src/channel/weixin/media/tests.rs`
 （`decrypt_replays_the_oracle_media_cases` / `download_replays_the_oracle_cases`）。
@@ -78,6 +78,7 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 | `media-image-media-hex-text-key` | 微信真实形状：base64 的 32 字符 hex 文本，解出 32 字节 ASCII（首候选，aes-256）+ 其 hex 解码（次候选，aes-128） |
 | `media-image-dedupes-identical-keys` | 两处来源同一把 key → 去重后只剩一条 |
 | `media-image-owner-base64-fallback` | owner 非 32 hex 时按 base64 再试 |
+| `media-image-media-key-bmp-low-byte` / `-low-byte-equals` | Node 的 base64 把 JS 串按 **UTF-16 单元的低字节**取字节：`\u0141` 当 `A`、`\u013D` 当 `=` 截断；「跳过非 ASCII 字符」的读法会还原 key16 并解密，两格都要求零候选 |
 | `media-image-all-miss-falls-back` | 全不中 → 原样返回不抛 |
 | `media-image-not-block-multiple` | 非 16 字节整数倍 → 无候选（Node `final()` 抛） |
 | `media-summary-bad-keys` / `-no-owner` / `-owner-not-object` | 诊断串的 `keyShape=none` / 长度 / hex 判定 |
@@ -94,17 +95,32 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 `/final`，两条请求都记）· `-declared-too-large`（`content-length: 52428801` →
 `Attachment is 52428801 bytes (limit 52428800).`，且必须在读 body 前就拒绝）。
 
+Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
+`redirect: "follow"` 语义，含 bad-port 表、多 `Location` join、fragment 剥离），
+不是本模块内联的第二份循环。**收到字节的上限**另有一条 Rust-only 用例
+`the_received_body_is_capped_at_the_limit`：基线 `saveFromUrl` 先
+`arrayBuffer()` 全量缓冲再比大小，无 `content-length` 的流式 CDN 会把内存撑爆，
+本移植改为读时即封顶（`fetch_redirect::read_body`），超限报
+`Attachment is 52428801 bytes (limit 52428800).`——这是唯一一处有意偏离
+基线实现细节的地方，端到端可观察结果（拒绝超限附件）不变；50 MiB 的 body
+不进 fixture（会撑大 oracle），故用脚本化 loopback 服务器直接推流。
+
 负控（`negative_controls.py`，全部 KILLED）：
 
 | 变异 | 死点 |
 |---|---|
-| `media-plaintext-passthrough-dropped`（早退加 `&& buffer.is_empty()`） | `media-file-plaintext-wins-over-decrypt` 的 `fileChanged` |
-| `media-candidates-first-key-only`（`.take(1)`） | `media-image-second-candidate-hits` 的 `resultHex` |
-| `media-key-length-always-128`（24 字节也走 `Aes128`） | `media-image-media-base64-aes192` |
-| `media-all-miss-panics`（全不中 panic 而非回退） | `media-image-all-miss-falls-back` |
-| `media-pkcs7-strip-dropped` | 任一命中格的 `resultHex`（尾部 padding 未剥） |
+| `media-plaintext-passthrough-dropped`（早退加 `&& buffer.is_empty()`） | `plaintext_passthrough_wins_over_its_own_decryption`（`media-file-plaintext-wins-over-decrypt` 的诱饵被采用） |
+| `media-candidates-first-key-only`（`.take(1)`） | `the_candidate_loop_reaches_the_second_key`（`media-image-second-candidate-hits`） |
+| `media-key-length-always-128`（24 字节也走 `Aes128`） | `the_key_length_selects_the_aes_variant`（`media-image-media-base64-aes192`） |
+| `media-all-miss-returns-empty`（全不中返回空 Vec 而非 `None`） | `an_all_miss_falls_back_to_the_input`（`media-image-all-miss-falls-back`） |
+| `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
 | `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
-| `media-download-redirect-not-followed`（302 不在跟随列表） | `media-cdn-download-follows-redirect` 的 `ok` |
+| `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
+
+解密行的死点是**聚焦单元用例**而不是 31 格回放：回放在第一个不符的格上中止，
+不同变异停在不同的格，而 receipt 按「测试名 + 断言原文」精确匹配，逐格回放
+给不出稳定的声明死点。这些聚焦用例读的是同一份 oracle 格输入（单一真相源），
+只把每格行为单独钉死。
 
 **端口**：任务书建议挑固定段（如 18950-18969），本 fixture 改为**临时端口**
 （`listen(0, '127.0.0.1')`，沿用本文件既有 `FakeIlink` 的写法）：oracle 里只存

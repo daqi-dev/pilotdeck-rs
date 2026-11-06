@@ -143,8 +143,9 @@ fn endpoint_url(base_url: &str, endpoint: &str) -> String {
     }
 }
 
-/// JS `encodeURIComponent` (unreserved set `A-Za-z0-9-_.!~*'()`).
-fn uri_encode_component(value: &str) -> String {
+/// JS `encodeURIComponent` (unreserved set `A-Za-z0-9-_.!~*'()`); shared with
+/// [`super::media`] rather than copied there.
+pub(super) fn uri_encode_component(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         let keep = byte.is_ascii_alphanumeric()
