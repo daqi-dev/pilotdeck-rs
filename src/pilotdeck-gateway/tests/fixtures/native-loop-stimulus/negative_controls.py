@@ -147,6 +147,23 @@ STRING = re.compile(r'r#"(?:[^"]|"(?!#))"#|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\
 ANCHOR_FN = r'^\s*(?:pub(?:\([^)]*\))? )?(?:async )?fn {}\('
 
 
+def strip_literals(line):
+    """Replace every string/char literal with `""`, keeping the rest verbatim.
+
+    Uses `finditer` rather than `Pattern.sub`: the shared anchor checker
+    (anchor_selfcheck.regex_flags) refuses compiled/aliased regex consumers in
+    a control script, and this file also uses literal `.replace()`.
+    """
+    out = []
+    position = 0
+    for match in STRING.finditer(line):
+        out.append(line[position:match.start()])
+        out.append('""')
+        position = match.end()
+    out.append(line[position:])
+    return ''.join(out)
+
+
 def fn_body(text, name):
     """Return the one definition of `name`, ending at its matching brace."""
     lines = text.splitlines()
@@ -160,7 +177,7 @@ def fn_body(text, name):
     for index in range(head, len(lines)):
         # String literals hold balanced braces here, but strip them anyway so a
         # later edit cannot make the brace count silently wrong.
-        code = STRING.sub('""', lines[index])
+        code = strip_literals(lines[index])
         depth += code.count('{') - code.count('}')
         opened = opened or '{' in code
         if opened and depth <= 0:
