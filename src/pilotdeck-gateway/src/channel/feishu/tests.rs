@@ -105,13 +105,18 @@ async fn bounded<T>(context: &str, future: impl std::future::Future<Output = T>)
     }
 }
 
-async fn until(context: &str, predicate: impl Fn() -> bool) {
+/// Wait for `predicate`, emitting the receipt of the cell this wait stands in
+/// for when the deadline passes. `assertion` must be one a mutation row
+/// declares — a timeout that invented its own name (`case x wait lark 5`)
+/// would be judged INVALID instead of KILLED even though the mutation was
+/// caught. `detail` therefore only reaches stderr.
+async fn until(assertion: &str, detail: &str, predicate: impl Fn() -> bool) {
     let started = Instant::now();
     while !predicate() {
-        crate::negative_assert!(
-            started.elapsed() < DEADLINE,
-            "#1329 {context} matches the TS oracle"
-        );
+        if started.elapsed() >= DEADLINE {
+            eprintln!("#1329 timeout waiting for {detail}");
+        }
+        crate::negative_assert!(started.elapsed() < DEADLINE, "{assertion}");
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
@@ -696,21 +701,24 @@ async fn replay(case: &Value, lark: &Arc<Lark>) -> Value {
                 gate(&gates, step["gate"].as_str().expect("#1329 gate name")).send_replace(true);
             }
             "wait" => {
+                // The wait stands in for this case's cell comparison, so a
+                // timeout must emit exactly that cell's receipt.
+                let cell = format!("#1329 case {name} matches the TS oracle");
                 if let Some(count) = step["lark"].as_u64() {
                     let record = record.clone();
-                    until(&format!("{context} wait lark {count}"), move || {
+                    until(&cell, &format!("{context} lark {count}"), move || {
                         record.lock().expect("#1329 record mutex").lark.len() >= count as usize
                     })
                     .await;
                 } else if let Some(count) = step["gateway"].as_u64() {
                     let record = record.clone();
-                    until(&format!("{context} wait gateway {count}"), move || {
+                    until(&cell, &format!("{context} gateway {count}"), move || {
                         record.lock().expect("#1329 record mutex").gateway.len() >= count as usize
                     })
                     .await;
                 } else if let Some(count) = step["logs"].as_u64() {
                     let record = record.clone();
-                    until(&format!("{context} wait logs {count}"), move || {
+                    until(&cell, &format!("{context} logs {count}"), move || {
                         record.lock().expect("#1329 record mutex").logs.len() >= count as usize
                     })
                     .await;
@@ -964,9 +972,11 @@ async fn token_invalid_code_drops_the_cached_token() {
         "#1329 the token pin event is fresh, not deduped"
     );
     let record_reader = record.clone();
-    until("token pin outbound", move || {
-        record_reader.lock().expect("#1329 record mutex").lark.len() >= 6
-    })
+    until(
+        "#1329 the invalid token costs exactly one extra token POST",
+        "token pin outbound",
+        move || record_reader.lock().expect("#1329 record mutex").lark.len() >= 6,
+    )
     .await;
 
     let entries = record.lock().expect("#1329 record mutex").lark.clone();
@@ -1068,4 +1078,199 @@ async fn losing_the_admission_race_requeues_the_turn() {
         entry.active_run.is_none(),
         "#1329 the race loser does not start a run"
     );
+}
+
+/// The per-chat turn queue is not decoration: a turn that had to wait for the
+/// running one must be picked up by the drainer when it finishes, in the same
+/// order the messages were accepted. The live window (two inbound batches,
+/// `/new` replacing the batch under a running drain) is not stably
+/// reproducible, so the pin builds the state directly: two turns queue while
+/// the chat is busy, the busy turn releases, and the next drainer must run the
+/// live turn and then both queued ones.
+#[tokio::test]
+async fn queued_turns_drain_after_the_active_turn() {
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gateway = MockInbound::new(
+        vec![
+            TurnScript::default(),
+            TurnScript::default(),
+            TurnScript::default(),
+        ],
+        record.clone(),
+        Gates::default(),
+    );
+    let (channel, _slot) = case_channel(LARK_PORT);
+    let deps = case_deps(&record, gateway);
+    let handle = bounded("queue drain start", channel.start(deps))
+        .await
+        .expect("#1329 start");
+    let chat_id = "queue-chat";
+
+    let turn = |message: &str| QueuedTurn {
+        session_key: format!("feishu:chat={chat_id}:general"),
+        message: message.to_owned(),
+        project_key: None,
+        message_id: None,
+        generation: 0,
+    };
+
+    // The busy turn holds the admission slot; both arrivals lose it.
+    channel
+        .runtime
+        .active_chats
+        .lock()
+        .expect("#1329 active chats mutex")
+        .insert(chat_id.to_owned());
+    channel
+        .runtime
+        .run_queued_turns(chat_id, turn("queued-1"))
+        .await;
+    channel
+        .runtime
+        .run_queued_turns(chat_id, turn("queued-2"))
+        .await;
+    {
+        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        crate::negative_assert_eq!(
+            state.chats.get(chat_id).map(|entry| entry.queue.len()),
+            Some(2),
+            "#1329 both arrivals wait in the chat queue"
+        );
+    }
+
+    // The running turn ends (its drainer gives the slot back while looking for
+    // the next turn), and the next message becomes the drainer.
+    channel
+        .runtime
+        .active_chats
+        .lock()
+        .expect("#1329 active chats mutex")
+        .remove(chat_id);
+    channel
+        .runtime
+        .run_queued_turns(chat_id, turn("live"))
+        .await;
+
+    let messages: Vec<String> = record
+        .lock()
+        .expect("#1329 record mutex")
+        .gateway
+        .iter()
+        .map(|entry| entry["message"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    crate::negative_assert_eq!(
+        messages,
+        vec![
+            "live".to_owned(),
+            "queued-1".to_owned(),
+            "queued-2".to_owned()
+        ],
+        "#1329 the drainer runs the queued turns after the live one"
+    );
+    {
+        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        crate::negative_assert!(
+            state
+                .chats
+                .get(chat_id)
+                .is_none_or(|entry| entry.queue.is_empty()),
+            "#1329 the drained queue is empty"
+        );
+    }
+    crate::negative_assert!(
+        !channel
+            .runtime
+            .active_chats
+            .lock()
+            .expect("#1329 active chats mutex")
+            .contains(chat_id),
+        "#1329 the drainer gives the admission back"
+    );
+    let _ = bounded("queue drain stop", handle.stop("done")).await;
+}
+
+/// `/new <正文>` resets the session and then submits the text on the *new*
+/// session key (TS returns early only when `!mapped.message`). The mapper pin
+/// covers the parse; this one covers the channel actually reaching the
+/// gateway with the payload and not answering the bare confirmation instead.
+#[tokio::test]
+async fn new_command_with_text_submits_on_the_new_session() {
+    // 18960-18972 belong to the oracle replay, 18973/18990-18993 to the other
+    // pins, 18995-18998 to the wecom_callback suite: stay clear of all of them
+    // so a parallel full-suite run cannot collide on bind.
+    const NEW_TEXT_PIN_LARK_PORT: u16 = 18980;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let lark = Lark::new();
+    lark.arm_script(
+        vec![
+            (
+                200,
+                "{\"code\":0,\"tenant_access_token\":\"t-1\",\"expire\":7200}".to_owned(),
+            ),
+            (
+                200,
+                "{\"code\":0,\"data\":{\"reaction_id\":\"re-1\"}}".to_owned(),
+            ),
+            (
+                200,
+                "{\"code\":0,\"data\":{\"message_id\":\"om-out\"}}".to_owned(),
+            ),
+        ],
+        record.clone(),
+    );
+    start_lark_on(lark.clone(), NEW_TEXT_PIN_LARK_PORT).await;
+    let gateway = MockInbound::new(
+        vec![TurnScript {
+            gate_before: None,
+            events: vec![json!({"type": "assistant_text_delta", "text": "总结完毕"})],
+            error: None,
+        }],
+        record.clone(),
+        Gates::default(),
+    );
+    let (channel, slot) = case_channel(NEW_TEXT_PIN_LARK_PORT);
+    let deps = case_deps(&record, gateway);
+    let handle = bounded("new text start", channel.start(deps))
+        .await
+        .expect("#1329 start");
+    let handler = slot.handler().expect("#1329 webhook handler");
+
+    let (status, body) = bounded(
+        "new text event",
+        handler(v2_event(
+            "ev-new-text",
+            "c7",
+            "/new 请总结",
+            Some("om-in-7"),
+        )),
+    )
+    .await;
+    crate::negative_assert_eq!(status, 200, "#1329 the /new command is acknowledged");
+    crate::negative_assert_eq!(body, "{\"ok\":true}", "#1329 the /new command is accepted");
+    until(
+        "#1329 /new with text submits the payload on the new session",
+        "new text outbound",
+        || record.lock().expect("#1329 record mutex").lark.len() >= 4,
+    )
+    .await;
+
+    let submitted = record.lock().expect("#1329 record mutex").gateway.clone();
+    crate::negative_assert_eq!(
+        submitted,
+        vec![json!({
+            "sessionKey": "feishu:chat=c7:s_<uuid>",
+            "channelKey": "feishu",
+            "message": "请总结",
+        })],
+        "#1329 /new with text submits exactly the stripped payload"
+    );
+    let lark_entries = record.lock().expect("#1329 record mutex").lark.clone();
+    crate::negative_assert!(
+        lark_entries.iter().all(|entry| !entry["body"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("已创建新会话。")),
+        "#1329 /new with text does not answer the bare confirmation"
+    );
+    let _ = bounded("new text stop", handle.stop("done")).await;
 }

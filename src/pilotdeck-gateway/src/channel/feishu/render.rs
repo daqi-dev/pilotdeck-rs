@@ -49,9 +49,22 @@ fn strip_live_cursor(text: &str) -> String {
     }
 }
 
-/// JS `String.prototype.slice(0, n).trimEnd()` over UTF-16 units.
+/// True for the first unit of a surrogate pair: cutting *after* it would leave
+/// a lone surrogate, which a Rust `String` cannot hold (registered diff
+/// A8.3-CH-FEISHU-009).
+fn is_high_surrogate(unit: u16) -> bool {
+    (0xD800..=0xDBFF).contains(&unit)
+}
+
+/// JS `String.prototype.slice(0, n).trimEnd()` over UTF-16 units, except that
+/// a cut landing between the two halves of a surrogate pair backs off one unit
+/// (diff 009: TS keeps the lone surrogate, Rust would emit U+FFFD).
 fn truncate_units(units: &[u16], keep: usize) -> String {
-    let head = &units[..units.len().min(keep)];
+    let mut end = units.len().min(keep);
+    if end > 0 && end < units.len() && is_high_surrogate(units[end - 1]) {
+        end -= 1;
+    }
+    let head = &units[..end];
     crate::metadata::js_trim_end(&String::from_utf16_lossy(head)).to_owned()
 }
 
@@ -138,7 +151,24 @@ pub fn live_chunks(text: &str, limit: usize) -> Vec<String> {
     if limit == 0 || units.len() <= limit {
         return vec![text.to_owned()];
     }
-    units.chunks(limit).map(String::from_utf16_lossy).collect()
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < units.len() {
+        let mut end = (start + limit).min(units.len());
+        // Diff 009: TS's hard `slice` can leave a lone surrogate on either
+        // side of the cut; a Rust `String` cannot, so the segment boundary
+        // moves one unit out of the pair instead of emitting U+FFFD.
+        if end < units.len() && is_high_surrogate(units[end - 1]) {
+            if end - start > 1 {
+                end -= 1;
+            } else {
+                end += 1;
+            }
+        }
+        chunks.push(String::from_utf16_lossy(&units[start..end]));
+        start = end;
+    }
+    chunks
 }
 
 /// `splitForTransport`: 4000-unit chunks, preferring the last newline and
@@ -152,6 +182,7 @@ pub fn split_for_transport(text: &str, max: usize) -> Vec<String> {
     if max == 0 || units.len() <= max {
         return vec![text.to_owned()];
     }
+
     let mut chunks = Vec::new();
     let mut rest = units.as_slice();
     while rest.len() > max {
@@ -477,6 +508,31 @@ mod tests {
         ));
         buffer.handle_event(&parse_json(r#"{"type":"error","message":"secondary"}"#));
         assert_eq!(buffer.text, "\n⚠️ bad\n");
+    }
+
+    #[test]
+    fn live_chunks_never_split_a_surrogate_pair() {
+        let text = format!("{}😀{}", "a".repeat(3997), "b".repeat(10));
+        let chunks = live_chunks(&text, 3998);
+        crate::negative_assert!(
+            chunks.iter().all(|chunk| !chunk.contains('\u{FFFD}')),
+            "#1329 no chunk carries a replacement character"
+        );
+        crate::negative_assert_eq!(chunks.concat(), text, "#1329 chunks rejoin the reply");
+        crate::negative_assert_eq!(chunks.len(), 2, "#1329 the boundary moved one unit out");
+        // The same guard in the post truncation: the keep window ends right
+        // after the high surrogate, so the cut backs off instead of emitting
+        // U+FFFD (keep is TS's `maxTextLength - 12` head budget, i.e. 3988).
+        let long = format!("{}😀{}", "a".repeat(3987), "b".repeat(40));
+        let truncated = post_text(&render_live_post(&long, true, None));
+        crate::negative_assert!(
+            !truncated.contains('\u{FFFD}'),
+            "#1329 the truncated post carries no replacement character"
+        );
+        crate::negative_assert!(
+            truncated.ends_with("…（已截断）"),
+            "#1329 the oversized post still reports truncation"
+        );
     }
 
     #[test]

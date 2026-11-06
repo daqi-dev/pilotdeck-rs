@@ -9,7 +9,9 @@ patch evidence, pending registrations and the complete result summary.
 Sibling of `channel-unmigrated`, which pins the seam itself (`channel::tests::`
 over `channel/loader.rs`). This fixture pins the *assembly*: deleting the call
 site or swallowing its error must turn `startup_refuses_*` red, and the bundle
-key table must keep `feishu` listed while #1329 has not landed (#1694 §7).
+key declaration must stay closed in both directions — every `BUNDLE_CHANNEL_KEYS`
+entry needs an assembly constructor (#1694 §7; `feishu` joined both tables with
+#1329, so an enabled feishu is now built rather than refused).
 """
 from pathlib import Path
 import sys
@@ -43,8 +45,10 @@ REJECT_BLOCK = (
 
 EVERY = ('startup_refuses_every_unmigrated_channel',
          '#1763 enabled unmigrated channel must refuse native startup')
-FEISHU = ('startup_refuses_unimplemented_feishu',
-          '#1763 enabled feishu must refuse native startup')
+# #1329: `feishu` is implemented, so the feishu cell moved from "must refuse"
+# to the declaration invariant it now belongs to (see `BUNDLE` mutation).
+BUNDLE = ('bundle_keys_match_the_assembly',
+          '#1763 the assembly constructs exactly the bundle keys the loader owns')
 
 MUTATIONS = [
     # #1763: the production call site is deleted altogether. The seam still
@@ -52,7 +56,7 @@ MUTATIONS = [
     # can notice — that is exactly what this row pins.
     ('assembly-reject-call-removed', assembly, REJECT_BLOCK,
      '        // #1763 negative control: call site deleted\n',
-     [EVERY, FEISHU]),
+     [EVERY]),
     # #1763: the error is swallowed instead of propagating, i.e. "refuse" turns
     # into the silent skip #1302 B forbids. Same cells must kill.
     ('assembly-reject-silently-skipped', assembly, REJECT_BLOCK,
@@ -65,23 +69,22 @@ MUTATIONS = [
      '            });\n'
      '        // #1763 negative control: silent skip\n'
      '        let _ = rejected;\n',
-     [EVERY, FEISHU]),
-    # #1694 §7: `feishu` drops out of the bundle table, so an enabled feishu is
-    # skipped again instead of refused until #1329 builds it.
+     [EVERY]),
+    # #1694 §7: `feishu` drops out of the bundle table while the assembly still
+    # claims to construct it, so the two declarations disagree.
     ('bundle-feishu-dropped', loader,
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin"];',
-     [FEISHU]),
+     [BUNDLE]),
 ]
 
 
 def main():
     guarded = [assembly, loader]
     args = ['--check'] if sys.argv[1:] == ['--check-anchors'] else sys.argv[1:]
-    # No `any_cell`: both assembly mutations break both named cells (deleting
-    # the call site or swallowing its error hands `expect_err` an `Ok`), so
-    # requiring every cell keeps `startup_refuses_unimplemented_feishu` from
-    # silently weakening while the row still passes.
+    # No `any_cell`: both assembly mutations hand `expect_err` an `Ok`, so the
+    # base cell must stay red for each of them; requiring every declared cell
+    # keeps a partially-weakened row from passing.
     return matrix_main(root, __file__, 'native_process::channels_tests::', MUTATIONS,
                        passed_count=1, child_count=0, paths=guarded,
                        exact=True, args=args)

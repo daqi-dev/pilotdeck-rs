@@ -52,6 +52,13 @@ MUTATIONS = [
      'pub const MAX_TEXT_MESSAGE_LENGTH: usize = 4000;',
      'pub const MAX_TEXT_MESSAGE_LENGTH: usize = 6000;',
      'channel_matches_real_ts', '#1329 case long-text-chunked matches the TS oracle'),
+    # `liveTextLimit()` is `maxMessageLength - cursor.length`; not subtracting
+    # the cursor widens every segment to 4000 units, so the long-text case's
+    # two posts carry the wrong split.
+    ('live-text-limit-ignores-cursor', source / 'render.rs',
+     '    max.saturating_sub(DEFAULT_LIVE_REPLY_CURSOR.encode_utf16().count())\n        .max(1)',
+     '    max.max(1)',
+     'channel_matches_real_ts', '#1329 case long-text-chunked matches the TS oracle'),
     # 99991663 must drop the cached tenant token so the text fallback
     # re-fetches; ignoring the code leaves one token POST and a stale bearer.
     ('token-invalid-ignored', source / 'client.rs',
@@ -59,12 +66,15 @@ MUTATIONS = [
      '            && !TOKEN_INVALID_CODES.contains(&number)',
      'token_invalid_code_drops_the_cached_token',
      '#1329 the invalid token costs exactly one extra token POST'),
-    # The queued second message must drain after the first turn completes;
-    # stopping the drain loop drops it from every cell.
+    # A turn queued behind the running one must be picked up when the drainer
+    # looks for its next turn; stopping that hand-off strands every queued
+    # turn (the live case never reaches the turn queue — its second message
+    # waits in the inbound batch and is handled by the same drainer).
     ('queue-drain-stopped', source / 'mod.rs',
-     '            next = self.shift_turn(chat_id);',
-     '            next = None;',
-     'channel_matches_real_ts', '#1329 case second-message-serialized matches the TS oracle'),
+     '                next = self.take_next_or_release(chat_id, &mut slot);',
+     '                next = None;',
+     'queued_turns_drain_after_the_active_turn',
+     '#1329 the drainer runs the queued turns after the live one'),
     # Only a hot-reload keeps the route; inverting the guard clears it for
     # hot-reload (the case's url_verification falls to 404) and keeps it for
     # "done" (the stopped-route case answers 200 instead of 404).

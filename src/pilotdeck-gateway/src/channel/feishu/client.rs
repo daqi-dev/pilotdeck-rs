@@ -411,7 +411,6 @@ impl ApiClient {
                 return;
             }
         };
-        let _ = &token;
         if let Err(error) = self
             .http
             .request_bearer(
