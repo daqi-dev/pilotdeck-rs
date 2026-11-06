@@ -3723,6 +3723,117 @@ MUTATIONS = [
      "                        bi50 = bi49\n"
      "                        bi50['setattr'](report, 'status', 'PASS')\n"
      "                    report['status'] = overall\n"),
+
+    # #1953 fix-r35 (issue A..G): the nine constructs the r34 resolver still
+    # read as clean.  Each one is a real write to the shared aggregator with a
+    # construct the analyser lost sight of.
+    ('calibrate-loop-backedge-alias', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import builtins\n"
+     "                        dict = builtins.dict\n"
+     "                        for i in (0, 1):\n"
+     "                            if i:\n"
+     "                                dict.update({'status': 'PASS'})\n"
+     "                            dict = report\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-sameline-restore', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        import builtins\n"
+     "                        dict = report; dict.update({'status': 'PASS'}); "
+     "dict = builtins.dict\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-shared-seen-paths', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    if False:\n"
+     "                        a = setattr\n"
+     "                        h = a\n"
+     "                        h = a\n"
+     "                        h(report, 'status', 'PASS')\n"
+     "                    report['status'] = overall\n"),
+    ('calibrate-decorator-lambda-scope', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def outer():\n"
+     "        x = md\n"
+     "\n"
+     "        @((lambda y=x: (lambda f: (setattr(y, 'common', object()), f)[1]))())\n"
+     "        def inner():\n"
+     "            x = object()\n"
+     "\n"
+     "    outer()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-nonlocal-walrus-withdraw', GUARD_SOURCE,
+     "    if policy == 'round':\n",
+     "    if False:\n"
+     "        def middle():\n"
+     "            def inner():\n"
+     "                nonlocal common\n"
+     "                import types\n"
+     "                (common := types.SimpleNamespace(\n"
+     "                    aggregate_status=lambda *a: ('PASS', 0)))\n"
+     "            inner()\n"
+     "        middle()\n"
+     "    if policy == 'round':\n"),
+    ('calibrate-handle-list-literal', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, _n)]\n"
+     "    _hs[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-dict-literal', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = {'x': getattr(md, _n)}\n"
+     "    _hs['x']('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-handle-yield', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    def _handles():\n"
+     "        yield getattr(md, _n)\n"
+     "    next(_handles())('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-handover', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _pdrs_attr_name = '__getattribute__'\n"
+     "    getattr(md, _pdrs_attr_name)('__dict__')['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4163,6 +4274,75 @@ def calibrate_partial_setdefault_prebound(rows):
 def calibrate_builtins_chain_fiftyone(rows):
     """#892 fix-r34: calibrate-builtins-chain-fiftyone."""
     return _unrouted_status(rows, 'calibrate-builtins-chain-fiftyone')
+
+
+def calibrate_loop_backedge_alias(rows):
+    """#1953 A: a loop back edge rebinds the alias after the use line, so the
+    line-only binding filter still handed out the name."""
+    return _unrouted_status(rows, 'calibrate-loop-backedge-alias')
+
+
+def calibrate_sameline_restore(rows):
+    """#1953 B: a same-line rebind and restore tied on ``(lineno, value)``, so
+    the pick broke by walk order instead of source order."""
+    return _unrouted_status(rows, 'calibrate-sameline-restore')
+
+
+def calibrate_shared_seen_paths(rows):
+    """#1953 C: one ``seen`` set shared by a name's sibling bindings let the
+    first path shadow the second."""
+    return _unrouted_status(rows, 'calibrate-shared-seen-paths')
+
+
+def calibrate_decorator_lambda_scope(rows):
+    """#1953 D: a decorator expression evaluated in the enclosing scope was
+    attributed to the decorated function's scope."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-decorator-lambda-scope flagged, '
+        'passed=False')
+
+
+def calibrate_nonlocal_walrus_withdraw(rows):
+    """#1953 E: the nonlocal withdrawal missed a ``NamedExpr`` (and match
+    captures) written into the outer name."""
+    return _must_call_shared(
+        rows, '_failure',
+        'aggregation-audit: calibrate-nonlocal-walrus-withdraw flagged, '
+        'passed=False')
+
+
+def calibrate_handle_list_literal(rows):
+    """#1953 F1: a handle stored in a list literal escaped the escape test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-list-literal flagged, '
+        'passed=False')
+
+
+def calibrate_handle_dict_literal(rows):
+    """#1953 F2: a handle stored in a dict literal escaped the escape test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-dict-literal flagged, '
+        'passed=False')
+
+
+def calibrate_handle_yield(rows):
+    """#1953 F3: a handle handed out through ``yield`` escaped the escape
+    test."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-handle-yield flagged, passed=False')
+
+
+def calibrate_getattribute_handover(rows):
+    """#1953 G: ``__getattribute__`` read by a non-literal name hands over the
+    ``__dict__`` and was not in the read-handover set."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-handover flagged, '
+        'passed=False')
 
 
 def _unrouted_status(rows, name):
@@ -4798,6 +4978,25 @@ JUDGES = {
         'aggregation-audit', calibrate_partial_setdefault_prebound, False, ()),
     'calibrate-builtins-chain-fiftyone': (
         'aggregation-audit', calibrate_builtins_chain_fiftyone, False, ()),
+    # #1953 fix-r35: see the MUTATIONS note above.
+    'calibrate-loop-backedge-alias': (
+        'aggregation-audit', calibrate_loop_backedge_alias, False, ()),
+    'calibrate-sameline-restore': (
+        'aggregation-audit', calibrate_sameline_restore, False, ()),
+    'calibrate-shared-seen-paths': (
+        'aggregation-audit', calibrate_shared_seen_paths, False, ()),
+    'calibrate-decorator-lambda-scope': (
+        'aggregation-audit', calibrate_decorator_lambda_scope, False, ()),
+    'calibrate-nonlocal-walrus-withdraw': (
+        'aggregation-audit', calibrate_nonlocal_walrus_withdraw, False, ()),
+    'calibrate-handle-list-literal': (
+        'aggregation-audit', calibrate_handle_list_literal, False, ()),
+    'calibrate-handle-dict-literal': (
+        'aggregation-audit', calibrate_handle_dict_literal, False, ()),
+    'calibrate-handle-yield': (
+        'aggregation-audit', calibrate_handle_yield, False, ()),
+    'calibrate-getattribute-handover': (
+        'aggregation-audit', calibrate_getattribute_handover, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

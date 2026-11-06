@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 226 mutants:
+`JUDGES`, keyed by the same names. The current table has 235 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -420,7 +420,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-handle-annassign`, `calibrate-handle-argument`,
 `calibrate-ordered-binding`, `calibrate-partial-update-prebound`,
 `calibrate-partial-setdefault-prebound`,
-`calibrate-builtins-chain-fiftyone`.
+`calibrate-builtins-chain-fiftyone`, `calibrate-loop-backedge-alias`,
+`calibrate-sameline-restore`, `calibrate-shared-seen-paths`,
+`calibrate-decorator-lambda-scope`, `calibrate-nonlocal-walrus-withdraw`,
+`calibrate-handle-list-literal`, `calibrate-handle-dict-literal`,
+`calibrate-handle-yield`, `calibrate-getattribute-handover`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1021,9 +1025,9 @@ anything outside that set needs runtime observation instead of a static PASS.**
 A green `--mode all` therefore means "none of the registered shapes is present",
 never "no unaggregated write exists".
 
-The constructs below were measured against the ruler at
-`1aad2b626e3db5c27a950489ce7db3beace3312e` (r34) and are **not** detected.  They
-are recorded here so they are not re-reported as new.  Repro: copy the tree to a
+The construct below was measured against the ruler at
+`1aad2b626e3db5c27a950489ce7db3beace3312e` (r34) and rechecked after
+`fix-r35`; it is **still** not detected.  Repro: copy the tree to a
 detached worktree at that commit and run
 `BASE_TREE=<tree> python3 -I _tmp/20261106-issue-892/r34-review-probes/probe.py`
 (probe + raw output archived with PR #1634).  `rc=0` = the ruler reported PASS,
@@ -1033,17 +1037,32 @@ against the injected tree is a full `--mode aggregation-audit` run.
 
 | ID | Shape **not** covered | Minimal spelling | Probe | rc |
 |---|---|---|---|---|
-| A | Binding that reaches the write through a **loop back edge**.  `_bindings_at` filters bindings by text line only, so a binding written *after* the call site is invisible on the next iteration. | `dict = builtins.dict`<br>`for i in (0, 1):`<br>`    if i: dict.update({'status': 'PASS'})`<br>`    dict = report` | `A-loop-backedge` | 0 |
-| B | **Same physical line**: the call and a later rebind share a line, and only the line number is compared, so the rebind excuses the call. | `dict = report; dict.update({'status': 'PASS'}); dict = builtins.dict` | `B-sameline-restore` | 0 |
-| C | Two **sibling alias paths** to the same binding.  The recursive resolvers share one `seen` set across `or`-ed candidates, so the second path to an already-visited binding returns `None`; `found` becomes `{setattr, None}` and `len(found) != 1` drops the write. | `a = setattr`<br>`h = a`<br>`h = a`<br>`h(report, 'status', 'PASS')` | `C-shared-seen` | 0 |
-| D | Nested lambda **inside a decorator expression**.  `_walk_scoped` assigns the decorator lambda to the decorated function's scope, so a capture of `md` is resolved against the inner function's unrelated `x = object()`. | `def outer():`<br>`    x = md`<br>`    @((lambda y=x: (lambda f: (setattr(y, 'common', object()), f)[1]))())`<br>`    def inner(): x = object()`<br>`outer()` | `D-decorator-lambda` | 0 |
-| E | A `nonlocal` name rebound through a **walrus**.  `_local_bound_names` collects plain assignments only, so `nonlocal common` plus `(common := ...)` is not seen as a write. | `def middle():`<br>`    def inner():`<br>`        nonlocal common`<br>`        (common := types.SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0)))`<br>`    inner()`<br>`middle()` | `E-nonlocal-walrus` | 0 |
-| F | A dynamic write handle handed through a **container or a generator**.  `_handle_escapes` inspects the immediate parent node only; a handle stored in a list/tuple/dict or produced by `yield` never reaches a call. | `n = '__setattr__'`<br>`hs = [getattr(md, n)]; hs[0]('common', object())`<br>— or —<br>`hs = {'x': getattr(md, n)}; hs['x']('common', object())`<br>— or —<br>`def handles(): yield getattr(md, n)`<br>`next(handles())('common', object())` | `F1-handle-list`<br>`F2-handle-dict`<br>`F3-handle-yield` | 0<br>0<br>0 |
-| G | **`__getattribute__` as the managed attribute name.**  The known-string allowlist covers `__setattr__` / `__setitem__` / `setattr` / `setitem`, but not the read that yields a writable `__dict__`. | `_pdrs_attr_name = '__getattribute__'`<br>`getattr(md, _pdrs_attr_name)('__dict__')['common'] = object()` | `G-getattribute-named` | 0 |
 | H | **False FAIL, not a miss**: a starred target is bound to *every* element of the right-hand side, including the ones already consumed by the leading target, so `rest[0]` is treated as `md` and an unrelated object is withdrawn. | `a, *rest = (md, object())`<br>`rest[0].common = object()` | `H-star-overbind-false-fail` | 1 |
 
+### Closed by `fix-r35` (#1953)
+
+Nine constructs measured at the same r34 head were **not** detected there.  The
+r35 resolver changes detect all nine, and each now has a `calibrate-*` mutant
+that was `SURVIVED` before the fix and `KILLED` after (raw evidence archived with
+PR #1953; re-derive the "before" state by copying the tree to a detached
+worktree at `1aad2b626e3db5c27a950489ce7db3beace3312e` with the current
+`negative_controls.py` in place and running `python3 -I negative_controls.py
+--output <dir> --only <name>`).
+
+| ID | Shape | Mutant |
+|---|---|---|
+| A | Binding that reaches the write through a **loop back edge**.  `_bindings_at` filters bindings by text line only, so a binding written *after* the call site is invisible on the next iteration. | `calibrate-loop-backedge-alias` |
+| B | **Same physical line**: the call and a later rebind share a line, so the line-only comparison let the rebind excuse the call. | `calibrate-sameline-restore` |
+| C | Two **sibling alias paths** to the same binding: one `seen` set shared across them made the second path return `None`. | `calibrate-shared-seen-paths` |
+| D | Nested lambda **inside a decorator expression**, evaluated in the enclosing scope but attributed to the decorated function's scope. | `calibrate-decorator-lambda-scope` |
+| E | A `nonlocal` name rebound through a **walrus** (or a match capture) was not withdrawn as a write. | `calibrate-nonlocal-walrus-withdraw` |
+| F1 | A dynamic write handle stored in a **list literal** never reached the escape test. | `calibrate-handle-list-literal` |
+| F2 | A dynamic write handle stored in a **dict literal** never reached the escape test. | `calibrate-handle-dict-literal` |
+| F3 | A dynamic write handle handed out through **`yield`** never reached the escape test. | `calibrate-handle-yield` |
+| G | **`__getattribute__`** read by a non-literal name hands over the `__dict__`; it was not in the read-handover set. | `calibrate-getattribute-handover` |
+
 Also measured at the same head, tracked in #1954 rather than accepted here (they
-are P2-level and narrower than A–H): `from operator import attrgetter as _ag;
+are P2-level and narrower than the constructs above): `from operator import attrgetter as _ag;
 _ag('__setattr__')(md)('common', object())` (probe `I-attrgetter-fromimport`,
 rc=0 — the from-import alias list does not carry `attrgetter`); an `attrgetter`
 handle registered through an annotated assignment rather than a bare `Assign`
