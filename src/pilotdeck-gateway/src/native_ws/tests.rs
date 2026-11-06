@@ -584,16 +584,33 @@ fn budget_normalize(raw: &str) -> String {
 #[tokio::test]
 async fn upgrade_budget_boundary_matches_ts() {
     let expected = budget_oracle();
+    let cells = expected["cells"].as_array().expect("#1351 oracle cells");
+    let mut ids: Vec<&str> = cells
+        .iter()
+        .map(|cell| cell["id"].as_str().expect("#1351 oracle cell id"))
+        .collect();
+    ids.sort_unstable();
+    // #1351 (2026-11-06 review): compare the cell *set*, not just its length —
+    // a duplicated id plus a dropped cell would keep `len() == 9` while
+    // silently losing a covered cell, and `plain-16385` / `plain-20480` are
+    // covered only by this replay (the standalone cell tests are upgrade-only).
     negative_assert_eq!(
-        expected["cells"]
-            .as_array()
-            .expect("#1351 oracle cells")
-            .len(),
-        9,
-        "#1351 the fixture records all nine boundary cells"
+        ids,
+        vec![
+            "plain-16383",
+            "plain-16384",
+            "plain-16385",
+            "plain-20480",
+            "upgrade-16383",
+            "upgrade-16384",
+            "upgrade-16385",
+            "upgrade-17020",
+            "upgrade-20480",
+        ],
+        "#1351 the fixture records exactly the nine expected boundary cells"
     );
     let (address, stop, task) = start(Arc::default(), DEADLINE).await;
-    for cell in expected["cells"].as_array().expect("#1351 oracle cells") {
+    for cell in cells {
         let id = cell["id"].as_str().expect("#1351 oracle cell id");
         let request = cell["request"].as_str().expect("#1351 oracle cell request");
         let recorded = cell["response"]
@@ -683,9 +700,13 @@ async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str
 /// cell, recorded on the TS baseline by this round's raw-socket probe
 /// (`_tmp/20261106-issue-1351/probe.out`, Node v22.22.0) and golden-replayed
 /// byte-exactly by `upgrade_budget_boundary_matches_ts`. Kept in its own test
-/// like #1209's `header_budget_deep_oversize_431s_like_ts`: under the
-/// `native-http-upgrade-budget-off` mutant the boundary cell's panic must not
-/// mask this cell's anchor.
+/// like #1209's `header_budget_deep_oversize_431s_like_ts` so that a panic in
+/// the boundary replay cannot mask this cell, and so a hand-run
+/// `PDRS_MUTANT=native-http-upgrade-budget-off … --exact` pins this cell on its
+/// own (raw output in `_tmp/20261106-issue-1351/negctl-newcells/`). It has no
+/// `native-ws-entry/negative_controls.py` row yet: that table binds one switch
+/// name to one test, and a per-cell switch needs its own site in the upgrade
+/// guard (#1757).
 #[tokio::test]
 async fn upgrade_budget_16385_cell_431s_like_ts() {
     let (address, stop, task) = start(Arc::default(), DEADLINE).await;
@@ -697,9 +718,11 @@ async fn upgrade_budget_16385_cell_431s_like_ts() {
 /// (n = 20387) is the same canned 431 + close, recorded on the TS baseline by
 /// this round's raw-socket probe (`_tmp/20261106-issue-1351/probe.out`, Node
 /// v22.22.0) and golden-replayed byte-exactly by
-/// `upgrade_budget_boundary_matches_ts`. A test of its own so the 16385
-/// cell's panic cannot mask this cell's anchor under the
-/// `native-http-upgrade-budget-off` mutant.
+/// `upgrade_budget_boundary_matches_ts`. A test of its own so the 16385 cell's
+/// panic cannot mask this cell, and so a hand-run
+/// `PDRS_MUTANT=native-http-upgrade-budget-off … --exact` pins this cell on its
+/// own (raw output in `_tmp/20261106-issue-1351/negctl-newcells/`). Like the
+/// 16385 cell it has no negative-control row yet (#1757).
 #[tokio::test]
 async fn upgrade_budget_20kib_cell_431s_like_ts() {
     let (address, stop, task) = start(Arc::default(), DEADLINE).await;
