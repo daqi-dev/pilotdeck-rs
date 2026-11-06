@@ -3968,6 +3968,57 @@ MUTATIONS = [
      "                        [_r for _r in (1,)\n"
      "                         if operator.setitem(report, 'status', 'PASS')]\n"
      "                    report['status'] = overall\n"),
+    ('calibrate-match-capture-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    match md:\n"
+     "        case h:\n"
+     "            h.common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-match-capture-setattr-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    match md:\n"
+     "        case h:\n"
+     "            setattr(h, 'common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-attr-spelling', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.__getattribute__('__dict__')['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-wrapped-container', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in list(_hs):\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4575,6 +4626,42 @@ def calibrate_comprehension_filter_write(rows):
     """#1953 fix-r1 r1b: the write sat in a comprehension filter, which is
     neither the element nor a statement."""
     return _unrouted_status(rows, 'calibrate-comprehension-filter-write')
+
+
+def calibrate_match_capture_receiver(rows):
+    """#1953 fix-r1 r1b: ``case h:`` also aliases the *receiver*, so
+    ``h.common = <stub>`` writes the subject the pattern matched."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-match-capture-receiver flagged, '
+        'passed=False')
+
+
+def calibrate_match_capture_setattr_receiver(rows):
+    """#1953 fix-r1 r1b: same capture, handed to ``setattr`` rather than
+    written with an attribute store."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-match-capture-setattr-receiver flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_attr_spelling(rows):
+    """#1953 fix-r1 r1b: ``md.__getattribute__('__dict__')`` is the
+    attribute-spelling route to the same mapping ``getattr`` reaches."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-attr-spelling flagged, '
+        'passed=False')
+
+
+def calibrate_for_wrapped_container(rows):
+    """#1953 fix-r1 r1b: iterating ``list(hs)`` takes the handles out of the
+    container just as iterating ``hs`` does."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-wrapped-container flagged, '
+        'passed=False')
 
 
 def _unrouted_status(rows, name):
@@ -5253,6 +5340,14 @@ JUDGES = {
         'aggregation-audit', calibrate_list_const_subscript_write, False, ()),
     'calibrate-comprehension-filter-write': (
         'aggregation-audit', calibrate_comprehension_filter_write, False, ()),
+    'calibrate-match-capture-receiver': (
+        'aggregation-audit', calibrate_match_capture_receiver, False, ()),
+    'calibrate-match-capture-setattr-receiver': (
+        'aggregation-audit', calibrate_match_capture_setattr_receiver, False, ()),
+    'calibrate-getattribute-attr-spelling': (
+        'aggregation-audit', calibrate_getattribute_attr_spelling, False, ()),
+    'calibrate-for-wrapped-container': (
+        'aggregation-audit', calibrate_for_wrapped_container, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
