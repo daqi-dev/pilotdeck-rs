@@ -126,9 +126,9 @@ supplies a slot must carry its measured face as a reason (`fix-r16`).  A non-zer
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests ninety-eight probe functions: ninety-seven inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests one hundred and three probe functions: one hundred and two inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the ninety-seven (the nine helpers
+function.  `probe892` is the authoritative list for the one hundred and two (the nine helpers
 it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
 `_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 110 mutants:
+`JUDGES`, keyed by the same names. The current table has 115 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -360,7 +360,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-dunder-setitem-status`, `calibrate-local-import-alias`,
 `calibrate-module-alias-binding`, `calibrate-attr-status`,
 `calibrate-dunder-setattr-status`, `calibrate-unbound-setitem-status`,
-`calibrate-builtins-setattr-status`, `calibrate-operator-setitem-status`.
+`calibrate-builtins-setattr-status`, `calibrate-operator-setitem-status`,
+`calibrate-try-assign-alias`, `calibrate-attr-exit-code`,
+`calibrate-subscript-exit-code`, `calibrate-attr-code-relay`,
+`calibrate-try-else-completes`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -532,6 +535,23 @@ three-argument spellings `dict.__setitem__(report, ...)` /
 `builtins.setattr(report, ...)` / `operator.setitem(report, ...)`
 (GLM sibling r17 P2-2).
 
+The five `fix-r19` mutants pin the r18-round gaps:
+`calibrate-try-assign-alias` binds `bail = sys.exit` inside a module-level
+`try:` block and calls `bail(0)` — the shape `_guard.py` itself uses — which
+the module-level assignment pass missed because it walked direct children only
+(GLM boundary r18 P1-1); `calibrate-attr-exit-code` /
+`calibrate-subscript-exit-code` / `calibrate-attr-code-relay` hand an exit code
+back as `helpers.EXIT_OK`, as `CODES[policy]`, and as a local name assigned
+from an attribute, three spellings the return arm had no branch for, so the
+value was judged by no rule at all (GLM boundary r18 P0-1); and
+`calibrate-try-else-completes` delegates to a helper whose `except` handler
+falls off its own end while `else` returns, which the old `_body_completes`
+folded into one flag so the `else` branch cancelled the completing handler
+(MiniMax boundary r18 P0-1).  An exit code is now judged the same way whether
+it is spelled as a bare name, an attribute or a subscript: an origin no local
+binding can prove is fail-closed, and a subscript whose value contains the
+shared aggregator stays legal (`shared-subscript-control`).
+
 The restore window is shielded by `fix-r18`: `terminate_cleanly` raises
 `SystemExit` from the signal handler so the restore `finally` unwinds, and a
 raise landing on a bytecode boundary *inside* the write-back loop exited
@@ -539,28 +559,42 @@ mid-restore and left a mutant in the tree, which the next run read as a real
 kill (MiniMax concurrency r17 P1-1).  `negative_process.restore_critical()`
 makes the handler record the signum instead (`defer_signal_exit`), and the
 pending exit is taken once after the restore and its byte verification
-(`take_deferred_signal`).  The deferral protocol is checked deterministically
-on every import of `negative_controls.py`; the bytecode boundary itself is not
+(`take_deferred_signal`).  `fix-r19` moved the protection into the window
+itself: a consumer-side call can only protect the one fixture that remembers to
+make it, so `restore_critical()` now swaps the SIGINT / SIGTERM / SIGHUP
+handlers for its own recorder while the window is open and puts them back
+afterwards (a handler that is `SIG_IGN` stays ignored, and a handler installed
+*inside* the window survives it).  That closes a plain Ctrl-C, for which no
+fixture installed a handler at all, and every sibling handler that raises
+`SystemExit` directly (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  The
+deferral protocol is checked deterministically on every import of
+`negative_controls.py`, and the real-signal path is covered by
+`test_negative_process.RestoreWindowSignals` (SIGTERM / SIGINT / SIGHUP with
+the default and the fixture handler, plus the ignored-signal and
+handler-restoration cases); the arbitrary bytecode boundary is not
 reproducible by construction and is recorded as such in the PR.
 
-Two boundaries stay open and are
-recorded here so they are not re-reported as new: an exit alias rebound inside a
-*called helper* is not resolved (the helper's body is walked for exit calls with
-the module-level aliases plus its own bindings, so `bail = sys.exit` in the
-helper itself is seen, but a name bound in a third function and passed in is
-not); and an exit spelled as an attribute of an object that is not one of
-`sys` / `os` / `builtins` / `posix` (`helpers.exit(0)`) is not treated as a
-process exit.
-
-Two boundaries stay open and are
-recorded here so they are not re-reported as new: an augmented assignment on a
-*parameter* is only judged by its own payload (a `|=` set-union of two
-parameters is not treated as an aggregation point), a `{**payload}`
-expansion whose names all resolve locally is not followed into the payload's
-contents, and an **attribute receiver** (`self.report.update(payload)` /
-`self.report |= payload`) is only a summary write when the payload carries a
-status literal of its own — the audited tree has no classes, so an opaque
-payload on an attribute is not treated as a summary write either way.  The
+Known boundaries stay open and are recorded here so they are not re-reported
+as new: an exit alias rebound inside a *called helper* is not resolved (the
+helper's body is walked for exit calls with the module-level aliases plus its
+own bindings, so `bail = sys.exit` in the helper itself is seen, but a name
+bound in a third function and passed in is not); an exit spelled as an
+attribute of an object that is not one of `sys` / `os` / `builtins` / `posix`
+(`helpers.exit(0)`) is not treated as a process exit; the write family resolves
+`setattr` / `setitem` spellings but not a *name* bound to one
+(`from operator import setitem as put; put(report, 'status', 'PASS')`); an
+alias chain longer than the hops `_exit_target` follows is not resolved; a
+`Starred` element inside a returned tuple is judged only through the tuple's
+other arms; an augmented assignment on a *parameter* is only judged by its own
+payload (a `|=` set-union of two parameters is not treated as an aggregation
+point); a `{**payload}` expansion whose names all resolve locally is not
+followed into the payload's contents; an **attribute receiver**
+(`self.report.update(payload)` / `self.report |= payload`) is only a summary
+write when the payload carries a status literal of its own — the audited tree
+has no classes, so an opaque payload on an attribute is not treated as a
+summary write either way; and the shielded restore window keeps one deferred
+signum, so a second signal arriving inside the same window is dropped rather
+than queued.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s

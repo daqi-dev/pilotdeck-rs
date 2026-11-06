@@ -1913,14 +1913,23 @@ def _body_completes(body, aliases=None):
                 return False
             continue
         if isinstance(statement, ast.Try):
+            # ``else`` runs only when the ``try`` body ends normally, while a
+            # handler that falls off its own end rejoins the code after the
+            # whole statement -- so the handler path is not gated by ``else``
+            # and ``else`` is not gated by the handler path.  Folding them into
+            # one flag let ``else: return ...`` cancel a completing handler,
+            # and a non-completing ``finally`` could not veto at all
+            # (MiniMax boundary r18 P0-1).
             completes = _body_completes(statement.body, aliases)
-            if statement.handlers:
-                completes = completes or any(
-                    _body_completes(handler.body, aliases) for handler in statement.handlers)
-            if completes and statement.orelse:
-                completes = _body_completes(statement.orelse, aliases)
-            if statement.finalbody and _body_completes(statement.finalbody, aliases):
+            if statement.orelse:
+                completes = completes and _body_completes(
+                    statement.orelse, aliases)
+            if any(_body_completes(handler.body, aliases)
+                   for handler in statement.handlers):
                 completes = True
+            if statement.finalbody and not _body_completes(
+                    statement.finalbody, aliases):
+                completes = False
             if not completes:
                 return False
             continue
@@ -2130,6 +2139,13 @@ def _exit_name_violation(name, bindings, function=None, module=None,
                 if lineno not in sites[owner]:
                     continue  # an initializer that a later statement overwrites
             return 'literal'
+        if isinstance(value, ast.Attribute):
+            # ``code = helpers.EXIT_OK`` proves nothing about the origin, for
+            # the same reason the direct ``return EXIT_OK`` spelling is
+            # ``unbound`` (GLM boundary r18 P0-1).
+            return 'attribute'
+        if isinstance(value, ast.Subscript) and not _calls_aggregate(value):
+            return 'subscript'
         spelling = _inline_exit_call(value)
         if spelling:
             return spelling + '()'
@@ -2235,7 +2251,7 @@ def _module_exit_aliases(tree):
     # the first alias before it is read (the chain is short and acyclic in
     # practice; a cycle simply stops resolving).
     for _pass in range(2):
-        for node in tree.body:
+        for node in _own_nodes(tree):
             if isinstance(node, ast.Assign):
                 pairs = [(target, node.value) for target in node.targets]
             elif isinstance(node, ast.AnnAssign) and node.value is not None:
@@ -2633,6 +2649,19 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
                     # MiniMax boundary P1-4).
                     violations.append(f'inline exit code {ast.unparse(arm)[:60]} '
                                       f'at line {node.lineno}')
+                elif isinstance(arm, (ast.Attribute, ast.Subscript)):
+                    # ``return helpers.EXIT_OK`` / ``return CODES[key]``: the
+                    # value is not a local binding this pass can trace, so its
+                    # origin is invisible -- the bare-name spelling one branch
+                    # up is ``unbound`` and the status side fails closed on
+                    # attributes too.  One source may not have two verdicts
+                    # (GLM boundary r18 P0-1).
+                    if not _calls_aggregate(arm):
+                        kind = ('attribute' if isinstance(arm, ast.Attribute)
+                                else 'subscript')
+                        violations.append(
+                            f'inline exit code ({kind} relay) '
+                            f'{ast.unparse(arm)[:60]} at line {node.lineno}')
                 elif isinstance(arm, (ast.UnaryOp, ast.Compare)):
                     # ``return not ok`` leaves the process with 0 on a clean
                     # batch and no shared call produced it (MiniMax boundary
@@ -3391,7 +3420,27 @@ def aggregation_audit():
         "def _builtins_setattr_slot(rows):\n"
         "    report = {'cases': rows}\n"
         "    _bi.setattr(report, 'status', 'PASS')\n"
-        "    return report\n")
+        "    return report\n"
+        "try:\n"
+        "    _guarded_bail = _s.exit\n"
+        "except ImportError:\n"
+        "    _guarded_bail = None\n"
+        "def _guarded_assignment_alias(report):\n"
+        "    print(report)\n"
+        "    _guarded_bail(0)\n"
+        "def _attribute_exit_arm(rows):\n"
+        "    if not rows:\n"
+        "        return {'status': 'PASS'}, _helpers.EXIT_OK\n"
+        "    return common.aggregate_status('PASS')\n"
+        "def _subscript_exit_arm(rows):\n"
+        "    if not rows:\n"
+        "        return {'status': 'PASS'}, _CODES[rows]\n"
+        "    return common.aggregate_status('PASS')\n"
+        "def _attribute_code_relay(rows):\n"
+        "    if not rows:\n"
+        "        code = _helpers.EXIT_OK\n"
+        "        return {'status': 'PASS'}, code\n"
+        "    return common.aggregate_status('PASS')\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -3779,6 +3828,56 @@ def aggregation_audit():
     if not _is_status_target(ast.parse("report.status = 'PASS'").body[0].targets[0]):
         failures.append('#892 aggregation-audit: detector self-test rejected an attribute '
                         'status target')
+    # GLM boundary r18 P0-1 / P1-1: an exit code handed back as an attribute or
+    # as a subscript that no shared call produced has no traceable origin, so
+    # it gets the same fail-closed verdict as the bare name one branch up; the
+    # module alias bound inside a module-level ``try:`` is the shape
+    # ``_guard.py`` itself uses.
+    if module_aliases.get('_guarded_bail') != 'sys.exit':
+        failures.append('#892 aggregation-audit: detector self-test lost an assignment alias '
+                        'bound inside a module-level ``try:`` block')
+    for probe_name, needle, message in (
+            ('_guarded_assignment_alias', 'exit-call-status',
+             'an exit call through a ``try:``-guarded module alias'),
+            ('_attribute_exit_arm', 'attribute relay',
+             'an exit code handed back as ``helpers.EXIT_OK``'),
+            ('_subscript_exit_arm', 'subscript relay',
+             'an exit code read out of an untracked container'),
+            ('_attribute_code_relay', 'attribute relay',
+             'an attribute exit code relayed through a local name')):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe:
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'{message}')
+            continue
+        if needle == 'exit-call-status':
+            if needle not in probe[0]:
+                failures.append(f'#892 aggregation-audit: detector self-test did not '
+                                f'enumerate {message}')
+        elif not any(needle in slot for slot in unshared_status_slots(probe[1])):
+            failures.append(f'#892 aggregation-audit: detector self-test did not flag '
+                            f'{message}')
+    # MiniMax boundary r18 P0-1: ``else`` runs only on the ``try`` body's normal
+    # exit, so it may not cancel a handler that falls off its own end; and a
+    # ``finally`` that always returns means the statement never falls through.
+    try_else = ast.parse("def _try_else(policy):\n"
+                         "    try:\n"
+                         "        raise ValueError(policy)\n"
+                         "    except ValueError:\n"
+                         "        pass\n"
+                         "    else:\n"
+                         "        return 2\n").body[0]
+    if not _body_completes(try_else.body):
+        failures.append('#892 aggregation-audit: detector self-test let an ``else`` branch '
+                        'cancel a handler that completes on its own')
+    try_finally = ast.parse("def _try_finally(policy):\n"
+                            "    try:\n"
+                            "        raise ValueError(policy)\n"
+                            "    finally:\n"
+                            "        return 2\n").body[0]
+    if _body_completes(try_finally.body):
+        failures.append('#892 aggregation-audit: detector self-test treated a ``finally`` '
+                        'that always returns as falling off the end')
     # GLM boundary r15 P1-1: an attribute head may name any module member, so it
     # may never inherit the ``(rel, name)`` registration of the file it is
     # written in.  Both call sites are asserted against the one rel that
