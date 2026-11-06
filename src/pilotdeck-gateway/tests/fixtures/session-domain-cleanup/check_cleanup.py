@@ -131,7 +131,10 @@ def summarize_results(results):
     malformed = [row for row in results
                  if row.get('passed') is None and not row.get('skipped')]
     if (malformed or not executed
-            or any(row.get('passed') is False for row in executed)):
+            or any(row.get('passed') is not True for row in executed)):
+        # ``is False`` let a malformed ``passed=0`` / ``passed='no'`` count as
+        # a non-failing row and the run report PASS; only a literal ``True``
+        # passes (MiniMax boundary r19 P2-3).
         return md.common.aggregate_status('FAIL')[0], skipped
     status, _ = md.common.aggregate_status(
         'PASS', 'PASS_WITH_SKIPS' if skipped else None)
@@ -988,8 +991,53 @@ def _status_words():
     return STATUS_WORDS
 
 
+def _folded_string(node):
+    """The string *node* builds out of constants, or None (#892 r20).
+
+    ``'PA' + 'SS'`` and ``f'{"PA"}{"SS"}'`` are the same literal as ``'PASS'``
+    to the interpreter but were not a ``Constant`` to the checker, so every
+    rule that keys on a status word walked straight past them: a write of
+    ``report['status'] = 'PA' + 'SS'`` was not an inline clean status and
+    ``sys.exit('PA' + 'SS')`` was not a status literal (GLM boundary r19 P1-2).
+    Only fully constant expressions fold; anything with a runtime operand
+    returns None and keeps its own verdict.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                parts.append(part.value)
+            elif (isinstance(part, ast.FormattedValue) and part.format_spec is None
+                  and isinstance(part.value, ast.Constant)
+                  and isinstance(part.value.value, (str, int))):
+                parts.append(str(part.value.value))
+            else:
+                return None
+        return ''.join(parts)
+    if isinstance(node, ast.BinOp):
+        left = _folded_string(node.left)
+        right = _folded_string(node.right)
+        if isinstance(node.op, ast.Add) and left is not None and right is not None:
+            return left + right
+        if isinstance(node.op, ast.Mod) and left is not None and right is not None:
+            try:
+                return left % right
+            except (TypeError, ValueError):
+                return None
+        if (isinstance(node.op, ast.Mult) and left is not None
+                and isinstance(node.right, ast.Constant)
+                and isinstance(node.right.value, int)):
+            return left * node.right.value
+    return None
+
+
 def _status_literals(node):
     words = _status_words()
+    folded = _folded_string(node)
+    if folded is not None and folded in words:
+        return True
     return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
 
 
@@ -1099,26 +1147,87 @@ def _status_slot_values(summary):
             if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS]
 
 
-def _is_shared_call(node):
+def _loads_shared_module(value, name):
+    """True when *value* is the apparatus loader call for module *name*.
+
+    The audited tree binds the shared module as
+    ``common = _load('common', _apparatus / 'common.py')`` (or ``load(...)`` in
+    ``_guard.py``), so the call names the module it loads.  Any other binding --
+    a namespace stub, a local dict, a helper that returns something else -- does
+    not name a module and therefore does not earn the trust.
+    """
+    return (isinstance(value, ast.Call) and bool(value.args)
+            and isinstance(value.args[0], ast.Constant)
+            and value.args[0].value == name)
+
+
+def _module_shared_names(tree):
+    """Module names that still are the shared aggregator inside *tree* (#892 r20).
+
+    ``common.aggregate_status`` only proves a shared call while ``common`` is
+    still the shared module.  The checker trusted the spelling, so a file that
+    rebinds the name -- ``common = SimpleNamespace(aggregate_status=lambda
+    *a: ('PASS', 0))`` -- had every call to its own stub counted as the shared
+    map, and the function was enumerated, or excused, on a claim the shared map
+    never made (GLM boundary r19 P1-1).  A module-scope binding keeps the trust
+    only when it is the apparatus loader call naming the module; everything
+    else withdraws it.
+    """
+    trusted = set(_SHARED_MODULES)
+    if not isinstance(tree, ast.Module):
+        return frozenset(trusted)
+    for node in _own_nodes(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            trusted.discard(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name in _target_names(target):
+                    if name in trusted and not _loads_shared_module(node.value, name):
+                        trusted.discard(name)
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            for name in _target_names(node.target):
+                if name in trusted and not _loads_shared_module(node.value, name):
+                    trusted.discard(name)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            trusted.difference_update(_target_names(node.target))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    trusted.difference_update(_target_names(item.optional_vars))
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            trusted.discard(node.name)
+    return frozenset(trusted)
+
+
+def _is_shared_call(node, shared=None):
     """A call to the one shared ``common.aggregate_status`` (#892 r3).
 
     Substring matching let a local ``def aggregate_status`` stand in for the
     shared map; the shared call is the qualified attribute, never a bare local
-    name (MiniMax boundary P1-5 / DeepSeek boundary P2-5).
+    name (MiniMax boundary P1-5 / DeepSeek boundary P2-5).  *shared* is the set
+    of names that still denote the shared module in the calling file, from
+    ``_module_shared_names``; a rebound ``common`` is not in it (GLM boundary
+    r19 P1-1).
     """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
     if not (isinstance(func, ast.Attribute) and func.attr == 'aggregate_status'):
         return False
+    trusted = _SHARED_MODULES if shared is None else shared
     base = func.value
     if isinstance(base, ast.Name):
-        return base.id == 'common'
-    return isinstance(base, ast.Attribute) and base.attr == 'common'
+        return base.id in trusted
+    return isinstance(base, ast.Attribute) and base.attr in trusted
 
 
-def _calls_aggregate(node):
-    return any(_is_shared_call(n) for n in ast.walk(node))
+def _calls_aggregate(node, shared=None):
+    return any(_is_shared_call(n, shared) for n in ast.walk(node))
+
+
+# #892 r20: the module that owns the one shared aggregator.  A file that
+# rebinds the name loses the trust (``_module_shared_names``).
+_SHARED_MODULES = frozenset({'common'})
 
 
 # #892 r1: a hard-coded status literal may only be *fail-closed*.  The clean
@@ -1527,6 +1636,12 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
             continue
         if (isinstance(arm, ast.Constant) and isinstance(arm.value, str)
                 and arm.value in _CLEAN_STATUS_LITERALS):
+            return True
+        folded = _folded_string(arm)
+        if folded is not None and folded in _CLEAN_STATUS_LITERALS:
+            # ``'PA' + 'SS'`` / ``f'{"PASS"}'`` reach the slot as the clean
+            # literal without ever being a ``Constant`` node (GLM boundary r19
+            # P1-2).
             return True
         if _has_passed_aggregate(arm) and not _calls_aggregate(arm):
             return True
@@ -2066,6 +2181,17 @@ def _exit_provenance(argument, bindings, function, module, point,
                 or _delegated_exit(arm, module, bindings=bindings,
                                    aliases=aliases)):
             return True
+        if isinstance(arm, (ast.Attribute, ast.Subscript)):
+            # ``sys.exit(helpers.EXIT_OK)`` / ``raise SystemExit(CODES[key])``:
+            # r19 taught the *return* arm that a code spelled as an attribute or
+            # an untracked subscript has no provenance, but this function -- the
+            # one that judges the same argument for every exit call -- got no
+            # such branch, so the two spellings of one rule disagreed and the
+            # exit-call side stayed blind (GLM sibling r19 P1, MiniMax boundary
+            # r19 P0).  A subscript whose base routes through the shared call is
+            # already skipped above by ``_calls_aggregate``; everything else
+            # fails closed.
+            return True
         if isinstance(arm, (ast.UnaryOp, ast.Compare)):
             return True
         if isinstance(arm, ast.Call) and _exit_code_shaped(arm):
@@ -2278,11 +2404,27 @@ def _binding_exit_aliases(bindings, aliases=None, function=None):
     merged = dict(aliases or {})
     if function is not None:
         merged.update(_import_exit_aliases(_own_nodes(function)))
-    for name, items in (bindings or {}).items():
-        for _lineno, value in items:
+    # A single pass in binding order resolved ``bail = sys.exit; other = bail``
+    # only when ``bail`` happened to come first in the dict, so the same two
+    # lines had two verdicts depending on source order (MiniMax boundary r19
+    # P1).  Iterate to a fixed point: the chain is short and a cycle simply
+    # stops resolving.
+    pending = [(name, value) for name, items in (bindings or {}).items()
+               for _lineno, value in items]
+    while pending:
+        remaining = []
+        progressed = False
+        for name, value in pending:
             target = _exit_target(value, merged)
-            if target is not None:
+            if target is None:
+                remaining.append((name, value))
+                continue
+            if merged.get(name) != target:
                 merged[name] = target
+                progressed = True
+        if not progressed:
+            break
+        pending = remaining
     return merged
 
 
@@ -2792,7 +2934,8 @@ def _has_exit_path(function, aliases=None):
     return not _body_completes(function.body, aliases)
 
 
-def aggregation_markers(function, module=None, rel=None, aliases=None):
+def aggregation_markers(function, module=None, rel=None, aliases=None,
+                        shared=None):
     """Markers that make *function* a top-level status/exit computation.
 
     *module* is the file's module-level ``def`` map; the write-side rules need
@@ -2828,7 +2971,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None):
                 if _is_status_target(target) and (
                         _status_literals(value)
                         or _has_passed_aggregate(value)
-                        or _calls_aggregate(value)):
+                        or _calls_aggregate(value, shared)):
                     markers.add('assign-status')
                 elif (_is_report_status(target, value)
                       and not _name_feeds_shared(target.id, function)):
@@ -2841,7 +2984,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None):
                     and value.func.id == 'int' and _status_literals(value)):
                 markers.add('return-int-status')
             if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Call)
-                    and _is_shared_call(value.value)):
+                    and _is_shared_call(value.value, shared)):
                 markers.add('return-aggregate-code')
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
@@ -2872,13 +3015,13 @@ def aggregation_markers(function, module=None, rel=None, aliases=None):
             # ``update()`` spelling above and must enumerate the function too
             # (MiniMax boundary r10 P0-1).
             markers.add('write-status')
-        elif _is_shared_call(node):
+        elif _is_shared_call(node, shared):
             markers.add('calls-aggregate')
     return markers
 
 
-def calls_shared(function):
-    return any(_is_shared_call(node) for node in ast.walk(function))
+def calls_shared(function, shared=None):
+    return any(_is_shared_call(node, shared) for node in ast.walk(function))
 
 
 def scan_aggregation_tree(tree, rel, aliases=None):
@@ -2895,10 +3038,11 @@ def scan_aggregation_tree(tree, rel, aliases=None):
               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
     if aliases is None:
         aliases = _module_exit_aliases(tree)
+    shared = _module_shared_names(tree)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        markers = aggregation_markers(function, module, rel, aliases)
+        markers = aggregation_markers(function, module, rel, aliases, shared)
         if not markers:
             continue
         key = (rel, function.name)
@@ -2927,6 +3071,7 @@ def aggregation_audit():
     found = {}
     modules = {}
     aliases_by_rel = {}
+    trusted_by_rel = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
@@ -2974,6 +3119,17 @@ def aggregation_audit():
         modules[rel] = {node.name: node for node in tree.body
                         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
         aliases_by_rel[rel] = _module_exit_aliases(tree)
+        trusted_by_rel[rel] = _module_shared_names(tree)
+        lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
+        if lost:
+            # One file may not bind the shared aggregator to anything but the
+            # apparatus loader: with the spelling trusted, a stub served as the
+            # shared map (GLM boundary r19 P1-1); with the spelling withdrawn
+            # silently, the same function would simply stop being enumerated.
+            # Either way the file is not auditable, so it fails closed here.
+            failures.append(f'#892 aggregation-audit: {rel} rebinds the shared '
+                            f'aggregator module {lost}; only the apparatus loader '
+                            'may bind it')
         scanned, duplicates = scan_aggregation_tree(tree, rel)
         for duplicate in duplicates:
             failures.append(f'#892 aggregation-audit: duplicate aggregation point '
@@ -2989,7 +3145,8 @@ def aggregation_audit():
                             f'{rel}:{name}')
             continue
         markers, function = found[key]
-        shared = calls_shared(function) and 'return-int-status' not in markers
+        shared = (calls_shared(function, trusted_by_rel.get(rel))
+                  and 'return-int-status' not in markers)
         slots = unshared_status_slots(function, key, modules.get(rel), rel,
                                       aliases_by_rel.get(rel))
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
