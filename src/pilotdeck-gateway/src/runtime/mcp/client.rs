@@ -401,7 +401,7 @@ impl SdkClient {
     async fn list_tools(
         &self,
         timeout_ms: f64,
-        server_id: &str,
+        _server_id: &str,
     ) -> Result<JsValue, McpClientError> {
         let result = self
             .wire
@@ -428,11 +428,15 @@ impl SdkClient {
                     // rejects the whole list instead of silently turning
                     // into a permissive validator later.
                     if let Err(error) = super::output_schema::check_schema(schema) {
-                        return Err(McpClientError::client(
-                            McpClientErrorCode::CallFailed,
-                            format!("MCP call failed (server={server_id}): {}", error.0),
-                            server_id,
-                        ));
+                        // The baseline lets the Ajv failure out as a plain
+                        // `Error`, so it runs through the shared
+                        // `is_timeout_message` classifier in
+                        // `call_with_reconnect`: a message that happens to
+                        // mention "timeout" is reported as a timeout and
+                        // recycles the transport (`probe-schema-edge.out`,
+                        // first two rows). Wrapping it as `McpClientError`
+                        // here would skip that classification.
+                        return Err(McpClientError::plain("Error", error.0));
                     }
                     output.insert(name.clone(), schema.clone());
                 }
