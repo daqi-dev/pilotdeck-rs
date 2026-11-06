@@ -268,3 +268,8 @@ Rust 侧的 `src/pilotdeck-gateway/tests/common/permission_faults.rs` 有
   未识别值 panic —— 与 Rust 侧 `permission_faults.rs` 刚收紧的口径不一致，属同一种
   fail-open。该文件同样有冻结登记行，CI 钉死 `=1`（`.github/workflows/ci.yml`）所以
   现网不踩；口径统一并入 #1930。
+- 同族缺口之二（#1900 sibling 评审补充）：本仓第三个开关
+  `PDRS_ALLOW_NO_RG`（`src/pilotdeck-gateway/tests/grep_tool.rs`）同样不 trim、
+  不认 `off`/`no`、未识别值不拒绝（`=off` 会读成 ON）。它只影响「是否允许跳过
+  ripgrep 检查」，误读方向是放行跳过而不是解除强制闸门，CI 从不设置它，真跳过时
+  也有 loud skip 行，所以本单只登记不改；与上面两个开关一起并入 #1930 统一口径。
