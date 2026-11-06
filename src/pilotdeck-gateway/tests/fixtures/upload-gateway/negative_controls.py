@@ -77,6 +77,8 @@ LEASE_SYMLINK = 'upload::tests::upload_lease_cleanup_never_deletes_through_a_sym
 LEASE_ENTRY = 'upload::tests::upload_lease_cleanup_never_deletes_through_an_entry_symlink'
 SWAP_RECORD = 'upload::tests::upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round'
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
+LEASE_SWAP = 'upload::tests::upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round'
+LEASE_RELEASE = 'upload::tests::upload_lease_release_does_not_follow_a_swapped_leases_root'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -379,7 +381,11 @@ mutations = [
                 .map_err(|e| UploadError::io(e, "fsync", None))?;''', LEASE_ATOMIC,
      'lease.json must appear only through an atomic rename'),
     # #1646 review: the two guards added after the first round.
-    ('cleanup-symlink-root-swept', STORE, '''        let root = match plain_root(project, "chat-uploads") {
+    # The gate and the "resolves to exactly itself" check now live in the same
+    # `plain_root` call, so replacing the match removes both at once — the
+    # mutant really does sweep through the symlink, instead of being stopped by
+    # the second line of defence and failing on a logging assertion instead.
+    ('cleanup-symlink-root-swept', STORE, '''        let root_real = match plain_root(project, "chat-uploads") {
             PlainRoot::Plain(root) => root,
             // No uploads yet: the ordinary empty state, as silent as the old
             // `names()` on a missing directory.
@@ -391,7 +397,8 @@ mutations = [
                 ));
                 return;
             }
-        };''', '''        let root = project.join(".tmp/chat-uploads");''', SYMLINK_ROOT,
+        };''', '''        let root_real =
+            fs::canonicalize(project.join(".tmp/chat-uploads")).unwrap_or_default();''', SYMLINK_ROOT,
      'a symlinked uploads root must not be swept'),
     ('cleanup-record-rm-aborts', STORE, '''            match self
                 .fault("record-rm", &dir)
@@ -416,7 +423,7 @@ mutations = [
             return;
         }''', SWAP,
      'a root swapped mid-round must not be followed'),
-    ('cleanup-lease-symlink-root-swept', STORE, '''        let root = match plain_root(project, "chat-upload-leases") {
+    ('cleanup-lease-symlink-root-swept', STORE, '''        let root_real = match plain_root(project, "chat-upload-leases") {
             PlainRoot::Plain(root) => root,
             PlainRoot::Missing => return Ok(()),
             PlainRoot::Blocked => {
@@ -426,7 +433,8 @@ mutations = [
                 ));
                 return Ok(());
             }
-        };''', '''        let root = project.join(".tmp/chat-upload-leases");''', LEASE_SYMLINK,
+        };''', '''        let root_real =
+            fs::canonicalize(project.join(".tmp/chat-upload-leases")).unwrap_or_default();''', LEASE_SYMLINK,
      'a symlinked leases root must not be swept'),
     ('cleanup-record-rm-follows-swapped-root', STORE, '''            if !inside_root(&root_real, &dir) {
                 self.log_cleanup(format!(
@@ -446,6 +454,24 @@ mutations = [
                 }
 ''', '', LEASE_ENTRY,
      'a symlinked lease entry must not be swept'),
+    # #1646 review r3: the record half's "do not re-resolve the root per entry"
+    # property had two mutations; the lease half had none.
+    ('cleanup-lease-root-recanonicalized', STORE, '''                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] lease cleanup skipped {}: outside the leases root",
+''', '''                let root_real = fs::canonicalize(&root_real).unwrap_or_default();
+                if !inside_root(&root_real, &dir) {
+                    self.log_cleanup(format!(
+                        "[uploads] lease cleanup skipped {}: outside the leases root",
+''', LEASE_SWAP,
+     'a lease delete must not follow a root swapped mid-round'),
+    # #1646 review r3: `release` is the third delete point on the leases tree and
+    # fires long after acquire; it must not follow a swapped root either.
+    ('lease-release-symlink-root-swept', STORE, '''                if root_real != root || !inside_root(&root_real, &self.dir) {
+                    return Ok(());
+                }
+''', '', LEASE_RELEASE,
+     'a lease release must not follow a swapped leases root'),
 ]
 
 if '--check' in sys.argv[1:]:

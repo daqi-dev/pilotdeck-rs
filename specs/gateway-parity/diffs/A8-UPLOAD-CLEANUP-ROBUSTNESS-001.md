@@ -9,8 +9,10 @@ id: A8-UPLOAD-CLEANUP-ROBUSTNESS-001
 1. `cleanup_expired` 逐条容错：单条记录读 / 判到期 / 删除失败只记日志跳过，不再中止整个 project 的一轮清理与后续 `cleanup_expired_leases`。
 2. 无 `metadata.json` 的孤儿任务目录按 mtime 超过上传 retention 后回收（TS 永不回收）。
 3. `lease.json` 原子写（temp + rename），读者永远不会观察到 0 字节 / 半截的 `lease.json`。
-4. 两棵清理根（`chat-uploads` / `chat-upload-leases`）都加「必须是真目录」闸 + 轮首根快照，
-   两半轮的**每一处**递归删除前都过 `inside_root`（现解析条目 × 轮首快照），
+4. 两棵清理根（`chat-uploads` / `chat-upload-leases`）都加「必须解析回自身」闸
+   （`plain_root` 要求 `canonicalize` 结果与 `<project>/.tmp/<leaf>` 字面相同，
+   指向项目内其他目录的符号链接同样挡掉）+ 轮首根快照，两半轮与 `release` 的
+   **每一处**租约/记录递归删除前都过 `inside_root`（现解析条目 × 轮首快照），
    清理绝不穿过符号链接根删到项目外（TS 无此防护）。
 
 ## TS 依据
@@ -38,44 +40,48 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `sweep_expired_records` L434-511：逐条容错。`read_at` Err / `expiresAt` 解析 Err /
   `remove_tree` Err → `skip_record`（`writeln!` 日志带记录路径，写失败丢弃）后继续。`list_in_project`
   的严格语义保留给 `create` / `find_idempotent` / `mutate` 等调用方，未放宽。
-- `plain_root` L1277-1293：`.tmp/<leaf>` 的三态闸（`Plain` / `Missing` / `Blocked`）。
+- `plain_root` L1285-1305：`.tmp/<leaf>` 的三态闸（`Plain` / `Missing` / `Blocked`）。
   两棵根都过它：记录半轮 `sweep_expired_records` L440 用 `chat-uploads`，
-  租约半轮 `cleanup_expired_leases` L894 用 `chat-upload-leases`。`.tmp` 与
+  租约半轮 `cleanup_expired_leases` L887 用 `chat-upload-leases`。`.tmp` 与
   `.<leaf>` 都是**真目录**才清扫；`Blocked`（符号链接 / 非目录）整轮跳过并记一行日志；
   `Missing`（从无上传 / 从无活租约，常态空态）静默返回，与旧 `names()` 吞错一致。
   动机：`read_dir` / `remove_dir_all` 跟随中间符号链接，而 `read_at` 的 containment
   校验只在有 `metadata.json` 时生效——没有它，符号链接根会把项目外目录当孤儿删掉；
   租约半轮更险，`lease.json` 缺失即判过期，删除是默认动作。
-- `inside_root` L1245-1250（doc L1238-1244）：全条唯一的 containment 判定，两半轮三处
-  递归删除点共用——解析 `dir`，要求「≠ 根快照 且 以根快照为前缀」；解析失败按「不在根内」
-  处理（= 不删）。抽成单点实现，避免三处写法漂移出不同的判据。
-- `sweep_expired_records` L458-467：轮首把根 **canonicalize 一次**并全程复用（`root_real`），
+  判据是**等值**而非「在项目内」：`plain_root` 自己 `canonicalize` 并要求结果与
+  `<project>/.tmp/<leaf>` 字面相同，不相等（含指向项目内另一目录的链接）即 `Blocked`。
+  `Plain` 携带的就是这个已校验的解析路径，直接充当轮首快照，调用方不再各自锚定。
+- `inside_root` L1249-1254（doc L1242-1248）：全条唯一的 containment 判定，两半轮与
+  `release` 共四类递归删除点共用——解析 `dir`，要求「≠ 根快照 且 以根快照为前缀」；
+  解析失败按「不在根内」处理（= 不删）。抽成单点实现，避免各处写法漂移出不同判据。
+- `sweep_expired_records` L434-511：根来自 `plain_root` 后全程复用（`root_real`），
   之后的 containment 比对一律「现解析的条目 × 轮首快照」，**不再逐条重解析根**。
   逐条重解析会让换入的符号链接在等号两边同时生效，把闸变成 no-op 覆盖整轮剩余时间。
-  紧随其后 L464 再核 `root_real.starts_with(project)`：`plain_root` 的两次
-  `symlink_metadata` 与这次 `canonicalize` 之间仍有换链窗口，快照一旦落到项目外，
-  后续所有 containment 都会以项目外为基准，整轮放弃。
 - `sweep_expired_records` L491-503：到期记录的删除分支与孤儿分支同样过 `inside_root`，
   未命中记 `[uploads] cleanup skipped <路径>: outside the uploads root` 并跳过该条。
   （r3 前这里没有守卫，轮中换链后本轮剩余每条到期记录都会删到项目外。）
-- `reclaim_orphan` L520-555：只回收**真目录**条目；年龄判据 `mtime >= now - retention_ms`
-  保留，之后才做 containment（L545 `inside_root`），把检查到 `remove_dir_all` 之间的
+- `reclaim_orphan` L512-547：只回收**真目录**条目；年龄判据 `mtime >= now - retention_ms`
+  保留，之后才做 containment（L537 `inside_root`），把检查到 `remove_dir_all` 之间的
   窗口压到几条指令，而不是整轮。
-- `spawn_cleanup` L1045-1050：调度循环的失败日志同样改 `writeln!` + 丢弃错误；`eprintln!`
+- `UploadArtifactLease::release` L1086-1110：同一棵租约树上的第三个删除点，`dir` 在
+  acquire 时由纪录的 canonical 项目拼出，此后可存活很多轮。删除前要求根
+  `canonicalize` 回 `<project>/.tmp/chat-upload-leases` 字面（否则视为被换链，跳过），
+  再过 `inside_root(&root_real, &self.dir)`；未命中静默返回 `Ok(())`（重复 release 语义不变）。
+- `spawn_cleanup` L1037-1042：调度循环的失败日志同样改 `writeln!` + 丢弃错误；`eprintln!`
   在 stderr 不可写时 panic，而这里的 panic 发生在被 detach 的任务里——清理调度会静默死亡，
   正是该测试要防的结局。
-- `skip_record` / `log_cleanup` L542-560：日志行 `[uploads] cleanup skipped <路径>: <错误>` /
+- `skip_record` / `log_cleanup` L549-566：日志行 `[uploads] cleanup skipped <路径>: <错误>` /
   `[uploads] cleanup reclaimed orphan: <路径>`。日志写失败被丢弃（`writeln!` + 忽略错误），
   不用会 panic 的 `eprintln!`——否则 stderr 不可写会把「逐条容错」变回整轮中止。
-- `acquire_attachment_lease` L547-601：`lease.json.<pid>.<rand>.tmp` → `write_all` →
-  `sync_all` → `rename`（照 `write()` L748-776 的 metadata.json 范式），字节内容不变；
+- `acquire_attachment_lease` L578-644：`lease.json.<pid>.<rand>.tmp` → `write_all` →
+  `sync_all` → `rename`（照 `write()` L779-807 的 metadata.json 范式），字节内容不变；
   失败由既有错误路径 `remove_tree(&dir)` 连 temp 清掉。新增 `lease-rename` fault 注入点。
-- `cleanup_expired_leases` L888-940：删租约前新增 `lease-rm` fault 注入点（测试期模拟整轮失败，
+- `cleanup_expired_leases` L880-927：删租约前新增 `lease-rm` fault 注入点（测试期模拟整轮失败，
   生产行为不变）。读侧语义不变：`lease.json` 缺失 / 不可解析仍按过期处理（TS L431-438 同病），
-  本条只保证 Rust 自己的写者不再产生半截文件。L907-913 取轮首根快照并核
-  `starts_with(project)`（与记录半轮同理）；L925-931 每份租约目录删除前过 `inside_root`，
-  未命中记 `[uploads] lease cleanup skipped <路径>: outside the leases root` 并跳过；
-  L935 清空后的 `<id>` 目录删除同样受 `inside_root` 约束。
+  本条只保证 Rust 自己的写者不再产生半截文件。根快照同样来自 `plain_root`（已核等值）；
+  L913-919 每份租约目录删除前过 `inside_root`，未命中记
+  `[uploads] lease cleanup skipped <路径>: outside the leases root` 并跳过；
+  L923 清空后的 `<id>` 目录删除同样受 `inside_root` 约束。
 
 ## 范围
 
@@ -113,10 +119,13 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   的确定性窗口（回归测试 `upload_cleanup_does_not_follow_a_root_swapped_mid_round` /
   `upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round` /
   `upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round`）。
-- `plain_root` 的两次 `symlink_metadata` 与紧随的 `canonicalize` 之间仍有同一个量级的窗口：
-  换链可让快照本身落到项目外。两个半轮用 `root_real.starts_with(project)` 兜住这一格
-  （快照出项目即整轮放弃），但「快照在项目内、条目在检查后被换成链接」仍属上面的
-  指令级窗口，同样要 dirfd 才能根除。
+- `plain_root` 的两次 `symlink_metadata` 与紧随的 `canonicalize` 之间的换链窗口由等值判据
+  兜住（解析结果必须字面等于 `<project>/.tmp/<leaf>`，换成任何链接都不等值）；但
+  「快照取到正确路径、条目在检查后被换成链接」仍属上面的指令级窗口，同样要 dirfd 才能根除。
+- `release` 的守卫是「删除前再判一次」，不是「acquire 时的快照」：`dir` 本身没有保存
+  acquire 时的根快照，因此 release 时若根已不存在（canonicalize 失败）静默按已删处理。
+  语义上安全（不删即不越界），代价是「根被换链」时该租约目录留在原地，靠租约清扫在
+  到期后回收。
 
 
 ## 机器判据
@@ -132,19 +141,24 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   `upload_lease_cleanup_never_deletes_through_an_entry_symlink`（L1281）、
   `upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round`（L1309）、
   `upload_lease_cleanup_never_deletes_through_a_symlinked_root`（L1353）、
-  `upload_cleanup_record_removal_failure_does_not_stop_the_sweep`（L1384）、
-  `upload_lease_atomic_rename_failure_keeps_valid_leases`（L1414）、
-  `cleanup_failure_keeps_the_schedule_alive`（L1487，失败注入点改为 `lease-rm`）。
+  `upload_lease_release_does_not_follow_a_swapped_leases_root`（L1385）、
+  `upload_cleanup_record_removal_failure_does_not_stop_the_sweep`（L1416）、
+  `upload_lease_atomic_rename_failure_keeps_valid_leases`（L1446）、
+  `cleanup_failure_keeps_the_schedule_alive`（L1519，失败注入点改为 `lease-rm`）。
 - 负控 `src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py`：
   `cleanup-bad-record-aborts`、`cleanup-orphan-reclaim-removed`、
   `cleanup-orphan-fresh-deleted`、`lease-write-in-place`、
   `cleanup-symlink-root-swept`、`cleanup-record-rm-aborts`、
   `cleanup-orphan-root-recanonicalized`、`cleanup-lease-symlink-root-swept`、
-  `cleanup-record-rm-follows-swapped-root`、`cleanup-lease-entry-symlink-swept`
-  （各绑上述具名测试与唯一失败文案，共 10 条；整份文件 32 条锚点）。
+  `cleanup-record-rm-follows-swapped-root`、`cleanup-lease-entry-symlink-swept`、
+  `cleanup-lease-root-recanonicalized`、`lease-release-symlink-root-swept`
+  （各绑上述具名测试与唯一失败文案，共 12 条；整份文件 34 条锚点）。
+  其中 `cleanup-symlink-root-swept` / `cleanup-lease-symlink-root-swept` 的变异是
+  「只 `canonicalize` 根、不加闸」的老写法：两层防护（`plain_root` 等值闸 + `inside_root`）
+  一起失效，才真正复现穿链删除；只删一层时另一层仍挡住，负控会假绿。
 - 复算命令：
   `cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib upload`
-  （48 passed，含 `upload_oracle_replay_matches_ts_results` 与
+  （49 passed，含 `upload_oracle_replay_matches_ts_results` 与
   `upload_golden_bytes_match_ts_fixtures` 不改金样全绿）；
   `python3 -I src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py --check`；
   `python3 -I scripts/gateway-parity/check_frozen.py --base 5ab9485394f0`。
@@ -152,11 +166,13 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   无需手改导入路径（`repro.mts` 存档里写的是另一台机器的基线绝对路径，sed 换成主仓路径）：
 
   ```sh
+  # 起点是主仓，不是 PR worktree：存档与只读基线都在主仓下面。
+  cd /Users/da/ws/pilotdeck-rs
   rm -rf /tmp/ts-repro-1646 && mkdir -p /tmp/ts-repro-1646/work
   sed 's#/Users/da/ws/pdrs-runner/resources/PilotDeck#/Users/da/ws/pilotdeck-rs/resources/PilotDeck#' \
     _tmp/20261106-1646-receive/delivery/ts-repro/repro.mts > /tmp/ts-repro-1646/repro.mts
-  cd resources/PilotDeck && node --import ./node_modules/tsx/dist/loader.mjs \
-    /tmp/ts-repro-1646/repro.mts /tmp/ts-repro-1646/work
+  (cd resources/PilotDeck && node --import ./node_modules/tsx/dist/loader.mjs \
+    /tmp/ts-repro-1646/repro.mts /tmp/ts-repro-1646/work)
   ```
 
   实测输出（2026-11-06，主仓 `_tmp` 证据 + 只读基线）：
