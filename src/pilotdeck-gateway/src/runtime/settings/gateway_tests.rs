@@ -146,11 +146,13 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
         failures.join("\n")
     );
 
-    // `assemblyCases.capability`: a gateway assembled without the five
-    // options answers CAPABILITY_UNAVAILABLE for apply/update/styles and
-    // the `{reloaded:false,reason:"unsupported"}` projection for the two
+    // `assemblyCases.capability`: a gateway assembled without the six
+    // options answers CAPABILITY_UNAVAILABLE for apply/update/resolve/styles
+    // and the `{reloaded:false,reason:"unsupported"}` projection for the two
     // reloads — the component's own option handling, replayed through a
-    // bare instance.
+    // bare instance. The oracle list covers only the five TS-side methods
+    // (`resolve_settings` is #1320-native and has no TS row), so the loop
+    // below walks five rows over a six-option bare assembly.
     let assembly = field(&oracle, "assemblyCases");
     let capability = match field(assembly, "capability") {
         JsValue::Array(items) => items.clone(),
@@ -181,7 +183,7 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
         );
     }
     // The unknown-method row is the wiring layer's `Unknown gateway method`
-    // error; for this component it must simply not be one of the five.
+    // error; for this component it must simply not be one of the six.
     let unknown = bare.dispatch("settings_probe", &input).await;
     assert!(
         unknown.is_none(),
