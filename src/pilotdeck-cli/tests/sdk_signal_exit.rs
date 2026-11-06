@@ -438,6 +438,9 @@ fn signal_abort_state_local_provenance() {
 
 #[test]
 fn signal_abort_state_rejects_provenance_and_denominator_drift() {
+    // verify_abort_state_oracle reads source.json and generate.mjs from disk,
+    // so this reader needs the same lease as its siblings (#1662).
+    let _lease = fixture_read_lease();
     let oracle: Value =
         serde_json::from_str(include_str!("fixtures/sdk-signal-abort-state/oracle.json"))
             .expect("#1145 supplemental negative original JSON");
