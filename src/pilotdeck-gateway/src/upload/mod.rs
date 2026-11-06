@@ -669,18 +669,45 @@ impl UploadStore {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(UploadError::io(e, "realpath", Some(&path))),
         };
-        if !canonical_path.starts_with(canonical_project.join(".tmp/chat-uploads")) {
+        let upload_root = canonical_project.join(".tmp/chat-uploads");
+        if !canonical_path.starts_with(&upload_root) {
             return Err(UploadError::dialog(
                 "PROJECT_PATH_FORBIDDEN",
                 "Upload metadata symlink leaves the upload directory.",
             ));
         }
-        // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
-        // open error names its path, a descriptor read error (EISDIR after a
-        // directory swap, EIO, ...) is `read` without one (node v22.22.0,
-        // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
+        // #1494: the prefix check above ran against a spelling, and
+        // `File::open` re-walks the path — a `metadata.json` swapped for an
+        // outside symlink between the canonicalize and the open reads
+        // outside bytes while the checked spelling never changed (the same
+        // race reproduced against the TS readAt, node v22.22.0,
+        // `_tmp/20261106-issue-1468-1494/ts-probe/read_at_toctou_probe.mjs`).
+        #[cfg(test)]
+        swap_test_hook::notify(
+            swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen,
+            &canonical_path,
+        );
         let bytes = match fs::File::open(&canonical_path) {
+            // UploadStore.ts:384 reads through `readFile` (node:fs/promises): an
+            // open error names its path, a descriptor read error (EISDIR after a
+            // directory swap, EIO, ...) is `read` without one (node v22.22.0,
+            // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
             Ok(mut file) => {
+                // #1494: bind the approval to the opened handle — the
+                // platform's own resolved path for the descriptor must still
+                // name a location inside the canonical upload root, and a
+                // handle with no resolvable path is never read either
+                // (fail closed, like the #1468 lease binding).
+                let handle_inside = match crate::handle_path::opened_path(&file) {
+                    Ok(handle) => handle.starts_with(&upload_root),
+                    Err(_) => false,
+                };
+                if !handle_inside {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata handle leaves the upload directory.",
+                    ));
+                }
                 let mut bytes = Vec::new();
                 match file.read_to_end(&mut bytes) {
                     Ok(_) => bytes,
@@ -1107,4 +1134,66 @@ fn future(record: &JsValue, field: &str, now: i64) -> Result<bool> {
     Ok(parse_node22_date(date)
         .map_err(|e| UploadError::json(format!("{e:?}")))?
         .is_some_and(|ms| ms > now as f64))
+}
+
+/// #1494 window-injection seam (tests only): `read_at` notifies
+/// [`swap_test_hook::notify`] between its canonicalize containment check and
+/// `File::open`; a test installs a callback that swaps `metadata.json` for an
+/// outside symlink exactly inside that window, and must assert the hook
+/// actually fired — an unfired hook proves nothing. Per-thread and
+/// RAII-removed like the swap seam in native_process/services.rs; production
+/// builds compile none of this.
+#[cfg(test)]
+mod swap_test_hook {
+    use std::path::Path;
+
+    /// The one #1494 window: after `read_at`'s canonicalize prefix check,
+    /// before the `File::open` that re-walks the path.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SwapWindow {
+        BetweenCanonicalizeAndOpen,
+    }
+
+    type Hook = Box<dyn FnMut(&Path)>;
+
+    thread_local! {
+        static HOOKS: std::cell::RefCell<Vec<(SwapWindow, Hook)>> =
+            std::cell::RefCell::default();
+    }
+
+    /// Removes exactly its own window's hook on drop.
+    pub struct Guard {
+        window: SwapWindow,
+    }
+
+    pub fn set(window: SwapWindow, hook: impl FnMut(&Path) + 'static) -> Guard {
+        HOOKS.with(|hooks| {
+            assert!(
+                hooks.borrow().iter().all(|(set, _)| *set != window),
+                "one swap hook per window"
+            );
+            hooks.borrow_mut().push((window, Box::new(hook)));
+        });
+        Guard { window }
+    }
+
+    pub fn notify(window: SwapWindow, path: &Path) {
+        HOOKS.with(|hooks| {
+            for (hook_window, hook) in hooks.borrow_mut().iter_mut() {
+                if *hook_window == window {
+                    hook(path);
+                }
+            }
+        });
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOKS.with(|hooks| {
+                hooks
+                    .borrow_mut()
+                    .retain(|(window, _)| *window != self.window)
+            });
+        }
+    }
 }

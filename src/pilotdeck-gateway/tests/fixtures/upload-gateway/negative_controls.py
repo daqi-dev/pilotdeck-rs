@@ -19,6 +19,10 @@ A mutation counts as KILLED only when the *named* test fails with the
 mutation's own expected assertion text: the same command can also kill an
 unrelated assertion, e.g. the oracle's property-order check, which is not
 evidence for the behavior under test (review P1-5).
+
+The two #1494 rows pin the read_at handle binding: dropping it, or restoring
+the pre-fix pre-open path spelling check, must each turn its named TOCTOU
+test red.
 """
 import difflib
 import hashlib
@@ -44,6 +48,9 @@ KEY_DEDUPE = 'upload::gateway_tests::upload_gateway_idempotency_hash_still_dedup
 FIDELITY = 'upload::gateway_tests::upload_gateway_preserves_raw_utf16_parameters'
 SIZE = 'upload::gateway_tests::upload_gateway_part_size_cap_is_checked_before_allocating'
 MESSAGES = 'upload::gateway_tests::upload_gateway_error_messages_preserve_lone_surrogates'
+READ_AT_SWAP = ('upload::tests::upload_read_at_metadata_swapped_between_'
+                'canonicalize_and_open_is_rejected')
+LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_lease'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -189,6 +196,29 @@ mutations = [
         let provider = self.require()?;
         gateway_record(&provider.get(&upload_id)?)''', ORDER,
      'get must require the provider before validating uploadId'),
+    # #1494: the read_at handle binding. read-at-handle-check-dropped
+    # removes it outright; read-at-check-before-open restores the pre-fix
+    # shape — a check of the pre-open path spelling, which the canonicalize→
+    # open swap already passed — so both must turn their named tests red.
+    ('read-at-handle-check-dropped', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
+                    Ok(handle) => handle.starts_with(&upload_root),
+                    Err(_) => false,
+                };
+                if !handle_inside {
+                    return Err(UploadError::dialog(
+                        "PROJECT_PATH_FORBIDDEN",
+                        "Upload metadata handle leaves the upload directory.",
+                    ));
+                }
+''', '', READ_AT_SWAP,
+     '#1494 the swapped-in outside record must never be read back'),
+    ('read-at-check-before-open', STORE, '''                let handle_inside = match crate::handle_path::opened_path(&file) {
+                    Ok(handle) => handle.starts_with(&upload_root),
+                    Err(_) => false,
+                };''',
+     '                let handle_inside = canonical_path.starts_with(&upload_root);',
+     LEASE_CHAIN,
+     '#1494 a forged record must never reach the attachment lease'),
 ]
 
 if '--check' in sys.argv[1:]:
