@@ -395,3 +395,96 @@ async fn zero_turn_timeout_never_aborts_the_turn() {
         "#1821 weixin zero turn timeout never aborts the turn"
     );
 }
+
+/// #1780: the first `submit_turn` panics (standing in for any panic inside
+/// `process_message` — poisoned lock recovery, a JS-value conversion, …); the
+/// second call returns an empty stream so a re-admitted chat completes.
+struct PanicOnceGateway {
+    submits: AtomicUsize,
+    panicked: Arc<tokio::sync::Notify>,
+}
+impl WeixinGatewayPort for PanicOnceGateway {
+    fn submit_turn(&self, _input: JsValue) -> WeixinTurnStream {
+        let call = self.submits.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            // The test waits on this before asserting the marker is gone; the
+            // panic itself unwinds the spawned task.
+            self.panicked.notify_one();
+            panic!("#1780 injected panic inside process_message");
+        }
+        let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        WeixinTurnStream {
+            receiver,
+            receipt: None,
+        }
+    }
+    fn abort_turn<'a>(
+        &'a self,
+        _session_key: &'a JsString,
+        _run_id: Option<&'a JsString>,
+        _reason: Option<&'a str>,
+    ) -> WeixinAbortFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn queued_turn(message: &str) -> QueuedWeixinTurn {
+    QueuedWeixinTurn {
+        session_key: js("weixin:chat=chat-panic:general"),
+        message: js(message),
+        project_key: None,
+    }
+}
+
+fn channel_with_gateway(root: &Root, gateway: Arc<dyn WeixinGatewayPort>) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("weixin-credentials.json");
+    options.credentials_dir = Some(root.path().to_path_buf());
+    options.gateway = Some(gateway);
+    WeixinChannel::new(options)
+}
+
+async fn until<F: FnMut() -> bool>(what: &str, mut ready: F) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if ready() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("#1780 timed out waiting for {what}"));
+}
+
+#[tokio::test]
+async fn panicking_turn_releases_active_chat_slot() {
+    let root = Root::new();
+    let panicked = Arc::new(tokio::sync::Notify::new());
+    let gateway = Arc::new(PanicOnceGateway {
+        submits: AtomicUsize::new(0),
+        panicked: panicked.clone(),
+    });
+    let channel = channel_with_gateway(&root, gateway.clone());
+    let user = js("chat-panic");
+
+    channel.enqueue_or_run(user.clone(), queued_turn("first"));
+    tokio::time::timeout(Duration::from_secs(5), panicked.notified())
+        .await
+        .expect("#1780 the injected process_message panic never fired");
+
+    // (a) A panic that kills the spawned turn task must still release the
+    // admission marker; otherwise the chat stays "active" with no consumer.
+    until("active_chats to release the panicked chat", || {
+        !channel.lock_inner().active_chats.contains(&user)
+    })
+    .await;
+
+    // (b) The user's next message must be consumed immediately instead of
+    // queueing behind the dead task forever.
+    channel.enqueue_or_run(user.clone(), queued_turn("second"));
+    until("the next message to reach submit_turn", || {
+        gateway.submits.load(Ordering::SeqCst) >= 2
+    })
+    .await;
+}
