@@ -59,7 +59,10 @@ impl ProjectFileService {
             Err(_) => PathBuf::from(project_root),
         };
         Self {
-            root: fs::canonicalize(&resolved).unwrap_or_else(|_| canonical_prefix(&resolved)),
+            // `canonical_prefix` already canonicalizes the deepest existing
+            // ancestor and re-appends the missing tail, which is exactly the
+            // form every containment check below compares against.
+            root: canonical_prefix(&resolved),
             max_read_bytes: DEFAULT_MAX_READ_BYTES,
             boundary: !crate::mutants::on("api-web-boundary-off"),
             nofollow: !crate::mutants::on("api-web-nofollow-off"),
@@ -401,12 +404,17 @@ impl ProjectFileService {
     /// Create the project root this write found missing, through the same
     /// pinned walk as every other write step: the deepest existing ancestor is
     /// pinned NOFOLLOW first, the missing tail is `mkdirat`-ed below that
-    /// descriptor, and the finished root is re-pinned the same way. No path is
-    /// ever reopened, so ancestry swapped for a link inside the window fails
-    /// closed instead of carrying the root (and the write) out of the
-    /// workspace.
+    /// descriptor, and the finished root is re-pinned by that same NOFOLLOW
+    /// walk — no follow-open ever happens, so ancestry swapped for a link
+    /// inside the window fails closed instead of carrying the root (and the
+    /// write) out of the workspace. A rename that substitutes a *real*
+    /// directory still resolves by path, exactly as Node does.
     #[cfg(unix)]
     fn created_root(&self) -> io::Result<fs::File> {
+        // Deterministic boundary-probe seam: the missing-root open has already
+        // failed, so a test may swap an ancestor before the pin below.
+        #[cfg(test)]
+        test_hook::notify("create-root");
         let ancestor = deepest_existing(&self.root);
         let pinned = crate::project_files::open_directory_beneath(&ancestor, &ancestor)?;
         let tail = self

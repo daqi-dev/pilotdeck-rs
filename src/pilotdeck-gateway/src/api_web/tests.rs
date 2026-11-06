@@ -944,6 +944,142 @@ fn write_rejects_a_root_swapped_for_a_link() {
     }
 }
 
+/// #1675 probe (write race window, leaf): the checked file is swapped for a
+/// symlink to the outside directory after the lexical/realpath check and
+/// before the write, so the failing gate is the leaf `O_NOFOLLOW` open in
+/// `overwrite_at` rather than the component walk above it.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_leaf_swapped_inside_the_window() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    fs::write(root.join("race.txt"), b"inside\n").expect("#1675 write the in-root file");
+    let link_root = root.clone();
+    let link_target = outside.join("escaped.txt");
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "write" {
+            fs::remove_file(link_root.join("race.txt")).expect("#1675 remove the in-root file");
+            std::os::unix::fs::symlink(&link_target, link_root.join("race.txt"))
+                .expect("#1675 install the racing leaf symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "race.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("escaped.txt"));
+    assert!(
+        leaked.is_err(),
+        "#1675 mutated: the race window carried the leaf write out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "race.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a raced leaf answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 a write through a raced leaf must be rejected"),
+    }
+}
+
+/// #1675 probe (missing root, ancestor race): the root does not exist yet, and
+/// an existing ancestor of it is swapped for a link to the outside directory
+/// after the lexical/realpath check and before the write. Recursive path mkdir
+/// follows that link and builds the root outside the workspace; the pinned
+/// root open refuses it. The swap rides the `write` phase, so the control that
+/// turns the descriptor walk off exercises the same swap.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_missing_root_below_a_swapped_ancestor() {
+    let (parent, _root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    let mid = parent.join("mid");
+    fs::create_dir_all(&mid).expect("#1675 create the in-root ancestor");
+    let fresh = mid.join("proj");
+    let link_mid = mid.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "write" {
+            fs::remove_dir(&link_mid).expect("#1675 remove the in-root ancestor");
+            std::os::unix::fs::symlink(&link_target, &link_mid)
+                .expect("#1675 install the racing ancestor symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#1675 the fresh root is UTF-8"));
+    let result = service.write_file(
+        "nested/a.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("proj/nested/a.txt"));
+    assert!(
+        leaked.is_err(),
+        "#1675 mutated: the swapped ancestor carried the created root out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "nested/a.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a swapped ancestor answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 a write must not create the root through a swapped ancestor"),
+    }
+}
+
+/// #1675 regression probe (missing root, ancestor swapped *inside* the create):
+/// the root open has already failed with ENOENT, and an ancestor is swapped
+/// before the pinned create walks it. `create_dir_all` + a post-hoc
+/// `canonicalize` comparison (the shape this PR replaced) follows the link,
+/// builds the root outside, and then compares two equally poisoned values —
+/// this probe fails on that implementation and passes on the pinned one. The
+/// seam only exists on the descriptor path, so the switch-off build answers
+/// `Ok` here by construction: this pin is deliberately **not** bound to
+/// `api-web-nofollow-off`.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_missing_root_below_an_ancestor_swapped_after_the_open() {
+    let (parent, _root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    let mid = parent.join("mid");
+    fs::create_dir_all(&mid).expect("#1675 create the in-root ancestor");
+    let fresh = mid.join("proj");
+    let link_mid = mid.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "create-root" {
+            fs::remove_dir(&link_mid).expect("#1675 remove the in-root ancestor");
+            std::os::unix::fs::symlink(&link_target, &link_mid)
+                .expect("#1675 install the racing ancestor symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#1675 the fresh root is UTF-8"));
+    let result = service.write_file(
+        "nested/a.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    assert!(
+        fs::read_to_string(outside.join("proj/nested/a.txt")).is_err(),
+        "#1675 the pinned create must not build the root through a swapped ancestor"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "nested/a.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a swapped ancestor answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 the pinned create must refuse a swapped ancestor"),
+    }
+}
+
 /// #1675 regression probe: the project root does not exist yet, and the write
 /// creates it like TS's `mkdir(dirname(target), {recursive: true})`.
 #[cfg(unix)]
