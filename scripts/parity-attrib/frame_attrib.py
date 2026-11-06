@@ -236,6 +236,16 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
     diffs = per.get('channel', {}).get('differences') or []
     verdict = per.get('verdict')
     rules = sorted(per.get('triggered_rules') or [])
+    # C0（进程内自报）：G03 自己说「这轮没比成」时同样不能折成 NOT_6。
+    #   trace_input：compare_records 里抛异常（记录缺必需键 / 形状非法）→ 比较器根本没比成；
+    #   trace_identity：sidecar 身份自证不成立 → 该轮不可信。轮次闸门只看 run.json，
+    #   挡不住 identity 帧本身被 G03 判否（#1926 r4 两家非作者评审 P1，独立撞上同一条）。
+    #   trace_health **不在此列**：它是可解析 trace 的真实异常（重复/乱序终态），属产品行为
+    #   差异，negctl C/D 依赖它判 NOT_6；一律折成 UNKNOWN 会把这些真差异放走。
+    not_run = [r for r in ('trace_input', 'trace_identity') if r in rules]
+    if not_run:
+        return 'UNKNOWN', [f'C0 未运行：G03 自报 {not_run}（比较器没比成 / 轮次身份不成立；'
+                           f'未判定，不当作反证）{per.get("error", "")}']
     if verdict == 'PASS':
         return 'PASS', [f'C2：G03 判 PASS，语义差异 0 条']
     # C2a：规则集必须恰好是 #6 的那三条。#6 只会多一条 durable.status，
@@ -464,6 +474,15 @@ def run(root, scenario):
 
 # ---------- negctl：用真实 trace 的变异副本证明判据不是空话 ----------
 
+def case_mark(got, want):
+    """负控结果归类（纯函数，自测可覆盖）：`UNKNOWN` = 装置故障，不是判据被证伪。"""
+    if got == want:
+        return 'OK'
+    if got == 'UNKNOWN':
+        return 'UNKNOWN'
+    return 'MISMATCH'
+
+
 def negctl(root, scenario, outdir):
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
     # 证据目录独占新建：README 已声明「不得覆写」，代码必须同样设防，否则并发重跑会
@@ -571,17 +590,46 @@ def negctl(root, scenario, outdir):
                   put_ev(base_ts, {'accountingContract': 'negctl/v1', 'total': 1}),
                   put_ev(base_ru, {'accountingContract': 'negctl/v1', 'total': 2}), 'NOT_6'))
 
+    # N/O 绑定 #1926 r4 的 C0（进程内自报故障）：G03 **自己**说「没比成」时必须判 UNKNOWN，
+    #   不能折成 NOT_6 反证（rc=2 / MISMATCH 都会把装置故障报成「判据被证伪」）。
+    # N identity 自证被改 → G03 追加 trace_identity → UNKNOWN
+    def break_identity(recs):
+        out = [dict(r) for r in recs]
+        proof = next(r for r in out if is_identity(r))
+        proof['sha256'] = '0' * 64
+        return out
+
+    cases.append(('N-identity-broken-g03-selfreport', break_identity(base_ts), base_ru, 'UNKNOWN'))
+
+    # O 记录缺必需键（G03 load_aligned 抛 ValueError）→ trace_input → UNKNOWN
+    def drop_sequence(recs):
+        out = [dict(r) for r in recs]
+        out[0] = {k: v for k, v in out[0].items() if k != 'sequence'}
+        assert 'sequence' not in out[0]
+        return out
+
+    cases.append(('O-record-missing-sequence-g03-input-error', drop_sequence(base_ts), base_ru, 'UNKNOWN'))
+
     ok = True
+    unjudged = 0
     for case in cases:
         name, ts_recs, ru_recs, want = case[0], case[1], case[2], case[3]
         sc = case[4] if len(case) > 4 else scenario
         td, rd = write_case(name, ts_recs, ru_recs)
         got, ev = judge(sc, td, rd, ts_recs, ru_recs)
-        mark = 'OK' if got == want else 'MISMATCH'
-        if got != want:
+        mark = case_mark(got, want)
+        if mark == 'UNKNOWN':
+            # 装置/比较器故障 ≠ 判据被证伪：单独计，不置 MISMATCH（#1926 r4 评审 P1）。
+            unjudged += 1
+        elif mark == 'MISMATCH':
             ok = False
         print(f'negctl {name:32s} 期望={want:9s} 实得={got:9s} {mark}  {ev[0][:110]}')
-    return 0 if ok else 4
+    if not ok:
+        return 4
+    if unjudged:
+        print(f'## 未判定：{unjudged} 条负控因装置/比较器故障未判定（rc=8），不构成 MISMATCH')
+        return 8
+    return 0
 
 
 def main():

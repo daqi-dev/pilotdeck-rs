@@ -145,7 +145,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = 'a1de13f2fb0108e8aec40a0c8540990dc31eededca5004412e6806c264614fa2'
+PINNED_DEVICE_SHA256 = '5e3849fab60cf86bdec77371225805ff7c27325928311803df1300b7a05f018b'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -274,6 +274,13 @@ check('verdict_exit 有未判定 → 8（比较器故障不得给 rc=0）', fa.v
 check('verdict_exit 未判定优先于批次不完整 → 8', fa.verdict_exit(80, 20, 0, True, 1) == 8)
 check('verdict_exit 已有 NOT_6 时未判定不改变 2', fa.verdict_exit(80, 20, 1, False, 1) == 2)
 
+# ---- case_mark(): 负控结果归类（UNKNOWN ≠ MISMATCH）----
+check('case_mark 命中 → OK', fa.case_mark('NOT_6', 'NOT_6') == 'OK')
+check('case_mark 实得 UNKNOWN 而期望别 → UNKNOWN（不算 MISMATCH）',
+      fa.case_mark('UNKNOWN', 'NOT_6') == 'UNKNOWN')
+check('case_mark 期望 UNKNOWN 且实得 UNKNOWN → OK', fa.case_mark('UNKNOWN', 'UNKNOWN') == 'OK')
+check('case_mark 真判错 → MISMATCH', fa.case_mark('ATTRIB_6', 'NOT_6') == 'MISMATCH')
+
 # ---- run(): 空对拍必须硬失败（P0：旧版 0 pair 时打印「无第二种差异」并 rc=0）----
 with tempfile.TemporaryDirectory() as tdir:
     out, err = io.StringIO(), io.StringIO()
@@ -294,6 +301,19 @@ try:
     check('judge g03 输出缺该场景 → UNKNOWN', got == 'UNKNOWN', f'got={got}')
 finally:
     fa.g03 = _orig_g03
+
+# ---- C0（进程内自报）：G03 说「没比成」→ UNKNOWN；trace_health 不误扩 ----
+got, ev = fa.judge('deadline', '/x', '/y', [], [],
+                   per={'verdict': 'FAIL', 'triggered_rules': ['trace_input'], 'error': 'bad record'})
+check('judge G03 自报 trace_input → UNKNOWN', got == 'UNKNOWN' and 'C0' in ev[0], f'got={got}')
+got, ev = fa.judge('deadline', '/x', '/y', [], [],
+                   per={'verdict': 'FAIL', 'triggered_rules': ['trace_identity']})
+check('judge G03 自报 trace_identity → UNKNOWN', got == 'UNKNOWN' and 'C0' in ev[0], f'got={got}')
+got, ev = fa.judge('deadline', '/x', '/y', [], [],
+                   per={'verdict': 'FAIL', 'triggered_rules': ['E10', 'E11', 'G03_channels', 'trace_health'],
+                        'channel': {'differences': []}})
+check('judge trace_health 仍判 NOT_6（C0 不误扩，negctl C/D 依赖它）',
+      got == 'NOT_6' and 'C0' not in ev[0], f'got={got} ev={ev[0][:60]!r}')
 
 # ---- run(): 端到端接线（全 PASS → 7；比较器故障 → 8），用桩替换 g03 ----
 def _mk_round(root, name, side):
