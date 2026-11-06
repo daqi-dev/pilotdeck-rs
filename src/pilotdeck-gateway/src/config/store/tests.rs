@@ -747,17 +747,24 @@ async fn restored_mtime_rewrite_between_samples_is_seen() {
         .expect("#879 healthy watcher paths");
     settle().await;
     advance(5).await;
-    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let modified = std::fs::metadata(&path)
+        .expect("#1739 initial metadata")
+        .modified()
+        .expect("#1739 initial mtime");
     root.write(&other_model());
     root.write(BASE);
     std::fs::File::options()
         .write(true)
         .open(&path)
-        .unwrap()
+        .expect("#1739 reopen for mtime restore")
         .set_modified(modified)
-        .unwrap();
+        .expect("#1739 restore mtime");
     advance(600).await;
-    assert_eq!(loads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        2,
+        "#1739 a same-length rewrite with mtime restored is still seen (ctime)"
+    );
     assert_eq!(
         store.snapshot().get("version").and_then(JsValue::as_number),
         Some(2.0)
@@ -786,13 +793,13 @@ fn parent_watched_config_file_content_is_sampled() {
     // control (no target) is the old entry-metadata-only fingerprint.
     let target = Some(std::ffi::OsStr::new("pilotdeck.yaml"));
     assert_ne!(
-        fingerprint(&root.0, true, target),
-        fingerprint(&root.0, true, None)
+        fingerprint(&root.0, true, target, true),
+        fingerprint(&root.0, true, None, true)
     );
     let other = Some(std::ffi::OsStr::new("other.yaml"));
     assert_eq!(
-        fingerprint(&root.0, true, other),
-        fingerprint(&root.0, true, None)
+        fingerprint(&root.0, true, other, true),
+        fingerprint(&root.0, true, None, true)
     );
 }
 
@@ -819,6 +826,72 @@ fn oversized_config_file_is_sampled_by_metadata_only() {
     let mut metadata_only = DefaultHasher::new();
     hash_entry(&path, &mut metadata_only, false);
     assert_ne!(with_content.finish(), metadata_only.finish());
+}
+
+/// #1739: a sample whose metadata is unchanged must not read the config
+/// file's content (the per-tick cost of the poll loop is the point of the
+/// fix); a changed sample must read it and be seen. The count is observed
+/// directly via the [`hash_entry`] test hook, not inferred from timing.
+#[test]
+fn unchanged_metadata_skips_the_content_read() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1739 file watched");
+    let before = content_reads(&path);
+    for tick in 0..50 {
+        assert!(
+            !watched.changed(),
+            "#1739 unchanged sample {tick} must be quiet"
+        );
+    }
+    assert_eq!(
+        content_reads(&path),
+        before,
+        "#1739 50 metadata-identical samples must not read the config file content"
+    );
+    root.write(&other_model());
+    assert!(watched.changed(), "#1739 a changed sample is seen");
+    assert_eq!(
+        content_reads(&path),
+        before + 1,
+        "#1739 a changed sample reads the content exactly once"
+    );
+}
+
+/// #1739: the metadata short-circuit leans on ctime — the same-length,
+/// mtime-restored rewrite of the watcher-level
+/// `restored_mtime_rewrite_between_samples_is_seen` at unit level: the
+/// metadata sample still differs (ctime), so the content is still read and
+/// the change is still seen.
+#[test]
+fn restored_mtime_rewrite_still_reads_the_content() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let modified = std::fs::metadata(&path)
+        .expect("#1739 initial metadata")
+        .modified()
+        .expect("#1739 initial mtime");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1739 file watched");
+    let before = content_reads(&path);
+    // Same length as BASE ("deterministic" -> "deterministix"), mtime restored.
+    root.write(&BASE.replace("deterministic", "deterministix"));
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("#1739 reopen for mtime restore")
+        .set_modified(modified)
+        .expect("#1739 restore mtime");
+    assert!(
+        watched.changed(),
+        "#1739 the ctime bump is seen through the metadata short-circuit"
+    );
+    assert_eq!(
+        content_reads(&path),
+        before + 1,
+        "#1739 the same-length mtime-restored rewrite is content-sampled once"
+    );
 }
 
 #[test]

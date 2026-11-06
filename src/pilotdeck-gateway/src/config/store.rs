@@ -44,10 +44,13 @@
 //!   coarser than the burst. Ledger: specs/gateway-parity/accepted-diffs.md
 //!   A6.3-CONFIG-POLL-001 (unapproved).
 //!
-//! Each sample reads at most [`CONTENT_SAMPLE_LIMIT`] bytes of a watched
-//! config file (the file itself, or the missing config file's name inside a
-//! watched parent directory); larger files and other directory entries are
-//! sampled by metadata only.
+//! Each sample compares metadata first (#1739): unchanged metadata (length,
+//! mtime, ctime, inode — every write and `utimes` bumps ctime) proves the
+//! content cannot have changed, so the content read is skipped. Only when
+//! metadata changed is up to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched
+//! config file read (the file itself, or the missing config file's name
+//! inside a watched parent directory); larger files and other directory
+//! entries are sampled by metadata only.
 use super::{
     Env, Error,
     changes::{ChangeClass, classify_config_changes, diff_config_snapshots},
@@ -644,13 +647,33 @@ impl Drop for WatchHandle {
 /// file is sampled by metadata (length, mtime, ctime, inode) only.
 pub const CONTENT_SAMPLE_LIMIT: u64 = 1024 * 1024;
 
+/// #1739 test hook: content bytes actually read, keyed by path. The tests
+/// assert that a metadata-identical sample skips the content read without
+/// inferring it from timing; the key keeps parallel tests (each in its own
+/// temp root) from observing each other's reads.
+#[cfg(test)]
+static CONTENT_READS: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> = Mutex::new(None);
+
+#[cfg(test)]
+fn content_reads(path: &Path) -> usize {
+    lock(&CONTENT_READS)
+        .as_ref()
+        .and_then(|reads| reads.get(path).copied())
+        .unwrap_or(0)
+}
+
 struct WatchedPath {
     path: PathBuf,
     directory: bool,
     /// For a directory watched in place of a missing config file, that
     /// file's name: its content is sampled once it appears.
     target: Option<std::ffi::OsString>,
+    /// The last full sample (content included for the watched config file).
     fingerprint: u64,
+    /// The last metadata-only sample (#1739): identical metadata between two
+    /// samples proves the content cannot have changed — every write and
+    /// `utimes` bumps ctime — so the content read is skipped.
+    metadata_fingerprint: u64,
 }
 
 impl WatchedPath {
@@ -669,17 +692,32 @@ impl WatchedPath {
         // An existing directory (e.g. an empty config path resolving to cwd)
         // is fingerprinted by its entries, like `fs.watch` on a directory.
         let directory = path.is_dir();
-        let fingerprint = fingerprint(&path, directory, target.as_deref());
+        let metadata_fingerprint = fingerprint(&path, directory, target.as_deref(), false);
+        let fingerprint = fingerprint(&path, directory, target.as_deref(), true);
         Some(Self {
             path,
             directory,
             target,
             fingerprint,
+            metadata_fingerprint,
         })
     }
 
     fn changed(&mut self) -> bool {
-        let next = fingerprint(&self.path, self.directory, self.target.as_deref());
+        // #1739: metadata first. At the default cadence (two watched paths
+        // every 20 ms) the per-tick content read costs up to ~19% of a core
+        // (measured: ~1.9 ms per 1 MiB read on cb8, page-cache hot; a
+        // metadata-only sample is ~1 µs), and metadata equality already
+        // implies content equality on every filesystem where ctime
+        // granularity is finer than the burst (the same granularity the
+        // net-zero case below already leans on). Only a metadata change
+        // walks on to the content read.
+        let next_metadata = fingerprint(&self.path, self.directory, self.target.as_deref(), false);
+        if next_metadata == self.metadata_fingerprint {
+            return false;
+        }
+        let next = fingerprint(&self.path, self.directory, self.target.as_deref(), true);
+        self.metadata_fingerprint = next_metadata;
         std::mem::replace(&mut self.fingerprint, next) != next
     }
 }
@@ -698,18 +736,33 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) {
             (meta.ctime(), meta.ctime_nsec(), meta.ino(), meta.dev()).hash(hasher);
             if read_content && meta.is_file() && meta.len() <= CONTENT_SAMPLE_LIMIT {
                 let mut content = Vec::new();
-                std::fs::File::open(path)
+                let read = std::fs::File::open(path)
                     .and_then(|file| file.take(CONTENT_SAMPLE_LIMIT).read_to_end(&mut content))
                     .ok()
-                    .map(|_| content)
-                    .hash(hasher);
+                    .map(|_| content);
+                #[cfg(test)]
+                {
+                    if read.is_some() {
+                        lock(&CONTENT_READS)
+                            .get_or_insert_with(Default::default)
+                            .entry(path.to_path_buf())
+                            .and_modify(|count| *count += 1)
+                            .or_insert(1);
+                    }
+                }
+                read.hash(hasher);
             }
         }
         Err(_) => false.hash(hasher),
     }
 }
 
-fn fingerprint(path: &Path, directory: bool, target: Option<&std::ffi::OsStr>) -> u64 {
+fn fingerprint(
+    path: &Path,
+    directory: bool,
+    target: Option<&std::ffi::OsStr>,
+    sample_content: bool,
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     if directory {
         // The directory's own metadata changes on every entry create/delete.
@@ -724,11 +777,11 @@ fn fingerprint(path: &Path, directory: bool, target: Option<&std::ffi::OsStr>) -
         names.sort();
         for name in names {
             name.hash(&mut hasher);
-            let read_content = target == Some(name.as_os_str());
+            let read_content = sample_content && target == Some(name.as_os_str());
             hash_entry(&path.join(&name), &mut hasher, read_content);
         }
     } else {
-        hash_entry(path, &mut hasher, true);
+        hash_entry(path, &mut hasher, sample_content);
     }
     hasher.finish()
 }
