@@ -67,12 +67,19 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   reload，而 `fs.watch` 会给一次 identity reload；#327 起同周期 A→B→A 并回拨 mtime
   已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩「整个突发的 ctime
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
-  刷新的 ctime、inode）：元数据未变则不读内容（#1739）。漏检只有一格：改写后 ctime 未跨
-  tick，且 len / mtime / inode 也都没变；精确表述见 `src/config/store.rs` 模块文档。
-  元数据变化后才读被监视配置文件（含经父目录监视、后来出现的那个配置文件名）
-  至多 1 MiB 内容，超出或其它目录项只看元数据。这一格按冻结程序登记为
+  刷新的 ctime、inode）：元数据未变则不读内容（#1739）。元数据采样或内容读任一失败
+  （stat / `read_dir` / 打开或读取配置文件）算**不完整采样**：不提交 metadata 指纹，
+  下一 tick 继续重试，直到一次完整采样落地——读恢复后无需任何元数据变化即可补报
+  （#1792，`transient_read_failure_is_retried_until_the_content_is_seen`）；同一不可读
+  状态的全指纹一致，至多报一次变化，不会 reload 风暴。完整语义下漏检只有一格：改写后
+  ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
+  `src/config/store.rs` 模块文档。
+  元数据变化后（或不完整采样重试时）才读被监视配置文件（含经父目录监视、后来出现的
+  那个配置文件名）至多 1 MiB 内容，超出或其它目录项只看元数据。这一格按冻结程序登记为
   `specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`（未批准），
-  复算用挂载的 HFS+ 镜像把 `TMPDIR` 指过去，见该条目「机器判据」。
+  勘误见同目录 `A6.3-CONFIG-METADATA-SHORTCUT-001-R1.md` 与
+  `A6.3-CONFIG-POLL-001-R1.md`；复算用挂载的 HFS+ 镜像把 `TMPDIR` 指过去，
+  见该条目「机器判据」。
   相对的全局配置路径（`PILOTDECK_CONFIG_PATH`）按
   `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
 
@@ -80,3 +87,28 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
 cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
   --test config_store --locked --offline
 ```
+
+## 负控本地运行
+
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 10 个
+源码变异，要求各绑定测试自身 panic 载荷携带 `#1736` / `#1739` / `#1792` 标记，
+每个变异前跑正控、后跑恢复正控，源码逐字节恢复并复核。运行时要求：
+
+```sh
+CARGO_TARGET_DIR=<独立目录> LANG=en_US.UTF-8 \
+python3 -I src/pilotdeck-gateway/tests/fixtures/config-store/negative_controls.py \
+  <新的证据目录>
+```
+
+- `LANG` 前缀是 cb8 的 zh_CN 默认 locale 曾在 libtest 输出里产生假红，脚本内
+  `env.setdefault` 只在调用方未显式选择时兜底；本地复跑请显式带上。
+- `python3 -I` 不阻止字节码写入，脚本在导入共享 harness 前置了
+  `sys.dont_write_bytecode = True`，不会在 fixtures 树里留下 `__pycache__`。
+- runner 默认要求产品源码与 `HEAD` 逐字节一致；沙箱评审树无法 commit 时用
+  `PDRS_NEGATIVE_BASELINE=$(git stash create)`（悬空提交，不动 ref、不改 index）
+  钉住被审树，stdout 会打 `NON-HEAD BASELINE` 提醒这不是宿主证据。守卫同时比对
+  worktree 与 index（`git diff --cached`），而 `stash create` 只快照 worktree——
+  未 commit 的改动要先 `git add` 暂存，否则全行报
+  `source baseline mismatch`。
+- 产物：每行 `-positive` / `-negative` / `-restored` 日志与 `summary.json`
+  （`controls[]` + `counts`），全 `KILLED` 退出码 0。
