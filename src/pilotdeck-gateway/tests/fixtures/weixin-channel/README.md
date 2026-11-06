@@ -28,12 +28,11 @@
 14. 响应 `get_updates_buf:""` 不清游标：后续 poll 体仍带持久化 cursor；
 15. `typing_ticket:""` 时仍取 getconfig 但不发 sendtyping。
 
-12–15 是 JS 真值语义（`if (x)` 对空串为假）的金样钉子：去掉 Rust 侧的空串
-`filter`，对应的金样格即变红。负控 `empty-*` 三条变异覆盖这四格：14/15 直接死在
-金样比对（`#1328 weixin replay oracle`）；12/13 由 `empty-bot-token-accepted`
-一条变异同时去掉两处 filter，空凭证被接受后登录不再 `failed`，回放死在
-10 s 等待闸门（`#1328 weixin harness gate did not resolve`），与
-`credentials-fallback` 同形。
+12–15 是 JS 真值语义（`if (x)` 对空串为假）的金样钉子：去掉对应的空串
+`filter`，回放即变红。负控 `empty-*` 四条变异一格一条，死法分两种：
+14/15 死在金样比对（`#1328 weixin replay oracle`）；12/13 死在 10 s 等待闸门
+（`#1328 weixin harness gate did not resolve`）—— 空凭证被接受后登录不再
+`failed`，回放走不到比对，与 `credentials-fallback` 同形。
 
 ## 确定性
 

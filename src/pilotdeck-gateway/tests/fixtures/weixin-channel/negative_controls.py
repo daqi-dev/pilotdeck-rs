@@ -72,8 +72,13 @@ MUTATIONS = [
      '  "expectedCaseCount": 15,',
      '  "expectedCaseCount": 14,',
      REPLAY, '#1328 weixin generator declaration'),
-    # JS truthiness (`if (x)` is false for ""): each of the three filters has
-    # its own golden case, so dropping the filter must turn the replay red.
+    # JS truthiness (`if (x)` is false for ""): four filters, four golden cases,
+    # one row per filter so every case has its own killer. Death points differ:
+    # c14/c15 die on the oracle comparison (`#1328 weixin replay oracle`); the
+    # credential pair dies earlier — the empty value is accepted, the `failed`
+    # report never arrives, and the replay hits the 10 s harness gate
+    # (`#1328 weixin harness gate did not resolve`, same shape as
+    # `credentials-fallback`).
     ('empty-buffer-clears-cursor', weixin / 'client.rs',
      'string_field(&response, "get_updates_buf").filter(|b| !b.units().is_empty())',
      'string_field(&response, "get_updates_buf")',
@@ -85,15 +90,14 @@ MUTATIONS = [
     ('empty-bot-token-accepted', weixin / 'client.rs',
      '                let bot_token =\n'
      '                    string_field(&status, "bot_token").filter(|token| '
-     '!token.units().is_empty());\n'
+     '!token.units().is_empty());',
+     '                let bot_token = string_field(&status, "bot_token");',
+     REPLAY, '#1328 weixin harness gate did not resolve'),
+    ('empty-account-id-accepted', weixin / 'client.rs',
      '                let account_id =\n'
      '                    string_field(&status, "ilink_bot_id").filter(|id| '
      '!id.units().is_empty());',
-     '                let bot_token = string_field(&status, "bot_token");\n'
      '                let account_id = string_field(&status, "ilink_bot_id");',
-     # With the filters gone the mutant accepts the empty token, so c12 never
-     # reports `failed`: the replay dies on the harness gate (10 s) before it
-     # can reach the oracle comparison — same kill shape as `credentials-fallback`.
      REPLAY, '#1328 weixin harness gate did not resolve'),
 ]
 
