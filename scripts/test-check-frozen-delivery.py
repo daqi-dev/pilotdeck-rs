@@ -3293,6 +3293,26 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and all('�' not in path for path in seen),
              f"found={found} invalid={invalid} seen={seen}")
 
+    # P1（codex）：runner 查询自身出错（非 1）不能当成「没有 runner」——否则
+    # 普通文件顶替的装置会被跳过。1 是 git 的「该树里没有这个路径」（2.54 实测），
+    # 其余非零是查询失败。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        real_git = cfd.git
+        try:
+            for code, want in ((128, None), (1, False)):
+                cfd.git = (lambda seq: (lambda *_a, **_k: seq.pop(0)))(
+                    [(0, "deadbeef", ""), (code, "", "boom")])
+                got = cfd.exists_at(root, "deadbeef",
+                                    "scripts/x/check_frozen.py")
+                case(f"exists_at：git 退出码 {code} → {want!r}",
+                     got is want, f"code={code} got={got!r}")
+        finally:
+            cfd.git = real_git
+
     # P0（两家独立撞上）：``specs/<alias>`` 是符号链接（120000 blob）时，discover
     # 以前按「不是 tree」静默 continue：该装置根本不跑，父预检报 READY 而子装置
     # 明明是 FAIL。目录型非 tree 条目（符号链接 / 子模块）一律 BLOCK，并在报告里
@@ -3538,7 +3558,8 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
     # 必须按条目目录解析，否则这类仓库的清理会被永久 BLOCK。
     with tempfile.TemporaryDirectory() as td:
         results = []
-        for idx, payload in enumerate(("", "   \n")):
+        for idx, payload in enumerate(("", "   \n", "/tmp/cfd-snapshot-abc/tr\n",
+                                       "bad\x00path/.git\n", "file:///x/.git\n")):
             root = Path(td) / f"repo{idx}"
             root.mkdir()
             init_repo(root)
@@ -3558,7 +3579,7 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
                 cfd._SNAPSHOT_HOLDERS.clear()
             results.append((payload.strip(), recorded is cfd._UNREADABLE_GITDIR,
                             present, dropped, kept, entry.exists()))
-        case("gitdir 为空 / 空白 → 不可读，不报 False、不摘登记",
+        case("gitdir 为空 / 空白 / 截断 / NUL / URL → 不可读，不报 False、不摘登记",
              all(row[1] and row[2] is None and row[3] is False and row[4]
                  and row[5] for row in results), f"{results}")
 
@@ -3586,6 +3607,32 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and dropped is True and not kept and not entry.exists(),
              f"relative={relative!r} recorded={recorded!r} present={present!r} "
              f"dropped={dropped!r} kept={kept} entry_exists={entry.exists()}")
+
+    # 上面那条用例用 os.path.relpath 手工合成 gitdir，与实现共享同一假设
+    # （GLM boundary P2：若 git 的相对基不是 `.git/worktrees/<id>/`，两边会
+    # 一致地错而测试仍绿）。这里驱动真实 git 落一次盘对拍。``--relative-paths``
+    # 要 git ≥ 2.48，老 git 打 SKIP 并跳过——跳过不是通过。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        real_target = Path(td) / "wt-real"
+        made = subprocess.run(
+            ["git", "-C", str(root), "worktree", "add", "--relative-paths",
+             "--detach", str(real_target), "HEAD"],
+            capture_output=True, text=True, timeout=TIMEOUT)
+        if made.returncode != 0:
+            print("SKIP  真实 git --relative-paths 建树（本机 git 不支持该选项）")
+        else:
+            entry = next(iter((root / ".git" / "worktrees").iterdir()))
+            payload = (entry / "gitdir").read_text().strip()
+            recorded = cfd._recorded_gitdir(entry)
+            want = cfd._real_path(real_target / ".git")
+            case("真实 git --relative-paths 写出的相对 gitdir → 解析到 <worktree>/.git",
+                 recorded == want and not Path(payload).is_absolute(),
+                 f"payload={payload!r} recorded={recorded!r} want={want!r}")
 
     # P2（codex）：可读匹配 + 不可读条目并存时，可读的那条就是证据 → True；
     # 只有持久坏条目 → None，且阻塞文案点名该条目路径（不再指认自家快照未清）。
@@ -3624,16 +3671,19 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
 
         def flaky(admin, wanted):
             calls.append(1)
-            return None if len(calls) == 1 else False
+            return (None, ["broken"]) if len(calls) == 1 else (False, [])
 
         cfd._scan_admin = flaky
+        cfd._UNVERIFIED_ADMIN_ENTRIES.discard("/virtual/repo/.git/worktrees/broken")
         try:
             present = cfd.admin_entry_present(root, target)
         finally:
             cfd._scan_admin = real_scan
-        case("瞬态不可读条目：退避重扫后按干净处理（不假 BLOCK）",
-             present is False and len(calls) == 2,
-             f"present={present!r} calls={len(calls)}")
+        case("瞬态不可读条目：退避重扫后按干净处理（不假 BLOCK、不入诊断集）",
+             present is False and len(calls) == 2
+             and "broken" not in cfd._UNVERIFIED_ADMIN_ENTRIES,
+             f"present={present!r} calls={len(calls)} "
+             f"named={sorted(cfd._UNVERIFIED_ADMIN_ENTRIES)}")
 
     # P1（codex）：两个根嵌套时取**最深**前缀，先命中被审树会把快照路径归一错。
     with tempfile.TemporaryDirectory() as td:
