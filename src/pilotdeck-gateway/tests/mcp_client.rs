@@ -19,6 +19,7 @@ use pilotdeck_gateway::runtime::mcp::{
     protocol::{
         McpEnvironment, McpServerSpec, McpTransportSpec, expand_mcp_string, load_mcp_server_config,
     },
+    runtime::{McpRuntime, McpRuntimeOptions},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use scratch::Scratch;
@@ -1649,6 +1650,116 @@ async fn list_tools_rejects_an_unresolvable_output_schema_ref() {
     assert_eq!(
         status, "ready",
         "#401 a $ref rejection leaves the shared connection usable"
+    );
+}
+
+// ── gate11 concurrency P2(c): dispose while a handshake is in flight ──────
+
+/// #401 gate11 concurrency P2(c): `dispose()` does not fence an in-flight
+/// handshake — the TS baseline's `close()` behaves the same (probe
+/// `_tmp/20261106-issue-401/probe/probe-dispose-inflight.mts`, raw output on
+/// #401: `closeMs=1`, `closeWaitedForHandshake=false`). What the port owns is
+/// the late cleanup: once the handshake lands after the epoch bump, the
+/// attempt's connection is closed and its per-session directory removed even
+/// though nobody awaits it. The gate is a file the mock waits on, so the
+/// interleaving is deterministic — no sleeps decide who goes first.
+#[tokio::test]
+async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
+    let scratch = Scratch::new("mcp-client-dispose-inflight");
+    let dir = std::fs::canonicalize(scratch.path()).unwrap();
+    let sessions = dir.join("sessions");
+    std::fs::write(
+        dir.join("script.json"),
+        format!(r#"{{"procs":[{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}]}}"#),
+    )
+    .unwrap();
+    let runtime = std::sync::Arc::new(McpRuntime::new(
+        vec![McpServerSpec {
+            id: "mock".into(),
+            transport: McpTransportSpec::Stdio {
+                command: "node".into(),
+                args: Some(vec![mock_path()]),
+                env: Some(vec![
+                    ("MOCK_DIR".into(), dir.to_string_lossy().into_owned()),
+                    (
+                        "PILOTDECK_SESSION_TMPDIR".into(),
+                        sessions.to_string_lossy().into_owned(),
+                    ),
+                ]),
+                cwd: None,
+                per_session: true,
+            },
+            call_timeout_ms: None,
+        }],
+        McpRuntimeOptions::default(),
+    ));
+    let starting = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.start().await }
+    });
+    // The handshake has been written to the server; the gate keeps it in
+    // flight. `build_transport` already made the per-session directory.
+    wait_logged(&dir, 0, "frame").await;
+    let session_dir = std::fs::read_dir(&sessions)
+        .expect("#401 the per-session root must exist")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("pilotdeck-mcp-mock-"))
+        })
+        .expect("#401 build_transport must create a per-session directory");
+    assert!(
+        session_dir.exists(),
+        "#401 the per-session directory exists while the handshake is gated"
+    );
+    // `dispose()` must return now: it never waits for the handshake.
+    tokio::time::timeout(Duration::from_secs(2), runtime.stop())
+        .await
+        .expect("#401 dispose must not fence the in-flight handshake");
+    assert!(
+        session_dir.exists(),
+        "#401 dispose returns before the gated handshake settles, so the directory is still there"
+    );
+    assert_eq!(
+        runtime
+            .client("mock")
+            .expect("#401 the client is registered")
+            .status()
+            .as_str(),
+        "idle",
+        "#401 dispose leaves the client idle while the handshake is still running"
+    );
+    open_gate(&dir, "g0");
+    let entries = starting
+        .await
+        .expect("#401 the runtime start task must finish");
+    assert_eq!(entries.len(), 1, "#401 one server entry");
+    assert_eq!(
+        entries[0].status.as_str(),
+        "error",
+        "#401 the superseded handshake surfaces as a failed start"
+    );
+    // The late cleanup nobody awaits still removes the directory.
+    let mut removed = false;
+    for _ in 0..400 {
+        if !session_dir.exists() {
+            removed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        removed,
+        "#401 dispose returns before the in-flight handshake settles, and its cleanup still removes the per-session directory"
+    );
+    wait_logged(&dir, 0, "exit").await;
+    settle(&dir, false).await;
+    assert_eq!(
+        read_logs(&dir).len(),
+        1,
+        "#401 no replacement connection is spawned"
     );
 }
 
