@@ -2123,6 +2123,112 @@ async fn sequential_turns_create_fresh_hosts_and_send_each_payload() {
     }
 }
 
+/// #1864 (b): the permission-mode source is re-read on every submit, like
+/// InProcessGateway.ts:1443 — a stored selection reaches the live session's
+/// next turn without a close, and a non-empty
+/// `managedPermissions.defaultMode` still wins over the store. Negative
+/// control: deleting the override in `LiveSessionAdapter::submit` makes the
+/// second turn's payload carry "default"; deleting the
+/// managed-permissions guard makes the guarded session carry the stored
+/// mode.
+#[tokio::test]
+async fn permission_mode_source_rewrites_the_agent_config_each_turn() {
+    let handlers = Arc::new(Mutex::new(Vec::new()));
+    let created = handlers.clone();
+    let current: Arc<Mutex<Option<JsString>>> = Arc::new(Mutex::new(None));
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+        let created = created.clone();
+        Box::pin(async move {
+            let client = spawn_client("live-payload").await?;
+            let handler = Arc::new(Handler::default());
+            created.lock().unwrap().push(handler.clone());
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                handler as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
+        })
+    })
+    .with_agent_config(
+        parse_json(r#"{"permissionMode":"default"}"#)
+            .expect("#1864 agent config fixture")
+            .as_object()
+            .expect("#1864 agent config object")
+            .clone(),
+    )
+    .with_permission_mode_source({
+        let current = current.clone();
+        Arc::new(move || current.lock().unwrap().clone())
+    });
+    let agent_permission_mode = |handler: &Handler| {
+        handler.events.lock().unwrap()[0]
+            .get("payload")
+            .expect("#1864 execute payload")
+            .get("receivedPayload")
+            .expect("#1864 echoed payload")
+            .get("agent")
+            .expect("#1864 the agent config rides the payload")
+            .get("permissionMode")
+            .cloned()
+    };
+    let mut turn = session
+        .submit_turn_for_test(input(), turn_options("turn-1864-a"))
+        .expect("#1864 the first turn submits");
+    while next(turn.as_mut()).await.unwrap().is_some() {}
+    assert_eq!(
+        agent_permission_mode(handlers.lock().unwrap().last().unwrap()),
+        Some(JsValue::String("default".into())),
+        "#1864 no stored selection keeps the composed mode"
+    );
+    // The live session stays open; only the source changes.
+    *current.lock().unwrap() = Some("plan".into());
+    let mut turn = session
+        .submit_turn_for_test(input(), turn_options("turn-1864-b"))
+        .expect("#1864 the second turn submits");
+    while next(turn.as_mut()).await.unwrap().is_some() {}
+    assert_eq!(
+        agent_permission_mode(handlers.lock().unwrap().last().unwrap()),
+        Some(JsValue::String("plan".into())),
+        "#1864 the stored mode reaches the live session's next turn"
+    );
+    // A non-empty managedPermissions.defaultMode wins over the source.
+    let guarded_handler = Arc::new(Handler::default());
+    let recorded = guarded_handler.clone();
+    let guarded = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+        let recorded = recorded.clone();
+        Box::pin(async move {
+            let client = spawn_client("live-payload").await?;
+            Ok((
+                Box::pin(async move { Ok(client) }) as HostFuture<HostClient>,
+                recorded as Arc<dyn HostHandler>,
+                test_lease(),
+            ))
+        })
+    })
+    .with_agent_config(
+        // The shape `apply_session_overrides` composes when a non-empty
+        // managedPermissions.defaultMode wins: the mode is already in the
+        // config, and the per-turn source must not overwrite it.
+        parse_json(
+            r#"{"permissionMode":"bypassPermissions","managedPermissions":{"defaultMode":"bypassPermissions"}}"#,
+        )
+        .expect("#1864 agent config fixture")
+        .as_object()
+        .expect("#1864 agent config object")
+        .clone(),
+    )
+    .with_permission_mode_source(Arc::new(|| Some("plan".into())));
+    let mut turn = guarded
+        .submit_turn_for_test(input(), options())
+        .expect("#1864 the guarded turn submits");
+    while next(turn.as_mut()).await.unwrap().is_some() {}
+    assert_eq!(
+        agent_permission_mode(&guarded_handler),
+        Some(JsValue::String("bypassPermissions".into())),
+        "#1864 the guarded session keeps its composed mode"
+    );
+}
+
 #[tokio::test]
 async fn invalid_submit_does_not_consume_the_session() {
     let session = session("live-normal", Arc::new(Handler::default())).await;

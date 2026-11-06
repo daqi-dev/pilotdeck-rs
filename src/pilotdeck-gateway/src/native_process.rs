@@ -25,8 +25,10 @@ mod channels_tests;
 mod management_tests;
 mod requests;
 mod services;
+mod session_overrides;
 #[cfg(test)]
 mod settings_tests;
+pub use session_overrides::SessionOverrides;
 mod tools;
 
 /// Start the real serial host, bind WS, then drain on either supported signal.

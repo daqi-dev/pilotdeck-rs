@@ -380,6 +380,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         prepare_weixin_login: None,
         cron: None,
         settings: Requests::stub_settings(owner),
+        session_overrides: Arc::default(),
     }
 }
 

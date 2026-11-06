@@ -250,6 +250,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             prepare_weixin_login: None,
             cron: None,
             settings: requests::Requests::stub_settings(&owner),
+            session_overrides: Arc::default(),
         }
     })
 }

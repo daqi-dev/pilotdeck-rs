@@ -23,7 +23,7 @@ use crate::{
         },
         project::{
             Families, Family, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
-            ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides,
+            ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides, StageContext,
             memory_bundle::MemoryManagementResource, persistence::PersistenceResources,
             plugins::PluginResources,
         },
@@ -220,6 +220,11 @@ pub(super) async fn start_observed_with_upload_cleanup(
         ..InteractionOptions::default()
     }));
     let user_dialog_bus = user_dialog::build_user_dialog_bus();
+    // #1864: the per-gateway session selection store. One instance serves
+    // both writers (the three selector methods on `Requests`) and the reader
+    // (the prepare closure composing each session's agent config).
+    let session_overrides: Arc<super::SessionOverrides> = Arc::default();
+    let prepare_overrides = session_overrides.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -242,6 +247,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
             let interactions = prepare_interactions.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
+            let session_overrides = prepare_overrides.clone();
             Box::pin(async move {
                 let lease = project.acquire(None)?;
                 let resources = lease
@@ -321,7 +327,26 @@ pub(super) async fn start_observed_with_upload_cleanup(
                     "cwd".into(),
                     JsValue::String(options.project.to_string_lossy().into_owned().into()),
                 );
-                config.insert("permissionMode".into(), "default".into());
+                // #1864: compose the session selections the three selector
+                // methods stored — the native counterpart of
+                // SessionAgentConfigBundle.compose over the registry maps.
+                // The permission-mode source for the per-turn override (b)
+                // reads the same store live, mirroring
+                // InProcessGateway.ts:1443.
+                let stored_permission_mode =
+                    session_overrides.permission_mode(&context.session_key);
+                let stored_thinking = session_overrides.thinking(&context.session_key);
+                let stored_style_content =
+                    match session_overrides.output_style(&context.session_key) {
+                        Some(name) => output_style_content(&staged, &name).await,
+                        None => None,
+                    };
+                apply_session_overrides(
+                    &mut config,
+                    stored_permission_mode.as_ref(),
+                    stored_thinking.as_ref(),
+                    stored_style_content.as_deref(),
+                );
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
@@ -386,7 +411,15 @@ pub(super) async fn start_observed_with_upload_cleanup(
                                 turn_ports(&ports, identity, recorder, signal)
                             },
                         )
-                        .with_agent_config(config))
+                        .with_agent_config(config)
+                        // #1864 (b): TS re-reads the permission-mode override
+                        // on every run (InProcessGateway.ts:1443), so an
+                        // already-live session picks the change up without a
+                        // close. The source reads the same store the selector
+                        // method writes.
+                        .with_permission_mode_source(Arc::new(move || {
+                            session_overrides.permission_mode(&session)
+                        })))
                     }),
                 })
             })
@@ -668,6 +701,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
                 cron: cron.clone(),
                 settings: settings.gateway,
+                session_overrides,
             });
             let submitter = Arc::new(TurnSubmitter {
                 owner,
@@ -825,6 +859,81 @@ pub fn transcript_path(options: &Options, session: &JsString) -> std::path::Path
         "{}.jsonl",
         crate::storage::sanitize_session_id(session)
     ))
+}
+
+/// #1864 (a): the pure compose step for the three session selections —
+/// extracted from the prepare closure so the read-back tests exercise the
+/// same logic the next session runs. Mirrors
+/// SessionAgentConfigBundle.compose: `managedPermissions.defaultMode` (a
+/// non-empty string) wins over the stored permission mode, else "default";
+/// a stored thinking value is written as-is (JS null included — presence is
+/// the override, TS deletes only on undefined); the output style's content
+/// merges into `appendSystemPrompt` as
+/// `[existing, content].filter(non-blank).join("\n\n")`, an empty join
+/// writes undefined, and a style that resolved to no content leaves the
+/// field untouched.
+pub(super) fn apply_session_overrides(
+    config: &mut JsObject,
+    stored_permission_mode: Option<&JsString>,
+    stored_thinking: Option<&JsValue>,
+    style_content: Option<&str>,
+) {
+    let managed = config
+        .get("managedPermissions")
+        .and_then(|value| value.get("defaultMode"))
+        .and_then(JsValue::as_string)
+        .filter(|mode| {
+            !crate::metadata::js_trim(&String::from_utf16_lossy(mode.units())).is_empty()
+        });
+    let mode = managed
+        .cloned()
+        .or_else(|| stored_permission_mode.cloned())
+        .unwrap_or_else(|| JsString::from("default"));
+    config.insert("permissionMode".into(), JsValue::String(mode));
+    if let Some(thinking) = stored_thinking {
+        config.insert("thinking".into(), thinking.clone());
+    }
+    if let Some(content) = style_content {
+        let existing = config
+            .get("appendSystemPrompt")
+            .and_then(JsValue::as_string)
+            .map(|value| String::from_utf16_lossy(value.units()));
+        let joined = [existing.as_deref(), Some(content)]
+            .into_iter()
+            .flatten()
+            .filter(|part| !crate::metadata::js_trim(part).is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        config.insert(
+            "appendSystemPrompt".into(),
+            if joined.is_empty() {
+                JsValue::Undefined
+            } else {
+                JsValue::String(joined.into())
+            },
+        );
+    }
+}
+
+/// #1864: the stored output style's content through the same view
+/// `output_styles_list` lists (ProjectResources → PluginRuntime →
+/// PluginResources.runtime). Like ProjectRuntimeRegistry's
+/// getSdkOutputStyleContent the view is read without a refresh and a
+/// missing style is not an error: `None` leaves the field alone.
+async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<String> {
+    let plugin_runtime = staged
+        .resource(Resource::PluginRuntime)?
+        .as_any()
+        .downcast_ref::<PluginResources>()?
+        .runtime
+        .clone();
+    plugin_runtime
+        .create_view(vec![])
+        .await
+        .list_output_styles()
+        .into_iter()
+        .find(|style| JsString::from(style.name.as_str()) == *name)
+        .map(|style| style.content)
 }
 pub(super) fn register_project(options: &Options) -> Result<(), ProxyError> {
     // resolve_process_path reads current_dir only for a relative marker.

@@ -207,6 +207,7 @@ pub struct TurnHostFactory {
     expected_module_id: Option<JsString>,
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
+    permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 
 impl TurnHostFactory {
@@ -248,12 +249,23 @@ impl TurnHostFactory {
             expected_module_id,
             ports: Arc::new(ports),
             agent_config: None,
+            permission_mode_source: None,
         }
     }
 
     /// Bind the session's explicit serialized AgentRuntimeConfig.
     pub fn with_agent_config(mut self, config: JsObject) -> Self {
         self.agent_config = Some(config);
+        self
+    }
+
+    /// #1864 (b): the live permission-mode source the adapter consults on
+    /// every submit.
+    pub fn with_permission_mode_source(
+        mut self,
+        source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
+    ) -> Self {
+        self.permission_mode_source = Some(source);
         self
     }
 
@@ -277,6 +289,7 @@ impl TurnHostFactory {
         });
         let close_timeout = self.limits.close_timeout;
         let agent_config = self.agent_config.clone();
+        let permission_mode_source = self.permission_mode_source.take();
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_signal(
             recorder,
@@ -295,8 +308,12 @@ impl TurnHostFactory {
         } else {
             close_timeout
         });
-        match agent_config {
+        let session = match agent_config {
             Some(config) => session.with_agent_config(config),
+            None => session,
+        };
+        match permission_mode_source {
+            Some(source) => session.with_permission_mode_source(source),
             None => session,
         }
     }
