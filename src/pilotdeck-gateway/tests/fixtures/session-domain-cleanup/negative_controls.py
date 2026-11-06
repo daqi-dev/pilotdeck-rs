@@ -1243,6 +1243,64 @@ def calibrate_shadowed_common(rows):
     return True, 'aggregation-audit: shadowed common binding flagged, passed=False'
 
 
+def calibrate_computed_status_key(rows):
+    """#892 r21: a summary keyed ``{'sta' + 'tus': 'PA' + 'SS'}`` is the same
+    dict as ``{'status': 'PASS'}`` at runtime; the r20 folding reached the
+    value side only, so the key side never saw it (GLM sibling r20 P1-1)."""
+    return _guard_failure(
+        rows, "'PA' + 'SS'",
+        'aggregation-audit: folded status key flagged, passed=False')
+
+
+def calibrate_computed_status_key_write(rows):
+    """#892 r21: ``report['sta' + 'tus'] = 'PA' + 'SS'`` writes the very slot
+    the constant spelling does, with the key and the value both folded
+    (GLM sibling r20 P1-1)."""
+    return _guard_failure(
+        rows, "'PA' + 'SS'",
+        'aggregation-audit: folded-key status write flagged, passed=False')
+
+
+def _must_call_shared(rows, function, detail):
+    """#892 r21: a registered point whose shared calls all went through a
+    locally rebound spelling must read as not shared."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    needle = f'{function} must call common.aggregate_status'
+    if not any(needle in failure for failure in (row.get('failures') or [])):
+        return False, (f'failures={row.get("failures")!r}, want the {needle!r} '
+                       'failure')
+    return True, detail
+
+
+def calibrate_shadowed_common_local(rows):
+    """#892 r21: rebinding ``common`` inside the function body -- over the
+    parameter itself -- makes every ``common.aggregate_status`` in it a call
+    to the stub (GLM sibling r20 P1-2 / boundary r20 P1-1)."""
+    return _must_call_shared(
+        rows, '_failure',
+        'aggregation-audit: function-scope shadowed common flagged, passed=False')
+
+
+def calibrate_shadowed_receiver_local(rows):
+    """#892 r21: a locally rebound relay receiver (``md = <stub>`` then
+    ``md.common.aggregate_status``) was taken on the spelling alone
+    (GLM boundary r20 P1-1)."""
+    return _must_call_shared(
+        rows, 'summarize_results',
+        'aggregation-audit: rebound shared relay flagged, passed=False')
+
+
+def calibrate_shadowed_common_global(rows):
+    """#892 r21: ``global common`` rebinds the module binding at runtime from
+    inside a function, out of the module walk's sight."""
+    return calibrate_shadowed_common(rows)
+
+
 def calibrate_computed_status_write(rows):
     """#892 r20: ``report['status'] = 'PA' + 'SS'`` writes the clean literal
     without ever being a ``Constant`` node (GLM boundary r19 P1-2)."""
@@ -2185,6 +2243,51 @@ MUTATIONS = [
      "    other = bail\n"
      "    other(0)\n\n\n"
      "def _failure(error, policy, common):"),
+    # #892 fix-r21 (GLM sibling r20 P1-1): the r20 constant folding reached
+    # the value side only; a summary keyed ``{'sta' + 'tus': ...}`` was not a
+    # summary at all, so the function escaped enumeration entirely.
+    ('calibrate-computed-status-key', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'computed-key':\n"
+     "        report = {'sta' + 'tus': 'PA' + 'SS'}\n"
+     "        return report, 0\n"
+     "    if policy == 'traceback':"),
+    ('calibrate-computed-status-key-write', GUARD_SOURCE,
+     "    if policy == 'traceback':",
+     "    if policy == 'computed-key-write':\n"
+     "        report = {}\n"
+     "        report['sta' + 'tus'] = 'PA' + 'SS'\n"
+     "        return report, 0\n"
+     "    if policy == 'traceback':"),
+    # #892 fix-r21 (GLM sibling r20 P1-2 / boundary r20 P1-1): the r20 trust
+    # withdrawal walked module scope only, so a function-scope rebinding of
+    # ``common`` (here: over the parameter itself) kept every stub call
+    # counted as the shared map's.
+    ('calibrate-shadowed-common-local', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def _failure(error, policy, common):\n"
+     "    from types import SimpleNamespace\n"
+     "    common = SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n"),
+    # #892 fix-r21 (GLM boundary r20 P1-1, receiver form): a locally rebound
+    # relay receiver -- ``md = <stub>`` then ``md.common.aggregate_status`` --
+    # was taken on the spelling alone.  The fixture's own summarize_results
+    # is the registered point that uses exactly this shape.
+    ('calibrate-shadowed-receiver-local', CHECK,
+     "    status, _ = md.common.aggregate_status(",
+     "    from types import SimpleNamespace\n"
+     "    md = SimpleNamespace(common=SimpleNamespace(\n"
+     "        aggregate_status=lambda *a: ('PASS', 0)))\n"
+     "    status, _ = md.common.aggregate_status("),
+    # #892 fix-r21 (module poisoning through a function): ``global common``
+    # rebinds the module binding at runtime out of the module walk's sight,
+    # so the spelling stayed trusted for every function in the file.
+    ('calibrate-shadowed-common-global', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def _poison_shared():\n"
+     "    global common\n"
+     "    from types import SimpleNamespace\n"
+     "    common = SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n\n\n"
+     "def _failure(error, policy, common):"),
 ]
 
 JUDGES = {
@@ -2500,6 +2603,16 @@ JUDGES = {
         'aggregation-audit', calibrate_computed_status_write, False, ()),
     'calibrate-local-exit-alias-chain': (
         'aggregation-audit', calibrate_local_exit_alias_chain, False, ()),
+    'calibrate-computed-status-key': (
+        'aggregation-audit', calibrate_computed_status_key, False, ()),
+    'calibrate-computed-status-key-write': (
+        'aggregation-audit', calibrate_computed_status_key_write, False, ()),
+    'calibrate-shadowed-common-local': (
+        'aggregation-audit', calibrate_shadowed_common_local, False, ()),
+    'calibrate-shadowed-receiver-local': (
+        'aggregation-audit', calibrate_shadowed_receiver_local, False, ()),
+    'calibrate-shadowed-common-global': (
+        'aggregation-audit', calibrate_shadowed_common_global, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
