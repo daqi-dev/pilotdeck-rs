@@ -332,9 +332,18 @@ def discover(root, commit):
     filesystem fallback: a caller with no SHA to pin to must fail closed, not
     silently revive the pre-fix semantics.
 
-    Returns ``[(kind, entry_path_or_None)]``, or ``None`` when the tree cannot
-    be listed at ``commit`` (callers fail closed).  A FROZEN.md without an entry
-    is still reported (as blocking) instead of being silently skipped.
+    Returns ``(found, invalid)``.  ``found`` is ``[(kind, entry_path_or_None)]``;
+    ``invalid`` is ``[(name, mode, type)]`` for each ``specs/*`` entry whose
+    object is directory-like but not a tree -- a symlink (``120000 blob``) or a
+    submodule (``160000 commit``).  Both are empty-able lists, or the whole
+    result is ``None`` when the tree cannot be listed at ``commit`` (callers
+    fail closed).  A FROZEN.md without an entry is still reported (as blocking)
+    instead of being silently skipped, and a directory-like non-tree entry is
+    returned rather than skipped: it can stand in for a whole apparatus
+    directory, so treating it as absent let the run print READY while a sibling
+    apparatus for the same alias failed (two non-author reviews caught exactly
+    that).  A plain file directly under ``specs/`` (``specs/README.md``) cannot
+    hold a ``FROZEN.md``, so it stays a non-apparatus and is not reported.
     """
     # ``specs/`` (not ``specs``): the bare pathspec lists the ``specs`` tree
     # entry itself and hides everything one level down.
@@ -349,12 +358,26 @@ def discover(root, commit):
     if code != 0:
         return None
     found = []
+    invalid = []
     for entry in filter(None, out.split(b'\0')):
         meta, sep, name = entry.partition(b'\t')
         parts = meta.split()
-        if not sep or len(parts) != 3 or parts[1] != b'tree':
+        if not sep or len(parts) != 3:
             continue
         if not name.startswith(b'specs/') or name.count(b'/') != 1:
+            continue
+        if parts[1] != b'tree':
+            # Fail closed for anything directory-like: a symlink (``120000``)
+            # or submodule (``160000``) named ``specs/<alias>`` can stand in
+            # for an apparatus directory the tool cannot enumerate, so the true
+            # apparatus set is unknown.  Skipping it silently made the parent
+            # report READY while the child apparatus for that alias failed.
+            # A regular file (``100644``/``100755``, e.g. ``specs/README.md``)
+            # cannot contain a ``FROZEN.md`` and is not an apparatus alias.
+            mode = os.fsdecode(parts[0])
+            if mode not in ('120000', '160000'):
+                continue
+            invalid.append((os.fsdecode(name), mode, os.fsdecode(parts[1])))
             continue
         kind = os.fsdecode(name.split(b'/', 1)[1])
         frozen = exists_at(root, commit, f'specs/{kind}/FROZEN.md')
@@ -367,7 +390,7 @@ def discover(root, commit):
             return None
         found.append((kind, root / 'scripts' / kind / 'check_frozen.py'
                       if present else None))
-    return sorted(found)
+    return sorted(found), invalid
 
 
 # ------------------------------------------------------------ report parsing
@@ -3815,13 +3838,27 @@ def _admin_dir(root):
     return Path(_real_path(common)) / 'worktrees'
 
 
+# Returned by ``_recorded_gitdir`` when an entry's ``gitdir`` file cannot be
+# read.  It is deliberately not ``None``: a plain ``None`` compared unequal to
+# every wanted path and made ``admin_entry_present`` answer False ("no entry
+# names this target") for bookkeeping it had not read at all -- so a cleanup
+# that could not read one entry reported the holder gone and deregistered it
+# while the entry was still on disk.  Callers must treat any sighting of this
+# value as "not proven clean" (fail closed).
+_UNREADABLE_GITDIR = object()
+
+
 def _recorded_gitdir(entry):
-    """The path an admin entry's ``gitdir`` file names, canonicalised."""
+    """The path an admin entry's ``gitdir`` file names, canonicalised.
+
+    Returns ``_UNREADABLE_GITDIR`` when the file cannot be read; callers must
+    not read that as an absence (see the constant).
+    """
     try:
         text = (entry / 'gitdir').read_text(encoding='utf-8',
                                             errors='surrogateescape').strip()
     except OSError:
-        return None
+        return _UNREADABLE_GITDIR
     return _real_path(text)
 
 
@@ -3829,7 +3866,9 @@ def admin_entry_present(root, target):
     """True when some ``.git/worktrees`` entry still names ``target``.
 
     ``None`` means the bookkeeping could not be read, which callers treat as
-    "not proven clean" rather than as an absence.
+    "not proven clean" rather than as an absence.  An entry whose ``gitdir``
+    cannot be read is likewise unproven: unless a *different* entry is proven
+    to name ``target`` (True), the answer is ``None``, never False.
     """
     try:
         admin = _admin_dir(root)
@@ -3838,10 +3877,15 @@ def admin_entry_present(root, target):
         if not admin.exists():
             return False
         wanted = _real_path(target / '.git')
+        unreadable = False
         for entry in admin.iterdir():
-            if _recorded_gitdir(entry) == wanted:
+            recorded = _recorded_gitdir(entry)
+            if recorded is _UNREADABLE_GITDIR:
+                unreadable = True
+                continue
+            if recorded == wanted:
                 return True
-        return False
+        return None if unreadable else False
     except OSError:
         return None
 
@@ -3870,7 +3914,13 @@ def drop_admin_entry(root, target):
             return True
         wanted = _real_path(target / '.git')
         for entry in admin.iterdir():
-            if _recorded_gitdir(entry) == wanted:
+            recorded = _recorded_gitdir(entry)
+            if recorded is _UNREADABLE_GITDIR:
+                # Cannot prove this entry is (or is not) ours: leave it alone.
+                # ``admin_entry_present`` below then reports None, so the
+                # holder stays registered for the atexit retry.
+                continue
+            if recorded == wanted:
                 shutil.rmtree(entry, ignore_errors=True)
     except OSError:
         return False
@@ -4051,11 +4101,23 @@ def main(argv=None):
         return 1
     _PINNED_HEAD['sha'] = head_before
 
-    apparatuses = discover(root, head_before)
-    if apparatuses is None:
+    discovery = discover(root, head_before)
+    if discovery is None:
         print('=== discovery === BLOCKED')
         print('  BLOCK[blocking] cannot enumerate specs/*/FROZEN.md at the pinned '
               f'commit {head_before[:12]}: the apparatus set is unknown')
+        print('BLOCKED 1 / READY 0')
+        return 1
+    apparatuses, invalid_specs = discovery
+    if invalid_specs:
+        # A non-tree ``specs/<alias>`` hides a directory the tool cannot
+        # enumerate: the apparatus set is unknowable, so nothing this run says
+        # can be READY.  Name each offender and its mode instead of dropping it.
+        print('=== discovery === BLOCKED')
+        for name, mode, otype in invalid_specs:
+            print(f'  BLOCK[blocking] {name} is mode {mode} ({otype}), not a '
+                  'directory tree: the apparatus set under specs/ cannot be '
+                  'enumerated, so READY would be unsound')
         print('BLOCKED 1 / READY 0')
         return 1
     if not apparatuses:

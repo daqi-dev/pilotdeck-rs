@@ -3266,13 +3266,52 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
                                            + b'\0', b'')
         cfd.exists_at = lambda _r, _c, path: (seen.append(path), True)[1]
         try:
-            found = cfd.discover(root, 'f' * 40)
+            found, invalid = cfd.discover(root, 'f' * 40)
         finally:
             cfd.git_bytes, cfd.exists_at = real_bytes, real_exists
         case("discover 按字节读 ls-tree：非 UTF-8 目录名不被静默跳过",
              found == [(kind, root / 'scripts' / kind / 'check_frozen.py')]
+             and invalid == []
              and all('�' not in path for path in seen),
-             f"found={found} seen={seen}")
+             f"found={found} invalid={invalid} seen={seen}")
+
+    # P0（两家独立撞上）：``specs/<alias>`` 是符号链接（120000 blob）时，discover
+    # 以前按「不是 tree」静默 continue：该装置根本不跑，父预检报 READY 而子装置
+    # 明明是 FAIL。目录型非 tree 条目（符号链接 / 子模块）一律 BLOCK，并在报告里
+    # 点名条目与模式；普通文件（specs/README.md）不算别名，另见下方正控。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        fake_apparatus(root, "parity", {"status": "PASS", "failures": []})
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        (root / "specs" / "alias").symlink_to("parity")
+        commit(root, "delivery")
+        mode = git(root, "ls-tree", "HEAD", "--", "specs/alias").split()[0]
+        proc = run_tool("--root", str(root), "--base", "origin/main")
+        case("specs/<alias> 是符号链接（120000 blob）→ BLOCKED 并点名 alias",
+             mode == "120000" and proc.returncode == 1
+             and "=== discovery === BLOCKED" in proc.stdout
+             and "specs/alias" in proc.stdout and "120000" in proc.stdout
+             and "=== parity === READY" not in proc.stdout
+             and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"mode={mode} rc={proc.returncode} out={proc.stdout}")
+
+    # 正控：``specs/README.md`` 是普通文件（100644 blob），不可能装 FROZEN.md，
+    # 收紧后不得把它当非法条目把正常路径打红。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        fake_apparatus(root, "parity", {"status": "PASS", "failures": []})
+        write(root, "specs/README.md", "specs index\n")
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        proc = run_tool("--root", str(root), "--base", "origin/main")
+        case("specs/README.md（普通 100644 文件）不算装置别名 → parity 仍 READY",
+             proc.returncode == 0 and "=== parity === READY" in proc.stdout
+             and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
 
     # P2（sibling）：钉住提交里没有的装置目录（只在工作树里，未跟踪）不得被审 ——
     # 杀掉「discover 仍读文件系统」的变异体。
@@ -3401,6 +3440,32 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
             cfd.git = real_git
         case("drop_admin_entry：记账读不出 → 返回 False（不当作已清）",
              removed is False, f"removed={removed}")
+
+    # P1（两家独立撞上）：单条 ``.git/worktrees/<id>/gitdir`` 不可读时不能当成
+    # 「已清」—— 旧实现 _recorded_gitdir 返回 None，与 wanted 不等，于是
+    # admin_entry_present 报 False、drop_holder 摘了登记，而记账仍在盘上。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        holder = Path(td) / "cfd-snapshot-z"
+        target = holder / "tree"
+        target.mkdir(parents=True)
+        entry = root / ".git" / "worktrees" / "broken"
+        entry.mkdir(parents=True)        # 没有 gitdir 文件 → read_text 抛 OSError
+        cfd._SNAPSHOT_HOLDERS.append((root, holder))
+        try:
+            recorded = cfd._recorded_gitdir(entry)
+            present = cfd.admin_entry_present(root, target)
+            dropped = cfd.drop_holder(root, holder)
+            kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+        finally:
+            cfd._SNAPSHOT_HOLDERS.clear()
+        case("gitdir 不可读 → admin_entry_present 不得报 False、drop_holder 不摘登记",
+             recorded is cfd._UNREADABLE_GITDIR and present is None
+             and dropped is False and kept and entry.exists(),
+             f"recorded={recorded!r} present={present!r} dropped={dropped!r} "
+             f"kept={kept} entry_exists={entry.exists()}")
 
     # P1（codex）：两个根嵌套时取**最深**前缀，先命中被审树会把快照路径归一错。
     with tempfile.TemporaryDirectory() as td:
