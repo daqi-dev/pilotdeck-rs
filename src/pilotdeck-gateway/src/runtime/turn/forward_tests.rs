@@ -618,7 +618,10 @@ async fn status_pending(drop_owner: bool) {
         );
     }
     let mut pending = f.turn.next();
-    timeout(Duration::from_secs(5), async {
+    // Same fixture gate as `forward_status_fail_drop`, whose own wait is 10
+    // seconds: a tighter bound turns a loaded host into an undiagnosable
+    // "#741h status writer must enter gate" failure (#1219 review P2).
+    timeout(Duration::from_secs(15), async {
         tokio::select! {result=&mut pending=>panic!("#741h status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#741h forward fixture invariant")}
     }).await.expect("#741h status writer must enter gate");
     drop(pending);

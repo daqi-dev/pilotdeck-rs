@@ -543,6 +543,15 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
             0,
             "#855 [reject]: the pump must never start, not even before the failure terminal"
         );
+        // #1219: measure, don't assume. This cell's first durable write fails,
+        // so the turn never reaches `RecordingAction::Complete`; TS
+        // `reject-raw.json` likewise carries no `turn_result`.
+        let durable = store.completes.load(Ordering::SeqCst);
+        println!("#1219 [reject] durable turn_result count = {durable}");
+        assert_eq!(
+            durable, 0,
+            "#1219 [reject]: a rejected turn appends no durable turn_result"
+        );
     } else {
         {
             let mut waiting = turn.next();
@@ -722,10 +731,10 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                 Some(&"success".into()),
                 "#741i [open]: authoritative terminal keeps success"
             );
-            // #1219: these sibling cells end through the same
-            // `RecordingAction::Complete`, so the durable count is one here too
-            // (the pre-cancel cell above only differs in which terminal it
-            // synthesises).
+            // #1219: only the open cell reaches this branch. The reject cell
+            // ends after its first durable write fails, so it appends no
+            // `turn_result` at all (TS `reject-raw.json` likewise has none);
+            // #1219 does not claim a durable completion count for it.
             assert_eq!(
                 store.completes.load(Ordering::SeqCst),
                 1,
