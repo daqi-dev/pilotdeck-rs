@@ -164,15 +164,12 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 `large_shallow` 与 `ten_mib` 仍把主重复减半：半幅展开后先断言字节数在全幅的 50%–60%
 之间（实测各例均 ≥ 0.50），再由**实测字节比**推导 `factor = full/half`——0.6 时
 factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它，推导后的 2.15x 带不会。
-这条保证有前提：150 ms 余量按 `0.15s/small` 折算，0.6x 的二次实现只有在
-`0.15/(factor² − factor^1.5) < small`（精确条件，
-`scaling_band_tracks_the_measured_input_factor` 断言的正是它；0.6x 时约 0.23957 s）
-时才必被拦下；常引用的 0.24 s 是保守充分条件，不是边界本身。这条前提由
-`assert_within_scaling_band` 的**运行时前置断言**强制：`SCALING_NOISE / small` 一旦
-覆盖整个「线性到二次」差距（factor 2 时 small 低于 0.128 s），判据直接红并说明样本太短，
-不静默放行——更快的机器或更小的夹具不能把它变成假 PASS。实测调用点
-small 为 1.45 s（deep-frame 4 MiB）到 5.8 s（`large_shallow`），
-余量最多吃掉 0.63x 差距里的 0.10x。
+150 ms 余量按 `0.15s/small` 折算，并**封顶在「线性到二次」差距的十分之一**
+（`scaling_band_caps_the_slack_on_short_samples` 钉住）。没有这个封顶时，同一个
+150 ms 打在 CPU 采样的 23 ms 小样本上就是 6.5x——比 factor 2 的整个 1.17x 差距还大，
+真二次实现会被直接放过；封顶后任何样本长度下判据都还能分辨。实测调用点上封顶不改变
+既有带宽：factor 2 的 small 1.45 s（deep-frame 4 MiB）折算 0.10x，低于 0.117x 的封顶，
+带宽仍是 2.83x + 0.10x = 2.93x；`large_shallow` 5.8 s 同理。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
 拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
 `PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`

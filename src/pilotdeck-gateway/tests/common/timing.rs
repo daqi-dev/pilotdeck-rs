@@ -170,8 +170,9 @@ where
 }
 
 /// Slack added to the scaling band, in seconds, converted to ratio space
-/// through the fastest small run. One source for the assertion, its failure
-/// message, the unit tests and the run-time precondition below.
+/// through the fastest small run and capped at a tenth of the band's
+/// linear-to-quadratic gap. One source for the assertion, its failure message
+/// and the unit tests.
 pub const SCALING_NOISE: f64 = 0.15;
 
 /// Band for a pair of inputs `factor` times apart. Linear work grows by
@@ -186,37 +187,22 @@ pub const SCALING_NOISE: f64 = 0.15;
 /// ratio space through the fastest small run, so short inputs keep the same
 /// absolute allowance.
 ///
-/// The slack costs guarantee width: a quadratic implementation at a 0.6x
-/// "half" reads 2.78x against the 2.15x band, but only while
-/// `0.15 s / small < factor^2 - factor^1.5`. That formula is the exact
-/// boundary, which `scaling_band_tracks_the_measured_input_factor` asserts;
-/// at a 0.6x half it evaluates to about 0.23957 s, and 0.24 s quoted
-/// elsewhere is a conservative sufficient condition, not the boundary
-/// itself.
-/// Every measured call site clears it by a wide margin: the smallest observed
-/// small sample is 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s,
-/// so the slack takes at most 0.10x of the 0.63x gap on this hardware. That is
-/// a measurement, not a portable guarantee, so the condition is enforced at
-/// run time rather than only documented: a caller whose small sample is too
-/// short for the ratio to judge refuses loudly instead of passing silently.
+/// The absolute slack can only be allowed to eat a small part of the gap the
+/// band discriminates. On long samples it is tiny (`0.15 s / 1.45 s` = 0.10x
+/// against a 1.17x gap at factor 2), but the same 150 ms against a CPU-sampled
+/// 23 ms run is 6.5x — more than the whole gap — which would let a real
+/// quadratic pass. The slack is therefore capped at a tenth of the gap, so the
+/// band keeps its discriminating power at any sample length: on the measured
+/// call sites the cap never binds, so their limits are unchanged (#978
+/// boundary review).
 #[allow(dead_code)]
 pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor: f64) {
     let allowed = factor.powf(1.5);
     let small = sampled.small.as_secs_f64().max(f64::EPSILON);
-    let limit = allowed + SCALING_NOISE / small;
     let quadratic = factor * factor;
     let gap = quadratic - allowed;
-    // Once the slack covers the whole linear-to-quadratic gap the band reaches
-    // the quadratic ratio and a genuinely quadratic implementation passes.
-    // Refuse to judge instead: faster hardware or a smaller fixture must not
-    // turn this criterion into a silent false PASS (#978 boundary review).
-    assert!(
-        SCALING_NOISE / small < gap,
-        "{label}: a {small:.3}s small sample is too short to judge {factor:.2}x growth — \
-         the {SCALING_NOISE}s slack alone spans the {gap:.2}x linear-to-quadratic gap \
-         (needs small > {:.3}s)",
-        SCALING_NOISE / gap
-    );
+    let slack = (SCALING_NOISE / small).min(gap * 0.1);
+    let limit = allowed + slack;
     let small_duration = sampled.small;
     let large_duration = sampled.large;
     let samples = sampled.samples;
@@ -225,7 +211,8 @@ pub fn assert_within_scaling_band(label: &str, sampled: &ScalingSamples, factor:
         ratio <= limit,
         "{label} did not scale from {factor:.0}x-smaller {small_duration:?} \
          to {large_duration:?} (median of {samples} paired ratios: {ratio:.2}x): \
-         allowed {limit:.2}x = {allowed:.2}x + {SCALING_NOISE}s/{small:.3}s; \
+         allowed {limit:.2}x = {allowed:.2}x + {slack:.2}x ({SCALING_NOISE}s/{small:.3}s, \
+         capped at a tenth of the {gap:.2}x gap); \
          a linear implementation needs about {factor:.0}x, \
          a quadratic one about {quadratic:.0}x"
     );
@@ -446,13 +433,15 @@ fn scaling_band_rejects_quadratic_growth_without_loosening() {
     );
 }
 
-/// #978: the slack must never swallow the whole linear-to-quadratic gap. At a
-/// 0.1 s small run the 150 ms slack raises the 2.83x band to 4.33x, which a
-/// real quadratic (4.0x) passes; the criterion refuses to judge that pair
-/// instead of passing it (#978 boundary review).
+/// #978: the absolute slack must never swallow the band's discriminating gap.
+/// A CPU-sampled 23 ms small run (cb8 release deep-frame) would carry a
+/// `0.15 s / 0.023 s = 6.5x` slack — more than the 1.17x linear-to-quadratic
+/// gap at factor 2 — and a real quadratic (4.0x) would pass. The cap at a
+/// tenth of the gap keeps the band meaningful at any sample length (#978
+/// boundary review).
 #[test]
-fn scaling_band_refuses_a_sample_too_short_to_judge() {
-    let short = Duration::from_secs_f64(0.1);
+fn scaling_band_caps_the_slack_on_short_samples() {
+    let short = Duration::from_secs_f64(0.023);
     let sampled = ScalingSamples {
         small: short,
         large: short.mul_f64(4.0),
@@ -462,31 +451,40 @@ fn scaling_band_refuses_a_sample_too_short_to_judge() {
     let panic = std::panic::catch_unwind(|| {
         assert_within_scaling_band("#978 unit short sample", &sampled, 2.0)
     })
-    .expect_err("#978 a 0.1 s small sample cannot be judged");
+    .expect_err("#978 a 4.0x quadratic must breach the capped band even at 23 ms");
     let message = panic
         .downcast_ref::<String>()
         .map(String::as_str)
         .or_else(|| panic.downcast_ref::<&str>().copied())
         .unwrap_or_default();
     assert!(
-        message.contains("#978 unit short sample") && message.contains("too short to judge"),
-        "#978 the short-sample refusal must name the site: {message}"
+        message.contains("#978 unit short sample") && message.contains("a quadratic one about 4x"),
+        "#978 the cap must leave the band's own diagnosis: {message}"
     );
-    // Once the small run clears the floor the same pair is judged, and the
-    // quadratic still breaches the band.
-    let long = Duration::from_secs_f64(0.5);
-    let sampled = ScalingSamples {
+    // At 1.45 s the cap does not bind: the limit is the historical
+    // 2.83x + 0.15/1.45 = 2.93x, so long-sample call sites are unchanged.
+    let long = Duration::from_secs_f64(1.45);
+    let linear = ScalingSamples {
+        small: long,
+        large: long.mul_f64(2.0),
+        median_ratio: 2.0,
+        samples: 3,
+    };
+    assert_within_scaling_band("#978 unit long linear", &linear, 2.0);
+    let quadratic = ScalingSamples {
         small: long,
         large: long.mul_f64(4.0),
         median_ratio: 4.0,
         samples: 3,
     };
     assert!(
-        std::panic::catch_unwind(|| {
-            assert_within_scaling_band("#978 unit long enough", &sampled, 2.0)
-        })
+        std::panic::catch_unwind(|| assert_within_scaling_band(
+            "#978 unit long quadratic",
+            &quadratic,
+            2.0
+        ))
         .is_err(),
-        "#978 a judged quadratic must still breach the band"
+        "#978 a long-sample quadratic must still breach the band"
     );
 }
 
@@ -500,17 +498,15 @@ fn scaling_band_refuses_a_sample_too_short_to_judge() {
 fn scaling_band_tracks_the_measured_input_factor() {
     let factor: f64 = 1.0 / 0.6;
     let quadratic_ratio = factor * factor;
-    // The slack is converted through the small run, so the rejection only
-    // holds while the small sample is long enough that the slack cannot
-    // bridge the linear-to-quadratic gap: the exact condition is
-    // SCALING_NOISE / (factor^2 - factor^1.5) < small, about 0.23957 s here
-    // (0.24 s is a conservative sufficient condition). The measured call
-    // sites run 1.45-5.8 s (deep-frame 4 MiB measured 1.45 s, `large_shallow`
-    // 5.8 s), so the slack takes at most 0.10x of that gap there.
-    let floor = SCALING_NOISE / (quadratic_ratio - factor.powf(1.5));
+    // The slack is capped at a tenth of the linear-to-quadratic gap, so the
+    // rejection holds at any sample length. At 1.45 s the uncapped slack
+    // (0.15/1.45 = 0.10x) already sits above the cap (0.063x), so this case
+    // exercises the cap while staying at the measured call-site scale.
+    let gap = quadratic_ratio - factor.powf(1.5);
+    let cap = gap * 0.1;
     assert!(
-        (floor - 0.2396).abs() < 0.001,
-        "#978 the 0.6x quadratic is rejected only for small > {floor:.4}s"
+        (cap - 0.0626).abs() < 0.001 && SCALING_NOISE / 1.45 > cap,
+        "#978 the 0.6x cap is {cap:.4}x and binds at the measured 1.45 s run"
     );
     let small = Duration::from_secs_f64(1.45); // deep-frame's measured 4 MiB run
     let sampled = ScalingSamples {
