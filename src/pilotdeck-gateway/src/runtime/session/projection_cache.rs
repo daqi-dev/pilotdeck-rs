@@ -121,15 +121,34 @@ impl ProjectionCache {
         // disk commit, so it either joins this suffix or publishes afterwards.
         let mut live = lock(&self.projection.entries);
         let read_watermark = last_sequence(&entries);
-        entries.extend(
-            live.iter()
-                .filter(|entry| sequence(entry) > read_watermark)
-                .cloned(),
-        );
+        // #1500: a published row may carry no numeric `sequence`, and the read
+        // above may predate its durable commit. It cannot come from that read
+        // (`Recorder::restore` rejects a row without a positive sequence), so
+        // it is always a late suffix: the watermark cannot order it, and
+        // dropping it would install a projection missing a row `project()`
+        // replays from disk.
+        let published: Vec<JsValue> = live
+            .iter()
+            .filter(|entry| match field(entry, "sequence").as_number() {
+                Some(ordinal) => ordinal > read_watermark,
+                None => true,
+            })
+            .cloned()
+            .collect();
+        entries.extend(published);
         let mut state = project(&entries)?;
         // Conversation contains replay context (including incomplete turns).
         // Keep that authoritative replay; cache only rows with standalone state.
-        if let Some(checkpoint) = checkpoint {
+        // #1500: the checkpoint rows are aggregated up to a numeric watermark,
+        // and the suffix loops below place each row on one side of it. A row
+        // without a `sequence` has no side: `sequence()` reads it as -1.0, which
+        // is never above a valid watermark, so the cached metadata/usage would
+        // silently drop it while `project()` replays it. `state` above is the
+        // authoritative replay, so keep it whenever such a row exists.
+        let ordered = entries
+            .iter()
+            .all(|entry| field(entry, "sequence").as_number().is_some());
+        if let Some(checkpoint) = checkpoint.filter(|_| ordered) {
             let rows = field(&checkpoint, "projections");
             if let Some((watermark, cached)) =
                 row(rows, METADATA, 2.0).filter(|(_, value)| valid_metadata(value))
