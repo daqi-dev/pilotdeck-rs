@@ -86,18 +86,12 @@ pub(crate) fn scenario_keys(oracle: &JsValue) -> Vec<String> {
 /// `Object.entries` with JS own-key order: array indices first in ascending
 /// numeric order, then other keys in insertion order.
 ///
-/// #1748 item 3: the order is defined once, in the protocol crate
-/// (`JsObject::own_entries`, the routine the JSON codec and the wire boundary
-/// share). This used to be a second implementation of ECMAScript key order, so
-/// a correction to either copy would have silently desynchronized the oracle
-/// replays' byte comparison.
-pub(crate) fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
-    object
-        .own_entries()
-        .into_iter()
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect()
-}
+/// #1748 item 3: reused straight from the settings gateway, which delegates to
+/// the protocol crate (`JsObject::own_entries`, the routine the JSON codec and
+/// the wire boundary share). This used to be a second implementation of
+/// ECMAScript key order, so a correction to either copy would have silently
+/// desynchronized the oracle replays' byte comparison.
+pub(crate) use super::gateway::own_entries;
 
 /// JS `String(number)` for the golden's numeric tokens.
 ///
