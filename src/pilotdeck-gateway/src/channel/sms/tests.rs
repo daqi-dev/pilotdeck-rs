@@ -2311,7 +2311,13 @@ async fn replay_named(name: &str) {
             "cronResults": record.cron_results,
         })
     };
-    crate::negative_assert_eq!(snapshot, case["expected"], "#1339 sms oracle: {name}");
+    crate::negative_assert_eq!(
+        snapshot,
+        recorded_expected(&case)
+            .expect("#1339 expected validated object")
+            .clone(),
+        "#1339 sms oracle: {name}"
+    );
 }
 
 macro_rules! replay_cases {
