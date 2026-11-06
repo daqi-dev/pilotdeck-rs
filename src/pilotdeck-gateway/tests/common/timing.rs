@@ -183,11 +183,11 @@ where
 ///
 /// The slack costs guarantee width: a quadratic implementation at a 0.6x
 /// "half" reads 2.78x against the 2.15x band, but only while
-/// `0.15 s / small < factor^2 - factor^1.5`, i.e. `small > 0.23957 s` — the
-/// exact floor, which `scaling_band_tracks_the_measured_input_factor`
-/// asserts. The round 0.24 s quoted elsewhere is above that floor and is
-/// rejected by the same `ratio <= limit` comparison; it is a conservative
-/// shorthand, not the boundary.
+/// `0.15 s / small < factor^2 - factor^1.5`. That formula is the exact
+/// boundary, which `scaling_band_tracks_the_measured_input_factor` asserts;
+/// at a 0.6x half it evaluates to about 0.23957 s, and 0.24 s quoted
+/// elsewhere is a conservative sufficient condition, not the boundary
+/// itself.
 /// Every measured call site clears it by a wide margin: the smallest observed
 /// small sample is 1.45 s (deep-frame 4 MiB) and `large_shallow` runs 5.8 s,
 /// so the slack takes at most 0.10x of the 0.63x gap on this hardware. That is
@@ -441,11 +441,11 @@ fn scaling_band_tracks_the_measured_input_factor() {
     let quadratic_ratio = factor * factor;
     // The 0.15 s slack is converted through the small run, so the rejection
     // only holds while the small sample is long enough that the slack cannot
-    // bridge the linear-to-quadratic gap: the floor is
-    // 0.15 / (factor^2 - factor^1.5) = 0.23957 s (0.24 s is a conservative
-    // rounding and is rejected too). The measured call sites run 1.45-5.8 s
-    // (deep-frame 4 MiB measured 1.45 s, `large_shallow` 5.8 s), so the slack
-    // takes at most 0.10x of that gap there.
+    // bridge the linear-to-quadratic gap: the exact condition is
+    // 0.15 / (factor^2 - factor^1.5) < small, about 0.23957 s here (0.24 s is
+    // a conservative sufficient condition). The measured call sites run
+    // 1.45-5.8 s (deep-frame 4 MiB measured 1.45 s, `large_shallow` 5.8 s), so
+    // the slack takes at most 0.10x of that gap there.
     let floor = 0.15 / (quadratic_ratio - factor.powf(1.5));
     assert!(
         (floor - 0.2396).abs() < 0.001,

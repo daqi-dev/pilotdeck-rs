@@ -481,7 +481,11 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (Vec<u8>, bool) {
     let mut closed = false;
     while start.elapsed() < FIRST_BYTE {
         let wait = if out.is_empty() {
-            FIRST_BYTE - start.elapsed()
+            // Saturating: the loop condition above re-reads `elapsed`, so on a
+            // loaded host it can cross the cap between the two reads and the
+            // plain subtraction would panic on the very stall this watcher
+            // must tolerate (#978 boundary review).
+            FIRST_BYTE.saturating_sub(start.elapsed())
         } else {
             QUIET
         };

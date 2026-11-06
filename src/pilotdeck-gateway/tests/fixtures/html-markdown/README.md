@@ -165,9 +165,9 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 之间（实测各例均 ≥ 0.50），再由**实测字节比**推导 `factor = full/half`——0.6 时
 factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它，推导后的 2.15x 带不会。
 这条保证有前提：150 ms 余量按 `0.15s/small` 折算，0.6x 的二次实现只有在
-`small > 0.15/(factor² − factor^1.5) = 0.23957 s`（精确下限，
-`scaling_band_tracks_the_measured_input_factor` 断言的正是它）时才必被拦下；
-常引用的 0.24 s 是下限之上的保守取整，同样被 `ratio <= limit` 拦下。实测调用点
+`0.15/(factor² − factor^1.5) < small`（精确条件，
+`scaling_band_tracks_the_measured_input_factor` 断言的正是它；0.6x 时约 0.23957 s）
+时才必被拦下；常引用的 0.24 s 是保守充分条件，不是边界本身。实测调用点
 small 为 1.45 s（deep-frame 4 MiB）到 5.8 s（`large_shallow`），
 余量最多吃掉 0.63x 差距里的 0.10x。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
