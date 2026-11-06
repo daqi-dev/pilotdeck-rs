@@ -720,6 +720,16 @@ fn assert_recorded_error_shape(case: &str, index: usize, expected: &Value) {
         expected["error"].is_string(),
         "#1333 {case} request {index}: a recorded connection error must be a string, got {expected}"
     );
+    // A missing `bytes` key and a non-zero count are different drifts: one is
+    // a recording that lost its measurement, the other a partially delivered
+    // response. `Value::get` on the missing key answers `None`, which used to
+    // panic with the "partially delivered" wording either way
+    // (#1759 r5 boundary P3).
+    assert!(
+        expected.get("bytes").is_some(),
+        "#1333 {case} request {index}: a recorded connection error must carry the measured \
+         `bytes` count, got {expected}"
+    );
     assert_eq!(
         expected["bytes"].as_u64(),
         Some(0),
