@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N11）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N13）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -16,11 +16,15 @@
 """
 from __future__ import annotations
 
+import sys
+
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
 import argparse
 import importlib.util
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -29,7 +33,7 @@ DEFAULT_DATA = Path('_tmp/20261106-issue-1477/r1/data')
 DEFAULT_ORACLE = HERE / 'ts-oracle.json'
 INJECTED_MESSAGE = 'injected by negative controls for retirement-outcome-parity'
 ALT_CODE = 'UPLOAD_NOT_FOUND'
-CAPABILITY_UNAVAILABLE = 'CAPABILITY_UNAVAILABLE'
+CHECK_TIMEOUT_SECONDS = 600
 
 
 def load_checker():
@@ -37,10 +41,14 @@ def load_checker():
     spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    if Path(module.__file__).resolve() != CHECKER:
+        raise SystemExit(f'loaded checker {module.__file__} is not {CHECKER}')
     return module
 
 
 CHECK = load_checker()
+# 判据侧常量的唯一登记值（不在负控里再硬编码一份，避免常量漂移后测错对象）。
+CAPABILITY_UNAVAILABLE = CHECK.CAPABILITY_UNAVAILABLE
 
 
 def read_round(data_dir, name):
@@ -152,12 +160,24 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
                        if row['outcome'] == 'error'
                        and row.get('errorCode') != CAPABILITY_UNAVAILABLE)
     ok_rows = [row['method'] for row in base_rows if row['outcome'] == 'ok']
+    # N10 保留的两个 ok 方法必须在线上有 response 帧（stream ok 只有 final
+    # 事件，rewrite_response 会找不到帧 → 控件 INVALID）。
+    request_ok = [row['method'] for row in base_rows
+                  if row['outcome'] == 'ok' and row['shape'] == 'request']
+    assert len(request_ok) >= 3, f'need three request-shaped ok rows, got {request_ok}'
+    stream_ok = [row['method'] for row in base_rows
+                 if row['outcome'] == 'ok' and row['shape'] == 'stream']
+    # 保留 stream ok（它没有 response 帧可改写）与一个 request ok → 恰 99 个被改写。
+    keep_ok = stream_ok[:1] + request_ok[:1] if stream_ok else request_ok[:2]
+    assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
+    shape_probe = request_ok[2]
+    n10_probe = next(row['method'] for row in base_rows if row['method'] not in keep_ok)
     first_row = base_rows[0]['method']
-    n10_keep, n10_probe = ok_rows[0], ok_rows[2]
+    outcome_probe = ok_rows[2]
     gated = 'memory_list'
     assert gated in CHECK.REGISTERED_UNAVAILABLE_METHODS
     assert find_row(base_rows, gated)['errorCode'] == CAPABILITY_UNAVAILABLE
-    assert ALT_CODE != CAPABILITY_UNAVAILABLE
+    assert ALT_CODE != CHECK.CAPABILITY_UNAVAILABLE
 
     def clone(*samples):
         return [([dict(row) for row in rows], [json.loads(json.dumps(frame)) for frame in frames])
@@ -183,7 +203,7 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     def n10():
         rows, frames = clone((base_rows, base_frames))[0]
         for row in rows:
-            if row['method'] not in (ok_rows[0], ok_rows[1]):
+            if row['method'] not in keep_ok:
                 identifier = send_id(frames, row['method'])
                 row['outcome'] = 'error'
                 row['errorCode'] = CAPABILITY_UNAVAILABLE
@@ -246,10 +266,12 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
             unavailable = [row['method'] for row in rows
                            if row['outcome'] == 'error'
                            and row.get('errorCode') == CAPABILITY_UNAVAILABLE]
-            if len(unavailable) != 99:
-                return False, f'{len(unavailable)} unavailable rows, expected 99'
-            if ok_rows[0] not in [row['method'] for row in rows if row['outcome'] == 'ok']:
-                return False, 'kept ok row missing'
+            expected = len(rows) - len(keep_ok)
+            if len(unavailable) != expected:
+                return False, f'{len(unavailable)} unavailable rows, expected {expected}'
+            kept = sorted(row['method'] for row in rows if row['outcome'] == 'ok')
+            if kept != sorted(keep_ok):
+                return False, f'kept ok rows are {kept}, expected {sorted(keep_ok)}'
             return True, ''
         return check
 
@@ -288,7 +310,7 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
         Control('N5', f'删掉方法行 {first_row}',
                 ['P1-COVERAGE'], first_row, n5, landed_absent(first_row)),
         Control('N6', f'复制方法行 {first_row}（同名两行）',
-                ['P1-COVERAGE', 'P8-FAIL-CLOSED'], first_row, n6, landed_duplicate(first_row)),
+                ['P1-COVERAGE'], first_row, n6, landed_duplicate(first_row)),
         Control('N7', f'线缆 error.code 与 outcome 码不一致（{error_probe}）',
                 ['P6-WIRE-CODE'], error_probe,
                 one(lambda rows, frames: rewrite_response(
@@ -310,6 +332,15 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
         Control('N11', f'第 2 轮 {error_probe} 的码与第 1 轮不同（其余不变）',
                 ['P7-ROUND-STABILITY'], error_probe, n11, landed_n11(),
                 {'driftRound': 'round-02'}),
+        Control('N12', f'{shape_probe} 的 shape 改 stream（线缆不动）',
+                ['P2-SHAPE'], shape_probe,
+                one(lambda rows, frames: find_row(rows, shape_probe).update(shape='stream')),
+                landed_row('shape', 'stream', shape_probe)),
+        Control('N13', f'{outcome_probe} 的 outcome 改成未登记值',
+                ['P8-FAIL-CLOSED'], outcome_probe,
+                one(lambda rows, frames: find_row(rows, outcome_probe).update(
+                    outcome='skipped', error='injected unknown outcome')),
+                landed_row('outcome', 'skipped', outcome_probe)),
     ]
 
 
@@ -325,6 +356,8 @@ def run_control(control, out_root, oracle):
         return record
     for name, (rows, frames) in bundles.items():
         write_round(out_dir / name, rows, frames)
+    # 旧产物不留在目录里冒充本轮输出（缺失即失败）。
+    (out_dir / 'check-output.json').unlink(missing_ok=True)
     # 第一步：注入是否落地（重读落盘文件核对）。
     try:
         reread = {name: reread_round(out_dir / name) for name in bundles}
@@ -339,9 +372,17 @@ def run_control(control, out_root, oracle):
     command = [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(oracle)]
     for name in sorted(bundles):
         command += ['--round', str(out_dir / name)]
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                timeout=CHECK_TIMEOUT_SECONDS, start_new_session=True)
+    except subprocess.TimeoutExpired:
+        record.update(verdict='INVALID',
+                      reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
+        return record
     record['rc'] = result.returncode
     (out_dir / 'check-output.json').write_text(result.stdout, encoding='utf-8')
+    if result.stderr.strip():
+        record['stderr'] = result.stderr.strip()[:2000]
     if result.returncode == 0:
         record.update(verdict='SURVIVED',
                       reason='checker returned PASS on mutated data')
@@ -385,7 +426,7 @@ def run_control(control, out_root, oracle):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description='Negative controls N1-N11 for the retirement outcome-parity '
+        description='Negative controls N1-N13 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
     parser.add_argument('output', help='output directory for mutated rounds + summary')
     parser.add_argument('--data', default=str(DEFAULT_DATA),
@@ -401,6 +442,11 @@ def main(argv=None):
 
     out_root = Path(args.output)
     out_root.mkdir(parents=True, exist_ok=True)
+    # 上一轮的 summary.json 不得冒充本轮结果（下游以「summary.json 存在」为跑完证据）。
+    stale = out_root / 'summary.json'
+    if stale.exists():
+        stale.unlink()
+        print(f'removed stale {stale}', file=sys.stderr)
     records = []
     for control in controls:  # 全部跑完再汇总，不遇败即停
         record = run_control(control, out_root, Path(args.oracle))

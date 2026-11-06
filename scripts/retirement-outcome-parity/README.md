@@ -9,7 +9,7 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 |---|---|
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
-| `negative_controls.py` | N1–N11 汇总式控件执行器（见下）。 |
+| `negative_controls.py` | N1–N13 汇总式控件执行器（见下）。 |
 
 ## 金样来源
 
@@ -51,7 +51,9 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   P5-UNAVAILABLE-SET / P6-WIRE-CODE / P7-ROUND-STABILITY / P8-FAIL-CLOSED）、`round`、
   `method`、`detail`）。
 - rc=1：有 violation，逐条点名方法（+轮次 / 双方码）。
-- rc=2：输入不可用（缺文件、解析失败、缺字段、金样形状不对）——fail-closed，绝不当 PASS。
+- rc=2：输入不可用（缺文件、解析失败、缺字段、`errorCode` 非字符串、`events` 非整数、
+  **两个轮次目录同名**（P7 以目录名为键）、金样形状不对）——fail-closed，绝不当 PASS。
+- 两个入口都要求 `python3 -I`（首个语句断言 `sys.flags.isolated`，同装置族其它入口）。
 - **Rust 轮必须显式跑本装置**：判据尚未接进冻结装置 `session_domain.py`（见「容差与残余」③）。
 
 ## 容差与残余（登记在差异条目里，此处只摘要）
@@ -61,9 +63,12 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   `error.message` 文本（含轮次绝对路径与 provider 措辞，只要求非空）、
   `events` 计数 / `lastEventType`（只要求 stream ok 有 `final: true` 帧且 `events >= 1`）。
 - 残余：① 文案与帧数不比较；② 只覆盖单轮内方法级行为，hostAudit / entryInventory /
-  网络面归 #1478；③ 未接进冻结装置，Rust 轮必须显式跑本装置，否则不得宣称覆盖。
+  网络面归 #1478；③ 未接进冻结装置，Rust 轮必须显式跑本装置，否则不得宣称覆盖；
+  ④ P6 要求 error 行带同 id `response` 帧，比冻结装置 `EVIDENCE_BACKING` 对 stream
+  error 的「任意 receive 帧」更严——只落 event 帧的 stream error 会判 FAIL（响亮失败，
+  非假 PASS）；放宽需另立更正件。
 
-## 负控（N1–N11）
+## 负控（N1–N13）
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py <输出目录> \
@@ -76,7 +81,11 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py <输出目录>
 `summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分两步：**注入是否落地**（重读
 落盘文件核对变异事实）+ **归因是否落到被注入对象**（期望规则 fire 且点名被注入方法）。
 N10（99/101 unavailable，线缆同步）是 F5 / DS-P0-1 的闭环证据：旧 `UNIFORM_UNAVAILABLE`
-语义（全 101 才 FAIL）在该形状下一条规则都不触发。
+语义（全 101 才 FAIL）在该形状下一条规则都不触发。N12（`shape` request↔`stream` 互换）与
+N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。
+
+执行器启动时先删同输出目录的旧 `summary.json`（旧结果不得冒充本轮），checker 子进程带
+600 s 超时；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
