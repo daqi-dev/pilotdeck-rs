@@ -36,7 +36,10 @@ pub use gateway::{
     SubmitTurnRequest, TurnEventStream,
 };
 pub use mapper::{MappedSession, SmsSessionMapper, SmsSessionMapperState};
-pub use permission::{BeginAnswer, DecisionReply, ImPermissionHelper, PermissionAnswer};
+pub use permission::{
+    AnswerGuard, BeginAnswer, DecisionReply, ImPermissionHelper, InitialPromptGuard,
+    PermissionAnswer, PermissionState, PromptGuard,
+};
 pub use sender::{SmsOutgoingMessage, SmsSender, TwilioFactory};
 
 use super::protocol::{
@@ -158,7 +161,6 @@ pub(crate) fn join_lines(lines: &[JsString]) -> Vec<u16> {
 struct SmsRuntime {
     mapper: SmsSessionMapper,
     elicitation: ImElicitationHelper,
-    permissions: ImPermissionHelper,
     active_chats: Arc<StdMutex<HashSet<JsString>>>,
     client: Option<Arc<dyn SmsSender>>,
     from_number: JsString,
@@ -179,6 +181,21 @@ struct Boundaries {
 struct SmsShared {
     boundaries: StdMutex<Boundaries>,
     runtime: Mutex<SmsRuntime>,
+    /// #1790: the permission state machine lives behind its own `std` mutex so
+    /// the cross-`await` guards can release it on panic/cancel without the
+    /// async runtime lock (which a `Drop` cannot take). Every access is a
+    /// short synchronous section, never held across an `await`.
+    permissions: PermissionState,
+}
+
+impl SmsShared {
+    /// Lock the permission state, recovering a poisoned mutex: a `Drop` guard
+    /// may run while a panic unwinds, and re-raising there would abort.
+    fn lock_permissions(&self) -> std::sync::MutexGuard<'_, ImPermissionHelper> {
+        self.permissions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 impl SmsShared {
@@ -295,7 +312,6 @@ impl SmsChannel {
                 runtime: Mutex::new(SmsRuntime {
                     mapper: mapper.unwrap_or_default(),
                     elicitation: ImElicitationHelper::default(),
-                    permissions: ImPermissionHelper::default(),
                     active_chats: Arc::new(StdMutex::new(HashSet::new())),
                     client: None,
                     from_number: JsString::from(""),
@@ -305,6 +321,7 @@ impl SmsChannel {
                     path: JsString::from(DEFAULT_PATH),
                     public_url: JsString::from(""),
                 }),
+                permissions: Arc::new(StdMutex::new(ImPermissionHelper::default())),
             }),
             inputs: StdMutex::new(SmsStartInputs {
                 extra,
@@ -1115,18 +1132,19 @@ async fn handle_incoming(
 
     // #1589 (issue #1): same two-section restoration as the elicitation
     // switch above — not a production path, only the negative control's
-    // observable (`sms_permission_lock_split`).
+    // observable (`sms_permission_lock_split`). #1790: the permission state is
+    // its own `std` mutex, so the sections are synchronous.
     let began = if crate::mutants::on("sms-permission-lock-split") {
         let has_pending = {
-            let runtime = shared.runtime.lock().await;
-            runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
+            let permissions = shared.lock_permissions();
+            permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some()
         };
         tokio::task::yield_now().await;
-        let mut runtime = shared.runtime.lock().await;
+        let mut permissions = shared.lock_permissions();
         if !has_pending {
             None
         } else {
-            match runtime.permissions.begin_answer(&chat_id, &text) {
+            match permissions.begin_answer(&chat_id, &text) {
                 // A `clear` that landed between the sections emptied the
                 // state; the stale check lets the message fall through to
                 // the turn instead of the early `None` return.
@@ -1136,13 +1154,11 @@ async fn handle_incoming(
         }
     } else {
         // #1339 fix-r1: same fusion for `hasPending` + `beginAnswer`.
-        {
-            let mut runtime = shared.runtime.lock().await;
-            if runtime.permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
-                Some(runtime.permissions.begin_answer(&chat_id, &text))
-            } else {
-                None
-            }
+        let mut permissions = shared.lock_permissions();
+        if permissions.has_pending(&chat_id) && boundaries(shared).gateway.is_some() {
+            Some(permissions.begin_answer(&chat_id, &text))
+        } else {
+            None
         }
     };
     if let Some(begin) = began {
@@ -1162,6 +1178,16 @@ async fn handle_incoming(
                 let gateway = boundaries(shared)
                     .gateway
                     .expect("#1339 checked before begin");
+                // #1790: own the `answering`/`in_flight` release across the
+                // decide await; a gateway panic or a cancelled/timed-out task
+                // then unwinds through the guard instead of wedging the chat.
+                let mut guard = AnswerGuard::new(
+                    shared.permissions.clone(),
+                    chat_id.clone(),
+                    generation,
+                    entry.clone(),
+                    shifted_rest.clone(),
+                );
                 // #1339 fix-r1: a missing event `requestId` stays real
                 // `undefined` (the JSON record then omits the key), not the
                 // string "undefined".
@@ -1188,32 +1214,28 @@ async fn handle_incoming(
                 };
                 match gateway.permission_decide(decision).await {
                     Err(error) => {
-                        {
-                            let mut runtime = shared.runtime.lock().await;
-                            runtime.permissions.fail_answer(
-                                &chat_id,
-                                generation,
-                                entry,
-                                shifted_rest,
-                            );
-                        }
+                        shared.lock_permissions().fail_answer(
+                            &chat_id,
+                            generation,
+                            entry,
+                            shifted_rest,
+                        );
+                        guard.settle();
                         shared.log(
                             "error",
                             format!("sms: permission answer error: {}", error.to_js_string()),
                         );
                     }
                     Ok(outcome) => {
-                        let answer = {
-                            let mut runtime = shared.runtime.lock().await;
-                            runtime.permissions.finish_answer(
-                                &chat_id,
-                                answer_token,
-                                generation,
-                                reply,
-                                shifted_rest,
-                                outcome,
-                            )
-                        };
+                        let answer = shared.lock_permissions().finish_answer(
+                            &chat_id,
+                            answer_token,
+                            generation,
+                            reply,
+                            shifted_rest,
+                            outcome,
+                        );
+                        guard.settle();
                         if let Some(answer) = answer {
                             deliver_answer(shared, &chat_id, answer).await;
                         }
@@ -1337,36 +1359,37 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
     if let Some(text) = answer.text.clone() {
         let delivered = send_reply(shared, chat_id, text).await;
         if !delivered {
-            let mut runtime = shared.runtime.lock().await;
-            runtime
-                .permissions
+            shared
+                .lock_permissions()
                 .release_answer(chat_id, answer.answer_token);
             return;
         }
         if !answer.can_advance && !answer.retry_prompt {
             return;
         }
-        let next_prompt = {
-            let mut runtime = shared.runtime.lock().await;
-            runtime
-                .permissions
-                .take_next_prompt(chat_id, answer.answer_token)
-        };
+        let next_prompt = shared
+            .lock_permissions()
+            .take_next_prompt(chat_id, answer.answer_token);
         if let Some(prompt) = next_prompt {
-            let expected = {
-                let runtime = shared.runtime.lock().await;
-                runtime
-                    .permissions
-                    .get_prompt_request_id(chat_id, answer.answer_token)
-            };
+            // #1790: own the `prompt_delivering` flag `take_next_prompt` set
+            // across the send; a panic or cancellation then releases it
+            // (`release_answer`: queue the retry) instead of wedging the chat.
+            let mut guard = PromptGuard::new(
+                shared.permissions.clone(),
+                chat_id.clone(),
+                answer.answer_token,
+            );
+            let expected = shared
+                .lock_permissions()
+                .get_prompt_request_id(chat_id, answer.answer_token);
             let delivered = send_reply(shared, chat_id, prompt).await;
-            let mut runtime = shared.runtime.lock().await;
-            runtime.permissions.confirm_next_prompt(
+            shared.lock_permissions().confirm_next_prompt(
                 chat_id,
                 delivered,
                 expected.as_ref(),
                 answer.answer_token,
             );
+            guard.settle();
         }
     }
 }
@@ -1421,12 +1444,10 @@ async fn process_message(
                 continue;
             }
             if is("permission_request") {
-                let question = {
-                    let mut runtime = shared.runtime.lock().await;
-                    runtime.permissions.capture(chat_id, session_key, &event)
-                };
+                let question = shared
+                    .lock_permissions()
+                    .capture(chat_id, session_key, &event);
                 if let Some(question) = question {
-                    let delivered = send_reply(shared, chat_id, question).await;
                     let expected = event
                         .get("requestId")
                         .cloned()
@@ -1434,12 +1455,22 @@ async fn process_message(
                             JsValue::Undefined | JsValue::Null => None,
                             value => Some(js_string_of(&value)),
                         });
-                    let mut runtime = shared.runtime.lock().await;
-                    runtime.permissions.confirm_initial_prompt(
+                    // #1790: own the `answering`/`initial_prompt_pending` set
+                    // by `capture` across the prompt send; a panic or
+                    // cancellation then records the not-delivered retry
+                    // instead of wedging the chat in "权限提示发送中".
+                    let mut guard = InitialPromptGuard::new(
+                        shared.permissions.clone(),
+                        chat_id.clone(),
+                        expected.clone(),
+                    );
+                    let delivered = send_reply(shared, chat_id, question).await;
+                    shared.lock_permissions().confirm_initial_prompt(
                         chat_id,
                         delivered,
                         expected.as_ref(),
                     );
+                    guard.settle();
                 }
                 continue;
             }
@@ -1459,8 +1490,8 @@ async fn process_message(
     {
         let mut runtime = shared.runtime.lock().await;
         runtime.elicitation.clear(chat_id);
-        runtime.permissions.clear_after_turn(chat_id);
     }
+    shared.lock_permissions().clear_after_turn(chat_id);
     let final_text = trim_units(&reply_units);
     if !final_text.is_empty() {
         send_reply(shared, chat_id, JsString::from_utf16(final_text.to_vec())).await;

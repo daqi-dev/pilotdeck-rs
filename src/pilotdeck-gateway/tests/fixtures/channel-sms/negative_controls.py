@@ -222,6 +222,27 @@ switches = [
      '#1339 #1729 rejects env_value drift'),
     ('sms-oracle-send-fail-entry', SMS / 'tests.rs', 'recorded_send_fail_entry_rejects_drift',
      '#1339 #1729 rejects send_fail_entry drift'),
+    # #1790: the answer guard is disarmed — a panic, a cancellation or a
+    # timeout in the permissionDecide await leaves `answering`/`in_flight` set
+    # and the chat is stuck in "权限决定处理中" until restart.
+    ('sms-permission-answer-guard-off', SMS / 'permission.rs',
+     ['a_panicking_permission_decide_does_not_lock_the_chat',
+      'cancelled_permission_decide_does_not_lock_the_chat',
+      'timed_out_permission_decide_does_not_lock_the_chat'],
+     ['#1790 answering must not survive the permission_decide panic',
+      '#1790 answering must not survive cancellation',
+      '#1790 answering must not survive the timeout']),
+    # #1790: the prompt guard is disarmed — a panic during the next-prompt
+    # send leaves `prompt_delivering` set and `take_next_prompt` refuses
+    # every later message.
+    ('sms-permission-prompt-guard-off', SMS / 'permission.rs',
+     'a_panicking_prompt_delivery_does_not_lock_the_chat',
+     '#1790 prompt_delivering must not survive the prompt-send panic'),
+    # #1790: the initial-prompt guard is disarmed — a panic during the first
+    # prompt send leaves `initial_prompt_pending` set ("权限提示发送中").
+    ('sms-permission-initial-guard-off', SMS / 'permission.rs',
+     'a_panicking_initial_prompt_delivery_does_not_lock_the_chat',
+     '#1790 initial_prompt_pending must not survive the prompt-send panic'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',
