@@ -241,7 +241,7 @@ class SuiteTests(unittest.TestCase):
             def scratch(*_args, **_kwargs):
                 yield root / 'scratch'
             def environment(_directory):
-                if fault in ('refuse', 'refuse-residue'):
+                if fault in ('refuse', 'refuse-residue', 'refuse-vanished'):
                     if fault == 'refuse-residue':
                         # Anything already written into the claimed directory
                         # cannot be dropped by the executor; it must be left in
@@ -249,6 +249,12 @@ class SuiteTests(unittest.TestCase):
                         # receives the scratch directory, so write into the
                         # evidence directory explicitly.
                         (root / 'out' / 'leftover.txt').write_text('written first')
+                    if fault == 'refuse-vanished':
+                        # The empty directory is gone by the time the executor
+                        # unwinds (an external cleaner won the race). Dropping
+                        # it must be quiet, not a second failure (#1666
+                        # fix-r8: the FileNotFoundError branch had no test).
+                        (root / 'out').rmdir()
                     # #1666/#1734: the real startup refusal is refuse(), i.e. a
                     # SystemExit carrying the integer code 2 and a stderr line.
                     control.refuse('startup refusal probe')
@@ -283,10 +289,10 @@ class SuiteTests(unittest.TestCase):
                     self.assertEqual(fault, 'interrupt', '#994 only the cancellation probe may interrupt')
                     code = 1
                 except SystemExit as refusal:
-                    self.assertIn(fault, ('refuse', 'refuse-residue'),
+                    self.assertIn(fault, ('refuse', 'refuse-residue', 'refuse-vanished'),
                                   '#994 only the startup probes may refuse')
                     code = refusal.code
-            refused = fault in ('refuse', 'refuse-residue')
+            refused = fault in ('refuse', 'refuse-residue', 'refuse-vanished')
             summary = None if refused else json.loads((root / 'out/summary.json').read_text())
             if fault == 'refuse':
                 # #1666/#1734: "never started" leaves nothing a host could read
@@ -304,6 +310,14 @@ class SuiteTests(unittest.TestCase):
                                  '#1666 a startup refusal must not publish a summary')
                 self.assertIn(str(root / 'out'), errors.getvalue(),
                               '#1666 the residue path must be named on stderr')
+            elif fault == 'refuse-vanished':
+                # Already gone: dropping it must not raise, and the executor
+                # must not claim to have left a directory behind (#1666
+                # fix-r8).
+                self.assertFalse((root / 'out').exists(),
+                                 '#1666 an already removed directory stays removed')
+                self.assertNotIn('behind', errors.getvalue(),
+                                 '#1666 nothing was left, so nothing may be reported as left')
             self.assertEqual(real.read_text(), 'original', '#994 original worktree never mutated')
             self.assertEqual(copied.read_text(), 'original', '#994 scratch restored after every outcome')
             for label, text in observations:
@@ -343,6 +357,18 @@ class SuiteTests(unittest.TestCase):
         directory that is quietly missing (#1666 fix-r7).
         """
         code, summary, observations = self.exercise('refuse-residue')
+        self.assertEqual(code, 2, '#1666 a startup refusal is "never started", not a failed run')
+        self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
+        self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')
+
+    def test_startup_refusal_tolerates_an_already_removed_directory(self):
+        """Dropping an empty directory that a cleaner already removed is quiet.
+
+        The unwinding path calls ``rmdir()``; if the directory is gone by then
+        the ``FileNotFoundError`` means "nothing was left behind", so it must
+        not become a second failure or a false residue report (#1666 fix-r8).
+        """
+        code, summary, observations = self.exercise('refuse-vanished')
         self.assertEqual(code, 2, '#1666 a startup refusal is "never started", not a failed run')
         self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
         self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')

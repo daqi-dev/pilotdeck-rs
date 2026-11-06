@@ -16,7 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (CARGO_SLOTS_CALL_SECONDS, CARGO_SLOTS_WAIT_SECONDS,
                              mutating_sources, run_owned, wait_for_slot)
-from negative_selection import refuse
+from negative_selection import missing_target, refuse
 import pending_reanchor as pending
 
 REPO = Path(__file__).resolve().parents[5]
@@ -57,11 +57,13 @@ def scratch(label, *, deadline=580):
 
 
 def environment(root):
-    if not os.environ.get('CARGO_TARGET_DIR'):
+    if missing_target():
         # #1666/#1734: a missing caller target is "never started" (2), not
         # "ran and did not pass" (1). `SystemExit('...')` carried the message
         # and therefore exited 1; `refuse()` writes it to stderr and passes
-        # the code as an int.
+        # the code as an int. An empty or all-space value is the same caller
+        # error, and a presence-only check let it through to the shared
+        # normalisation (#1666 fix-r8, found by two reviewers on both sides).
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
     env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'),
                CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'),
@@ -281,7 +283,10 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
     # wait for a cargo slot: a missing target is "never started" (2), not a
     # run that failed. `environment()` below keeps the same refusal as a
     # backstop for callers that reach it directly.
-    if not os.environ.get('CARGO_TARGET_DIR'):
+    if missing_target():
+        # absent, empty or all-space: all three are "never started" (#1666
+        # fix-r8). Callers such as `background-output/negative.py` have no
+        # guard of their own, so this one has to be the whole family's.
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
     # #1666: a taken evidence directory means "never started" (2). Letting
     # `FileExistsError` escape printed a traceback and exited 1, which the host

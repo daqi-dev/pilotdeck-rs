@@ -106,7 +106,9 @@ except ValueError as error:
     refuse(str(error))
 if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
-if not os.environ.get('PDRS_BASELINE'):  # #1666: empty is missing, like the target above
+if not (os.environ.get('PDRS_BASELINE') or '').strip():
+    # #1666: absent, empty and all-space are one caller error, the same three
+    # modes as the target guard above (#1666 fix-r8).
     refuse('set PDRS_BASELINE to the pinned PilotDeck TS checkout before running')
 out = claim_dir(sys.argv[1])
 env = os.environ.copy()
