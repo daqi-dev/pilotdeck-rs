@@ -44,19 +44,23 @@
 //!   on the tick the sample already recorded. Ledger: specs/gateway-parity/accepted-diffs.md
 //!   A6.3-CONFIG-POLL-001 (unapproved).
 //!
-//! Each sample compares metadata first (#1739): unchanged metadata (length,
-//! mtime, ctime, inode, device) means the content has not changed, so the
-//! content read is skipped. The gap is the ctime tick: ctime carries only a
-//! tick number, so a write that keeps ctime on the tick the fingerprint
-//! already recorded is invisible *to that field*. If it also leaves length,
-//! mtime and inode unchanged, every hashed field is identical and the content
-//! change is missed. That window runs from the sample which recorded the tick
-//! to the end of the tick — at most one granularity wide (ns on APFS/ext4,
-//! 1 s on HFS+), independent of the sampling interval, and empty when the
-//! tick has already ended at sample time (the usual case on APFS/ext4) — the
-//! same caveat as (3) above. A same-length, mtime-restoring rewrite landing
-//! in it is *not* seen, where the pre-#1739 per-tick content comparison did
-//! see it. Measured on HFS+ (1 s ctime granularity) in
+//! Each sample compares metadata first (#1739): when the whole metadata
+//! fingerprint — length, mtime, ctime, inode, device, plus, for a parent
+//! directory watch, every other entry the fingerprint covers — is unchanged,
+//! the sample skips the content read and treats the content as unchanged.
+//! That inference is sound except in one cell. ctime carries only a tick
+//! number, so a write that leaves ctime on the tick the fingerprint already
+//! recorded is invisible *to that field*; if it also leaves every other
+//! hashed field unchanged — same length, mtime restored, same inode and
+//! device, and for a parent directory watch every other covered entry
+//! unchanged — then the whole fingerprint is identical and the content change
+//! is missed. That window runs from the sample which recorded the tick to the
+//! end of the tick — at most one granularity wide (ns on APFS/ext4, 1 s on
+//! HFS+), independent of the sampling interval, and empty when the tick has
+//! already ended at sample time (the usual case on APFS/ext4) — the same
+//! caveat as (3) above. A rewrite meeting all of those conditions and landing
+//! in the window is *not* seen, where the pre-#1739 per-tick content
+//! comparison did see it. Measured on HFS+ (1 s ctime granularity) in
 //! `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
 //! specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md
 //! (unapproved). Only when
