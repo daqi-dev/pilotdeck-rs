@@ -17,9 +17,9 @@ bump that carries a same-length mtime-restored rewrite through it); two pin
 #1899's watcher-stop evidence (the join-based check reverted to
 ``JoinHandle::is_finished()``, which is also true for a task that died by
 panic; a panicking watcher loop that an ``is_finished()``-only check accepts as
-a clean stop; and a watcher that returns cleanly right after spawn, which only
-the pre-drop liveness assertion catches — all three are #1650's silent-death
-path).
+a clean stop; a watcher that returns cleanly right after spawn; one that exits
+on its first in-loop tick, before ``stop`` and before ``drop(store)``; and one
+that never stops at all — all of them are #1650's silent-death path).
 """
 from pathlib import Path
 import json
@@ -129,17 +129,17 @@ mutations = [
      'config::store::tests::panicked_watcher_task_is_not_a_clean_stop',
      '#1899 a panicked watcher must not look like a clean stop'),
     # #1899: the watcher loop panics on its first poll — the #1650 silent-death
-    # path. The drop-the-store test must fail instead of passing on a task that
-    # is merely "finished": the injected panic kills it at the liveness check
-    # (the watcher must still be running before the store is dropped) or, if it
-    # is only observed at the join, at the clean-stop assertion — both markers
-    # are the same defect seen one step apart.
+    # path. The drop test must fail instead of passing on a task that is merely
+    # "finished": the injected panic kills it at the first liveness check, and
+    # the later ones are listed because they are the same defect seen one step
+    # apart (`classify` accepts the first marker that shows up).
     ('watch-loop-panic-injected', source,
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      '    panic!("#1899 injected: simulated watch_loop failure");\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
-     ['#1899 the watcher must still be running before the store is dropped',
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped',
       '#1899 dropping the store must stop the watcher cleanly']),
     # #1899 review P2-2: a watcher that returns cleanly right after spawn also
     # joins with `Ok(())`, so the drop-the-store evidence only means something
@@ -185,6 +185,20 @@ mutations = [
      '                let mut changed = false;',
      'config::store::tests::stop_cancels_pending_reload_and_leaves_no_task',
      '#1899 the watcher must still be running before stop'),
+    # #1899 review P2 (concurrency): every other row dies before the join, so
+    # the timeout arm of `watcher_stop` (and with it the "90 s clears the 60 s
+    # poll ceiling" invariant) had no receipt. Removing the owner-gone return
+    # makes the watcher keep ticking after `drop(store)`: the suspended clock
+    # walks the whole 90 s at no wall-clock cost and the test fails at the
+    # clean-stop assertion instead of hanging or being called a clean stop.
+    ('watch-loop-never-stops', source,
+     '                if inner.strong_count() == 0 {\n'
+     '                    return;\n'
+     '                }\n'
+     '                let mut changed = false;',
+     '                let mut changed = false;',
+     'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
+     '#1899 dropping the store must stop the watcher cleanly'),
 ]
 
 
