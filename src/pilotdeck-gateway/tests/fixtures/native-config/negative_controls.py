@@ -116,6 +116,20 @@ mutations = [
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
+    # ── fix-r2 P0: a loaded session must be written *through* its recorder.
+    # Bypassing the lookup sends the entry to a fresh writer on the same tail;
+    # the loaded writer's next append then duplicates `sequence + 1` and the
+    # bound test's chain assertion must catch it.
+    ('transcript-live-bypass-config', CONFIG,
+     '            if let Some(recorder) = super::transcript_locks::live_recorder(&recorders, &key) {',
+     '            if let Some(recorder) = None::<Arc<crate::storage::recorder::Recorder>> {',
+     CFG + 'model_set_appends_through_the_loaded_writer',
+     '#1457 the loaded writer keeps numbering the chain'),
+    ('transcript-live-bypass-rename', SESSION_DIR,
+     '            if let Some(recorder) = live {',
+     '            if let Some(recorder) = None::<Arc<crate::storage::recorder::Recorder>> {',
+     DIR + 'rename_appends_through_the_loaded_writer',
+     '#1457 the loaded writer keeps numbering the chain'),
     ('style-unavailable-method-name', CONFIG,
      'Err(session_config_unavailable("set_output_style"))',
      'Err(session_config_unavailable("unknown"))',

@@ -309,8 +309,9 @@ impl Requests {
         // left a second writer numbering from the same tail; routing through the
         // one writer does neither. With no loaded session the fence is the only
         // writer, and a session created while we hold it restores the tail after
-        // this append.
-        let live = super::transcript_locks::live_recorder(&self.recorders, session_key);
+        // this append. The lookup runs inside the blocking closure, next to the
+        // append it decides, so the recorder it names is the one that writes.
+        let recorders = self.recorders.clone();
         let home = self.options.home.clone();
         let key = session_key.clone();
         let mut metadata = pilotdeck_protocol::JsObject::new();
@@ -338,7 +339,7 @@ impl Requests {
             let _write = write_fence;
             let turn = JsString::from(turn_id);
             let entry = JsValue::Object(metadata);
-            if let Some(recorder) = live {
+            if let Some(recorder) = super::transcript_locks::live_recorder(&recorders, &key) {
                 return recorder
                     .writer()
                     .record_session_metadata(&key, &turn, entry)
@@ -1692,6 +1693,93 @@ mod tests {
     }
 
     // ─────────────────────────────────────── transcript write serialization
+
+    /// #1457 fix-r2 (P0): a loaded session owns the transcript writer, so the
+    /// model-selection entry goes through its recorder instead of a second
+    /// writer restored from the tail. The request spells the key as an alias
+    /// (`b9/session` and `b9-session` are one file after
+    /// `sanitize_session_id`), the case a raw-key lookup missed: the recorder
+    /// would keep a stale sequence and its next append would duplicate.
+    #[tokio::test]
+    async fn model_set_appends_through_the_loaded_writer() {
+        use crate::storage::recorder::Recorder;
+
+        let (_scratch, r) = setup_fixture();
+        let home = r.options.home.clone();
+        let project = r.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let open = |session_id: &str| {
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: project.clone(),
+                    pilot_home: r.options.home.clone(),
+                    session_id: session_id.into(),
+                    now: None,
+                })
+                .expect("#1457 the transcript storage opens")
+        };
+        let loaded = open("b9/session");
+        loaded
+            .restore()
+            .expect("#1457 the seeded transcript restores");
+        let writer = Arc::new(loaded.transcript);
+        let recorder = Arc::new(Recorder::from_writer(writer.clone()));
+        r.recorders
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("b9/session".into(), Arc::downgrade(&recorder));
+
+        let result = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "b9-session".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect("#1457 the model selection resolves over a loaded session");
+        negative_assert_eq!(
+            result
+                .get("saved")
+                .and_then(|saved| saved.get("model"))
+                .and_then(JsValue::as_string),
+            Some(&JsString::from("test")),
+            "#1457 the model selection is saved"
+        );
+
+        // The loaded writer still holds the only sequence: this append continues
+        // the chain the selection entry extended. A second writer on the same
+        // tail would have duplicated `sequence + 1` and this call would fail.
+        writer
+            .record_agent_status_message(
+                &"b9/session".into(),
+                &"after-selection".into(),
+                &JsValue::Undefined,
+            )
+            .expect("#1457 the loaded writer keeps numbering the chain");
+        let entries = transcript_entries(&r, "b9-session");
+        negative_assert_eq!(
+            entries.iter().any(
+                |entry| entry.get("turnId").and_then(|t| t.as_str()) == Some("model-selection")
+            ),
+            true,
+            "#1457 the selection entry reached the loaded session's transcript"
+        );
+        negative_assert_eq!(
+            entries.iter().any(
+                |entry| entry.get("turnId").and_then(|t| t.as_str()) == Some("after-selection")
+            ),
+            true,
+            "#1457 the loaded writer kept appending after the selection"
+        );
+        teardown(&r).await;
+    }
 
     /// #1457 fix-r1 (P0): `session_model_set` and `rename_session` each build a
     /// fresh `JsonlTranscriptStore`, restore the tail, and append
