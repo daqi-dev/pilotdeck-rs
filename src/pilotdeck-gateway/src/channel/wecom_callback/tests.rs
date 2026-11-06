@@ -1142,7 +1142,17 @@ async fn request_timeout_answers_408_and_releases_stop() {
             .any(|window| window == b"\r\nconnection: close\r\n"),
         "#1336 the 408 closes the connection like Node's requestTimeout"
     );
-    crate::negative_assert!(raw.ends_with(b"\r\n\r\n"), "#1336 the 408 has no body");
+    // Split at the header terminator: `ends_with("\r\n\r\n")` also holds for a
+    // body that itself ends in those four bytes, so it cannot prove the body is
+    // empty (#1336 r5 Codex P1).
+    let body = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|at| &raw[at + 4..]);
+    crate::negative_assert!(
+        matches!(body, Some(rest) if rest.is_empty()),
+        "#1336 the 408 has no body"
+    );
     crate::negative_assert!(
         drained,
         "#1336 requestTimeout lets stop() retire a stalled body"
@@ -1157,6 +1167,9 @@ async fn request_timeout_answers_408_and_releases_stop() {
         Duration::from_secs(1),
     )
     .await;
+    // `None` is "not one byte arrived in 1 s", not "the read returned": the
+    // helper keeps partial bytes even when its deadline expires, so an early
+    // answer that never reaches EOF still fails this half.
     crate::negative_assert!(response.is_none(), "#1336 no answer before requestTimeout");
     crate::negative_assert!(
         !drained,
@@ -1195,12 +1208,13 @@ async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
     .expect("#1336 stalled listen")
 }
 
-/// One client, one stalled request, one `stop()`: returns the first response
-/// read (if any within `budget`) and whether `stop()` returned within it.
-/// Always releases the client and waits for the port, so the two halves of an
-/// A/B can share one port. The listener polls each connection once before it
-/// honours `stop()`, so the bytes below are already in the socket buffer when
-/// the shutdown branch is first considered — no sleep-based settle.
+/// One client, one stalled request, one `stop()`: returns every byte the
+/// client received within a fixed 1 s read deadline (empty ⇒ it received
+/// nothing) and whether `stop()` returned within `budget`. Always releases the
+/// client and waits for the port, so the two halves of an A/B can share one
+/// port. The listener polls each connection once before it honours `stop()`,
+/// so the bytes below are already in the socket buffer when the shutdown
+/// branch is first considered — no sleep-based settle.
 async fn stop_after_stalled_request(
     port: u16,
     timeouts: http::Timeouts,
@@ -1220,11 +1234,13 @@ async fn stop_after_stalled_request(
     // Read to EOF rather than a single `read`: `connection: close` makes EOF
     // the terminator, and one `read` that happens to stop on a segment
     // boundary would let a response *with* a body slip past the "no body"
-    // assertion (`ends_with("\r\n\r\n")`) — a pin that can falsely pass.
-    let response = match timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await {
-        Ok(Ok(_)) if !buf.is_empty() => Some(buf),
-        _ => None,
-    };
+    // assertion — a pin that can falsely pass. Keep whatever arrived even when
+    // the deadline expires or the read errors (#1336 r5 boundary/Codex P1):
+    // dropping a partial `buf` would let an early response read as "no
+    // answer" in the long-timeout half, the same false pass from the other
+    // side.
+    let _ = timeout(Duration::from_secs(1), client.read_to_end(&mut buf)).await;
+    let response = if buf.is_empty() { None } else { Some(buf) };
     let drained = timeout(budget, listener.stop()).await.is_ok();
     let _ = client.shutdown().await;
     drop(client);
