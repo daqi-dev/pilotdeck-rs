@@ -625,11 +625,10 @@ def calibrate_partial_raise_point(rows):
 def calibrate_param_augassign_opaque(rows):
     """#892 r13: ``report |= payload`` on a parameter receiver is the opaque
     form of the r12 literal fix (MiniMax sibling r12 P1-3)."""
-    ok, detail = _unregistered_publish(rows)
-    if not ok:
-        return ok, detail
-    return True, ('aggregation-audit: parameter-receiver opaque |= enumeration '
-                  'flagged, passed=False')
+    return _unregistered_point(
+        rows, 'publish', 'write-status',
+        'aggregation-audit: parameter-receiver opaque |= enumeration '
+        'flagged, passed=False')
 
 
 def calibrate_helper_local_relay(rows):
@@ -900,19 +899,9 @@ def calibrate_augassign_unregistered(rows):
     """#892 r11: ``report |= {'status': 'PASS'}`` is invisible to the ``Assign``
     family (``ast.AugAssign`` is a sibling), so an unregistered function using
     it was never enumerated (MiniMax boundary r10 P0-1)."""
-    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
-    if not ok:
-        return ok, reason
-    row, error = _audit_row(rows)
-    if row is None:
-        return False, error
-    failures = row.get('failures') or []
-    if not any('unregistered aggregation point' in failure
-               and failure.rstrip().endswith(":publish markers=['write-status']")
-               for failure in failures):
-        return False, (f'failures={failures!r}, want the unregistered publish '
-                       "point with markers=['write-status']")
-    return True, 'aggregation-audit: augmented |= enumeration flagged, passed=False'
+    return _unregistered_point(
+        rows, 'publish', 'write-status',
+        'aggregation-audit: augmented |= enumeration flagged, passed=False')
 
 
 def calibrate_opaque_clean_write(rows):
@@ -956,37 +945,19 @@ def calibrate_param_augassign(rows):
     summary handed in as a parameter; the receiver gate only knew names bound to
     a dict literal, so the function was never enumerated (GLM boundary r11
     P1-1)."""
-    ok, detail = _unregistered_publish(rows)
-    if not ok:
-        return ok, detail
-    return True, ('aggregation-audit: parameter-receiver |= enumeration '
-                  'flagged, passed=False')
+    return _unregistered_point(
+        rows, 'publish', 'write-status',
+        'aggregation-audit: parameter-receiver |= enumeration '
+        'flagged, passed=False')
 
 
 def calibrate_param_update(rows):
     """#892 r12: ``report.update(payload)`` on a parameter receiver, same
     enumeration hole as the ``|=`` spelling (GLM boundary r11 P1-1)."""
-    ok, detail = _unregistered_publish(rows)
-    if not ok:
-        return ok, detail
-    return True, ('aggregation-audit: parameter-receiver update enumeration '
-                  'flagged, passed=False')
-
-
-def _unregistered_publish(rows):
-    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
-    if not ok:
-        return ok, reason
-    row, error = _audit_row(rows)
-    if row is None:
-        return False, error
-    failures = row.get('failures') or []
-    if not any('unregistered aggregation point' in failure
-               and failure.rstrip().endswith(":publish markers=['write-status']")
-               for failure in failures):
-        return False, (f'failures={failures!r}, want the unregistered publish '
-                       "point with markers=['write-status']")
-    return True, 'ok'
+    return _unregistered_point(
+        rows, 'publish', 'write-status',
+        'aggregation-audit: parameter-receiver update enumeration '
+        'flagged, passed=False')
 
 
 def _unregistered_point(rows, function, marker, detail):
@@ -2946,7 +2917,12 @@ def main():
                 if expected_status == 'PASS':
                     rows_ok = all(row.get('passed') is True for row in rows)
                 else:
-                    rows_ok = (all(row.get('passed') in (True, None) for row in rows)
+                    # Same strict predicate as the Darwin arm: ``in (True, None)``
+                    # would let ``passed: 1`` through (``1 == True``), which the
+                    # fixture's own summarize_results rejects (GLM boundary r20
+                    # P2-2).
+                    rows_ok = (all(row.get('passed') is True
+                                   or row.get('passed') is None for row in rows)
                                and any(row.get('passed') is None for row in rows))
                 restored_ok = (restored.returncode == expected_code
                                and restored_summary.get('status') == expected_status

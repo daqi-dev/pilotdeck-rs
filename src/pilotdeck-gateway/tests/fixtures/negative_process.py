@@ -49,14 +49,24 @@ _RESTORE_DEPTH = 0
 _DEFERRED_SIGNAL = None
 
 # Signals the restore window shields itself.  SIGINT joins the two the fixture
-# handlers already install, because a Ctrl-C lands on the same write-back loop.
-_SHIELDED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
+# handlers already install, because a Ctrl-C lands on the same write-back loop;
+# SIGQUIT joins them because ``^\`` is catchable and deferrable the same way
+# (GLM sibling r20 P2), while SIGKILL stays the documented uncatchable
+# exemption.
+_SHIELDED_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
 
 
 def _record_signal(signum, _frame):
-    """Handler installed for the duration of ``restore_critical``."""
+    """Handler installed for the duration of ``restore_critical``.
+
+    Keeps the *first* signal: the window's contract is one deferred signum, so
+    a second signal arriving inside the same window is dropped rather than
+    queued -- and never overwrites the first (anthropic concurrency r20 P2-1 /
+    boundary r20 P2-2, which the old unconditional store violated).
+    """
     global _DEFERRED_SIGNAL
-    _DEFERRED_SIGNAL = signum
+    if _DEFERRED_SIGNAL is None:
+        _DEFERRED_SIGNAL = signum
 
 
 def _kill_group(process):
@@ -390,8 +400,14 @@ def _git(root, *args):
     try:
         stdout, stderr = process.communicate(timeout=GIT_TIMEOUT)
     except subprocess.TimeoutExpired:
-        process.kill()
-        process.communicate()
+        # Group kill, then a bounded collect: git runs in its own session, so
+        # a plain kill() only reaches the leader while a setsid descendant
+        # (external diff / textconv under a non-default repo config) still
+        # holds the pipes and would block an unbounded communicate() forever
+        # -- inside the shielded window, with no signal left to interrupt it
+        # (GLM concurrency r20 P2-1).  ``run_owned`` uses the same pair.
+        _kill_group(process)
+        _collect(process, KILL_TIMEOUT)
         raise RuntimeError(f"git {' '.join(args)}: timed out after "
                            f"{GIT_TIMEOUT}s")
     if process.returncode != 0:
@@ -797,7 +813,7 @@ def restore_critical():
     Recording is *not* delegated to the consumer: a fixture that installs its
     own ``signal.signal`` handler for SIGTERM never calls
     ``defer_signal_exit``, so the window has to swap the handlers itself for
-    every signal it can (SIGINT, SIGTERM, SIGHUP); otherwise one more
+    every signal it can (SIGINT, SIGTERM, SIGHUP, SIGQUIT); otherwise one more
     fixture -- or a Ctrl-C -- keeps killing the write-back mid-loop
     (MiniMax sibling r18 P1-2 / GLM sibling r18 P1-3).  A handler that is
     ``SIG_IGN`` stays ignored, and a non-main thread, where ``signal.signal``
@@ -823,11 +839,16 @@ def restore_critical():
 
 
 def defer_signal_exit(signum):
-    """Record *signum* instead of exiting when the restore is in progress."""
+    """Record *signum* instead of exiting when the restore is in progress.
+
+    Same keep-first rule as the window's own recorder: a second signal never
+    overwrites the first deferred one.
+    """
     global _DEFERRED_SIGNAL
     if not _RESTORE_DEPTH:
         return False
-    _DEFERRED_SIGNAL = signum
+    if _DEFERRED_SIGNAL is None:
+        _DEFERRED_SIGNAL = signum
     return True
 
 
