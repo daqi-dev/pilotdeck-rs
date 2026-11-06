@@ -44,7 +44,7 @@ use crate::{
         crypto::{decrypt_wx_message, verify_msg_signature},
         http::Listener,
         interaction::{InteractionPort, NoInteraction},
-        mapper::SessionMapper,
+        mapper::{Resolved, SessionMapper},
         outbound::{HttpClient, encode_uri_component},
         render::render_event,
         xml::{extract_encrypt_from_xml, xml_tag},
@@ -146,6 +146,25 @@ struct State {
     mapper: SessionMapper,
     token: Option<CachedToken>,
     active_chats: HashSet<String>,
+}
+
+/// Clears a chat's `active_chats` entry even when the detached dispatch task
+/// unwinds, mirroring TS's `try { await processMessage(...) }
+/// finally { activeChats.delete(chatId) }`.
+struct ActiveChat {
+    runtime: Arc<Runtime>,
+    chat_id: String,
+}
+
+impl Drop for ActiveChat {
+    fn drop(&mut self) {
+        self.runtime
+            .state
+            .lock()
+            .expect("#1336 state mutex")
+            .active_chats
+            .remove(&self.chat_id);
+    }
 }
 
 struct Runtime {
@@ -393,46 +412,61 @@ impl Runtime {
             return;
         }
 
-        if self
-            .state
-            .lock()
-            .expect("#1336 state mutex")
-            .active_chats
-            .contains(&chat_id)
-        {
-            self.log(
-                "info",
-                &format!("wecom_callback: chat {chat_id} already active, skipping"),
-            );
-            return;
+        // TS runs `has()` → `mapper.resolve()` → `add()` inside one synchronous
+        // block, so no second callback for the same chat can slip between the
+        // check and the insert. Taking the lock twice (as this used to) left
+        // that window open: on the multi-threaded runtime two concurrent POSTs
+        // for one chat both saw "not active" and each dispatched a turn. One
+        // lock scope reproduces the JS run-to-completion block; the early
+        // returns keep the TS ordering (`has` before `resolve`).
+        enum Gate {
+            Active,
+            Notify,
+            Dispatch(Resolved),
         }
+        let gate = {
+            let mut state = self.state.lock().expect("#1336 state mutex");
+            if state.active_chats.contains(&chat_id) {
+                Gate::Active
+            } else {
+                let resolved = state.mapper.resolve(&chat_id, &content);
+                if resolved.is_new && resolved.message.is_empty() {
+                    Gate::Notify
+                } else if resolved.message.is_empty() {
+                    return;
+                } else {
+                    state.active_chats.insert(chat_id.clone());
+                    Gate::Dispatch(resolved)
+                }
+            }
+        };
+        let resolved = match gate {
+            Gate::Active => {
+                self.log(
+                    "info",
+                    &format!("wecom_callback: chat {chat_id} already active, skipping"),
+                );
+                return;
+            }
+            Gate::Notify => {
+                // TS awaits the notice without the chat added, so a message
+                // arriving meanwhile still dispatches; release the lock first.
+                let _ = self.send_reply(&chat_id, "已创建新会话。").await;
+                return;
+            }
+            Gate::Dispatch(resolved) => resolved,
+        };
 
-        let resolved = self
-            .state
-            .lock()
-            .expect("#1336 state mutex")
-            .mapper
-            .resolve(&chat_id, &content);
-        if resolved.is_new && resolved.message.is_empty() {
-            let _ = self.send_reply(&chat_id, "已创建新会话。").await;
-            return;
-        }
-        if resolved.message.is_empty() {
-            return;
-        }
-
-        self.state
-            .lock()
-            .expect("#1336 state mutex")
-            .active_chats
-            .insert(chat_id.clone());
+        // RAII: a panic in a dynamically dispatched port (`submit`/`next`, or
+        // any `InteractionPort` call) unwinds this detached task without
+        // reaching a trailing `remove`, which would leave the chat "active" and
+        // silently drop every later message until the process restarts.
+        let _active = ActiveChat {
+            runtime: self.clone(),
+            chat_id: chat_id.clone(),
+        };
         self.process_message(&chat_id, &resolved.session_key, &resolved.message)
             .await;
-        self.state
-            .lock()
-            .expect("#1336 state mutex")
-            .active_chats
-            .remove(&chat_id);
     }
 
     async fn process_message(self: &Arc<Self>, chat_id: &str, session_key: &str, message: &str) {
