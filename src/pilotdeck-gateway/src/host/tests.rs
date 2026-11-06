@@ -247,6 +247,14 @@ impl Drop for Receipt {
     }
 }
 fn peer(mode: &str) -> (Command, Receipt) {
+    let (_, receipt) = owned_receipt(mode);
+    let mut command = command(mode);
+    command.arg(&receipt.0);
+    (command, receipt)
+}
+/// Exclusive receipt directory (#1779 tests need the directory itself, not
+/// just the receipt path, to hand the peer's pid around).
+fn owned_receipt(mode: &str) -> (std::path::PathBuf, Receipt) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let owned = std::env::temp_dir().join(format!(
         "pilotdeck-host-{}-{}-{}",
@@ -260,18 +268,23 @@ fn peer(mode: &str) -> (Command, Receipt) {
     // Exclusive directory: PID reuse can never turn an old PASS into evidence.
     std::fs::create_dir(&owned).unwrap();
     let receipt = Receipt(owned.join(format!("{mode}.txt")));
-    let mut command = command(mode);
-    command.arg(&receipt.0);
-    (command, receipt)
+    (owned, receipt)
+}
+fn fixture_script() -> &'static str {
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/a6-host/fixture.py"
+    )
+}
+fn orphan_probe() -> &'static str {
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/a6-host/orphan_probe.py"
+    )
 }
 fn command(mode: &str) -> Command {
     let mut command = Command::new("python3");
-    command
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../scripts/a6-host/fixture.py"
-        ))
-        .arg(mode);
+    command.arg(fixture_script()).arg(mode);
     command
 }
 fn request() -> ExecuteRequest {
@@ -1184,6 +1197,129 @@ async fn close_allows_sigterm_cleanup_after_stdin_eof() {
     println!(
         "CLOSE_TERM_PASS stdin EOF observed before SIGTERM; cleanup receipt persisted; child reaped"
     );
+}
+
+/// #1779: the peer must not outlive its host. `orphan_probe.py` is the doomed
+/// side of the mbp2 leak -- it handshakes, records the peer pid, then SIGKILLs
+/// itself, which is exactly what a killed test process does: the peer's stdin
+/// reaches EOF and no signal ever reaches its group.
+#[cfg(unix)]
+#[tokio::test]
+async fn peer_exits_when_its_host_is_killed() {
+    let mode = "close-hang";
+    let (owned, receipt) = owned_receipt(mode);
+    let mut probe = Command::new("python3");
+    probe
+        .arg(orphan_probe())
+        .arg(fixture_script())
+        .arg(mode)
+        .arg(&receipt.0)
+        .arg(&owned)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut probe = probe.spawn().unwrap();
+    probe.wait().await.unwrap();
+    let pid: u32 = std::fs::read_to_string(owned.join("fixture.pid"))
+        .expect("probe records the peer pid before dying")
+        .trim()
+        .parse()
+        .unwrap();
+    // The watchdog polls the parent every 100 ms; assert_reaped allows 10 s.
+    assert_reaped(pid).await;
+    // Exiting is not the whole claim: it must be the parent-death path, not a
+    // signal that happened to arrive from the test's own process group.
+    let reason = std::fs::read_to_string(receipt.0.with_extension("orphan"))
+        .expect("peer did not record why it exited");
+    assert!(reason.contains("parent"), "{reason}");
+    println!("HOST_PASS killed host: peer {pid} exited instead of orphaning");
+}
+
+/// #1779: stdin EOF is not a terminating signal. The `while True:
+/// signal.pause()` this replaces waited forever when the host closed stdin and
+/// died before escalating; the bounded wait must fail loudly instead.
+#[cfg(unix)]
+#[tokio::test]
+async fn peer_fails_instead_of_hanging_when_no_signal_follows_eof() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    let mode = "close-hang";
+    let (mut command, receipt) = peer(mode);
+    // The production ceiling is 30 s; two seconds keeps this assertion quick
+    // without weakening it -- the peer is idle the whole time.
+    command.env("PDRS_A6_CLOSE_WAIT_LIMIT", "2");
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut stderr = child.stderr.take().unwrap();
+    for frame in [
+        r#"{"kind":"request","messageId":"hello-1","method":"hello"}"#,
+        r#"{"kind":"request","messageId":"cap-1","method":"capabilities"}"#,
+    ] {
+        stdin.write_all(frame.as_bytes()).await.unwrap();
+        stdin.write_all(b"\n").await.unwrap();
+        stdin.flush().await.unwrap();
+        assert!(
+            stdout.next_line().await.unwrap().is_some(),
+            "peer stopped answering during the handshake"
+        );
+    }
+    drop(stdin); // EOF, and no SIGTERM ever follows
+    let status = timeout(Duration::from_secs(20), child.wait())
+        .await
+        .expect("peer hung after stdin EOF: the bounded wait is gone (#1779)")
+        .unwrap();
+    assert!(
+        !status.success(),
+        "peer reported success for an EOF it never got a signal after: {status:?}"
+    );
+    let mut text = String::new();
+    stderr.read_to_string(&mut text).await.unwrap();
+    assert!(
+        text.contains("no terminating signal within"),
+        "peer did not report the missing signal: {text}"
+    );
+    let reason = std::fs::read_to_string(receipt.0.with_extension("timeout"))
+        .expect("peer did not persist why it gave up");
+    assert!(reason.contains("no terminating signal within"), "{reason}");
+}
+
+/// #1779: the backstop. A peer whose parent cannot be observed (for example
+/// one that was already reparented before the watchdog started) must still not
+/// outlive its ceiling.
+#[tokio::test]
+async fn peer_self_terminates_at_max_lifetime() {
+    let mode = "positive";
+    let (mut command, receipt) = peer(mode);
+    command.env("PDRS_A6_FIXTURE_MAX_LIFETIME", "2");
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    // Hold stdin open: the peer blocks in its first read with its host alive,
+    // so only the lifetime ceiling can end it.
+    let _stdin = child.stdin.take().unwrap();
+    let output = timeout(Duration::from_secs(20), child.wait_with_output())
+        .await
+        .expect("peer outlived its lifetime ceiling (#1779)")
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(71),
+        "expected the lifetime exit code: {:?}",
+        output.status
+    );
+    let reason = std::fs::read_to_string(receipt.0.with_extension("lifetime"))
+        .expect("peer did not persist why it gave up");
+    assert!(reason.contains("lifetime exceeded"), "{reason}");
 }
 
 #[tokio::test]

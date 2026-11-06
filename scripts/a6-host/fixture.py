@@ -8,6 +8,8 @@ import subprocess
 import select
 from pathlib import Path
 
+import lifetime  # #1779: parent-death + lifetime watchdog, same directory
+
 mode = sys.argv[1]
 if mode.startswith('reconnect-'):
     import runpy
@@ -52,6 +54,9 @@ known_modes.update({
 if mode not in known_modes:
     sys.exit('unknown fixture mode: ' + mode)
 receipt = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+# #1779: a SIGKILLed host reparents this process to init and never sends the
+# signal a waiting mode is blocked on. Watch the parent for every mode.
+lifetime.install(receipt, mode)
 
 
 def write_receipt():
@@ -162,8 +167,10 @@ send(response(capabilities, **binding, payload=dict(capabilitiesVersion='v1', me
 if mode in ('close-term-cleanup', 'close-hang'):
     assert sys.stdin.read() == ''
     receipt.with_suffix('.eof').write_text('EOF\n')
-    while True:
-        signal.pause()
+    # #1779: EOF only says the host stopped writing; the SIGTERM this mode
+    # waits for never comes if the host is gone. Bound the wait (and let the
+    # parent watchdog cover the orphan case) instead of pausing forever.
+    lifetime.bounded_close_wait(receipt, mode)
 if mode == 'cancel-pre-execute':
     assert sys.stdin.read() == ''
     write_receipt()
