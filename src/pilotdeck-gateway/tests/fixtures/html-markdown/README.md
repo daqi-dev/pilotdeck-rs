@@ -172,7 +172,7 @@ factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它
 CPU 秒无关（倍数小时差距本身也小，封顶值随之变小）。factor 2 的 1.45 s 这种长样本
 （deep-frame 迁移前的墙钟实测，也是负控变异体下的 4 MiB CPU 时间）折算 0.10x，
 低于 0.117x 的封顶，**带宽不变**（2.83x + 0.10x = 2.93x；`large_shallow` 的 5.8 s
-为 2.86x，同样不封顶）；现役的 deep-frame 与 `large_shallow` 都已改成 CPU 采样
+为 2.85x，同样不封顶）；现役的 deep-frame 与 `large_shallow` 都已改成 CPU 采样
 （cb8 release：deep-frame 23 ms、`large_shallow` paragraphs 107 ms），
 **封顶生效**，带宽从 9.35x / 4.23x 收到 2.95x，真二次 4.0x 重新可拦。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
