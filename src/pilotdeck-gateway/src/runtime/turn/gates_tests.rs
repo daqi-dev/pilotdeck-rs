@@ -674,12 +674,12 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                 0,
                 "#855 [cancel]: the pump must never start, not even before the abort terminal"
             );
-            // #1219 / A7.2-TURN-ABORT-001's completeTurn dimension. No runner
-            // exists on this pre-execute path, but the aborted terminal is
-            // still recorded exactly once through `RecordingAction::Complete`.
+            // #1219 / A7.2-TURN-ABORT-001's completeTurn dimension. The host
+            // pump never starts here, but the factory returned and its runner
+            // is wired, so the aborted terminal is recorded exactly once via
+            // `RecordingAction::Complete` -> `TurnRunner::complete`.
             // Node v22.22.0, real TS `pump-order-cases/generate.mts` cancel
-            // cell: one durable turn_result with result.type=aborted,
-            // stopReason=aborted_streaming (ts-pump-order/cancel-raw.json).
+            // cell: one durable turn_result (type=aborted; cancel-raw.json).
             assert_eq!(
                 store.completes.load(Ordering::SeqCst),
                 1,
@@ -721,6 +721,15 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
                     .get("type"),
                 Some(&"success".into()),
                 "#741i [open]: authoritative terminal keeps success"
+            );
+            // #1219: these sibling cells end through the same
+            // `RecordingAction::Complete`, so the durable count is one here too
+            // (the pre-cancel cell above only differs in which terminal it
+            // synthesises).
+            assert_eq!(
+                store.completes.load(Ordering::SeqCst),
+                1,
+                "#1219 [{case}]: a completed turn appends exactly one durable turn_result"
             );
         }
     }

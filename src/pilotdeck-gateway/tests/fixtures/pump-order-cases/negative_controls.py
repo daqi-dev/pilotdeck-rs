@@ -158,12 +158,12 @@ mutations['submitted-prefix-lost'] = (
       '#741k [open]: user_prompt_submitted must follow input_accepted')],
 )
 
-# #1219: A7.2-TURN-ABORT-001's completeTurn dimension. The pre-execute
-# cancellation has no runner, yet its aborted terminal is still recorded once
-# (real TS generate.mts cancel cell: one durable turn_result,
-# result.type=aborted). Dropping aborted terminals from the completion path
-# must trip the count assertion alone; the projection and pump checks stay
-# untouched.
+# #1219: A7.2-TURN-ABORT-001's completeTurn dimension. The host pump never
+# starts on the pre-execute cancellation, but the factory has already returned
+# and its runner records the aborted terminal once (real TS generate.mts cancel
+# cell: one durable turn_result, result.type=aborted). Dropping aborted
+# terminals from the completion path must trip the count assertion alone; the
+# projection and pump checks stay untouched.
 mutations['pre-cancel-skip-complete'] = (
     path,
     '            _ if terminal && self.accepted => Some(RecordingAction::Complete(',
@@ -171,6 +171,18 @@ mutations['pre-cancel-skip-complete'] = (
     'gates_pump_cancel_never_starts_the_pump',
     [('gates_pump_cancel_never_starts_the_pump',
       '#1219 [cancel]: pre-cancel must append exactly one durable turn_result')],
+)
+
+# #1219 r3: the sibling reject/open cells end through the same completion path,
+# so narrowing it to aborted terminals alone must trip their durable-count
+# assertion too.
+mutations['open-skip-complete'] = (
+    path,
+    '            _ if terminal && self.accepted => Some(RecordingAction::Complete(',
+    '            _ if terminal && self.accepted && event.get("result").and_then(|r| r.get("type")) == Some(&"aborted".into()) => Some(RecordingAction::Complete(',
+    'gates_pump_open_pins_the_start_order',
+    [('gates_pump_open_pins_the_start_order',
+      '#1219 [open]: a completed turn appends exactly one durable turn_result')],
 )
 
 from negative_suite import Case, run_cases
