@@ -307,6 +307,43 @@ const scenarios: Scenario[] = [
     ],
   },
   {
+    id: 'tools-list-bad-output-schema',
+    procs: [{
+      initialize: INIT(),
+      'tools/list': ok({
+        tools: [
+          { name: 'good', inputSchema: { type: 'object' } },
+          {
+            name: 'bad',
+            inputSchema: { type: 'object' },
+            outputSchema: { type: 'object', properties: { x: { type: 'nope' } } },
+          },
+        ],
+      }),
+    }],
+    ops: [{ op: 'listTools' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
+    // Same rejection, but the Ajv text mentions "timeout": the baseline lets the
+    // failure out as a plain Error, so the shared `is_timeout_message`
+    // classifier reports a timeout and recycles the transport (#401 boundary P1).
+    id: 'tools-list-timeout-shaped-output-schema',
+    procs: [{
+      initialize: INIT(),
+      'tools/list': ok({
+        tools: [
+          { name: 'good', inputSchema: { type: 'object' } },
+          {
+            name: 'bad',
+            inputSchema: { type: 'object' },
+            outputSchema: { type: 'object', properties: { x: { type: 'timeout' } } },
+          },
+        ],
+      }),
+    }],
+    ops: [{ op: 'listTools' }, { op: 'status' }, { op: 'close' }],
+  },
+  {
     id: 'server-crash',
     procs: [{ initialize: INIT(), 'tools/call:crash': [{ exit: 3 }] }],
     ops: [
@@ -859,8 +896,11 @@ assert.equal(scenario('http-json').http.length, 5);
 assert.equal(scenario('http-errors').steps[6].ok.content[0].text, 'after reconnect');
 assert.equal(scenario('sse-legacy-refused').steps[0].error.message,
   'MCP handshake failed: SSE error: TypeError: fetch failed: connect ECONNREFUSED <refused>');
-assert.equal(recorded.length, 26);
-assert.equal(stepCount, 115);
+assert.equal(recorded.length, 28);
+assert.equal(stepCount, 121);
+assert.equal(scenario('tools-list-bad-output-schema').steps[0].error.code, 'mcp_call_failed');
+assert.equal(scenario('tools-list-timeout-shaped-output-schema').steps[0].error.code, 'mcp_call_timeout');
+assert.equal(scenario('tools-list-timeout-shaped-output-schema').steps[1].status, 'error');
 assert.deepEqual(
   [sanitize, recursive, wire, parse, truncate, expand, config].map((cases) => cases.length),
   [6, 4, 7, 7, 5, 11, 7],
