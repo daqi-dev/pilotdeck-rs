@@ -184,28 +184,30 @@ impl BarrierRelease {
 }
 impl Drop for BarrierRelease {
     fn drop(&mut self) {
-        if receipt_seq(&self.control, self.site, "release", self.key).is_none()
-            && let Some(seq) = receipt_seq(&self.control, self.site, "block", self.key)
-        {
-            // Non-panicking release: a `.unwrap()` here could abort during unwind.
-            let temporary = self.control.join("release.json.tmp");
-            if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
-                let _ = fs::rename(&temporary, self.control.join("release.json"));
-            }
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < deadline
-                && receipt_seq(&self.control, self.site, "release", self.key).is_none()
-            {
-                thread::sleep(POLL);
-            }
-        }
-        // The durable write behind the barrier lands after the release; wait for
-        // its `complete` receipt so `Scratch` does not remove the directory (and
-        // race the worker into re-creating it) before that write finishes.
+        // Re-sample on every pass, never once: a worker that only reaches the
+        // barrier while this guard is already spinning has not written its
+        // `block` receipt yet, and a one-shot sample would then skip the release
+        // entirely — the leak this guard exists to stop.
         let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline
-            && receipt_seq(&self.control, self.site, "complete", self.key).is_none()
-        {
+        loop {
+            if receipt_seq(&self.control, self.site, "release", self.key).is_none()
+                && let Some(seq) = receipt_seq(&self.control, self.site, "block", self.key)
+            {
+                // Non-panicking release: a `.unwrap()` here could abort during unwind.
+                let temporary = self.control.join("release.json.tmp");
+                if fs::write(&temporary, format!("{{\"seq\":{seq}}}")).is_ok() {
+                    let _ = fs::rename(&temporary, self.control.join("release.json"));
+                }
+            }
+            // The durable write behind the barrier lands after the release; wait
+            // for its `complete` receipt so `Scratch` does not remove the
+            // directory (and race the worker into re-creating it) before that
+            // write finishes.
+            if receipt_seq(&self.control, self.site, "complete", self.key).is_some()
+                || Instant::now() >= deadline
+            {
+                break;
+            }
             thread::sleep(POLL);
         }
     }
