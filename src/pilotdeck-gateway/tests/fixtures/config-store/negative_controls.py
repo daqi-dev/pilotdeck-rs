@@ -8,11 +8,12 @@ Every selected row is reported, including anchor/build/source-guard failures.
 
 Rows bind one mutation to one named test in ``config::store::tests`` (a lib
 test, run with ``--exact``); the kill evidence is that test's own panic payload
-carrying its ``#1736`` / ``#1739`` message. Three rows pin the watcher bounds
-(the debounce ceiling, the poll-interval ceiling, and the ``checked_add``
-overflow fallback in ``deadline_after``); two pin the metadata short-circuit
-(the skipped content read on unchanged metadata, and the ctime bump that
-carries a same-length mtime-restored rewrite through it).
+carrying its ``#1736`` / ``#1739`` / ``#1794`` message. Four rows pin the
+watcher bounds (the debounce ceiling through both the watcher-level test and
+the ledger's literal two-hour pin, the poll-interval ceiling, and the
+``checked_add`` overflow fallback in ``deadline_after``); two pin the metadata
+short-circuit (the skipped content read on unchanged metadata, and the ctime
+bump that carries a same-length mtime-restored rewrite through it).
 """
 from pathlib import Path
 import json
@@ -40,6 +41,19 @@ mutations = [
      '}',
      'config::store::tests::overlong_debounce_is_clamped_and_reloads_within_the_bound',
      '#1736 an overlong debounce lands on MAX_DEBOUNCE, not on the requested value'),
+    # #1794 P1-2: the same clamp removal, bound to the ledger's literal
+    # two-hour value instead of `2 * MAX_DEBOUNCE` — raising the ceiling to
+    # Node's own `2^31 - 1` ms limit is the entry's convergence path and this
+    # row is what turns that from a silent behaviour change into a red test.
+    ('two-hour-debounce-ceiling-removed', source,
+     'fn effective_debounce(options: &WatchOptions) -> Duration {\n'
+     '    options.debounce.min(MAX_DEBOUNCE)\n'
+     '}',
+     'fn effective_debounce(options: &WatchOptions) -> Duration {\n'
+     '    options.debounce\n'
+     '}',
+     'config::store::tests::two_hour_debounce_is_clamped_to_the_one_hour_ceiling',
+     '#1794 a two-hour debounce the baseline honours verbatim lands on the one-hour ceiling'),
     # #1736: the poll-interval ceiling is removed (back to #1650's floor-only
     # clamp), so a `Duration::MAX` period hits tokio's `Instant::far_future`
     # fallback — the ticker fires once and never again, the change written
