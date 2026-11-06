@@ -13,6 +13,9 @@
 逐条记 KILLED / SURVIVED / INVALID + 原因，**全部跑完再汇总**（不遇第一个失败就
 中止）；任一非 KILLED 即非零退出；``summary.json`` 原子发布（先写 ``*.tmp`` 再
 ``rename``，缺失即失败）。
+
+退出码与 checker 同口径：0 全 KILLED / 1 有非 KILLED / 2 输入或环境不可用
+（缺 ``-I``、checker 加载失败、输出目录写不进去）——rc2 绝不能被读成「判据 FAIL」。
 """
 from __future__ import annotations
 
@@ -38,13 +41,25 @@ import sys
 # 把「哪些形状算帮助」再猜一遍（``-hh`` / ``--help=x`` / 被带值选项吃掉），而猜错的
 # 方向都是留旧 PASS 冒充本轮（两家评审 P0）。
 #
-# 同理**不镜像 argparse 的「选项样式」判定**（负数正则跨版本变过、另有含空格当值的
-# 规则）：值 = ``--output`` 后第一个不是本解析器已知选项的非空 token，其余 ``-`` 开头
-# 的（``-1`` / ``-1x`` / ``-x y``）一律按值。多失效一个名字像选项的目录，比漏收后
-# 留下旧 PASS 便宜。所有显式目录**逐个都试一遍**再退出，前一个不可删不短路后面的。
+# 值 = 紧跟 ``--output`` 的**那个** token；它若不是值（见下），就算这次 ``--output``
+# 缺值、不再向后找（``--output --data DIR`` 里的 DIR 是 ``--data`` 的值，argparse 在
+# 第一个 ``--output`` 上就报错）。三种 token 不是值：
+#   ① 本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）；
+#   ② **两个 CPython 版本都判成选项**的形状（``-`` 后是 ``-`` 或字母、且不含空格：
+#      ``-hh`` / ``-h=x`` / ``-x`` / ``--he`` / ``-e5``）——3.12 与 3.14 实测
+#      ``--output <token>`` 都报 ``expected one argument``，当值只会去删同名目录；
+#   ③ 空 token（``Path('') == Path('.')``，见 ``main`` 的空值判断）。
+# 两版结论**相反**的只有「``-`` 后紧跟数字或点」这一小撮（``-1x`` / ``-1e3``：3.12
+# 当选项、3.14 当值），一律按值——漏收的方向是留旧 PASS 冒充本轮，误删只是少一份可
+# 复算的旧结果，代价不对称。所有显式目录**逐个都试一遍**再退出，前一个不可删不短路
+# 后面的。
 # ---------------------------------------------------------------------------
 
 VALUE_OPTIONS = ('--output', '--data', '--oracle')
+HELP_OPTIONS = ('-h', '--help')
+# 选项拼写的唯一来源：``main`` 的解析器用 ``PARSER_OPTIONS`` 建、``is_known_option``
+# 用 ``KNOWN_OPTIONS`` 判，两者在 ``build_parser`` 里断言相等（评审 P2：手抄副本无守卫）。
+KNOWN_OPTIONS = VALUE_OPTIONS + HELP_OPTIONS
 
 
 def tmp_owner_pid(name):
@@ -61,6 +76,10 @@ def pid_alive(pid):
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
+        return False
+    except OverflowError:
+        # 名字里的「pid」大到超出 C int（人为植入的 tmp）：不是活进程，按垃圾处理。
+        # 不接住会让模块体的失效段整段抛异常 → rc1 traceback 且后面的目录不再失效。
         return False
     except OSError:
         return True
@@ -118,22 +137,30 @@ def invalidate_stale_summary(out_root):
 
 
 def is_known_option(token):
-    """本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）。
-
-    只回答一个问题：「``--output`` 后面的这个 token 会不会被 argparse 当成值」。
-    认识的选项一定不是值（argparse 报 ``expected one argument``）；其余 token——包括
-    ``-1``、``-1x``、``-x y``、``--bad`` 这类以 ``-`` 开头的——一律按值处理。
-
-    **不镜像 argparse 的「选项样式」判定**：那套规则跨版本变过（3.12 的
-    ``^-\\d+$|^-\\d*\\.\\d+$`` 与 3.14 的 ``-\\.?\\d`` 对 ``-1x`` 结论相反，另有一条
-    「含空格的 token 当值」），照抄任何一版都会在另一版上漏收，而漏收的方向是
-    **留旧 PASS 冒充本轮**（两家评审各给一条可达形状）。这里改成一侧判据：多失效
-    一个名字像选项、且真的存在并含本装置产物的目录，代价远小于留下旧 PASS。
-    """
-    if token in ('-h', '--help'):
-        return True
+    """本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）。取值规则见模块头。"""
     return any(token == option or token.startswith(option + '=')
-               for option in VALUE_OPTIONS + ('--help',))
+               for option in KNOWN_OPTIONS)
+
+
+def is_certainly_option(token):
+    """**3.12 与 3.14 都会判成选项**的形状，因此不当 ``--output`` 的值。理由见模块头。
+
+    ``-hh`` / ``-h=x`` / ``-x`` / ``--he`` / ``--1`` / ``-e5`` 实测两版都是选项
+    （``--output <token>`` 报 ``expected one argument``）；当值只会去失效一个同名目录
+    （Codex r10 P0）。含空格的两版都当值（``-x y``）；``-`` 开头的负数仍是值；两版
+    **结论相反**的 ``-1x`` / ``-1e3`` / ``-1_000`` 按值（见模块头的代价不对称）。
+    """
+    if not token.startswith('-') or len(token) == 1:
+        return False
+    if ' ' in token:
+        return False
+    second = token[1]
+    if second == '-':
+        return True
+    if second == '.':
+        # ``-.5`` 两版都是值；``-.`` / ``-..`` 两版都是选项
+        return not (len(token) > 2 and token[2].isdigit())
+    return not second.isdigit()
 
 
 def early_outputs(argv):
@@ -142,12 +169,13 @@ def early_outputs(argv):
     只认两字不差的 ``--output`` / ``--output=``：不猜缩写、不猜位置参数——那些猜测
     正是前几轮误删别人证据的来源（评审 P0）。
 
-    值 = ``--output`` 后面第一个**不是已知选项**的非空 token（``--`` 之后不再有选项）。
-    已知选项不当值，但要**重新按 token 处理一遍**：``--output --output=DIR`` 的 DIR
-    仍被收集（argparse 在第一个 ``--output`` 上报错，DIR 是这条命令行里显式点名的）。
-    空值（``--output=`` / ``--output ''``）不收集——``Path('')`` 就是当前工作目录，
-    绝不能把 CWD 当输出目录失效（两家评审：会删掉调用者目录里的 summary）；``main``
-    另行把它判成参数错误 rc2。
+    值 = **紧跟** ``--output`` 的那个 token，且它不是已知选项、不是两版都判成选项的
+    形状（``is_certainly_option``）、也不是空值；否则视为这次 ``--output`` 缺值，
+    **不再向后找**（``--output --data DIR`` 的 DIR 属于 ``--data``）。已知选项不当值，
+    但要**重新按 token 处理一遍**：``--output --output=DIR`` 的 DIR 仍被收集（argparse
+    在第一个 ``--output`` 上报错，DIR 是这条命令行里显式点名的）。空值（``--output=``
+    / ``--output ''``）不收集——``Path('')`` 就是当前工作目录，绝不能把 CWD 当输出
+    目录失效（两家评审：会删掉调用者目录里的 summary）；``main`` 另行判参数错误 rc2。
 
     重复写多次时**每个非空值都收集**：argparse 只有最后一个生效，但这条命令终究没跑完，
     被显式点名的目录都不该留旧 PASS。
@@ -159,10 +187,11 @@ def early_outputs(argv):
             break
         if expecting:
             expecting = False
-            if token and not is_known_option(token):
+            if (token and not is_known_option(token)
+                    and not is_certainly_option(token)):
                 values.append(token)
                 continue
-            # 已知选项不是值：不收集，落下去按选项再处理这个 token。
+            # 不是值：不收集，落下去按选项再处理这个 token。
         if token == '--output':
             expecting = True
         elif token.startswith('--output='):
@@ -256,6 +285,22 @@ CHECK = load_checker()
 CAPABILITY_UNAVAILABLE = CHECK.CAPABILITY_UNAVAILABLE
 
 
+class OutputError(Exception):
+    """输出目录写不进去（只读目录 / 同名文件 / 父件是普通文件 / 目标是目录）。
+
+    环境不可用按入口级失败收口 rc2；裸 OSError 冒成 traceback 是 rc1，会被下游读成
+    「某个控件 SURVIVED 的判据 FAIL」（两家评审 r10）。
+    """
+
+
+def write_output(path, text):
+    """写盘失败一律折成 ``OutputError``（rc2），不当判据 FAIL。"""
+    try:
+        Path(path).write_text(text, encoding='utf-8')
+    except (OSError, ValueError) as error:
+        raise OutputError(f'cannot write {path}: {error}') from error
+
+
 def read_round(data_dir, name):
     # 只按 "\n" 切行（共享实现，见 check_outcome_parity.load_frames）。
     rows, _ = CHECK.load_rows(Path(data_dir) / name)
@@ -265,12 +310,15 @@ def read_round(data_dir, name):
 
 def write_round(out_dir, rows, frames):
     driver = Path(out_dir) / 'driver'
-    driver.mkdir(parents=True, exist_ok=True)
-    (driver / 'methods.json').write_text(
-        json.dumps({'methods': rows}, ensure_ascii=False) + '\n', encoding='utf-8')
-    (driver / 'frames.jsonl').write_text(
-        '\n'.join(json.dumps(frame, ensure_ascii=False) for frame in frames) + '\n',
-        encoding='utf-8')
+    try:
+        driver.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OutputError(f'cannot create {driver}: {error}') from error
+    write_output(driver / 'methods.json',
+                 json.dumps({'methods': rows}, ensure_ascii=False) + '\n')
+    write_output(driver / 'frames.jsonl',
+                 '\n'.join(json.dumps(frame, ensure_ascii=False)
+                           for frame in frames) + '\n')
 
 
 def reread_round(out_dir):
@@ -702,7 +750,11 @@ def run_control(control, out_root, oracle):
     for name, (rows, frames) in bundles.items():
         write_round(out_dir / name, rows, frames)
     # 旧产物不留在目录里冒充本轮输出（缺失即失败）。
-    (out_dir / 'check-output.json').unlink(missing_ok=True)
+    try:
+        (out_dir / 'check-output.json').unlink(missing_ok=True)
+    except OSError as error:
+        raise OutputError(
+            f'cannot remove stale {out_dir / "check-output.json"}: {error}') from error
     # 第一步：注入是否落地（重读落盘文件核对）。
     try:
         reread = {name: reread_round(out_dir / name) for name in bundles}
@@ -725,7 +777,7 @@ def run_control(control, out_root, oracle):
                       reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
         return record
     record['rc'] = result.returncode
-    (out_dir / 'check-output.json').write_text(result.stdout, encoding='utf-8')
+    write_output(out_dir / 'check-output.json', result.stdout)
     if result.stderr.strip():
         record['stderr'] = result.stderr.strip()[:2000]
     if result.returncode == 0:
@@ -773,18 +825,36 @@ def run_control(control, out_root, oracle):
     return record
 
 
-def main(argv=None):
+def build_parser():
+    """解析器选项表由 ``PARSER_OPTIONS`` 驱动，并断言与 ``KNOWN_OPTIONS`` 一致。
+
+    两处各自硬编码时，「加一个选项但漏改预扫描集合」会让该选项被当成 ``--output``
+    的值去失效同名目录，漂移无人发现（评审 P2）。这里让漂移在启动时 rc2 暴露。
+    """
+    options = (
+        (('--output',), {'required': True,
+                         'help': 'output directory for mutated rounds + summary'}),
+        (('--data',), {'default': str(DEFAULT_DATA),
+                       'help': 'TS reference data root (default: %(default)s)'}),
+        (('--oracle',), {'default': str(DEFAULT_ORACLE),
+                         'help': 'ts-oracle.json (default: %(default)s)'}),
+    )
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
         description='Negative controls N1-N17 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
     # 输出目录走**显式**选项、不做位置参数：解析前就能无歧义取值（见模块头）。
-    parser.add_argument('--output', required=True,
-                        help='output directory for mutated rounds + summary')
-    parser.add_argument('--data', default=str(DEFAULT_DATA),
-                        help='TS reference data root (default: %(default)s)')
-    parser.add_argument('--oracle', default=str(DEFAULT_ORACLE),
-                        help='ts-oracle.json (default: %(default)s)')
+    for flags, kwargs in options:
+        parser.add_argument(*flags, **kwargs)
+    declared = tuple(flags[0] for flags, _ in options)
+    if declared != VALUE_OPTIONS:
+        parser.error(f'KNOWN_OPTIONS out of sync with the parser: '
+                     f'parser={declared} scanner={VALUE_OPTIONS}')
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(raw_argv)
 
@@ -822,23 +892,31 @@ def main(argv=None):
         return 2
 
     records = []
-    for control in controls:  # 全部跑完再汇总，不遇败即停
-        record = run_control(control, out_root, Path(args.oracle))
-        records.append(record)
-        print(f"{control.id}: {record['verdict']} ({record['reason']})")
+    try:
+        for control in controls:  # 全部跑完再汇总，不遇败即停
+            record = run_control(control, out_root, Path(args.oracle))
+            records.append(record)
+            print(f"{control.id}: {record['verdict']} ({record['reason']})")
 
-    counts = {verdict: sum(1 for record in records if record['verdict'] == verdict)
-              for verdict in ('KILLED', 'SURVIVED', 'INVALID')}
-    summary = {'status': 'PASS' if counts['SURVIVED'] == 0 and counts['INVALID'] == 0 else 'FAIL',
-               'controls': records, 'counts': counts,
-               'oracle': str(args.oracle), 'data': str(args.data)}
-    target = out_root / 'summary.json'
-    # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
-    # 会把另一进程写了一半的内容发布成最终文件）。
-    tmp = out_root / f'summary.json.{os.getpid()}.tmp'
-    tmp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n',
-                   encoding='utf-8')
-    tmp.replace(target)  # 原子发布：先写 *.tmp 再 replace
+        counts = {verdict: sum(1 for record in records if record['verdict'] == verdict)
+                  for verdict in ('KILLED', 'SURVIVED', 'INVALID')}
+        summary = {'status': 'PASS' if counts['SURVIVED'] == 0
+                   and counts['INVALID'] == 0 else 'FAIL',
+                   'controls': records, 'counts': counts,
+                   'oracle': str(args.oracle), 'data': str(args.data)}
+        target = out_root / 'summary.json'
+        # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
+        # 会把另一进程写了一半的内容发布成最终文件）。
+        tmp = out_root / f'summary.json.{os.getpid()}.tmp'
+        write_output(tmp, json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        try:
+            tmp.replace(target)  # 原子发布：先写 *.tmp 再 replace
+        except OSError as error:
+            raise OutputError(f'cannot publish {target}: {error}') from error
+    except OutputError as error:
+        # 写盘失败是「跑不了」（rc2），不是「某个控件的判据 FAIL」（rc1）。
+        print(f'negative_controls: 输出目录不可用：{error}', file=sys.stderr)
+        return 2
     print(json.dumps({'status': summary['status'], 'counts': counts,
                       'summary': str(target)}, ensure_ascii=False))
     return 0 if summary['status'] == 'PASS' else 1
