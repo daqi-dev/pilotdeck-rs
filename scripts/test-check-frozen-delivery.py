@@ -3110,7 +3110,7 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
                         source=leak)
         case("子装置在被审仓自建 worktree → BLOCKED（写范围之外）",
              proc.returncode == 1
-             and "appeared while the apparatuses ran" in proc.stdout,
+             and "appeared in the audited repo while this apparatus ran" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     # P1-C2（续）：SIGTERM 落在快照存活期间也必须清干净（atexit + 信号转
@@ -3164,7 +3164,8 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              f"err={err.strip()[-200:]}")
 
     # P2：``git worktree add`` 失败时 git 可能已经写下 .git/worktrees 记账，
-    # 失败路径必须走 drop_holder（remove 失败后 prune），不能只删目录。
+    # 失败路径必须只清掉**本 holder** 的记账；仓级 ``git worktree prune`` 会顺手
+    # 删掉别的会话的陈旧记账，不在本次写范围内。
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "repo"
         root.mkdir()
@@ -3174,27 +3175,35 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         head = git(root, "rev-parse", "HEAD")
         real_git = cfd.git
         entry = root / ".git" / "worktrees" / "tree"
+        other = root / ".git" / "worktrees" / "someone-else"
+        other.mkdir(parents=True)
+        (other / "gitdir").write_text(str(Path(td) / "elsewhere" / ".git") + "\n")
+        calls = []
 
         def failing_git(_root, *args, **_kwargs):
+            calls.append(args)
+            if args[:2] == ("rev-parse", "--git-common-dir"):
+                return 0, ".git\n", ""
             if args[:2] == ("worktree", "add"):
+                # git 先写记账再 checkout：失败时 entry 已存在，gitdir 指向本 holder。
                 entry.mkdir(parents=True, exist_ok=True)
+                (entry / "gitdir").write_text(str(Path(args[4]) / ".git") + "\n")
                 return 1, "", "boom"
             if args[:2] == ("worktree", "remove"):
                 return 1, "", "no such worktree"
-            if args[:2] == ("worktree", "prune"):
-                shutil.rmtree(entry, ignore_errors=True)
-                return 0, "", ""
             return 0, "", ""
         try:
             cfd.git = failing_git
             snapshot, why = cfd.create_snapshot(root, head)
         finally:
             cfd.git = real_git
-        case("快照创建失败 → 返回 None 且 .git/worktrees 记账被 prune 清掉",
+        case("快照创建失败 → 返回 None 且只清本 holder 的 .git/worktrees 记账",
              snapshot is None and why == "boom" and not entry.exists()
+             and other.exists()
+             and ("worktree", "prune") not in calls
              and not cfd._SNAPSHOT_HOLDERS,
              f"snapshot={snapshot} why={why} entry={entry.exists()} "
-             f"holders={cfd._SNAPSHOT_HOLDERS}")
+             f"other={other.exists()} calls={calls} holders={cfd._SNAPSHOT_HOLDERS}")
 
     # P2：ROW_BARE 只认 64 位 hex，16 位截断哈希是散文不是清单行。
     with tempfile.TemporaryDirectory() as td:
@@ -3206,6 +3215,128 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         rows = cfd.manifest_rows(root, "parity", git(root, "rev-parse", "HEAD"))
         case("ROW_BARE：16 位 hex 行不算清单行（真装置也只认 64 位）",
              rows == set(), f"rows={rows}")
+
+    # P2：ROW_TABLE 的收紧也要有负控（真 fullmatch 要求尾单元格与纯哈希反引号）。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              "| `scripts/parity/a.py` | `0123456789abcdef` |\n"
+              "| `scripts/parity/b.py` | `0123456789abcdef junk` | note |\n"
+              "| `scripts/parity/c.py` | `0123456789abcdef…` | note |\n")
+        commit(root, "base")
+        rows = cfd.manifest_rows(root, "parity", git(root, "rev-parse", "HEAD"))
+        case("ROW_TABLE：缺尾单元格 / 哈希反引号带杂尾是散文，合法省略号行才算",
+             rows == {"scripts/parity/c.py"}, f"rows={rows}")
+
+    # P2：ROW_BARE 用 re.ASCII —— 真装置是 bytes 正则，CJK 行名在那边就是散文。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "specs/gateway-parity/FROZEN.md",
+              "# fake FROZEN\n\n" + sha("x") + "  中文/名.py\n")
+        commit(root, "base")
+        rows = cfd.manifest_rows(root, "gateway-parity", git(root, "rev-parse", "HEAD"))
+        case("ROW_BARE：CJK 行名按真装置（bytes \\w）算散文", rows == set(), f"rows={rows}")
+
+    # P1（boundary）：``ls-tree -z`` 按字节解析 —— 非 UTF-8 目录名被解码成 U+FFFD
+    # 后 exists_at 会问一个不存在的名字，装置被静默跳过（假 READY 方向）。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        raw = b'specs/caf\xe9'
+        kind = b'caf\xe9'.decode('utf-8', 'surrogateescape')
+        real_bytes, real_exists = cfd.git_bytes, cfd.exists_at
+        seen = []
+        cfd.git_bytes = lambda *_a, **_k: (0, b'040000 tree ' + b'0' * 40 + b'\t' + raw
+                                           + b'\0', b'')
+        cfd.exists_at = lambda _r, _c, path: (seen.append(path), True)[1]
+        try:
+            found = cfd.discover(root, 'f' * 40)
+        finally:
+            cfd.git_bytes, cfd.exists_at = real_bytes, real_exists
+        case("discover 按字节读 ls-tree：非 UTF-8 目录名不被静默跳过",
+             found == [(kind, root / 'scripts' / kind / 'check_frozen.py')]
+             and all('�' not in path for path in seen),
+             f"found={found} seen={seen}")
+
+    # P2（sibling）：钉住提交里没有的装置目录（只在工作树里，未跟踪）不得被审 ——
+    # 杀掉「discover 仍读文件系统」的变异体。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        fake_apparatus(root, "parity", {"status": "PASS", "failures": []})
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        write(root, "specs/fake/FROZEN.md",
+              "# fake FROZEN\n\n" + sha("S\n") + "  ../../seed.txt\n")
+        write(root, "scripts/fake/check_frozen.py",
+              "import json\nprint(json.dumps({'status': 'PASS', 'failures': []}))\n")
+        proc = run_tool("--root", str(root), "--base", "origin/main")
+        case("工作树里多出的未跟踪装置（钉住提交没有）不被审",
+             "=== fake ===" not in proc.stdout and "=== parity ===" in proc.stdout
+             and proc.returncode == 0,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # P1（codex/GLM 两家独立撞上）：并发兄弟建 worktree 不得假 BLOCK，本进程
+    # 留下的记账必须拦。
+    case("scope_verdict：本进程快照记账残留 → block",
+         cfd.scope_verdict({'/a'}, {'/a', '/snap/tree'}, '/snap/tree')[0] is not None)
+    verdict_block, verdict_note = cfd.scope_verdict({'/a'}, {'/a', '/other/wt'}, None)
+    case("scope_verdict：非本进程新增条目 → 只记 note 不阻",
+         verdict_block is None and '/other/wt' in (verdict_note or ''),
+         f"{verdict_block} / {verdict_note}")
+    case("scope_verdict：worktree list 读不出 → block",
+         cfd.scope_verdict(None, set(), None)[0] is not None)
+    case("scope_verdict：无变化 → 全 None",
+         cfd.scope_verdict({'/a'}, {'/a'}, '/x') == (None, None))
+    with tempfile.TemporaryDirectory() as td:
+        target = Path(td) / "snap"
+        target.mkdir()
+        link = Path(td) / "link"
+        link.symlink_to(target)
+        linked = cfd.scope_verdict(set(), {str(link)}, str(target))[0]
+        case("scope_verdict：同一个目录的符号链接拼写仍算自家记账（→ block）",
+             linked is not None, f"{linked}")
+
+    # P1（codex）：清理被 SIGTERM 打断时 holder 必须仍在登记里，atexit 才能重试。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        holder = Path(td) / "cfd-snapshot-x"
+        (holder / "tree").mkdir(parents=True)
+        real_git = cfd.git
+        raised = kept = False
+        cfd._SNAPSHOT_HOLDERS.append((root, holder))
+
+        def interrupted(_root, *_args, **_kwargs):
+            raise SystemExit(143)
+        try:
+            cfd.git = interrupted
+            try:
+                cfd.drop_holder(root, holder)
+            except SystemExit:
+                raised = True
+            kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+        finally:
+            cfd.git = real_git
+            cfd._SNAPSHOT_HOLDERS.clear()
+        case("drop_holder 被 SystemExit 打断 → holder 仍登记（atexit 可重试）",
+             raised and kept and holder.exists(), f"raised={raised} kept={kept}")
+
+    # P1（codex）：两个根嵌套时取**最深**前缀，先命中被审树会把快照路径归一错。
+    with tempfile.TemporaryDirectory() as td:
+        outer, inner = Path(td) / "outer", Path(td) / "outer" / "inner"
+        inner.mkdir(parents=True)
+        ctx_nested = {"root": outer, "kind": "ui-server-parity", "snapshot": inner}
+        nested = cfd.repo_relative_any(ctx_nested, str(inner / "a.md"))
+        plain = cfd.repo_relative_any({"root": outer, "kind": "ui-server-parity"},
+                                      str(outer / "a.md"))
+        case("repo_relative_any：嵌套根取最深前缀，非嵌套不变",
+             nested == "a.md" and plain == "a.md", f"nested={nested} plain={plain}")
 
     print(f"SUMMARY failed={fails}")
     return 1 if fails else 0
