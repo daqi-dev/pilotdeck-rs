@@ -1517,6 +1517,15 @@ fn ledger_io_display_uses_the_labelled_syscall_and_never_guesses() {
 #[cfg(unix)]
 fn temporary_create_failure_reports_the_transcript_not_the_staging_name() {
     use std::os::unix::fs::PermissionsExt;
+    if rustix::process::geteuid().as_raw() == 0 {
+        // chmod 500 cannot stop root from creating the staging file.
+        let _ = io::Write::write_all(
+            &mut std::io::stderr(),
+            b"temporary_create_failure_reports_the_transcript_not_the_staging_name: skipped, \
+              running as root (chmod 500 is not a write error for root)\n",
+        );
+        return;
+    }
     let scratch = Scratch::new();
     let path = scratch.path();
     let original = fs::metadata(&scratch.0).unwrap().permissions();
@@ -1537,6 +1546,42 @@ fn temporary_create_failure_reports_the_transcript_not_the_staging_name() {
     assert_eq!(reported, Some(path.to_string_lossy().as_ref()));
     assert_eq!(
         LedgerError::Io(error).to_string(),
+        format!("EACCES: permission denied, open '{}'", path.display())
+    );
+}
+
+/// #1554: `load`'s open stage renders Node's EACCES with the supplied path.
+/// Without this the label is invisible on the adapter path, where the reader
+/// fallback would print the same words and hide a wrong syscall.
+#[test]
+#[cfg(unix)]
+fn transcript_open_failure_renders_node_eacces_with_the_supplied_path() {
+    use std::os::unix::fs::PermissionsExt;
+    if rustix::process::geteuid().as_raw() == 0 {
+        // chmod 000 is not a read error for root, so the cell cannot run.
+        let _ = io::Write::write_all(
+            &mut std::io::stderr(),
+            b"transcript_open_failure_renders_node_eacces_with_the_supplied_path: skipped, \
+              running as root (chmod 000 is not a read error for root)\n",
+        );
+        return;
+    }
+    let scratch = Scratch::new();
+    let path = scratch.path();
+    fs::write(&path, "").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    let error = transcript::read_transcript(&path).unwrap_err();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let message = error.to_string();
+    let LedgerError::Io(error) = &error else {
+        panic!("expected an io failure: {error:?}")
+    };
+    let (syscall, reported) =
+        crate::node_io::staged_fields(error).expect("the open stage labels its failure");
+    assert_eq!(syscall, "open");
+    assert_eq!(reported, Some(path.to_string_lossy().as_ref()));
+    assert_eq!(
+        message,
         format!("EACCES: permission denied, open '{}'", path.display())
     );
 }
