@@ -1160,7 +1160,7 @@ def _status_slot_values(summary):
             if _status_key(key)]
 
 
-def _loads_shared_module(value, name, loaders=frozenset()):
+def _loads_shared_module(value, name, loaders=frozenset(), rebound=frozenset()):
     """True when *value* is the apparatus loader call for module *name*.
 
     The audited tree binds the shared module as
@@ -1171,13 +1171,17 @@ def _loads_shared_module(value, name, loaders=frozenset()):
     callee itself must resolve to the guard loader; a ``def _load(name, path)``
     inserted after ``_load = _guard.load`` spells the call the same way while
     returning a stub, so a first-argument constant alone no longer suffices
-    (GLM boundary r22 P1-2).
+    (GLM boundary r22 P1-2).  #892 r24: a loader name rebound inside the calling
+    function (``_load = <stub>`` in the body, or a parameter of that name)
+    shadows the module alias exactly like a same-named ``def`` does at module
+    scope, so *rebound* withdraws the trust in that function.
     """
     return (isinstance(value, ast.Call) and bool(value.args)
             and isinstance(value.args[0], ast.Constant)
             and value.args[0].value == name
             and isinstance(value.func, ast.Name)
-            and value.func.id in loaders)
+            and value.func.id in loaders
+            and value.func.id not in rebound)
 
 
 # #892 r23: the file that defines the apparatus loader itself.  ``load`` there
@@ -1188,20 +1192,27 @@ GUARD_REL = 'scripts/gateway-parity/_guard.py'
 
 
 def _loader_names(tree, rel=None):
-    """Module-scope names that still denote the guard loader (#892 r23).
+    """Module-scope names that still denote the guard loader (#892 r23/r24).
 
     ``_load = _guard.load`` earned every ``_load('common', ...)`` call the
     loader's trust without asking who ``_load`` is.  A name keeps the role
     only while *every* module-scope binding of it is the ``<name>.load``
-    attribute; ``_guard.py`` itself is the one sanctioned ``def load``.
+    attribute **and** that base name itself resolves on the module binding
+    graph to a real module (``_proven_module_names``); ``_guard = <stub>``
+    then ``_load = _guard.load`` would otherwise spell a loader while calling
+    a stub (#892 r24, same class as the ``_proven_source`` P0).  ``_guard.py``
+    itself is the one sanctioned ``def load``.
     """
     if not isinstance(tree, ast.Module):
         return frozenset()
     bindings = _module_scope_binding_map(tree)
+    modules = _proven_module_names(tree)
     loaders = {name for name, values in bindings.items()
-               if all(isinstance(value, ast.Attribute) and value.attr == 'load'
-                      and isinstance(value.value, ast.Name)
-                      for value in values)}
+               if values and all(
+                   isinstance(value, ast.Attribute) and value.attr == 'load'
+                   and isinstance(value.value, ast.Name)
+                   and value.value.id in modules
+                   for value in values)}
     if rel == GUARD_REL and bindings.get('load') == [None]:
         loaders.add('load')
     return frozenset(loaders)
@@ -1251,6 +1262,77 @@ def _module_scope_binding_map(tree):
     return bindings
 
 
+def _module_imported_names(tree):
+    """Module-scope names bound by an ``import`` statement (#892 r24).
+
+    ``_module_scope_binding_map`` records an import as a bare ``None`` binding,
+    the same marker it uses for a top-level ``def`` and for loop/``with``
+    targets.  Only the import form proves the name denotes a real module, so the
+    import names are collected here instead of being inferred from ``None``.
+    """
+    names = set()
+    for node in _own_nodes(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            names.update(alias.asname or alias.name.split('.')[0]
+                         for alias in node.names)
+    return names
+
+
+def _module_load_call(value, proven):
+    """True when *value* is a call that returns a loaded module (#892 r24).
+
+    The apparatus bootstrap binds ``_guard`` through
+    ``sys.modules.get('_guard')`` / ``importlib.util.module_from_spec(_spec)``.
+    The call is accepted only when the name it hangs off is itself proven
+    (an import or another proven module load), so ``_guard = stub.fake_load()``
+    does not hand ``_guard.load`` a loader role; ``importlib.import_module`` is
+    the one import-by-name spelling.
+    """
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+        return False
+    func = value.func
+    if func.attr in ('module_from_spec', 'import_module'):
+        return _root_name(func.value) in proven
+    if func.attr == 'get':
+        base = func.value
+        return (isinstance(base, ast.Attribute) and base.attr == 'modules'
+                and isinstance(base.value, ast.Name)
+                and base.value.id == 'sys' and 'sys' in proven)
+    return False
+
+
+def _root_name(node):
+    """Leftmost ``Name`` of an attribute chain, or ``None``."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _proven_module_names(tree):
+    """Module-scope names whose every binding loads a real module (#892 r24).
+
+    An imported name is proven outright; a name assigned from a module-load call
+    joins once the name that call hangs off is proven, computed as a fixpoint so
+    ``_guard = importlib.util.module_from_spec(...)`` is accepted while
+    ``_guard = SimpleNamespace(load=...)`` is not.  Anything unproven stays out,
+    and ``_loader_names`` fails closed on it.
+    """
+    if not isinstance(tree, ast.Module):
+        return frozenset()
+    bindings = _module_scope_binding_map(tree)
+    proven = set(_module_imported_names(tree))
+    changed = True
+    while changed:
+        changed = False
+        for name, values in bindings.items():
+            if name in proven or not values:
+                continue
+            if all(_module_load_call(value, proven) for value in values):
+                proven.add(name)
+                changed = True
+    return frozenset(proven)
+
+
 def _withdrawn_receivers(tree, rel=None, shared=None):
     """Relay receivers whose module-scope bindings are not proven (#892 r23).
 
@@ -1279,12 +1361,13 @@ def _withdrawn_receivers(tree, rel=None, shared=None):
         return frozenset()
     bindings = _module_scope_binding_map(tree)
     loaders = _loader_names(tree, rel)
+    proven = _proven_source_names(tree)
     poisoned = set()
     for name in receivers:
         for value in bindings.get(name, ()):
             if isinstance(value, ast.Constant) and value.value is None:
                 continue
-            if not (_proven_source(value, rel)
+            if not (_proven_source(value, rel, proven)
                     or any(_loads_shared_module(value, module, loaders)
                            for module in trusted)):
                 poisoned.add(name)
@@ -1380,10 +1463,47 @@ PROVEN_SHARED_SOURCES = {
 }
 
 
-def _proven_source(value, rel=None):
-    """True when *value* is a call to a registered proven shared source."""
+def _proven_source_names(tree):
+    """Registered proven-source names that still resolve to their real def (#892 r24).
+
+    The registry keys on ``(rel, name)``, so a same-named redefinition kept the
+    trust: a second ``def load_session_domain`` returning a PASS stub -- Python
+    runs the last def -- still spelled the registered call while the audit read
+    the stub's verdicts as the real loader's (MiniMax sibling r23 #1 / DeepSeek
+    sibling r23 #1).  A name is proven only while the module binding graph has
+    exactly one binding for it and that binding is a top-level ``def``/``class``
+    or an ``import``; a second def, an assignment, a ``global`` rebind or a
+    loop/``with`` target all leave a different marker and withdraw it.  The
+    caller intersects with the registry, so this is the "can it be traced to a
+    real module-level definition" half of the proof, never the whole claim.
+    """
+    if not isinstance(tree, ast.Module):
+        return frozenset()
+    bindings = _module_scope_binding_map(tree)
+    defined = {node.name for node in tree.body
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                    ast.ClassDef))}
+    candidates = defined | _module_imported_names(tree)
+    return frozenset(name for name in candidates
+                     if bindings.get(name) == [None])
+
+
+def _proven_source(value, rel=None, proven=frozenset(), local=frozenset()):
+    """True when *value* is a call to a registered proven shared source.
+
+    #892 r24: both halves of the proof have to hold -- the ``(rel, name)`` key
+    is registered **and** the name resolves through the module binding graph to
+    a real module-level definition (``_proven_source_names``).  A name rebound
+    in the enclosing function (``committed_status_contract = <stub>`` inside
+    ``main``) shadows the module binding for that call, so *local* withdraws it
+    the same way (DeepSeek boundary r23 #3).  ``proven`` defaults to the empty
+    set, so a caller that has no binding graph fails closed instead of trusting
+    the spelling.
+    """
     return (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-            and (rel, value.func.id) in PROVEN_SHARED_SOURCES)
+            and (rel, value.func.id) in PROVEN_SHARED_SOURCES
+            and value.func.id in proven
+            and value.func.id not in local)
 
 
 def _local_bound_names(node):
@@ -1412,7 +1532,8 @@ def _local_bound_names(node):
     return [], None
 
 
-def _function_shared_names(function, shared=None, rel=None, loaders=frozenset()):
+def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
+                           proven=frozenset()):
     """(trusted names, locally rebound receivers) inside *function* (#892 r21).
 
     The r20 withdrawal walked module scope only, so a *function-scope*
@@ -1429,11 +1550,29 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset())
     alone; ``global``-declared receivers bind at module scope and stay the
     module scan's business (``check_cleanup.main`` rebinds ``md`` there,
     judged by ``_withdrawn_receivers`` since #892 r23).
+
+    #892 r24: the callee side is judged against the same scope.  A proven
+    source or loader name rebound in this function -- or arriving as a
+    parameter -- shadows the module binding for the whole body, so the call
+    is not the registered definition even though it spells the name
+    (``committed_status_contract = <stub>`` then
+    ``common = committed_status_contract(ROOT)``; DeepSeek boundary r23 #3).
     """
     trusted = set(_SHARED_MODULES if shared is None else shared)
     rebound = set()
     declared_global = {name for node in ast.walk(function)
                        if isinstance(node, ast.Global) for name in node.names}
+    local_names = set()
+    arguments = function.args
+    for arg in (list(arguments.posonlyargs) + list(arguments.args)
+                + list(arguments.kwonlyargs)
+                + [arguments.vararg, arguments.kwarg]):
+        if arg is not None:
+            local_names.add(arg.arg)
+    for node in _own_nodes(function):
+        names, _value = _local_bound_names(node)
+        local_names.update(names)
+    local_names -= declared_global
     for node in _own_nodes(function):
         names, value = _local_bound_names(node)
         for name in names:
@@ -1441,8 +1580,10 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset())
                 continue
             if name in trusted:
                 if not (value is not None
-                        and (_loads_shared_module(value, name, loaders)
-                             or _proven_source(value, rel))):
+                        and (_loads_shared_module(value, name, loaders,
+                                                  local_names)
+                             or _proven_source(value, rel, proven,
+                                               local_names))):
                     trusted.discard(name)
                     rebound.add(name)
             else:
@@ -3309,6 +3450,9 @@ def scan_aggregation_tree(tree, rel, aliases=None):
         aliases = _module_exit_aliases(tree)
     shared = _module_shared_names(tree, rel)
     loaders = _loader_names(tree, rel)
+    # #892 r24: the same module binding graph also judges the proven-source
+    # callees, so a same-named redefinition cannot stand in for the real def.
+    proven = _proven_source_names(tree)
     # #892 r23: a receiver poisoned at module scope (or through ``global``)
     # loses the relay in *every* function of the file, not only where it is
     # rebound locally (GLM boundary r22 P0-1).
@@ -3317,7 +3461,7 @@ def scan_aggregation_tree(tree, rel, aliases=None):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         fn_shared, fn_rebound = _function_shared_names(
-            function, shared, rel, loaders)
+            function, shared, rel, loaders, proven)
         markers = aggregation_markers(function, module, rel, aliases,
                                       fn_shared, fn_rebound | poisoned)
         if not markers:
@@ -3350,6 +3494,7 @@ def aggregation_audit():
     aliases_by_rel = {}
     trusted_by_rel = {}
     loaders_by_rel = {}
+    proven_by_rel = {}
     poisoned_by_rel = {}
     failures = []
     if not callable(getattr(md.common, 'aggregate_status', None)):
@@ -3412,6 +3557,7 @@ def aggregation_audit():
         aliases_by_rel[rel] = _module_exit_aliases(tree)
         trusted_by_rel[rel] = _module_shared_names(tree, rel)
         loaders_by_rel[rel] = _loader_names(tree, rel)
+        proven_by_rel[rel] = _proven_source_names(tree)
         poisoned_by_rel[rel] = _withdrawn_receivers(
             tree, rel, trusted_by_rel[rel])
         lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
@@ -3441,7 +3587,8 @@ def aggregation_audit():
         markers, function = found[key]
         fn_shared, fn_rebound = _function_shared_names(
             function, trusted_by_rel.get(rel), rel,
-            loaders_by_rel.get(rel, frozenset()))
+            loaders_by_rel.get(rel, frozenset()),
+            proven_by_rel.get(rel, frozenset()))
         # #892 r23: module/global-poisoned receivers lose the relay here too.
         fn_rebound = fn_rebound | poisoned_by_rel.get(rel, frozenset())
         shared = (calls_shared(function, fn_shared, fn_rebound)
@@ -3913,12 +4060,26 @@ def aggregation_audit():
         "    return md.common.aggregate_status(report)[1]\n"
         "def _param_common(report, common):\n"
         "    return common.aggregate_status(report)[1]\n"
+        # #892 r24: the loader alias only keeps its role while ``_guard``
+        # itself traces to a real module on the binding graph, so the probe
+        # carries the same importlib bootstrap the real entries do.
+        "import importlib.util\n"
+        "_spec = importlib.util.spec_from_file_location('_guard', 'guard.py')\n"
+        "_guard = importlib.util.module_from_spec(_spec)\n"
         "_load = _guard.load\n"
         "_shadow_load = _guard.load\n"
         "def _shadow_load(name, path):\n"
         "    return _SN(aggregate_status=lambda *a: ('PASS', 0))\n"
         "def _redefined_loader(report):\n"
         "    common = _shadow_load('common', 'common.py')\n"
+        "    return common.aggregate_status(report)[1]\n"
+        # #892 r24: the loader base is judged on the binding graph too.  A
+        # ``.load`` attribute hung off a stub object spells a loader while
+        # returning the stub, so it must not earn the role.
+        "_stub_guard = _SN(load=lambda *a: _SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
+        "_stub_load = _stub_guard.load\n"
+        "def _stub_loader(report):\n"
+        "    common = _stub_load('common', 'common.py')\n"
         "    return common.aggregate_status(report)[1]\n"
         "md2 = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
         "def _module_receiver(report):\n"
@@ -3990,6 +4151,79 @@ def aggregation_audit():
             failures.append('#892 aggregation-audit: detector self-test still '
                             'trusts a shared binding through a redefined '
                             'loader alias')
+    stub_loader = _probe892_function('_stub_loader')
+    if stub_loader is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'stub-loader-base probe')
+    else:
+        stub_shared, _stub_rebound = _function_shared_names(
+            stub_loader, loaders=_loader_names(probe892, '<self-test-892>'))
+        if ('common' in stub_shared
+                or calls_shared(stub_loader, stub_shared, _stub_rebound)):
+            failures.append('#892 aggregation-audit: detector self-test still '
+                            'trusts a loader alias hung off a stub object')
+    # #892 r24: the proven-source registry keys on ``(rel, name)``, so a
+    # same-named redefinition -- Python runs the last def -- and a function
+    # parameter/local of the same name both kept the trust while the call went
+    # to the stub.  Both are judged on the module binding graph now, with the
+    # untampered shape beside each as the healthy control.
+    check_rel = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+                 'check_cleanup.py')
+    negative_rel = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+                    'negative_controls.py')
+    # The name is spliced in rather than spelled out: the ``negative_controls``
+    # mutation ``calibrate-shadowed-receiver-poison-fn`` anchors on the def line
+    # of the proven source and requires it to occur exactly once in this file,
+    # so quoting it here would disarm that case (r24 negative run reported
+    # ``anchor expired: count=4``).
+    proven_probe = 'load_session_domain'
+    healthy_definition = ast.parse(
+        f"def {proven_probe}():\n"
+        "    return None\n")
+    redefined_definition = ast.parse(
+        f"def {proven_probe}():\n"
+        "    return None\n"
+        f"def {proven_probe}():\n"
+        "    return 'PASS'\n")
+    if proven_probe not in _proven_source_names(healthy_definition):
+        failures.append('#892 aggregation-audit: detector self-test withdrew '
+                        'trust from the real module-level proven source')
+    elif not _proven_source(ast.parse(f'{proven_probe}()').body[0].value,
+                            check_rel,
+                            _proven_source_names(healthy_definition)):
+        failures.append('#892 aggregation-audit: detector self-test stopped '
+                        'recognizing the healthy proven source call')
+    if proven_probe in _proven_source_names(redefined_definition):
+        failures.append('#892 aggregation-audit: detector self-test still '
+                        'traces a same-named redefined proven source')
+    elif _proven_source(ast.parse(f'{proven_probe}()').body[0].value,
+                        check_rel,
+                        _proven_source_names(redefined_definition)):
+        failures.append('#892 aggregation-audit: detector self-test still '
+                        'trusts the redefined proven source call')
+    rebound_source = ast.parse(
+        "def _rebound_source(report):\n"
+        "    committed_status_contract = lambda *a: None\n"
+        "    common = committed_status_contract(report)\n"
+        "    return common.aggregate_status(report)[1]\n")
+    healthy_source = ast.parse(
+        "def _healthy_source(report):\n"
+        "    common = committed_status_contract(report)\n"
+        "    return common.aggregate_status(report)[1]\n")
+    rebound_call = _function_shared_names(
+        rebound_source.body[0], _SHARED_MODULES, negative_rel, frozenset(),
+        frozenset({'committed_status_contract'}))
+    if ('common' in rebound_call[0]
+            or calls_shared(rebound_source.body[0], *rebound_call)):
+        failures.append('#892 aggregation-audit: detector self-test still '
+                        'trusts a proven source rebound in the same function')
+    healthy_call_names = _function_shared_names(
+        healthy_source.body[0], _SHARED_MODULES, negative_rel, frozenset(),
+        frozenset({'committed_status_contract'}))
+    if ('common' not in healthy_call_names[0]
+            or not calls_shared(healthy_source.body[0], *healthy_call_names)):
+        failures.append('#892 aggregation-audit: detector self-test withdrew '
+                        'trust from the unrebound proven source call')
     # #892 r23 (GLM boundary r22 P0-1): receiver relays poisoned at module
     # scope or through ``global`` lose the shared call file-wide, with the
     # proven module-scope receiver kept beside them as the healthy control.
@@ -4908,6 +5142,16 @@ def main():
         print(json.dumps(result, ensure_ascii=False), flush=True)
     status, skipped = summarize_results(results)
     _, exit_code = md.common.aggregate_status(status)
+    # #892 r24: the map that computes this exit code is itself under audit.  A
+    # same-named redefinition of ``load_session_domain`` hands ``md`` a stub
+    # whose ``aggregate_status`` maps every word -- including the audit's own
+    # FAIL -- to PASS/0, so a detected failure would still leave as a green
+    # summary (MiniMax sibling #1 / DeepSeek sibling #1).  A row that is not a
+    # literal pass can never leave on the clean side: the checker's own verdict
+    # stays fail-closed whatever the loaded module says.  ``1`` is the product's
+    # ``common.BATCH_EXIT_CODES['FAIL']``.
+    if exit_code == 0 and any(row.get('passed') is not True for row in results):
+        status, exit_code = 'FAIL', 1
     summary = {'status': status, 'exitCode': exit_code, 'output': str(output),
                'skipped': [row.get('mode') for row in skipped], 'results': results}
     (output / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2) + '\n')

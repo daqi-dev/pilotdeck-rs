@@ -1624,10 +1624,19 @@ TERMINATE_HANDLER_CHILD = r"""
 import os, pathlib, signal, sys, time
 sys.path.insert(0, sys.argv[1])
 import negative_controls
+which = getattr(signal, sys.argv[3])
+# #892 r24: a background / ``nohup`` parent hands SIGQUIT (and SIGINT) down as
+# SIG_IGN, and the child inherits that disposition.  The control arm must still
+# measure the *default* disposition, so it resets the tested signal instead of
+# relying on the caller's shell (memory: background inherits SIGINT ignored);
+# SIGINT is restored to the interpreter's own handler for the same reason.
+if which != signal.SIGINT:
+    signal.signal(signal.SIGINT, signal.default_int_handler)
 if sys.argv[4] == "registered":
     negative_controls._install_terminate_handlers()
+else:
+    signal.signal(which, signal.SIG_DFL)
 sentinel = pathlib.Path(sys.argv[2])
-which = getattr(signal, sys.argv[3])
 try:
     os.kill(os.getpid(), which)
     time.sleep(10)
