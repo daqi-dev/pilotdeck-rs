@@ -8,7 +8,9 @@
 
 import hashlib
 import importlib.util
+import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -2926,6 +2928,284 @@ def run():
         gaps = cfd.registration_gaps(root, "parity", base, [], [])
         case("registration_gaps：历史事件被改写 → 非空（append-only 那一半）",
              any("append-only" in gap for gap in gaps), f"gaps={gaps}")
+
+    # ================================================ fix-r2（codex / GLM）
+    # P0-1：装置发现在钉 HEAD 之前读可变工作树 → 发现阶段的 A→B→A 漏检。
+    # 垫片只把「工具第一次 rev-parse --verify HEAD」那一刻的树切回 A，
+    # 此前的文件系统读看到的是 B（少了 parity 的 FROZEN.md）。
+    GIT_SHIM = '''#!/usr/bin/env python3
+import os, subprocess, sys
+args = sys.argv[1:]
+done = os.environ['CFD_SHIM_DONE']
+if (not os.path.exists(done) and 'rev-parse' in args
+        and '--verify' in args and 'HEAD' in args):
+    open(done, 'w').close()
+    subprocess.run([os.environ['CFD_SHIM_GIT'], '-C', os.environ['CFD_SHIM_ROOT'],
+                    'checkout', '-q', os.environ['CFD_SHIM_A']],
+                   check=False, capture_output=True)
+os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
+'''
+    UNCHAINED = "scripts/parity/x.py: " + LACKS_CHAIN_MSG
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        parity_src = ("import json\n"
+                      "print(json.dumps({'status': 'FAIL', 'failures': "
+                      + repr([UNCHAINED]) + "}))\n" + PARITY_MANIFEST)
+        gw_src = ("import json\nprint(json.dumps({'status': 'PASS', 'failures': []}))\n"
+                  + gw_source())
+        write(root, "scripts/parity/check_frozen.py", parity_src)
+        write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+        write(root, "scripts/gateway-parity/check_frozen.py", gw_src)
+        write(root, "scripts/parity/x.py", "A\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('A\n')}  ../../scripts/parity/x.py\n"
+              f"{sha(parity_src)}  ../../scripts/parity/check_frozen.py\n")
+        write(root, "specs/gateway-parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha(gw_src)}  ../../scripts/gateway-parity/check_frozen.py\n")
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        write(root, "scripts/parity/x.py", "B\n")   # 改字节、无 Change 链
+        commit(root, "delivery")
+        head_a = git(root, "rev-parse", "HEAD")
+        git(root, "rm", "-q", "specs/parity/FROZEN.md")   # B：发现阶段看不到 parity
+        commit(root, "B: parity apparatus gone")
+        head_b = git(root, "rev-parse", "HEAD")
+        git(root, "checkout", "-q", head_b)               # 起跑时停在 B
+
+        shim_dir = Path(td) / "shim"
+        shim_dir.mkdir()
+        shim = shim_dir / "git"
+        shim.write_text(GIT_SHIM)
+        shim.chmod(0o755)
+        env = dict(os.environ)
+        env.update(PATH=str(shim_dir) + os.pathsep + env["PATH"],
+                   CFD_SHIM_DONE=str(Path(td) / "shim-done"),
+                   CFD_SHIM_GIT=shutil.which("git"),
+                   CFD_SHIM_ROOT=str(root), CFD_SHIM_A=head_a)
+        proc = subprocess.run([sys.executable, "-I", str(TOOL),
+                               "--root", str(root), "--base", "origin/main"],
+                              capture_output=True, text=True, timeout=TIMEOUT, env=env)
+        case("发现阶段 A→B→A → 装置集合取自钉住提交（parity 仍被审，旧实现假 READY）",
+             proc.returncode == 1 and "=== parity === BLOCKED" in proc.stdout
+             and "BLOCKED 1 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+        case("发现阶段 A→B→A → 运行结束仍把树留在 A（不是被发现的 B）",
+             git(root, "rev-parse", "HEAD") == head_a,
+             f"head={git(root, 'rev-parse', 'HEAD')[:12]} a={head_a[:12]}")
+
+    # P0-2：``A2 apparatus missing FROZEN hash:`` 的空列表 / 纯分隔符不得判可消除。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        ctx = {"root": root, "kind": "gateway-parity", "mb": base, "edges": [],
+               "pending": set(), "dropped": set(), "snapshot": None}
+        for label, message in (("空项", "A2 apparatus missing FROZEN hash: ,"),
+                               ("纯空白", "A2 apparatus missing FROZEN hash:  "),
+                               ("只有分隔符", "A2 apparatus missing FROZEN hash: , ,")):
+            verdict = cfd.classify(ctx, message)
+            case(f"A2 报文 {label}（空 hash 列表）→ block",
+                 verdict[0] == "block", f"{verdict}")
+        normal = cfd.classify(
+            ctx, "A2 apparatus missing FROZEN hash: scripts/gateway-parity/new.py")
+        case("A2 报文带真实名字、无链 → block（不是被空列表修复带偏的假 ok）",
+             normal[0] == "block", f"{normal}")
+        garbled = cfd.classify(
+            ctx, "A2 apparatus missing FROZEN hash: scripts/gateway-parity/new file.py")
+        case("A2 报文含非路径项（空格）→ block 且报 malformed（整串校验不放松）",
+             garbled[0] == "block" and "malformed" in (garbled[1] or ""),
+             f"{garbled}")
+
+    # P1-G：parity 删 spec 文档时报裸名（表格键），掉行集合是 specs/parity/…。
+    def parity_spec_drop(td, keep_in_inventory):
+        root = Path(td)
+        init_repo(root)
+        names = ("README.md", "multimodal.md") if keep_in_inventory else ("README.md",)
+        message = ("multimodal.md: [Errno 2] No such file or directory: "
+                   "'specs/parity/multimodal.md'")
+        src = ("import json\nprint(json.dumps({'status': 'FAIL', 'failures': "
+               + repr([message]) + "}))\n"
+               "\n\ndef manifest_inventory(root):\n"
+               f"    names = {names!r}\n"
+               "    return {name: name for name in names}\n")
+        write(root, "scripts/parity/check_frozen.py", src)
+        write(root, "specs/parity/multimodal.md", "# multimodal\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha(src)}  ../../scripts/parity/check_frozen.py\n"
+              f"| `multimodal.md` | `{sha('# multimodal\n')}` | 2026-01-01 | seed |\n")
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        git(root, "rm", "-q", "specs/parity/multimodal.md")
+        write(root, "specs/parity/frozen/20260101-m.md",
+              f"Change: {sha('# multimodal\n')} - specs/parity/multimodal.md\n"
+              + EVENT_FIELDS)
+        commit(root, "delivery")
+        return run_tool("--root", str(root), "--base", "origin/main")
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = parity_spec_drop(td, keep_in_inventory=False)
+        case("真删 spec 文档 + Change: <old> - 链 → READY（裸名报文，旧实现假 BLOCKED）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        proc = parity_spec_drop(td, keep_in_inventory=True)
+        case("删了仍在清单里的 spec 文档 → BLOCKED（归一不放过不该删的）",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # P1-C1：ui 的 ``unexpected registered file`` 报的是快照根下的绝对路径。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        write(root, "scripts/ui-server-parity/apparatus.py", UI_APPARATUS)
+        write(root, "scripts/ui-server-parity/check_frozen.py", UI_FROZEN)
+        write(root, "rust-toolchain.toml", "[toolchain]\n")
+        write(root, "specs/ui-server-parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('[toolchain]\n')}  ../../rust-toolchain.toml\n"
+              f"{sha(UI_FROZEN)}  ../../scripts/ui-server-parity/check_frozen.py\n"
+              f"{sha(UI_APPARATUS)}  ../../scripts/ui-server-parity/apparatus.py\n")
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        git(root, "rm", "-q", "rust-toolchain.toml")
+        write(root, "specs/ui-server-parity/frozen/20260101-t.md",
+              f"Change: {sha('[toolchain]\n')} - rust-toolchain.toml\n" + EVENT_FIELDS)
+        commit(root, "delivery")
+        edges, _, _ = cfd.event_evidence(root, "ui-server-parity", base)
+        snapshot = Path(td) / "cfd-snapshot-fake" / "tree"
+        ctx = {"root": root, "kind": "ui-server-parity", "mb": base, "edges": edges,
+               "pending": set(), "dropped": {"rust-toolchain.toml"}, "snapshot": snapshot}
+        reported = f"unexpected registered file: {snapshot}/rust-toolchain.toml"
+        case("ui 报文用快照绝对路径 → ok（旧实现按被审树归一返 None 假 BLOCKED）",
+             cfd.classify(ctx, reported)[0] == "ok", f"{cfd.classify(ctx, reported)}")
+        case("ui 报文用被审树绝对路径 → 仍 ok",
+             cfd.classify(ctx, f"unexpected registered file: {root}/rust-toolchain.toml")[0]
+             == "ok")
+        outside = cfd.classify(ctx, "unexpected registered file: /nowhere/rust-toolchain.toml")
+        case("ui 报文指向两个根之外的绝对路径 → block",
+             outside[0] == "block", f"{outside}")
+
+    # P1-C2：写范围 —— 子装置在被审仓的 git 记账里自建 worktree 必须被抓住。
+    with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as extra:
+        target = Path(extra) / "sneaky"
+        payload = {"status": "PASS", "failures": []}
+        leak = ("import subprocess, json\n"
+                f"subprocess.run(['git', 'worktree', 'add', '--detach', {str(target)!r},\n"
+                "                'HEAD'], capture_output=True)\n"
+                "print(json.dumps({'status': 'PASS', 'failures': []}))\n")
+        body = "import json\nprint(json.dumps(" + repr(payload) + "))\n" + leak
+        proc = delivery(Path(td), "gateway-parity", payload,
+                        base_files=[("specs/gateway-parity/FROZEN.md",
+                                     "# fake FROZEN\n\n"
+                                     f"{sha(body)}  ../../scripts/gateway-parity/"
+                                     "check_frozen.py\n")],
+                        source=leak)
+        case("子装置在被审仓自建 worktree → BLOCKED（写范围之外）",
+             proc.returncode == 1
+             and "appeared while the apparatuses ran" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # P1-C2（续）：SIGTERM 落在快照存活期间也必须清干净（atexit + 信号转
+    # SystemExit）。走真实入口 ``main()``：子装置故意 sleep 30 s，父进程看到
+    # 属于本仓的 ``cfd-snapshot-*`` 后给工具发 SIGTERM，再核退出码与泄漏
+    # （快照目录 / .git/worktrees 记账）。直接调 install_sigterm_cleanup 的写法
+    # 杀不死「main 忘了装处理器」这一变异，所以必须走入口。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        slow = ("import time\n"
+                "print('started', flush=True)\n"
+                "time.sleep(30)\n")
+        fake_apparatus(root, "parity", {"status": "PASS", "failures": []}, slow)
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        before = set(Path(tempfile.gettempdir()).glob("cfd-snapshot-*"))
+        proc = subprocess.Popen([sys.executable, "-I", str(TOOL), "--root", str(root),
+                                 "--base", "origin/main"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=True)
+        pgid = os.getpgid(proc.pid)
+        holder = None
+        deadline = time.time() + 60
+        while time.time() < deadline and proc.poll() is None:
+            listed_now = git(root, "worktree", "list", "--porcelain")
+            fresh = [p for p in set(Path(tempfile.gettempdir()).glob("cfd-snapshot-*"))
+                     - before if str(p / "tree") in listed_now]
+            if fresh:
+                holder = sorted(fresh)[0]
+                break
+            time.sleep(0.2)
+        if holder is not None:
+            proc.terminate()
+        try:
+            _, err = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, err = proc.communicate()
+        try:
+            os.killpg(pgid, signal.SIGKILL)   # 收掉还在 sleep 的子装置
+        except (ProcessLookupError, PermissionError):
+            pass
+        listed = git(root, "worktree", "list", "--porcelain")
+        leaked = holder is not None and (holder.exists()
+                                         or str(holder / "tree") in listed)
+        case("真实入口收到 SIGTERM → 退出码 143 且快照与 worktree 记账都不留",
+             proc.returncode == 143 and holder is not None and not leaked,
+             f"rc={proc.returncode} holder={holder} leaked={leaked} "
+             f"err={err.strip()[-200:]}")
+
+    # P2：``git worktree add`` 失败时 git 可能已经写下 .git/worktrees 记账，
+    # 失败路径必须走 drop_holder（remove 失败后 prune），不能只删目录。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        head = git(root, "rev-parse", "HEAD")
+        real_git = cfd.git
+        entry = root / ".git" / "worktrees" / "tree"
+
+        def failing_git(_root, *args, **_kwargs):
+            if args[:2] == ("worktree", "add"):
+                entry.mkdir(parents=True, exist_ok=True)
+                return 1, "", "boom"
+            if args[:2] == ("worktree", "remove"):
+                return 1, "", "no such worktree"
+            if args[:2] == ("worktree", "prune"):
+                shutil.rmtree(entry, ignore_errors=True)
+                return 0, "", ""
+            return 0, "", ""
+        try:
+            cfd.git = failing_git
+            snapshot, why = cfd.create_snapshot(root, head)
+        finally:
+            cfd.git = real_git
+        case("快照创建失败 → 返回 None 且 .git/worktrees 记账被 prune 清掉",
+             snapshot is None and why == "boom" and not entry.exists()
+             and not cfd._SNAPSHOT_HOLDERS,
+             f"snapshot={snapshot} why={why} entry={entry.exists()} "
+             f"holders={cfd._SNAPSHOT_HOLDERS}")
+
+    # P2：ROW_BARE 只认 64 位 hex，16 位截断哈希是散文不是清单行。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n0123456789abcdef  specs/parity/x.md\n")
+        commit(root, "base")
+        rows = cfd.manifest_rows(root, "parity", git(root, "rev-parse", "HEAD"))
+        case("ROW_BARE：16 位 hex 行不算清单行（真装置也只认 64 位）",
+             rows == set(), f"rows={rows}")
 
     print(f"SUMMARY failed={fails}")
     return 1 if fails else 0
