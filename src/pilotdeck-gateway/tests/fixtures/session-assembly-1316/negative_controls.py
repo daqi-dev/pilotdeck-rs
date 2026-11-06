@@ -576,8 +576,15 @@ def deadline_probe():
                 pass
             else:
                 problems.append('log probe: an expired deadline did not raise')
-            written = probe_log.read_text() if probe_log.exists() else ''
-            if not probe_log.exists():
+            # #1938 r2（GLM sibling P1）：与 `dispatch_probe` 同一口径。原来
+            # `exists()` 与 `read_text()` 是两次系统调用，中间被删就抛
+            # `FileNotFoundError`，回溯穿出 `--self-check`——那是假 FAIL，不是诊断。
+            # 读不到等同于「没写」，正好是这条断言要报的东西。
+            try:
+                written = probe_log.read_text()
+            except FileNotFoundError:
+                written = None
+            if written is None:
                 problems.append('log probe: no log was written before the deadline raised')
             elif 'partial stdout' not in written or 'partial stderr' not in written:
                 problems.append('log probe: the collected output was not written before '
@@ -614,13 +621,22 @@ def deadline_probe():
             wait_for_slot = refuse
             deadline = time.monotonic()
             append_progress(event='probe', status='OK')
-            lines = (out / 'progress.jsonl').read_text().splitlines()
+            # #1938 r2（GLM sibling P1）：同上。文件是 `append_progress` 刚写的；
+            # 读不到就是「没能立刻读到」，下面那条断言正是要报它。
+            try:
+                lines = (out / 'progress.jsonl').read_text().splitlines()
+            except FileNotFoundError:
+                lines = []
             if not lines or json.loads(lines[-1]).get('event') != 'probe':
                 problems.append('progress.jsonl: the appended record was not readable at once')
             else:
                 print('deadline probe progress.jsonl: one flushed record readable', flush=True)
             publish_summary([dict(name='probe', status='KILLED')], timed_out='probe deadline')
-            published = json.loads((out / 'summary.json').read_text())
+            # #1938 r2（GLM sibling P1）：同上。空清单走同一条诊断（没发布 TIMEOUT 行）。
+            try:
+                published = json.loads((out / 'summary.json').read_text())
+            except FileNotFoundError:
+                published = []
             if not any(row.get('status') == 'TIMEOUT' for row in published):
                 problems.append('summary.json: a deadline published no TIMEOUT row')
             if (out / 'summary.json.tmp').exists():

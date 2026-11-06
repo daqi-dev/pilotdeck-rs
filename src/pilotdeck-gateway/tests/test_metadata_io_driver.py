@@ -829,6 +829,18 @@ class EnvironmentControls(unittest.TestCase):
                                msg='#1938 dropping one row must change the pinned count'):
             self.assertEqual(len(rows(mutant)), len(pinned))
         print('#1938 dispatch case row-count: KILLED', flush=True)
+        # GLM sibling P2（当轮修）：三根桩名同样是 for 消费的字面量表——删掉 `git`
+        # 就少掉「取锁之后」那层证据（bare flock 不留 mtime），探针照样打印通过。
+        self.assertEqual(source.count(
+            "        for stub_name in ('cargo', 'rustc', 'git'):\n"), 1,
+            '#1938 the three stubs, git included, are pinned exactly once')
+        with self.assertRaises(AssertionError,
+                               msg='#1938 dropping the git stub must be caught'):
+            self.assertEqual(source.replace(
+                "        for stub_name in ('cargo', 'rustc', 'git'):",
+                "        for stub_name in ('cargo', 'rustc'):", 1).count(
+                    "        for stub_name in ('cargo', 'rustc', 'git'):\n"), 1)
+        print('#1938 dispatch stub-name git-removed: KILLED', flush=True)
 
     # r2 GLM sibling P1：`--self-check-controls` 的本体 `self_check_controls_run()`
     # 是自检链的第六个函数，r1 只钉了前五个——删掉它任何一条 `problems.append`
@@ -1254,7 +1266,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '0b823cbe934404a52775f2098da4c8626c8de4827c4251a05b96f356bcdef3c3'
+    SESSION_CONTROLS_SHA256 = 'b4758cb395df358aa1b70ed505180d7c51f8f1cda101cf530092f2a89fcd15f0'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
