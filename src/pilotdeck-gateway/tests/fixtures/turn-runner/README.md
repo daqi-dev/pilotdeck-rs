@@ -110,7 +110,7 @@ runner 负控默认25项（两个 terminal 分支分别变异，每个锚点 cou
 
 `LiveSessionAdapter::new/with_interaction` 显式接收会话的 `Arc<Recorder>` 与当前 history 读取函数，factory 接收同一个 Arc，组装 model/tool durable ports 时必须复用它。submit 接原始 text/blocks；执行配置与 syntheticMessages 来自 options，history→accepted→synthetic 的组装由 TurnInput 共用。`input-synthetic-null` 是真实 TS 新行，原有行与 sourceSha256 保持，已有 ignored `runner_regenerates_identically` 覆盖重生成。
 
-`input_negative.py` 将13个源码变异逐项绑定完整测试名和专属断言消息，使用公共 mutating_sources/run_owned/wait_for_slot，要求调用方设置 CARGO_TARGET_DIR。旧 live factory 负控参数锚点及 recording text-value 作用域已同步。第 2 条 Recording/真实 active slot 共持与 I/O pending 矩阵仍未交付，不能用输入测试或 runner 测试 guard 代替。
+`input_negative.py` 将14个源码变异逐项绑定完整测试名和专属断言消息，使用公共 mutating_sources/run_owned/wait_for_slot，要求调用方设置 CARGO_TARGET_DIR。旧 live factory 负控参数锚点及 recording text-value 作用域已同步。第 2 条 Recording/真实 active slot 共持与 I/O pending 矩阵仍未交付，不能用输入测试或 runner 测试 guard 代替。
 
 
 ## pr5d AgentLoop 流完整性

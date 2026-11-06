@@ -8,7 +8,12 @@ import {assertBaseline, baselineSourceHashes} from '../../_shared/baseline.mts';
 
 const base = path.resolve(process.env.PDRS_BASELINE!);
 const output = path.resolve(process.argv[2]);
+// #1281 review: a hard deadline exit skips the lexical finally, so the owned
+// work root has to be removed here as well (a killed process is the only exit
+// this cannot cover, and that one is owned by the caller's process group).
+let ownedWork: string | undefined;
 const deadline = setTimeout(() => {
+  if (ownedWork) fs.rmSync(ownedWork, {recursive: true, force: true, maxRetries: 2, retryDelay: 10});
   process.stderr.write('#1011 generator exceeded 120 seconds\n'); process.exit(1);
 }, 120000);
 deadline.unref();
@@ -23,7 +28,7 @@ const sourceSha256 = await baselineSourceHashes(base, [
 ]);
 fs.mkdirSync(output, {recursive: true});
 fs.writeFileSync(path.join(output, '.generation-owner'), 'session-factory/projection-cache\n', {flag: 'wx'});
-const work = fs.mkdtempSync(path.join(output, 'work-'));
+const work = ownedWork = fs.mkdtempSync(path.join(output, 'work-'));
 try {
   // Delay the OS write only after native JsonlSessionPersistence has registered
   // its writeTail. Delaying the provider call itself would invent a restore race

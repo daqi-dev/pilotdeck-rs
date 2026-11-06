@@ -101,13 +101,16 @@ mutations = [
      'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
      '#1011 generator owner identifies fixture'),
     # #1281: the work cleanup must also run when the oracle.json wx write
-    # fails after the whole matrix. Moving the rmSync out of the finally
-    # models "cleanup only on the success exit"; the collision cell of
+    # fails after the whole matrix. Moving the rmSync from the finally into the
+    # tail of the try body models "cleanup only on the success exit" and keeps
+    # the file parseable (an emptied finally clause, not a bare try — a bare
+    # `try { }` is a SyntaxError, which would make the cell fail for the wrong
+    # reason and the mutation INVALID rather than KILLED). The collision cell of
     # generator_cleans_owned_work must catch the leftover work-* directory.
     ('generator-cleanup-success-only',
      'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
      '} finally {\n  fs.rmSync(work, {recursive: true, force: true});\n}',
-     '}\nfs.rmSync(work, {recursive: true, force: true});',
+     '  fs.rmSync(work, {recursive: true, force: true});\n} finally {\n}',
      'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
      '#1011 generator left files behind in OUT'),
 
@@ -177,15 +180,21 @@ def main():
         # so a plain `fn <name>` scan would not find them. Accept either the
         # direct function or the `name=>"case"` table entry; anything else
         # fails the audit instead of silently binding a nonexistent test.
-        # Guards bound at the factory::tests level (regenerates_identically)
-        # live in factory_tests.rs, so both files are scanned.
-        test_source = '\n'.join(
-            (root / 'src/pilotdeck-gateway/src/runtime/session' / name).read_text()
-            for name in ('projection_cache_tests.rs', 'factory_tests.rs'))
-        compact = ''.join(test_source.split())
+        # #1281 review: the full module path picks the one file that declares
+        # that module (factory.rs pins the #[path] names); a concatenation of
+        # both files would accept a test that lives in the other module.
+        modules = {'runtime::session::factory::tests::': 'factory_tests.rs',
+                   'runtime::session::factory::projection_cache_tests::': 'projection_cache_tests.rs'}
+        compacts = {file: ''.join(
+            (root / 'src/pilotdeck-gateway/src/runtime/session' / file).read_text().split())
+            for file in modules.values()}
         for _name, _filename, _old, _new, test, _assertion in mutations:
+            file = next((name for module, name in modules.items()
+                         if test.startswith(module)), None)
+            if file is None:
+                raise SystemExit(f'#1210 bound test module not audited: {test}')
             short = test.rsplit('::', 1)[-1]
-            if 'fn' + short + '(' not in compact and short + '=>"' not in test_source:
+            if 'fn' + short + '(' not in compacts[file] and short + '=>"' not in compacts[file]:
                 raise SystemExit(f'#1210 bound test not found for {short}: {test}')
         print('PASS: #1011 projection cache mutation anchors (static only)')
         return 0

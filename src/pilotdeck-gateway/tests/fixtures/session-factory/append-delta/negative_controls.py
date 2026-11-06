@@ -11,6 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, run_cases, publish_summary
 
+
+def baseline():
+    # #1281: this runner owns the cleanup cells of
+    # projection_delta_tests::factory_generators_clean_only_owned_work, so it
+    # needs the same escape hatch as the session-factory and projection-cache
+    # runners: an uncommitted sandbox candidate can be the guarded baseline,
+    # while a committed host keeps HEAD.
+    return os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
+
 mutations = [
     ('completion-index-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs',
      'lock(&self.projection.completed_turns).insert(turn.clone());',
@@ -134,7 +143,7 @@ def run(out, env, selected_mutations):
     for name, filename, old, new, _, _ in selected_mutations:
         target = root / filename
         try:
-            with mutating_sources(root, [target]) as originals:
+            with mutating_sources(root, [target], baseline=baseline()) as originals:
                 target.write_text(mutate(originals[target].decode(), None, [(old, new)]))
                 slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
                 (out / f'{name}-compile-slots.log').write_text(slot.stdout + slot.stderr)
@@ -148,7 +157,8 @@ def run(out, env, selected_mutations):
     prefix = 'runtime::session::factory::projection_delta_tests::'
     selected = [Case(name, root / filename, old, new, prefix + test, assertion)
                 for name, filename, old, new, test, assertion in selected_mutations]
-    run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
+    run_cases(root, selected, out, env, mutate, timeout=900, script=__file__,
+              baseline=baseline())
     results = json.loads((out / 'summary.json').read_text())['controls']
     for control, compile_result in zip(results, compilation):
         control['compiled'] = compile_result['compiled']
@@ -179,7 +189,7 @@ def main():
     guarded = out / 'guarded-run'
     guarded.mkdir()
     try:
-        with mutating_sources(root, input_paths()):
+        with mutating_sources(root, input_paths(), baseline=baseline()):
             results, compilation = run(guarded, env, selected_mutations)
     except Exception as error:
         results = [{'mutation': name, 'test': 'runtime::session::factory::projection_delta_tests::' + test,

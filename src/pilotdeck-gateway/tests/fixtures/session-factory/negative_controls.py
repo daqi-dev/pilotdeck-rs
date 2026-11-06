@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Commit first; never bypass HEAD. Compile each mutant, then run its exact test.
+"""Commit first; committed hosts run against HEAD. Compile each mutant, then run its exact test.
+
+A sandbox candidate that is not committed yet may name itself through
+PDRS_NEGATIVE_BASELINE (see `run`); every other run is guarded against HEAD.
 
 Use --compile for the separate compile audit, --audit for read-only anchors.
 The full suite belongs on the coordinator host; a guarded sample is enough here.
@@ -33,6 +36,13 @@ generator = Path(__file__).with_name('generate.mts')
 snapshot_test = Path(__file__).with_name('file-snapshot-test.mts')
 prefix = 'runtime::session::factory::tests::'
 delta_prefix = 'runtime::session::factory::projection_delta_tests::'
+cache_prefix = 'runtime::session::factory::projection_cache_tests::'
+# #1281: the full module path decides which file --audit searches. Every prefix
+# that may appear in a row's bound test has to be listed here; an unlisted one
+# fails the audit instead of falling back to a wider scan.
+audited_modules = ((prefix, 'factory_tests.rs'),
+                   (cache_prefix, 'projection_cache_tests.rs'),
+                   (delta_prefix, 'projection_delta_tests.rs'))
 cases = [
     ('same-key-concurrent', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),
     ('same-key-cached', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_cached', '#745 same-key-cached conclusion'),
@@ -393,17 +403,27 @@ def audit():
                 if changed == current:
                     raise ValueError('mutation leaves source unchanged')
                 accumulated[path] = changed
-            # #1281: bound tests live in factory_tests.rs and (since the
-            # cleanup cells moved there) projection_delta_tests.rs; the short
-            # name keeps both module prefixes auditable the same way.
-            source = '\n'.join(factory.with_name(name).read_text()
-                              for name in ('factory_tests.rs', 'projection_delta_tests.rs'))
-            test_name = test.removeprefix(prefix).rsplit('::', 1)[-1]
+            # #1210 / #1281 review: bind the whole module path to the single
+            # file that declares that module (factory.rs pins the three
+            # #[path] declarations). Searching one concatenation of all three
+            # files let a row pass on a test that only exists in an unrelated
+            # module, so the audit could stay CHECKED on a wrong binding.
+            module = next((file for module_prefix, file in audited_modules
+                           if test.startswith(module_prefix)), None)
+            if module is None:
+                raise ValueError('bound test module not audited: ' + test)
+            source = factory.with_name(module).read_text()
+            test_name = test.rsplit('::', 1)[-1]
             compact = ''.join(source.split())
             if 'fn' + test_name + '(' not in compact and test_name + '=>' not in compact:
                 raise ValueError('bound full test not found: ' + test)
             # Static audit checks a literal/formatted failure marker, not semantic
-            # inequality. A compiled runtime kill proves the latter.
+            # inequality. A compiled runtime kill proves the latter. The marker
+            # is searched in the bound module's file only; binding it to the
+            # individual test body is not attempted because these tests reach
+            # their assertions through shared helpers and `impl` methods (a
+            # per-test region would be red for ~20 correct rows), and the
+            # runtime negative control is the authority on the marker anyway.
             literals = source.split('"')[1::2]
             def marker_matches(literal):
                 pieces = literal.split('{')
