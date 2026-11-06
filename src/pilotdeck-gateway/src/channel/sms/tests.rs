@@ -1744,22 +1744,51 @@ fn recorded_body(step: &Value) -> Vec<u8> {
     recorded_body_checked(step).unwrap_or_else(|error| panic!("{error}"))
 }
 
-fn assert_boundary_body_len_checked(name: &str, case: &Value) -> Result<(), String> {
-    let expected = match name {
-        "payload-exactly-1mib" => MAX_BODY_BYTES,
-        "payload-too-large" => MAX_BODY_BYTES + 1,
-        _ => return Ok(()),
-    };
-    let lengths = recorded_steps_checked(case)?
+/// #1984: request bodies at or above `MAX_BODY_BYTES` are *boundary* cells and
+/// must be declared here with their expected length. The check classifies by
+/// the recorded byte length, not by the case name, so a renamed cell or a newly
+/// added boundary cell that is missing from this table fails the replay instead
+/// of passing silently -- the old `_ => Ok(())` name whitelist was exactly that
+/// silent pass.
+const BOUNDARY_BODY_CASES: &[(&str, usize)] = &[
+    ("payload-exactly-1mib", MAX_BODY_BYTES),
+    ("payload-too-large", MAX_BODY_BYTES + 1),
+];
+
+/// Recorded `request` body lengths of one oracle case, in fixture order.
+fn recorded_request_body_lengths(case: &Value) -> Result<Vec<usize>, String> {
+    recorded_steps_checked(case)?
         .into_iter()
         .flatten()
         .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
         .map(|step| recorded_body_checked(step).map(|body| body.len()))
-        .collect::<Result<Vec<_>, _>>()?;
-    if lengths != [expected] && !crate::mutants::on("sms-oracle-boundary-body-length") {
-        return Err(format!(
-            "#1339 {name} body boundary must be [{expected}], got {lengths:?}"
-        ));
+        .collect()
+}
+
+fn assert_boundary_body_len_checked(name: &str, case: &Value) -> Result<(), String> {
+    let lengths = recorded_request_body_lengths(case)?;
+    match BOUNDARY_BODY_CASES.iter().find(|entry| entry.0 == name) {
+        Some((_, expected)) => {
+            if lengths != [*expected] && !crate::mutants::on("sms-oracle-boundary-body-length") {
+                return Err(format!(
+                    "#1339 {name} body boundary must be [{expected}], got {lengths:?}"
+                ));
+            }
+        }
+        None => {
+            // #1984 fail-closed: a body at or above the cap is a boundary cell
+            // even when its name was never declared. Register it with its
+            // expected length, or the replay fails here instead of skipping.
+            if let Some(length) = lengths.iter().copied().find(|len| *len >= MAX_BODY_BYTES)
+                && !crate::mutants::on("sms-oracle-boundary-unregistered")
+            {
+                return Err(format!(
+                    "#1339 {name} records a {length}-byte request body at or above the \
+                     {MAX_BODY_BYTES}-byte cap but is not declared in BOUNDARY_BODY_CASES; \
+                     declare it with its expected length"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -1948,21 +1977,63 @@ fn recorded_boundary_body_length_panics_on_drift() {
     );
 }
 
-/// #1984 repro (commit 1 of the fix): the boundary check keys off the case
-/// *name*, so every other name -- a renamed cell, a newly added boundary cell,
-/// or any name outside `payload-*` -- returned `Ok(())` without ever looking at
-/// the recorded body. This assertion passing on `origin/main` is the fail-open;
-/// the fix flips it to `is_err()` and binds it to a negative control.
+/// #1984: the boundary check used to key off the case *name*, so a renamed or
+/// newly added boundary cell returned `Ok(())` without looking at the body at
+/// all. The real 1 MiB+1 cell under an undeclared name must now be rejected,
+/// which is what closes that fail-open; the negative control
+/// `sms-oracle-boundary-unregistered` disarms exactly this branch.
 #[test]
-fn unregistered_boundary_case_passes_today() {
-    assert!(
+fn recorded_boundary_body_length_rejects_unregistered_case() {
+    crate::negative_assert!(
         assert_boundary_body_len_checked(
             "payload-too-large-renamed",
             &case_by_name("payload-too-large"),
         )
-        .is_ok(),
-        "#1339 #1984 fail-open repro: an undeclared case name is not checked"
+        .is_err(),
+        "#1339 #1984 rejects an undeclared boundary case"
     );
+}
+
+/// #1984: the declared boundary table and the fixture must agree in both
+/// directions -- a declared cell that was renamed or resized fails, and every
+/// oracle cell whose recorded `request` body reaches the cap must be declared.
+/// The per-case check above catches a *replayed* undeclared cell; this test
+/// also catches a rename that removed the declared cell from the fixture.
+#[test]
+fn boundary_body_cases_match_the_fixture() {
+    // The declared pair must still bracket the cap itself; otherwise the two
+    // cells stop proving that `MAX_BODY_BYTES` is the accept/reject boundary.
+    assert!(
+        BOUNDARY_BODY_CASES.contains(&("payload-exactly-1mib", MAX_BODY_BYTES))
+            && BOUNDARY_BODY_CASES.contains(&("payload-too-large", MAX_BODY_BYTES + 1)),
+        "#1339 #1984 the declared boundary cells must bracket MAX_BODY_BYTES"
+    );
+    for (name, expected) in BOUNDARY_BODY_CASES {
+        assert_eq!(
+            recorded_request_body_lengths(&case_by_name(name))
+                .expect("#1339 declared boundary case steps"),
+            [*expected],
+            "#1339 #1984 declared boundary case {name}"
+        );
+    }
+    for case in oracle_cases() {
+        let name = case["name"]
+            .as_str()
+            .expect("#1339 every oracle case carries a string name");
+        if BOUNDARY_BODY_CASES
+            .iter()
+            .any(|(declared, _)| *declared == name)
+        {
+            continue;
+        }
+        let lengths =
+            recorded_request_body_lengths(&case).expect("#1339 oracle case request steps");
+        assert!(
+            lengths.iter().all(|length| *length < MAX_BODY_BYTES),
+            "#1339 #1984 {name} records a capped request body {lengths:?} but is not declared \
+             in BOUNDARY_BODY_CASES"
+        );
+    }
 }
 
 #[test]
