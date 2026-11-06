@@ -29,7 +29,11 @@
 15. `typing_ticket:""` 时仍取 getconfig 但不发 sendtyping。
 
 12–15 是 JS 真值语义（`if (x)` 对空串为假）的金样钉子：去掉 Rust 侧的空串
-`filter`，第 12–15 格与负控 `empty-*` 三条变异同时变红。
+`filter`，对应的金样格即变红。负控 `empty-*` 三条变异覆盖这四格：14/15 直接死在
+金样比对（`#1328 weixin replay oracle`）；12/13 由 `empty-bot-token-accepted`
+一条变异同时去掉两处 filter，空凭证被接受后登录不再 `failed`，回放死在
+10 s 等待闸门（`#1328 weixin harness gate did not resolve`），与
+`credentials-fallback` 同形。
 
 ## 确定性
 
