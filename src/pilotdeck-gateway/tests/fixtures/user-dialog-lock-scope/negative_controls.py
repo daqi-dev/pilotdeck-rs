@@ -116,7 +116,7 @@ DECLARED = (
     'restore-drops-the-replaced-waiter',
     'settle-failure-drops-pre-consume-events',
     'replaced-dialog-loses-its-poll',
-    'superseded-install-keeps-the-old-generation',
+    'superseded-install-overwrites-the-replacement-poll',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -290,12 +290,12 @@ mutations = [
      '.is_some_and(|entry| entry.generation == generation)',
      '.is_some_and(|entry| entry.generation >= generation)',
      REPLACED_POLL_TEST, REPLACED_POLL_ASSERTION),
-    # channel.poll: an entry installed by a superseded registration keeps its
-    # old generation, so the current owner can never clear it (TS keeps one
-    # timer per request; the entry follows the request id).
-    ('superseded-install-keeps-the-old-generation', 'user_dialog/channel.rs',
-     'entry.generation != generation',
-     'entry.generation == generation',
+    # channel.begin: a late install from a superseded registration overwrites
+    # the replacement's poll entry with its own generation, so the replacement
+    # stops polling (TS keeps one timer per request).
+    ('superseded-install-overwrites-the-replacement-poll', 'user_dialog/channel.rs',
+     'current.is_none_or(|current| current < generation)',
+     'current.is_none_or(|current| current > generation)',
      REENTRANT_INSTALL_TEST, REENTRANT_INSTALL_ASSERTION),
 ]
 declared = list(DECLARED)
