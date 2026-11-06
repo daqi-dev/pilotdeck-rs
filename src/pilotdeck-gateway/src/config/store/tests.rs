@@ -766,13 +766,16 @@ fn watched_paths_follow_exists_then_dirname() {
             .collect::<Vec<_>>()
     };
     // Missing `<project>/.pilotdeck`: fs.watch would throw; not watched.
-    assert_eq!(watched(&store), [(root.0.join("pilotdeck.yaml"), false)]);
+    assert_eq!(
+        watched(&store),
+        [(root.0.join("pilotdeck.yaml"), Some(false))]
+    );
     std::fs::create_dir(project.join(".pilotdeck")).unwrap();
     assert_eq!(
         watched(&store),
         [
-            (root.0.join("pilotdeck.yaml"), false),
-            (project.join(".pilotdeck"), true)
+            (root.0.join("pilotdeck.yaml"), Some(false)),
+            (project.join(".pilotdeck"), Some(true))
         ]
     );
 }
@@ -897,7 +900,7 @@ fn parent_watched_config_file_content_is_sampled() {
     let root = Root::new();
     let path = root.0.join("pilotdeck.yaml");
     let mut watched = WatchedPath::new(path.clone()).expect("parent watched");
-    assert!(watched.directory);
+    assert_eq!(watched.directory, Some(true));
     assert_eq!(
         watched.target.as_deref(),
         Some(std::ffi::OsStr::new("pilotdeck.yaml"))
@@ -1117,6 +1120,170 @@ fn startup_read_failure_is_retried_until_the_content_is_seen() {
     clear_content_read_failures(&path);
 }
 
+/// #1792 r1 (P2-1): a failed `stat` — not a `NotFound` — must leave the
+/// metadata fingerprint uncommitted, report nothing while it fails (the
+/// folded fingerprint is not evidence of a change), and let the first
+/// complete sample after recovery report once even though neither the
+/// content nor the metadata changed.
+#[test]
+fn stat_failure_leaves_the_metadata_fingerprint_uncommitted() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1792 file watched");
+    arm_read_failures(&path, ReadOp::Stat, 3);
+    for tick in 0..3 {
+        assert!(
+            !watched.changed(),
+            "#1792 a stat-failed sample {tick} reports no change"
+        );
+        assert_eq!(
+            watched.metadata_fingerprint, None,
+            "#1792 a stat-failed sample {tick} commits no metadata fingerprint"
+        );
+    }
+    // The failures are exhausted; nothing about the file changed in between.
+    assert!(
+        watched.changed(),
+        "#1792 the first complete sample after stat recovery reports the recovery"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 the recovered complete sample commits the metadata fingerprint"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 the recovered sample re-commits the short-circuit"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 the short-circuited sample keeps the metadata fingerprint"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+}
+
+/// #1792 r1 (P2-1): a failed `read_dir` on a watched directory follows the
+/// same rule as a failed stat, and the directory still sees later changes
+/// once the reads recover.
+#[test]
+fn read_dir_failure_leaves_the_metadata_fingerprint_uncommitted() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    std::fs::create_dir(&dir).expect("#1792 watch directory");
+    std::fs::write(dir.join("seed.yaml"), "a: 1\n").expect("#1792 seed entry");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1792 directory watched");
+    assert_eq!(
+        watched.directory,
+        Some(true),
+        "#1792 the startup probe classifies the directory"
+    );
+    arm_read_failures(&dir, ReadOp::ReadDir, 2);
+    for tick in 0..2 {
+        assert!(
+            !watched.changed(),
+            "#1792 a read_dir-failed sample {tick} reports no change"
+        );
+        assert_eq!(
+            watched.metadata_fingerprint, None,
+            "#1792 a read_dir-failed sample {tick} commits no metadata fingerprint"
+        );
+    }
+    // The failures are exhausted; the first complete sample commits again and
+    // reports the recovery.
+    assert!(
+        watched.changed(),
+        "#1792 the first complete sample after read_dir recovery reports the recovery"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 the recovered complete sample commits the metadata fingerprint"
+    );
+    // A change in the recovered directory is still seen.
+    std::fs::write(dir.join("late.yaml"), "b: 2\n").expect("#1792 late entry");
+    assert!(
+        watched.changed(),
+        "#1792 a new entry in the recovered directory is still seen"
+    );
+    clear_read_failures(&dir, ReadOp::ReadDir);
+}
+
+/// #1792 r1 (P2-2, D1): a dangling symlink inside a watched directory is a
+/// complete observation of absence, not an incomplete sample — the
+/// metadata fingerprint must commit instead of staying `None` forever —
+/// and the entry resolving is still seen.
+#[test]
+fn missing_entry_is_a_complete_observation() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    std::fs::create_dir(&dir).expect("#1792 watch directory");
+    std::os::unix::fs::symlink("nowhere", dir.join("dangling")).expect("#1792 dangling symlink");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1792 directory watched");
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 a dangling entry is a complete observation, not a permanent None"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 an unchanged dangling entry is quiet"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 an unchanged dangling entry keeps the metadata fingerprint"
+    );
+    std::fs::write(dir.join("nowhere"), "a: 1\n").expect("#1792 symlink target");
+    assert!(
+        watched.changed(),
+        "#1792 the dangling entry resolving is seen"
+    );
+}
+
+/// #1792 r1 (P1-1): a startup probe failure must not drop the path. The
+/// path is kept with an unknown mode and no sample; the first `changed()`
+/// re-probes, and that first successful sample records without reporting
+/// (no identity reload out of a failed probe), while a real change after
+/// it is still seen.
+#[test]
+fn startup_stat_failure_keeps_the_path_watched() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    std::fs::create_dir(&dir).expect("#1792 watch directory");
+    arm_read_failures(&dir, ReadOp::Stat, 1);
+    let mut watched = WatchedPath::new(dir.clone())
+        .expect("#1792 a stat failure at startup must not drop the path");
+    assert_eq!(
+        watched.directory, None,
+        "#1792 the startup probe failure leaves the mode unknown"
+    );
+    assert_eq!(
+        watched.fingerprint, None,
+        "#1792 the startup probe failure commits no sample"
+    );
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1792 the startup probe failure commits no metadata fingerprint"
+    );
+    // The failure is exhausted: the next tick probes again and samples.
+    assert!(
+        !watched.changed(),
+        "#1792 the first sample after a failed probe records without reporting"
+    );
+    assert_eq!(
+        watched.directory,
+        Some(true),
+        "#1792 the re-probe classifies the directory"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 the first complete sample commits the metadata fingerprint"
+    );
+    std::fs::write(dir.join("pilotdeck.yaml"), BASE).expect("#1792 config appears");
+    assert!(
+        watched.changed(),
+        "#1792 a change after a failed startup probe is still seen"
+    );
+    clear_read_failures(&dir, ReadOp::Stat);
+}
+
 #[test]
 fn relative_global_config_path_is_anchored_at_cwd() {
     let root = Root::new();
@@ -1144,9 +1311,9 @@ fn relative_global_config_path_is_anchored_at_cwd() {
             .map(|w| (w.path, w.directory))
             .collect::<Vec<_>>()
     };
-    assert_eq!(watched(&store), [(cwd.join("cfg.yaml"), false)]);
+    assert_eq!(watched(&store), [(cwd.join("cfg.yaml"), Some(false))]);
     // Missing: watched through `dirname`, i.e. cwd (TS: `dirname("cfg.yaml")`
     // is `.`), not skipped because the bare name has an empty parent.
     std::fs::remove_file(cwd.join("cfg.yaml")).unwrap();
-    assert_eq!(watched(&store), [(cwd.clone(), true)]);
+    assert_eq!(watched(&store), [(cwd.clone(), Some(true))]);
 }

@@ -75,13 +75,31 @@
 //! A sample that fails any read — a `stat`, a `read_dir`, or the content
 //! read of the watched config file — is *incomplete* and commits no metadata
 //! fingerprint (#1792): the next tick re-samples until a complete one
-//! lands, so a transient read failure (EMFILE and friends) delays detection
-//! to the first tick after the reads recover, without needing any metadata
-//! change. The startup sample of [`WatchedPath::new`] follows the same rule,
-//! so a file that was unreadable when watching started becomes visible once
-//! reads recover. While a path stays unreadable, the same full fingerprint
-//! is reported at most once (the content read is retried every tick, not
-//! the reload), so a persistently unreadable path is not a reload storm.
+//! lands, without needing any metadata change. A `NotFound` is not a
+//! failure but a complete observation of absence (#1792 r1): a dangling
+//! directory entry or a vanished directory is stable, observable state and
+//! must not keep `metadata_fingerprint` permanently `None`; only a failure
+//! that can hide content (permission, descriptor exhaustion, I/O) does.
+//! What an incomplete sample reports splits by what failed. A failed
+//! content read still observed the metadata, so the change — content folded
+//! to unknown — is reported once while the read keeps failing and once more
+//! when it recovers. A failed `stat` or `read_dir` observed nothing
+//! trustworthy, so nothing is reported while it fails; the first complete
+//! sample after recovery reports once — an identity reload (version+1,
+//! empty `changedPaths`) when nothing changed in between, where the
+//! baseline's `fs.watch` starts watching without reading and produces no
+//! such event (registered in `diffs/A6.3-CONFIG-POLL-001-R1.md`). The full
+//! fingerprint is committed either way, so a persistently unreadable path
+//! is not a reload storm. The startup sample of [`WatchedPath::new`]
+//! follows the same rule, and a startup *probe* failure keeps the path
+//! watched with an unknown mode instead of dropping it (#1792 r1); the
+//! first sample after such a failure records without reporting, so a
+//! recovered probe does not by itself produce a reload. The price of
+//! retrying is that while a path stays in the incomplete state every tick
+//! re-attempts the reads instead of short-circuiting on metadata — the
+//! failed reads themselves are cheap errors, and the content read is
+//! bounded by [`CONTENT_SAMPLE_LIMIT`] per tick per watched config file,
+//! at the cadence [`MIN_POLL_INTERVAL`] caps.
 //! Only when metadata changed — or the last sample was incomplete — is up
 //! to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched config file read (the
 //! file itself, or the missing config file's name inside a watched parent
@@ -764,7 +782,8 @@ impl Drop for WatchHandle {
 }
 
 /// Content bytes hashed per sample of one watched config file; beyond this a
-/// file is sampled by metadata (length, mtime, ctime, inode, device) only.
+/// file is sampled by metadata (length, `is_dir`, mtime, ctime, inode,
+/// device) only.
 /// The bound exists for the same reason as [`MIN_POLL_INTERVAL`]: the content
 /// read is only paid when metadata changed (or the previous sample was
 /// incomplete, #1792), and one MiB keeps that worst case a fraction of the
@@ -779,13 +798,24 @@ pub const CONTENT_SAMPLE_LIMIT: u64 = 1024 * 1024;
 #[cfg(test)]
 static CONTENT_READS: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> = Mutex::new(None);
 
-/// #1792 test hook: the next N content reads of each path fail, emulating a
-/// transient EMFILE-style failure without touching the file (no chmod, no
-/// mtime rewrite — those change metadata and would mask the bug). Keyed by
-/// path for the same parallel-test isolation as [`CONTENT_READS`]; only
-/// present in test builds.
+/// #1792 r1 test hook: the read operation a failure can be armed for. Every
+/// `stat` and `read_dir` of a watched path goes through [`stat_path`] /
+/// [`read_dir_path`], and the content read through [`read_should_fail`], so a
+/// transient failure can be injected for exactly one operation without
+/// touching the filesystem (no chmod, no mtime rewrite — those change metadata
+/// and would mask the bug).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ReadOp {
+    Stat,
+    ReadDir,
+    Content,
+}
+
+/// #1792 test hook: the next N reads of each (path, op) fail, keyed by path
+/// for the same parallel-test isolation as [`CONTENT_READS`]; only armed in
+/// test builds.
 #[cfg(test)]
-static CONTENT_READ_FAILURES: Mutex<Option<std::collections::HashMap<PathBuf, usize>>> =
+static READ_FAILURES: Mutex<Option<std::collections::HashMap<(PathBuf, ReadOp), usize>>> =
     Mutex::new(None);
 
 #[cfg(test)]
@@ -796,12 +826,12 @@ fn content_reads(path: &Path) -> usize {
         .unwrap_or(0)
 }
 
-/// Whether this content read is one of the N armed failures (#1792 test hook).
+/// Whether this read is one of the N armed failures (#1792 test hook).
 #[cfg(test)]
-fn content_read_should_fail(path: &Path) -> bool {
-    match lock(&CONTENT_READ_FAILURES)
+fn read_should_fail(path: &Path, op: ReadOp) -> bool {
+    match lock(&READ_FAILURES)
         .as_mut()
-        .and_then(|failures| failures.get_mut(path))
+        .and_then(|failures| failures.get_mut(&(path.to_path_buf(), op)))
     {
         Some(remaining) if *remaining > 0 => {
             *remaining -= 1;
@@ -812,37 +842,84 @@ fn content_read_should_fail(path: &Path) -> bool {
 }
 
 #[cfg(not(test))]
-fn content_read_should_fail(_path: &Path) -> bool {
+fn read_should_fail(_path: &Path, _op: ReadOp) -> bool {
     false
+}
+
+/// Every `stat` of a watched path goes through here: one place for the
+/// #1792 test hook to inject a transient failure.
+fn stat_path(path: &Path) -> std::io::Result<std::fs::Metadata> {
+    if read_should_fail(path, ReadOp::Stat) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "#1792 test hook",
+        ));
+    }
+    std::fs::metadata(path)
+}
+
+/// Every `read_dir` of a watched directory goes through here, like
+/// [`stat_path`].
+fn read_dir_path(path: &Path) -> std::io::Result<std::fs::ReadDir> {
+    if read_should_fail(path, ReadOp::ReadDir) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "#1792 test hook",
+        ));
+    }
+    std::fs::read_dir(path)
+}
+
+/// Whether this content read is one of the N armed failures (#1792 test hook).
+fn content_read_should_fail(path: &Path) -> bool {
+    read_should_fail(path, ReadOp::Content)
+}
+
+/// Arms the next `failures` reads of `path`'s `op` to fail (#1792 test hook).
+#[cfg(test)]
+fn arm_read_failures(path: &Path, op: ReadOp, failures: usize) {
+    lock(&READ_FAILURES)
+        .get_or_insert_with(Default::default)
+        .insert((path.to_path_buf(), op), failures);
+}
+
+/// Disarms any leftover failures for this (path, op) only (#1792 test hook).
+/// Scoped to one key on purpose: the hook is process-global while libtest runs
+/// tests in parallel, so wiping any wider here would erase a sibling test's
+/// armed failures between its arm and its read and turn that test flaky.
+#[cfg(test)]
+fn clear_read_failures(path: &Path, op: ReadOp) {
+    if let Some(failures) = lock(&READ_FAILURES).as_mut() {
+        failures.remove(&(path.to_path_buf(), op));
+    }
 }
 
 /// Arms the next `failures` content reads of `path` to fail (#1792 test hook).
 #[cfg(test)]
 fn arm_content_read_failures(path: &Path, failures: usize) {
-    lock(&CONTENT_READ_FAILURES)
-        .get_or_insert_with(Default::default)
-        .insert(path.to_path_buf(), failures);
+    arm_read_failures(path, ReadOp::Content, failures);
 }
 
-/// Disarms any leftover failures for `path` only (#1792 test hook). Scoped to
-/// one path on purpose: the hook is process-global while libtest runs tests in
-/// parallel, so a whole-map `= None` here would wipe a sibling test's armed
-/// failures between its arm and its read and turn that test flaky.
+/// Disarms any leftover content-read failures for `path` only (#1792 test
+/// hook); see [`clear_read_failures`].
 #[cfg(test)]
 fn clear_content_read_failures(path: &Path) {
-    if let Some(failures) = lock(&CONTENT_READ_FAILURES).as_mut() {
-        failures.remove(path);
-    }
+    clear_read_failures(path, ReadOp::Content);
 }
 
 struct WatchedPath {
     path: PathBuf,
-    directory: bool,
+    /// Whether [`path`] is sampled as a directory (by its entries); `None`
+    /// while the startup probe failed (#1792 r1) — the first `changed()`
+    /// re-probes instead of trusting a missing classification.
+    directory: Option<bool>,
     /// For a directory watched in place of a missing config file, that
     /// file's name: its content is sampled once it appears.
     target: Option<std::ffi::OsString>,
-    /// The last full sample (content included for the watched config file).
-    fingerprint: u64,
+    /// The last full sample (content included for the watched config file);
+    /// `None` until a sample has been taken at all (#1792 r1: a startup
+    /// probe failure defers sampling to the first `changed()`).
+    fingerprint: Option<u64>,
     /// The last complete metadata-only sample (#1739): identical metadata
     /// skips the content read. `None` means the last sample was incomplete
     /// (#1792) — a read that failed — and the next tick must re-sample
@@ -854,43 +931,95 @@ struct WatchedPath {
 }
 
 impl WatchedPath {
-    /// `existsSync(path) ? path : dirname(path)`; `fs.watch` throws (and the
-    /// path is skipped) when that target does not exist.
+    /// `existsSync(path) ? path : dirname(path)`, with `fs.watch` throwing
+    /// (and the path being skipped) when that target does not exist — except
+    /// that a stat failure must not be read as absence (#1792 r1): a
+    /// transient EMFILE/EACCES/EIO at startup used to silently fall back to
+    /// the parent or drop the path, closing detection for good. A failed
+    /// stat keeps the path with an unknown mode for the first `changed()` to
+    /// re-probe.
     fn new(path: PathBuf) -> Option<Self> {
-        let (path, target) = if path.exists() {
-            (path, None)
-        } else {
-            let target = path.file_name().map(ToOwned::to_owned);
-            (path.parent()?.to_path_buf(), target)
-        };
-        if !path.exists() {
-            return None;
+        match stat_path(&path) {
+            Ok(meta) => Some(Self::sampled(path, None, meta.is_dir())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let target = path.file_name().map(ToOwned::to_owned);
+                let parent = path.parent()?.to_path_buf();
+                match stat_path(&parent) {
+                    Ok(meta) => Some(Self::sampled(parent, target, meta.is_dir())),
+                    // The parent is missing too: `fs.watch` would throw and
+                    // the baseline skips the path.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    // The parent exists but its mode is unknown; keep it.
+                    Err(_) => Some(Self::probing(parent, target)),
+                }
+            }
+            // The stat itself failed: keep the path rather than fall back to
+            // the parent (or drop it).
+            Err(_) => Some(Self::probing(path, None)),
         }
-        // An existing directory (e.g. an empty config path resolving to cwd)
-        // is fingerprinted by its entries, like `fs.watch` on a directory.
-        let directory = path.is_dir();
+    }
+
+    /// A watched path whose startup probe succeeded: sampled immediately,
+    /// like every pre-r1 startup.
+    fn sampled(path: PathBuf, target: Option<std::ffi::OsString>, directory: bool) -> Self {
         // #1819: the same metadata is stat-ed twice here (once for the
         // metadata-only sample, once inside the full sample); reusing it
         // would mean threading a `Metadata` value through `hash_entry`'s
         // signature — not worth it for a one-off startup cost per watched
         // path.
-        let (metadata, metadata_complete) = fingerprint(&path, directory, target.as_deref(), false);
-        let (fingerprint, complete) = fingerprint(&path, directory, target.as_deref(), true);
+        let (metadata, metadata_status) = fingerprint(&path, directory, target.as_deref(), false);
+        let (fingerprint, status) = fingerprint(&path, directory, target.as_deref(), true);
         // #1792: an incomplete startup sample (any stat, `read_dir`, or
         // content read that failed) commits no metadata fingerprint either;
         // `None` keeps the next tick re-sampling, so a file that was
         // unreadable when watching started is still seen once reads recover.
-        let metadata_fingerprint = (metadata_complete && complete).then_some(metadata);
-        Some(Self {
+        let metadata_fingerprint = (metadata_status == SampleStatus::Complete
+            && status == SampleStatus::Complete)
+            .then_some(metadata);
+        Self {
             path,
-            directory,
+            directory: Some(directory),
             target,
-            fingerprint,
+            fingerprint: Some(fingerprint),
             metadata_fingerprint,
-        })
+        }
+    }
+
+    /// A watched path whose startup probe failed (#1792 r1): the mode is
+    /// unknown and nothing has been sampled yet.
+    fn probing(path: PathBuf, target: Option<std::ffi::OsString>) -> Self {
+        Self {
+            path,
+            directory: None,
+            target,
+            fingerprint: None,
+            metadata_fingerprint: None,
+        }
     }
 
     fn changed(&mut self) -> bool {
+        // #1792 r1: re-probe a startup probe that failed; a `NotFound` here
+        // is a complete observation of absence, so sampling continues as a
+        // file-shaped watch, while any other failure defers to the next
+        // tick with nothing committed.
+        let directory = match self.directory {
+            Some(directory) => directory,
+            None => match stat_path(&self.path) {
+                Ok(meta) => {
+                    let directory = meta.is_dir();
+                    self.directory = Some(directory);
+                    directory
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    self.directory = Some(false);
+                    false
+                }
+                Err(_) => {
+                    self.metadata_fingerprint = None;
+                    return false;
+                }
+            },
+        };
         // #1739: metadata first. At the default cadence (two watched paths
         // every 20 ms) the per-tick content read costs up to ~19% of a core
         // (measured: ~1.9 ms per 1 MiB read on cb8, page-cache hot; a
@@ -899,13 +1028,26 @@ impl WatchedPath {
         // gap — a write that leaves every hashed field, ctime included, on
         // the values already sampled — is spelled out in the module note and
         // diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
-        let (next_metadata, metadata_complete) =
-            fingerprint(&self.path, self.directory, self.target.as_deref(), false);
-        if metadata_complete && self.metadata_fingerprint == Some(next_metadata) {
+        let (next_metadata, metadata_status) =
+            fingerprint(&self.path, directory, self.target.as_deref(), false);
+        if metadata_status == SampleStatus::Obscured {
+            // #1792: a failed `stat` or `read_dir` observed nothing
+            // trustworthy, so the folded fingerprint is not evidence of a
+            // change — nothing is reported this tick. The folded fingerprint
+            // is still committed (the same unreadable state stays quiet, and
+            // the first complete sample after recovery differs from it and
+            // reports), and no metadata fingerprint is committed, so every
+            // later tick re-samples.
+            self.metadata_fingerprint = None;
+            self.fingerprint = Some(next_metadata);
             return false;
         }
-        let (next, complete) =
-            fingerprint(&self.path, self.directory, self.target.as_deref(), true);
+        if metadata_status == SampleStatus::Complete
+            && self.metadata_fingerprint == Some(next_metadata)
+        {
+            return false;
+        }
+        let (next, status) = fingerprint(&self.path, directory, self.target.as_deref(), true);
         // #1792: an incomplete sample — any stat, `read_dir`, or content read
         // that failed — commits no metadata fingerprint: committing anyway
         // closed the recovery path for good (identical metadata then
@@ -915,22 +1057,58 @@ impl WatchedPath {
         // one lands. The full `fingerprint` is committed regardless, so while
         // a path stays unreadable the same fingerprint reports at most once —
         // the content read is retried every tick, not the reload.
-        self.metadata_fingerprint = if metadata_complete && complete {
-            Some(next_metadata)
-        } else {
-            None
-        };
-        std::mem::replace(&mut self.fingerprint, next) != next
+        self.metadata_fingerprint = (metadata_status == SampleStatus::Complete
+            && status == SampleStatus::Complete)
+            .then_some(next_metadata);
+        let previous = self.fingerprint.replace(next);
+        if status == SampleStatus::Obscured {
+            // Same rule as the metadata branch above, reached when the
+            // failure landed between the two samples.
+            return false;
+        }
+        // The first sample after a startup probe failure only records (#1792
+        // r1): `None` must not be read as "changed from something".
+        previous.is_some_and(|previous| previous != next)
+    }
+}
+
+/// How much of one sample was actually observed (#1792 r1): what an
+/// incomplete sample may report depends on which read failed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SampleStatus {
+    /// Every read in the sample succeeded. A `NotFound` counts: it is a
+    /// complete observation of absence, and the entry's appearance changes
+    /// the hashed name list (so a dangling symlink must not keep the sample
+    /// incomplete forever).
+    Complete,
+    /// Only the content read failed: the metadata was observed, the content
+    /// was not.
+    ContentUnknown,
+    /// A `stat` or `read_dir` failed with something other than `NotFound`:
+    /// the sample says nothing trustworthy about the path.
+    Obscured,
+}
+
+impl SampleStatus {
+    /// Combine one entry's status into a whole-sample status: an obscured
+    /// entry hides everything; an unknown content read is the weakest
+    /// incompleteness.
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Complete, Self::Complete) => Self::Complete,
+            (Self::Obscured, _) | (_, Self::Obscured) => Self::Obscured,
+            _ => Self::ContentUnknown,
+        }
     }
 }
 
 /// Hashes one path's metadata (and, when asked, content) into `hasher`.
-/// Returns whether every read in this entry's sample succeeded; a `false`
+/// Returns how much of this entry's sample was observed; an incomplete
 /// return makes the whole sample incomplete, which [`WatchedPath::changed`]
 /// turns into a next-tick retry (#1792) instead of a committed fingerprint.
-fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> bool {
+fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> SampleStatus {
     use std::{io::Read, os::unix::fs::MetadataExt};
-    match std::fs::metadata(path) {
+    match stat_path(path) {
         Ok(meta) => {
             true.hash(hasher);
             meta.len().hash(hasher);
@@ -966,54 +1144,72 @@ fn hash_entry(path: &Path, hasher: &mut DefaultHasher, read_content: bool) -> bo
                 }
                 let read_complete = read.is_some();
                 read.hash(hasher);
-                return read_complete;
+                return if read_complete {
+                    SampleStatus::Complete
+                } else {
+                    SampleStatus::ContentUnknown
+                };
             }
-            true
+            SampleStatus::Complete
         }
-        Err(_) => {
+        Err(error) => {
             false.hash(hasher);
-            false
+            // #1792 r1: a missing entry is a complete observation — it is not
+            // there, and its appearance changes the hashed name list. Only a
+            // failure that can hide content (permission, descriptor, I/O)
+            // makes the sample incomplete and worth retrying next tick.
+            if error.kind() == std::io::ErrorKind::NotFound {
+                SampleStatus::Complete
+            } else {
+                SampleStatus::Obscured
+            }
         }
     }
 }
 
-/// One sample of a watched path. Returns the fingerprint and whether the
-/// sample was complete — every `stat`, `read_dir`, and content read
-/// succeeded; an incomplete sample must not commit a metadata fingerprint
-/// (#1792).
+/// One sample of a watched path. Returns the fingerprint and how much of the
+/// sample was observed; an incomplete sample must not commit a metadata
+/// fingerprint (#1792).
 fn fingerprint(
     path: &Path,
     directory: bool,
     target: Option<&std::ffi::OsStr>,
     sample_content: bool,
-) -> (u64, bool) {
+) -> (u64, SampleStatus) {
     let mut hasher = DefaultHasher::new();
-    let mut complete = true;
+    let mut status = SampleStatus::Complete;
     if directory {
         // The directory's own metadata changes on every entry create/delete.
-        complete &= hash_entry(path, &mut hasher, false);
+        status = status.merge(hash_entry(path, &mut hasher, false));
         let mut names = Vec::new();
-        match std::fs::read_dir(path) {
+        match read_dir_path(path) {
             Ok(entries) => {
                 for entry in entries {
                     match entry {
                         Ok(entry) => names.push(entry.file_name()),
-                        Err(_) => complete = false,
+                        // A partial entry list would silently drop names.
+                        Err(_) => status = status.merge(SampleStatus::Obscured),
                     }
                 }
             }
-            Err(_) => complete = false,
+            Err(error) => {
+                // #1792 r1: a vanished directory is a complete, empty
+                // observation; any other failure hides the entry list.
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    status = status.merge(SampleStatus::Obscured);
+                }
+            }
         }
         names.sort();
         for name in names {
             name.hash(&mut hasher);
             let read_content = sample_content && target == Some(name.as_os_str());
-            complete &= hash_entry(&path.join(&name), &mut hasher, read_content);
+            status = status.merge(hash_entry(&path.join(&name), &mut hasher, read_content));
         }
     } else {
-        complete &= hash_entry(path, &mut hasher, sample_content);
+        status = status.merge(hash_entry(path, &mut hasher, sample_content));
     }
-    (hasher.finish(), complete)
+    (hasher.finish(), status)
 }
 
 async fn watch_loop(
