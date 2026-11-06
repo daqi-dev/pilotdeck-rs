@@ -463,7 +463,10 @@ impl EdgeClawFileStores {
             let deleted = match self.delete_memory_entries(&ids) {
                 Ok(deleted) => deleted,
                 Err(error) => {
-                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
                     return Err(error);
                 }
             };
@@ -482,7 +485,10 @@ impl EdgeClawFileStores {
                     // session's rows: `indexed` back to 0 lets the next
                     // heartbeat re-list them and regenerate the files, the
                     // same recovery an unindexed row already gets.
-                    self.storage.rearm_l0_indexed_for_session(session)?;
+                    // #1298 (review boundary): the re-arm is best effort and
+                    // must not replace the error that aborted the clear; a
+                    // failed re-arm is recorded and the primary error stands.
+                    self.rearm_after_clear_failure(session);
                     return Err(error);
                 }
             };

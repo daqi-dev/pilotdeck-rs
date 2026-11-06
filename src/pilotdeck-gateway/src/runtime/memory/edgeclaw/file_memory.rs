@@ -459,6 +459,13 @@ pub struct EdgeClawFileStores {
     /// #917 fix-r2: the `clearSession` seam for the concurrency matrix.
     /// Production never installs a hook.
     pub(super) clear_session_hook: ClearSessionHookSlot,
+    /// #1298 (review boundary, residual P2): where a failed `clearSession`
+    /// records that its best-effort re-arm also failed. The observer is
+    /// test-only; production leaves the slot empty and the failure goes to
+    /// stderr. #1298 also turned the re-arm from a `?` into a swallowed
+    /// secondary failure, so the clear always reports the error that actually
+    /// aborted it instead of the recovery's error.
+    pub(super) rearm_failure_observer: RearmFailureObserverSlot,
 }
 
 /// #917 fix-r2: deterministic stage names for the `clearSession` seam, the
@@ -499,6 +506,14 @@ pub type ClearSessionHook = std::sync::Arc<
 
 type ClearSessionHookSlot = std::sync::Mutex<Option<ClearSessionHook>>;
 
+/// #1298: notified when a failed `clearSession` could not re-arm its
+/// still-present L0 rows either (the session key and the re-arm error text).
+/// Tests install one; production never does.
+#[doc(hidden)]
+pub type RearmFailureObserver = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;
+
+type RearmFailureObserverSlot = std::sync::Mutex<Option<RearmFailureObserver>>;
+
 /// #917 fix-r1: in-memory per-store clear counter. `generation` is this
 /// `EdgeClawFileStores`' monotone counter; `sessions` records the value each
 /// cleared session key last reached together with the generation at which
@@ -536,15 +551,27 @@ impl SessionClears {
     /// reader sees both or neither; #1207: each deleted id is stamped with
     /// this bump's generation, so the record can answer "deleted *after* the
     /// reader's baseline", not merely "deleted at some point").
+    ///
+    /// #1298 (review boundary, residual P2): the sequence number is drawn
+    /// while the `sessions` map is locked, so the stamps written below are
+    /// ordered with the map state every reader observes. It no longer relies
+    /// on the caller's invariant that two bumps of one store cannot overlap:
+    /// `clearSession` holds `operation_scope()` for its whole run
+    /// (`file_memory.rs:353-365`) and this `SessionClears` is a per-store
+    /// field, never shared, so a reordered `fetch_add` was unreachable — but
+    /// that was the *caller's* lock, not this type's. The atomic stays (it is
+    /// read through the map, so a plain `u64` would work today); moving it
+    /// under the map lock removes an implicit cross-module dependency at zero
+    /// runtime cost.
     pub(crate) fn bump(&self, session: &str, removed: &[String]) {
-        let next = self
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
         let mut sessions = self
             .sessions
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let next = self
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         let state = sessions
             .entry(session.to_string())
             .or_insert(SessionClearState {
@@ -691,7 +718,18 @@ impl EdgeClawFileStores {
             temp_random_fragment: Arc::new(default_temp_fragment),
             session_clears: SessionClears::new(),
             clear_session_hook: std::sync::Mutex::new(None),
+            rearm_failure_observer: std::sync::Mutex::new(None),
         })
+    }
+    /// #1298: install the re-arm failure observer (tests only; production
+    /// never installs one). The callback receives the session key and the
+    /// re-arm error text.
+    #[doc(hidden)]
+    pub fn set_rearm_failure_observer(&self, observer: RearmFailureObserver) {
+        *self
+            .rearm_failure_observer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(observer);
     }
     /// Override the sibling temp-path naming seams. `sqlite.ts:422` reads
     /// `Date.now()` and one `Math.random()` draw per path, so replay hosts
@@ -704,6 +742,31 @@ impl EdgeClawFileStores {
         self.temp_now_ms = now_ms;
         self.temp_random_fragment = random_fragment;
         self
+    }
+    /// #1298 (review boundary, residual P2): re-arm the session's L0 rows
+    /// after a failed `clearSession` without letting a re-arm failure replace
+    /// the error that actually aborted the clear. The re-arm is best effort:
+    /// when it fails too, SQLite is unreachable, no recovery can run, the row
+    /// stays `indexed=1`, and the only useful signal is the failure record —
+    /// the caller must still report the primary error (the pre-#1298 `?`
+    /// returned `database is not open` and dropped the injected cause).
+    pub(crate) fn rearm_after_clear_failure(&self, session: &str) {
+        let error = match self.storage.rearm_l0_indexed_for_session(session) {
+            Ok(()) => return,
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        let observer = self
+            .rearm_failure_observer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        match observer {
+            Some(observer) => observer(session, &message),
+            None => {
+                eprintln!("edgeclaw clearSession re-arm failed for session {session}: {message}")
+            }
+        }
     }
 }
 

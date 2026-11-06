@@ -2983,6 +2983,247 @@ async fn clear_failing_after_l0_ids_selected_rearms_indexed_rows() {
     lab.server.close().await;
 }
 
+// #1298 (review boundary, residual P2): #1207 fix-r1's abort recovery was
+// only pinned at the `L0IdsSelected` seam. The earlier `BeforeDeleteL0` seam
+// aborts through the same tail error arm — by then the session's memory
+// files are already removed and its L0 rows are still present — so the same
+// re-arm must run. Without this cell, dropping the recovery on that stage
+// would leave an indexed row whose file is gone forever and no test would
+// notice.
+#[tokio::test]
+async fn clear_failing_at_before_delete_l0_rearms_indexed_rows() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-at-before-delete-l0", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "indexed before a clear that fails at the before-delete-L0 seam",
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1298 the first heartbeat must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1298 the first heartbeat must index the turn and write its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1298 list l0 rows after the first heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1298 the row must be indexed before the failing clear starts"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1298 the turn's file must exist before the failing clear starts, got {paths:?}"
+    );
+    lab.stores
+        .set_clear_session_hook(Arc::new(|stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#1298 the failing-clear hook must fire on the target session"
+            );
+            if stage != ClearSessionStage::BeforeDeleteL0 {
+                return Ok(());
+            }
+            Err(FileMemoryError::Invalid(
+                "#1298 injected failure at the before-delete-L0 seam".into(),
+            ))
+        }));
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#1298 the clear must fail with the injected error");
+    assert!(
+        error
+            .to_string()
+            .contains("#1298 injected failure at the before-delete-L0 seam"),
+        "#1298 the clear must fail with the injected error, got {error}"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#1298 the failed clear must not advance the generation"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        !paths.iter().any(|path| path.starts_with("Project/")),
+        "#1298 the failed clear removed the session's files; only the re-arm can bring them back, got {paths:?}"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1298 list l0 rows after the failed clear");
+    assert_eq!(
+        rows.len(),
+        1,
+        "#1298 the failed clear must leave the session's L0 row in place"
+    );
+    assert!(
+        !rows[0].indexed,
+        "#1298 the clear that failed at the before-delete-L0 seam with the files already removed must re-arm its still-present indexed row"
+    );
+    let pending = lab
+        .stores
+        .storage
+        .list_unindexed_l0_by_session("s1")
+        .expect("#1298 list unindexed rows after the failed clear");
+    assert_eq!(
+        pending.len(),
+        1,
+        "#1298 the re-armed row must be re-listable so the next heartbeat regenerates its file"
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1298 the heartbeat after the re-armed clear failure must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1298 the heartbeat after the re-armed clear failure must re-index the row and regenerate its file"
+    );
+    let rows = lab
+        .stores
+        .storage
+        .list_all_l0()
+        .expect("#1298 list l0 rows after the second heartbeat");
+    assert!(
+        rows[0].indexed,
+        "#1298 the re-armed row must be indexed again alongside the regenerated file"
+    );
+    let paths = memory_paths(&lab.stores);
+    assert!(
+        paths.iter().any(|path| path.starts_with("Project/")),
+        "#1298 the heartbeat after the re-armed clear failure must regenerate the session's file, got {paths:?}"
+    );
+    lab.server.close().await;
+}
+
+// #1298 (review boundary, residual P2): the abort recovery is best effort.
+// When the re-arm itself cannot run — here the storage is closed at the
+// `BeforeDeleteL0` seam, so the re-arm's `conn()` reports `Closed` — the
+// clear must still report the error that aborted it. Before #1298 the re-arm
+// used `?`, so the injected cause was replaced by "database is not open" and
+// the re-arm failure left no record at all.
+#[tokio::test]
+async fn clear_failing_with_closed_storage_keeps_primary_error() {
+    let _guard = HEARTBEAT_TEST_LOCK.lock().await;
+    let lab = gated_lab("clear-fails-with-closed-storage", false, &[], |_| {
+        vec![
+            classify_response(&[("project", "durable project fact")]),
+            note_response("Alpha", "Alpha description", "## Summary\nAlpha body"),
+        ]
+    })
+    .await;
+    capture_user_turn(
+        &lab.indexer,
+        "s1",
+        "2026-10-22T00:00:01.000Z",
+        "indexed before a clear whose re-arm cannot run",
+    );
+    let stats = lab
+        .indexer
+        .run_heartbeat(run_options())
+        .await
+        .expect("#1298 the first heartbeat must succeed");
+    assert_eq!(
+        (
+            stats.captured_sessions,
+            stats.written_files,
+            stats.failed_sessions
+        ),
+        (1, 1, 0),
+        "#1298 the first heartbeat must index the turn and write its file"
+    );
+    let recorded: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = recorded.clone();
+    lab.stores
+        .set_rearm_failure_observer(Arc::new(move |session, message| {
+            sink.lock()
+                .expect("#1298 the re-arm record lock must not be poisoned")
+                .push((session.to_string(), message.to_string()));
+        }));
+    let repository = Arc::downgrade(&lab.stores);
+    lab.stores
+        .set_clear_session_hook(Arc::new(move |stage, session| {
+            assert_eq!(
+                session, "s1",
+                "#1298 the failing-clear hook must fire on the target session"
+            );
+            if stage != ClearSessionStage::BeforeDeleteL0 {
+                return Ok(());
+            }
+            let stores = repository
+                .upgrade()
+                .expect("#1298 the repository must outlive the running clear");
+            stores
+                .storage
+                .close()
+                .expect("#1298 the storage must close at the seam");
+            Err(FileMemoryError::Invalid(
+                "#1298 injected failure at the before-delete-L0 seam".into(),
+            ))
+        }));
+    let error = lab
+        .stores
+        .clear_session_memory_data("s1")
+        .expect_err("#1298 the clear must fail with the injected error");
+    assert!(
+        error
+            .to_string()
+            .contains("#1298 injected failure at the before-delete-L0 seam"),
+        "#1298 the clear must report the error that aborted it, not the re-arm's, got {error}"
+    );
+    assert_eq!(
+        lab.stores.session_clear_generation("s1"),
+        0,
+        "#1298 the failed clear must not advance the generation"
+    );
+    let recorded = recorded
+        .lock()
+        .expect("#1298 the re-arm record lock must not be poisoned")
+        .clone();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "#1298 the failed re-arm must be recorded exactly once, got {recorded:?}"
+    );
+    assert_eq!(
+        recorded[0].0, "s1",
+        "#1298 the re-arm record must name the session it could not recover"
+    );
+    assert!(
+        recorded[0].1.contains("database is not open"),
+        "#1298 the re-arm record must carry why the recovery failed, got {recorded:?}"
+    );
+    lab.server.close().await;
+}
+
 // #1207 fix-r2 (review P0): a clear that fails *inside* delete_memory_entries
 // — here the manifest repair rewriting the read-only MEMORY.md, after the
 // per-file unlinks already removed the session's memory file — has the same
