@@ -13,6 +13,7 @@
 | 2026-11-07 | 按 ① 修订并**入仓**（本目录）：C5 豁免 `requestEvidence`、新增 C6、补 2 条 negctl |
 | 2026-11-07 | 两家非作者评审（GLM/zai + MiniMax）后的修复轮：零对拍硬失败、轮次有效性闸门、C6 多重集配对、C2b 字段集钉死、G03 超时、`--negctl-out` 独占、装置自身 sha256 pin |
 | 2026-11-07 | `#1968`（P1）+ `#1969`（P2 批）清残留：negctl 基线改走轮次闸门（不可用退 rc=3）、独占新建改 `os.makedirs`（原子）、基线变异点缺失改 `BaselineUnusable`（不再 traceback）、证据 trace 原子写、N/O 负控校验成因、G03 子进程 `TMPDIR` 隔离 |
+| 2026-11-07 | 上述改动的**评审修复轮**（GLM/zai 四角色）：E/H 两条用例补变异点守卫（此前是静默空操作 → 假 `MISMATCH`）、N/O 成因改**结构化集合**（正文子串匹配会被进程级证据行里的 G03 stderr 污染）、`negctl` 循环中途崩溃独立 rc=9 并删半成品、`--negctl-out` 创建失败捕 `OSError`、空串不再静默落进 `run()`、G03 起不来按「未判定」而非崩溃、`g03_tmpdir` 接 SIGTERM |
 
 入仓理由：`#1157` 的常驻复查条件写着「用同一份 `frame_attrib.py` 重跑」，而 `_tmp/` 是可回收目录。
 放 `scripts/parity-attrib/` 而**不是** `scripts/parity/`：后者在冻结检查（`check_frozen.py`）扫描范围内。
@@ -26,7 +27,7 @@ python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景>
 #    <rounds 目录> 下同时含 ts-r1..ts-rN 与 rust-r1..rust-rN（parity-full 落盘布局）
 
 # 2) 负控（会往 --negctl-out 写变异副本，该目录须独占新建：代码用 `os.makedirs` 原子独占，
-#    已存在即 rc=1 退出，不覆盖任何历史证据）
+#    已存在或无法创建即 rc=1 退出，不覆盖任何历史证据；装置自身崩溃是 rc=9，两者不混）
 python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景> --negctl-out <新目录>
 
 # 3) 自测（纯合成数据，不依赖 trace）
@@ -38,12 +39,14 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 `6` 有轮次无效因而只覆盖部分批次（结论不算验收证据）· `7` 本批次**没有任何 FAIL**（全 PASS）
 → 不能作为 #6 归因证据 · `8` 有 pair **未判定**（比较器超时 / 输出不可解析 / 输出缺该场景）。
 `8` 与 `2` 严格区分：「工具没跑成」不是「不是 #6」，不能把 rc=2 这个最强否定结论发给装置故障。
-`--negctl-out` 子命令的退出码是另一套语义：`0` = 15 条负控全部按期望命中 · `1` = `--negctl-out`
-已存在（独占新建失败，不覆盖证据）· `3` **基线不可用**（没有有效轮次 / 基线 trace 缺本装置需要改的
-变异点，**数据问题，不下判据结论**）· `4` 有 `MISMATCH`（判据真被证伪）· `8` 有负控**未判定**
-（同一条 case 上比较器故障，不折成 `MISMATCH`——那会把装置故障报成「判据被证伪」）。
-优先级是 `4` > `8`：已经证伪就不受未判定影响，且未判定条数照常在 `4` 的输出里打印，不吞。
-不存在 rc=2/6/7 的含义。
+`--negctl-out` 子命令的退出码是另一套语义：`0` = 15 条负控全部按期望命中 · `1` = 证据目录
+**不可用**（已存在 → 独占新建失败、不覆盖证据；或无法创建，如只读父目录 / 路径中段是文件）·
+`3` **基线不可用**（没有有效轮次 / 基线 trace 缺本装置需要改的变异点，**数据问题，不下判据结论**）·
+`4` 有 `MISMATCH`（判据真被证伪）· `8` 有负控**未判定**（同一条 case 上比较器故障，不折成
+`MISMATCH`——那会把装置故障报成「判据被证伪」）· `9` **装置自身崩溃**（循环中途异常；半成品证据
+目录已删除）。`9` 与 `1` 必须分开：以 rc 判停的 `#1157` 复查会按 `1` 读成「目录名已占用」而换名
+重跑，真实崩溃就被误归因，残缺目录还可能被当成完整证据。优先级是 `4` > `8`：已经证伪就不受未判定
+影响，且未判定条数照常在 `4` 的输出里打印，不吞。不存在 rc=2/6/7 的含义。
 
 脚本内 `_repo_root()` 从自身位置向上找含 `scripts/parity/g03_compare.py` 的仓库根，因此 `_tmp/` 里的
 历史副本与本目录的入仓副本都能跑；**找不到就报错退出**，绝不回退到硬编码的机器路径（否则被审树与
@@ -167,17 +170,19 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M/N/O 亦符合期望（15/15 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 99 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+- 自测 `test_frame_attrib.py` 现有 109 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
   `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
   BLOCKED / 超大整数 started_wall）、`verdict_exit()` 退出码折叠（含未判定）、`judge()` 的 C1–C6
   编排与 `UNKNOWN`（注入 G03 桩，不跑冻结比较器）、C0 的进程内自报（`trace_input` /
   `trace_identity` → UNKNOWN，`trace_health` 仍 NOT_6）、负控归类 `case_mark()`（UNKNOWN ≠
-  MISMATCH，N/O 还要求成因点名自报规则）、`run()` 端到端接线（全 PASS → rc=7、比较器故障 → rc=8
+  MISMATCH；N/O 还要求**结构化**成因非空，判据不看证据行文案）、`run()` 端到端接线（全 PASS → rc=7、比较器故障 → rc=8
   且不打印反证命中）、空 root 硬失败，以及**装置自身 sha256 pin**。
   另有 `#1969` 新增的：`build_cases()` 返回 15 条五元组且不改基线、变异点缺失一律 `BaselineUnusable`
-  （不再是 `StopIteration` / `IndexError`）、`write_trace()` 序列化失败时目标文件原样保留且无临时
-  残留、`negctl()` 端到端四条（rc=0 全命中 / rc=8 未判定 / rc=8 成因不符 / rc=4 且未判定摘要照常打印 /
-  rc=3 无效基线轮次）、`--negctl-out` 悬空符号链接拒绝。
+  （不再是 `StopIteration` / `IndexError`；**15 条用例逐条覆盖**，含 E 的 `operation.terminal`
+  与 H 的 `side_effect.state`，以及 gsf 这条唯一前置）、`write_trace()` 序列化失败时目标文件原样
+  保留且无临时残留、`negctl()` 端到端六条（rc=0 全命中 / rc=8 未判定 / rc=8 成因非自报 / rc=4 且未判定
+  摘要照常打印 / rc=3 无效基线轮次 / **rc=9 循环崩溃且半成品目录已删**）、`--negctl-out` 悬空符号链接
+  拒绝与空串显式报错、`judge()` 的第三个返回值（结构化成因）在自报 / 进程级两条路径上的取值。
   每条闸门断言都带判别力：缺 summary 的用例会把 summary 恢复后再测 started_wall，
   原因串必须点名 `started_wall`（否则删掉闸门也照样绿）。
 
