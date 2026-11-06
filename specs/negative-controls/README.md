@@ -106,6 +106,16 @@
 `tests/fixtures/*/negative_controls.py` 这类自己管循环、自己判杀的 Python 入口，判决路径
 必须满足三条不变式。三条的共享实现都在 `tests/fixtures/negative_selection.py`，脚本不各写一遍。
 
+**覆盖范围（重要，别当全集）**：本轮迁移的是 #1666 点名的第一批，加上同形的第二批——
+`settings` · `memory-maintenance` · `upload-gateway` · `html-timing` · `interaction-bus` ·
+`node-io` · `project-files-linux-dirent` · `network-timing`（含 `negative_private.py`）·
+`sdk-settings` · `settings-gateway` · `interaction-values` · `turn-submit-admission` ·
+`turn-runner/runner_negative.py` · `cli-parity-mock-gateway`。**其余同族入口尚未迁移**，
+由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
+的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
+该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
+`shared-runner-failclosed` 是登记在表内的豁免（手工运行、失败关闭、无退出码消费方）。
+
 1. **分母是静态字面量，不是运行期表长度**。表后写 `EXPECTED_NAMES`，启动即
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
    当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印
@@ -125,9 +135,17 @@
 |---|---|
 | 0 | 选中的变异全部 KILLED（`--compile-only` 时全部 COMPILED） |
 | 1 | 确实跑过但没拿到全绿结论：SURVIVED / INVALID / SKIPPED / 基线重放不通过 / 收尾恢复校验失败 |
-| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在、缺 `CARGO_TARGET_DIR`、树脏或领锁超时、oracle 读不了 |
+| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、缺 `CARGO_TARGET_DIR`、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
 被信号直接杀死（SIGINT 130 / SIGTERM 143 / SIGKILL 137）不在表内，看证据是否完整。
 这套分界不依赖 `assert`，所以 `-O` 下不变。
+
+实现进度按行读：**已迁移脚本**对未知 / 重复变异名、名册漂移、输出目录已存在
+（走 `claim_dir`，`FileExistsError` 不再落成 1）、缺 `CARGO_TARGET_DIR` 都返回 2；
+**树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
+其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
+宿主分诊时不要把这三种边当成已覆盖。
+另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
+（`network-timing` 在 `mutation_suite` / `baseline_only` 内部占目录，同样在守卫之后）。

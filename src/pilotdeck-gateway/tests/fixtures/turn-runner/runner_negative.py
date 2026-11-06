@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 from _negative_common import mutate, run, check_mutations
 
 root = Path(__file__).resolve().parents[5]
@@ -52,26 +53,74 @@ mutations = [
     ('best-effort-status', 'status', [('.await;', '.await.expect("mutant status failure");')]),
 ]
 
+# #1666: the denominator is this literal roster, never `len(mutations)`. A
+# dropped or renamed row is a startup refusal instead of a shorter green run,
+# and `select()` refuses an unknown name instead of silently matching nothing.
+EXPECTED_NAMES = (
+    'start-durable',
+    'accepted-before-write',
+    'accepted-boundary',
+    'synthetic-durable',
+    'history-loop-only',
+    'status-required',
+    'status-dedup',
+    'complete-durable',
+    'catch-complete',
+    'terminal-mark',
+    'catch-terminal-mark',
+    'worker-lease',
+    'aborted-reason',
+    'nullish-hint',
+    'visible-error-details',
+    'phase-guard',
+    'catch-phase-guard',
+    'identity-turn-guard',
+    'identity-guard',
+    'invalid-result-early-return',
+    'invalid-result-error-shape',
+    'status-undefined-detail',
+    'status-null-text',
+    'status-undefined-text',
+    'catch-status-must-repeat',
+    'undefined-result-message',
+    'nonstring-turn-message',
+    'undefined-turn-dedup',
+    'turn-surrogate-lossy',
+    'turn-coercion-error',
+    'best-effort-status',
+)
+
 if sys.argv[1:] == ['--check']:
     raise SystemExit(check_mutations((n, source, s, r) for n, s, r in mutations))
 if not env.get('CARGO_TARGET_DIR'):
-    raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
-if sys.argv[2:]:
-    selected = set(sys.argv[2:])
-    assert selected <= {row[0] for row in mutations}, 'unknown mutation'
-    mutations = [row for row in mutations if row[0] in selected]
+    refuse('CARGO_TARGET_DIR must be supplied by the caller')
+# Every startup guard runs before the evidence directory exists, so a
+# `refuse()` ("never started", exit 2) really leaves nothing behind.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    run_rows = select(mutations, sys.argv[2:], always=())
+except ValueError as error:
+    refuse(str(error))
+out = claim_dir(sys.argv[1])
 run = partial(run, root=root, out=out, command=command, env=env)
+verdicts = []
 with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
     original = originals[source].decode()
-    assert run('positive').returncode == 0
-    for name, scope, replacements in mutations:
+    if run('positive').returncode != 0:
+        raise RuntimeError('unmutated baseline did not pass')
+    for name, scope, replacements in run_rows:
         source.write_text(mutate(original, scope, replacements))
         result = run(name)
-        assert result.returncode != 0 and 'test result: FAILED' in result.stdout, name
-        assert 'panicked at' in result.stdout + result.stderr, name
+        if result.returncode == 0 or 'test result: FAILED' not in result.stdout:
+            raise RuntimeError(f'{name}: bound runner test did not fail')
+        if 'panicked at' not in result.stdout + result.stderr:
+            raise RuntimeError(f'{name}: failure is not a test assertion panic')
         source.write_bytes(originals[source])
+        verdicts.append({'verdict': 'KILLED'})
         print(f'{name}: runtime RED; source restored', flush=True)
-    assert run('restored').returncode == 0
-(out / 'summary.json').write_text(json.dumps({'mutations':len(mutations),'runtimeFailures':len(mutations),'restoredPass':True},indent=2)+'\n')
+    if run('restored').returncode != 0:
+        raise RuntimeError('restored baseline did not pass')
+(out / 'summary.json').write_text(json.dumps({'mutations':len(run_rows),'runtimeFailures':len(run_rows),'restoredPass':True},indent=2)+'\n')
+# Zero rows can never read as success: a run that proves nothing exits 1.
+sys.exit(verdict_exit(verdicts))
+

@@ -7,10 +7,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'
 helper = root / 'src/pilotdeck-gateway/src/runtime/cleanup_task.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/memory/maintenance.rs'
@@ -68,6 +66,7 @@ try:
     run_rows = select(mutations, selected, always=())
 except ValueError as error:
     refuse(str(error))
+out = claim_dir(sys.argv[1])
 summary = []
 def run(name, test):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')

@@ -17,8 +17,20 @@ import signal
 # #1734: the marker-scope predicate is shared with the legacy `negative_panic`
 # helper. Both kits used to carry their own copy and had drifted apart; the
 # single implementation lives in `negative_scope` and the strictest historical
-# rule set is kept.
-from negative_scope import HANG_PREFIXES, marker_is_scoped
+# rule set is kept. `toy_runner.py` imports this module with only `_negkit/` on
+# `sys.path` (under `-I`), so fall back to the fixtures root instead of
+# duplicating the predicate here.
+try:
+    from negative_scope import HANG_PREFIXES, marker_is_scoped
+except ModuleNotFoundError:  # direct `import contract` with only `_negkit/` on sys.path
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    # Kept as an attribute lookup, not a second `from ... import` line: the
+    # submit-migration fixtures anchor on the import above and require it to
+    # occur exactly once in this file.
+    import negative_scope
+    HANG_PREFIXES = negative_scope.HANG_PREFIXES
+    marker_is_scoped = negative_scope.marker_is_scoped
 
 
 # Reserved diagnostics emitted by the existing gateway watchdog/timeout probes.

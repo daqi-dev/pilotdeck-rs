@@ -16,11 +16,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/config/settings.rs'
 shared = root / 'src/pilotdeck-gateway/src/config/snapshot.rs'
 
@@ -158,6 +156,7 @@ except ValueError as error:
     refuse(str(error))
 if 'CARGO_TARGET_DIR' not in os.environ:
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+out = claim_dir(sys.argv[1])
 env = os.environ.copy()
 summary = []
 with mutating_sources(root, [source, shared]) as snapshots:
@@ -206,7 +205,8 @@ with mutating_sources(root, [source, shared]) as snapshots:
                     f'{name}: restore failed ({restored} != {before}); the tree is dirty')
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
-    print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte',
+    killed_rows = sum(1 for row in summary if row['killed'])
+    print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte',
           flush=True)
 # #1666: a zero-row run can never exit 0, and neither can a surviving mutant.
 sys.exit(verdict_exit(summary, key='killed', killed=True))

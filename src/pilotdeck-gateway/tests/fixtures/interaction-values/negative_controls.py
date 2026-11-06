@@ -13,10 +13,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/interaction/value.rs'
 bus = source.with_name('bus.rs')
 reconnect = source.with_name('reconnect.rs')
@@ -52,24 +51,63 @@ mutations = [
     ('validation-order', bus, 'self.register_with_payload(owner, entry, || to_interaction_replay_value(nodes, root))',
      'let payload = to_interaction_replay_value(nodes, root)?; self.register_with_payload(owner, entry, || Ok(payload))'),
 ]
-selected = set(sys.argv[2:])
-mutations = [mutation for mutation in mutations
-             if not selected or mutation[0] in selected]
-assert len({name for name, *_ in mutations}) == len(mutations), 'duplicate mutation name'
-assert not selected or len(mutations) == len(selected), 'unknown mutation name'
-paths = sorted({path for _name, path, _old, _new in mutations}, key=str)
+# #1666: the denominator is this literal roster, never `len(mutations)`. A
+# dropped or renamed row is a startup refusal instead of a shorter green run,
+# and `select()` refuses an unknown name instead of silently matching nothing.
+EXPECTED_NAMES = (
+    'owner-stale',
+    'owner-create',
+    'owner-disconnect',
+    'owner-remove',
+    'owner-dispose',
+    'owner-clear',
+    'wire-normalize',
+    'unsupported',
+    'date-invalid',
+    'date-range',
+    'date-clip',
+    'date-iso',
+    'bigint',
+    'bigint-empty',
+    'bigint-digits',
+    'bigint-canonical',
+    'wire-identity',
+    'identity',
+    'object-order',
+    'array-undefined',
+    'object-undefined',
+    'object-proto',
+    'proto-visit',
+    'object-fields',
+    'array-fields',
+    'root-omit',
+    'invalid-reference',
+    'entry-bypass',
+    'validation-order',
+)
+# Every startup guard runs before the evidence directory exists, so a
+# `refuse()` ("never started", exit 2) really leaves nothing behind.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    run_rows = select(mutations, sys.argv[2:], always=())
+except ValueError as error:
+    refuse(str(error))
+out = claim_dir(sys.argv[1])
+paths = sorted({path for _name, path, _old, _new in run_rows}, key=str)
 env = target_environment(root)
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','interaction_producer_','--','--nocapture']
+verdicts = []
 
 with mutating_sources(root, paths) as snapshots:
     # All anchors are checked against the locked, HEAD-verified snapshots before
     # the first write: a stale anchor aborts with the tree still pristine.
-    for name, path, old, new in mutations:
+    for name, path, old, new in run_rows:
         text = snapshots[path].decode()
-        assert text.count(old) == 1, (name, text.count(old))
+        if text.count(old) != 1:
+            raise RuntimeError(f'{name}: anchor occurs {text.count(old)} times (expected 1)')
         with (out / (name + '.mutation')).open('x') as f:
             f.write(str(path.relative_to(root)) + '\n' + old + '\n=>\n' + new + '\n')
-    for name, path, old, new in mutations:
+    for name, path, old, new in run_rows:
         original = snapshots[path]
         text = original.decode()
         try:
@@ -79,11 +117,16 @@ with mutating_sources(root, paths) as snapshots:
             result = run_owned(command, cwd=root, env=env, timeout=180)
             log = result.stdout + result.stderr
             (out / (name + '.log')).write_text(log)
-            assert result.returncode == 101 and 'test result: FAILED.' in log and 'panicked at' in log, name
+            if not (result.returncode == 101 and 'test result: FAILED.' in log
+                    and 'panicked at' in log):
+                raise RuntimeError(f'{name}: bound test did not fail at its assertion '
+                                   f'(exit {result.returncode})')
+            verdicts.append({'verdict': 'KILLED'})
             print(name + ': KILLED (assertion killed)', flush=True)
         finally:
             path.write_bytes(original)
-            assert path.read_bytes() == original
+            if path.read_bytes() != original:
+                raise RuntimeError(f'{name}: source was not restored byte-for-byte')
             with (out / (name + '.restored-sha256')).open('x') as f:
                 f.write(hashlib.sha256(original).hexdigest()+'\n')
 # All mutations restored and checked by mutating_sources; compile failures never count.
@@ -92,5 +135,8 @@ slot = wait_for_slot(root / 'scripts/cargo-slots.sh')
 result = run_owned(command, cwd=root, env=env, timeout=180)
 log = result.stdout + result.stderr
 (out / 'restored.log').write_text(log)
-assert result.returncode == 0 and 'test result: ok.' in log, 'restored positive control failed'
+if not (result.returncode == 0 and 'test result: ok.' in log):
+    raise RuntimeError('restored positive control failed')
 print('restored: PASS',flush=True)
+# Zero rows can never read as success: a run that proves nothing exits 1.
+sys.exit(verdict_exit(verdicts))
