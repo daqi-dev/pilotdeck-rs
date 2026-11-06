@@ -15,10 +15,12 @@
 ``rename``，缺失即失败）。
 
 退出码与 checker 同口径：0 全 KILLED / 1 有非 KILLED / 2 输入或环境不可用
-（缺 ``-I``、checker 加载失败、输出目录写不进去）——rc2 绝不能被读成「判据 FAIL」。
+（缺 ``-I``、checker 加载失败、输出目录写不进去、argv 连宽松孪生解析器都分不了类）
+——rc2 绝不能被读成「判据 FAIL」。
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -27,39 +29,40 @@ import sys
 #
 # 下游以「summary.json 存在」为「负控已跑完」的证据，所以**任何**早退路径都不得
 # 把上一轮的 PASS 留在盘上：缺 ``-I``、checker 导入失败、argparse 报错（拼错 /
-# 缺值 / 多余 token）、读数据失败、preflight 非 0。因此这段只依赖 ``os`` / ``sys``，
-# 放在模块体最前面，早于 ``-I`` 断言、早于 ``load_checker()``、早于 pycache 目录
-# 设置（那一步在无可写临时目录时也可能退出）。
+# 缺值 / 多余 token）、读数据失败、preflight 非 0。因此这段放在模块体最前面，早于
+# ``-I`` 断言、早于 ``load_checker()``、早于 pycache 目录设置（那一步在无可写临时
+# 目录时也可能退出）；只依赖 ``os`` / ``sys`` / ``argparse``（标准库，无副作用）。
 #
-# 输出目录只从**显式** ``--output`` 取：解析器 ``allow_abbrev=False``，选项名
-# 精确匹配，解析前即可无歧义地取出。不按「哪些 token 可能是位置参数」猜候选——
-# 未知选项带不带值在解析前不可判定，猜错的代价是删掉别人的证据（评审 P0，误删同样
-# 算丢数据）；没写 ``--output`` 就一个都不删。
+# 帮助路径同样失效（**不猜会走哪条分支**）：只要命令里显式写了输出目录，无论
+# argparse 之后是跑、是 ``-h``、还是报错，那个目录的旧 PASS 都已报废。
 #
-# 帮助路径同样失效（**不再猜会走哪条分支**）：只要命令里显式写了输出目录，无论
-# argparse 之后是跑、是 ``-h``、还是报错，那个目录的旧 PASS 都已报废。跳过帮助等于
-# 把「哪些形状算帮助」再猜一遍（``-hh`` / ``--help=x`` / 被带值选项吃掉），而猜错的
-# 方向都是留旧 PASS 冒充本轮（两家评审 P0）。
+# **token 分类交给 argparse 自己，不再手抄规则。** 前几轮把「哪个 token 算
+# ``--output`` 的值」写成镜像 argparse 的判定层（候选集 / 帮助判定 / 负数正则 /
+# 「两版都判成选项的形状」），每加一层都在另一版 Python 或另一种拼写上漏收，而漏收
+# 的方向是留旧 PASS 冒充本轮、猜错的方向是删掉别人的证据（Codex/DeepSeek 连续
+# P0）。现在的做法是**问 argparse 本人**：用**同一张选项表**（``PARSER_OPTIONS``）
+# 建一个宽松孪生解析器（``build_classifier``），把所有选项的 ``nargs`` 放宽成
+# ``'?'``、``--output`` 改成 ``action='append'``，未知选项由 ``parse_known_args``
+# 收进 extras——它不会因为「缺值」报错，但**分类与真实解析器逐 token 一致**，
+# 包括只有运行中的这版 CPython 才有的行为（``-1x`` / ``-1e3``：3.12 是选项、
+# 3.14 是值）与短选项内联（``'-h x'`` 是 ``-h`` 带内联值，不是目录名）。
+# 实测矩阵见 ``README.md``「值怎么取」与 ``_tmp/20261106-issue-1477/verify-fix-r12/``。
 #
-# 值 = 紧跟 ``--output`` 的**那个** token；它若不是值（见下），就算这次 ``--output``
-# 缺值、不再向后找（``--output --data DIR`` 里的 DIR 是 ``--data`` 的值，argparse 在
-# 第一个 ``--output`` 上就报错）。三种 token 不是值：
-#   ① 本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）；
-#   ② **两个 CPython 版本都判成选项**的形状（``-`` 后是 ``-`` 或字母、且不含空格：
-#      ``-hh`` / ``-h=x`` / ``-x`` / ``--he`` / ``-e5``）——3.12 与 3.14 实测
-#      ``--output <token>`` 都报 ``expected one argument``，当值只会去删同名目录；
-#   ③ 空 token（``Path('') == Path('.')``，见 ``main`` 的空值判断）。
-# 两版结论**相反**的只有「``-`` 后紧跟数字或点」这一小撮（``-1x`` / ``-1e3``：3.12
-# 当选项、3.14 当值），一律按值——漏收的方向是留旧 PASS 冒充本轮，误删只是少一份可
-# 复算的旧结果，代价不对称。所有显式目录**逐个都试一遍**再退出，前一个不可删不短路
-# 后面的。
+# 空值不收集（``Path('') == Path('.')``，见 ``main`` 的空值判断）；重复写多次时
+# **每个非空值都收集**（argparse 只有一个生效，但这条命令终究没跑完，被显式点名的
+# 目录都不该留旧 PASS），所有目录**逐个都试一遍**再退出，前一个不可删不短路后面的。
+# 没有 ``--output`` 就一个都不删；``--`` 之后的不算（真实解析器把那里当位置参数，
+# 本执行器没有位置参数、直接 rc2），孪生解析器同样不收集。
 # ---------------------------------------------------------------------------
 
-VALUE_OPTIONS = ('--output', '--data', '--oracle')
+# 选项表的**唯一来源**：解析前分类（``build_classifier``）与正式解析
+# （``build_parser``）都从这里建，加选项不会漏改其中一侧（Codex r11 P2）。
+PARSER_OPTIONS = (
+    ('output', ('--output',), 'output directory for mutated rounds + summary'),
+    ('data', ('--data',), 'TS reference data root (default: %(default)s)'),
+    ('oracle', ('--oracle',), 'ts-oracle.json (default: %(default)s)'),
+)
 HELP_OPTIONS = ('-h', '--help')
-# 选项拼写的唯一来源：``main`` 的解析器用 ``PARSER_OPTIONS`` 建、``is_known_option``
-# 用 ``KNOWN_OPTIONS`` 判，两者在 ``build_parser`` 里断言相等（评审 P2：手抄副本无守卫）。
-KNOWN_OPTIONS = VALUE_OPTIONS + HELP_OPTIONS
 
 
 def tmp_owner_pid(name):
@@ -136,69 +139,52 @@ def invalidate_stale_summary(out_root):
     return True
 
 
-def is_known_option(token):
-    """本解析器认识的选项拼写（``allow_abbrev=False``，精确匹配）。取值规则见模块头。"""
-    return any(token == option or token.startswith(option + '=')
-               for option in KNOWN_OPTIONS)
+def build_classifier():
+    """只做 token 分类的**宽松孪生**解析器：与 ``build_parser`` 同一张选项表。
 
+    与真实解析器的差别只在「永不因为形状报错」，不在「怎么分类」：
 
-def is_certainly_option(token):
-    """**3.12 与 3.14 都会判成选项**的形状，因此不当 ``--output`` 的值。理由见模块头。
+    * 每个带值选项 ``nargs='?'`` + ``action='append'``——``--output --data DIR``
+      这类形状不会中止，``--output`` 收 None，重复写时**每个**值都留下；
+    * ``parse_known_args``——未知选项 / 多余 token 落 extras，不抛 SystemExit；
+    * ``-h`` / ``--help`` 必须按真实解析器注册：否则 ``'-h x'``（短选项 + 内联值）
+      会被当成普通位置参数当值（Codex r11 P0）。但**不能**用 ``store_true``——那样
+      ``--help=x`` / ``-h=x`` 会抛 ``ignored explicit argument``，孪生解析器整个失败，
+      后面的 ``--output`` 就不再失效（留旧 PASS）。所以 help 也放宽成
+      ``nargs='?'`` + ``action='append'``：只借它做 token 分类，值被收进 ``namespace.help``
+      不影响 ``--output`` 的收集。
 
-    ``-hh`` / ``-h=x`` / ``-x`` / ``--he`` / ``--1`` / ``-e5`` 实测两版都是选项
-    （``--output <token>`` 报 ``expected one argument``）；当值只会去失效一个同名目录
-    （Codex r10 P0）。含空格的两版都当值（``-x y``）；``-`` 开头的负数仍是值；两版
-    **结论相反**的 ``-1x`` / ``-1e3`` / ``-1_000`` 按值（见模块头的代价不对称）。
+    分类本身完全由运行中的这版 argparse 决定（``_parse_optional`` 的正数/负数/含空格/
+    短选项内联规则），所以跨版本差异（``-1x``：3.12 选项、3.14 值）自动跟随，不需要
+    镜像，也不会随版本漂移（前几轮 P0 的根因）。
     """
-    if not token.startswith('-') or len(token) == 1:
-        return False
-    if ' ' in token:
-        return False
-    second = token[1]
-    if second == '-':
-        return True
-    if second == '.':
-        # ``-.5`` 两版都是值；``-.`` / ``-..`` 两版都是选项
-        return not (len(token) > 2 and token[2].isdigit())
-    return not second.isdigit()
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument(*HELP_OPTIONS, nargs='?', action='append')
+    for _key, flags, _help in PARSER_OPTIONS:
+        parser.add_argument(*flags, nargs='?', action='append')
+    return parser
 
 
 def early_outputs(argv):
-    """解析前从原始 argv 取**所有**显式写出的非空 ``--output`` 值。
+    """解析前取**所有**显式写出的非空 ``--output`` 值，返回 ``(values, ok)``。
 
-    只认两字不差的 ``--output`` / ``--output=``：不猜缩写、不猜位置参数——那些猜测
-    正是前几轮误删别人证据的来源（评审 P0）。
+    分类全部交给 argparse（见 ``build_classifier``）：不手抄规则、不猜缩写、不猜
+    位置参数——那些猜测正是前几轮误删别人证据 / 留旧 PASS 的来源（两家评审 P0）。
 
-    值 = **紧跟** ``--output`` 的那个 token，且它不是已知选项、不是两版都判成选项的
-    形状（``is_certainly_option``）、也不是空值；否则视为这次 ``--output`` 缺值，
-    **不再向后找**（``--output --data DIR`` 的 DIR 属于 ``--data``）。已知选项不当值，
-    但要**重新按 token 处理一遍**：``--output --output=DIR`` 的 DIR 仍被收集（argparse
-    在第一个 ``--output`` 上报错，DIR 是这条命令行里显式点名的）。空值（``--output=``
-    / ``--output ''``）不收集——``Path('')`` 就是当前工作目录，绝不能把 CWD 当输出
-    目录失效（两家评审：会删掉调用者目录里的 summary）；``main`` 另行判参数错误 rc2。
+    ``ok=False`` 表示连宽松孪生解析器都起不来（例如 3.12 的 ``parse_known_args``
+    在某种形状上抛 ``ArgumentError``）：此时**不猜也不删**，由调用方按输入不可用
+    rc2 退出——这比删错目录安全，残余登记在差异条目「机器判据」段。
 
-    重复写多次时**每个非空值都收集**：argparse 只有最后一个生效，但这条命令终究没跑完，
-    被显式点名的目录都不该留旧 PASS。
+    空值（``--output=`` / ``--output ''``）不收集：``Path('')`` 就是当前工作目录，
+    绝不能把 CWD 当输出目录失效（两家评审：会删掉调用者目录里的 summary）；
+    ``main`` 另行判参数错误 rc2。
     """
-    values = []
-    expecting = False
-    for token in argv:
-        if token == '--':
-            break
-        if expecting:
-            expecting = False
-            if (token and not is_known_option(token)
-                    and not is_certainly_option(token)):
-                values.append(token)
-                continue
-            # 不是值：不收集，落下去按选项再处理这个 token。
-        if token == '--output':
-            expecting = True
-        elif token.startswith('--output='):
-            inline = token[len('--output='):]
-            if inline:
-                values.append(inline)
-    return values
+    try:
+        namespace, _extras = build_classifier().parse_known_args(argv)
+    except (argparse.ArgumentError, SystemExit) as error:
+        print(f'negative_controls: cannot classify argv: {error!r}', file=sys.stderr)
+        return [], False
+    return [value for value in (namespace.output or []) if value], True
 
 
 # 只在作为脚本运行时失效：被 import 时不得拿宿主的 sys.argv 去删任何东西
@@ -207,8 +193,10 @@ def early_outputs(argv):
 # **逐个都试一遍再退出**：前一个目录不可删（如 ``/dev/null``）不能让后面显式点名的
 # 目录跳过失效（两家评审：短路会让后者旧 PASS 冒充本轮）。
 if __name__ == '__main__':
-    _failures = [path for path in early_outputs(sys.argv[1:])
-                 if not invalidate_stale_summary(path)]
+    _outputs, _classified = early_outputs(sys.argv[1:])
+    if not _classified:
+        raise SystemExit(2)
+    _failures = [path for path in _outputs if not invalidate_stale_summary(path)]
     if _failures:
         raise SystemExit(2)
 
@@ -216,7 +204,6 @@ if not sys.flags.isolated:
     print(f'negative_controls: run with -I: python3 -I {__file__}', file=sys.stderr)
     raise SystemExit(2)
 
-import argparse
 import importlib.util
 import json
 import subprocess
@@ -826,30 +813,26 @@ def run_control(control, out_root, oracle):
 
 
 def build_parser():
-    """解析器选项表由 ``PARSER_OPTIONS`` 驱动，并断言与 ``KNOWN_OPTIONS`` 一致。
+    """正式解析器：选项表与 ``build_classifier`` **同源**（``PARSER_OPTIONS``）。
 
     两处各自硬编码时，「加一个选项但漏改预扫描集合」会让该选项被当成 ``--output``
-    的值去失效同名目录，漂移无人发现（评审 P2）。这里让漂移在启动时 rc2 暴露。
+    的值去失效同名目录，漂移无人发现（Codex r10 P2）；只比每组第一个拼写同样漏掉
+    别名（r11 P2）。同源之后这两类漂移在结构上不存在——``build_classifier`` 用
+    ``flags`` 全套注册，``_parse_optional`` 对别名一视同仁。
     """
-    options = (
-        (('--output',), {'required': True,
-                         'help': 'output directory for mutated rounds + summary'}),
-        (('--data',), {'default': str(DEFAULT_DATA),
-                       'help': 'TS reference data root (default: %(default)s)'}),
-        (('--oracle',), {'default': str(DEFAULT_ORACLE),
-                         'help': 'ts-oracle.json (default: %(default)s)'}),
-    )
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
         description='Negative controls N1-N17 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
-    # 输出目录走**显式**选项、不做位置参数：解析前就能无歧义取值（见模块头）。
-    for flags, kwargs in options:
+    defaults = {'data': str(DEFAULT_DATA), 'oracle': str(DEFAULT_ORACLE)}
+    for key, flags, help_text in PARSER_OPTIONS:
+        kwargs = {'help': help_text}
+        if key == 'output':
+            # 输出目录走**显式**选项、不做位置参数：解析前就能无歧义取值（见模块头）。
+            kwargs['required'] = True
+        else:
+            kwargs['default'] = defaults[key]
         parser.add_argument(*flags, **kwargs)
-    declared = tuple(flags[0] for flags, _ in options)
-    if declared != VALUE_OPTIONS:
-        parser.error(f'KNOWN_OPTIONS out of sync with the parser: '
-                     f'parser={declared} scanner={VALUE_OPTIONS}')
     return parser
 
 
