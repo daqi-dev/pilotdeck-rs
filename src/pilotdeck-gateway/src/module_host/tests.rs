@@ -52,12 +52,24 @@ const REPLAY_PAD_BUDGET: usize = INPUT_BUDGET;
 /// oracle edited to a tiny pad — or a generator that recorded the wrong size
 /// — would leave both cells green while proving nothing. The body must
 /// therefore be the length the cell claims to test, in the transport's own
-/// `INPUT_BUDGET` units.
+/// `INPUT_BUDGET` units. Unknown `budget-*` ids fail closed: a new boundary
+/// cell must be taught its length here (the switch exists so the negative
+/// control can prove the guard rejects it), otherwise it would replay without
+/// any length pin — the same silent pass this guard removes.
 fn budget_body_len_checked(id: &str, request: &[u8]) -> Result<(), String> {
-    let expected = match id {
-        "budget-exact" => INPUT_BUDGET,
-        "budget-over" => INPUT_BUDGET + 1,
-        _ => return Ok(()),
+    let expected = match id.strip_prefix("budget-") {
+        Some("exact") => INPUT_BUDGET,
+        Some("over") => INPUT_BUDGET + 1,
+        Some(class) => {
+            if crate::mutants::on("module-host-oracle-unknown-budget-cell") {
+                return Ok(());
+            }
+            return Err(format!(
+                "#1349 cell {id}: budget cell class `{class}` has no length guard; teach \
+                 `budget_body_len_checked` its expected body length before adding it"
+            ));
+        }
+        None => return Ok(()),
     };
     let head = request
         .windows(4)
@@ -134,6 +146,16 @@ fn recorded_budget_body_length_rejects_drift() {
 fn recorded_budget_body_length_panics_on_drift() {
     budget_body_len_checked("budget-exact", b"POST / HTTP/1.1\r\n\r\nshort")
         .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn recorded_unknown_budget_cell_is_rejected() {
+    crate::negative_assert!(
+        budget_body_len_checked("budget-under", b"POST / HTTP/1.1\r\n\r\n").is_err(),
+        "#1349 #1696 fails closed on a budget cell class with no length guard"
+    );
+    // Non-budget cells are not this guard's business.
+    assert!(budget_body_len_checked("served", b"POST / HTTP/1.1\r\n\r\n").is_ok());
 }
 
 fn oracle() -> Value {

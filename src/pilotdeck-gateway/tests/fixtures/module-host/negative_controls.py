@@ -78,6 +78,10 @@ switches = [
     # lengths, so a tiny pad cannot leave `budget-exact`/`budget-over` green.
     ('module-host-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_budget_body_length_rejects_drift',
      '#1349 #1696 rejects boundary body length drift'),
+    # #1696: a new `budget-*` cell the guard has not been taught must be
+    # rejected, not replayed without any length pin.
+    ('module-host-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_unknown_budget_cell_is_rejected',
+     '#1349 #1696 fails closed on a budget cell class with no length guard'),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

@@ -490,7 +490,7 @@ scenario(
 
 // 18. http10: an HTTP/1.0 client asking to keep alive. Node answers its own
 // HTTP/1.1 status line with `Connection: close` on a closed socket; hyper
-// answers a 1.0 line (the registered A8.4-NATIVE-HTTP-001 diff) and, before
+// answers a 1.0 line (the draft entry A8.3-CH-WEBHOOK-004) and, before
 // #1684, kept the socket open with `Connection: keep-alive`. The recorded
 // response is close-delimited (Node leaves off the content-length it uses for
 // 1.1), so the Rust side replays this cell in a pinned direct test that
