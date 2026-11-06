@@ -40,4 +40,4 @@ cd src && cargo test -p pilotdeck-gateway --lib api_web
 
 ## 负控
 
-`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器）：鉴权闸、边界闸（`isAbsolute` / `..` 检查）、文本扩展名判定、方法闸、`maxReadBytes` 上限、#1675 的 NOFOLLOW 句柄加固各自一个开关，每个绑定专属 replay cell 或边界探针的单行断言，去掉后必须变红（KILLED）。`api-web-nofollow-off` 绑定 #1675 的两条探针（写穿目录符号链接、读路径竞态窗口），去掉加固后两条都必须变红。新增 cell 时同步更新 `src/api_web/tests.rs` 的 `replay_tests!` 表与开关绑定。
+`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器）：鉴权闸、边界闸（`isAbsolute` / `..` 检查）、`project_describe` 的 catch、文本扩展名判定、方法闸、`maxReadBytes` 上限、#1675 的 NOFOLLOW 句柄加固共七个开关，每个绑定专属 replay cell 或边界探针的单行断言，去掉后必须变红（KILLED）。`api-web-nofollow-off` 绑定 #1675 的八条探针：写侧五条（确定性中间段目录链接、中间段目录竞态换链、整根竞态换链、末段叶竞态换链、缺根时祖先竞态换链）、读侧两条（末段叶竞态换链、中间段目录竞态换链）、枚举一条（目录竞态换链），去掉加固后八条都必须变红。新增 cell 时同步更新 `src/api_web/tests.rs` 的 `replay_tests!` 表与开关绑定。
