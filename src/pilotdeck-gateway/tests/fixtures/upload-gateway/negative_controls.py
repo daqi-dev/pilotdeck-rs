@@ -62,11 +62,15 @@ MESSAGES = 'upload::gateway_tests::upload_gateway_error_messages_preserve_lone_s
 READ_AT_SWAP = ('upload::tests::upload_read_at_metadata_swapped_between_'
                 'canonicalize_and_open_is_rejected')
 LEASE_CHAIN = 'upload::tests::upload_read_at_forged_record_cannot_reach_the_lease'
-READ_AT_RENAME = ('upload::tests::upload_read_at_record_renamed_after_open_is_rejected')
+READ_AT_RENAME = 'upload::tests::upload_read_at_record_renamed_after_open_is_rejected'
 READ_AT_PREAPPROVED = (
     'upload::tests::upload_read_at_metadata_swapped_before_approved_stat_is_rejected')
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
+SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
+ORPHAN = 'upload::tests::upload_cleanup_reclaims_expired_orphan_directories'
+FRESH = 'upload::tests::upload_cleanup_keeps_fresh_orphan_directories'
+LEASE_ATOMIC = 'upload::tests::upload_lease_atomic_rename_failure_keeps_valid_leases'
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -313,6 +317,59 @@ mutations = [
      '    match (fs::metadata(destination), expected) {',
      LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
+    # #1646: sweep robustness — each mutation restores one TS-parity weakness.
+    ('cleanup-bad-record-aborts', STORE, '''                Ok(None) => {
+                    self.reclaim_orphan(&dir);
+                    continue;
+                }
+                Err(e) => {
+                    self.skip_record(&dir, &e);
+                    continue;
+                }''', '''                Ok(None) => {
+                    self.reclaim_orphan(&dir);
+                    continue;
+                }
+                Err(e) => {
+                    return;
+                }''', SWEEP,
+     'bad record aborts the sweep'),
+    ('cleanup-orphan-reclaim-removed', STORE, '''                Ok(None) => {
+                    self.reclaim_orphan(&dir);
+                    continue;
+                }''', '''                Ok(None) => {
+                    continue;
+                }''', ORPHAN,
+     'an orphan past the upload retention is reclaimed'),
+    ('cleanup-orphan-fresh-deleted', STORE,
+     '        if since_epoch.as_millis() as i64 >= (self.options.now)() - self.options.retention_ms {',
+     '        if false {', FRESH,
+     'a just-created orphan must survive its metadata write window'),
+    ('lease-write-in-place', STORE, '''            let path = dir.join("lease.json");
+            // Like `write` (metadata.json): the lease file only ever appears
+            // complete, so a concurrent `cleanup_expired_leases` never reads a
+            // half-written lease and deletes a live one (#1646). TS:404–413
+            // writes `lease.json` in place instead.
+            let temp = path.with_file_name(format!(
+                "lease.json.{}.{}.tmp",
+                std::process::id(),
+                random_id()?
+            ));
+            let mut file = open_new(&temp)?;
+            self.fault("lease-write", &temp)?;
+            file.write_all(json_line(&expiry)?.as_bytes())
+                .map_err(|e| UploadError::io(e, "write", None))?;
+            file.sync_all()
+                .map_err(|e| UploadError::io(e, "fsync", None))?;
+            drop(file);
+            self.fault("lease-rename", &temp)?;
+            fs::rename(&temp, &path).map_err(|e| UploadError::io(e, "rename", Some(&temp)))?;''', '''            let path = dir.join("lease.json");
+            let mut file = open_new(&path)?;
+            self.fault("lease-write", &path)?;
+            file.write_all(json_line(&expiry)?.as_bytes())
+                .map_err(|e| UploadError::io(e, "write", None))?;
+            file.sync_all()
+                .map_err(|e| UploadError::io(e, "fsync", None))?;''', LEASE_ATOMIC,
+     'lease.json must appear only through an atomic rename'),
 ]
 
 if '--check' in sys.argv[1:]:
