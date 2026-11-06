@@ -380,12 +380,16 @@ mod coercion_depth_tests {
     /// `isContentBlock` runs `String(block.type)` on inner blocks
     /// (`CompactSnapshot.ts:41-43`), so this is the shape that reaches
     /// `checked_string` through `snapshot` → `valid_message` → `valid_block`.
-    fn tool_result_with_deep_type(depth: usize) -> JsValue {
+    fn nested(depth: usize) -> JsValue {
         let mut value = JsValue::from("text");
         for _ in 0..depth {
             value = JsValue::Array(vec![value]);
         }
-        let inner = object([("type", value), ("text", JsValue::from("x"))]);
+        value
+    }
+
+    fn tool_result_with_deep_type(depth: usize) -> JsValue {
+        let inner = object([("type", nested(depth)), ("text", JsValue::from("x"))]);
         object([
             ("type", JsValue::from("tool_result")),
             ("toolCallId", JsValue::from("t")),
@@ -417,6 +421,34 @@ mod coercion_depth_tests {
                 crate::js_value::MAX_ARRAY_DEPTH
             ))
             .expect("at the shared bound the coercion succeeds")
+        );
+    }
+
+    /// The other `String()` call site in `isContentBlock`: `value.mediaType`
+    /// on a `media_reference` block (`CompactSnapshot.ts:44-50`).
+    #[test]
+    fn deep_media_type_is_a_gateway_error_not_a_stack_overflow() {
+        let block = |depth: usize| {
+            object([
+                ("type", JsValue::from("media_reference")),
+                ("path", JsValue::from("media/p.png")),
+                ("originalBytes", JsValue::Number(1.0)),
+                ("preview", JsValue::from("preview")),
+                ("hasMore", JsValue::Bool(false)),
+                ("mimeType", JsValue::from("image/png")),
+                ("mediaType", nested(depth)),
+            ])
+        };
+        let failed = valid_block(&block(crate::js_value::MAX_ARRAY_DEPTH + 1))
+            .expect_err("past the shared bound the coercion throws");
+        assert_eq!(failed.code, "gateway_request_failed");
+        assert_eq!(
+            failed.message.to_utf8().expect("utf-8 message"),
+            crate::js_value::StackOverflow::MESSAGE
+        );
+        assert!(
+            !valid_block(&block(crate::js_value::MAX_ARRAY_DEPTH))
+                .expect("at the shared bound the coercion succeeds")
         );
     }
 }
