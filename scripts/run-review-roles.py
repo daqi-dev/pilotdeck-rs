@@ -42,6 +42,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -81,6 +82,8 @@ ERR_QUOTA = "额度耗尽（429）"  # 找人：升级 Token Plan 套餐 / 换 k
 ERR_CONN = "连接断开"  # 查网络 / 代理 / 节点
 ERR_OTHER = "通道错误响应"
 RETRY_MARKS = ("ECONNRESET", "Connection dropped")  # 只重试这一类；把额度 429 也重试只会放大占用
+MAX_ERROR_TEXT = 8192  # 单个错误块最多留这么多字符：评审复读也不能把整段正文堆进内存
+MAX_ERROR_BLOCKS = 3  # 只留前几个带 API Error 的块，够定位原因即可
 MINIMAX_BASE_URL = "https://api.minimaxi.com/anthropic"  # MiniMax 官方 Anthropic 兼容接口，Claude Code 自行拼 /v1/messages（与 review-minimax.py 的 API 常量一致）
 DEFAULT_MODEL = {"zai": "glm-5.3-mb", "anthropic": "claude-opus-5-5", "minimax": "MiniMax-M3.1-Flash",
                  "deepseek": "deepseek-v4.1-flash-mb"}  # 通道正本见 state/memory/20261015-model-runners.md
@@ -234,9 +237,12 @@ def validate_final(text: str) -> tuple[str, dict[str, int] | None, str]:
 def api_error_text(result: dict) -> str:
     """错误响应的内嵌原文：优先取带 `API Error:` 的块（断连前可能已有正常正文，别混进来），其余按序兜底。"""
     texts = [t for t in (result.get("resp_texts") or []) if isinstance(t, str) and t.strip()]
+    last = result.get("last_text")
+    if isinstance(last, str) and last.strip():
+        texts.append(last[:MAX_ERROR_TEXT])
     res = result.get("result")
     if isinstance(res, str) and res.strip():
-        texts.append(res)
+        texts.append(res[:MAX_ERROR_TEXT])
     out: list[str] = []
     for t in [x for x in texts if API_ERROR_MARK in x] or texts:
         if t not in out:
@@ -245,17 +251,22 @@ def api_error_text(result: dict) -> str:
 
 
 def classify_api_error(text: str) -> str:
+    """按原文分类；连接类先判（真断连该重试，不该被正文里偶然出现的 429 抢走）。"""
     low = text.lower()
-    if "429" in text or "用量上限" in text or "token plan" in low or "quota" in low:
-        return ERR_QUOTA
-    if any(m in text for m in RETRY_MARKS) or "连接" in text:
+    if any(m in text for m in RETRY_MARKS) or "连接" in text or "econnrefused" in low or "etimedout" in low:
         return ERR_CONN
+    # 429 用词边界：错误码 / request id 里的 "14293" 不得被当额度（两轮评审都点了这条）
+    if (re.search(r"(?<!\d)429(?!\d)", text) or "用量上限" in text or "额度" in text
+            or "token plan" in low or "quota" in low or "usage limit" in low or "1308" in text):
+        return ERR_QUOTA
     return ERR_OTHER
 
 
 def one_line(text: str, limit: int = 300) -> str:
-    """detail 会进 summary 表格：压成一行、限长；表格竖线由写表处统一转义，完整原文仍在 *.jsonl / *.err 里。"""
+    """detail 会进 summary 表格（也会被贴进 PR 正文）：压成一行、限长，并拆掉能伪造闸门结果块的字样。
+    完整原文仍在 *.jsonl / *.err 里。"""
     flat = " ".join(text.split())
+    flat = flat.replace("<!--", "< !--").replace("-->", "-- >")
     return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
@@ -273,6 +284,11 @@ def run_role(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], cwd: P
     else:
         rec2["detail"] = f"首次 {ERR_CONN}（{first}），已自动重试 1 次；{rec2['detail'] or 'PASS'}"
     rec2["retried"] = 1
+    # 两次尝试的墙钟与花费都要算上：只记第二次会把一个角色的真实占用低估一半
+    rec2["seconds"] = round((rec.get("seconds") or 0) + (rec2.get("seconds") or 0), 1)
+    rec2["started"] = rec.get("started") or rec2.get("started")
+    costs = [c for c in (rec.get("cost_usd"), rec2.get("cost_usd")) if isinstance(c, (int, float))]
+    rec2["cost_usd"] = sum(costs) if costs else None
     return rec2
 
 
@@ -323,11 +339,18 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
                         msg = ev.get("message")
                         result.setdefault("resp_models", set()).add(msg.get("model") if isinstance(msg, dict) else None)
                         # 错误响应（额度 / 断连）没有正常评审正文，原因只在 assistant 文本块里（real shape 见
-                        # _tmp/20261106-issue-1527/review-r30-minimax/：model=<synthetic> + "API Error: ..."）
+                        # _tmp/20261106-issue-1527/review-r30-minimax/：model=<synthetic> + "API Error: ..."）。
+                        # 只留有界内容：正常正文只保留最后一块（兜底用），带 API Error 的留前几块。
                         if isinstance(msg, dict):
                             for blk in msg.get("content") or []:
                                 if isinstance(blk, dict) and isinstance(blk.get("text"), str):
-                                    result.setdefault("resp_texts", []).append(blk["text"])
+                                    txt = blk["text"]
+                                    if API_ERROR_MARK in txt:
+                                        kept = result.setdefault("resp_texts", [])
+                                        if len(kept) < MAX_ERROR_BLOCKS:
+                                            kept.append(txt[:MAX_ERROR_TEXT])
+                                    else:
+                                        result["last_text"] = txt[:MAX_ERROR_TEXT]
                     if ev.get("type") == "result":
                         result.update(ev)
                 except Exception as e:  # noqa: BLE001 —— pump 必须先杀进程再死，绝不留下未验证的进程
@@ -373,7 +396,11 @@ def run_role_once(role: str, prompt_path: Path, out_dir: Path, cmd: list[str], c
     err_text = api_error_text(result)
     synthetic = any(m in (None, "", SYNTHETIC_MODEL) for m in resp)
     if model and not resp:  # 连 assistant 事件都没有：模型根本没用上，报「模型不符」同样是错怪实现方
-        rec["detail"] = f"{ERR_OTHER}：通道没有返回任何模型响应（无 assistant 事件），不是模型不符"
+        kind = classify_api_error(err_text)
+        rec["detail"] = f"{kind}：{one_line(err_text) or '通道没有返回任何模型响应（无 assistant 事件）'}（不是模型不符）"
+        rec["api_error_kind"] = kind
+        rec["api_error_text"] = one_line(err_text)
+        rec["retry_connection"] = kind == ERR_CONN and any(mark in err_text for mark in RETRY_MARKS)
         return rec
     if model and (synthetic or (API_ERROR_MARK in err_text and resp != {expect})):
         kind = classify_api_error(err_text)
