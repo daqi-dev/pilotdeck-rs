@@ -4,6 +4,7 @@
 import subprocess
 import inspect
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -107,6 +108,16 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(run_host.slot_gate(env), str(runner))
             with self.assertRaises(RuntimeError):
                 run_host.slot_gate({})
+
+    def test_slot_gate_candidates_track_the_shared_script(self):
+        # run_host pins its gate into PDRS_CARGO_SLOT_BIN and cargo-slots.sh
+        # accepts any executable explicit path, so a policy change on the
+        # script side (new candidate, tighter fallback) would be silently
+        # bypassed by a stale list here. Bind the two sources mechanically.
+        script = (Path(run_host.ROOT) / 'scripts' / 'cargo-slots.sh').read_text()
+        self.assertEqual(set(re.findall(r'GATE=\$HOME/(\S+)', script)),
+                         set(run_host.SLOT_GATE_CANDIDATES))
+        self.assertIn(f'[ ! -d "$HOME/{run_host.SLOT_GATE_OPS_DIR}" ] &&', script)
 
     def test_cargo_slot_requires_the_gate(self):
         # #589 r2 P1: the wait must be strict. `wait_for_slot` maps
