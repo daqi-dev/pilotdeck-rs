@@ -220,9 +220,12 @@ def write_atomic(path, data):
     target (#1692 §9 r2 review): a SIGKILL does not run `finally`, and a residue
     inside `src/` is read back as an "untracked build input" by
     `negative_process._assert_input_areas`, which then refuses every later run
-    until someone deletes it by hand. `.negctl-*` at the root is both outside
-    the scanned areas and inside the `.gitignore`d namespace. The mode comes
-    from the source because `os.replace` publishes the temp's own mode.
+    until someone deletes it by hand. The protection is the LOCATION: the root
+    is outside the scanned areas (`src`, `.cargo`, `rust-toolchain*`). The
+    `.gitignore`d `.negctl-*` name only keeps `git status` clean -- that scan
+    uses `git ls-files --others` and includes ignored files on purpose, so the
+    ignore rule is not what protects us. The mode comes from the source because
+    `os.replace` publishes the temp's own mode.
     """
     PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'

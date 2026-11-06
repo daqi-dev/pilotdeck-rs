@@ -429,8 +429,10 @@ def write_source_atomic(path, data):
     land in `src/`, which `negative_process._assert_input_areas` scans with
     `git ls-files --others` (ignored files included on purpose), and the next
     run would die with "untracked build input" - the same lockout §9 exists to
-    remove. At the root it is both outside the scanned areas (`src`, `.cargo`,
-    `rust-toolchain*`) and inside the `.gitignore`d `.negctl-*` namespace.
+    remove. At the root it is outside the scanned areas (`src`, `.cargo`,
+    `rust-toolchain*`) -- that is the protection; the `.gitignore`d `.negctl-*`
+    name only keeps `git status` clean, because that scan uses
+    `git ls-files --others` and includes ignored files on purpose.
     Same filesystem, so `os.replace` is still ONE atomic rename: a reader sees
     the old bytes or the new ones, never a half-written file.
     """

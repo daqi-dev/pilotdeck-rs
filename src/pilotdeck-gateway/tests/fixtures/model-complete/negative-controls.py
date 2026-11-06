@@ -415,10 +415,14 @@ PUBLISH_DIR = ROOT / ".negctl-publish"
 def atomic_write(path: Path, data: bytes) -> None:
     """Publish `data` over `path` via a temp file + fsync + one replace.
 
-    The temp lives in `PUBLISH_DIR` at the repository root, not beside the
-    target (#1692 §9 r2 review): a SIGKILL does not run `finally`, and a residue
-    inside `src/` is read back as an "untracked build input" by
-    `negative_process._assert_input_areas`, which then refuses every later run.
+    For a target inside the worktree the temp lives in `PUBLISH_DIR` at the
+    repository root, not beside the target (#1692 §9 r2 review): a SIGKILL does
+    not run `finally`, and a residue inside `src/` is read back as an
+    "untracked build input" by `negative_process._assert_input_areas`, which
+    then refuses every later run. The protection is the location (the root is
+    outside the scanned areas); the `.gitignore`d `.negctl-*` name only keeps
+    `git status` clean, since that scan uses `git ls-files --others` and
+    includes ignored files on purpose.
     `mkstemp` creates 0600, so the source mode is restored before the rename --
     otherwise every run would publish 0600 onto a tracked source and leave a
     mode-only `git diff` under `core.filemode=true`.
