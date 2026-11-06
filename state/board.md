@@ -1,22 +1,21 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-07 01:14 · by Claude Code 执行者（**按 01:0x–01:1x `gh pr view` / `gh issue view` / `git cherry` / `du -sk` 实测刷新，不抄旧段**，基线 origin/main@`00fcb43f4`）· **74 条（doing 58 / ready 1 / blocked 13 / human 2）** · 本段改动：删 1 行（#1808 已 CLOSED 2026-11-06T17:10:53Z）· 改 7 行（#1339 · #1363 · #1398 · #1780 · #1727 · #1748 · #1869）· 本段合入 5 张（#1897 · #1944 · #1936 · #1948 · #1896）
+updated: 2026-11-07 01:52 · by Claude Code 协调者（02:01 交接）· **68 条（doing 52 / ready 1 / blocked 13 / human 2）** · 本段改动：删 7 行（#1370 · #1737 · #1821 · #1656 · #1507 · #1351 已 CLOSED；另 #1790 实测也已 CLOSED 一并删；#1246 在 board 里本来就没有独立行）· 改 8 行（#1320 · #1333 · #1325 · #1550 · #1551 · #1468 · #1494 · #1363，旧写「只剩收尾 / 前置全清」与实测相反）· 改 #1477（PR #1940 已 MERGED）· 增 1 行（#1298 doing）· 追加 02:01 交接段
 - #1157 | coord | doing | 待人决策总表（置顶）：**#1644 人已批**（cron 缺 tzdata 维持 fail-closed）；**#1640 已解**（人 03:11:10Z「1 和 2 都行，怎么快怎么来」，PR #1647 已合入）；**#1701 的 PR #1676 已合入**、#1598（已合入决策卡）待人复核；**#1716 已 CLOSED**（人批窄读）；**#1811 已 CLOSED**——两半（`deadline` / `deadline_during_tool`）都 AI 已实测、待人签字，C5 口径缺口转 **#1926（question，待人批）**；仍待人 = **#1861**（`docs/plan/005` 是 A5.1 账本哈希输入，47+3 是否回写 + 重新登记，AI 建议保持原文）· **#1875**（macmini-01 自 15:53 起离线，fleet `Host is down` / ssh 超时：**要人到现场看电源与网线**）· **#1837**（#1778 wecom-callback 监听器无请求体上限、继承自 TS 基线：加 = 偏离基线需登记差异，不加 = 保持 TS 原样）· **#1864**（决策 #1457：三个能力方法宣告了但没接线——选项 1 继续宣告 / 选项 2 不宣告 + #1839 跟进，**AI 建议选项 2**）；各包冒烟「AI 已实测，待人签字」见 RESULT；**常驻复查触发条件（人 2026-11-06T10:21:13Z 留言）**：mbp2 出现 ≥2 h 无负控无 cargo 静默窗口时用 `_tmp/20261106-issue-1811/frame_attrib.py` 重跑 `deadline` / `deadline_during_tool` 各 10 对，`NOT_6` 出现即停并报告——**随 #1811 关单移交 #1926，23:3x 前未再复跑（探测 1/2 记录见 `_tmp/20261106-issue-1811/quiet-probe/`）**
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412 已合）、s3 #1370（PR #1561 已合入，issue 待收尾）；s4 #1371（**车道在跑**，树 `wt-1371` @`1d2d230f1`（23:04））；s5 #1372 顺次；**#1408 前置于本单关单**；**#1648 已 CLOSED 14:24:25Z**（s3 前置已清，s3 可收尾关单）
 - #1355 | impl | doing | E1 --suite retirement 冻结装置：**PR #1515 已合入**，冻结重登记 `--write` 已落；决策卡 #1598 待人复核；唯一未清 P1 = **#1477（车道在跑，树 `wt-1477` @`f07e3ce2e`，23:21 fix-r14：Codex r13 P0×2 P1×2 + Grok r13 P0×1）**；另三条 P2 #1588 / #1652 / #1718 全 OPEN
 - #1328 | impl | doing | channel weixin：**PR #1726 已合入**；**收尾自查未过、issue 不关**——pr2 范围（U12 之外的 weixin 余项）未交，证据 `_tmp/20261106-closeout/issue-1328.md`；评审遗留 #1725；#1336 的前置已随本单解除
-- #1333 | impl | doing | channel 三角总单：api-server **PR #1584 已合入**、webhook **PR #1534 已合入**；`_build/wt-1333` 已核并回收；只剩 api-server 侧收尾关单；子项 #1336 见本单独立行
+- #1333 | impl | doing | channel 三角总单：api-server **PR #1584 已合入**、webhook **PR #1534 已合入**；`_build/wt-1333` 已核并回收；**api-server 侧收尾未过**——#1759 / #1710 / #1760 仍 OPEN，均写「前置于 #1333 关单」；子项 #1336 见本单独立行
 - #1336 | impl | doing | A8.3-ch-wecom-callback：**PR #1778 OPEN（23:3x 实测 head `09650bb6b`，MERGEABLE）**；首轮 P1×1 + P2×5 已修，P2×4 转 **#1774–#1777**；等两家第二轮四角色；**占用 `channel/mod.rs` 注册点 → #1329 等它合入；串行：先合本单 #1778，#1763 的 #1818 后 rebase**
-- #1339 | impl | ready | A8.3-ch-sms（已重开）：旧两条前置已清（#1729 的 PR #1787、#1738 的 PR #1799）；**三条 sms 车道前置两条已有 PR**：#1790（PR #1902 head `6fd386c76` MERGEABLE）· #1808（**PR #1896 已 MERGED，`00fcb43f4`，已核邮箱**）· #1879（树 `wt-1879-sms` @`2efe5f13e`，无 PR；本段实测）；#1813（PR #1886）已 MERGED。**三条清完再派收尾**
+- #1339 | impl | ready | A8.3-ch-sms（已重开）：旧两条前置已清（#1729 的 PR #1787、#1738 的 PR #1799）；**三条 sms 车道前置两条已清**：#1790（**已 CLOSED，PR #1902 MERGED `6fd386c76`**）· #1808（**PR #1896 已 MERGED，`00fcb43f4`，已核邮箱**）· #1879（树 `wt-1879-sms` @`2efe5f13e`，无 PR；本段实测）；#1813（PR #1886）已 MERGED。**三条清完再派收尾**
 - #1316 | impl | doing | A7.8-pr1 会话域整域装配：**PR #1558 已合入**；只剩收尾关单；P2 8 条归 **#1632**（前置于本单收口）；唯一 P1 在 diff 外 → #1624
-- #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**PR #1700 已合入**（原「队列 pos1」已过时）；只剩收尾关单；**#1767 已 CLOSED（PR #1815 合入）**
+- #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**PR #1700 已合入**（原「队列 pos1」已过时）；**#1509 仍 OPEN（写「前置于 #1325 接线」）→ 收尾未过**；**#1767 已 CLOSED（PR #1815 合入）**
 - #1382 | review | doing | PR #1493 已合入，#1252 已 CLOSED；**#1508 已于 12:35:57Z CLOSED，只剩 #1507 收尾后关单**（#1507 仍 OPEN，PR #1795 已合入）
 - #132 | review | blocked | PR #1235 **已合入**（原「队列 pos1」已过时）；前置 = **#1357**（A8 退役）
 - #1386 | impl | doing | A8.3 未迁 13 个 channel 登记差异：**PR #1579 已合入**；**收尾自查未过、不关单**——**#1763 已 CLOSED（PR #1818 合入），前置已清**；P2 全转 **#1694**
 - #1495 | impl | doing | 批次 B10 flaky 测试三项：**PR #1567 已合入**；**PR #1851 已 MERGED（14:40:00Z，`5b173276a`）**；**#978 仍 OPEN、不可关**——剩「每二进制十轮」全量扫描验收未做（`stress-bin.sh` 负载 30+），#1297 / #1400 已 CLOSED；证据 `_tmp/20261106-closeout/issue-1495.md`
-- #1370 | impl | doing | #1242-s3 writer append / registry persist barrier 与 EIO 见证：**PR #1561 已合入**；**#1648 已 CLOSED（14:24:25Z），前置已清** → 只剩收尾关单
-- #1363 | impl | doing | #1140 收口剩余 P2：**PR #1715 已合入**，负控 7/7 KILLED、两家四角色 PASS；只剩收尾关单；残留 #1728 / #1714 / #1706；**最后一条前置 #1727 的 PR #1935 已 MERGED（`90b68c9b0`，已核邮箱）→ 前置已清**
+- #1363 | impl | doing | #1140 收口剩余 P2：**PR #1715 已合入**，负控 7/7 KILLED、两家四角色 PASS；残留 #1728 / #1714 / #1706；**最后一条前置 #1727 仍 OPEN**——PR #1935 已 MERGED（`90b68c9b0`）只清掉级联问题，**关掉 #1727 才解锁本单**
 - #1398 | impl | doing | A5 冻结装置跟进：非冻结切片 #1519 已 CLOSED、PR #1577 已合；**#590 已 CLOSED（14:23:52Z）**（四格账本 PR #1724 已合入）；剩余：`scripts/parity/round.py`、`scripts/gateway-parity/common.py` 仍只注册 SIGTERM，`memory_run` 7 处未去重（#1099 OPEN），负控无 `EXPECTED_CASES`；**PR #1928 OPEN（head `b538560c7`，MERGEABLE，live-e2e capture 二次信号抑制）**；**方向更正（01:1x）：#1398 不是 #1662 的前置——反过来，#1662 末行写「前置于 #1398 收尾」，即 #1662 先清、#1398 才能收尾**；**#1925 人已选 C（三处冻结装置统补 #1194 展开期二次信号守卫），前置 = #590 收口（已 CLOSED 14:23:52Z）+ 下一车次（`specs/gateway-parity/BATCH-RELEASE.md` 车次流程，§9 尚无车次运行；不为本单单独跑三次全量复算）**
 - #892 | impl | doing | session-domain 清理装置汇总枚举测试：**PR #1634 OPEN（23:3x 实测 head `f44d0b7e1`，MERGEABLE）**，两家判出 **P0 尺子假 PASS**（`check_cleanup.py` 别名/绑定盲区）+ P1×2；树 `wt-892` @`c58e849a0`（23:16），**本机 session-domain 负控在跑**；触冻结件走冻结程序；**串行：与 #1692 共享负控 runner 契约 `tests/fixtures/negative_process.py`（+ `test_negative_process.py`），先合一个再 rebase**
 - #1552 | impl | doing | 差异族 A6.4-TLS-CA-SOURCES-001：**PR #1647 已合入**；**不能关**——P2-跟进 **#1654 / #1865 仍 OPEN**
@@ -26,10 +25,9 @@ updated: 2026-11-07 01:14 · by Claude Code 执行者（**按 01:0x–01:1x `gh 
 - #1162 | research | doing | 剩余需修差异族：六族全部有归属且**四条已合入**（#1552→#1647、#1553→#1653、#1554→#1732、#1555→#1576）；#1550/#1551 的 **PR #1832 已合入**（09:56Z）；本单只剩收口
 - #297 | research | doing | A6-recorder 闸门遗留：**PR #1638 已合入**；**收尾未过、不关单**——第 2/3 条未交付，**#1657 前置于本单**；**仍待派**：先派 #1657（P2-跟进，改 `tests/` 夹具），串行在 #892 之后（同碰 `negative_process.py` 家族），无树、无 PR、无进程
 - #1329 | impl | blocked | A8.3-ch-feishu：前置 = **#1336 的 PR #1778**（OPEN，MERGEABLE，占 `channel/mod.rs` 注册点）；合入后即可派
-- #1320 | impl | doing | A8 接线 U7 六方法 + generation 顺序：**PR #1749 已合入**；**三个 P2 前置全清**——#1761 / #1762 随 #1871 合入（`0ed48a1a4`，12:58:02Z）关闭、#1769 已 CLOSED（PR #1838）→ **收尾自查可推进**（大步骤自查：产物逐条对照 + `unimplemented!`/`todo!`/`NOT_IMPLEMENTED` 扫描），无树无 PR
+- #1320 | impl | doing | A8 接线 U7 六方法 + generation 顺序：**PR #1749 已合入**；**仍有 6 条 OPEN 明写「前置于 #1320 关闭」**——#1745 · #1746 · #1748 · #1869 · #1942 · #1946（02:0x 逐条 `gh issue view` 实测；旧写「三个 P2 前置全清、收尾自查可推进」与实测相反）→ **收尾自查暂不可推进**；无树无 PR
 - #1401 | impl | doing | A8.6 前置跟进 #1261 native 入口 7 项 c 类：前置 #1323 已解（PR #1426 已合入）；**PR #1924 DRAFT（head `1e6a92af1`，MERGEABLE）**，树 `wt-1401`；原「派 macmini-01」记录作废（macmini-01 15:53 `Host is down`）
 - #1409 | impl | blocked | P2-跟进 #1155 r5：返回边界扫描读失败静默跳过（按 P1）+ 负控 / README 五项；前置 = **#1357**（A8.6 收口）
-- #1351 | impl | doing | native_http 家族：**PR #1753 已合入**（原「draft」已过时）；#1348 / #1383 已 CLOSED；只剩收尾关单；#1394 HTTP store、#1404 共享辅助去重 顺次
 - #1323 | impl | doing | A8 接线 U3 snapshot 生产接线：**PR #1426 已合入**；**接续 PR #1828 已合入**（09:20Z），**#1431 仍 OPEN，前置于本单关单**；`delivery-orphan.py` 曾误判成交付孤儿；**串行：#1828 × #1457 的 #1830 同改 `native_process/management_tests.rs`，必须串行评审/合并**
 - #1352 | impl | blocked | A8.5-pr1 describe_server / hello_ok：**真堵点 #1326 已解**（PR #1835 已合入、issue 已 CLOSED），但**仍不可派**——八个依赖里 **#1316 / #1320 / #1323 / #1328 仍 OPEN**（前三者是「PR 已合、收尾未过」，#1323 还等 #1431）；已 CLOSED 的只有 #1319 / #1321 / #1322 / #1326。19:2x 实测更正：上一版写「#1323 已 CLOSED、可直接派」是错的
 - #1353 | impl | blocked | A8.5-pr2 切换状态机：前置 = **#1352**
@@ -42,40 +40,36 @@ updated: 2026-11-07 01:14 · by Claude Code 执行者（**按 01:0x–01:1x `gh 
 - #1483 | impl | blocked | 合入 PR 的 P2 分流（#1412 run 白名单硬编码 / #1391 close 交错 / #1350 keep-alive 门）：前置 = **A8 native_process 后续包**
 - #1317 | impl | blocked | A7 收口链：**#1316 已合（PR #1558）** · **#727 的 PR #1717 已合入** · **#590 已 CLOSED（14:23:52Z，PR #1724）**；前置只剩 **#589**（#1219 已 CLOSED、PR #1772 已合入）
 - #1357 | impl | blocked | A8.6 收尾：**真实距离（23:3x 逐条 `gh issue view` 实测）**——本单自列的 **#1355 / #1356 / #1317 / #1352 / #1353 / #1354 / #132 七条一个都没完成（全 OPEN）**，另 **#1386 仍 OPEN**；**标题带「前置于」的 P2-跟进实测 65 张开着（21:19 为 62），P2-跟进 标签合计 237 张（21:19 为 226）**（代表 #1849 #1863 #1602 #1621 #1682–#1685 #1688 #1689 #1575 #1484 #1736 #1739）；**收尾分诊 9 条 #1246 #1334 #1445 #1458 #1525 #1538 #1589 #1632 #1650 全 OPEN**，缺口写在各单评论；13 个标题带 `[A 之后]` 的 channel 单不计入本前置；**#1313 不在本前置**（正本 = #1316/#1317 正文 + 决策卡 `state/decisions-20261105-1313-rescope.md`，`docs/plan/005` 仍写旧 50 项口径**未改**，见 #1861）
-- #1477 | impl | doing | P1-跟进 #1355：Rust 侧 retirement 轮逐方法 outcome / 错误码对照：**车道在跑**，树 `wt-1477` @`f07e3ce2e`（23:21，fix-r14：失效协议补负数与连续选项 / 写盘改持有目录 fd 的 openat 链 / 平台缺 O_NOFOLLOW 拒跑；Codex r13 P0×2 P1×2 + Grok r13 P0×1），**无 PR**；要动 `specs/parity/` 装置与差异账本（`accepted-diffs.md` 冻结，只能新增 `diffs/<ID>.md`）；清掉它 #1355 才能关
-- #1550 | impl | doing | 差异族 A6.2-TRANSCRIPT-DOMAIN-001：与 #1551 合成一树 `wt-1550`，**PR #1832 已合入**（09:56Z），只剩收尾关单；前置 #1554 的 PR #1732 已合，串行已解除
-- #1551 | impl | doing | 差异族 A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001：与 #1550 **同树同任务书同 PR #1832**，PR #1832 已合入，随 #1550 一起收尾，别重复派
+- #1477 | impl | doing | P1-跟进 #1355：Rust 侧 retirement 轮逐方法 outcome / 错误码对照：**PR #1940 已 MERGED（`13fbdde62`，2026-11-06T17:37:39Z）**——两家评审 Codex + Grok 最终 P0=0/P1=0，负控 17/17 KILLED；**#1809 仍 OPEN**（其正文写「前置于 Rust retirement 轮真正跑本装置之前」，未写「前置于 #1477 收尾」）；清掉它 #1355 才能关
+- #1550 | impl | doing | 差异族 A6.2-TRANSCRIPT-DOMAIN-001：与 #1551 合成一树 `wt-1550`，**PR #1832 已合入**（09:56Z）；**#1833 仍 OPEN（写「前置于 #1550 关单 / A7.5 恢复投影收尾」）→ 收尾未过**；前置 #1554 的 PR #1732 已合，串行已解除
+- #1551 | impl | doing | 差异族 A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001：与 #1550 **同树同任务书同 PR #1832**，PR #1832 已合入；**#1833 仍 OPEN，同批挡住 #1550 与本单**，随 #1550 一起收尾，别重复派
 - #1406 | impl | doing | P2-跟进 #1220/#1253：abort-messages 负控未覆盖 abort 路径 + 增量投影残留：树 `wt-1406` @`d7a4ac158`（与 #1281 共用）；**PR #1919 在合并队列 pos1（AWAITING_CHECKS，head `d7a4ac158`，23:3x 实测）**；#589 前置之一
 - #1281 | impl | doing | P2-跟进 #1253 增量投影 r2 剩余 P2：与 #1406 **同树同批**（`wt-1406`）、**同一张 PR #1919（队列 pos1）**，别分两单；#589 前置之一
 - #589 | impl | blocked | A7.2-pr6a LiveSession + Submit：产品代码已全在 main，macOS `live_e2e --ignored` 11/11 已过；前置 = **#1406 · #1281**（两条的 PR #1919 已在队列 pos1，合入并关单后即可收口；#1219 已 CLOSED、PR #1772 已合入）
-- #1737 | impl | doing | P2-跟进 #1735：api_server 两处 submit 拒绝臂零覆盖（`stream_turn` / `buffered_turn`）：**PR #1880 已 MERGED（14:07:16Z，`ecb035734`）** → 只剩收尾关单；树 `wt-1737` 已可回收
 - #1736 | impl | doing | P2-跟进 #1735：config watcher 的 debounce / poll_interval：**PR #1794 已合入**（09:20Z）；issue 已重开，等 #1791 / #1792 / #1793 清完再关；与 #1739 同批（#1791 / #1792 / #1793 / #1819 全 OPEN）
 - #1739 | impl | doing | P2-跟进 #1735：config watcher 每 tick 全文读的 fingerprint：**与 #1736 同批同 PR #1794（已合入 09:20Z）**，等 #1819 收尾后再关，别分两单
-- #1468 | impl | doing | **P1 安全**-跟进 #1321：附件 lease 批准对象绑路径不绑句柄：**PR #1909 已 MERGED（14:34:15Z，`613a1515b`，含负控与差异登记）** → 只剩收尾关单判断；与 #1494 同批
-- #1494 | impl | doing | **P1 安全**：`read_at` canonicalize→open TOCTOU，新接线使其 RPC 可达：**与 #1468 同树同 PR #1909（已 MERGED 14:34:15Z）**，随 #1468 一起收尾，别分两单
+- #1468 | impl | doing | **P1 安全**-跟进 #1321：附件 lease 批准对象绑路径不绑句柄：**PR #1909 已 MERGED（14:34:15Z，`613a1515b`，含负控与差异登记）**；**收尾未过**——#1887 / #1888 / #1889 仍 OPEN，均写「前置于 #1468 收尾自查」；与 #1494 同批
+- #1494 | impl | doing | **P1 安全**：`read_at` canonicalize→open TOCTOU，新接线使其 RPC 可达：**与 #1468 同树同 PR #1909（已 MERGED 14:34:15Z）**；**#1889 仍 OPEN（写「前置于 #1468 收尾自查」，连带本单）**，随 #1468 一起收尾，别分两单
 - #1754 | impl | human | **决策 · MCP 未批准差异**：`tools/list` schema 深度上限 256 早于 Ajv（257–399 段基线可列出、端口整单拒绝）：**PR #1801 已合入**（14:55 MERGED），树 `wt-1754`；与 #1751 同批；**待人批**（「未批准差异」的批准状态）——别派实现、也别关单
 - #1751 | impl | human | **决策 · MCP 未批准差异**：A6.5 per-session 目录寿命（TS close 即删 / Rust 迟到握手落地才删）：**与 #1754 同批（PR #1801 已合入，14:55 MERGED）**；**待人批**——别派实现、也别关单
 - #1457 | impl | doing | 实现 #1310 session config 7 方法真实能力：**PR #1830 已 MERGED（`421f9cb71`，2026-11-06T12:21:45Z）**；fix-r3 两家非作者评审 P0=0，两家**独立撞上同一条 P1**（别名 key 下 model set/clear 用过活动门、owner 键 close 会中断活动回合）；修复轮到上限 3，余项全部转跟进单并写「前置于 #1457 收尾」：**#1872 / #1873 / #1874**，另有结转的 **#1868 / #1860** 仍 OPEN；待人拍 **#1864**（capabilities 是否继续宣告三个未接线方法）。**PR 已合、收尾自查未过，别标完成。**
 - #1692 | impl | doing | P2-跟进 #1632 包 A：负控 job 的时长预算 / 采样上界 / profile / 截断证据：**PR #1844 已合入**（树 `wt-1692-negctl` 已回收），只剩收尾关单；**同族 #1843 同树同 PR：`wt-1692-1843` @`e8ef74ae2` = PR #1916 head（MERGEABLE），r9 最后一轮（换闭集形态：整份夹具字节钉 + 出口清单整份比对 + 删 AST 白名单），绝不开 r10，r9 同处仍出 P1 就拆单**；它正是 #1316 前置 #1632 的推进方；**串行：与 #892 共享负控夹具，先合一个再 rebase**
-- #1507 | impl | doing | #1507 / #1508（PR #1795，`47850b66b`）：fix-r2..r4 已过两家评审；**#1508 已 CLOSED（12:35:57Z）**、PR #1795 已合入，**只剩 #1507 收尾**（本装置残差进 #1800，其余装置进 #1866 → M6 #1099 车道）
 - #1899 | impl | doing | **P0 尺子假通过**：`config/store/tests.rs:654` 用 `is_finished()` 判 watch 任务「已停」，tokio 1.48 里 `is_finished()==state.is_complete()`，harness 的 `catch_unwind` 把 panic 存成 `Err(JoinError::panic)` → **panic 的任务也判 COMPLETE，该用例假绿**。**PR #1917 OPEN（23:3x 实测 head `b8f7de44a`，MERGEABLE）**；树 `wt-1899` @`9d749d077`（23:18，1 个未提交改动），修前红 / 假绿 / 修后原始输出 `_tmp/20261106-issue-1899/{01-pre-fix-newtest-red,02-pre-fix-false-green,03-post-fix-module}.log`。**★ 串行：#1792 树 @`ffc0cc2e4`（21:25 后无新提交、干净）同改 `config/store.rs` + `config/store/tests.rs` + 负控夹具，先合一个再 rebase，别并排评审/合并**
 - #1901 | impl | doing | **P0 挂起**：`channel/sms/mod.rs:750-771` 读请求体无 deadline——声明 `Content-Length` 后停发，连接任务与 socket 永久挂起；TS / Node 22.22.0 实测 299932 ms 关连接回 408（51 字节）。**已只读预研、未开分支**：`_tmp/20261106-issue-1901/prep.md` 实测 `mod.rs:516-518` 是全文唯一 `serve_connection`、无 `.timer(...)`，签名校验在体读之后（未鉴权即可占连接）。**待派**；与 #1790 / #1879 同走 `channel/sms/`，串行
 - #1900 | impl | doing | **P1**：`#1525` 收口剩余 5 项（umask 0222 还原 / skip 名单反向守卫 / parity 开关 / 开关 fail-open / review_tests SKIP）。**树 `wt-1900` @`6d6c50759`（23:15，fix-r2：反向守卫补 relay 调用方 / 跨行调用点 / 冻结件登记），本机四角色评审在跑，无 PR**
-- #1821 | impl | doing | A8.3-ch-weixin-pr2a 实时回复控制器全量（edit / 活动节流 / 超时看门狗 / maxMessageLength）：**PR #1904 已 MERGED（14:21:54Z，`3fe809982`）** → 只剩收尾关单；树 `wt-1821` 已可回收
-- #1790 | impl | doing | **P1** #1339 sms：permission 的 `answering` / `in_flight` / `prompt_delivering` 跨 await 置位，panic 后会话卡在「权限决定处理中」：**PR #1902 OPEN（head `6fd386c76`，MERGEABLE，14:40 更新）**；树 `~/ws/_build/wt-issue-1790`；前置于 #1339 收尾
 - #1780 | impl | doing | P1-跟进 #1738：weixin channel 的 `active_chats` 非 panic-safe：**PR #1897 已 MERGED（`5172aec3c`，已核邮箱）**——`ActiveChatSlot` Drop guard 覆盖正常返回 / panic unwind / 首次轮询前取消三条路径，三条 weixin 用例；**issue 保持 OPEN**（PR 正文 Refs 未关单）；**承接方 #1932**（两条 c 档 P2：api_server 的 `ActiveChat::new` guard 缺 panic 注入用例 + 共享 `channel::ActiveChat` 毒锁路径无用例，前置于 #1333 收尾）；树 `wt-1780` 已回收（归档 `_tmp/20261107-archive-wt-1780/`）
 - #1813 | impl | doing | P2-跟进 #1729：录制字段四态的残余同源点：**PR #1886 已 MERGED（14:10:03Z，`0d8f9d336`）** → 只剩收尾关单；树 `wt-1813` 已可回收；**#1879 是它的同族后续**
 - #1662 | impl | doing | P1-跟进 #1519：session-lease committed 负控原地改写 `capture.py`：**PR #1862 DRAFT（head `fe9a9314e`）**；树 `wt-1662` @`e9c31ff32`，**本机四角色评审在跑（23:3x 实测进程）**
 - #1879 | impl | doing | P2-跟进 #1813：sms 回放 harness 的 `wait-log.level/text` 仍可缺省：树 `wt-1879-sms` @`07abffbfc`（23:03，fix-r1：truncate/halfClose 同走 null 哨兵 + 逐字段负控绑定 + 真路径断言），**无 PR**；与 #1813 同车，**先合 #1886（已 MERGED）→ 可推 PR**
 - #1666 | impl | doing | P2-跟进 #1538（与 #1734 同树同批）：同族负控仍用裸 assert（`-O` 下判杀/恢复静默，含冻结配对与 anchor）+ settings-gateway 负控退出码分诊表 / marker 守卫：**PR #1923 OPEN（head `e7c4a4583`，MERGEABLE，r2 增量评审在跑，base `9d8a4368e`）**；树 `wt-1666-1734`
 - #1696 | impl | doing | P2-跟进 #1334（与 #1684 同树同批）：module_host/approvals 的 `__PDRS_PAD__` 占位符缺分配 + webhook 车道缺 finalize（HTTP/1.0 响应版本与连接语义）：**PR #1934 已 MERGED（2026-11-06T17:37:39Z，`bed589399`，已核邮箱 noreply）**；收尾只剩 `wt-1696-1684` 回收（早期闸门原件已拷回 `_tmp/20261106-issue-1696-1684/gate-archive/`）；残留转 **#1931**（登记文本）/ **#1947**（1.0 帧化同源车道与测试装置），两者均前置于 #1334 关单
-- #1656 | impl | doing | P2-跟进 #1246：`mark_l0_indexed` 化身维度 / 负控未接静态预检 / repair 删除：**PR #1918 已 MERGED（15:18:12Z，`36c9b9d99`）** → 只剩收尾关单；树 `wt-1656` 已可回收
 - #1600 | impl | doing | **P1** #1591：`user_dialog respond` 持 `std::sync::Mutex` 跨 `resolve`（#1599）+ `management_tests::setup` 夹具仍 `new(runtime, None)`（#1600）：**树 `wt-1600-1599` @`29e8c85d4`（23:0x，1 个未提交改动），无 PR**
 - #1727 | impl | doing | P2-跟进 #1363：锚点预检 1 条真失败放大成 63 条（scratch 脚本未清理污染后续子测试）：**PR #1935 已 MERGED（`90b68c9b0`，已核邮箱）**——子测试清理移入 `finally`，一条真失败不再级联成上百条；树 `wt-1727` 本段实测已不存在（不在 `_build/`、也不在 `git worktree list`，未由本段回收）；**它曾是 #1363 关单的最后一条前置，现已清**
 - #1748 | impl | doing | 金样装置与测试支撑的重复实现已开始漂移（TS harness / 负控 runner / 归一化 / 适配器）：**PR #1936 已 MERGED（`77fd4cde5`，已核邮箱）→ 条目 1 完成**（`tests/fixtures/_shared/settings-harness.mts` 成两份 fixture 的单一来源；重生成 oracle 与入库 `oracle.json` 逐字节相同）；**issue 保持 OPEN**——条目 2–4（负控 runner 重复与漂移、归一化、适配器）未动，代理已在 issue 下写明完成/未完成；树 `wt-1748-1869` 已回收（归档 `_tmp/20261107-archive-wt-1748-1869/`）
 - #1869 | impl | doing | [P2-跟进] #1761/#1762 收紧残余：顶层 contentHash 可空 / 禁用态子集无负控 / public…：**与 #1748 同 PR #1936 已 MERGED（`77fd4cde5`）→ 条目 1–3 完成**（顶层 `contentHash` 收紧为非空字符串，A/B 实测旧断言假通过、新断言转红；`empty/missing-storage-capabilities-outside-ts` 两条变异 4/4 KILLED；published 半边改逐方法成功形状）；**issue 保持 OPEN**——条目 4–7（三态划分、Drop 守卫、drop-contentHash 变异、flag_reference-only 变异）未做；别分两单
 - #1745 | impl | doing | native settings 时序：store 全局 `settled_in_turn` 把 TS 同 tick 搭车窗口…：树 `wt-1745-1746` @`8be642e18`（23:15，同提交含 #1746），**无 PR**；与 #1746 同树同批
 - #1746 | impl | doing | native host build 失败路径跳过 host cleanup：已 stage 的 runtime 注册…：**与 #1745 同树同提交 `8be642e18`**，别分两单
+- #1298 | impl | doing | P2-跟进 #1207：EdgeClaw clearSession 代次 / 复位路径四项 P2：本轮已按 dev-launch 派出，任务书 `_tmp/20261107-issue-1298/task.md`，**无树无 PR**（02:0x 实测：无 `_build/wt-*1298*`、无远端分支）
 <!-- READY:END -->
 
 
@@ -3890,3 +3884,22 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 > **验证**：`cargo fmt --all --check` rc 0；全量三套变异负控在最终 head 全跑：webhook **49**、module-host **25**、approvals **27**，全部 KILLED，0 SURVIVED / 0 INVALID（`_tmp/20261106-issue-1696-1684/negctl-r5/`）；三套夹具 `--check` 49/25/27；`check_frozen --base origin/main` PASS（30 条）；`cargo test --lib` 全量 4612 passed（head `69c7fa1b8`），r4 新增守卫测试定向 8 passed；CI `check` 绿。
 > **PR**：#1934，head `7e4d0e265`，`Refs #1696 #1684`（两单均为 P2-跟进、前置于 #1334 关单，不自动关单，**issue 仍 OPEN**）。**合入：`bed589399`（2026-11-06T17:37:39Z），已核邮箱**。
 > **资源**：本机 legacy 缓存 `_build/wt-1696-1684/_build/cargo-target` 由协调者删除；协调者叫停本机编译后本车道未再于本机启动 cargo（后续编译按人令走 cb8 > mbp2 > macmini-01）。早期闸门原件（r1–r5、含 MiniMax/GLM 块）已从树内拷回主仓 `_tmp/20261106-issue-1696-1684/gate-archive/`，**树可回收**。
+
+### 02:01（两小时交接，接 00:01；下一段 04:01）
+
+**本段合并 15 张**（00:01→02:0x，`gh pr list --state merged --limit 60 --search "merged:>=2026-11-06T16:01:00Z"` 实测）：#1935 · #1778 · #1928 · #1916 · #1862 · #1944 · #1948 · #1936 · #1897 · #1896 · #1773 · #1945 · #1934（#1684/#1696 webhook 1.0 finalize 与回放 pad 预算）· #1963（board 01:1x 刷新，`100ee33f9`）· **#1940（#1477 retirement outcome 对拍装置，`13fbdde62`）**。
+
+**合并队列**（01:5x GraphQL `mergeQueue` 实测，6 张）：pos1 #1917（P0 #1899）· pos2 #1951（#1371）· pos3 #1950（#1746）· pos4 #1972（board #1696+#1684 收口）· pos5 #1923（#1666/#1734 负控去 assert 化）· pos6 #1634（#892）。**#1966**（#1926 归因装置入仓 C5 豁免 + C6）与 **#1958**（#1879 sms 回放）本刻不在队列（`gh pr view` = OPEN / mergeable UNKNOWN），等 `rust`/`negative-controls` 绿了再入；两者都已两家评审收敛。
+
+**在跑的车道**：#1901 sms 体读期限（**PR #1973 已开**，P2 已转 #1970）· #1899 config watch 假绿 · #1600/#1599 user_dialog 锁 · #1371 时序矩阵 · #1745/#1746 host 清理 · #1864 capabilities 选项 1 · #892 session-domain 清理装置 · **#1298 EdgeClaw clear 四项 P2（新派）**。远端 cb8 跑三个 GLM worker 与 #1600-1599 链。
+
+**本轮新判断 / 风险**
+- **#1901 假金样风险已排除（真实数据）**：新 `body-read-timeout` oracle 的 408 与生成器自己 480 s 探针超时在录制结果上不可区分，我按 P0 追问后车道在钉版宿主（node v22.22.0 / ICU 78.2）重跑生成器：**两遍共 600.03 s ⇒ 每次 300.0 s = Node `requestTimeout` 默认值**；若 480 s 探针先到会 destroy 后 fail 且不写 oracle，两遍要 ≥960 s。gen_rc=0、56 用例齐、重生成 `oracle.json` sha256 与入库逐字节相同。原始输出 `_tmp/20261107-issue-1901/oracle-provenance.raw.log`。**PR #1973 已开**（head `43215a121`），CI 绿后自行入队。
+- **收尾关单审计已执行完毕**（`_tmp/20261107-closeout-audit/REPORT.md`）：**可关 7 条已全部 CLOSED**（#1370 #1737 #1821 #1656 #1507 #1351 #1246，每条先贴「产物 + 行号 + 占位扫描 + 残留单号」的自查评论再关）；**不可关 13 条**，卡点见报告表。**下一版 READY 要删掉这 7 行。**
+- **#1246 关掉后解出一条没人跟踪的真实产品活**：**#1298**（EdgeClaw clearSession 代次 / 复位路径四项 P2）在 board 里一行都没有，不派就永远没人捡。已按 dev-launch 派出去（任务书 `_tmp/20261107-issue-1298/task.md`），**下一版 READY 要把 #1298 加进 doing**。
+- **READY 有 7 行与实测相反**（下一版必须改）：#1320 写「前置全清」实为 6 条 OPEN 明写前置于它 · #1333 / #1325 / #1550 / #1551 / #1468 / #1494 写「只剩收尾」实为各有 OPEN 前置 · #1363 写「#1727 已开 PR」实为 #1935 已 MERGED 而 **#1727 仍 OPEN**。另 **#1477 已合入**，行里还是 23:21 的「无 PR」；#1809 仍 OPEN，前置于 #1477 收尾。
+- **派单前必查三样**（`_build/wt-<N>` 提交 / `_tmp/*issue-<N>*/` / `git branch -r`）：本段我按旧 board 的「待派」误派过一次 #1901，实际它 00:37 已开工。
+
+**资源（01:5x `du -sk` + `fleet` 实测）**：`_build` 146487288 + `_tmp` 17502144 = **163989432 KiB / 156.4 GiB**（上限 200、> 160 打 WARN——`pdrs-loop` 在 160 即停派新活，当前余量 3.6 GiB）；worktree **33 棵 linked / 60**（`wt-status` 实测；`fleet` 记 34 含主仓）；四机负载 本机 0.80 / cb8 0.06 / macmini-01 0.13 / mbp2 0.13（10 / 20 / 10 / 10 核）；P4 闸门 zai 0/24 · minimax 4/16 · deepseek 0/16 · anthropic 0/2。
+
+**board 移交**：本段 board 归本会话（#1963 已于 01:38:01 合入，`100ee33f9`；本段另把上面 7 行 READY 与 #1477 / #1298 一并改好，READY 从 74 条变 68 条）。02:01 起交 **coord2**（tmux `aiw:coord2`，已 `bypass permissions`）。coord2 接回后第一件事是更正 #1157 常驻复查口径：装置入仓在 **PR #1966**（`scripts/parity-attrib/`），**未合入前主仓里没有这个目录**，board 不能提前写「已入仓」；合入后再改指向，并把 UNKNOWN(rc=8) 纳入停手条件（人 2026-11-06T17:23Z 留言）。
