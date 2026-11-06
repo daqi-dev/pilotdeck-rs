@@ -804,6 +804,7 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                             &id,
                             lease.as_ref(),
                             if cancel { "cancelled" } else { "answered" },
+                            None,
                         );
                         let outbox = bus.drain_events();
                         (consumed, outbox)
@@ -814,6 +815,13 @@ fn replay_channel_case(oracle: &JsValue, case: &JsValue) {
                             object([
                                 ("consumed", JsValue::Bool(false)),
                                 ("reason", "not_pending".into()),
+                            ])
+                        }
+                        ConsumeResult::Replaced => {
+                            outbox.deliver();
+                            object([
+                                ("consumed", JsValue::Bool(false)),
+                                ("reason", "replaced".into()),
                             ])
                         }
                         ConsumeResult::LeaseRequired => {
@@ -1486,4 +1494,94 @@ fn channel_and_journal_match_real_ts_oracle_step_by_step() {
 #[ignore = "requires a real PilotDeck baseline checkout and node_modules/tsx"]
 fn user_dialog_channel_fixtures_regenerate_identically_from_ts() {
     crate::test_baseline::regenerates_identically("user-dialog-channel");
+}
+
+/// #1442/#1599: the channel's `cancel` path is the third place where the
+/// settle hook, the resolver and the change observer run, and it must keep
+/// them outside the bus guard like the method layer and the bus itself. The
+/// bound negative control puts the settle hook back under a live guard; this
+/// probe is what turns red then.
+#[test]
+fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
+    use crate::negative_assert;
+
+    type ReentryLog = Arc<Mutex<Vec<(&'static str, bool)>>>;
+    let log: ReentryLog = Arc::new(Mutex::new(Vec::new()));
+    let bus: Arc<Mutex<GatewayUserDialogBus>> = {
+        let observer_log = log.clone();
+        Arc::new_cyclic(|bus: &std::sync::Weak<Mutex<GatewayUserDialogBus>>| {
+            let bus = bus.clone();
+            let log = observer_log.clone();
+            Mutex::new(GatewayUserDialogBus::new(
+                DialogRuntime::default(),
+                Some(Box::new(move |_event| {
+                    let reentered = bus.upgrade().is_some_and(|bus| bus.try_lock().is_ok());
+                    log.lock().unwrap().push(("observer", reentered));
+                    Ok(())
+                })),
+            ))
+        })
+    };
+    let channel = GatewayUserDialogChannel::new(ChannelOptions::new(
+        "session",
+        bus.clone(),
+        Arc::new(|_event| Ok(())),
+    ));
+    let request = channel.request_input(&InputRequest {
+        tool_call_id: "call-channel-cancel".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Channel cancel".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let request_id = request.request_id().clone();
+    // Swap the channel-registered entry for one that records whether each
+    // host callback can re-acquire the bus lock (same probe shape as the
+    // method-layer tests).
+    let settle_bus = bus.clone();
+    let settle_log = log.clone();
+    let resolve_bus = bus.clone();
+    let resolve_log = log.clone();
+    bus.lock().unwrap().register(
+        &"session".into(),
+        PendingDialog {
+            request_id: request_id.clone(),
+            dialog_kind: "input".into(),
+            tool_call_id: "call-channel-cancel".into(),
+            tool_name: "request_user_input".into(),
+            event: crate::metadata::object([("requestId", JsValue::String(request_id.clone()))]),
+            accepts: Arc::new(|_value| true),
+            resolve: Box::new(move |_answer| {
+                let reentered = resolve_bus.try_lock().is_ok();
+                resolve_log.lock().unwrap().push(("resolve", reentered));
+            }),
+            reject: Box::new(|_error| {}),
+            on_settled: Some(Box::new(move || {
+                let reentered = settle_bus.try_lock().is_ok();
+                settle_log.lock().unwrap().push(("on_settled", reentered));
+                Ok(())
+            })),
+        },
+    );
+    channel.abort(&request_id);
+    let records = log.lock().unwrap().clone();
+    for name in ["on_settled", "resolve"] {
+        negative_assert!(
+            records.iter().any(|(recorded, _)| *recorded == name),
+            "#1442 channel cancel probe: {name} must run"
+        );
+    }
+    negative_assert!(
+        records.iter().any(|(recorded, _)| *recorded == "observer"),
+        "#1442 channel cancel probe: the change observer must run"
+    );
+    for (name, reentered) in &records {
+        // `try_lock().is_ok()` means the callback could take the bus lock, so
+        // it did not run under a live guard.
+        negative_assert!(
+            *reentered,
+            "#1442 the {name} callback re-acquired the bus lock; it must not run under the guard"
+        );
+    }
 }

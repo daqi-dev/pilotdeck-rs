@@ -398,8 +398,13 @@ fn real_ts_bus_trace_covers_two_renderers_renew_release_expiry_and_broadcast_fai
                     JsValue::Array(listed)
                 }
                 "consume" => {
-                    let consumed =
-                        bus.consume_for_response(&session, &request, lease.as_ref(), "answered");
+                    let consumed = bus.consume_for_response(
+                        &session,
+                        &request,
+                        lease.as_ref(),
+                        "answered",
+                        None,
+                    );
                     let outbox = bus.drain_events();
                     match consumed {
                         ConsumeResult::Entry(consumed) => {
@@ -418,6 +423,10 @@ fn real_ts_bus_trace_covers_two_renderers_renew_release_expiry_and_broadcast_fai
                         ConsumeResult::NotPending => {
                             outbox.deliver();
                             object([("reason", "not_pending".into())])
+                        }
+                        ConsumeResult::Replaced => {
+                            outbox.deliver();
+                            object([("reason", "replaced".into())])
                         }
                         ConsumeResult::LeaseRequired => {
                             outbox.deliver();
@@ -519,7 +528,7 @@ fn wrong_values_do_not_consume_waiter_and_snapshots_are_detached() {
             assert!(callbacks.resolved.lock().unwrap().is_empty());
         } else {
             let ConsumeResult::Entry(consumed) =
-                bus.consume_for_response(&session, &request, None, "answered")
+                bus.consume_for_response(&session, &request, None, "answered", None)
             else {
                 panic!("not consumed")
             };
@@ -797,7 +806,7 @@ fn session_isolation_native_cleanup_and_duplicate_registration() {
     bus.register(&"a".into(), pending(field(&fixture, "request"), &callbacks));
     assert_eq!(bus.pending_count(&"a".into()), 1);
     assert!(matches!(
-        bus.consume_for_response(&"a".into(), &id, None, "answered"),
+        bus.consume_for_response(&"a".into(), &id, None, "answered", None),
         ConsumeResult::LeaseRequired
     ));
     let consumed = bus
@@ -948,4 +957,97 @@ fn put_null_request_into_nonempty_record_fails_without_writing_like_ts() {
             );
         }
     }
+}
+
+fn numbered_pending(request_id: &str, accepts: AcceptsFn) -> PendingDialog {
+    PendingDialog {
+        request_id: request_id.into(),
+        dialog_kind: "input".into(),
+        tool_call_id: format!("call-{request_id}").into(),
+        tool_name: "request_user_input".into(),
+        event: crate::metadata::object([("requestId", JsValue::String(request_id.into()))]),
+        accepts,
+        resolve: Box::new(|_answer| {}),
+        reject: Box::new(|_error| {}),
+        on_settled: None,
+    }
+}
+
+fn listed_request_ids(bus: &mut GatewayUserDialogBus, session: &JsString) -> Vec<String> {
+    bus.list(session)
+        .iter()
+        .map(|event| {
+            event
+                .get("requestId")
+                .and_then(JsValue::as_string)
+                .and_then(|value| value.to_utf8().ok())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// #1599: a settle failure must put the dialog back where it was. TS
+/// `remove()` mutates nothing when `onSettled` throws
+/// (GatewayUserDialogBus.ts:219-226), so appending to the bucket tail would
+/// reorder `user_dialog_list` against the baseline.
+#[test]
+fn restore_keeps_the_consumed_dialog_at_its_original_position() {
+    use crate::negative_assert_eq;
+
+    let clock = clock(&fixture());
+    let mut bus = GatewayUserDialogBus::new(runtime(&clock, "bus-restore-order"), None);
+    let session: JsString = "restore-order".into();
+    for id in ["alpha", "beta", "gamma"] {
+        bus.register(&session, numbered_pending(id, Arc::new(|_value| true)));
+    }
+    let consumed = bus
+        .consume(&session, &"beta".into(), "abort")
+        .expect("beta is pending");
+    bus.restore(&session, consumed);
+    negative_assert_eq!(
+        listed_request_ids(&mut bus, &session),
+        vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+        "#1599 restore puts the consumed dialog back at its original position"
+    );
+}
+
+/// #1599: the bus guard is released between the snapshot and the consume, so
+/// a host callback can reenter and replace the dialog under the same request
+/// id. The answer was validated against the old dialog and must not be
+/// delivered to the new one.
+#[test]
+fn consume_for_response_refuses_a_dialog_replaced_after_the_snapshot() {
+    use crate::negative_assert;
+
+    let clock = clock(&fixture());
+    let mut bus = GatewayUserDialogBus::new(runtime(&clock, "bus-replaced"), None);
+    let session: JsString = "replaced".into();
+    let request: JsString = "replaced-request".into();
+    let first: AcceptsFn = Arc::new(|_value| true);
+    bus.register(&session, numbered_pending("replaced-request", first));
+    let snapshot = bus
+        .snapshot_for_response(&session, &request)
+        .expect("the dialog is pending");
+    // A host callback reenters the bus and registers a different dialog with
+    // its own validator under the same request id.
+    let second: AcceptsFn = Arc::new(|_value| false);
+    bus.register(&session, numbered_pending("replaced-request", second));
+    let consumed = bus.consume_for_response(
+        &session,
+        &request,
+        None,
+        "answered",
+        Some(&snapshot.accepts),
+    );
+    negative_assert!(
+        matches!(consumed, ConsumeResult::Replaced),
+        "#1599 an answer validated against a replaced dialog must not be delivered"
+    );
+    negative_assert!(
+        matches!(
+            bus.consume_for_response(&session, &request, None, "answered", None),
+            ConsumeResult::Entry(_)
+        ),
+        "#1599 without a validated snapshot the pending dialog is consumed as before"
+    );
 }
