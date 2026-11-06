@@ -25,8 +25,8 @@
   （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在第一次
   **被拒绝**（`try_lock_shared` 返回 `WouldBlock`）时记下时刻
   `blocked=<epoch ms>`，marker 里同时带 `first`（第一次尝试）、`blocked` 与 `at`
-  （取锁成功）。GREEN 要求 `start_ms + 1000 ≤ blocked ≤ end_ms − 1000`
-  （`WITNESS_MARGIN_MS`，理由见下文「边界毫秒」）。
+  （取锁成功）。GREEN 要求 `start_ms ≤ blocked ≤ end_ms − 1000`（`WITNESS_MARGIN_MS`，
+  只加在上端，理由见下文「边界毫秒」）。
 
   `WouldBlock` 是「此刻有排他持有者」的直接观测：进程里没有别的东西能造出它，而本次
   writer 在整个持锁区间内一直持有排他锁，所以落在区间内的拒绝只能来自它。用等待时长
@@ -106,18 +106,58 @@ writer 已自行失败退出，全都会被看见（`#1662` r8 P1：先前在 `t
 `N+0.1 ms` 采样得 `end_ms=N`、`N+0.2 ms` 放锁、另一个排他持有者 `N+0.3 ms` 取锁、
 读者 `N+0.4 ms` 被它拒绝也记 `N`，而 writer 的 `finally` 延迟到 `N+1.1 ms` 才记
 `released_ms=N+1` —— 旧的 `start ≤ blocked ≤ end` 与 `released > end` 都成立，却把
-别人的拒绝记成本次 writer 的（r8 P0）。因此 GREEN 要求 `blocked` 落在两端各让出
-`WITNESS_MARGIN_MS = 1000` 的区间内：`blocked ≤ end_ms − 1000` 意味着真实拒绝时刻比
-真实放锁至少早 1 s，而这段时间里本次 writer 一直持着排他锁，`flock` 不允许第二个排他
-持有者存在。1 s 只占 90 s 持锁的约 1 %，远大于任何调度抖动（r8 实测 `blocked` 距
-`start_ms` 1.4 s、距 `end_ms` 88.6 s）。
+别人的拒绝记成本次 writer 的（r8 P0）。因此 GREEN 要求 `blocked ≤ end_ms − 1000`：
+这意味着真实拒绝时刻比真实放锁至少早 1 s，而这段时间里本次 writer 一直持着排他锁，
+`flock` 不允许第二个排他持有者存在。1 s 只占 90 s 持锁的约 1 %，远大于任何调度抖动
+（r8 实测 `blocked` 距 `start_ms` 1.4 s、距 `end_ms` 88.6 s）。
+
+**下界不留边距**（r9 P1）：`start_ms` 在 `with` 体内采样，此时 `mutating_sources`
+已经持锁且变异已写盘，不可能有别的持有者早整整一个毫秒桶；下界再加 1 s 只会吃掉读者
+的启动余量（r8 实测 `blocked − start_ms ≈ 1.4 s`），把正常拒绝判成 INVALID。
+
+### writer 的退出契约自检（`--stop-check`）
+
+`stop_writer()` 的「退出码无条件作数」是可复现的，不是注释里的断言：两跑、不跑 cargo，
+各自用 `STOP_CHECK_HOLD_SECONDS = 5 s` 的短窗口。
+
+```sh
+CARGO_TARGET_DIR=<target> python3 -I \
+  src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py \
+  --stop-check NEW_OUTPUT_DIR
+```
+
+- `NEW_OUTPUT_DIR/sigterm/`：窗口内发 `SIGTERM`。要求 rc 0、字节回位、
+  `writer-released.json` 的 `restored: true`，**且** stderr 里出现 `#1662 writer stopped`
+  —— 只有走处理器 → `_Stopped` → `mutating_sources.__exit__` 恢复这条路的 writer 才会
+  打印它，所以「rc 0 + restored」不能被一个忽略信号、跑满 hold 正常退出的 writer 冒充
+  （r9 P2）。
+- `NEW_OUTPUT_DIR/own-failure/`：`PDRS_1662_WRITER_FAIL_AFTER_HOLD=1` 让 writer 正常
+  跑满窗口后自行失败。要求 rc≠0、`stop_writer()` 抛错且报出的文本含该退出码、字节回位。
+
+原始输出形如：
+
+```
+sigterm: rc=0 window=True bytes_back=True released=(1793973366834, True) reported=None
+own-failure: rc=1 window=True bytes_back=True released=(1793973381421, True) reported='#1662 writer exited 1'
+```
+
+这一步已经挂进默认执行清单（见「运行」）：默认三行是 GREEN、RED、`writer-exit-contract`，
+任一行非 KILLED 都退出 1。（r9 P2：自检模式若无人调用就是死代码。）自检中断时走
+`force_stop()` 的优雅停止 + 有界等待，**不以 SIGKILL 起手**——恢复途中的强杀会把变异体
+留在盘上（r9 P0）。
 
 这一点不靠论证：writer 在 `with` 之外的 `finally` 里（`__exit__` 已恢复并放锁）原子
-发布 `writer-released.json`（`released_ms`；**仅当窗口已进入时发布**——取锁阶段被
-SIGTERM 的 writer 从未持锁，不公布假证据；窗口进入后无论正常结束还是 SIGTERM 展开都
-发布），GREEN 要求 `released_ms > end_ms`，否则 INVALID（区间不保守）；**记录缺失同样
-INVALID**（缺证据不算证据，不允许静默跳过这条检查），KILLED 的 reason 里也带上该时刻。
-每次运行因此都留下「公布区间严格落在真实持锁区间内」的实测记录，而不是注释里的推断。
+发布 `writer-released.json`（`released_ms` 与 `restored`；**仅当窗口已进入时发布**——
+取锁阶段被 SIGTERM 的 writer 从未持锁，不公布假证据；窗口进入后无论正常结束还是 SIGTERM
+展开都发布），GREEN 要求 `released_ms > end_ms`，否则 INVALID（区间不保守）；**记录缺失
+同样 INVALID**（缺证据不算证据，不允许静默跳过这条检查），KILLED 的 reason 里也带上该
+时刻。每次运行因此都留下「公布区间严格落在真实持锁区间内」的实测记录，而不是注释里的
+推断。
+
+`restored` 是 writer 放锁后对 guarded 文件的**直接观测**（`read_bytes()` 与
+`git show HEAD:<file>` 的字节比对，`capture_matches_head()`），GREEN 要求
+`restored: true`；缺失或 false 一律 INVALID —— 「放锁记录存在」不再等于「恢复成功」
+（r8 concurrency/boundary P2）。
 
 wall clock 被外部改写（NTP 步进 / 手工改表）不在该模型的守卫范围内：两侧都用
 `time.time()` 打点，时钟跳变会让跨进程的时刻比较失去意义；本条记在 #1885。
@@ -132,6 +172,11 @@ SIGKILL、或恢复本身失败（磁盘满 / 权限），仍会留下变异体�
 CARGO_TARGET_DIR=<target> python3 -I \
   src/pilotdeck-gateway/tests/fixtures/sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
 ```
+
+默认执行清单三行：`fixed-test-survives-writer-window`（GREEN）、
+`lease-removed-false-fail`（RED）、`writer-exit-contract`（`--stop-check` 的两跑，
+产物在 `NEW_OUTPUT_DIR/sigterm/` 与 `NEW_OUTPUT_DIR/own-failure/`）。三行全 KILLED
+才退出 0。
 
 若宿主 cargo 名额排队导致测试晚于 writer 放锁才到达，测试自报的等待为 0（或 `at`
 落在持锁区间之外），GREEN 记 INVALID，不会记成 KILLED。RED 仍是决定性方向。
