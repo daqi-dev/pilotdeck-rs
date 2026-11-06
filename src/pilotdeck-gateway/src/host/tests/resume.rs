@@ -329,15 +329,24 @@ async fn rejected_resume_or_replacement_handshake_observes_failure_exactly_once(
         ("reconnect-handshake-eof", "stdout closed"),
         ("reconnect-handshake-timeout", "resume handshake timed out"),
     ] {
+        // #978: only `reconnect-handshake-timeout` is meant to lose to the
+        // handshake deadline (its fixture never answers). The other modes wait
+        // for a fixture that does answer, so a loaded host must not turn that
+        // reply into a timeout (2/48 loaded copies reddened
+        // `reconnect-rejected` here). Keep the tight second for the
+        // never-answers mode only; the answering modes get the suite's usual
+        // headroom, with execution_timeout well above it (#230).
+        let (handshake_timeout, execution_timeout) = if mode == "reconnect-handshake-timeout" {
+            (Duration::from_secs(1), Duration::from_secs(10))
+        } else {
+            (Duration::from_secs(60), Duration::from_secs(120))
+        };
         let (result, handler, receipt) = execute(
             mode,
             Limits {
-                // The timeout mode never answers; the others must not lose to a
-                // loaded host's scheduling (#230).
-                // Must stay well below execution_timeout, or that fires first.
-                handshake_timeout: Duration::from_secs(1),
+                handshake_timeout,
                 close_timeout: Duration::from_millis(500),
-                execution_timeout: Some(Duration::from_secs(10)),
+                execution_timeout: Some(execution_timeout),
                 ..limits()
             },
         )

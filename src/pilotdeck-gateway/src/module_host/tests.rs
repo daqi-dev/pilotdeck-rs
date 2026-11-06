@@ -23,6 +23,13 @@ use tokio::{
 
 const ORACLE: &str = include_str!("../../tests/fixtures/module-host/oracle.json");
 const DEADLINE: Duration = Duration::from_secs(10);
+/// #978: liveness watchdog for the first response byte, not an assertion
+/// about the response. A host running eight concurrent lib suites starved
+/// the serving task past the old ten seconds (8/48 loaded copies reported
+/// "produced no bytes and stayed open"); the byte oracle and the closed
+/// flag are unchanged, and a connection that truly never answers still
+/// reds after this margin.
+const FIRST_BYTE: Duration = Duration::from_secs(60);
 /// The recorder's quiet window: a response is complete after a quarter second
 /// of silence while the connection stays open.
 const QUIET: Duration = Duration::from_millis(250);
@@ -472,9 +479,9 @@ async fn capture(stream: &mut TcpStream, id: &str) -> (Vec<u8>, bool) {
     let mut buffer = vec![0u8; 8192];
     let start = Instant::now();
     let mut closed = false;
-    while start.elapsed() < DEADLINE {
+    while start.elapsed() < FIRST_BYTE {
         let wait = if out.is_empty() {
-            DEADLINE - start.elapsed()
+            FIRST_BYTE - start.elapsed()
         } else {
             QUIET
         };
