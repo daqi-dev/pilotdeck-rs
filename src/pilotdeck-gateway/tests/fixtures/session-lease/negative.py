@@ -22,8 +22,12 @@ test_file = Path(__file__).with_name('test_lease.py')
 cli = root / 'scripts/cli-parity/run_round.py'
 capture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py'
 readme = Path(__file__).with_name('README.md')
-guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme, capture]
-EXPECTED_CASES = 24
+# #1662: capture.py is never an in-place guarded source here. Its disk bytes are
+# sha256-verified by the resident sdk_signal_exit test, so the capture case is
+# injected in memory (see one()) in every mode; an in-place committed mutation
+# would false-fail that test and a SIGKILLed run would leave a mutant behind.
+guarded_sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]
+EXPECTED_CASES = 26
 # Independent total: update deliberately when adding or retiring a control.
 cases = [
     ('cli-term-raises-twice', cli, 'def interrupted(signum, frame):\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),
@@ -50,6 +54,8 @@ cases = [
     ('capture-term-raises-twice', capture, '    if isinstance(sys.exception(), KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', '    if isinstance(None, KeyboardInterrupt):\n        return\n    raise KeyboardInterrupt(f\'#1145 capture interrupted by signal {signum}\')', 'test_capture_cancel_unwind'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('omit-lease-case', Path(__file__).resolve(), "    ('cl" + "i-term-raises-twice', cli, 'def interrupted(signum, frame):\\n    if isinstance(sys.exception(), KeyboardInterrupt):', 'def interrupted(signum, frame):\\n    if isinstance(None, KeyboardInterrupt):', 'test_cli_cancel_unwind'),\n", '', 'test_expected_case_count'),
+    ('capture-guarded-again', Path(__file__).resolve(), 'guarded_' + 'sources = [common, source, test_file, Path(__file__).resolve(), cli, readme]', 'guarded_' + 'sources = [common, source, test_file, Path(__file__).resolve(), cli, readme, capture]', 'test_guarded_sources_exclude_captured_fixture'),
+    ('capture-committed-disk-write', Path(__file__).resolve(), 'inject = memory or path not in guarded_' + 'sources', 'inject = memory', 'test_capture_case_mutates_memory_only'),
 ]
 messages = {
     'test_cli_signal_handlers_registered': '#a5b CLI signal handlers are installed by production code',
@@ -59,6 +65,8 @@ messages = {
     'test_memory_rehearsal_holds_tree_lock': '#1398 lease memory rehearsal holds the source tree lock',
     'test_documented_release_definition': '#1221 allStopped documents lease proof separately from scoring',
     'test_guarded_sources_include_common': '#a5b parity mutation guards include common.py',
+    'test_guarded_sources_exclude_captured_fixture': '#1662 guarded sources exclude capture.py whose disk bytes are golden-verified',
+    'test_capture_case_mutates_memory_only': '#1662 the capture case mutates memory only, never the disk fixture',
     'test_blocked_fixture_releases_lease': '#1221 BLOCKED empty fixture releases lease for successor',
     'test_failed_and_cancelled_fixture_release': '#1221 non-PASS cleanup releases only a settled empty group',
     'test_lease_probe_is_fail_closed': '#1221 lease proof requires held reaped leader and final ESRCH',
@@ -165,6 +173,7 @@ def main():
     def one(row, restore=False):
         name, path, before, after, test = row
         status, reason = 'INVALID', ''
+        original, wrote = None, False
         try:
             if test not in messages or '    def ' + test + '(' not in test_file.read_text():
                 raise ValueError('unknown bound test or assertion marker: ' + test)
@@ -176,10 +185,16 @@ def main():
                 raise ValueError('positive bound test did not pass')
             if path.suffix == '.py':
                 compile(changed, str(path), 'exec')
-            if not memory:
+            # #1662: a case outside the guarded set (capture.py is disk-verified
+            # by sdk_signal_exit) runs its mutant through the in-memory child
+            # even in committed mode; only guarded sources are ever written.
+            original = path.read_bytes()
+            inject = memory or path not in guarded_sources
+            if not inject:
                 path.write_text(changed)
+                wrote = True
             (out / (name + '-compile.log')).write_text('Python compile: PASS; Markdown compilation: N/A\n')
-            result = run(name + '-negative', test, name if memory else None)
+            result = run(name + '-negative', test, name if inject else None)
             log = result.stdout + result.stderr
             if passed(result):
                 status, reason = 'SURVIVED', 'bound test passed'
@@ -193,8 +208,8 @@ def main():
         except Exception as error:
             status, reason = 'INVALID', str(error)
         finally:
-            if restore:
-                path.write_bytes(originals[path])
+            if restore and wrote:
+                path.write_bytes(original)
         try:
             if not passed(run(name + '-restored', test)):
                 status, reason = 'INVALID', reason + '; restored control failed'
@@ -207,7 +222,7 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            with mutating_sources(root, guarded_sources) as originals:
+            with mutating_sources(root, guarded_sources):
                 for row in selected:
                     one(row, True)
     except BaseException as error:
