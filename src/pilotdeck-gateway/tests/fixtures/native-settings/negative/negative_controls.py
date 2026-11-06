@@ -520,6 +520,11 @@ with mutating_sources(root, sorted({root / row[1]
                 row = next((row for row in reversed(summary)
                             if row['name'] == name), None)
                 if row is None:
+                    # Defensive only: both the try and the except branch above
+                    # append this mutant's row before reaching `finally`, so
+                    # today this arm cannot be taken. It stays so that a future
+                    # edit which moves those appends still invalidates the
+                    # verdict instead of dropping it.
                     row = dict(name=name, test=test, baseline=baseline_sha,
                                baselineSource=baseline_source,
                                hostEvidence=baseline_source == 'HEAD')

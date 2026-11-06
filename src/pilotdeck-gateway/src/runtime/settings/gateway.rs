@@ -531,9 +531,10 @@ fn require_input<'a>(input: &'a JsValue, field: &str) -> Result<&'a JsValue, Set
 /// in ascending numeric order, then other keys in insertion order.
 ///
 /// #1748 item 3: one implementation of ECMAScript key order, in the protocol
-/// crate. This mirror and the replay support used to carry their own copies,
-/// so a correction to any one of them left the other two behind.
-fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
+/// crate. This mirror, the replay support (`test_support`) and the MCP server
+/// listing used to carry their own copies, so a correction to any one of them
+/// left the other two behind.
+pub(crate) fn own_entries(object: &JsObject) -> Vec<(JsString, JsValue)> {
     object
         .own_entries()
         .into_iter()

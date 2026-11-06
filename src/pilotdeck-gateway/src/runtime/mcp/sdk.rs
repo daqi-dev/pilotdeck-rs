@@ -945,22 +945,11 @@ fn set_status(servers: &mut Vec<(JsString, bool)>, name: JsString, configured: b
 /// ascending numeric order, then other keys in insertion order.
 fn own_entries(value: Option<&JsValue>) -> Vec<(JsString, JsValue)> {
     match value {
-        Some(JsValue::Object(object)) => {
-            let mut indexed = Vec::new();
-            let mut ordinary = Vec::new();
-            for (name, value) in object.entries() {
-                match name.array_index() {
-                    Some(index) => indexed.push((index, name.clone(), value.clone())),
-                    None => ordinary.push((name.clone(), value.clone())),
-                }
-            }
-            indexed.sort_by_key(|(index, _, _)| *index);
-            indexed
-                .into_iter()
-                .map(|(_, name, value)| (name, value))
-                .chain(ordinary)
-                .collect()
-        }
+        Some(JsValue::Object(object)) => object
+            .own_entries()
+            .into_iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect(),
         Some(JsValue::Array(items)) => items
             .iter()
             .enumerate()
