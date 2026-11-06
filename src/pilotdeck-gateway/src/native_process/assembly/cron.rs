@@ -130,6 +130,31 @@ impl NativeCronGatewayBody {
     }
 }
 
+/// The submit path's refusal, read off the event the drain would otherwise
+/// discard: `runtime/turn/submit.rs` answers a failed `owner.begin_turn`
+/// with `status("session_busy", …)` plus an `error` event carrying
+/// `session_busy` / `SESSION_BUSY`, and returns `Ok(())`. A turn that
+/// actually started cannot produce that code (it already holds the session's
+/// admission), so this is a rejection, not a mid-turn failure.
+fn rejected_admission(event: &JsValue) -> Option<CronError> {
+    let object = event.as_object()?;
+    let text = |name: &str| {
+        object
+            .get_property(name)
+            .and_then(JsValue::as_string)
+            .map(|value| String::from_utf16_lossy(value.units()))
+    };
+    if text("type").as_deref() != Some("error") {
+        return None;
+    }
+    let code = text("code")?;
+    if code != "session_busy" && code != "SESSION_BUSY" {
+        return None;
+    }
+    let message = text("message").unwrap_or_else(|| code.clone());
+    Some(CronError::gateway(code.as_str(), JsString::from(message)))
+}
+
 impl CronGatewayBody for NativeCronGatewayBody {
     fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
         // Blocking a worker of the gateway's (current-thread) runtime would
@@ -146,13 +171,25 @@ impl CronGatewayBody for NativeCronGatewayBody {
             let mut submission = submitter.submit(submit_input(input));
             // The event stream itself is #1305's `CronFire` half (store
             // claims, run records, result delivery); this boundary only
-            // keeps the port contract of unwinding the admitted turn.
-            while let Some(_event) = submission.next().await.map_err(|error| {
+            // keeps the port contract of unwinding the admitted turn — with
+            // one exception: a submit the session owner refused never ran a
+            // turn at all, and `submit` reports that as an ordinary `Ok`
+            // stream carrying a terminal `session_busy` error event. The
+            // port's own contract is `Err` for "cannot be admitted (busy,
+            // maintenance, shutdown)" (`CronGatewayBody`), so the rejection
+            // is surfaced here instead of being drained into a silent `Ok`.
+            // Every other event stays #1305's to interpret: a mid-turn error
+            // is not a rejection.
+            while let Some(event) = submission.next().await.map_err(|error| {
                 CronError::gateway(
                     "cron_run_failed",
                     JsString::from(format!("Error: {}", error.message)),
                 )
-            })? {}
+            })? {
+                if let Some(rejection) = rejected_admission(&event) {
+                    return Err(rejection);
+                }
+            }
             Ok(())
         })
     }
