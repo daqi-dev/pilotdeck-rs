@@ -184,10 +184,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
     let loop_switch = loop_stimulus_switch(&env)?;
     // #1371: only a resolved *plan* replaces the turn. An armed directory
     // without a plan is inert, so it must keep the production behaviour byte
-    // for byte, automatic title request included. Resolving the entry here
-    // (once per process) is the same value the turn factory reads later.
+    // for byte, automatic title request included. The plan is resolved here,
+    // at gateway startup; the sidecar resolves the same file when it starts,
+    // so the collector must write `loop.json` before launching the gateway
+    // (see the `loop_stimulus` module docs) or the two processes can disagree.
     let loop_planned = pilotdeck_transport::loop_stimulus::LoopStimulus::global()
-        .is_some_and(|stimulus| matches!(stimulus.plan(), Ok(Some(_))));
+        .is_some_and(|stimulus| stimulus.is_planned());
     if let Some(dir) = &loop_switch {
         // #1371: the controlled loop/fence entry states its directory before
         // any turn is driven, in the same construction style as #1370.
