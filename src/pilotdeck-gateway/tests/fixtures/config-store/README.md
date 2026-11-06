@@ -67,13 +67,12 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   reload，而 `fs.watch` 会给一次 identity reload；#327 起同周期 A→B→A 并回拨 mtime
   已能看到（`restored_mtime_rewrite_between_samples_is_seen`），只剩「整个突发的 ctime
   都停在指纹记下的那个 tick 编号」这一格。每次采样先比对元数据（含每次写入与 `utimes` 都会
-  刷新的 ctime、inode）：元数据未变则不读内容（#1739；「元数据相同 ⇒ 内容未变」只在
-  改写后的 ctime 仍等于指纹记下的那个 tick 编号时失效——窗口从该次采样算到那个 tick
-  结束，最宽一个文件系统粒度（HFS+ 1 s、APFS / ext4 ns 级），与采样间隔无关）；
+  刷新的 ctime、inode）：元数据未变则不读内容（#1739）。漏检只有一格：改写后 ctime 未跨
+  tick，且 len / mtime / inode 也都没变；精确表述见 `src/config/store.rs` 模块文档。
   元数据变化后才读被监视配置文件（含经父目录监视、后来出现的那个配置文件名）
-  至多 1 MiB 内容，超出或其它目录项只看元数据。代价是改写后的 ctime 仍在指纹记下的
-  那个 tick 编号里时，内容改动现在与净零突发同样不可见（原本每次采样都读内容，能看到）；这一格已按冻结程序登记为 `specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`
-  （未批准），复算用挂载的 HFS+ 镜像把 `TMPDIR` 指过去，见该条目「机器判据」。
+  至多 1 MiB 内容，超出或其它目录项只看元数据。这一格按冻结程序登记为
+  `specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`（未批准），
+  复算用挂载的 HFS+ 镜像把 `TMPDIR` 指过去，见该条目「机器判据」。
   相对的全局配置路径（`PILOTDECK_CONFIG_PATH`）按
   `StoreOptions.cwd` 锚定，与 loader 读的是同一文件。
 

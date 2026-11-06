@@ -42,10 +42,10 @@ watcher 依赖，改为按 `WatchOptions::poll_interval` 轮询被监视路径�
 夹到 10 ms – 60 s，`effective_poll_interval`）；
 监视对象的选取与基线一致。去抖夹到 1 h 上限（`effective_debounce`，基线不夹，
 登记见 `specs/gateway-parity/diffs/A6.3-CONFIG-DEBOUNCE-CEILING-001.md`）。
-每次采样先比 metadata，未变则不读内容（#1739）；ctime 只是一个 tick 编号，改写后的
-ctime 仍等于指纹记下的那个 tick 时会漏掉「同长度 + 还原 mtime」的改写——窗口从该次
-采样算到那个 tick 结束，最宽一个文件系统粒度（HFS+ 1 s、APFS / ext4 ns 级），与采样
-间隔无关（`specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`）。
+每次采样先比 metadata，未变则不读内容（#1739）。唯一的漏检窗口是「改写后 ctime 未跨
+tick，且其余参与指纹的字段（len / mtime / inode / dev）也都没变」；窗口宽度与采样间隔
+无关，具体表述见 `store.rs` 模块文档，登记与复算见
+`specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`。
 差异是「延迟 + 采样合并 + 净零突发不触发 identity reload」，详见 `tests/fixtures/config-store/README.md`。真实 TS 原件与回放见 `tests/fixtures/config-store/README.md`。
 
 `load_project` / `load_project_with_files` 的公开行为不变；`snapshot.rs` 只投影
