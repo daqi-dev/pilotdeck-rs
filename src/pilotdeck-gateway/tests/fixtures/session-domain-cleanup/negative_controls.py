@@ -2271,14 +2271,17 @@ MUTATIONS = [
     # #892 fix-r21 (GLM boundary r20 P1-1, receiver form): a locally rebound
     # relay receiver -- ``md = <stub>`` then ``md.common.aggregate_status`` --
     # was taken on the spelling alone.  The fixture's own summarize_results
-    # is the registered point that uses exactly this shape; the rebind goes at
-    # the top of the function so the early ``return`` still executes.
+    # is the registered point that uses exactly this shape.  The stub yields a
+    # FAIL verdict, not a fake PASS: summarize_results is itself the verdict
+    # function the harness requires to exit non-zero for a kill, so a
+    # PASS-returning stub would mask its own detection exit; the audit being
+    # calibrated is static and flags the rebind regardless of the stub's value.
     ('calibrate-shadowed-receiver-local', CHECK,
      "    executed = [row for row in results if row.get('passed') is not None]\n"
      "    skipped = [row for row in results",
      "    from types import SimpleNamespace\n"
      "    md = SimpleNamespace(common=SimpleNamespace(\n"
-     "        aggregate_status=lambda *a: ('PASS', 0)))\n"
+     "        aggregate_status=lambda *a: ('FAIL', 1)))\n"
      "    executed = [row for row in results if row.get('passed') is not None]\n"
      "    skipped = [row for row in results"),
     # #892 fix-r21 (module poisoning through a function): ``global common``
