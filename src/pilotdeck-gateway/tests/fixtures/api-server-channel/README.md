@@ -103,10 +103,13 @@ silently degrade a cell into "some short body":
   replay asserts the recorded `expect[0]` has `bytes: 0`, an `error` string and
   no `status`. A baseline cap raised above the recorded `OVER_CAP_BYTES` would
   therefore fail loudly instead of leaving the surface green. `bytes` is a
-  **measurement**, not a constant: a connection that dies after the status line
-  and part of the body records the byte count it actually received (and the
-  status line it actually saw), so that shape fails both pins instead of being
-  written down as a clean zero-byte close.
+  **measurement**, not a constant: it is counted on the socket, so it is
+  recorded even when the connection dies before the `response` callback runs
+  (Node raises `req`'s `'error'` synchronously and `IncomingMessage`'s on the
+  next tick). A connection that dies after the status line and part of the body
+  records the byte count it actually received and the status line it actually
+  saw, so that shape fails both pins instead of being written down as a clean
+  zero-byte close.
 - `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
   `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
   the cap and the fixture must not drift apart.
