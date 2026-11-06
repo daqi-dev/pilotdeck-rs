@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""Retirement 轮逐方法 outcome / 错误码对照装置（issue #1477）。
+
+判据（P1–P8）、阈值（0 处不一致）与容差全部登记于
+``specs/gateway-parity/diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md``，先于任何
+Rust retirement 轮登记（S1 判据提交，body 含 ``criteria-commit: yes``）。本文件是
+这些规则的唯一实现：
+
+  emit  -- 从 TS 参考轮（k=5）重生成 / 复核金样 ts-oracle.json
+  check -- 拿一轮或多轮 retirement 轮的 methods.json + frames.jsonl 对照金样
+
+退出码：0 PASS / 1 FAIL / 2 输入不可用（fail-closed：缺文件、JSON 解析失败、
+缺字段、金样条目数 != 101、金样与登记的 gated 集不符，一律绝不当 PASS）。
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
+
+# —— 登记事实（diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md「基线依据」）——
+SCHEMA = 'retirement-outcome-parity/ts-oracle v1'
+BASELINE_REVISION = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'
+NODE_VERSION = 'v22.22.0'
+EXPECTED_METHOD_COUNT = 101
+CAPABILITY_UNAVAILABLE = 'CAPABILITY_UNAVAILABLE'
+# P5：errorCode == CAPABILITY_UNAVAILABLE 的方法集合必须恰好等于这 6 个
+# （TS 基线在无凭据配置下就是如此答；这是登记值，不是豁免）。
+REGISTERED_UNAVAILABLE_METHODS = frozenset({
+    'manager_browsers', 'memory_list', 'memory_wipe',
+    'snapshot_get', 'snapshot_list', 'snapshot_restore',
+})
+KNOWN_OUTCOMES = ('ok', 'error')
+KNOWN_SHAPES = ('request', 'stream')
+
+
+class InputError(Exception):
+    """输入不可用 —— fail-closed，退出码 2，绝不当 PASS。"""
+
+
+def violation(rule, round_name, method, detail):
+    return {'rule': rule, 'round': round_name, 'method': method, 'detail': detail}
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_json(path):
+    try:
+        text = Path(path).read_text(encoding='utf-8')
+    except OSError as error:
+        raise InputError(f'cannot read {path}: {error}') from error
+    try:
+        return json.loads(text)
+    except ValueError as error:
+        raise InputError(f'cannot parse {path}: {error}') from error
+
+
+def load_rows(round_dir):
+    """一轮的 methods.json → 行列表（严格校验，缺字段即输入不可用）。"""
+    path = Path(round_dir) / 'driver' / 'methods.json'
+    data = read_json(path)
+    if not isinstance(data, dict) or not isinstance(data.get('methods'), list):
+        raise InputError(f'{path}: expected an object with a "methods" list')
+    rows = []
+    for index, row in enumerate(data['methods']):
+        if not isinstance(row, dict):
+            raise InputError(f'{path}: row {index} is not an object')
+        for field in ('method', 'outcome', 'shape'):
+            value = row.get(field)
+            if not isinstance(value, str) or not value:
+                raise InputError(f'{path}: row {index} lacks string field {field}')
+        rows.append(row)
+    return rows, path
+
+
+def load_frames(round_dir):
+    """一轮的 frames.jsonl → 帧列表。只按 "\\n" 切行（splitlines 会在
+    U+2028 / U+2029 / U+0085 / \\x0b / \\x0c 处把一条 JSON 记录切成两半）。"""
+    path = Path(round_dir) / 'driver' / 'frames.jsonl'
+    try:
+        text = Path(path).read_text(encoding='utf-8')
+    except OSError as error:
+        raise InputError(f'cannot read {path}: {error}') from error
+    lines = text.split('\n')
+    if lines and lines[-1] == '':
+        lines = lines[:-1]
+    frames = []
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            raise InputError(f'{path}: blank line {number}')
+        try:
+            frame = json.loads(line)
+        except ValueError as error:
+            raise InputError(f'{path}: line {number}: {error}') from error
+        if not isinstance(frame, dict):
+            raise InputError(f'{path}: line {number} is not an object')
+        frames.append(frame)
+    return frames, path
+
+
+def index_wire(frames, path):
+    """线缆索引：方法 → send id、id → response 帧、final:true 事件帧 id 集。"""
+    send_ids = {}
+    responses = {}
+    finals = set()
+    for frame in frames:
+        wire = frame.get('frame')
+        if not isinstance(wire, dict):
+            continue  # close 等记账行，无 frame 载荷
+        direction, kind = frame.get('direction'), wire.get('type')
+        if direction == 'send' and kind == 'request':
+            identifier, method = wire.get('id'), wire.get('method')
+            if not isinstance(identifier, str) or not isinstance(method, str):
+                raise InputError(f'{path}: send request frame without id/method')
+            send_ids.setdefault(method, []).append(identifier)
+        elif direction == 'receive' and kind == 'response':
+            identifier = wire.get('id')
+            if not isinstance(identifier, str):
+                raise InputError(f'{path}: response frame without id')
+            responses[identifier] = wire
+        elif direction == 'receive' and kind == 'event' and wire.get('final') is True:
+            identifier = wire.get('id')
+            if not isinstance(identifier, str):
+                raise InputError(f'{path}: final event frame without id')
+            finals.add(identifier)
+    return send_ids, responses, finals
+
+
+def analyze_round(round_name, rows, wire, oracle_index):
+    """单轮 P1–P6、P8 判分；P7 跨轮，见 analyze_stability。"""
+    send_ids, responses, finals = wire
+    violations = []
+    stats = {'round': round_name, 'rows': len(rows),
+             'executed': 0, 'ok': 0, 'error': 0, 'timeout': 0}
+    seen = set()
+    unavailable = set()
+    for row in rows:
+        method, outcome, shape = row['method'], row['outcome'], row['shape']
+        if method in seen:
+            violations.append(violation(
+                'P1-COVERAGE', round_name, method,
+                'duplicate method row (P8 fail-closed: duplicates are never PASS)'))
+        seen.add(method)
+        if outcome == 'timeout':
+            stats['timeout'] += 1
+            violations.append(violation(
+                'P1-COVERAGE', round_name, method,
+                'timeout outcome does not count as executed and is itself FAIL'))
+            continue
+        if outcome not in KNOWN_OUTCOMES:
+            violations.append(violation(
+                'P8-FAIL-CLOSED', round_name, method,
+                f'unknown outcome value {outcome!r} (expected one of {KNOWN_OUTCOMES})'))
+            continue
+        stats['executed'] += 1
+        stats[outcome] += 1
+        if outcome == 'error' and row.get('errorCode') == CAPABILITY_UNAVAILABLE:
+            unavailable.add(method)
+        golden = oracle_index.get(method)
+        if golden is None:
+            violations.append(violation(
+                'P1-COVERAGE', round_name, method,
+                'method outside the registered 101-method execution set'))
+        else:
+            if shape != golden['shape']:
+                violations.append(violation(
+                    'P2-SHAPE', round_name, method,
+                    f'shape {shape!r} != golden {golden["shape"]!r}'))
+            if outcome != golden['outcome']:
+                violations.append(violation(
+                    'P3-OUTCOME', round_name, method,
+                    f'outcome {outcome!r} != golden {golden["outcome"]!r} '
+                    '(no availability-ratio discounting)'))
+            if outcome == 'error':
+                code = row.get('errorCode')
+                if not isinstance(code, str) or not code:
+                    violations.append(violation(
+                        'P4-ERRORCODE', round_name, method,
+                        'error row without a non-empty errorCode'))
+                elif code != golden['errorCode']:
+                    violations.append(violation(
+                        'P4-ERRORCODE', round_name, method,
+                        f'errorCode {code!r} != golden {golden["errorCode"]!r} '
+                        '(case-sensitive, per-method, no code-family approximation)'))
+            elif row.get('errorCode') is not None:
+                violations.append(violation(
+                    'P4-ERRORCODE', round_name, method,
+                    f'ok row must not carry errorCode (got {row.get("errorCode")!r})'))
+        # P6 对每一行已执行方法都核（不依赖金样）。
+        identifiers = send_ids.get(method, [])
+        if not identifiers:
+            violations.append(violation(
+                'P6-WIRE-CODE', round_name, method, 'missing send frame'))
+        elif len(identifiers) > 1:
+            violations.append(violation(
+                'P6-WIRE-CODE', round_name, method,
+                f'{len(identifiers)} send frames for one method'))
+        else:
+            identifier = identifiers[0]
+            if outcome == 'error':
+                response = responses.get(identifier)
+                if response is None:
+                    violations.append(violation(
+                        'P6-WIRE-CODE', round_name, method, 'missing response frame'))
+                else:
+                    error = response.get('error')
+                    error = error if isinstance(error, dict) else None
+                    wire_code = error.get('code') if error else None
+                    if response.get('ok') is not False:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'response.ok is not false for an error outcome'))
+                    if error is None:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'response frame without an error object'))
+                    else:
+                        if wire_code != row.get('errorCode'):
+                            violations.append(violation(
+                                'P6-WIRE-CODE', round_name, method,
+                                f'wire error.code {wire_code!r} != '
+                                f'outcome.errorCode {row.get("errorCode")!r}'))
+                        message = error.get('message')
+                        if not isinstance(message, str) or not message:
+                            violations.append(violation(
+                                'P6-WIRE-CODE', round_name, method,
+                                'empty error.message on the wire'))
+            elif shape == 'stream':
+                if identifier not in finals:
+                    violations.append(violation(
+                        'P6-WIRE-CODE', round_name, method,
+                        'stream ok without a final:true event frame'))
+                events = row.get('events')
+                if not isinstance(events, int) or events < 1:
+                    violations.append(violation(
+                        'P6-WIRE-CODE', round_name, method,
+                        f'stream ok with events < 1 (got {events!r})'))
+            else:
+                response = responses.get(identifier)
+                if response is None:
+                    violations.append(violation(
+                        'P6-WIRE-CODE', round_name, method, 'missing response frame'))
+                else:
+                    if response.get('ok') is not True:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'response.ok is not true for an ok outcome'))
+                    if 'error' in response:
+                        violations.append(violation(
+                            'P6-WIRE-CODE', round_name, method,
+                            'ok response carries an error object'))
+    executed_names = {row['method'] for row in rows if row['outcome'] in KNOWN_OUTCOMES}
+    for method in sorted(set(oracle_index) - executed_names):
+        violations.append(violation(
+            'P1-COVERAGE', round_name, method,
+            'missing from the executed set (registered 101)'))
+    # P5：unavailable 集合恰好等于登记的 6 个（集合外答 unavailable 即 FAIL，
+    # 6 个之内答非 unavailable 也 FAIL；99/101 unavailable 必须 FAIL）。
+    for method in sorted(unavailable - REGISTERED_UNAVAILABLE_METHODS):
+        violations.append(violation(
+            'P5-UNAVAILABLE-SET', round_name, method,
+            'answers CAPABILITY_UNAVAILABLE outside the registered gated set '
+            '(the old all-or-nothing UNIFORM_UNAVAILABLE semantics is NOT the '
+            'Rust-round criteria)'))
+    for method in sorted(REGISTERED_UNAVAILABLE_METHODS - unavailable):
+        violations.append(violation(
+            'P5-UNAVAILABLE-SET', round_name, method,
+            'registered gated method did not answer CAPABILITY_UNAVAILABLE'))
+    return violations, stats
+
+
+def analyze_stability(per_round_values):
+    """P7：同一轮次集合内每方法 (outcome, errorCode) 逐轮相同。"""
+    violations = []
+    for method in sorted(per_round_values):
+        values = per_round_values[method]
+        distinct = {value for value in values.values()}
+        if len(distinct) > 1:
+            drift = ', '.join(f'{name}={value[0]}/{value[1]}'
+                              for name, value in sorted(values.items()))
+            rounds = ', '.join(sorted(values))
+            violations.append(violation(
+                'P7-ROUND-STABILITY', rounds, method,
+                f'(outcome, errorCode) drift across rounds: {drift}'))
+    return violations
+
+
+def load_oracle(path):
+    """金样加载 + 严格校验（fail-closed：任何不符合登记形状即退出码 2）。"""
+    data = read_json(path)
+    if not isinstance(data, dict):
+        raise InputError(f'{path}: oracle is not an object')
+    if data.get('schema') != SCHEMA:
+        raise InputError(f'{path}: unexpected schema {data.get("schema")!r}')
+    baseline = data.get('baseline')
+    if not isinstance(baseline, dict) or baseline.get('revision') != BASELINE_REVISION:
+        raise InputError(f'{path}: baseline.revision must be {BASELINE_REVISION}')
+    rounds = data.get('rounds')
+    if not isinstance(rounds, dict):
+        raise InputError(f'{path}: missing rounds metadata')
+    k = rounds.get('k')
+    if not isinstance(k, int) or k < 1:
+        raise InputError(f'{path}: rounds.k must be a positive integer')
+    if not isinstance(rounds.get('dirs'), list) or len(rounds['dirs']) != k:
+        raise InputError(f'{path}: rounds.dirs must list k round names')
+    files = rounds.get('files')
+    if not isinstance(files, list) or len(files) != k:
+        raise InputError(f'{path}: rounds.files must list one entry per round')
+    for entry in files:
+        if (not isinstance(entry, dict) or not isinstance(entry.get('round'), str)
+                or not isinstance(entry.get('methodsSha256'), str)
+                or not isinstance(entry.get('framesSha256'), str)):
+            raise InputError(f'{path}: malformed rounds.files entry')
+    methods = data.get('methods')
+    if not isinstance(methods, list) or len(methods) != EXPECTED_METHOD_COUNT:
+        raise InputError(
+            f'{path}: oracle must hold exactly {EXPECTED_METHOD_COUNT} rows, '
+            f'got {len(methods) if isinstance(methods, list) else "non-list"}')
+    index = {}
+    for position, row in enumerate(methods):
+        if not isinstance(row, dict):
+            raise InputError(f'{path}: methods[{position}] is not an object')
+        method = row.get('method')
+        if not isinstance(method, str) or not method:
+            raise InputError(f'{path}: methods[{position}] lacks a method name')
+        if method in index:
+            raise InputError(f'{path}: duplicate oracle method {method!r}')
+        shape, outcome = row.get('shape'), row.get('outcome')
+        if shape not in KNOWN_SHAPES:
+            raise InputError(f'{path}: {method}: shape {shape!r} not in {KNOWN_SHAPES}')
+        if outcome not in KNOWN_OUTCOMES:
+            raise InputError(f'{path}: {method}: outcome {outcome!r} not in {KNOWN_OUTCOMES}')
+        error_code = row.get('errorCode')
+        wire_code = row.get('wireCode')
+        if outcome == 'error':
+            if not isinstance(error_code, str) or not error_code:
+                raise InputError(f'{path}: {method}: error row without errorCode')
+            if wire_code != error_code:
+                raise InputError(f'{path}: {method}: wireCode {wire_code!r} != errorCode')
+        else:
+            if error_code is not None:
+                raise InputError(f'{path}: {method}: ok row must not carry errorCode')
+            if wire_code is not None:
+                raise InputError(f'{path}: {method}: ok row must not carry wireCode')
+        index[method] = {'shape': shape, 'outcome': outcome, 'errorCode': error_code}
+    unavailable = {method for method, row in index.items()
+                    if row['outcome'] == 'error' and row['errorCode'] == CAPABILITY_UNAVAILABLE}
+    if unavailable != REGISTERED_UNAVAILABLE_METHODS:
+        raise InputError(
+            f'{path}: oracle unavailable set {sorted(unavailable)} does not match '
+            f'the registered gated set {sorted(REGISTERED_UNAVAILABLE_METHODS)}')
+    return data, index
+
+
+def load_round_bundle(round_dir):
+    rows, methods_path = load_rows(round_dir)
+    frames, frames_path = load_frames(round_dir)
+    wire = index_wire(frames, frames_path)
+    return {'dir': Path(round_dir), 'rows': rows, 'frames': frames, 'wire': wire,
+            'methods_sha256': sha256_file(methods_path),
+            'frames_sha256': sha256_file(frames_path)}
+
+
+def stability_values(bundles):
+    values = {}
+    for bundle in bundles:
+        for row in bundle['rows']:
+            if row['outcome'] in KNOWN_OUTCOMES:
+                values.setdefault(row['method'], {})[bundle['dir'].name] = \
+                    (row['outcome'], row.get('errorCode'))
+    return values
+
+
+def emit_report(report):
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return EXIT_PASS if report['status'] == 'PASS' else EXIT_FAIL
+
+
+def run_emit(args):
+    bundles = [load_round_bundle(path) for path in args.round]
+    if len(bundles) < 1:
+        raise InputError('emit needs at least one --round')
+    # 用第一轮自身做自洽金样，跑全套单轮判分（P1/P5/P6/重复行 + 未知值）。
+    self_index = {row['method']: {'shape': row['shape'], 'outcome': row['outcome'],
+                                  'errorCode': row.get('errorCode')}
+                  for row in bundles[0]['rows']}
+    if len(self_index) != EXPECTED_METHOD_COUNT:
+        raise InputError(
+            f'first round holds {len(self_index)} methods, expected {EXPECTED_METHOD_COUNT}')
+    violations = []
+    stats = []
+    for bundle in bundles:
+        round_violations, round_stats = analyze_round(
+            bundle['dir'].name, bundle['rows'], bundle['wire'], self_index)
+        violations.extend(round_violations)
+        stats.append(round_stats)
+    violations.extend(analyze_stability(stability_values(bundles)))
+    if violations:
+        return emit_report({
+            'status': 'FAIL',
+            'command': 'emit',
+            'reason': 'reference rounds violate the registered rules; '
+                      'a golden sample cannot be derived from them',
+            'rounds': stats, 'violations': violations,
+            'violationsCount': len(violations)})
+    first = bundles[0]
+    wire_codes = {}
+    send_ids, responses, _ = first['wire']
+    for row in first['rows']:
+        method = row['method']
+        identifier = send_ids[method][0]
+        if row['outcome'] == 'error':
+            error = responses[identifier].get('error')
+            wire_codes[method] = error.get('code') if isinstance(error, dict) else None
+        else:
+            wire_codes[method] = None
+    payload = {
+        'schema': SCHEMA,
+        'baseline': {'revision': BASELINE_REVISION, 'node': NODE_VERSION,
+                     'suite': 'retirement'},
+        'rounds': {
+            'k': len(bundles),
+            'dirs': [bundle['dir'].name for bundle in bundles],
+            'files': [{'round': bundle['dir'].name,
+                       'methodsSha256': bundle['methods_sha256'],
+                       'framesSha256': bundle['frames_sha256']}
+                      for bundle in bundles],
+        },
+        'methods': [{'method': row['method'], 'shape': row['shape'],
+                     'outcome': row['outcome'], 'errorCode': row.get('errorCode'),
+                     'wireCode': wire_codes[row['method']]}
+                    for row in first['rows']],
+    }
+    target = Path(args.oracle)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
+                      encoding='utf-8')
+    print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),
+                      'methods': len(payload['methods']),
+                      'sha256': sha256_file(target),
+                      'rounds': stats}, ensure_ascii=False, indent=2))
+    return EXIT_PASS
+
+
+def run_check(args):
+    _, oracle_index = load_oracle(args.oracle)
+    bundles = [load_round_bundle(path) for path in args.round]
+    violations = []
+    stats = []
+    for bundle in bundles:
+        round_violations, round_stats = analyze_round(
+            bundle['dir'].name, bundle['rows'], bundle['wire'], oracle_index)
+        violations.extend(round_violations)
+        stats.append(round_stats)
+    violations.extend(analyze_stability(stability_values(bundles)))
+    report = {
+        'status': 'PASS' if not violations else 'FAIL',
+        'command': 'check',
+        'oracle': {'path': str(args.oracle), 'methods': len(oracle_index)},
+        'rounds': stats,
+        'violations': violations,
+        'violationsCount': len(violations),
+    }
+    return emit_report(report)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Retirement outcome-parity checker (#1477); rules P1-P8 are '
+                    'registered in specs/gateway-parity/diffs/'
+                    'A8.6-RETIREMENT-OUTCOME-PARITY-001.md')
+    sub = parser.add_subparsers(dest='command', required=True)
+    for name, runner in (('emit', run_emit), ('check', run_check)):
+        subparser = sub.add_parser(name)
+        subparser.add_argument('--oracle', required=True,
+                                help='ts-oracle.json path (emit writes, check reads)')
+        subparser.add_argument('--round', action='append', required=True,
+                               help='round directory (driver/methods.json + '
+                                    'driver/frames.jsonl); repeatable')
+        subparser.set_defaults(runner=runner)
+    args = parser.parse_args(argv)
+    try:
+        return args.runner(args)
+    except InputError as error:
+        print(json.dumps({'status': 'INPUT_ERROR', 'command': args.command,
+                          'error': str(error)}, ensure_ascii=False, indent=2))
+        return EXIT_INPUT
+
+
+if __name__ == '__main__':
+    sys.exit(main())
