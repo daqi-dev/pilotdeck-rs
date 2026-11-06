@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 183 mutants:
+`JUDGES`, keyed by the same names. The current table has 187 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -397,7 +397,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-dict-alias-augassign`, `calibrate-walrus-receiver-write`,
 `calibrate-alias-chain-reverse`, `calibrate-sm-pair-value`,
 `calibrate-sm-loop-rebind`, `calibrate-sm-unbound-update`,
-`calibrate-getattr-dict-subscript`, `calibrate-builtins-subscript-setattr`.
+`calibrate-getattr-dict-subscript`, `calibrate-builtins-subscript-setattr`,
+`calibrate-getattr-import-alias`, `calibrate-builtins-module-alias`,
+`calibrate-builtins-getattr-subscript`, `calibrate-builtins-subscript-vars`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -842,6 +844,21 @@ first argument as the mapping -- and `_setattr_arguments` accepts any
 `<expr>.setattr(target, key, value)` wrapper.  A `del md.__dict__['common']`
 is still out of scope: deleting the attribute makes the audit itself raise, so
 it cannot turn a real bypass into a green report.
+
+`fix-r31` closed the last literal-name holdout in that same family: the read side
+(`_getattr_literal`, which feeds `_expr_kinds` and `namespace_dict_roots`) judged
+only a callee spelled exactly `getattr`, while the write-target rule already went
+through the alias resolver.  Measured on the r30 head (before: PASS, after: FAIL):
+`from builtins import getattr as _g; _g(md, '__dict__')['common'] = <stub>`
+(`calibrate-getattr-import-alias`), `import builtins as _b;
+_b.getattr(md, '__dict__')['common'] = <stub>` (`calibrate-builtins-module-alias`),
+`__builtins__['getattr'](md, '__dict__')['common'] = <stub>`
+(`calibrate-builtins-getattr-subscript`) and
+`__builtins__['vars'](md)['common'] = <stub>`
+(`calibrate-builtins-subscript-vars`).  `_callable_name` now decodes the
+dict-valued `__builtins__['<builtin>']` callee, and both read-side call sites
+pass the alias map in.  A bare `builtins.getattr(...)` with no `import builtins`
+is not a program and stays unresolved.
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
