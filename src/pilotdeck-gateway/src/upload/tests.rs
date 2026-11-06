@@ -1377,6 +1377,156 @@ fn seed_cleanup_record(uploads: &Path, project_key: &Path, id: &str, expires_at:
     fs::write(dir.join("metadata.json"), format!("{line}\n")).unwrap();
 }
 
+/// Pin a directory's mtime so the orphan-retention check is judged against the
+/// store's fake clock, not the real one. A read-only open is enough: the test
+/// process owns the scratch tree, and `O_WRONLY` cannot open a directory.
+fn set_mtime(path: &Path, millis: u64) {
+    let dir = fs::File::open(path).unwrap();
+    dir.set_modified(UNIX_EPOCH + Duration::from_millis(millis))
+        .unwrap();
+}
+
+// #1646: one bad record must no longer cost the round, the good records, or
+// the lease sweep that follows it.
+#[test]
+fn upload_cleanup_bad_record_does_not_abort_the_sweep() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    // "upload-bad" sorts first: the corrupt record is met before the good one.
+    seed_cleanup_record(&uploads, &project, "upload-bad", "1970-01-01T00:00:00.000Z");
+    seed_cleanup_record(
+        &uploads,
+        &project,
+        "upload-good",
+        "1970-01-01T00:00:00.000Z",
+    );
+    fs::write(uploads.join("upload-bad/metadata.json"), "{").unwrap();
+    let lease = project.join(".tmp/chat-upload-leases/upload-bad/l1");
+    fs::create_dir_all(&lease).unwrap();
+    fs::write(
+        lease.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+    let cleaned = h
+        .store
+        .cleanup_expired()
+        .expect("bad record aborts the sweep");
+    assert_eq!(cleaned, 1, "bad record aborts the sweep");
+    assert!(!uploads.join("upload-good").exists());
+    assert!(
+        uploads.join("upload-bad").exists(),
+        "a corrupt record is left in place, not guessed at"
+    );
+    assert!(
+        !lease.exists(),
+        "the lease sweep still runs after the bad record"
+    );
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    let bad_path = uploads.join("upload-bad").to_string_lossy().into_owned();
+    assert!(
+        log.contains(&bad_path),
+        "the skip log names the bad record's path: {log}"
+    );
+}
+
+// #1646: a task directory without metadata.json never enters the record sweep;
+// Rust reclaims it once it is older than the upload retention.
+#[test]
+fn upload_cleanup_reclaims_expired_orphan_directories() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    let orphan = uploads.join("upload-orphan");
+    fs::create_dir_all(orphan.join("files")).unwrap();
+    fs::write(orphan.join("files/x"), "debris").unwrap();
+    set_mtime(&orphan, (EPOCH - DAY - 1) as u64);
+    let empty = uploads.join("upload-empty");
+    fs::create_dir_all(&empty).unwrap();
+    set_mtime(&empty, (EPOCH - 2 * DAY) as u64);
+    let cleaned = h.store.cleanup_expired().unwrap();
+    assert_eq!(
+        cleaned, 0,
+        "orphan reclamation keeps the return value's TS meaning (records removed)"
+    );
+    assert!(
+        !orphan.exists(),
+        "an orphan past the upload retention is reclaimed, files and all"
+    );
+    assert!(!empty.exists(), "an old empty orphan is reclaimed");
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(log.contains("reclaimed orphan"), "{log}");
+}
+
+// #1646 pairing case: a fresh orphan — a create whose metadata write has not
+// happened yet — must survive the sweep.
+#[test]
+fn upload_cleanup_keeps_fresh_orphan_directories() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    let uploads = project.join(".tmp/chat-uploads");
+    let fresh = uploads.join("upload-fresh");
+    fs::create_dir_all(fresh.join("files")).unwrap();
+    set_mtime(&fresh, EPOCH as u64);
+    let young = uploads.join("upload-young");
+    fs::create_dir_all(&young).unwrap();
+    set_mtime(&young, (EPOCH - DAY + 1) as u64);
+    h.store.cleanup_expired().unwrap();
+    assert!(
+        fresh.join("files").exists(),
+        "a just-created orphan must survive its metadata write window"
+    );
+    assert!(
+        young.exists(),
+        "an orphan younger than the retention must survive"
+    );
+}
+
+// #1646: lease.json appears only through a temp + rename, so a reader sees the
+// complete lease or nothing at all — never a 0-byte/half file it would treat
+// as expired. The rename fault is the deterministic stand-in for observing
+// the write window mid-flight.
+#[test]
+fn upload_lease_atomic_rename_failure_keeps_valid_leases() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let live = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let live_dir = PathBuf::from(string(&live.attachments[0], "path").unwrap())
+        .parent()
+        .unwrap()
+        .to_owned();
+    inject(&h, "lease-rename", libc::EIO);
+    let e = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .err()
+        .expect("lease.json must appear only through an atomic rename");
+    assert_eq!(e.code, "EIO");
+    let lease_root = project.join(".tmp/chat-upload-leases/upload-1");
+    assert_eq!(
+        names(&lease_root),
+        vec![live_dir.file_name().unwrap().to_string_lossy().into_owned()],
+        "the failed acquire leaves no partial lease behind"
+    );
+    assert_eq!(leftovers(&lease_root, ".tmp"), 0, "no lease temp survives");
+    // A valid lease survives a sweep that watched its neighbour fail.
+    h.store.cleanup_expired().unwrap();
+    assert!(
+        live_dir.join("lease.json").exists(),
+        "a valid lease is not deleted by the sweep"
+    );
+    live.release().unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store() {
     // The TS literal is `15 * 60 * 1000`; any other value silently diverges.
@@ -1417,21 +1567,27 @@ async fn cleanup_schedule_pins_the_ts_interval_and_ends_with_the_store() {
 async fn cleanup_failure_keeps_the_schedule_alive() {
     let scratch = Scratch::new();
     let project = scratch.dir("p");
-    let other = scratch.dir("other");
     let h = golden_store(&project);
     let uploads = project.join(".tmp/chat-uploads");
-    // A `projectKey` that does not match its directory fails `read_at`
-    // (UPLOAD_INTEGRITY_MISMATCH), which fails the whole project round like a
-    // torn metadata.json does. It sorts first, so the expired record is only
-    // reached once the failure is gone.
-    seed_cleanup_record(&uploads, &other, "upload-bad", "2100-01-01T00:00:00.000Z");
+    // #1646 made a corrupt record a logged skip instead of a round failure,
+    // so the failing stage is now the lease sweep: an injected lease rm error
+    // aborts the round after the records were already removed. The property
+    // under test is unchanged: a failed sweep does not end the schedule.
     seed_cleanup_record(
         &uploads,
         &project,
         "upload-expired",
         "1970-01-01T00:00:00.000Z",
     );
+    let lease = project.join(".tmp/chat-upload-leases/upload-expired/l1");
+    fs::create_dir_all(&lease).unwrap();
+    fs::write(
+        lease.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
     h.now.store(EPOCH, Ordering::SeqCst);
+    inject(&h, "lease-rm", libc::EACCES);
     // The assertions below only mean something once one tick has run, so the
     // period must be one the clamp leaves alone — checked, not assumed, so a
     // raised floor turns this red instead of silently making it vacuous.
@@ -1447,12 +1603,11 @@ async fn cleanup_failure_keeps_the_schedule_alive() {
         "a failed sweep does not end the schedule"
     );
     assert!(
-        uploads.join("upload-expired").exists(),
-        "the failed round removes nothing"
+        lease.exists(),
+        "the failed round leaves the lease sweep's work undone"
     );
-    fs::remove_dir_all(uploads.join("upload-bad")).unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
-        while uploads.join("upload-expired").exists() {
+        while lease.exists() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })

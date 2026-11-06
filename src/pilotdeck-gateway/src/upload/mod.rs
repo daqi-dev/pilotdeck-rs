@@ -91,6 +91,10 @@ pub struct UploadStore {
     listeners: Arc<Mutex<Listeners>>,
     #[cfg(test)]
     faults: Mutex<Vec<(String, i32)>>,
+    /// Non-record outcomes of a tolerant sweep (skips, orphan reclaims), so
+    /// tests can pin what the log said without capturing stderr.
+    #[cfg(test)]
+    cleanup_log: Mutex<Vec<String>>,
 }
 impl UploadStore {
     pub fn new(options: UploadStoreOptions) -> Self {
@@ -101,6 +105,8 @@ impl UploadStore {
             listeners: Arc::new(Mutex::new(Listeners::default())),
             #[cfg(test)]
             faults: Mutex::new(vec![]),
+            #[cfg(test)]
+            cleanup_log: Mutex::new(vec![]),
         }
     }
 
@@ -406,22 +412,98 @@ impl UploadStore {
         }
     }
 
+    /// UploadStore.ts:229–242, except one bad record no longer costs the round:
+    /// reading, judging, or removing a single record is tolerated and logged
+    /// with its path, so the remaining records and the lease sweep still run
+    /// (#1646; diff A8-UPLOAD-CLEANUP-ROBUSTNESS-001).
     pub fn cleanup_expired(&self) -> Result<usize> {
         let mut count = 0;
         for project in (self.options.list_projects)()? {
             let Ok(project) = fs::canonicalize(project) else {
                 continue;
             };
-            for record in self.list_in_project(&project)? {
-                if future(&record, "expiresAt", (self.options.now)())? {
-                    continue;
-                }
-                remove_tree(&task_dir(&record))?;
-                count += 1;
-            }
+            self.sweep_expired_records(&project, &mut count);
             self.cleanup_expired_leases(&project)?;
         }
         Ok(count)
+    }
+
+    /// The record half of [`Self::cleanup_expired`]. Unlike
+    /// [`Self::list_in_project`] (whose strict errors stay for `create` and
+    /// `find_idempotent`), every per-record failure here is a logged skip.
+    fn sweep_expired_records(&self, project: &Path, count: &mut usize) {
+        let root = project.join(".tmp/chat-uploads");
+        for id in names(&root).into_iter().filter(|id| safe_id(id)) {
+            let dir = root.join(&id);
+            let record = match self.read_at(project, &id) {
+                Ok(Some(record)) => record,
+                // No metadata.json: not a record this round — either crash
+                // debris or a create that has not reached its metadata write
+                // yet. Age decides (see `reclaim_orphan`).
+                Ok(None) => {
+                    self.reclaim_orphan(&dir);
+                    continue;
+                }
+                Err(e) => {
+                    self.skip_record(&dir, &e);
+                    continue;
+                }
+            };
+            match future(&record, "expiresAt", (self.options.now)()) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(e) => {
+                    self.skip_record(&dir, &e);
+                    continue;
+                }
+            }
+            match remove_tree(&dir) {
+                Ok(()) => *count += 1,
+                Err(e) => self.skip_record(&dir, &e),
+            }
+        }
+    }
+
+    /// A task directory without metadata.json never enters the record sweep,
+    /// so TS leaks it (with any uploaded bytes) forever. Rust reclaims it once
+    /// its mtime is older than the upload retention: metadata is written at
+    /// create time, so a directory past a whole upload TTL without one is
+    /// crash debris, and the floor also keeps a just-created directory whose
+    /// metadata write has not happened yet. Not counted in `cleanup_expired`'s
+    /// return, which keeps its TS meaning (expired records removed).
+    fn reclaim_orphan(&self, dir: &Path) {
+        let Ok(info) = fs::symlink_metadata(dir) else {
+            return;
+        };
+        let Ok(modified) = info.modified() else {
+            return;
+        };
+        let Ok(since_epoch) = modified.duration_since(UNIX_EPOCH) else {
+            return;
+        };
+        if since_epoch.as_millis() as i64 >= (self.options.now)() - self.options.retention_ms {
+            return;
+        }
+        match remove_tree(dir) {
+            Ok(()) => self.log_cleanup(format!(
+                "[uploads] cleanup reclaimed orphan: {}",
+                dir.display()
+            )),
+            Err(e) => self.skip_record(dir, &e),
+        }
+    }
+
+    fn skip_record(&self, dir: &Path, error: &UploadError) {
+        self.log_cleanup(format!(
+            "[uploads] cleanup skipped {}: {error}",
+            dir.display()
+        ));
+    }
+
+    fn log_cleanup(&self, line: String) {
+        eprintln!("{line}");
+        #[cfg(test)]
+        self.cleanup_log.lock().unwrap().push(line);
     }
 
     pub fn verify_attachment(
@@ -457,12 +539,24 @@ impl UploadStore {
         make_dir(&dir)?;
         let result: Result<()> = (|| {
             let path = dir.join("lease.json");
-            let mut file = open_new(&path)?;
-            self.fault("lease-write", &path)?;
+            // Like `write` (metadata.json): the lease file only ever appears
+            // complete, so a concurrent `cleanup_expired_leases` never reads a
+            // half-written lease and deletes a live one (#1646). TS:404–413
+            // writes `lease.json` in place instead.
+            let temp = path.with_file_name(format!(
+                "lease.json.{}.{}.tmp",
+                std::process::id(),
+                random_id()?
+            ));
+            let mut file = open_new(&temp)?;
+            self.fault("lease-write", &temp)?;
             file.write_all(json_line(&expiry)?.as_bytes())
                 .map_err(|e| UploadError::io(e, "write", None))?;
             file.sync_all()
                 .map_err(|e| UploadError::io(e, "fsync", None))?;
+            drop(file);
+            self.fault("lease-rename", &temp)?;
+            fs::rename(&temp, &path).map_err(|e| UploadError::io(e, "rename", Some(&temp)))?;
             for (index, attachment) in attachments.iter_mut().enumerate() {
                 let source = PathBuf::from(string(attachment, "path").unwrap_or_default());
                 let destination = dir.join(string(attachment, "attachmentId").unwrap_or_default());
@@ -854,6 +948,7 @@ impl UploadStore {
                 {
                     continue;
                 }
+                self.fault("lease-rm", &dir)?;
                 remove_tree(&dir)?;
             }
             if names(&leases).is_empty() {
