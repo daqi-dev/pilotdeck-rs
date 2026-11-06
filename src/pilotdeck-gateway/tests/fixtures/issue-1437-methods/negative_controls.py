@@ -207,7 +207,11 @@ mutations = [
      '                                "delivered",\n'
      '                                JsValue::Bool(true),\n',
      TEST + 'user_dialog_respond_unwired_bus_returns_delivered_false',
-     '#1437 respond answered on an unwired bus reports delivered:false'),
+     # #1600 made the shared fixture a connected bus, so an `answered`
+     # response for an unknown id now stops at the no-snapshot guard and never
+     # reaches `ConsumeResult::NotPending`; the `cancelled` case is the one that
+     # still exports that branch, and it is the assertion this row kills on.
+     '#1437 respond cancelled on an unwired bus reports delivered:false'),
     # the two families stay outside LOCAL_METHODS.
     ('local-dispatch-leak', DISPATCH,
      '"supported_agents",',
