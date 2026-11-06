@@ -2414,6 +2414,10 @@ MUTATIONS = [
     ('calibrate-operator-setitem-status', SOURCE,
      "                    report['status'] = overall\n",
      "                    operator.setitem(report, 'status', 'PASS')\n"),
+    ('calibrate-status-getattr-alias', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _ga = getattr\n"
+     "                    _ga(report, '__setitem__')('status', 'PASS')\n"),
     # #892 fix-r19 (GLM boundary r18 P1-1): the module-level assignment pass
     # walked direct children only, so an alias bound inside ``try:`` -- the
     # shape ``_guard.py`` itself uses -- never reached ``_module_exit_aliases``.
@@ -3282,6 +3286,200 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    # #892 fix-r32 (codex boundary r31 P0-2/P0-3/P0-5..P0-10, GLM
+    # sibling r31 P1-3/P3-5, concurrency r31 P3-1): the write handle,
+    # the star argument and the binding forms the r31 rules could not name.
+    ('calibrate-write-handle-name', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _fh = md.__setattr__\n"
+     "    _fh('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-write-handle-getattr', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _fh = getattr(md, '__setattr__')\n"
+     "    _fh('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-write-handle-attrgetter', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import operator as _pdrs_o\n"
+     "    _pdrs_o.attrgetter('__setattr__')(md)('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-star-setattr', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    setattr(*(md, 'common', None))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-star-forward', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _pdrs_f(*a, **kw):\n"
+     "        setattr(*a, **kw)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-unpack-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _pdrs_m, _pdrs_other = md, None\n"
+     "    _pdrs_m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    for _pdrs_m in (md,):\n"
+     "        _pdrs_m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-default-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    def _pdrs_f(_pdrs_m=md):\n"
+     "        _pdrs_m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-with-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    with nullcontext(md) as _pdrs_m:\n"
+     "        _pdrs_m.common = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-with-key-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    for _pdrs_k in {'safe': 1}:\n"
+     "        with nullcontext('common') as _pdrs_k:\n"
+     "            setattr(md, _pdrs_k, None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-globals-tuple-target', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    globals()['common'], _pdrs_x = None, None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-sm-callable-setitem', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    from operator import setitem as _pdrs_put\n"
+     "    _pdrs_put(sys.modules, '_guard', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-sm-mapping-augassign', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    sys.modules |= {'_guard': object()}\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-alias-subscript', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import builtins as _pdrs_b\n"
+     "    _pdrs_bs = _pdrs_b\n"
+     "    _pdrs_bs['setattr'](md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-dynamic-call', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _pdrs_n = '__setattr__'\n"
+     "    getattr(md, _pdrs_n)('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-globals-alias-augassign', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _pdrs_g = globals()\n"
+     "    _pdrs_g |= {'common': None}\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -3530,6 +3728,124 @@ def calibrate_builtins_subscript_vars(rows):
         rows, CHECK_REL, 'main',
         'aggregation-audit: __builtins__ subscript vars flagged, '
         'passed=False')
+
+
+def calibrate_status_getattr_alias(rows):
+    """#892 fix-r32: a status write through a ``getattr`` alias."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _ga(report, '__setitem__')('status', 'PASS')")
+
+
+def calibrate_write_handle_name(rows):
+    """#892 fix-r32: a bound managed write kept in a plain name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-write-handle-name flagged, passed=False')
+
+
+def calibrate_write_handle_getattr(rows):
+    """#892 fix-r32: a bound managed write kept in a name through ``getattr``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-write-handle-getattr flagged, passed=False')
+
+
+def calibrate_write_handle_attrgetter(rows):
+    """#892 fix-r32: a write handle built by ``operator.attrgetter``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-write-handle-attrgetter flagged, passed=False')
+
+
+def calibrate_star_setattr(rows):
+    """#892 fix-r32: a managed write whose arguments arrive in a star argument."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-star-setattr flagged, passed=False')
+
+
+def calibrate_star_forward(rows):
+    """#892 fix-r32: a managed write forwarded from ``*args``/``**kwargs``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-star-forward flagged, passed=False')
+
+
+def calibrate_unpack_receiver(rows):
+    """#892 fix-r32: a receiver handed on through an unpacked assignment target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-unpack-receiver flagged, passed=False')
+
+
+def calibrate_for_receiver(rows):
+    """#892 fix-r32: a receiver bound by a ``for`` target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-receiver flagged, passed=False')
+
+
+def calibrate_default_receiver(rows):
+    """#892 fix-r32: a receiver bound by a parameter default."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-default-receiver flagged, passed=False')
+
+
+def calibrate_with_receiver(rows):
+    """#892 fix-r32: a receiver bound by a ``with ... as`` target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-with-receiver flagged, passed=False')
+
+
+def calibrate_with_key_rebind(rows):
+    """#892 fix-r32: a loop key rebound by a ``with ... as`` target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-with-key-rebind flagged, passed=False')
+
+
+def calibrate_globals_tuple_target(rows):
+    """#892 fix-r32: a namespace write through an unpacked subscript target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-globals-tuple-target flagged, passed=False')
+
+
+def calibrate_sm_callable_setitem(rows):
+    """#892 fix-r32: a ``sys.modules`` write through an aliased ``operator.setitem``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-sm-callable-setitem flagged, passed=False')
+
+
+def calibrate_sm_mapping_augassign(rows):
+    """#892 fix-r32: a ``sys.modules`` write through an in-place mapping update."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-sm-mapping-augassign flagged, passed=False')
+
+
+def calibrate_builtins_alias_subscript(rows):
+    """#892 fix-r32: a builtin read through an alias of the ``__builtins__`` table."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-builtins-alias-subscript flagged, passed=False')
+
+
+def calibrate_getattr_dynamic_call(rows):
+    """#892 fix-r32: a call through ``getattr`` with a non-literal attribute name."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattr-dynamic-call flagged, passed=False')
+
+
+def calibrate_globals_alias_augassign(rows):
+    """#892 fix-r32: a namespace replacement through an aliased ``globals()`` ``|=``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-globals-alias-augassign flagged, passed=False')
 
 
 JUDGES = {
@@ -3979,6 +4295,40 @@ JUDGES = {
         'aggregation-audit', calibrate_builtins_getattr_subscript, False, ()),
     'calibrate-builtins-subscript-vars': (
         'aggregation-audit', calibrate_builtins_subscript_vars, False, ()),
+    'calibrate-status-getattr-alias': (
+        'aggregation-audit', calibrate_status_getattr_alias, False, ()),
+    'calibrate-write-handle-name': (
+        'aggregation-audit', calibrate_write_handle_name, False, ()),
+    'calibrate-write-handle-getattr': (
+        'aggregation-audit', calibrate_write_handle_getattr, False, ()),
+    'calibrate-write-handle-attrgetter': (
+        'aggregation-audit', calibrate_write_handle_attrgetter, False, ()),
+    'calibrate-star-setattr': (
+        'aggregation-audit', calibrate_star_setattr, False, ()),
+    'calibrate-star-forward': (
+        'aggregation-audit', calibrate_star_forward, False, ()),
+    'calibrate-unpack-receiver': (
+        'aggregation-audit', calibrate_unpack_receiver, False, ()),
+    'calibrate-for-receiver': (
+        'aggregation-audit', calibrate_for_receiver, False, ()),
+    'calibrate-default-receiver': (
+        'aggregation-audit', calibrate_default_receiver, False, ()),
+    'calibrate-with-receiver': (
+        'aggregation-audit', calibrate_with_receiver, False, ()),
+    'calibrate-with-key-rebind': (
+        'aggregation-audit', calibrate_with_key_rebind, False, ()),
+    'calibrate-globals-tuple-target': (
+        'aggregation-audit', calibrate_globals_tuple_target, False, ()),
+    'calibrate-sm-callable-setitem': (
+        'aggregation-audit', calibrate_sm_callable_setitem, False, ()),
+    'calibrate-sm-mapping-augassign': (
+        'aggregation-audit', calibrate_sm_mapping_augassign, False, ()),
+    'calibrate-builtins-alias-subscript': (
+        'aggregation-audit', calibrate_builtins_alias_subscript, False, ()),
+    'calibrate-getattr-dynamic-call': (
+        'aggregation-audit', calibrate_getattr_dynamic_call, False, ()),
+    'calibrate-globals-alias-augassign': (
+        'aggregation-audit', calibrate_globals_alias_augassign, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
