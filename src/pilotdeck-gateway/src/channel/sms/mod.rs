@@ -1356,29 +1356,34 @@ async fn handle_incoming(
 /// The post-answer part of the TS permission branch: confirmation send,
 /// non-advancing status handling, and the next queued prompt.
 async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: PermissionAnswer) {
+    // #1790: after `finish_answer` the answer lock is still held across both
+    // sends below (the confirmation and, when queued, the next prompt), and
+    // this branch never reaches `clear_after_turn`. One guard covers the whole
+    // tail: a panic, cancellation or timeout retries the queued prompt or
+    // settles the answer (`release_answer`) instead of leaving `answering` set
+    // forever — which drops every later message as `BeginAnswer::None`.
+    let mut guard = PromptGuard::new(
+        shared.permissions.clone(),
+        chat_id.clone(),
+        answer.answer_token,
+    );
     if let Some(text) = answer.text.clone() {
         let delivered = send_reply(shared, chat_id, text).await;
         if !delivered {
             shared
                 .lock_permissions()
                 .release_answer(chat_id, answer.answer_token);
+            guard.settle();
             return;
         }
         if !answer.can_advance && !answer.retry_prompt {
+            guard.settle();
             return;
         }
         let next_prompt = shared
             .lock_permissions()
             .take_next_prompt(chat_id, answer.answer_token);
         if let Some(prompt) = next_prompt {
-            // #1790: own the `prompt_delivering` flag `take_next_prompt` set
-            // across the send; a panic or cancellation then releases it
-            // (`release_answer`: queue the retry) instead of wedging the chat.
-            let mut guard = PromptGuard::new(
-                shared.permissions.clone(),
-                chat_id.clone(),
-                answer.answer_token,
-            );
             let expected = shared
                 .lock_permissions()
                 .get_prompt_request_id(chat_id, answer.answer_token);
@@ -1389,9 +1394,9 @@ async fn deliver_answer(shared: &Arc<SmsShared>, chat_id: &JsString, answer: Per
                 expected.as_ref(),
                 answer.answer_token,
             );
-            guard.settle();
         }
     }
+    guard.settle();
 }
 
 async fn process_message(

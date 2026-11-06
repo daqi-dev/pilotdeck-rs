@@ -3223,14 +3223,29 @@ impl SmsGateway for PermissionRequestGateway {
 }
 
 /// #1790: `permissionDecide` always succeeds; `submitTurn` yields an empty
-/// stream. Drives the permission branch without any gateway-side failure.
-struct DecideOkGateway;
+/// stream and records the submitted text. Drives the permission branch without
+/// any gateway-side failure.
+struct DecideOkGateway {
+    submits: Arc<SyncMutex<Vec<String>>>,
+}
+
+impl DecideOkGateway {
+    fn new() -> Self {
+        Self {
+            submits: Arc::new(SyncMutex::new(Vec::new())),
+        }
+    }
+}
 
 impl SmsGateway for DecideOkGateway {
     fn submit_turn(
         &self,
-        _request: SubmitTurnRequest,
+        request: SubmitTurnRequest,
     ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        self.submits
+            .lock()
+            .expect("#1790 submits mutex")
+            .push(String::from_utf16_lossy(request.message.units()));
         Box::pin(async {
             Ok(Box::new(MockTurnStream {
                 events: VecDeque::new(),
@@ -3382,7 +3397,7 @@ fn seed_two_pending_permissions(shared: &Arc<SmsShared>, chat: &JsString) {
 /// later message is silently dropped (`BeginAnswer::None`).
 #[tokio::test]
 async fn a_panicking_prompt_delivery_does_not_lock_the_chat() {
-    let shared = channel_with_gateway(Arc::new(DecideOkGateway));
+    let shared = channel_with_gateway(Arc::new(DecideOkGateway::new()));
     let chat = JsString::from("+15550011");
     seed_two_pending_permissions(&shared, &chat);
     let (sender, sends) = ProbeSender::new(Some("需要权限才能继续执行。"));
@@ -3427,6 +3442,58 @@ async fn a_panicking_prompt_delivery_does_not_lock_the_chat() {
         prompt_sends(&sends),
         2,
         "#1790 the panic and the retry each send one prompt"
+    );
+}
+
+/// #1790: the confirmation send also holds `answering` across an await (after
+/// `finish_answer`, before any next prompt). A panic there must settle the
+/// answer instead of leaving every later message dropped as
+/// `BeginAnswer::None`.
+#[tokio::test]
+async fn a_panicking_confirmation_send_does_not_lock_the_chat() {
+    let gateway = Arc::new(DecideOkGateway::new());
+    let submits = gateway.submits.clone();
+    let shared = channel_with_gateway(gateway);
+    let chat = JsString::from("+15550016");
+    seed_pending_permission(&shared, &chat, "req-1790-confirm");
+    let (sender, _sends) = ProbeSender::new(Some("已允许一次"));
+    install_sender(&shared, sender).await;
+
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    })
+    .await;
+    let error = joined.expect_err("#1790 the injected confirmation panic must fail the task");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1790 the confirmation spawn must end in the panic"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not survive the confirmation-send panic"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive the confirmation-send panic"
+        );
+        crate::negative_assert!(
+            !permissions.has_pending(&chat),
+            "#1790 the confirmation panic must settle the answered permission"
+        );
+    }
+    // The chat still advances: an ordinary message now reaches the turn.
+    handle_incoming(&shared, chat.clone(), JsString::from("hello"))
+        .await
+        .expect("#1790 the message after the confirmation panic returns Ok");
+    crate::negative_assert_eq!(
+        submits.lock().expect("#1790 submits mutex").len(),
+        1,
+        "#1790 the chat must run a turn after the confirmation panic"
     );
 }
 
