@@ -273,6 +273,16 @@ MUTANT_ROWS = [
         'test_negative_suite.AuditBindingTests.test_unaudited_module_is_refused',
         '#1890 an unaudited module must be refused',
     ),
+    # #1890: the companion rule is "the declaration really exists". Loosening it
+    # to always-true is the same failure the six drifted copies had.
+    (
+        'audit-binding-missing-declaration-allowed',
+        SUITE,
+        "    compact = ''.join(source.split())",
+        "    return True\n    compact = ''.join(source.split())",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#1890 a missing declaration must be refused',
+    ),
 ]
 
 
