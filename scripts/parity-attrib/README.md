@@ -12,6 +12,7 @@
 | 2026-11-06T15:47Z | `#1926` 人拍板 **① 补豁免 + 加 C6** |
 | 2026-11-07 | 按 ① 修订并**入仓**（本目录）：C5 豁免 `requestEvidence`、新增 C6、补 2 条 negctl |
 | 2026-11-07 | 两家非作者评审（GLM/zai + MiniMax）后的修复轮：零对拍硬失败、轮次有效性闸门、C6 多重集配对、C2b 字段集钉死、G03 超时、`--negctl-out` 独占、装置自身 sha256 pin |
+| 2026-11-07 | `#1968`（P1）+ `#1969`（P2 批）清残留：negctl 基线改走轮次闸门（不可用退 rc=3）、独占新建改 `os.makedirs`（原子）、基线变异点缺失改 `BaselineUnusable`（不再 traceback）、证据 trace 原子写、N/O 负控校验成因、G03 子进程 `TMPDIR` 隔离 |
 
 入仓理由：`#1157` 的常驻复查条件写着「用同一份 `frame_attrib.py` 重跑」，而 `_tmp/` 是可回收目录。
 放 `scripts/parity-attrib/` 而**不是** `scripts/parity/`：后者在冻结检查（`check_frozen.py`）扫描范围内。
@@ -24,7 +25,8 @@ python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景>
 #    <场景> ∈ {deadline, deadline_during_tool}
 #    <rounds 目录> 下同时含 ts-r1..ts-rN 与 rust-r1..rust-rN（parity-full 落盘布局）
 
-# 2) 负控（会往 --negctl-out 写变异副本，该目录须独占新建，代码会拒绝已存在的目录）
+# 2) 负控（会往 --negctl-out 写变异副本，该目录须独占新建：代码用 `os.makedirs` 原子独占，
+#    已存在即 rc=1 退出，不覆盖任何历史证据）
 python3 -I scripts/parity-attrib/frame_attrib.py <rounds 目录> <场景> --negctl-out <新目录>
 
 # 3) 自测（纯合成数据，不依赖 trace）
@@ -36,9 +38,12 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 `6` 有轮次无效因而只覆盖部分批次（结论不算验收证据）· `7` 本批次**没有任何 FAIL**（全 PASS）
 → 不能作为 #6 归因证据 · `8` 有 pair **未判定**（比较器超时 / 输出不可解析 / 输出缺该场景）。
 `8` 与 `2` 严格区分：「工具没跑成」不是「不是 #6」，不能把 rc=2 这个最强否定结论发给装置故障。
-`--negctl-out` 子命令的退出码是另一套语义：`0` = 15 条负控全部按期望命中 · `3` 基线不可用 ·
-`4` 有 `MISMATCH`（判据真被证伪）· `8` 有负控**未判定**（同一条 case 上比较器故障，不折成
-`MISMATCH`——那会把装置故障报成「判据被证伪」）。不存在 rc=2/6/7 的含义。
+`--negctl-out` 子命令的退出码是另一套语义：`0` = 15 条负控全部按期望命中 · `1` = `--negctl-out`
+已存在（独占新建失败，不覆盖证据）· `3` **基线不可用**（没有有效轮次 / 基线 trace 缺本装置需要改的
+变异点，**数据问题，不下判据结论**）· `4` 有 `MISMATCH`（判据真被证伪）· `8` 有负控**未判定**
+（同一条 case 上比较器故障，不折成 `MISMATCH`——那会把装置故障报成「判据被证伪」）。
+优先级是 `4` > `8`：已经证伪就不受未判定影响，且未判定条数照常在 `4` 的输出里打印，不吞。
+不存在 rc=2/6/7 的含义。
 
 脚本内 `_repo_root()` 从自身位置向上找含 `scripts/parity/g03_compare.py` 的仓库根，因此 `_tmp/` 里的
 历史副本与本目录的入仓副本都能跑；**找不到就报错退出**，绝不回退到硬编码的机器路径（否则被审树与
@@ -51,8 +56,13 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 `artifacts/summary.json` **必须存在**（缺失即无效——「blocked 未知」不能当成「未 blocked」）、其
 `blocked` 必须为空；`artifacts/<场景>*.jsonl` 必须存在且可解析。无效轮次**逐条列原因并排除**，
 不再参与 pair；若排除后仍能判定，rc=`6`；若一侧一轮都不剩，rc=`5`。
-没有这道闸门时，被 BLOCKED / 只跑半截的轮次会被 G03 追加 `trace_identity` 规则，从而把
-「轮次无效」误报成「不是 #6」，或直接因 trace 缺失/截断崩掉整个分析。
+`run()` 与 `negctl` **都**走这道闸门（`collect_rounds()`）。`negctl` 的基线若一侧一轮都不剩，
+退 `rc=3`「基线不可用」，**不判** `MISMATCH`：无效轮次是数据不可用，不是判据被证伪。
+没有这道闸门时，被 BLOCKED / 只跑半截的轮次会被 G03 追加 `trace_identity` 或 `trace_health` 规则，
+从而把「轮次无效」误报成「不是 #6」（negctl 上表现为假 `MISMATCH` → rc=4），或直接因 trace
+缺失/截断崩掉整个分析。`#1968` 就是 negctl 走 `rounds()` 绕过闸门的残留：`run()` 会 rc=5 硬失败的
+同一批数据，negctl 却拿无效轮次当基线跑出 rc=4。配对负控（改前 rc=4 / 改后 rc=3）与原始输出
+见 PR 正文与 `_tmp/20261107-issue-1968/evidence/01-before-fix-negctl.txt`、`02-after-fix-negctl.txt`。
 
 ## 判据
 
@@ -81,6 +91,10 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 `trace_health` **不**归入未判定：它是可解析 trace 的真实异常（重复/乱序终态），属产品行为差异，
 负控 `C`/`D` 正是靠它判 `NOT_6`；把它也折成 `UNKNOWN` 会放走真差异。
 同一对目录的结果在进程内缓存，`run()` 的展示列不会二次 spawn。
+冻结件在 import 期会 `tempfile.mkdtemp(prefix='pdrs-parity-pyc-')` 且从不删除（`dont_write_bytecode`），
+因此 `g03()` 给子进程设一个**本装置自建**的 `TMPDIR`，进程退出时（`atexit`）整体 `rmtree`：
+`run()` 20×20 对否则会往 `$TMPDIR` 泄漏 400 个空目录。实测（negctl 15 次 spawn）旧实现泄漏 14 个、
+新实现 0 个，见 `_tmp/20261107-issue-1968/evidence/11-tmpdir-leak.txt`。
 
 ## C5 / C6 的残余（#1926 明确接受）
 
@@ -124,7 +138,13 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
 
 `L` 是唯一「期望装置放过」的用例：它的价值是盯住豁免没被悄悄改严/改松。若 `L` 变回 `NOT_6`，
 说明 C5 口径又收紧了，必须同步 `#1157` 的论断与本 README。`N`/`O` 是「期望装置**不**下结论」的
-用例：若它们变回 `NOT_6`，说明 C0 又被折回反证命中（同一类错向复发）。
+用例：若它们变回 `NOT_6`，说明 C0 又被折回反证命中（同一类错向复发）。`N`/`O` 还要求**成因**对得上：
+证据行必须点名 `trace_input` / `trace_identity`；只对上一个 `UNKNOWN`（比如 G03 超时）不算命中，
+记 `UNJUDGED`——否则「比较器没跑成」会被当成「C0 按期望命中」，负例静默失效（`#1969`）。
+
+每条用例的结果标记（`case_mark()`）：`OK` 命中期望 · `MISMATCH` 实得与期望不符且实得不是未判定
+（**判据被证伪**）· `UNJUDGED` 实得为未判定（**装置/比较器故障**，只计数，不折成 `MISMATCH`）。
+标记名与判据结论 `UNKNOWN` 刻意分开，避免把「结论」与「归类」混成一件事。
 
 ## 验证记录
 
@@ -139,16 +159,25 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
   （`00-selftest.txt` / `01-recompute.txt` / `02-negctl.txt`；口径实测探针在
   `recompute-20261106T163102Z/03-g03-ev-probe.json` 与 `04-g03-ev-both-sides.json`）；
   修复轮前的复算留在 `recompute-20261106T1611Z/` 与 `recompute-20261106T162801Z/`（后者是字段集口径的中间态，已作废）。
+- **`#1968`/`#1969` 后再复算（2026-11-07，同一批 20 轮、同一数据）：数字不变**
+  `## 汇总：100 pair 中 PASS=80 · 归因 #6=20 · 不能归因=0`，negctl 15/15 `OK`，rc=0；
+  原始输出 `_tmp/20261107-issue-1968/evidence/04-recompute.txt`、`05-negctl-real.txt`。
+  同目录另有 `#1968` 配对负控（`01`/`02`/`03`）、基线守卫（`06`/`07`）、独占新建（`08`/`09`）、
+  单元级配对（`10`）、G03 临时目录泄漏（`11`）。
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M/N/O 亦符合期望（15/15 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 72 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+- 自测 `test_frame_attrib.py` 现有 99 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
   `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
   BLOCKED / 超大整数 started_wall）、`verdict_exit()` 退出码折叠（含未判定）、`judge()` 的 C1–C6
   编排与 `UNKNOWN`（注入 G03 桩，不跑冻结比较器）、C0 的进程内自报（`trace_input` /
   `trace_identity` → UNKNOWN，`trace_health` 仍 NOT_6）、负控归类 `case_mark()`（UNKNOWN ≠
-  MISMATCH）、`run()` 端到端接线（全 PASS → rc=7、比较器故障 → rc=8 且不打印反证命中）、
-  空 root 硬失败，以及**装置自身 sha256 pin**。
+  MISMATCH，N/O 还要求成因点名自报规则）、`run()` 端到端接线（全 PASS → rc=7、比较器故障 → rc=8
+  且不打印反证命中）、空 root 硬失败，以及**装置自身 sha256 pin**。
+  另有 `#1969` 新增的：`build_cases()` 返回 15 条五元组且不改基线、变异点缺失一律 `BaselineUnusable`
+  （不再是 `StopIteration` / `IndexError`）、`write_trace()` 序列化失败时目标文件原样保留且无临时
+  残留、`negctl()` 端到端四条（rc=0 全命中 / rc=8 未判定 / rc=8 成因不符 / rc=4 且未判定摘要照常打印 /
+  rc=3 无效基线轮次）、`--negctl-out` 悬空符号链接拒绝。
   每条闸门断言都带判别力：缺 summary 的用例会把 summary 恢复后再测 started_wall，
   原因串必须点名 `started_wall`（否则删掉闸门也照样绿）。
 
@@ -161,3 +190,7 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
    diff 里一眼可见；忘了改则自测红、CI 红。
 3. 不要把本目录搬进 `scripts/parity/`（冻结检查范围），也不要改 `scripts/parity/g03_compare.py`。
 4. 本装置是**判定装置**：影响对拍结论（假 PASS / 假 FAIL）的改动按 `P1` 处理，需两家非作者评审。
+5. **`#1157` 常驻复查口径**：一律跑**仓内这一份**（`scripts/parity-attrib/frame_attrib.py`），
+   不要跑 `_tmp/` 里的历史副本（`_tmp/` 可回收，副本的判定口径也可能已过期）；以 rc 判停，
+   `NOT_6`（rc=2）**或**未判定（rc=8）任一出现即停并人工复核，`rc=5/6/7` 也都**不是**「#6 已归因」。
+   只看 `NOT_6=0` 会漏掉「比较器没跑成」与「有效轮次不足」这两类没有结论的情况。
