@@ -51,7 +51,7 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 `WeixinChannel.ts:786-800`），这两条能力由控制器级 mock 测试钉住；
 `turnTimeoutMs` weixin 默认 0（生产不起看门狗），超时格由选项打开后测。
 
-## #1823 入站媒体（24 个解密/URL 场景 + 5 个 CDN 下载场景）
+## #1823 入站媒体（26 个解密/URL 场景 + 5 个 CDN 下载场景）
 
 `generate.mts` 在同一个基线提交上追加 `expectedMediaCaseCount` 与 31 条
 `kind` 标注的用例（`decrypt` / `download`）；渠道 15 条不动。Rust 侧重放在
@@ -116,6 +116,7 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 | `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
 | `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
 | `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
+| `media-download-terminated-mapped-to-fetch-failed`（断流映射回 `fetch failed`） | `a_terminated_body_reports_the_fetch_type_error` |
 | `replay-missing-case`（`remove(0)` 丢掉一条渠道场景） | `weixin_replays_the_ts_channel_oracle` 的 `#1328 weixin oracle case count` |
 | `media-oracle-missing-case`（`pop()` 丢掉一条媒体用例） | `weixin_replays_the_ts_channel_oracle` 的 `#1823 weixin generator media declaration` |
 

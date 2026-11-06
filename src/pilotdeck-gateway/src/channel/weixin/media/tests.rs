@@ -778,3 +778,32 @@ async fn the_received_body_is_capped_at_the_limit() {
         "#1823 received body is capped at the limit"
     );
 }
+
+// `await response.arrayBuffer()` on a body that errors mid-stream rejects with
+// `TypeError: terminated` (undici), not the connection-level `fetch failed`.
+#[tokio::test]
+async fn a_terminated_body_reports_the_fetch_type_error() {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("#1823 terminated bind");
+    let port = listener.local_addr().expect("#1823 terminated addr").port();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("#1823 terminated accept");
+        let _ = read_head(&mut stream).await;
+        // Promise ten bytes, send three, then drop the connection.
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc")
+            .await;
+        let _ = stream.shutdown().await;
+    });
+    let error = WeixinCdnClient::new()
+        .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
+        .await
+        .expect_err("#1823 a truncated body must fail");
+    task.await.expect("#1823 terminated server");
+    crate::negative_assert_eq!(
+        error.formatted(),
+        "TypeError: terminated",
+        "#1823 truncated body reports terminated"
+    );
+}
