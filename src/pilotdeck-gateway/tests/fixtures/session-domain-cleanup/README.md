@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 142 mutants:
+`JUDGES`, keyed by the same names. The current table has 153 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -374,7 +374,15 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-conditional-def`, `calibrate-decorated-source`,
 `calibrate-nested-def-rebind`, `calibrate-walrus-rebind`,
 `calibrate-dynamic-globals-write`, `calibrate-sys-modules-poison`,
-`calibrate-shadowed-global-loader`.
+`calibrate-shadowed-global-loader`, `calibrate-module-walrus`,
+`calibrate-dynamic-receiver-write`, `calibrate-setattr-shared-write`,
+`calibrate-exec-nonliteral`, `calibrate-negative-process-redefine`,
+`calibrate-decorated-guard-load`, `calibrate-direct-attribute-write`,
+`calibrate-dict-mutation-keys`, `calibrate-sys-modules-wildcard`,
+`calibrate-single-definition-dynamic`, `calibrate-dynamic-shared-name`,
+`calibrate-builtin-alias-setattr`, `calibrate-vars-dict-receiver`,
+`calibrate-loop-key-rebind`, `calibrate-definition-header-walrus`,
+`calibrate-sys-modules-chain-poison`, `calibrate-walrus-receiver-local`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -706,6 +714,39 @@ their target file entirely: `PROVEN_SHARED_DEFINITIONS` now holds the defining
 file of a cross-file proven source to the same single-undecorated-def shape
 (`calibrate-negative-process-redefine`), and `_guard.py` must keep exactly one
 undecorated `load` (`calibrate-decorated-guard-load`).
+
+`fix-r27` closed the r26 review's P0/P1 shapes.  The five per-rule alias
+collectors became one resolver: `_object_kinds` is a fixpoint over every
+`Assign`/`AnnAssign`/walrus binding and over `import sys as _s` /
+`from sys import modules` / `from builtins import setattr as _sa`, and yields
+the kinds `sys`, `sysmods`, `namespace`, `module`, `builtins` and
+`fn:<builtin>`; `_dynamic_write_names`, `_sys_modules_write_values`,
+`_receiver_attribute_writes`, `_is_namespace_object`, `_is_module_object` and
+`_callable_name` all read it, so a spelling taught to one rule reaches the
+others (GLM concurrency r26 P1-1 / DeepSeek sibling r26 P1-5).  The receiver's
+shared attribute is withdrawn by the plain `recv.<shared> = <stub>`
+(`calibrate-direct-attribute-write`), by `recv.__dict__[<key>]` /
+`vars(recv)[<key>]` (`calibrate-vars-dict-receiver`), through an alias root
+(`m = md`) and through a `from builtins import setattr` spelling
+(`calibrate-builtin-alias-setattr`); a `for` target that is reassigned inside
+the loop body no longer supplies the key (`calibrate-loop-key-rebind`), and a
+literal key dict mutated after its binding is unbounded rather than stale
+(`calibrate-dict-mutation-keys`).  `sys.modules[<name>] = ...` resolves the key
+through the enclosing `for` loop's literal pair sequence --
+`for name, previous in (('common', saved), ...)` restores each entry from the
+value paired with *its own* key, which is why the harness's own restore stays
+green -- while a key that cannot be resolved lands on the `'*'` sentinel and
+that sentinel is now a real verdict
+(`calibrate-sys-modules-wildcard`); the poisoning pass is a fixpoint, so a key
+pre-seeded from another pre-seeded key's read no longer launders itself
+(`calibrate-sys-modules-chain-poison`).  A literal `exec` or `globals()` write
+reaches `_single_definition` (`calibrate-single-definition-dynamic`),
+`_module_shared_names` (`calibrate-dynamic-shared-name`) and `_loader_names`,
+and the single-definition rule accepts only a `def`/`async def`, never a
+`class`.  Function-local rebinds now include walrus targets and `match`
+captures (`calibrate-walrus-receiver-local`), and a definition *header* --
+decorators, defaults, annotations, bases -- is walked in the enclosing scope,
+so a walrus there counts (`calibrate-definition-header-walrus`).
 
 Known boundaries stay open and are recorded here so they are not re-reported
 as new: an exit alias rebound inside a *called helper* is not resolved (the
