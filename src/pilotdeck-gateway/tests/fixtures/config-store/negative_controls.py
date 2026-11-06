@@ -151,7 +151,8 @@ mutations = [
      '    return;\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
-     '#1899 the watcher must still be running before the store is dropped'),
+     ['#1899 the watcher must still be running before the handle is dropped',
+      '#1899 the watcher must still be running before the store is dropped']),
     # #1899 review P2 (boundary): a liveness check taken at spawn time proves
     # nothing about a watcher that returns on its first in-loop tick — still
     # #1650's silent death, one tick later. Each check advances one poll interval
