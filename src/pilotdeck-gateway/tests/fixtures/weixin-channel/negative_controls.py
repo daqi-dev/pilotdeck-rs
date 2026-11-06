@@ -129,6 +129,14 @@ MUTATIONS = [
        'activity_delay_is_silent_just_before_ten_minutes',
        '#1821 activity pulses must fire '
        'activity-delay-is-silent-just-before-ten-minutes')]),
+
+    # #1808: the terminal comparison must reject a wrong-typed `expected`
+    # instead of falling back to the old blind read.
+    ('weixin-recorded-expected-wrong-type', weixin / 'replay_tests.rs',
+     '        Some(expected) => Err(format!("#1328 expected must be an object, got {expected}")),',
+     '        Some(expected) => Ok(expected),',
+     'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
+     '#1328 #1808 rejects expected type drift'),
 ]
 
 

@@ -121,6 +121,14 @@ MUTATIONS = [
      '  "expectedCaseCount": 8,',
      '  "expectedCaseCount": 7,',
      'loader_matches_real_ts', '#1327 loader generator declaration'),
+
+    # #1808: the terminal comparison must reject a wrong-typed `expected`
+    # instead of falling back to the old blind read.
+    ('channel-core-recorded-expected-wrong-type', tests,
+     '        Some(expected) => Err(format!("#1327 expected must be an object, got {expected}")),',
+     '        Some(expected) => Ok(expected),',
+     'recorded_expected_rejects_wrong_type',
+     '#1327 #1808 rejects expected type drift'),
 ]
 
 
