@@ -116,6 +116,8 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 | `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
 | `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
 | `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
+| `replay-missing-case`（`remove(0)` 丢掉一条渠道场景） | `weixin_replays_the_ts_channel_oracle` 的 `#1328 weixin oracle case count` |
+| `media-oracle-missing-case`（`pop()` 丢掉一条媒体用例） | `weixin_replays_the_ts_channel_oracle` 的 `#1823 weixin generator media declaration` |
 
 解密行的死点是**聚焦单元用例**而不是 31 格回放：回放在第一个不符的格上中止，
 不同变异停在不同的格，而 receipt 按「测试名 + 断言原文」精确匹配，逐格回放

@@ -63,12 +63,22 @@ MUTATIONS = [
      '  "cases": [\n',
      '  "cases": [],\n  "disabledCases": [\n',
      REPLAY, '#1328 weixin oracle cases must be non-empty'),
+    # #1823 appended the 31 media cases after the fifteen channel ones, so a
+    # bare `pop()` drops a media case (killed by the media declaration guard)
+    # instead of a channel scenario. Name which half each row drops:
+    # `remove(0)` a channel case, `pop()` a media case.
     ('replay-missing-case', weixin / 'replay_tests.rs',
+     '    for case in oracle_cases(&oracle) {',
+     '    let mut trimmed = oracle.clone();\n'
+     '    let _ = trimmed["cases"].as_array_mut().expect("#1328 mutant cases").remove(0);\n'
+     '    for case in oracle_cases(&trimmed) {',
+     REPLAY, '#1328 weixin oracle case count'),
+    ('media-oracle-missing-case', weixin / 'replay_tests.rs',
      '    for case in oracle_cases(&oracle) {',
      '    let mut trimmed = oracle.clone();\n'
      '    let _ = trimmed["cases"].as_array_mut().expect("#1328 mutant cases").pop();\n'
      '    for case in oracle_cases(&trimmed) {',
-     REPLAY, '#1328 weixin oracle case count'),
+     REPLAY, '#1823 weixin generator media declaration'),
     ('oracle-wrong-declaration', fixtures / 'weixin-channel/oracle.json',
      '  "expectedCaseCount": 15,',
      '  "expectedCaseCount": 14,',
