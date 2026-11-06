@@ -10,6 +10,7 @@ use super::{
     mapper::SessionMapper,
     render,
 };
+use crate::channel::ActiveChat;
 use crate::{http_proxy, metadata::object, runtime::memory::js_trim_units};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -554,20 +555,6 @@ fn submit_failed(message: &str) -> Response<crate::Body> {
     )
 }
 
-struct ActiveChat {
-    active: Arc<Mutex<HashSet<String>>>,
-    chat_id: String,
-}
-
-impl Drop for ActiveChat {
-    fn drop(&mut self) {
-        self.active
-            .lock()
-            .expect("api_server active chats")
-            .remove(&self.chat_id);
-    }
-}
-
 fn js_truthy(value: Option<&JsValue>) -> bool {
     match value {
         None | Some(JsValue::Undefined) | Some(JsValue::Null) => false,
@@ -773,10 +760,7 @@ async fn chat_completions(
         );
         return Ok(session_busy_response());
     }
-    let guard = ActiveChat {
-        active: shared.active.clone(),
-        chat_id: chat_id.clone(),
-    };
+    let guard = ActiveChat::new(shared.active.clone(), chat_id.clone());
 
     let user_text_utf8 = user_text
         .to_utf8()
@@ -966,7 +950,7 @@ async fn stream_turn(
     request: super::super::protocol::TurnRequest,
     chat_id: String,
     sender: mpsc::UnboundedSender<Bytes>,
-    _guard: ActiveChat,
+    _guard: ActiveChat<String>,
 ) {
     let mut stream = match gateway.submit(request).await {
         Ok(stream) => stream,
@@ -1050,7 +1034,7 @@ async fn buffered_turn(
     session_key: JsString,
     message: JsString,
     chat_id: &str,
-    _guard: ActiveChat,
+    _guard: ActiveChat<String>,
 ) -> Response<crate::Body> {
     let mut stream = match gateway
         .submit(super::super::protocol::TurnRequest {

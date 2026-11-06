@@ -146,7 +146,7 @@ struct State {
     delivery_info_created: HashMap<String, f64>,
     seen_deliveries: HashMap<String, f64>,
     rate_counts: HashMap<String, Vec<f64>>,
-    active_chats: HashSet<String>,
+    active_chats: Arc<Mutex<HashSet<String>>>,
 }
 
 struct StopSlot {
@@ -1059,10 +1059,14 @@ fn prune_delivery_info(state: &mut State, now: f64) {
 
 /// `handleIncoming`, the fire-and-forget turn pipeline.
 async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), ChannelError> {
-    let already_active = {
+    let active_chats = {
         let state = ctx.state.lock().expect("#1334 webhook state mutex");
-        state.active_chats.contains(chat_id)
+        state.active_chats.clone()
     };
+    let already_active = active_chats
+        .lock()
+        .expect("#1738 webhook active chats mutex")
+        .contains(chat_id);
     if already_active {
         log(
             ctx,
@@ -1088,16 +1092,16 @@ async fn handle_incoming(ctx: &Ctx, chat_id: &str, text: String) -> Result<(), C
     if mapped.message.is_empty() {
         return Ok(());
     }
-    {
-        let mut state = ctx.state.lock().expect("#1334 webhook state mutex");
-        state.active_chats.insert(chat_id.to_owned());
-    }
-    let outcome = process_message(ctx, chat_id, &mapped.session_key, &mapped.message).await;
-    {
-        let mut state = ctx.state.lock().expect("#1334 webhook state mutex");
-        state.active_chats.remove(chat_id);
-    }
-    outcome
+    // #1738: the `Drop` guard replaces the paired insert/remove so a panic in
+    // `process_message` (spawned fire-and-forget, so only the task dies) still
+    // releases the slot — the TS `finally { delete }` both baselines have. The
+    // guard must outlive the `.await` below, hence the named binding.
+    active_chats
+        .lock()
+        .expect("#1738 webhook active chats mutex")
+        .insert(chat_id.to_owned());
+    let _guard = super::ActiveChat::new(active_chats, chat_id.to_owned());
+    process_message(ctx, chat_id, &mapped.session_key, &mapped.message).await
 }
 
 /// `processMessage`: submit the turn, render the visible fragments, deliver
