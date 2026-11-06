@@ -239,6 +239,12 @@ class SuiteTests(unittest.TestCase):
             @contextmanager
             def scratch(*_args, **_kwargs):
                 yield root / 'scratch'
+            def environment(_directory):
+                if fault == 'refuse':
+                    # #1666/#1734: the real startup refusal is refuse(), i.e. a
+                    # SystemExit carrying the integer code 2 and a stderr line.
+                    control.refuse('startup refusal probe')
+                return {'CARGO_TARGET_DIR': str(root / 'target')}
             def run(_runner, label, *_args, **_kwargs):
                 observations.append((label, copied.read_text()))
                 _runner.compiled[label] = True
@@ -255,10 +261,11 @@ class SuiteTests(unittest.TestCase):
             with patch.object(control, 'REPO', root), patch.object(control, 'mutating_sources', guard), \
                  patch.object(control, 'scratch', scratch), \
                  patch.object(control, 'source_copy', return_value=root / 'scratch/src'), \
-                 patch.object(control, 'persistent_environment', return_value={'CARGO_TARGET_DIR': str(root / 'target')}), \
+                 patch.object(control, 'persistent_environment', environment), \
                  patch.dict(os.environ, {'CARGO_TARGET_DIR': str(root / 'target')}), \
                  patch.object(control.CargoTests, 'run', run), \
-                 __import__('contextlib').redirect_stdout(io.StringIO()):
+                 __import__('contextlib').redirect_stdout(io.StringIO()), \
+                 __import__('contextlib').redirect_stderr(io.StringIO()):
                 try:
                     code = control.mutation_suite('probe', rows, root / 'out',
                         lambda _test: (('--lib',), ['cell']), lambda result, _test: result.returncode == 0,
@@ -267,7 +274,17 @@ class SuiteTests(unittest.TestCase):
                 except KeyboardInterrupt:
                     self.assertEqual(fault, 'interrupt', '#994 only the cancellation probe may interrupt')
                     code = 1
-            summary = json.loads((root / 'out/summary.json').read_text())
+                except SystemExit as refusal:
+                    self.assertEqual(fault, 'refuse', '#994 only the startup probe may refuse')
+                    code = refusal.code
+            summary = None if fault == 'refuse' else json.loads((root / 'out/summary.json').read_text())
+            if fault == 'refuse':
+                # #1666/#1734: "never started" leaves nothing a host could read
+                # as evidence, and nothing that looks like a finished run.
+                self.assertFalse((root / 'out').exists(),
+                                 '#1666 a startup refusal must drop the empty evidence directory')
+                self.assertFalse((root / 'out/summary.json').exists(),
+                                 '#1666 a startup refusal must not publish a summary')
             self.assertEqual(real.read_text(), 'original', '#994 original worktree never mutated')
             self.assertEqual(copied.read_text(), 'original', '#994 scratch restored after every outcome')
             for label, text in observations:
@@ -291,6 +308,12 @@ class SuiteTests(unittest.TestCase):
                 self.assertEqual(summary['counts'], {'KILLED': 1, 'SURVIVED': 0, 'INVALID': 1},
                                  '#994 must run successor after invalid row')
                 self.assertIn(('first-0-restored', 'original'), observations, '#994 invalid rows also restore')
+
+    def test_startup_refusal_is_never_started_and_leaves_no_evidence(self):
+        code, summary, observations = self.exercise('refuse')
+        self.assertEqual(code, 2, '#1666 a startup refusal is "never started", not a failed run')
+        self.assertIsNone(summary, '#1666 a run that never started publishes no summary')
+        self.assertEqual(observations, [], '#1666 no mutation may run after a startup refusal')
 
     def test_source_guard_refusal_never_launches(self):
         code, summary, observations = self.exercise('guard')

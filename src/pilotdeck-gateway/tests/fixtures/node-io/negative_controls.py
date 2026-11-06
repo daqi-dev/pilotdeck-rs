@@ -90,7 +90,7 @@ try:
     run_rows = select(mutations, selected, always=())
 except ValueError as error:
     refuse(str(error))
-if 'CARGO_TARGET_DIR' not in os.environ:
+if not os.environ.get('CARGO_TARGET_DIR'):  # #1666: empty is missing, like the shared executor
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 out = claim_dir(sys.argv[1])
 env = os.environ.copy()

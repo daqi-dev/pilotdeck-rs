@@ -384,14 +384,17 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
                     print(f'{name}: {item["status"]}: {item["reason"]}', flush=True)
     except BaseException as error:
         if isinstance(error, SystemExit) and error.code == 2 and not records:
-            # #1666/#1734: a startup refusal (missing caller target, unreadable
-            # oracle) measured nothing. Re-raise without publishing a summary
-            # and drop the directory this call just claimed, so "never
-            # started" does not leave evidence that reads like a finished run.
+            # #1666/#1734: a startup refusal measured nothing. Re-raise without
+            # publishing a summary and drop the directory this call just
+            # claimed, so "never started" does not leave evidence that reads
+            # like a finished run. Only an empty directory can be dropped; if
+            # something already wrote into it, say where it was left instead
+            # of hiding the residue.
             try:
                 output.rmdir()
-            except OSError:
-                pass
+            except OSError as residue:
+                print(f'INVALID: startup refusal left {output} behind '
+                      f'({type(residue).__name__}: {residue})', file=sys.stderr, flush=True)
             raise
         reason = f'suite/source guard: {type(error).__name__}: {error}'
         for row in records:

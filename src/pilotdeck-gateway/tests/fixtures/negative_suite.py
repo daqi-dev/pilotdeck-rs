@@ -12,6 +12,7 @@ import pending_reanchor as pending
 
 from negative_panic import named_test_failed, panic_evidence
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse
 
 
 @dataclass
@@ -526,7 +527,10 @@ def matrix_main(root, script, prefix, rows, *, passed_count, child_count,
         raise SystemExit('unknown/duplicate mutation')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+        # #1734: the same "never started" taxonomy as the migrated entries.
+        # `SystemExit('<string>')` carried the message but exited 1, which the
+        # host triage table reads as "ran and did not pass".
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     # Positive/compile/restored runs never inherit a stale protocol from a caller.
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
