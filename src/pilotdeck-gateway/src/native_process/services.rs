@@ -562,7 +562,20 @@ pub(super) fn handle_bound_to_upload_areas(
 /// tested (and mutation-killed) without a live handle path; its unit test is
 /// `upload_store_root_outside_the_project_is_not_a_home`.
 pub(super) fn canonical_upload_store(project_canon: &Path) -> Option<PathBuf> {
-    match fs::canonicalize(project_canon.join(".tmp").join("chat-uploads")) {
+    let store = project_canon.join(".tmp").join("chat-uploads");
+    // Review boundary P2: a `.tmp/chat-uploads` that is itself a symlink — even
+    // to the project root or any in-project subtree — would make that subtree
+    // an accepted home, while `read_at`'s lexical prefix check rejects the same
+    // layout. A store root that is a link is never a home. (An *ancestor*
+    // swapped to a link is a different residual: the canonical spelling then
+    // re-resolves through it, and only the containment term below sees the
+    // final location.)
+    match fs::symlink_metadata(&store) {
+        Ok(metadata) if metadata.file_type().is_symlink() => return None,
+        Ok(_) => {}
+        Err(_) => return None,
+    }
+    match fs::canonicalize(&store) {
         Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),
         _ => None,
     }

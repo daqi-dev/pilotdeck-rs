@@ -148,14 +148,21 @@ mutations = [
      '        let approved_stat = match fs::metadata(&resolved) {',
      'native_process::services_tests::leaf_swapped_before_approved_stat_is_not_found',
      '#1468 a link planted before the approved stat must never inline outside bytes'),
-    # The upload-store containment guard is a decidable function on its own;
-    # dropping the containment term makes every canonicalizable store root a
-    # home, including one that resolves outside the project.
+    # The upload-store guard is two independent terms. Dropping the
+    # containment term accepts a store root under an outside ancestor (the
+    # leaf is a real directory, so only this term sees it); dropping the
+    # no-symlink term accepts a store root that is itself a link into the
+    # project. Each has its own assertion in the same unit test.
     ('upload-store-containment-dropped', SERVICES,
      '        Ok(resolved) if resolved.starts_with(project_canon) => Some(resolved),',
      '        Ok(resolved) => Some(resolved),',
      'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
-     '#1468 a store root outside the project must not become a home'),
+     '#1468 a store root under an outside ancestor must not become a home'),
+    ('upload-store-link-root-accepted', SERVICES,
+     '        Ok(metadata) if metadata.file_type().is_symlink() => return None,',
+     '        Ok(metadata) if false => return None,',
+     'native_process::services_tests::upload_store_root_outside_the_project_is_not_a_home',
+     '#1468 a store root that is a link into the project must not become a home'),
 ]
 
 

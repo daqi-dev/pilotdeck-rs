@@ -1119,6 +1119,60 @@ fn upload_read_at_forged_record_cannot_reach_the_lease() {
     );
 }
 
+/// #1494 (review sibling P1): `verified` checks the attachment through a
+/// handle, but the lease `hard_link` re-walks the source path. A leaf renamed
+/// in that window gets pinned as the lease artifact; the composer accepts any
+/// in-root regular file, so outside bytes would be inlined. The linked inode
+/// must be the one the integrity check approved.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_of_a_swapped_attachment_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let verified = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .unwrap();
+    let source = PathBuf::from(string(&verified[0], "path").unwrap());
+    let outside = project.join("outside-pinned.bin");
+    fs::write(&outside, b"outside-pinned-bytes").unwrap();
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        let source = source.clone();
+        let outside = outside.clone();
+        move |path: &Path| {
+            assert_eq!(path, source.as_path());
+            fs::rename(&outside, &source).unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(
+        swap_test_hook::SwapWindow::BetweenVerifiedAndLeaseLink,
+        swap,
+    );
+    let result = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None);
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the attachment swap hook must fire between verification and the lease link"
+    );
+    let error = result
+        .err()
+        .expect("#1494 a swapped attachment must never be pinned into the lease");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "ATTACHMENT_TAMPERED",
+            "Attachment artifact changed between verification and lease acquisition."
+        )
+    );
+}
+
 #[test]
 fn upload_subscription_receives_updates_until_dropped() {
     let scratch = Scratch::new();
