@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-06 14:13 · by Claude Code 执行者（**全量重建**：逐行 `gh issue view` / `gh pr view` / 树与 HEAD 核验，基线 origin/main@`e8b5e9c85`）· **63 条（doing 47 / ready 0 / blocked 15 / human 1）** · 本轮移出 2 条已关（#1348 / #1675）；改写判据：已合入的 PR 写「已合入」，在途写「PR #N OPEN（head …）」或「树 wt-N @sha」，blocked 一律写「前置 = …」
+updated: 2026-11-06 15:23 · by Claude Code 执行者（**增量刷新**：逐条 `gh pr view` / `gh issue view` 核在途 PR、队列位置与前置单状态，基线 origin/main@`2fd0d008f`）· **66 条（doing 50 / ready 0 / blocked 15 / human 1）** · 本段只改确实过时的：#1729 改「PR #1787 已在合并队列 pos1」；新增 #1476 / #1457 / #1527 三行；#1316 #1325 #1386 #297 #1370 #1320 六行的前置（#1624 #1632 #1767 #1763 #1694 #1657 #1648 #1761 #1762 #1769）15:2x 逐条复核仍全 OPEN，六行原样保留
 - #1157 | coord | doing | 待人决策总表（置顶）：**#1644 人已批**（cron 缺 tzdata 维持 fail-closed）；**#1640 已解**（人 03:11:10Z「1 和 2 都行，怎么快怎么来」，PR #1647 已合入）；**#1701 的 PR #1676 已合入**、#1598（已合入决策卡）待人复核；仍待人 = #1716 · #1544 · #1475 · #1498-B · #401（AI 实测无剩余工作，建议关单）；各包冒烟「AI 已实测，待人签字」见 RESULT
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412 已合）、s3 #1370（PR #1561 已合入，issue 待收尾）；s4 #1371（树 `wt-1371` @`aa3c79533`）；s5 #1372 顺次；**#1408 前置于本单关单**；#1648（见本单 s3 行）前置于 s3 收尾
 - #1355 | impl | doing | E1 --suite retirement 冻结装置：**PR #1515 已合入**，冻结重登记 `--write` 已落；决策卡 #1598 待人复核；唯一未清 P1 = **#1477（在途，树 `wt-1477` @`f58509af1`，14:08）**；另三条 P2 #1588 / #1652 / #1718
@@ -9,7 +9,7 @@ updated: 2026-11-06 14:13 · by Claude Code 执行者（**全量重建**：逐�
 - #1333 | impl | doing | channel 三角总单：api-server **PR #1584 已合入**、webhook **PR #1534 已合入**；`_build/wt-1333` 已核并回收；只剩 api-server 侧收尾关单；子项 #1336 见本单独立行
 - #1336 | impl | doing | A8.3-ch-wecom-callback：**PR #1778 OPEN（head `4f784aacc`，MERGEABLE）**，树 `wt-1336` 同 head（13:54）；首轮 P1×1 + P2×5 已修，P2×4 转 **#1774–#1777**；等两家第二轮四角色；**占用 `channel/mod.rs` 注册点 → #1329 等它合入**
 - #1339 | impl | blocked | A8.3-ch-sms（已重开）：前置 = **#1729**（PR #1787 OPEN）· **#1738**（PR #1799 OPEN）；两条 P1 清完再收口
-- #1729 | impl | doing | **P1** #1339/#1334：sms 与 webhook 回放 harness 把录制字段类型漂移读成默认值（对拍可能假 PASS）：**PR #1787 OPEN（head `2e7baaef1`）**，树 `wt-1729` 同 head；前置于 #1339 关单与 #1334 收尾
+- #1729 | impl | doing | **P1** #1339/#1334：sms 与 webhook 回放 harness 把录制字段类型漂移读成默认值（对拍可能假 PASS）：**PR #1787 已在合并队列 pos1**（head 以 PR 为准）；前置于 #1339 关单与 #1334 收尾
 - #1763 | impl | doing | P1-跟进 #1386：`reject_unmigrated_channels` 无生产调用点：树 `wt-1763` @`7a7af1b5b`（14:08），**无 PR**；前置于 #1357
 - #1316 | impl | doing | A7.8-pr1 会话域整域装配：**PR #1558 已合入**；只剩收尾关单；P2 8 条归 **#1632**（前置于本单收口）；唯一 P1 在 diff 外 → #1624
 - #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**PR #1700 已合入**（原「队列 pos1」已过时）；只剩收尾关单；**#1767 前置于本单关单**
@@ -65,6 +65,9 @@ updated: 2026-11-06 14:13 · by Claude Code 执行者（**全量重建**：逐�
 - #590 | impl | doing | A7.2-pr6b 收尾关单：**PR #1789 OPEN（head `37b901779`，docs R5）**，树 `wt-590-close` 同 head；issue 未关：#1722 六条 P2 已清、② 侧信号 23 条按人批「窄读」不降；它清完 #1355 / #1317 各少一条前置
 - #1754 | impl | doing | **决策 · MCP 未批准差异**：`tools/list` schema 深度上限 256 早于 Ajv（257–399 段基线可列出、端口整单拒绝）：**PR #1801 OPEN（head `cad081231`）**，树 `wt-1754` 同 head；与 #1751 同批；批准状态待人
 - #1751 | impl | doing | **决策 · MCP 未批准差异**：A6.5 per-session 目录寿命（TS close 即删 / Rust 迟到握手落地才删）：**与 #1754 同批（PR #1801）**；批准状态待人
+- #1476 | impl | doing | feat(gateway) A7 always-on 三方法暂缓 + 差异账本登记：**PR #1817 OPEN（head `454ff07d4`，BLOCKED：negative-controls / rust 检查未齐）**，树 `wt-1476` 同 head；修复轮上限残差 P2 转 **#1816**（前置于 #1317）；批准状态待人
+- #1457 | impl | doing | 实现 #1310 session config 7 方法真实能力：**收货中**（r5 两家评审在跑，`_tmp/20261106-issue-1457/review-r5-deepseek-b|c`），树 `wt-1457-r5` @`8b137d3a0`，**无 PR**；`requests.rs` +13 行经核为纯新增 7 个能力名（零删除），超出本单原定范围，协调者裁决接受，评审须逐字节核
+- #1527 | impl | doing | chore(tools) 冻结单交付前预检 `check-frozen-delivery`：**PR #1527 OPEN（head `149e227e7`，MERGEABLE/CLEAN，fix-r33）**，树 `wt-frozen-delivery`；本段评审 r2 修复中（`_tmp/20261106-issue-1527/negctl-r2`）；收敛后入队
 
 <!-- READY:END -->
 
@@ -3710,3 +3713,14 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 > **负控**：修前 cb8 三套 KILLED 13/26/20、SURVIVED 0、INVALID 0；fix-r2 后三套**全量重跑**（`channel/mod.rs` 变了）——`api-server-channel` 13/0/0 在 mbp2，`channel-sms` 26/0/0 与 `webhook-channel` 20/0/0 在 macmini-01（mbp2 的 python3.9 跑不了两套装置的 `X | Y` 语法，整套 INVALID；macmini 首轮缺 `cargo` PATH 亦 INVALID，均已原机留档），锚点 `anchors=5039 errors=0`；源文件 sha256 与 head git 对象逐一对齐，原始记录 `_tmp/20261106-issue-1738/neg-remote-r3/`。
 > **跟进**：#1780（weixin 同形，P1，前置于 #1328）· #1790（sms permission 跨 await 置位，P2，前置于 #1339 收尾）· #1744（已更正：槽误释放已修、**落败方已跑过 `resolve` 的副作用仍在**；handler 级负控并入其「无负控」半）。
 > **资源**：本机 `_build`+`_tmp` 176.1 GiB（WARN 档，上限 200）；`wt-1738` 13.2 GiB，合入后回收。
+
+> ## 2026-11-06 15:23 · 协调轮（两小时交接，上次 13:1x）
+> **本段合入 6 张**（06:55Z / 07:04Z 两批；邮箱核过，均为 `225912+zhengdaqi@users.noreply.github.com`）：#1789（#590 收尾 R5，清 #1722 六条）· #1799（#1738 webhook/sms `active_chats` 共享 Drop guard）· #1798（gitleaks 七条改 secret 锚定）· #1801（A6.5 MCP 两条差异登记，未批准待人）· #1806（#1785 turn abort 同步可见）· #1810（READY 全量重建）。
+> **队列**：#1787 在 pos1（#1729 sms/webhook 四态；15:20 实测 mergeQueue position=1）；#1817 检查未齐（negative-controls / rust 仍空），等齐再入队。
+> **关单**：#1253 已 CLOSED（三条缺项与 #1011 更正均随 PR #1275 落地）。
+> **新 PR / 收货**：#1817 = #1476（前置于 #1317；P2 残差转 #1816，前置于 #1317）· #1787 = #1729（前置于 #1339 关单 / #1334 收尾）· #1457 收货中（树 `wt-1457-r5` @`8b137d3a0`，无 PR；`requests.rs` +13 行实测为纯新增 7 个能力名、零删除，协调者裁决接受，评审须逐字节核）。
+> **磁盘事故**：本机 `/private/tmp` 卷一度 100% 满（剩 794 MB），Bash 工具自身 ENOSPC；#892 的 9 条 `test_safety` 假红即由此而来。处置：删 4 处无在跑的 cargo 构建产物（~53 GiB）＋回收 4 棵已合入树（~31 GiB）＋删 `~/ws/pdrs-worker-build/issue-1333`（49.8 GiB）/ `issue-1465`（7.2 GiB），794 MB → 111 GiB。15:2x 复测：`_build+_tmp` **159.2 GiB**（WARN 档，上限 200）、数据卷可用 **102 GiB**。红线未动：`~/ws/PilotDeck-rust-program-20261009`（126.8 GiB）、macmini 外接 4 T。
+> **通道**：cb8 / mbp2 / macmini 共用的 ZAI key 11:28 起当月额度耗尽（远端 GLM 派单即 401）；13:0x 已把本机 key 同步到三台远端（指纹 `76a6357fd2c8`→`3bdac318dde8`，mbp2 抽查 200 正常），15:2x 实测 cb8 的 GLM worker #1326 正常在跑、未见 401。**mbp2 无 `gh`（实测 `command -v gh` 为空）、有 cargo**：编译 / 测试 / 负控 / 对拍 → mbp2 优先，需 gh 的收尾 → 本机。
+> **新增机检**：`~/ws/pdrs-ops/bin/ready-audit`（A 环：依赖环 / 互等 / 全员在等；B 环：READY 陈旧 / 读错源 / blocked 前置已解；`--only A|B`、`--stale-hours`、`--self-check`），已接进 `round-start`（第 174 行，只报不管）。
+> **READY 复核（本段只改确实过时的）**：#1729 改「PR #1787 已在合并队列 pos1」；新增 #1476 / #1457 / #1527 三行（63 → 66 条）。#1316 / #1325 / #1386 / #297 / #1370 / #1320 六行的前置（#1624 #1632 #1767 #1763 #1694 #1657 #1648 #1761 #1762 #1769）逐条 `gh issue view` 15:2x 复核**仍全 OPEN**，六行原样保留，无一可收尾；等前置真关再改状态。
+> **下一步**：① #1787 出队 → `git fetch` + 核邮箱；② #1817 检查齐后入队；③ #1527 评审 r2 收敛后入队；④ #1326 cb8 接续轮守望中（timeout 7200 s，14:53:20 起）。
