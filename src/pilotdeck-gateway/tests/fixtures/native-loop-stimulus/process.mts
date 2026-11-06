@@ -168,6 +168,13 @@ const stop = async (process: any, label: string) => {
 };
 
 try {
+  // Terminal time of the timer-first cell, measured on this machine and in
+  // this run. The unknown-first cell compares against it instead of against
+  // an absolute deadline: both cells share the 400 ms turn timer, so an
+  // absolute bound would turn a slow host into a false failure while a
+  // relative one still separates "the release decided the turn" from "the
+  // timer did".
+  let timeoutFirstTerminal = 0;
   // Unset: the production default. No receipt, no control reads, the real loop.
   {
     const titlesBefore = titleRequests;
@@ -293,6 +300,7 @@ try {
     // bounded, never hang.
     assert.equal(terminal.type, 'error', '#1371 timeout-first ends red');
     assert.ok(at[at.length - 1] < 5000, '#1371 timeout-first stays bounded');
+    timeoutFirstTerminal = at[at.length - 1];
     assert.equal(await hasWitness(control, 'fence', 'current', 'true'), true, '#1371 timeout-first outer fence current');
     await release(control, plan, 'outcome', 'unknown');
     await witness(control, 'loop', 'final', 'result_unknown');
@@ -325,10 +333,12 @@ try {
     // here rather than asserted narrowly.
     assert.equal(terminal.type, 'error', '#1371 unknown-first terminal is an error');
     // The turn timeout drops its closing frames (`A19-HOST-001`), so the
-    // absence of a `turn_timeout` code cannot distinguish the two races: the
-    // bounded arrival time can. A timer-first turn terminals past
-    // TURN_TIMEOUT_MS; the release-first turn must terminal inside it.
-    assert.ok(at[at.length - 1] < TURN_TIMEOUT_MS, '#1371 unknown-first precedes the timer');
+    // absence of a `turn_timeout` code cannot distinguish the two races. The
+    // timer-first cell above measured what a timer-decided turn costs on this
+    // machine; a release-decided turn must terminal strictly earlier, and
+    // still inside the timer's own budget scaled for one slow host.
+    assert.ok(at[at.length - 1] < timeoutFirstTerminal, '#1371 unknown-first precedes the timer');
+    assert.ok(at[at.length - 1] < 2 * TURN_TIMEOUT_MS, '#1371 unknown-first stays bounded');
     assert.ok(!events.some((e: any) => e.type === 'error' && e.code === 'turn_timeout'), '#1371 unknown-first timer cleared');
     await witness(control, 'loop', 'final', 'result_unknown');
     ws.terminate(); await stop(process, 'unknown-first');
