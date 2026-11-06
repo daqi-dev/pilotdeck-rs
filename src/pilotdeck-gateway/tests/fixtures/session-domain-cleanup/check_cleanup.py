@@ -1218,6 +1218,184 @@ def _loader_names(tree, rel=None):
     return frozenset(loaders)
 
 
+def _module_level_defs(tree):
+    """Every ``def``/``class`` that binds a name at module scope (#892 r25).
+
+    ``_own_nodes`` deliberately prunes definition subtrees, so a
+    ``def`` inside ``if``/``try``/``for`` at module level was invisible to the
+    binding map: the name kept its single top-level ``[None]`` binding and the
+    proven-source trust survived while the runtime binding was the conditional
+    one (GLM boundary r24 P0-1).  This walk descends through every control
+    block and stops at definition bodies, so each module-scope definition is
+    one binding whatever block it sits in.
+    """
+    found = []
+    stack = [tree]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.ClassDef)):
+                found.append(child)
+                continue
+            if isinstance(child, ast.Lambda):
+                continue
+            stack.append(child)
+    return found
+
+
+def _nested_definition_names(function):
+    """Names a nested ``def``/``class`` binds inside *function* (#892 r25).
+
+    A nested definition is a local binding of the enclosing function exactly
+    like an assignment, so it shadows a module-level proven source or loader
+    for the whole body (GLM concurrency r24 P1-2: ``def main(): global md; def
+    load_session_domain(): ...; md = load_session_domain()``).
+    """
+    return {node.name for node in _module_level_defs(function)}
+
+
+def _walrus_names(function):
+    """``(name := value)`` targets inside *function* (#892 r25).
+
+    A walrus binds in the enclosing function scope, not the comprehension, so
+    ``if (load_session_domain := _stub): ...`` shadows the module definition
+    for the whole body while no ``Assign`` statement exists to record it
+    (GLM concurrency r24 P1-2).
+    """
+    return {node.target.id for node in ast.walk(function)
+            if isinstance(node, ast.NamedExpr)
+            and isinstance(node.target, ast.Name)}
+
+
+def _file_local_names(tree):
+    """Every name bound as a local inside any function of *tree* (#892 r25).
+
+    Parameters, assignments, ``for``/``with``/``except`` targets, imports,
+    nested definitions and walrus targets all count: each one shadows a module
+    binding for the whole body, and a module-scope scan cannot tell which call
+    site it belongs to.
+    """
+    names = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        names.update(_parameter_names(function))
+        names.update(_nested_definition_names(function))
+        names.update(_walrus_names(function))
+        for node in _own_nodes(function):
+            bound, _value = _local_bound_names(node)
+            names.update(bound)
+    return names
+
+
+def _tainted_global_rebinds(tree, loaders):
+    """Names a ``global`` rebind lands on through a shadowed loader (#892 r25).
+
+    ``global common; common = _load(...)`` is accepted as a real load, but when
+    the same function also binds ``_load`` locally the call returns whatever
+    that local returns and the module binding is replaced by a stub.  The
+    module-scope walk cannot see the shadowing, so any name declared global in
+    such a function loses the trust outright (GLM sibling r24 P1-1).
+    """
+    tainted = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        global_names = {name for node in ast.walk(function)
+                        if isinstance(node, ast.Global) for name in node.names}
+        if not global_names:
+            continue
+        local_names = set(_parameter_names(function))
+        local_names.update(_nested_definition_names(function))
+        local_names.update(_walrus_names(function))
+        for node in _own_nodes(function):
+            names, _value = _local_bound_names(node)
+            local_names.update(names)
+        if local_names & set(loaders):
+            tainted |= global_names
+    return tainted
+
+
+def _dynamic_write_names(tree):
+    """Names replaced by a *literal* dynamic write (#892 r25).
+
+    ``globals()['load_session_domain'] = stub`` and a literal
+    ``exec("load_session_domain = stub")`` mutate a module binding with no
+    statement the binding graph can see (GLM boundary r24 P1-4).  Only literal
+    spellings are collected: the apparatus itself legitimately writes
+    ``sys.modules['_guard']`` and ``exec(compile(...))`` while bootstrapping,
+    and failing those closed would withdraw the trust from every real file.
+    A non-literal target yields ``'*'``: any name could move, so the whole file
+    fails closed.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target])
+            for target in targets:
+                if not isinstance(target, ast.Subscript):
+                    continue
+                base = target.value
+                if not (isinstance(base, ast.Call)
+                        and isinstance(base.func, ast.Name)
+                        and base.func.id == 'globals'):
+                    continue
+                key = target.slice
+                names.add(key.value if isinstance(key, ast.Constant)
+                          and isinstance(key.value, str) else '*')
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == 'exec' and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            names.add('*')
+    return frozenset(names)
+
+
+def _sys_aliases(tree):
+    """Module-scope names that denote the ``sys`` module (#892 r25).
+
+    ``import sys as _s`` gives the same ``_s.modules`` handle as ``sys``, so a
+    pre-seed written through the alias has to be seen or the poisoning rule is
+    one spelling away from bypass.
+    """
+    names = {'sys'}
+    for node in _own_nodes(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.asname for alias in node.names
+                         if alias.name == 'sys' and alias.asname)
+    return names
+
+
+def _sys_modules_write_values(tree, sys_names=frozenset({'sys'})):
+    """``sys.modules['<literal>'] = value`` pairs (#892 r25).
+
+    The apparatus bootstrap legitimately writes ``sys.modules['_guard'] =
+    _guard`` after building the module, so the write alone is not poison.  The
+    ``sys.modules.get`` arm must not trust a key that is also *assigned from
+    something other than a plain name* -- that is exactly the
+    ``sys.modules['_guard'] = <stub>`` pre-seed (GLM concurrency r24 P1-3).
+    """
+    writes = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Subscript):
+                continue
+            base = target.value
+            if not (isinstance(base, ast.Attribute) and base.attr == 'modules'
+                    and isinstance(base.value, ast.Name)
+                    and base.value.id in sys_names):
+                continue
+            key = target.slice
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                writes.setdefault(key.value, []).append(node.value)
+    return writes
+
+
 def _module_scope_binding_map(tree):
     """Every module-scope binding in *tree*: name -> list of values (#892 r23).
 
@@ -1242,10 +1420,8 @@ def _module_scope_binding_map(tree):
         bound, value = _local_bound_names(node)
         for name in bound:
             add(name, value)
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef)):
-            add(node.name, None)
+    for node in _module_level_defs(tree):
+        add(node.name, None)
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -1278,7 +1454,7 @@ def _module_imported_names(tree):
     return names
 
 
-def _module_load_call(value, proven):
+def _module_load_call(value, proven, sys_poisoned=frozenset()):
     """True when *value* is a call that returns a loaded module (#892 r24).
 
     The apparatus bootstrap binds ``_guard`` through
@@ -1297,7 +1473,16 @@ def _module_load_call(value, proven):
         base = func.value
         return (isinstance(base, ast.Attribute) and base.attr == 'modules'
                 and isinstance(base.value, ast.Name)
-                and base.value.id == 'sys' and 'sys' in proven)
+                and base.value.id == 'sys' and 'sys' in proven
+                # #892 r25: the key must be a literal, so the binding names the
+                # module it loads instead of ``sys.modules.get(<anything>)``
+                # (GLM boundary r24 P2-5).
+                and bool(value.args)
+                and isinstance(value.args[0], ast.Constant)
+                and isinstance(value.args[0].value, str)
+                # #892 r25: a key pre-seeded with a non-name value is a stub
+                # install, not the module the bootstrap published.
+                and value.args[0].value not in sys_poisoned)
     return False
 
 
@@ -1319,15 +1504,24 @@ def _proven_module_names(tree):
     """
     if not isinstance(tree, ast.Module):
         return frozenset()
+    if _dynamic_write_names(tree) & {'*'}:
+        # Same fail-closed rule as ``_proven_source_names``: a non-literal
+        # dynamic write can move any binding.
+        return frozenset()
+    sys_poisoned = frozenset(
+        key for key, values
+        in _sys_modules_write_values(tree, _sys_aliases(tree)).items()
+        if not all(isinstance(value, ast.Name) for value in values))
     bindings = _module_scope_binding_map(tree)
-    proven = set(_module_imported_names(tree))
+    proven = set(_module_imported_names(tree)) - sys_poisoned
     changed = True
     while changed:
         changed = False
         for name, values in bindings.items():
             if name in proven or not values:
                 continue
-            if all(_module_load_call(value, proven) for value in values):
+            if all(_module_load_call(value, proven, sys_poisoned)
+                   for value in values):
                 proven.add(name)
                 changed = True
     return frozenset(proven)
@@ -1362,7 +1556,10 @@ def _withdrawn_receivers(tree, rel=None, shared=None):
     bindings = _module_scope_binding_map(tree)
     loaders = _loader_names(tree, rel)
     proven = _proven_source_names(tree)
-    poisoned = set()
+    # #892 r25: a ``global`` rebind routed through a loader name the same
+    # function shadows is a stub assignment, not a load (GLM sibling r24 P1-1).
+    tainted = _tainted_global_rebinds(tree, loaders)
+    poisoned = set(receivers & tainted)
     for name in receivers:
         for value in bindings.get(name, ()):
             if isinstance(value, ast.Constant) and value.value is None:
@@ -1422,14 +1619,28 @@ def _module_shared_names(tree, rel=None):
     global_names = {name for node in ast.walk(tree)
                     if isinstance(node, ast.Global) for name in node.names}
     if trusted & global_names:
-        for node in ast.walk(tree):
-            names, value = _local_bound_names(node)
-            for name in names:
-                if (name in trusted
-                        and not (value is not None
-                                 and _loads_shared_module(value, name,
-                                                           loaders))):
-                    trusted.discard(name)
+        # #892 r25: judge each function's global rebinds against that
+        # function's own local names -- a locally shadowed loader makes the
+        # "load" a stub call (GLM sibling r24 P1-1).
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            local_names = set(_parameter_names(function))
+            local_names.update(_nested_definition_names(function))
+            local_names.update(_walrus_names(function))
+            for node in _own_nodes(function):
+                names, _value = _local_bound_names(node)
+                local_names.update(names)
+            for node in _own_nodes(function):
+                names, value = _local_bound_names(node)
+                for name in names:
+                    if (name in trusted
+                            and not (value is not None
+                                     and _loads_shared_module(value, name,
+                                                              loaders,
+                                                              local_names))):
+                        trusted.discard(name)
+        trusted -= _tainted_global_rebinds(tree, loaders)
     return frozenset(trusted)
 
 
@@ -1479,13 +1690,26 @@ def _proven_source_names(tree):
     """
     if not isinstance(tree, ast.Module):
         return frozenset()
+    dynamic = _dynamic_write_names(tree)
+    if '*' in dynamic:
+        # Fail closed: a non-literal ``globals()``/``exec`` write can replace
+        # any binding after the walk, so no name in this file can be traced to
+        # its definition (GLM boundary r24 P1-4).
+        return frozenset()
     bindings = _module_scope_binding_map(tree)
-    defined = {node.name for node in tree.body
-               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                    ast.ClassDef))}
+    defined = {node.name for node in _module_level_defs(tree)
+               if not node.decorator_list}
     candidates = defined | _module_imported_names(tree)
+    # #892 r25: a function-local rebinding -- nested ``def``, walrus target or
+    # plain assignment -- shadows the module definition for that body, and the
+    # module-scope receiver scan cannot see which function a ``global`` rebind
+    # came from (GLM boundary r24 P0-2 / concurrency r24 P1-2).  Withdraw the
+    # name for the whole file instead of trusting the body we cannot attribute.
+    local_rebound = _file_local_names(tree)
     return frozenset(name for name in candidates
-                     if bindings.get(name) == [None])
+                     if bindings.get(name) == [None]
+                     and name not in local_rebound
+                     and name not in dynamic)
 
 
 def _proven_source(value, rel=None, proven=frozenset(), local=frozenset()):
@@ -1562,16 +1786,15 @@ def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
     rebound = set()
     declared_global = {name for node in ast.walk(function)
                        if isinstance(node, ast.Global) for name in node.names}
-    local_names = set()
-    arguments = function.args
-    for arg in (list(arguments.posonlyargs) + list(arguments.args)
-                + list(arguments.kwonlyargs)
-                + [arguments.vararg, arguments.kwarg]):
-        if arg is not None:
-            local_names.add(arg.arg)
+    local_names = set(_parameter_names(function))
     for node in _own_nodes(function):
         names, _value = _local_bound_names(node)
         local_names.update(names)
+    # #892 r25: a nested ``def``/``class`` and a walrus target bind in this
+    # function's scope exactly like an assignment, but neither is a statement
+    # ``_own_nodes`` reports (GLM concurrency r24 P1-2).
+    local_names.update(_nested_definition_names(function))
+    local_names.update(_walrus_names(function))
     local_names -= declared_global
     for node in _own_nodes(function):
         names, value = _local_bound_names(node)
