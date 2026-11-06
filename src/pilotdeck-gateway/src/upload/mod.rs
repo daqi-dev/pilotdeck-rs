@@ -437,22 +437,36 @@ impl UploadStore {
         // orphan branch below would delete directories outside the project.
         // `read_at`'s containment check never sees those directories (no
         // metadata.json), so gate the whole record sweep on a plain root.
-        let Some(root) = plain_uploads_root(project) else {
-            self.log_cleanup(format!(
-                "[uploads] cleanup skipped {}: uploads root is not a plain directory",
-                project.join(".tmp/chat-uploads").display()
-            ));
+        let root = match plain_root(project, "chat-uploads") {
+            PlainRoot::Plain(root) => root,
+            // No uploads yet: the ordinary empty state, as silent as the old
+            // `names()` on a missing directory.
+            PlainRoot::Missing => return,
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] cleanup skipped {}: uploads root is not a plain directory",
+                    project.join(".tmp/chat-uploads").display()
+                ));
+                return;
+            }
+        };
+        // Resolve the root once and keep this value for the whole round: every
+        // containment check below compares a *freshly* resolved entry against
+        // it. Re-canonicalizing the root per entry would resolve through a
+        // symlink swapped in mid-sweep and make both sides of the check agree,
+        // turning the guard into a no-op for the rest of the round.
+        let Ok(root_real) = fs::canonicalize(&root) else {
             return;
         };
-        for id in names(&root).into_iter().filter(|id| safe_id(id)) {
-            let dir = root.join(&id);
+        for id in names(&root_real).into_iter().filter(|id| safe_id(id)) {
+            let dir = root_real.join(&id);
             let record = match self.read_at(project, &id) {
                 Ok(Some(record)) => record,
                 // No metadata.json: not a record this round — either crash
                 // debris or a create that has not reached its metadata write
                 // yet. Age decides (see `reclaim_orphan`).
                 Ok(None) => {
-                    self.reclaim_orphan(&root, &dir);
+                    self.reclaim_orphan(&root_real, &dir);
                     continue;
                 }
                 Err(e) => {
@@ -485,21 +499,14 @@ impl UploadStore {
     /// crash debris, and the floor also keeps a just-created directory whose
     /// metadata write has not happened yet. Not counted in `cleanup_expired`'s
     /// return, which keeps its TS meaning (expired records removed).
-    fn reclaim_orphan(&self, root: &Path, dir: &Path) {
+    fn reclaim_orphan(&self, root_real: &Path, dir: &Path) {
         // Only a real directory can be reclaimed: a symlinked entry must be
         // left alone (removing the link is a different operation and is not
-        // this branch's job), and the canonical check keeps the recursive
-        // delete inside the root even if an entry is swapped mid-sweep.
+        // this branch's job).
         let Ok(info) = fs::symlink_metadata(dir) else {
             return;
         };
         if !info.is_dir() {
-            return;
-        }
-        let (Ok(root_real), Ok(dir_real)) = (fs::canonicalize(root), fs::canonicalize(dir)) else {
-            return;
-        };
-        if dir_real == root_real || !dir_real.starts_with(&root_real) {
             return;
         }
         let Ok(modified) = info.modified() else {
@@ -509,6 +516,18 @@ impl UploadStore {
             return;
         };
         if since_epoch.as_millis() as i64 >= (self.options.now)() - self.options.retention_ms {
+            return;
+        }
+        // Containment last, so the window between the check and the recursive
+        // delete is a few instructions instead of the rest of the round. The
+        // entry is resolved now and compared with the root snapshot taken when
+        // the round started: if `.tmp` or `chat-uploads` was swapped for a
+        // symlink since, `dir_real` leaves the snapshot and the delete is
+        // skipped instead of following the link outside the project.
+        let Ok(dir_real) = fs::canonicalize(dir) else {
+            return;
+        };
+        if dir_real == root_real || !dir_real.starts_with(root_real) {
             return;
         }
         match remove_tree(dir) {
@@ -969,7 +988,25 @@ impl UploadStore {
         })
     }
     fn cleanup_expired_leases(&self, project: &Path) -> Result<()> {
-        let root = project.join(".tmp/chat-upload-leases");
+        // Same plain-root gate as the record half: `names()` and
+        // `remove_tree()` follow intermediate symlinks, and "unreadable lease
+        // means expired" makes deletion the default action, so a symlinked
+        // `.tmp` or `.tmp/chat-upload-leases` would delete lease trees outside
+        // the project. Missing is the ordinary empty state and stays silent.
+        let root = match plain_root(project, "chat-upload-leases") {
+            PlainRoot::Plain(root) => root,
+            PlainRoot::Missing => return Ok(()),
+            PlainRoot::Blocked => {
+                self.log_cleanup(format!(
+                    "[uploads] lease cleanup skipped {}: leases root is not a plain directory",
+                    project.join(".tmp/chat-upload-leases").display()
+                ));
+                return Ok(());
+            }
+        };
+        let Ok(root) = fs::canonicalize(&root) else {
+            return Ok(());
+        };
         for id in names(&root).into_iter().filter(|id| safe_id(id)) {
             let leases = root.join(id);
             for lease in names(&leases).into_iter().filter(|id| safe_id(id)) {
@@ -1123,7 +1160,10 @@ pub fn spawn_cleanup(store: &Arc<UploadStore>, interval: Duration) -> tokio::tas
                 Err(error) => Some(error.to_string()),
             };
             if let Some(error) = failure {
-                eprintln!("[uploads] cleanup failed: {error}");
+                // Same reason as `log_cleanup`: `eprintln!` panics when
+                // stderr is unwritable, and that panic would end this
+                // detached loop — the one failure the schedule must survive.
+                let _ = writeln!(io::stderr(), "[uploads] cleanup failed: {error}");
             }
         }
     })
@@ -1350,20 +1390,32 @@ fn remove_tree(path: &Path) -> Result<()> {
         Err(e) => Err(UploadError::io(e, "rm", Some(path))),
     }
 }
-/// `<project>/.tmp/chat-uploads`, but only when both it and `<project>/.tmp`
-/// are plain directories. A symlinked component would make the sweep act on a
-/// tree outside the project (`read_dir`/`remove_dir_all` follow intermediate
-/// links), which is exactly what the orphan branch must never do.
-fn plain_uploads_root(project: &Path) -> Option<PathBuf> {
+/// Whether `<project>/.tmp/<leaf>` may be swept at all.
+enum PlainRoot {
+    /// Both `<project>/.tmp` and `<project>/.tmp/<leaf>` are plain directories.
+    Plain(PathBuf),
+    /// There is no such tree yet (never uploaded / no live lease): nothing to
+    /// clean, and nothing worth logging every interval.
+    Missing,
+    /// Something is there, but at least one component is a symlink or not a
+    /// directory: `read_dir`/`remove_dir_all` would follow it out of the
+    /// project, so the sweep must not touch it.
+    Blocked,
+}
+
+/// Gate a cleanup half on `<project>/.tmp/<leaf>` being a plain directory.
+fn plain_root(project: &Path, leaf: &str) -> PlainRoot {
     let dot_tmp = project.join(".tmp");
-    let root = dot_tmp.join("chat-uploads");
+    let root = dot_tmp.join(leaf);
     for dir in [&dot_tmp, &root] {
         match fs::symlink_metadata(dir) {
             Ok(m) if m.is_dir() => {}
-            _ => return None,
+            Ok(_) => return PlainRoot::Blocked,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return PlainRoot::Missing,
+            Err(_) => return PlainRoot::Blocked,
         }
     }
-    Some(root)
+    PlainRoot::Plain(root)
 }
 
 fn names(path: &Path) -> Vec<String> {
