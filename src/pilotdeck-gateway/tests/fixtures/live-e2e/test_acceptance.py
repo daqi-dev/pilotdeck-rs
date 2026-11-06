@@ -3,7 +3,9 @@
 """#748 acceptance inventory and reader ownership, including deterministic negative inputs."""
 import subprocess
 import inspect
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 import run_host
 import stdio_mitm
@@ -12,14 +14,78 @@ import stdio_mitm
 class AcceptanceTests(unittest.TestCase):
     def test_exact_test_inventory(self):
         for target, names in run_host.EXPECTED_TESTS.items():
+            # Cargo prints `running N tests` before the per-test rows; the
+            # runner cross-checks both, so the fixture must carry the header.
+            header = f'running {len(names)} tests\n'
             rows = [f'test {name} ... ok\n' for name in sorted(names)]
             def accepted(log, code=0):
                 return run_host.completed_tests(target, subprocess.CompletedProcess([], code, log, ''))['passed']
-            self.assertTrue(accepted(''.join(rows)), '#748 complete host test inventory accepted')
-            for text, code in [('', 0), ('0 passed; 0 failed', 0), (''.join(rows[1:]), 0),
-                               (''.join(rows + rows[:1]), 0), (''.join(rows) + 'test unexpected ... ok\n', 0),
-                               (''.join(rows), 1), (''.join(rows).replace(' ... ok', ' ... ignored', 1), 0)]:
+            self.assertTrue(accepted(header + ''.join(rows)), '#748 complete host test inventory accepted')
+            for text, code in [(header, 0), ('', 0), ('0 passed; 0 failed', 0),
+                               (header + ''.join(rows[1:]), 0),
+                               (header + ''.join(rows + rows[:1]), 0),
+                               (header + ''.join(rows) + 'test unexpected ... ok\n', 0),
+                               (header + ''.join(rows), 1),
+                               (header + ''.join(rows).replace(' ... ok', ' ... ignored', 1), 0)]:
                 self.assertFalse(accepted(text, code), '#748 host acceptance requires all expected tests')
+
+    def test_failure_message_names_missing_tests(self):
+        # #589 close-out negative control: a shrinking inventory must report the
+        # counts and the missing cell names, not just a faceless FAIL.
+        expected = run_host.EXPECTED_TESTS['live_e2e']
+        absent = sorted(expected)[-2:]
+        present = sorted(expected - set(absent))
+        log = (f'running {len(expected)} tests\n'
+               + ''.join(f'test {name} ... ok\n' for name in present))
+        record = run_host.completed_tests('live_e2e', subprocess.CompletedProcess([], 0, log, ''))
+        self.assertFalse(record['passed'])
+        self.assertEqual(record['expectedCount'], 11)
+        self.assertEqual(record['observedCount'], len(present))
+        message = run_host.failure_message('live_e2e', record)
+        print(f'missing-cell diagnostic: {message}', flush=True)
+        self.assertIn('expected 11 / observed 9', message)
+        self.assertIn('missing:', message)
+        for name in absent:
+            self.assertIn(name, message)
+        # An extra cell is named too, and cargo's own count disagreement is
+        # surfaced even when the declared inventory happens to match the rows.
+        extra = run_host.completed_tests(
+            'live_e2e', subprocess.CompletedProcess(
+                [], 0, f'running {len(expected) + 1} tests\n'
+                + ''.join(f'test {name} ... ok\n' for name in sorted(expected))
+                + 'test live_ws_extra ... ok\n', ''))
+        self.assertIn('unexpected: live_ws_extra', run_host.failure_message('live_e2e', extra))
+
+    def test_slot_gate_discovery(self):
+        # #589 close-out: a remote runner host has no ~/ws/pdrs-ops; the gate
+        # lives under ~/ws/pdrs-runner-tools. Silence must never mean "skip the
+        # quota", so a missing gate is an error with the tried paths.
+        with tempfile.TemporaryDirectory(prefix='pdrs-run-host-gate-') as temp:
+            home = Path(temp)
+            env = {'HOME': str(home)}
+            with self.assertRaises(RuntimeError) as caught:
+                run_host.slot_gate(env)
+            self.assertIn('no executable cargo slot gate', str(caught.exception))
+            self.assertIn('PDRS_CARGO_SLOT_BIN', str(caught.exception))
+            ops = home / 'ws/pdrs-ops/bin/cargo-slot'
+            ops.parent.mkdir(parents=True)
+            ops.write_text('#!/bin/sh\nexit 0\n')
+            ops.chmod(0o755)
+            self.assertEqual(run_host.slot_gate(env), str(ops))
+            runner = home / 'ws/pdrs-runner-tools/bin/cargo'
+            runner.parent.mkdir(parents=True)
+            runner.write_text('#!/bin/sh\nexit 0\n')
+            runner.chmod(0o755)
+            explicit = home / 'explicit-gate'
+            explicit.write_text('#!/bin/sh\nexit 0\n')
+            explicit.chmod(0o755)
+            self.assertEqual(run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(explicit))), str(explicit))
+            with self.assertRaises(RuntimeError):
+                run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(home / 'missing-gate')))
+            ops.unlink()
+            self.assertEqual(run_host.slot_gate(env), str(runner))
+            with self.assertRaises(RuntimeError):
+                run_host.slot_gate({})
 
     def test_reader_owns_stdout_close(self):
         process = Mock()
@@ -33,9 +99,8 @@ class AcceptanceTests(unittest.TestCase):
 
     def test_negative_controls_kill_old_behaviors(self):
         probes = [
-            (run_host, 'completed_tests',
-             'result.returncode == 0 and len(names) == len(expected) and set(names) == expected',
-             'result.returncode == 0', 'test_exact_test_inventory',
+            (run_host, 'completed_tests', "'passed': not reasons,",
+             "'passed': True,", 'test_exact_test_inventory',
              '#748 host acceptance requires all expected tests', 'host-empty-set'),
             (stdio_mitm, 'reap_after_host_eof', 'for stream in (process.stdin,):',
              'for stream in (process.stdout, process.stdin):', 'test_reader_owns_stdout_close',

@@ -6,7 +6,7 @@
 
 `live_e2e` 的 Rust/TS 用例目录保留在 Cargo 提供的 `CARGO_TARGET_TMPDIR`（通常为 `$CARGO_TARGET_DIR/tmp`），每次使用独立 UUID 叶目录；无需预建仓内 `_tmp`。目录根/独占命名回归无需 TS，运行 `cargo test -p pilotdeck-gateway --test live_e2e case_directories_use_cargo_tmpdir`；对应提交后负控为 `tests/fixtures/live-e2e-tmpdir/negative_controls.py <全新输出目录>`，须传入 `CARGO_TARGET_DIR`。
 
-- 宿主全验：`python3 -B tests/fixtures/live-e2e/run_host.py <全新输出目录>`（在 gateway crate 目录运行或使用完整脚本路径）。其 cargo `--test` 清单包含 `live_e2e` 和 `generator_provenance`，后者执行 ignored 的七格重生成守卫。
+- 宿主全验：`python3 -B tests/fixtures/live-e2e/run_host.py <全新输出目录>`（在 gateway crate 目录运行或使用完整脚本路径）。其 cargo `--test` 清单包含 `live_e2e` 和 `generator_provenance`，后者执行 ignored 的七格重生成守卫。统一 cargo 名额闸按 `PDRS_CARGO_SLOT_BIN` → `~/ws/pdrs-ops/bin/cargo-slot` → `~/ws/pdrs-runner-tools/bin/cargo`（远端 runner 宿主）顺序发现；都找不到即报错并列出候选路径，不会静默跳过名额。宿主清单按 cargo 自己打印的 `running N tests` 与实际 `test … ok` 行核对，漂移时打印「期望 N / 实收 M」与缺失/多出的测试名。
 - 独立生成：`node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" tests/fixtures/live-e2e/generate.mts <全新输出目录>`。
 - 独立自检：`python3 -B tests/fixtures/live-e2e/selftest.py <全新输出目录>`。
 - 负控绑定检查：`python3 -B tests/fixtures/live-e2e/negative_controls.py --check`。
