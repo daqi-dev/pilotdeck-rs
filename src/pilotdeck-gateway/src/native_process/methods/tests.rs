@@ -1325,11 +1325,22 @@ async fn noncanonical_input_forms_match_ts_probes() {
 
 #[tokio::test]
 async fn user_dialog_capability_gate_precedes_parameter_validation() {
-    // The setup bus is unwired (no on_change observer), so the capability
-    // error must win over the missing-sessionKey domain error — the shared
-    // require_user_dialog_bus gate runs before any parameter validation.
+    // This case needs the UNCONNECTED bus: it is the only state that answers
+    // CAPABILITY_UNAVAILABLE, and the shared fixture no longer builds it
+    // (#1600 — production is always connected). The legacy observer-coupled
+    // `new(runtime, None)` is therefore constructed explicitly here, so the
+    // capability error must win over the missing-sessionKey domain error even
+    // though the shared `require_user_dialog_bus` gate runs before any
+    // parameter validation.
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1309 gate-order fixture setup");
+    *requests
+        .user_dialog_bus
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = crate::user_dialog::GatewayUserDialogBus::new(
+        crate::user_dialog::DialogRuntime::default(),
+        None,
+    );
     for method in [
         "user_dialog_list",
         "user_dialog_claim",
@@ -1362,16 +1373,15 @@ async fn connected_bus_serves_zero_pending_user_dialog_semantics() {
     // #1445: production builds a connected bus with no observer. Availability
     // is method presence (TS GatewayWsConnection.ts:481-490), so every method
     // must answer its real zero-pending semantics instead of
-    // CAPABILITY_UNAVAILABLE. Reverting production to the observer-coupled
-    // `new(runtime, None)` makes these calls fail with CAPABILITY_UNAVAILABLE.
+    // CAPABILITY_UNAVAILABLE.
+    //
+    // #1600: this case deliberately uses the shared fixture's bus as-is. The
+    // fixture now assembles the same connected state production does, so
+    // reverting it to the observer-coupled `new(runtime, None)` turns these
+    // calls red — the fixture cannot silently drift back to a state that no
+    // longer exists in production.
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
         .expect("#1445 connected-bus fixture setup");
-    *requests
-        .user_dialog_bus
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()) = crate::user_dialog::GatewayUserDialogBus::connected(
-        crate::user_dialog::DialogRuntime::default(),
-    );
     let session = JsValue::from("connected-session");
     let request = JsValue::from("connected-request");
 
@@ -2978,11 +2988,13 @@ async fn user_dialog_respond_lease_required() {
 }
 
 // #1437: user_dialog_respond is the one family method that is NOT capability
-// gated (require_user_dialog_bus only guards list/claim/release): on the
-// default unwired native-process bus a valid respond returns
-// Ok({"delivered": false}), never Err(CAPABILITY_UNAVAILABLE). #1445 wires
-// on_change in assembly and flips this production path; this test pins the
-// current method-layer contract and needs a sync afterwards.
+// gated (require_user_dialog_bus only guards list/claim/release): a respond
+// for a request that is not pending returns Ok({"delivered": false}), never
+// Err(CAPABILITY_UNAVAILABLE). The name is historical — the shared fixture
+// has been connected since #1600, and this value is the same on the
+// unconnected bus, because respond has no capability gate at all. The
+// assertion therefore pins the method-layer contract, not the bus's
+// availability.
 #[tokio::test]
 async fn user_dialog_respond_unwired_bus_returns_delivered_false() {
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)

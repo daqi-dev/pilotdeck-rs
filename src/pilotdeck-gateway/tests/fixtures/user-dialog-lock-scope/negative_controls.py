@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Temporary product mutations; require an oracle assertion failure, then restore.
 
-#1442/#1599 negative controls: each mutation puts one host-supplied callback
-(the resolver, the settle hook, the accepts validator, or the change observer)
-back under the GatewayUserDialogBus MutexGuard, and the #1442 try_lock probe
-tests must turn red. Every mutant keeps the callback call count and order of
-the original code, so the kill evidence is the "runs under the guard" probe
-rather than a duplicated callback. Run with no other writers/builds in this
-worktree. Evidence goes in a new output folder; original source bytes and
-hashes are verified after every mutation.
+#1442/#1599/#1600 negative controls: each mutation puts one host-supplied
+callback (the resolver, the settle hook, the accepts validator, or the change
+observer) back under the GatewayUserDialogBus MutexGuard, or drifts the shared
+`management_tests::setup` fixture back to the retired unconnected bus; the
+matching probe test must turn red. Every mutant keeps the callback call count
+and order of the original code, so the kill evidence is the "runs under the
+guard" probe rather than a duplicated callback. Run with no other
+writers/builds in this worktree. Evidence goes in a new output folder;
+original source bytes and hashes are verified after every mutation.
 
 Remote-host mode keeps the delivery uncommitted, so the baseline is supplied
 by the caller (argv[2]): a `git stash create` commit of the staged delivery
@@ -83,6 +84,19 @@ mutations = [
      '            let _ = observer(change);\n'
      '        }\n'
      '    }'),
+    # #1600: the shared fixture drifts back to the retired unconnected bus.
+    ('fixture-drifts-to-unconnected-bus', 'native_process/management_tests.rs',
+     '            user_dialog_bus: Arc::new(std::sync::Mutex::new(\n'
+     '                crate::user_dialog::GatewayUserDialogBus::connected(\n'
+     '                    crate::user_dialog::DialogRuntime::default(),\n'
+     '                ),\n'
+     '            )),',
+     '            user_dialog_bus: Arc::new(std::sync::Mutex::new(\n'
+     '                crate::user_dialog::GatewayUserDialogBus::new(\n'
+     '                    crate::user_dialog::DialogRuntime::default(),\n'
+     '                    None,\n'
+     '                ),\n'
+     '            )),'),
 ]
 declared = [name for name, *_ in mutations]
 selected = sys.argv[3:]
@@ -97,11 +111,16 @@ failures = []
 
 
 def target_test(name):
+    # Full test path: the fixture mutation lives in management_tests, the
+    # callback probes in methods::tests.
+    if name == 'fixture-drifts-to-unconnected-bus':
+        return ('native_process::management_tests::'
+                'setup_assembles_a_connected_user_dialog_bus')
     if name == 'observer-delivery-back-under-guard':
-        return 'user_dialog_observer_reenters_the_bus_lock_free'
+        return 'native_process::methods::tests::user_dialog_observer_reenters_the_bus_lock_free'
     if name == 'accepts-back-under-guard':
-        return 'user_dialog_accepts_reenters_the_bus_lock_free'
-    return 'user_dialog_settle_and_resolve_reenter_the_bus_lock_free'
+        return 'native_process::methods::tests::user_dialog_accepts_reenters_the_bus_lock_free'
+    return 'native_process::methods::tests::user_dialog_settle_and_resolve_reenter_the_bus_lock_free'
 
 
 def wait_for_slot(name):
@@ -148,7 +167,7 @@ try:
         # #819: an unmutated baseline for every named target must be green first.
         baseline_ok = set()
         for test in dict.fromkeys(target_test(name) for name, *_ in mutations):
-            full = f'native_process::methods::tests::{test}'
+            full = test
             wait_for_slot('baseline-' + test)
             code, log = run(full)
             (out / f'baseline-{test}.log').write_text(log)
@@ -165,7 +184,7 @@ try:
             before = hashlib.sha256(original).hexdigest()
             content = original.decode()
             test = target_test(name)
-            full = f'native_process::methods::tests::{test}'
+            full = test
             try:
                 assert content.count(old) == 1, (name, content.count(old))
                 changed = content.replace(old, new, 1)
@@ -177,13 +196,15 @@ try:
                 code, log = run(full)
                 (out / f'{name}.log').write_text(log)
                 evidence = panic_evidence(log, full)
-                # Kill evidence is one of the three #1442 probe assertions: a
-                # callback's try_lock probe failing, the probe sequence breaking,
-                # or the bounded re-entrant call missing its deadline.
+                # Kill evidence is one of the #1442 probe assertions (a
+                # callback's try_lock probe failing, the probe sequence
+                # breaking, the bounded re-entrant call missing its deadline)
+                # or the #1600 fixture assertion.
                 marker_ok = any(marker in evidence for marker in (
                     'must not run under the guard',
                     'every probe fires exactly once, in order',
-                    "re-entrant bus call completed within the timeout"))
+                    "re-entrant bus call completed within the timeout",
+                    "the shared fixture's user-dialog bus must be connected"))
                 killed = (test in baseline_ok and code == 101
                           and named_test_failed(log, full)
                           and marker_ok
@@ -221,7 +242,7 @@ except BaseException as error:
         if name not in recorded:
             summary.append(dict(
                 name=name,
-                test=f'native_process::methods::tests::{target_test(name)}',
+                test=target_test(name),
                 status='INVALID', returncode=None, reason=reason,
                 sourceSha256=None))
     publish_summary()
