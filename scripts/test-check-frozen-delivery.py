@@ -148,6 +148,24 @@ def gw_source(*names):
             "    return {name: name for name in names}\n")
 
 
+def two_apparatus(root):
+    """parity + 一只真能判 READY 的 gateway-parity。
+
+    用来证明「某只装置被静默丢掉」之后剩下的那只仍会报 READY（假 READY 方向），
+    而不是「一只都不剩」被另一条规则拦住 —— 后者会让负控因为错误的原因变红。
+    """
+    fake_apparatus(root, "parity", {"status": "PASS", "failures": []})
+    fake_apparatus(root, "gateway-parity", {"status": "PASS", "failures": []},
+                   gw_source())
+    write(root, "scripts/gateway-parity/common.py", GW_COMMON)
+    write(root, "scripts/a5-19/run.py", "")
+    body = (root / "scripts/gateway-parity/check_frozen.py").read_text()
+    write(root, "specs/gateway-parity/FROZEN.md",
+          "# fake FROZEN\n\n" + sha(body)
+          + "  ../../scripts/gateway-parity/check_frozen.py\n"
+          + sha("") + "  ../../scripts/a5-19/run.py\n")
+
+
 def gw_inventory(check_frozen_body, common=None):
     """建一棵只有 gateway 装置两半的树，返回 ``gateway_inventory`` 的结果。
 
@@ -3298,6 +3316,52 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and "BLOCKED 1 / READY 0" in proc.stdout,
              f"mode={mode} rc={proc.returncode} out={proc.stdout}")
 
+    # P1（sibling）：``specs/<alias>`` 被普通文件顶替（坏合并删目录留文件）时，
+    # ``scripts/<alias>/check_frozen.py`` 还在；旧实现按普通文件静默 continue，
+    # 这个装置就整只不跑 —— 与符号链接同一条假 READY 路径。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        two_apparatus(root)
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main",
+            git(root, "rev-parse", "HEAD"))
+        shutil.rmtree(root / "specs" / "parity")
+        write(root, "specs/parity", "not a directory\n")
+        commit(root, "delivery")
+        mode = git(root, "ls-tree", "HEAD", "--", "specs/parity").split()[0]
+        runner = (root / "scripts" / "parity" / "check_frozen.py").exists()
+        proc = run_tool("--root", str(root), "--base", "origin/main")
+        case("specs/<alias> 被普通文件顶替（runner 仍在）→ BLOCKED 并点名",
+             mode == "100644" and runner and proc.returncode == 1
+             and "=== discovery === BLOCKED" in proc.stdout
+             and "specs/parity" in proc.stdout and "100644" in proc.stdout
+             and "=== parity === READY" not in proc.stdout
+             and "=== gateway-parity === READY" not in proc.stdout
+             and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"mode={mode} runner={runner} rc={proc.returncode} out={proc.stdout}")
+
+    # P2（两家评审）：子模块（160000 commit）是另一条目录型非 tree 路径，也要有
+    # 负控，不能只测符号链接。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        two_apparatus(root)
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        git(root, "update-ref", "refs/remotes/origin/main", base)
+        git(root, "update-index", "--add", "--cacheinfo",
+            f"160000,{base},specs/sub")
+        git(root, "commit", "-qm", "delivery")
+        mode = git(root, "ls-tree", "HEAD", "--", "specs/sub").split()[0]
+        proc = run_tool("--root", str(root), "--base", "origin/main")
+        case("specs/<alias> 是子模块（160000 commit）→ BLOCKED 并点名",
+             mode == "160000" and proc.returncode == 1
+             and "=== discovery === BLOCKED" in proc.stdout
+             and "specs/sub" in proc.stdout and "160000" in proc.stdout
+             and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"mode={mode} rc={proc.returncode} out={proc.stdout}")
+
     # 正控：``specs/README.md`` 是普通文件（100644 blob），不可能装 FROZEN.md，
     # 收紧后不得把它当非法条目把正常路径打红。
     with tempfile.TemporaryDirectory() as td:
@@ -3466,6 +3530,83 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and dropped is False and kept and entry.exists(),
              f"recorded={recorded!r} present={present!r} dropped={dropped!r} "
              f"kept={kept} entry_exists={entry.exists()}")
+
+    # P1（boundary）：``gitdir`` 可读但为空 / 全是空白（非原子写入被截断）或
+    # 相对路径时，旧实现 _real_path('') 得到 cwd、与 wanted 不等 → 又变成
+    # 「证明不是我们的」，drop_holder 照摘登记。
+    with tempfile.TemporaryDirectory() as td:
+        results = []
+        for idx, payload in enumerate(("", "   \n", "relative/.git\n")):
+            root = Path(td) / f"repo{idx}"
+            root.mkdir()
+            init_repo(root)
+            holder = Path(td) / f"cfd-snapshot-e{idx}"
+            target = holder / "tree"
+            target.mkdir(parents=True)
+            entry = root / ".git" / "worktrees" / f"tree{idx}"
+            entry.mkdir(parents=True)
+            (entry / "gitdir").write_text(payload)
+            recorded = cfd._recorded_gitdir(entry)
+            present = cfd.admin_entry_present(root, target)
+            cfd._SNAPSHOT_HOLDERS.append((root, holder))
+            try:
+                dropped = cfd.drop_holder(root, holder)
+                kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+            finally:
+                cfd._SNAPSHOT_HOLDERS.clear()
+            results.append((payload.strip(), recorded is cfd._UNREADABLE_GITDIR,
+                            present, dropped, kept, entry.exists()))
+        case("gitdir 为空 / 空白 / 相对路径 → 不可读，不报 False、不摘登记",
+             all(row[1] and row[2] is None and row[3] is False and row[4]
+                 and row[5] for row in results), f"{results}")
+
+    # P2（codex）：可读匹配 + 不可读条目并存时，可读的那条就是证据 → True；
+    # 只有持久坏条目 → None，且阻塞文案点名该条目路径（不再指认自家快照未清）。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        target = Path(td) / "snap" / "tree"
+        target.mkdir(parents=True)
+        good = root / ".git" / "worktrees" / "tree"
+        good.mkdir(parents=True)
+        (good / "gitdir").write_text(str(target / ".git") + "\n")
+        (root / ".git" / "worktrees" / "broken").mkdir()
+        cfd._UNVERIFIED_ADMIN_ENTRIES.clear()
+        present = cfd.admin_entry_present(root, target)
+        case("可读匹配 + 不可读条目并存 → True（不因旁人坏条目阻塞）",
+             present is True, f"present={present!r}")
+        shutil.rmtree(good)
+        cfd._UNVERIFIED_ADMIN_ENTRIES.clear()
+        present = cfd.admin_entry_present(root, target)
+        named = cfd.holder_verdict([(root, Path(td) / "snap")]) or ""
+        cfd._UNVERIFIED_ADMIN_ENTRIES.clear()
+        case("只有持久坏条目 → None，且阻塞文案点名该条目路径",
+             present is None and "broken" in named,
+             f"present={present!r} named={named!r}")
+
+    # 短退避：一次重扫就能消掉的瞬态不可读（兄弟正在 add）不该报 None。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        target = Path(td) / "snap" / "tree"
+        target.mkdir(parents=True)
+        real_scan = cfd._scan_admin
+        calls = []
+
+        def flaky(admin, wanted):
+            calls.append(1)
+            return None if len(calls) == 1 else False
+
+        cfd._scan_admin = flaky
+        try:
+            present = cfd.admin_entry_present(root, target)
+        finally:
+            cfd._scan_admin = real_scan
+        case("瞬态不可读条目：退避重扫后按干净处理（不假 BLOCK）",
+             present is False and len(calls) == 2,
+             f"present={present!r} calls={len(calls)}")
 
     # P1（codex）：两个根嵌套时取**最深**前缀，先命中被审树会把快照路径归一错。
     with tempfile.TemporaryDirectory() as td:
