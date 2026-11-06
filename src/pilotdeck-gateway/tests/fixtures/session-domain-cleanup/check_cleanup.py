@@ -1061,7 +1061,7 @@ def _is_status_target(target):
         # name in several per-case helpers, not a batch status key.
         return target.id == 'status'
     if isinstance(target, ast.Subscript):
-        return isinstance(target.slice, ast.Constant) and target.slice.value in _STATUS_KEYS
+        return _status_key(target.slice)
     if isinstance(target, ast.Attribute):
         # The enumeration must see the attribute spelling for the same reason
         # the slot layer does (MiniMax sibling r17 P1-1): otherwise the only
@@ -1131,9 +1131,22 @@ def _dict_pairs(summary):
 _STATUS_KEYS = frozenset({'status', 'verdict'})
 
 
+def _status_key(node):
+    """A status/verdict key whatever constant shape built it (#892 r21).
+
+    ``report['sta' + 'tus']`` writes the very slot ``report['status']`` does,
+    but the key is not a ``Constant`` node, and the r20 constant folding
+    reached the value side only: every key-side judgment still walked past
+    the folded spelling, so a summary keyed ``{'sta' + 'tus': 'PASS'}`` was
+    not a summary at all and the whole function escaped enumeration
+    (GLM sibling r20 P1-1).  All key judgments go through this one helper
+    so the two halves cannot drift apart again.
+    """
+    return _folded_string(node) in _STATUS_KEYS
+
+
 def _dict_has_status(summary):
-    return any(isinstance(key, ast.Constant) and key.value in _STATUS_KEYS
-               for key, _value in _dict_pairs(summary))
+    return any(_status_key(key) for key, _value in _dict_pairs(summary))
 
 
 def _status_slot_values(summary):
@@ -1144,7 +1157,7 @@ def _status_slot_values(summary):
     read as fail-closed while the process reports PASS (DeepSeek boundary P2-2).
     """
     return [value for key, value in _dict_pairs(summary)
-            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS]
+            if _status_key(key)]
 
 
 def _loads_shared_module(value, name):
@@ -1196,10 +1209,115 @@ def _module_shared_names(tree):
                     trusted.difference_update(_target_names(item.optional_vars))
         elif isinstance(node, ast.ExceptHandler) and node.name:
             trusted.discard(node.name)
+    # #892 r21: ``global common`` rebinds the module binding at runtime from
+    # inside a function, out of the walk above; the spelling would stay
+    # trusted for every other function in the file.  A file that declares the
+    # trusted name global must keep every binding of it loader-shaped, in any
+    # scope -- the module rule, applied wherever the binding actually lands.
+    global_names = {name for node in ast.walk(tree)
+                    if isinstance(node, ast.Global) for name in node.names}
+    if trusted & global_names:
+        for node in ast.walk(tree):
+            names, value = _local_bound_names(node)
+            for name in names:
+                if (name in trusted
+                        and not (value is not None
+                                 and _loads_shared_module(value, name))):
+                    trusted.discard(name)
     return frozenset(trusted)
 
 
-def _is_shared_call(node, shared=None):
+# #892 r21: helpers a function may rebind the trusted ``common`` spelling to,
+# besides the apparatus loader call itself.  ``_guard.py:run_entry`` binds the
+# loader directly; the negative-controls harness needs two more spellings that
+# load the shared module from committed bytes / from disk, because its whole
+# point is to judge a tree whose working-tree ``common.py`` may be dirty.  Each
+# entry names the file that calls the helper and the helper, with the load it
+# performs; the in-file self test asserts the imports and defs exist, so a name
+# cannot join this registry by typo and a stub cannot hide behind a lookalike
+# name in another file.
+PROVEN_SHARED_SOURCES = {
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
+     'committed_status_contract'):
+        'cross-file loader: git-shows committed HEAD common.py and evaluates '
+        'only its status tables and aggregate_status',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
+     'load_pristine_common'):
+        'same-file loader: importlib-loads the pristine common.py from disk '
+        'inside the mutation window',
+}
+
+
+def _proven_source(value, rel=None):
+    """True when *value* is a call to a registered proven shared source."""
+    return (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+            and (rel, value.func.id) in PROVEN_SHARED_SOURCES)
+
+
+def _local_bound_names(node):
+    """(names, value) a statement binds, for trust withdrawal (#892 r21).
+
+    Assignments, loop/with/except targets and imports all rebind a name to
+    something the module-level scan never sees; ``None`` marks bindings whose
+    value is not an expression (``for``/``with`` targets, imports, handlers).
+    """
+    if isinstance(node, ast.Assign):
+        names = [name for target in node.targets for name in _target_names(target)]
+        return names, node.value
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        return _target_names(node.target), node.value
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        return _target_names(node.target), None
+    if isinstance(node, (ast.With, ast.AsyncWith)):
+        names = [name for item in node.items if item.optional_vars is not None
+                 for name in _target_names(item.optional_vars)]
+        return names, None
+    if isinstance(node, ast.ExceptHandler):
+        return ([node.name] if node.name else []), None
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [alias.asname or alias.name.split('.')[0]
+                for alias in node.names], None
+    return [], None
+
+
+def _function_shared_names(function, shared=None, rel=None):
+    """(trusted names, locally rebound receivers) inside *function* (#892 r21).
+
+    The r20 withdrawal walked module scope only, so a *function-scope*
+    ``common = SimpleNamespace(aggregate_status=...)`` kept the spelling
+    trusted and the stub's verdicts were counted as the shared map's
+    (GLM sibling r20 P1-2 / boundary r20 P1-1).  Inside one function the
+    module rule applies again: a local binding keeps the trust only when it
+    is the apparatus loader call or a registered proven source.  Parameters
+    are the caller's contract (``_guard.py:_failure(error, policy, common)``)
+    -- but an assignment *inside the body* rebinds the name like any other,
+    parameter or not.  Names outside the trusted set can still relay to it
+    (``md.common.aggregate_status``), so every locally bound name is also
+    reported as a receiver whose relay is no longer taken on the spelling
+    alone; ``global``-declared receivers bind at module scope and stay the
+    module scan's business (``check_cleanup.main`` rebinds ``md`` there).
+    """
+    trusted = set(_SHARED_MODULES if shared is None else shared)
+    rebound = set()
+    declared_global = {name for node in ast.walk(function)
+                       if isinstance(node, ast.Global) for name in node.names}
+    for node in _own_nodes(function):
+        names, value = _local_bound_names(node)
+        for name in names:
+            if name in declared_global and name not in trusted:
+                continue
+            if name in trusted:
+                if not (value is not None
+                        and (_loads_shared_module(value, name)
+                             or _proven_source(value, rel))):
+                    trusted.discard(name)
+                    rebound.add(name)
+            else:
+                rebound.add(name)
+    return frozenset(trusted), frozenset(rebound)
+
+
+def _is_shared_call(node, shared=None, rebound=frozenset()):
     """A call to the one shared ``common.aggregate_status`` (#892 r3).
 
     Substring matching let a local ``def aggregate_status`` stand in for the
@@ -1207,7 +1325,10 @@ def _is_shared_call(node, shared=None):
     name (MiniMax boundary P1-5 / DeepSeek boundary P2-5).  *shared* is the set
     of names that still denote the shared module in the calling file, from
     ``_module_shared_names``; a rebound ``common`` is not in it (GLM boundary
-    r19 P1-1).
+    r19 P1-1).  *rebound* is the set of names the enclosing function binds
+    locally (#892 r21): a relayed ``md.common.aggregate_status`` whose
+    receiver was rebound to something else in that function is taken on the
+    spelling alone no longer.
     """
     if not isinstance(node, ast.Call):
         return False
@@ -1218,11 +1339,13 @@ def _is_shared_call(node, shared=None):
     base = func.value
     if isinstance(base, ast.Name):
         return base.id in trusted
-    return isinstance(base, ast.Attribute) and base.attr in trusted
+    return (isinstance(base, ast.Attribute) and base.attr in trusted
+            and not (isinstance(base.value, ast.Name)
+                     and base.value.id in rebound))
 
 
-def _calls_aggregate(node, shared=None):
-    return any(_is_shared_call(n, shared) for n in ast.walk(node))
+def _calls_aggregate(node, shared=None, rebound=frozenset()):
+    return any(_is_shared_call(n, shared, rebound) for n in ast.walk(node))
 
 
 # #892 r20: the module that owns the one shared aggregator.  A file that
@@ -1595,7 +1718,7 @@ def _writes_status_slot(target):
         # name in several per-case helpers, not a batch status key.
         return target.id == 'status'
     if isinstance(target, ast.Subscript):
-        return isinstance(target.slice, ast.Constant) and target.slice.value in _STATUS_KEYS
+        return _status_key(target.slice)
     if isinstance(target, ast.Attribute):
         # ``self.report.status = 'PASS'`` is the attribute spelling of the very
         # same write ``setattr(self.report, 'status', 'PASS')`` makes; modelling
@@ -1750,7 +1873,7 @@ def _summary_slot_violations(summary, bindings, lineno):
                 continue
             problems.append(f'summary unpack {ast.unparse(value)[:60]} at line {lineno}')
             continue
-        if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+        if _status_key(key):
             if _relays_status(value, bindings) or _calls_aggregate(value):
                 continue
             problems.append(f'status slot {ast.unparse(value)[:60]} at line {lineno}')
@@ -2546,7 +2669,7 @@ def _call_written_values(call):
     if isinstance(func, ast.Name) and func.id == 'setattr':
         if len(call.args) == 3:
             key = call.args[1]
-            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+            if _status_key(key):
                 written.append(call.args[2])
         return written
     if not isinstance(func, ast.Attribute):
@@ -2565,13 +2688,13 @@ def _call_written_values(call):
             key, value = call.args[0], call.args[1]
         else:
             return written
-        if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+        if _status_key(key):
             written.append(value)
         return written
     if func.attr == 'setdefault':
         if len(call.args) > 1:
             key = call.args[0]
-            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+            if _status_key(key):
                 written.append(call.args[1])
         return written
     for argument in call.args:
@@ -2581,7 +2704,7 @@ def _call_written_values(call):
             for element in argument.elts:
                 if isinstance(element, (ast.Tuple, ast.List)) and len(element.elts) == 2:
                     key = element.elts[0]
-                    if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+                    if _status_key(key):
                         written.append(element.elts[1])
     for keyword in call.keywords:
         if keyword.arg is None:
@@ -2944,12 +3067,13 @@ def _has_exit_path(function, aliases=None):
 
 
 def aggregation_markers(function, module=None, rel=None, aliases=None,
-                        shared=None):
+                        shared=None, rebound=frozenset()):
     """Markers that make *function* a top-level status/exit computation.
 
     *module* is the file's module-level ``def`` map; the write-side rules need
     it to resolve a callee in the file it is defined in (GLM boundary r12
-    P1-1).
+    P1-1).  *shared* / *rebound* are the function-scope trust view from
+    ``_function_shared_names`` (#892 r21).
     """
     markers = set()
     # A summary dict assigned to any name and returned by that name is a
@@ -2980,7 +3104,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
                 if _is_status_target(target) and (
                         _status_literals(value)
                         or _has_passed_aggregate(value)
-                        or _calls_aggregate(value, shared)):
+                        or _calls_aggregate(value, shared, rebound)):
                     markers.add('assign-status')
                 elif (_is_report_status(target, value)
                       and not _name_feeds_shared(target.id, function)):
@@ -2993,7 +3117,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
                     and value.func.id == 'int' and _status_literals(value)):
                 markers.add('return-int-status')
             if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Call)
-                    and _is_shared_call(value.value, shared)):
+                    and _is_shared_call(value.value, shared, rebound)):
                 markers.add('return-aggregate-code')
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
@@ -3024,13 +3148,13 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
             # ``update()`` spelling above and must enumerate the function too
             # (MiniMax boundary r10 P0-1).
             markers.add('write-status')
-        elif _is_shared_call(node, shared):
+        elif _is_shared_call(node, shared, rebound):
             markers.add('calls-aggregate')
     return markers
 
 
-def calls_shared(function, shared=None):
-    return any(_is_shared_call(node, shared) for node in ast.walk(function))
+def calls_shared(function, shared=None, rebound=frozenset()):
+    return any(_is_shared_call(node, shared, rebound) for node in ast.walk(function))
 
 
 def scan_aggregation_tree(tree, rel, aliases=None):
@@ -3051,7 +3175,9 @@ def scan_aggregation_tree(tree, rel, aliases=None):
     for function in ast.walk(tree):
         if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        markers = aggregation_markers(function, module, rel, aliases, shared)
+        fn_shared, fn_rebound = _function_shared_names(function, shared, rel)
+        markers = aggregation_markers(function, module, rel, aliases,
+                                      fn_shared, fn_rebound)
         if not markers:
             continue
         key = (rel, function.name)
@@ -3127,6 +3253,18 @@ def aggregation_audit():
         # boundary P1-2); nested helpers are judged by ``_nested_def_exits_zero``.
         modules[rel] = {node.name: node for node in tree.body
                         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        # #892 r21: the proven-source registry is only as good as its names --
+        # a typo or a renamed helper would withdraw trust on a shape the healthy
+        # tree actually uses, so every entry is asserted against its file.
+        module_names = set(modules[rel]) | {
+            alias.asname or alias.name.split('.')[0]
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names}
+        for _proven_rel, helper in PROVEN_SHARED_SOURCES:
+            if _proven_rel == rel and helper not in module_names:
+                failures.append(f'#892 aggregation-audit: proven shared source '
+                                f'{rel}:{helper} is neither defined nor imported there')
         aliases_by_rel[rel] = _module_exit_aliases(tree)
         trusted_by_rel[rel] = _module_shared_names(tree)
         lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
@@ -3154,7 +3292,9 @@ def aggregation_audit():
                             f'{rel}:{name}')
             continue
         markers, function = found[key]
-        shared = (calls_shared(function, trusted_by_rel.get(rel))
+        fn_shared, fn_rebound = _function_shared_names(
+            function, trusted_by_rel.get(rel), rel)
+        shared = (calls_shared(function, fn_shared, fn_rebound)
                   and 'return-int-status' not in markers)
         slots = unshared_status_slots(function, key, modules.get(rel), rel,
                                       aliases_by_rel.get(rel))
@@ -3606,8 +3746,78 @@ def aggregation_audit():
         "    if not rows:\n"
         "        code = _helpers.EXIT_OK\n"
         "        return {'status': 'PASS'}, code\n"
-        "    return common.aggregate_status('PASS')\n")
+        "    return common.aggregate_status('PASS')\n"
+        "def _folded_key_dict(rows):\n"
+        "    return {'sta' + 'tus': 'PASS'}\n"
+        "def _folded_key_write(report):\n"
+        "    report['sta' + 'tus'] = 'PASS'\n"
+        "    return report\n"
+        "def _shadowed_common_local(report):\n"
+        "    common = _SN(aggregate_status=lambda *a: ('PASS', 0))\n"
+        "    return common.aggregate_status(report)[1]\n"
+        "def _loader_common_local(report):\n"
+        "    common = _load('common', 'common.py')\n"
+        "    return common.aggregate_status(report)[1]\n"
+        "def _shadowed_receiver_local(report):\n"
+        "    md = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
+        "    return md.common.aggregate_status(report)[1]\n"
+        "def _param_common(report, common):\n"
+        "    return common.aggregate_status(report)[1]\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
+    # #892 r21: the key side of the r20 constant folding (GLM sibling r20
+    # P1-1) and the function-scope trust withdrawal (GLM sibling r20 P1-2 /
+    # boundary P1-1), each with the healthy control beside it.
+    folded_dict = probe892_found.get(('<self-test-892>', '_folded_key_dict'))
+    if not folded_dict or not unshared_status_slots(folded_dict[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'summary keyed by a folded constant')
+    folded_write = probe892_found.get(('<self-test-892>', '_folded_key_write'))
+    if not folded_write or not unshared_status_slots(folded_write[1]):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'folded-key status write')
+
+    def _probe892_function(name):
+        return next((node for node in probe892.body
+                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                     and node.name == name), None)
+
+    shadow_local = _probe892_function('_shadowed_common_local')
+    if shadow_local is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'function-scope shadow probe')
+    else:
+        shadow_shared, _shadow_rebound = _function_shared_names(shadow_local)
+        if ('common' in shadow_shared
+                or calls_shared(shadow_local, shadow_shared, _shadow_rebound)):
+            failures.append('#892 aggregation-audit: detector self-test still trusts '
+                            'a function-scope shadowed common')
+    loader_local = _probe892_function('_loader_common_local')
+    if loader_local is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'function-scope loader probe')
+    else:
+        loader_shared, _loader_rebound = _function_shared_names(loader_local)
+        if ('common' not in loader_shared
+                or not calls_shared(loader_local, loader_shared, _loader_rebound)):
+            failures.append('#892 aggregation-audit: detector self-test rejected the '
+                            'apparatus loader bound inside a function')
+    receiver_local = _probe892_function('_shadowed_receiver_local')
+    if receiver_local is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'function-scope receiver probe')
+    else:
+        receiver_shared, receiver_rebound = _function_shared_names(receiver_local)
+        if ('md' not in receiver_rebound
+                or calls_shared(receiver_local, receiver_shared, receiver_rebound)):
+            failures.append('#892 aggregation-audit: detector self-test still trusts a '
+                            'relayed shared call through a rebound receiver')
+    param_local = _probe892_function('_param_common')
+    if param_local is None:
+        failures.append('#892 aggregation-audit: detector self-test lost the '
+                        'parameter probe')
+    elif not calls_shared(param_local):
+        failures.append('#892 aggregation-audit: detector self-test stopped trusting '
+                        'the common parameter contract')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
