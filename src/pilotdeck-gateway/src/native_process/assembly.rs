@@ -457,6 +457,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
     crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
+    // #1746: exactly one teardown may run. The host polls this cleanup itself
+    // when initialization fails, so the fallback below arms only when the host
+    // thread never started (runtime build or spawn failure) and the future was
+    // dropped unpolled.
+    let cleanup_ran: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let cleanup_fallback_ran = cleanup_ran.clone();
     let build_factory = factory.clone();
     let build_project = project.clone();
     // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
@@ -677,58 +683,70 @@ pub(super) async fn start_observed_with_upload_cleanup(
             })
         },
         async move {
-            // #1326 A8 U8: stop the cron manager first — automation precedes
-            // closeServer (PilotDeckServerShutdownBundle.ts:33-37). `stop()`
-            // aborts active cron runs through the bound gateway (the
-            // synchronous abort prefix) and releases task sessions; a stop
-            // failure is observed but never blocks the remaining teardown.
-            let cron_stop = match cleanup_cron_slot.get() {
-                Some(cron) => {
-                    cleanup_observer(
-                        "cron",
-                        cron.stop()
-                            .map_err(|error| String::from_utf16_lossy(error.message().units())),
-                    )
-                    .await
+            if cleanup_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Ok(());
+            }
+            // #1746: the host awaits this future on its own failure path before
+            // reporting the error, so the deadline lives here; the shutdown
+            // drain still bounds it by the embedding's shutdown budget.
+            let teardown = async move {
+                // #1326 A8 U8: stop the cron manager first — automation precedes
+                // closeServer (PilotDeckServerShutdownBundle.ts:33-37). `stop()`
+                // aborts active cron runs through the bound gateway (the
+                // synchronous abort prefix) and releases task sessions; a stop
+                // failure is observed but never blocks the remaining teardown.
+                let cron_stop = match cleanup_cron_slot.get() {
+                    Some(cron) => {
+                        cleanup_observer(
+                            "cron",
+                            cron.stop()
+                                .map_err(|error| String::from_utf16_lossy(error.message().units())),
+                        )
+                        .await
+                    }
+                    None => Ok(()),
+                };
+                // #1328 A8.3: stop the channel assembly and flush its durable
+                // mapper state — the closeServer + flushChannelState pair
+                // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
+                // the gateway disposes). The WS server has already drained when
+                // this cleanup runs; the close-host hook is the pr2 WS-ordering
+                // follow-up.
+                let channel_stop = cleanup_observer(
+                    "channels",
+                    cleanup_channels
+                        .close()
+                        .await
+                        .map_err(|e| e.message().to_string()),
+                )
+                .await;
+                let channel_flush = cleanup_channels.flush().await;
+                let sessions = cleanup_observer(
+                    "session",
+                    cleanup_factory.dispose().await.map_err(|e| e.to_string()),
+                )
+                .await;
+                let project = cleanup_observer(
+                    "project",
+                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
+                )
+                .await;
+                if let Err(error) = &project {
+                    cleanup_diagnostic(error);
                 }
-                None => Ok(()),
+                let mut outcome = sessions.and(project);
+                for failure in [cron_stop.err(), channel_stop.err(), channel_flush.err()]
+                    .into_iter()
+                    .flatten()
+                {
+                    outcome = outcome.and(Err(failure));
+                }
+                outcome
             };
-            // #1328 A8.3: stop the channel assembly and flush its durable
-            // mapper state — the closeServer + flushChannelState pair
-            // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
-            // the gateway disposes). The WS server has already drained when
-            // this cleanup runs; the close-host hook is the pr2 WS-ordering
-            // follow-up.
-            let channel_stop = cleanup_observer(
-                "channels",
-                cleanup_channels
-                    .close()
-                    .await
-                    .map_err(|e| e.message().to_string()),
-            )
-            .await;
-            let channel_flush = cleanup_channels.flush().await;
-            let sessions = cleanup_observer(
-                "session",
-                cleanup_factory.dispose().await.map_err(|e| e.to_string()),
-            )
-            .await;
-            let project = cleanup_observer(
-                "project",
-                cleanup_project.dispose().await.map_err(|e| e.to_string()),
-            )
-            .await;
-            if let Err(error) = &project {
-                cleanup_diagnostic(error);
+            match tokio::time::timeout(budget, teardown).await {
+                Ok(outcome) => outcome,
+                Err(_) => Err("gateway host cleanup deadline exceeded".to_string()),
             }
-            let mut outcome = sessions.and(project);
-            for failure in [cron_stop.err(), channel_stop.err(), channel_flush.err()]
-                .into_iter()
-                .flatten()
-            {
-                outcome = outcome.and(Err(failure));
-            }
-            outcome
         },
     );
     match host {
@@ -741,11 +759,17 @@ pub(super) async fn start_observed_with_upload_cleanup(
             Ok(host)
         }
         Err(error) => {
-            let _ = tokio::time::timeout(budget, async {
-                let _ = factory.dispose().await;
-                project.dispose().await
-            })
-            .await;
+            // #1746: the host disposes the coordinator and polls the cleanup
+            // above before reporting a builder failure. This fallback owns the
+            // project/factory teardown only when the host thread never started
+            // — running it twice would dispose the same families twice.
+            if !cleanup_fallback_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = tokio::time::timeout(budget, async {
+                    let _ = factory.dispose().await;
+                    project.dispose().await
+                })
+                .await;
+            }
             Err(error.into())
         }
     }

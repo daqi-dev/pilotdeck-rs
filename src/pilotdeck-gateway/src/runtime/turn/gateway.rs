@@ -317,8 +317,11 @@ impl TurnGateway {
     }
     /// Keep the host executor alive while embedding-owned session/project
     /// resources dispose. The cleanup future must not enqueue new host jobs.
-    /// Registered only after successful initialization: on a builder error,
-    /// the caller remains responsible for disposing any partial resources.
+    /// A builder error still runs the host teardown before the failure is
+    /// reported: the coordinator it created is disposed and this cleanup is
+    /// polled on the host thread (#1746). It must therefore be bounded by its
+    /// own caller; the only case left to the embedding is a host thread that
+    /// never started (runtime build or spawn failure).
     pub fn start_with_cleanup(
         options: TurnReplayOptions,
         build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
@@ -360,8 +363,26 @@ impl TurnGateway {
                 ));
                 let services = match build(coordinator.clone()) {
                     Ok(services) if Arc::ptr_eq(&services.submitter.coordinator, &coordinator) => services,
-                    Ok(_) => { let _ = ready.send(Err(std::io::Error::other("submitter must use the serial host coordinator"))); return; }
-                    Err(error) => { let _ = ready.send(Err(error)); return; }
+                    Ok(services) => {
+                        // #1746: the host refuses these services, so it also
+                        // owns their teardown — the same owner/interactions
+                        // pair the drain below disposes.
+                        let error = std::io::Error::other("submitter must use the serial host coordinator");
+                        dispose_initialization(&coordinator, Some(services), cleanup).await;
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
+                    Err(error) => {
+                        // #1746: a failed builder must not skip the teardown.
+                        // Whatever the builder staged is already dropped with
+                        // its closure, but the coordinator the host created
+                        // and the embedding cleanup it was handed are still
+                        // live; both settle here, before the failure is
+                        // reported, exactly as the successful drain would.
+                        dispose_initialization(&coordinator, None, cleanup).await;
+                        let _ = ready.send(Err(error));
+                        return;
+                    }
                 };
                 let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default()));
                 if ready.send(Ok(gateway.clone())).is_err() { return; }
@@ -565,6 +586,32 @@ impl HostedConnection {
                 connection.notify(&name, payload);
             })
             .await
+    }
+}
+
+/// #1746: what a host that never finished initializing still owes. The order
+/// mirrors the successful drain — submission owner, the embedding cleanup,
+/// then the coordinator and its interactions — so a builder error cannot leave
+/// live turns, a staged runtime registry or an undisposed coordinator behind.
+/// The build closure's own captures are dropped when it returns; the services
+/// it handed over (only the refusal branch) are disposed here.
+async fn dispose_initialization(
+    coordinator: &TurnEventCoordinator,
+    services: Option<GatewayServices>,
+    cleanup: Option<Call<'static, Result<(), String>>>,
+) {
+    let interactions = services
+        .as_ref()
+        .map(|services| services.interactions.clone());
+    if let Some(services) = services {
+        let _ = services.submitter.owner.shutdown().await;
+    }
+    if let Some(cleanup) = cleanup {
+        let _ = cleanup.await;
+    }
+    coordinator.dispose();
+    if let Some(interactions) = interactions {
+        interactions.dispose(&"gateway_disposed".into());
     }
 }
 
