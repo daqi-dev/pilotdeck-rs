@@ -319,8 +319,10 @@ impl TurnGateway {
     /// resources dispose. The cleanup future must not enqueue new host jobs.
     /// A builder error still runs the host teardown before the failure is
     /// reported: the coordinator it created is disposed and this cleanup is
-    /// polled on the host thread (#1746). That wait is bounded by
-    /// [`INITIALIZATION_TEARDOWN_DEADLINE`] so a cleanup that never completes
+    /// polled on the host thread (#1746). Neither await is unbounded — the
+    /// refused-owner shutdown is capped at [`INITIALIZATION_TEARDOWN_DEADLINE`]
+    /// and the cleanup is then given that same bound on its own clock, so the
+    /// failure path can take up to twice it, but a cleanup that never completes
     /// cannot turn the start into a hang; the only case left to the embedding
     /// is a host thread that never started (runtime build or spawn failure).
     /// An embedding whose cleanup carries its own budget should use
