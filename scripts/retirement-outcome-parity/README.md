@@ -10,7 +10,7 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
 | `negative_controls.py` | N1–N18 负控 + PC1–PC2 正控汇总式执行器（见下）。 |
-| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，1540 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
+| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，`du -sk` 1548 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
 | `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / CI 接线），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
 
 ## 金样来源
@@ -83,7 +83,8 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   fail-closed，绝不当 PASS。
 - 报告含 `p7Rounds` / `p7Evaluated`：只跑 1 轮时 P7 是空判，`status: PASS` 不得当作
   「跨轮稳定已核」的证据。
-- 两个入口都要求 `python3 -I`（断言 `sys.flags.isolated`，同装置族其它入口）；缺 `-I` 与
+- 三个入口（`check_outcome_parity.py` / `negative_controls.py` / `self_check.py`）都要求
+  `python3 -I`（断言 `sys.flags.isolated`，同装置族其它入口）；缺 `-I` 与
   其它入口级失败一律 rc=2（输入不可用），不是 rc=1。
 - **Rust 轮必须显式跑本装置**：判据尚未接进冻结装置 `session_domain.py`（见「容差与残余」③）。
 
@@ -231,8 +232,10 @@ token 的旧扫描同结论；Codex r16 用独立的 54 278 个 token 复算也�
 的窗口里读到半成品。前置自检逐轮覆盖 `--data` 下的**全部**轮次，另跑一次**跨轮合并**
 （`check --round <全部轮次>`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
 「参考轮对本身已漂移」，N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired`
-收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口
-成对设 `sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
+收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。三个入口
+（`check_outcome_parity.py` / `negative_controls.py` / `self_check.py`，含 `self_check` 的
+`check_lock` 在子进程里再加载 checker 的那一处）都成对设
+`sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
 `scripts/parity/*` 口径）：只挡写不挡读时，`spec_from_file_location` 仍可执行陈旧 `.pyc`
 （PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」；没有可写临时目录时回退到
 一个**核实不存在**、名字带 16 位随机字节的目录（固定的 `.no-pycache-<pid>` 可预测，等于给
@@ -267,7 +270,7 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
 | `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
 | 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
-| `self_check.py --budget --lock --wiring` | 夹具体积预算 · 输出目录互斥 · CI 接线本身还在 |
+| `self_check.py`（六项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · CI 接线，六条守卫本身都还在 |
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
 
@@ -276,8 +279,10 @@ python3 -I scripts/retirement-outcome-parity/self_check.py            # 六项�
 python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
-`--self-check-controls` 给每个守卫造一个违反样本（超大夹具 / 抢锁的第二进程 / 删掉步骤的
-workflow），对应检查必须**变红**；守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI
+`--self-check-controls` 给每个守卫造违反样本，对应检查必须**变红**：体积预算用超大夹具、
+CI 接线用三个变异 workflow（删掉 retirement 行 / 整段注释掉 / 给闸门 step 加 `if: false`）。
+输出目录锁没有独立样本——它本身就是行为测试（删掉 `flock` 后第二个进程不再等，`check_lock`
+直接红），所以控件是同一正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI
 步骤 → 相应用例变红」的机器证据。
 
 ## 为什么不在 `scripts/gateway-parity/`
