@@ -87,10 +87,25 @@ MUTATIONS = [
      '#1336 headersTimeout lets stop() retire a half-sent request'),
     # Node answers a request whose body never arrives with 408, not 200.
     ('request-timeout-status', source / 'http.rs',
-     'super::response(408, None, b\"\")',
-     'super::response(200, None, b\"\")',
+     '        .status(408)',
+     '        .status(200)',
      'request_timeout_answers_408_and_releases_stop',
      '#1336 requestTimeout answers 408'),
+    # The 408 is a zero-length response: a body would leave the client reading
+    # past the pinned `\r\n\r\n` tail (A8.3-WECOM-CALLBACK-408-001).
+    ('wecom-408-with-body', source / 'http.rs',
+     '.body(super::full(Bytes::new()))',
+     '.body(super::full(Bytes::from_static(b"x")))',
+     'request_timeout_answers_408_and_releases_stop',
+     '#1336 the 408 has no body'),
+    # The active-chat claim only holds if the winner inserts the chat while it
+    # still owns the state lock; without the insert every concurrent POST
+    # dispatches its own turn (#1336 r2 concurrency P1).
+    ('active-chat-not-inserted', source / 'mod.rs',
+     'state.active_chats.insert(chat_id.clone());',
+     '/* claim dropped by the mutant */',
+     'concurrent_posts_for_one_chat_dispatch_once',
+     '#1336 concurrent posts for one chat dispatch exactly one turn'),
     # The recorded case count is 22; the replay holds the declaration to it.
     # Dropping a case *and* lowering the declaration together leaves the
     # non-empty and declaration checks green; only the generator's literal 22

@@ -721,8 +721,11 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                 // Wait for the accept, not for a fixed slice of wall clock: a
                 // `stop-pending` that flips the shutdown watch before the
                 // accept loop took the connection makes the oracle's drain
-                // cell fail for scheduling reasons only.
-                let before = http::accepted::count();
+                // cell fail for scheduling reasons only. The counter belongs
+                // to this channel, so a test running in parallel cannot
+                // satisfy the barrier on its own connection.
+                let counter = channel.runtime.accepted.clone();
+                let before = counter.load(std::sync::atomic::Ordering::SeqCst);
                 let mut stream = TcpStream::connect(("127.0.0.1", case_port()))
                     .await
                     .expect("#1336 slow socket connect");
@@ -734,7 +737,10 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                             .as_bytes(),
                     )
                     .await;
-                until(&context, move || http::accepted::count() > before).await;
+                until(&context, move || {
+                    counter.load(std::sync::atomic::Ordering::SeqCst) > before
+                })
+                .await;
                 sockets.insert(
                     step["label"]
                         .as_str()
@@ -1102,6 +1108,13 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
 /// Node's `requestTimeout`: a request whose body never arrives is answered
 /// `408` instead of holding the connection, and the timeout is what lets
 /// `stop()` drain a client that stalls after sending its headers.
+///
+/// The bytes are Node's 51 unframed bytes plus hyper's framing (`date`,
+/// `content-length: 0`) — the `connection: close` header is what closes the
+/// socket, and without it the connection stays open and `stop()` pins. The
+/// presentation difference is registered in
+/// `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-408-001.md`; a status-only
+/// check (the earlier shape of this test) could not tell the two apart.
 #[tokio::test]
 async fn request_timeout_answers_408_and_releases_stop() {
     const PORT: u16 = 18995;
@@ -1116,12 +1129,17 @@ async fn request_timeout_answers_408_and_releases_stop() {
         Duration::from_secs(5),
     )
     .await;
+    let raw = response.as_deref().unwrap_or_default();
     crate::negative_assert!(
-        response
-            .as_deref()
-            .is_some_and(|raw| raw.starts_with(b"HTTP/1.1 408")),
-        "#1336 requestTimeout answers 408"
+        raw.starts_with(b"HTTP/1.1 408 Request Timeout\r\n"),
+        "#1336 requestTimeout answers 408 Request Timeout"
     );
+    crate::negative_assert!(
+        raw.windows(b"\r\nconnection: close\r\n".len())
+            .any(|window| window == b"\r\nconnection: close\r\n"),
+        "#1336 the 408 closes the connection like Node's requestTimeout"
+    );
+    crate::negative_assert!(raw.ends_with(b"\r\n\r\n"), "#1336 the 408 has no body");
     crate::negative_assert!(
         drained,
         "#1336 requestTimeout lets stop() retire a stalled body"
@@ -1164,9 +1182,14 @@ async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
         WeComCallbackOptions::from_object(&options, QYAPI),
         Arc::new(NoInteraction),
     );
-    http::listen_with(channel.runtime.clone(), u32::from(port), timeouts)
-        .await
-        .expect("#1336 stalled listen")
+    http::listen_with(
+        channel.runtime.clone(),
+        u32::from(port),
+        timeouts,
+        Some(channel.runtime.accepted.clone()),
+    )
+    .await
+    .expect("#1336 stalled listen")
 }
 
 /// One client, one stalled request, one `stop()`: returns the first response
@@ -1203,4 +1226,136 @@ async fn stop_after_stalled_request(
     })
     .await;
     (response, drained)
+}
+
+/// #1336 r2 (concurrency P1): the active-chat claim is one critical section —
+/// `contains`, `resolve` and `insert` under a single lock — so simultaneous
+/// POSTs for the same chat dispatch exactly one turn. The recorded case
+/// `post-duplicate-active` cannot see the difference, because it waits for the
+/// first turn's submit before sending the second POST; a gate split back into
+/// two `state.lock()` scopes passes it. Here eight POSTs race with no ordering
+/// between them, and every one of them must either dispatch or be logged as
+/// already active.
+///
+/// The reply path points at a loopback port nothing listens on, so this test
+/// never touches the golden run's qyapi fake (18998) or its port.
+#[tokio::test]
+async fn concurrent_posts_for_one_chat_dispatch_once() {
+    const PORT: u16 = 18994;
+    const REQUESTS: usize = 8;
+    let oracle = oracle();
+    let case = oracle["cases"]
+        .as_array()
+        .expect("#1336 cases")
+        .iter()
+        .find(|case| case["name"].as_str() == Some("post-duplicate-active"))
+        .expect("#1336 post-duplicate-active case")
+        .clone();
+    let post = case["steps"]
+        .as_array()
+        .expect("#1336 steps")
+        .iter()
+        .find(|step| step["op"].as_str() == Some("http"))
+        .expect("#1336 concurrency POST step")
+        .clone();
+    let path = post["path"].as_str().expect("#1336 POST path").to_owned();
+    let body = post["body"].as_str().expect("#1336 POST body").to_owned();
+
+    let record = Arc::new(Mutex::new(Record::default()));
+    let gates = Gates::default();
+    let mut options = JsObject::new();
+    for (key, value) in [
+        ("corpId", "corp-x"),
+        ("agentId", "agent-1"),
+        ("secret", "corp-secret"),
+        ("token", "cbToken1"),
+        (
+            "encodingAesKey",
+            "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY",
+        ),
+    ] {
+        options.insert(key.into(), JsValue::String(JsString::from(value)));
+    }
+    options.insert("port".into(), JsValue::Number(f64::from(PORT)));
+    // Nothing listens here: the winning turn's replies fail fast instead of
+    // landing in the golden run's qyapi fake.
+    let channel = WeComCallbackChannel::new(
+        WeComCallbackOptions::from_object(&options, "http://127.0.0.1:18993/cgi-bin"),
+        Arc::new(ScriptInteraction {
+            script: json!({}),
+            record: record.clone(),
+        }),
+    );
+    let gateway: Arc<dyn TurnGateway> = Arc::new(MockInbound {
+        turns: vec![TurnScript {
+            gate_before: Some("hold".into()),
+            events: Vec::new(),
+            error: None,
+        }],
+        next: Mutex::new(0),
+        record: record.clone(),
+        gates: gates.clone(),
+    });
+    let logger = record.clone();
+    let deps = ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: Some(Arc::new(move |level, message| {
+            logger
+                .lock()
+                .expect("#1336 record mutex")
+                .logs
+                .push(json!([level, message]));
+        })),
+        turn_gateway: Some(gateway),
+    };
+    let context = "case concurrent-posts".to_owned();
+    let handle = bounded(&context, channel.start(deps))
+        .await
+        .expect("#1336 concurrent start");
+
+    let mut requests = Vec::new();
+    for _ in 0..REQUESTS {
+        let context = context.clone();
+        let path = path.clone();
+        let body = body.clone();
+        requests.push(tokio::spawn(async move {
+            http_request(&context, PORT, "POST", &path, Some(&body)).await
+        }));
+    }
+    // Every request either dispatched (exactly one) or logged the skip; wait
+    // until all eight have decided instead of sleeping for a settle window.
+    // The winning POST is still parked inside its turn, so its HTTP response
+    // has not been written yet — awaiting the handles here would deadlock.
+    until(&context, || {
+        let record = record.lock().expect("#1336 record mutex");
+        let skipped = record
+            .logs
+            .iter()
+            .filter(|entry| {
+                entry[1]
+                    .as_str()
+                    .is_some_and(|message| message.ends_with("already active, skipping"))
+            })
+            .count();
+        record.gateway.len() + skipped >= REQUESTS
+    })
+    .await;
+    let gateway_calls = record.lock().expect("#1336 record mutex").gateway.len();
+    crate::negative_assert_eq!(
+        gateway_calls,
+        1,
+        "#1336 concurrent posts for one chat dispatch exactly one turn"
+    );
+    // Open the gate: the winning turn streams its (empty) script and the
+    // channel writes the one response all eight clients are waiting on.
+    let _ = gate(&gates, "hold").send(true);
+    for request in requests {
+        bounded(&context, request)
+            .await
+            .expect("#1336 concurrent request task");
+    }
+    bounded(&context, handle.stop("done"))
+        .await
+        .expect("#1336 concurrent stop");
 }

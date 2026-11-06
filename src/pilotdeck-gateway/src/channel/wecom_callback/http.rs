@@ -1,14 +1,30 @@
 //! `http.createServer(...).listen(port, "0.0.0.0")` plus Node 22
 //! `server.close()` drain semantics: stop accepting, let in-flight requests
 //! finish, close idle keep-alive connections.
+//!
+//! This is the second hand-rolled `node:http` transport in the gateway: the
+//! shared lane (`crate::http_proxy::serve_connection_native_with_shutdown`,
+//! used by `channel/webhook` and `channel/api_server`) carries #1292's
+//! keep-alive/408 grid, while this module implements only what the WeCom
+//! callback needs. The differences that can reach the wire, all deliberate and
+//! both registered as unapproved draft entries:
+//! `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-408-001.md` (the
+//! `requestTimeout` 408 is framed by hyper — `date` + `content-length: 0` —
+//! instead of Node's 51 raw bytes) and
+//! `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-KEEPALIVE-001.md` (no
+//! `Keep-Alive: timeout=5` header, and an idle keep-alive connection retires on
+//! the 60 s `header_read_timeout` instead of Node's 5 s `keepAliveTimeout`).
+//! Moving to the shared lane is tracked as a follow-up, not done here so the
+//! channel's recorded behaviour stays what the golden fixture pins.
 
 use std::{
     convert::Infallible,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
-use hyper::{server::conn::http1, service::service_fn};
+use bytes::Bytes;
+use hyper::{Response, header, server::conn::http1, service::service_fn};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
@@ -42,24 +58,27 @@ impl Default for Timeouts {
 /// resource error (EMFILE) without a pause would spin a worker at 100% CPU.
 const ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 
-/// Test-only request-entry counter. The replay harness has to know that the
-/// server has read a request head and is now waiting on its body before it can
-/// assert what `stop()` does to that connection, and nothing else about an
-/// in-flight-but-silent request is observable; a fixed sleep was a wall-clock
-/// guess that failed under load.
-#[cfg(test)]
-pub(crate) mod accepted {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+/// Test-only request-entry counter, **per channel instance**. The replay
+/// harness has to know that this server has read a request head and is now
+/// waiting on its body before it can assert what `stop()` does to that
+/// connection, and nothing else about an in-flight-but-silent request is
+/// observable; a fixed sleep was a wall-clock guess that failed under load. A
+/// process-global counter let a concurrently running test satisfy another
+/// test's barrier, so the counter belongs to the channel under test.
+pub(crate) type Accepted = Arc<std::sync::atomic::AtomicUsize>;
 
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-
-    pub(crate) fn bump() {
-        COUNT.fetch_add(1, Ordering::SeqCst);
-    }
-
-    pub(crate) fn count() -> usize {
-        COUNT.load(Ordering::SeqCst)
-    }
+/// The 408 Node answers a request that exceeds `requestTimeout` with. Node
+/// writes 51 raw bytes and destroys the socket; hyper frames a response
+/// through its public API, so the wire adds `date` and `content-length: 0`
+/// and the `connection: close` header is what closes the socket. The exact
+/// bytes are pinned by `request_timeout_answers_408_and_releases_stop`.
+fn request_timeout_response() -> Response<super::Body> {
+    Response::builder()
+        .status(408)
+        .header(header::DATE, httpdate::fmt_http_date(SystemTime::now()))
+        .header(header::CONNECTION, "close")
+        .body(super::full(Bytes::new()))
+        .expect("#1336 request timeout response")
 }
 
 /// A listen failure formatted as the thrown JavaScript value would print:
@@ -125,8 +144,12 @@ impl Drop for Listener {
 
 /// Bind on `0.0.0.0:port` and start serving. Resolves only after the socket
 /// is listening, matching the `await new Promise(... listen ...)` shape.
-pub(crate) async fn listen(runtime: Arc<Runtime>, port: u32) -> Result<Listener, ListenError> {
-    listen_with(runtime, port, Timeouts::default()).await
+pub(crate) async fn listen(
+    runtime: Arc<Runtime>,
+    port: u32,
+    accepted: Option<Accepted>,
+) -> Result<Listener, ListenError> {
+    listen_with(runtime, port, Timeouts::default(), accepted).await
 }
 
 /// `listen` with the connection timers spelled out; the tests drive the same
@@ -135,6 +158,7 @@ pub(crate) async fn listen_with(
     runtime: Arc<Runtime>,
     port: u32,
     timeouts: Timeouts,
+    accepted: Option<Accepted>,
 ) -> Result<Listener, ListenError> {
     let port: u16 = port.try_into().map_err(|_| ListenError::bad_port(port))?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
@@ -151,9 +175,9 @@ pub(crate) async fn listen_with(
             tokio::select! {
                 biased;
                 _ = shutdown_rx.changed() => break,
-                accepted = listener.accept() => {
-                    let (stream, _peer) = match accepted {
-                        Ok(accepted) => accepted,
+                picked = listener.accept() => {
+                    let (stream, _peer) = match picked {
+                        Ok(picked) => picked,
                         Err(error) => {
                             // Node's server emits `error` and keeps serving.
                             // Retrying a persistent failure (EMFILE, ENOBUFS)
@@ -165,21 +189,24 @@ pub(crate) async fn listen_with(
                     };
                     let runtime = runtime.clone();
                     let mut shutdown = shutdown_rx.clone();
+                    let accepted = accepted.clone();
                     connections.spawn(async move {
                         let service = service_fn(move |request| {
                             let runtime = runtime.clone();
+                            let accepted = accepted.clone();
                             async move {
                                 // The request head has been read and the body
                                 // is pending; from here on `stop()` drains this
                                 // connection instead of dropping it.
-                                #[cfg(test)]
-                                accepted::bump();
+                                if let Some(accepted) = accepted.as_ref() {
+                                    accepted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                }
                                 // Node's `requestTimeout`: a request that has
                                 // not completed in time is answered 408 and the
                                 // connection is closed instead of pending.
                                 match tokio::time::timeout(timeouts.request, runtime.handle_request(request)).await {
                                     Ok(response) => Ok::<_, Infallible>(response),
-                                    Err(_) => Ok::<_, Infallible>(super::response(408, None, b"")),
+                                    Err(_) => Ok::<_, Infallible>(request_timeout_response()),
                                 }
                             }
                         });
@@ -208,6 +235,18 @@ pub(crate) async fn listen_with(
                             biased;
                             _ = connection.as_mut() => return,
                             _ = std::future::ready(()) => {}
+                        }
+                        // `stop()` may have flipped the watch between this
+                        // connection's `accept()` and the receiver clone above.
+                        // `changed()` only fires on a *later* update, so that
+                        // connection would never see the stop, never
+                        // `graceful_shutdown`, and `Listener::stop` would wait
+                        // on the drain forever (an idle keep-alive connection
+                        // has no timer). The watch value is the authority.
+                        if *shutdown.borrow() {
+                            connection.as_mut().graceful_shutdown();
+                            let _ = connection.await;
+                            return;
                         }
                         tokio::select! {
                             _ = connection.as_mut() => {}

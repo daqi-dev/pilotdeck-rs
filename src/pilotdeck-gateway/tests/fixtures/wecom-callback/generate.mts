@@ -31,6 +31,22 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const requireBaseline = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(requireBaseline.resolve('tsx'))('esbuild');
 
+// #1336 (fixtures P1): `tcp-open` used to wait only for the *client's*
+// `connect` callback, so the following `stop-pending` could run before the
+// server had accepted the connection — libuv does not order those two
+// callbacks, and the recorded drain cell then depended on which won. Wrapping
+// the (shared, mutable) builtin `createServer` lets the case wait for the
+// server's own `connection` event, which is the same barrier the Rust replay
+// takes from its per-channel accept counter.
+const nodeHttp = requireBaseline('node:http') as typeof http;
+const recordedServers: http.Server[] = [];
+const createServer = nodeHttp.createServer;
+nodeHttp.createServer = ((...args: any[]) => {
+  const server = (createServer as any)(...args);
+  recordedServers.push(server);
+  return server;
+}) as any;
+
 const CORP = 'corp-x';
 const TOKEN = 'cbToken1';
 const SECRET = 'sec-1';
@@ -323,6 +339,13 @@ async function runCase(index: number, definition: Case): Promise<any> {
       await pendingStops.get(step.label);
       events.push({ stop: step.reason });
     } else if (step.op === 'tcp-open') {
+      const server = recordedServers[recordedServers.length - 1];
+      // The server must have accepted this connection before the next step
+      // (`stop-pending`) closes the listener: the client's `connect` callback
+      // and the server's `connection` event are independent libuv events, so
+      // waiting only for the former left the recorded stop/drain order to the
+      // scheduler.
+      const accepted = new Promise<void>(resolve => server.once('connection', () => resolve()));
       const socket = net.connect(port, '127.0.0.1');
       const record = { socket, chunks: [] as Buffer[] };
       sockets.set(step.label, record);
@@ -333,6 +356,7 @@ async function runCase(index: number, definition: Case): Promise<any> {
         socket.once('connect', () => resolve());
         socket.once('error', error => reject(error));
       });
+      await accepted;
       socket.write(step.request);
     } else if (step.op === 'tcp-chunk') {
       sockets.get(step.label)!.socket.write(step.chunk);
@@ -378,7 +402,7 @@ const slowPost = (() => {
 const definitions: Case[] = [
   {
     name: 'missing-required-config',
-    config: { token: TOKEN, encodingAesKey: AESKEY, secret: SECRET, agentId: AGENT, port: 18800 },
+    config: { token: TOKEN, encodingAesKey: AESKEY, secret: SECRET, agentId: AGENT, port: 18900 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -388,7 +412,7 @@ const definitions: Case[] = [
   },
   {
     name: 'missing-outbound-config',
-    config: { corpId: CORP, token: TOKEN, encodingAesKey: AESKEY, port: 18801 },
+    config: { corpId: CORP, token: TOKEN, encodingAesKey: AESKEY, port: 18901 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -398,7 +422,7 @@ const definitions: Case[] = [
   },
   {
     name: 'bind-failure',
-    config: { ...baseConfig, port: 18802 },
+    config: { ...baseConfig, port: 18902 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'occupy' },
@@ -417,7 +441,7 @@ const definitions: Case[] = [
   },
   {
     name: 'http-get-faces',
-    config: { ...baseConfig, port: 18803 },
+    config: { ...baseConfig, port: 18903 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -430,7 +454,7 @@ const definitions: Case[] = [
   },
   {
     name: 'post-rejects',
-    config: { ...baseConfig, port: 18804 },
+    config: { ...baseConfig, port: 18904 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -441,7 +465,7 @@ const definitions: Case[] = [
   },
   {
     name: 'post-dispatches-turn',
-    config: { ...baseConfig, port: 18805 },
+    config: { ...baseConfig, port: 18905 },
     qyapi: [OK_TOKEN],
     turns: [{ events: [{ type: 'assistant_text_delta', text: 'Hello ' }, { type: 'assistant_text_delta', text: 'world' }] }],
     ...noHelpers,
@@ -454,7 +478,7 @@ const definitions: Case[] = [
   },
   {
     name: 'post-ignores',
-    config: { ...baseConfig, port: 18806 },
+    config: { ...baseConfig, port: 18906 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -467,7 +491,7 @@ const definitions: Case[] = [
   },
   {
     name: 'post-duplicate-active',
-    config: { ...baseConfig, port: 18807 },
+    config: { ...baseConfig, port: 18907 },
     qyapi: [OK_TOKEN],
     turns: [{ gateBefore: 'turn-1', events: [{ type: 'assistant_text_delta', text: '完成回复' }] }],
     ...noHelpers,
@@ -485,7 +509,7 @@ const definitions: Case[] = [
   },
   {
     name: 'mapper-commands',
-    config: { ...baseConfig, port: 18808 },
+    config: { ...baseConfig, port: 18908 },
     qyapi: [OK_TOKEN],
     turns: [
       { events: [{ type: 'assistant_text_delta', text: '回答一' }] },
@@ -507,7 +531,7 @@ const definitions: Case[] = [
   },
   {
     name: 'post-renders-events',
-    config: { ...baseConfig, port: 18809 },
+    config: { ...baseConfig, port: 18909 },
     qyapi: [OK_TOKEN],
     turns: [{ events: [
       { type: 'assistant_text_delta', text: 'a' },
@@ -531,7 +555,7 @@ const definitions: Case[] = [
   },
   {
     name: 'elicitation-pending',
-    config: { ...baseConfig, port: 18810 },
+    config: { ...baseConfig, port: 18910 },
     qyapi: [OK_TOKEN],
     turns: [],
     elicitation: { pending: ['chat1'], capture: '请选择：', answer: '已收到答复。' },
@@ -545,7 +569,7 @@ const definitions: Case[] = [
   },
   {
     name: 'permission-success',
-    config: { ...baseConfig, port: 18811 },
+    config: { ...baseConfig, port: 18911 },
     qyapi: [OK_TOKEN],
     turns: [],
     elicitation: { pending: [], capture: '', answer: null },
@@ -564,7 +588,7 @@ const definitions: Case[] = [
   },
   {
     name: 'permission-confirm-fails',
-    config: { ...baseConfig, port: 18812 },
+    config: { ...baseConfig, port: 18912 },
     qyapi: [OK_TOKEN, { status: 500, json: { errcode: 1, errmsg: 'server boom' } }],
     turns: [],
     elicitation: { pending: [], capture: '', answer: null },
@@ -583,7 +607,7 @@ const definitions: Case[] = [
   },
   {
     name: 'permission-no-text',
-    config: { ...baseConfig, port: 18813 },
+    config: { ...baseConfig, port: 18913 },
     qyapi: [],
     turns: [],
     elicitation: { pending: [], capture: '', answer: null },
@@ -601,7 +625,7 @@ const definitions: Case[] = [
   },
   {
     name: 'turn-error-fallback',
-    config: { ...baseConfig, port: 18814 },
+    config: { ...baseConfig, port: 18914 },
     qyapi: [OK_TOKEN],
     turns: [{ events: [{ type: 'assistant_text_delta', text: '部分' }], error: 'turn exploded' }],
     ...noHelpers,
@@ -614,7 +638,7 @@ const definitions: Case[] = [
   },
   {
     name: 'token-expiry-refresh',
-    config: { ...baseConfig, port: 18815 },
+    config: { ...baseConfig, port: 18915 },
     qyapi: [
       OK_TOKEN,
       { status: 200, json: { errcode: 40014, errmsg: 'invalid credential' } },
@@ -636,7 +660,7 @@ const definitions: Case[] = [
   },
   {
     name: 'stop-closes-listener',
-    config: { ...baseConfig, port: 18816 },
+    config: { ...baseConfig, port: 18916 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },
@@ -646,7 +670,7 @@ const definitions: Case[] = [
   },
   {
     name: 'restart-no-replay',
-    config: { ...baseConfig, port: 18817 },
+    config: { ...baseConfig, port: 18917 },
     qyapi: [OK_TOKEN],
     turns: [
       { events: [{ type: 'assistant_text_delta', text: '一' }] },
@@ -666,7 +690,7 @@ const definitions: Case[] = [
   },
   {
     name: 'stop-drains-inflight',
-    config: { ...baseConfig, port: 18818 },
+    config: { ...baseConfig, port: 18918 },
     qyapi: [OK_TOKEN],
     turns: [{ events: [{ type: 'assistant_text_delta', text: '好' }] }],
     ...noHelpers,
@@ -683,7 +707,7 @@ const definitions: Case[] = [
   },
   {
     name: 'stop-detached-turn',
-    config: { ...baseConfig, port: 18819 },
+    config: { ...baseConfig, port: 18919 },
     qyapi: [OK_TOKEN],
     turns: [{ gateBefore: 'turn-1', events: [{ type: 'assistant_text_delta', text: '迟到的回复' }] }],
     ...noHelpers,
@@ -698,7 +722,7 @@ const definitions: Case[] = [
   },
   {
     name: 'stop-idempotent',
-    config: { ...baseConfig, port: 18820 },
+    config: { ...baseConfig, port: 18920 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
       { op: 'start' },

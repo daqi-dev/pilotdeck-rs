@@ -176,6 +176,23 @@ struct Runtime {
     http: HttpClient,
     log: Mutex<Option<ChannelLog>>,
     state: Mutex<State>,
+    /// Test seam: how many request heads this channel's listener has read.
+    /// Per channel, so parallel tests cannot satisfy each other's barriers
+    /// (the count used to be a process-global static).
+    #[cfg(test)]
+    accepted: http::Accepted,
+}
+
+/// The counter the listener bumps in tests; `None` in production builds, so
+/// the serving path is identical and pays nothing for the seam.
+#[cfg(test)]
+fn accepted_seam(runtime: &Runtime) -> Option<http::Accepted> {
+    Some(runtime.accepted.clone())
+}
+
+#[cfg(not(test))]
+fn accepted_seam(_runtime: &Runtime) -> Option<http::Accepted> {
+    None
 }
 
 impl Runtime {
@@ -216,7 +233,7 @@ impl Runtime {
             );
             return Ok(Arc::new(NoopHandle));
         }
-        match http::listen(self.clone(), self.options.port).await {
+        match http::listen(self.clone(), self.options.port, accepted_seam(self)).await {
             Ok(listener) => {
                 self.log(
                     "info",
@@ -760,6 +777,8 @@ impl WeComCallbackChannel {
                 token: None,
                 active_chats: HashSet::new(),
             }),
+            #[cfg(test)]
+            accepted: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         });
         Self {
             key: ChannelKey::new(CHANNEL_KEY),
