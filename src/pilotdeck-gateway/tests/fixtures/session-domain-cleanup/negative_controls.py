@@ -78,6 +78,13 @@ COMMON_SOURCE = ROOT / 'scripts/gateway-parity/common.py'
 GUARD_SOURCE = ROOT / 'scripts/gateway-parity/_guard.py'
 CHECK = Path(__file__).resolve().with_name('check_cleanup.py')
 NEGATIVE = Path(__file__).resolve()
+# #892 fix-r25: the ``rel`` the audit reports for the two fixture files, so a
+# judge can bind the failure to the file the mutant touched instead of any
+# ``main`` in the batch.
+CHECK_REL = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+             'check_cleanup.py')
+NEG_REL = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
+           'negative_controls.py')
 
 _MISSING = object()
 
@@ -1309,6 +1316,77 @@ def calibrate_redefined_loader(rows):
     return calibrate_shadowed_common(rows)
 
 
+def _not_shared(rows, rel, function, detail):
+    """#892 r25: a registered point in *rel* whose shared relay lost its proof."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    needle = (f'aggregation-audit: {rel}:{function} must call '
+              'common.aggregate_status')
+    if not any(needle in failure for failure in (row.get('failures') or [])):
+        return False, (f'failures={row.get("failures")!r}, want the {needle!r} '
+                       'failure')
+    return True, detail
+
+
+def calibrate_conditional_def(rows):
+    """#892 r25: a same-named ``def`` inside a module-level ``if`` runs at
+    import time but the binding graph only walked the top level (GLM boundary
+    r24 P0-1)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: conditional module-scope def flagged, passed=False')
+
+
+def calibrate_decorated_source(rows):
+    """#892 r25: a decorator replaces the function object at def time while the
+    binding graph still saw one ``None`` binding (GLM concurrency r24 P0-1)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: decorated proven source flagged, passed=False')
+
+
+def calibrate_nested_def_rebind(rows):
+    """#892 r25: a nested ``def`` shadows the imported proven source for the
+    whole body (GLM boundary r24 P0-2)."""
+    return _not_shared(
+        rows, NEG_REL, 'main',
+        'aggregation-audit: nested-def rebind flagged, passed=False')
+
+
+def calibrate_walrus_rebind(rows):
+    """#892 r25: ``(name := None)`` binds in the enclosing function scope with
+    no ``Assign`` statement to record it (GLM boundary r24 P0-2)."""
+    return _not_shared(
+        rows, NEG_REL, 'main',
+        'aggregation-audit: walrus rebind flagged, passed=False')
+
+
+def calibrate_dynamic_globals_write(rows):
+    """#892 r25: ``globals()['<registered>'] = <stub>`` moves a module binding
+    behind the binding graph's back (GLM boundary r24 P1-4)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: dynamic globals write flagged, passed=False')
+
+
+def calibrate_sys_modules_poison(rows):
+    """#892 r25: ``sys.modules['_guard'] = <stub>`` satisfies the get arm with a
+    stub instead of the module the bootstrap published (GLM concurrency r24
+    P1-3)."""
+    return calibrate_shadowed_common(rows)
+
+
+def calibrate_shadowed_global_loader(rows):
+    """#892 r25: ``global common; common = _load(...)`` was accepted on the
+    loader spelling even when the same function shadows ``_load`` (GLM sibling
+    r24 P1-1)."""
+    return calibrate_shadowed_common(rows)
+
+
 def calibrate_computed_status_write(rows):
     """#892 r20: ``report['status'] = 'PA' + 'SS'`` writes the clean literal
     without ever being a ``Constant`` node (GLM boundary r19 P1-2)."""
@@ -2345,6 +2423,98 @@ MUTATIONS = [
      "def _load(name, path):\n"
      "    from types import SimpleNamespace\n"
      "    return SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n"),
+    # #892 fix-r25 (GLM boundary r24 P0-1): the binding graph walked only the
+    # statements ``_own_nodes`` descends, so a same-named def inside an
+    # ``if``/``try`` at module scope left the registered name on one ``[None]``
+    # binding and stayed proven while the conditional def ran.
+    ('calibrate-conditional-def', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if True:\n"
+     "    def load_session_domain():\n"
+     "        from types import SimpleNamespace\n"
+     "        return SimpleNamespace(common=SimpleNamespace(\n"
+     "            aggregate_status=lambda *a: ('FAIL', 1)))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r25 (GLM concurrency r24 P0-1 / boundary r24 P1-3): a decorator
+    # replaces the function object at def time; the binding graph still saw a
+    # single ``None`` binding and kept the name proven.
+    ('calibrate-decorated-source', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "def _swap_source(_fn):\n"
+     "    from types import SimpleNamespace\n"
+     "    return lambda *a, **k: SimpleNamespace(common=SimpleNamespace(\n"
+     "        aggregate_status=lambda *x: ('FAIL', 1)))\n"
+     "\n"
+     "\n"
+     "@_swap_source\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r25 (GLM boundary r24 P0-2 / concurrency r24 P1-2): a nested
+    # ``def`` shadows the imported proven source for the whole body, but
+    # ``_own_nodes`` prunes definition subtrees so ``local_names`` missed it.
+    ('calibrate-nested-def-rebind', NEGATIVE,
+     "    _install_terminate_handlers()\n    known = ",
+     "    _install_terminate_handlers()\n"
+     "    def committed_status_contract(*_a, **_k):\n"
+     "        from types import SimpleNamespace\n"
+     "        return SimpleNamespace(aggregate_status=lambda *a: ('FAIL', 1))\n"
+     "    known = "),
+    # #892 fix-r25 (GLM boundary r24 P0-2): a walrus target binds in the
+    # enclosing function scope and no ``Assign`` statement records it.
+    ('calibrate-walrus-rebind', NEGATIVE,
+     "    _install_terminate_handlers()\n    known = ",
+     "    _install_terminate_handlers()\n"
+     "    if (committed_status_contract := None) is None:\n"
+     "        pass\n"
+     "    known = "),
+    # #892 fix-r25 (GLM boundary r24 P1-4 / concurrency r24 P2-4): a
+    # ``globals()['<registered name>'] = <stub>`` write moves the module
+    # binding with no statement the binding graph can see.
+    ('calibrate-dynamic-globals-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "def _poison_dynamic():\n"
+     "    from types import SimpleNamespace\n"
+     "    globals()['load_session_domain'] = lambda *a, **k: SimpleNamespace(\n"
+     "        common=SimpleNamespace(aggregate_status=lambda *x: ('FAIL', 1)))\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r25 (GLM concurrency r24 P1-3): pre-seeding ``sys.modules``
+    # satisfies the ``sys.modules.get('_guard')`` arm with a stub while the
+    # bootstrap looks untouched.  Statically scanned only, like
+    # calibrate-redefined-loader above.
+    ('calibrate-sys-modules-poison', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "from types import SimpleNamespace as _SN_poison\n"
+     "sys.modules['_guard'] = _SN_poison(load=lambda *a, **k: None)\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    # #892 fix-r25 (GLM sibling r24 P1-1): ``global common; common =
+    # _load(...)`` was accepted on the module loader spelling even when the
+    # same function locally shadows ``_load`` with a stub factory.
+    ('calibrate-shadowed-global-loader', CONTROLS_SOURCE,
+     "_load = _guard.load\n",
+     "_load = _guard.load\n"
+     "\n"
+     "\n"
+     "def _poison_global():\n"
+     "    global common\n"
+     "    from types import SimpleNamespace\n"
+     "    _load = lambda *a, **k: SimpleNamespace(\n"
+     "        aggregate_status=lambda *x: ('FAIL', 1))\n"
+     "    common = _load('common', _apparatus / 'common.py')\n"),
 ]
 
 JUDGES = {
@@ -2678,6 +2848,20 @@ JUDGES = {
         'aggregation-audit', calibrate_shadowed_receiver_same_fn, False, ()),
     'calibrate-redefined-loader': (
         'aggregation-audit', calibrate_redefined_loader, False, ()),
+    'calibrate-conditional-def': (
+        'aggregation-audit', calibrate_conditional_def, False, ()),
+    'calibrate-decorated-source': (
+        'aggregation-audit', calibrate_decorated_source, False, ()),
+    'calibrate-nested-def-rebind': (
+        'aggregation-audit', calibrate_nested_def_rebind, False, ()),
+    'calibrate-walrus-rebind': (
+        'aggregation-audit', calibrate_walrus_rebind, False, ()),
+    'calibrate-dynamic-globals-write': (
+        'aggregation-audit', calibrate_dynamic_globals_write, False, ()),
+    'calibrate-sys-modules-poison': (
+        'aggregation-audit', calibrate_sys_modules_poison, False, ()),
+    'calibrate-shadowed-global-loader': (
+        'aggregation-audit', calibrate_shadowed_global_loader, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
