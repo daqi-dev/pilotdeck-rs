@@ -100,6 +100,16 @@ mutations = [
      "'#1011\\n', {flag: 'wx'}",
      'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
      '#1011 generator owner identifies fixture'),
+    # #1281: the work cleanup must also run when the oracle.json wx write
+    # fails after the whole matrix. Moving the rmSync out of the finally
+    # models "cleanup only on the success exit"; the collision cell of
+    # generator_cleans_owned_work must catch the leftover work-* directory.
+    ('generator-cleanup-success-only',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
+     '} finally {\n  fs.rmSync(work, {recursive: true, force: true});\n}',
+     '}\nfs.rmSync(work, {recursive: true, force: true});',
+     'runtime::session::factory::projection_cache_tests::generator_cleans_owned_work',
+     '#1011 generator left files behind in OUT'),
 
 ]
 
@@ -113,11 +123,15 @@ def mutate(content, scope, replacements):
 
 
 def run(out, env):
+    # #1281: PDRS_NEGATIVE_BASELINE lets an uncommitted sandbox candidate run
+    # its controls against the exact working tree, mirroring the
+    # turn-runner/spill-isolation runners; committed hosts keep HEAD.
+    baseline = env.get('PDRS_NEGATIVE_BASELINE', 'HEAD')
     compiled = []
     for name, filename, old, new, _, _ in mutations:
         target = root / filename
         try:
-            with mutating_sources(root, [target]) as originals:
+            with mutating_sources(root, [target], baseline=baseline) as originals:
                 target.write_text(mutate(originals[target].decode(), None, [(old, new)]))
                 slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
                 (out / f'{name}-compile-slots.log').write_text(slot.stdout + slot.stderr)
@@ -131,7 +145,8 @@ def run(out, env):
     (out / 'compilation.json').write_text(json.dumps(compiled, indent=2) + '\n')
     selected = [Case(name, root / filename, old, new, test, assertion)
                 for name, filename, old, new, test, assertion in mutations]
-    result = run_cases(root, selected, out, env, mutate, timeout=900, script=__file__)
+    result = run_cases(root, selected, out, env, mutate, timeout=900, script=__file__,
+                       baseline=env.get('PDRS_NEGATIVE_BASELINE', 'HEAD'))
     return result or int(any(not r['compiled'] for r in compiled))
 
 
@@ -184,7 +199,8 @@ def main():
     run_out = out / 'guarded-run'
     run_out.mkdir()
     try:
-        with mutating_sources(root, input_paths()):
+        with mutating_sources(root, input_paths(),
+                              baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):
             result = run(run_out, env)
         # Only the top-level receipt is final; publish it after all inputs have
         # been restored and verified. A killed process leaves no final receipt.

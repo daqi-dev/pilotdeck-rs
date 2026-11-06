@@ -772,13 +772,28 @@ fn delta_event_permutations_equal_replay() {
 #[ignore = "requires fixed Node v22.22.0 / ICU 78.2 and real TS baseline"]
 fn factory_generators_clean_only_owned_work() {
     use std::fs;
+    // #1281: cells are distinguished by variant, not a bare collision flag.
+    // The parent's own oracle.json collision and a child probe's raw/index.json
+    // collision fail at different points, and the snapshot body failure is not
+    // a collision at all.
+    #[derive(Debug)]
+    enum Variant {
+        Plain,
+        Collision(&'static str),
+        SnapshotFailure,
+    }
     let base = PathBuf::from(std::env::var_os("PDRS_BASELINE").expect("#1253 cleanup TS baseline"));
-    for (script, collision) in [
-        ("probe.mts", false),
-        ("probe.mts", true),
-        ("file-snapshot-test.mts", false),
-        ("generate.mts", false),
-        ("generate.mts", true),
+    for (script, variant) in [
+        ("probe.mts", Variant::Plain),
+        ("probe.mts", Variant::Collision("raw/resume-missing.json")),
+        ("file-snapshot-test.mts", Variant::Plain),
+        ("file-snapshot-test.mts", Variant::SnapshotFailure),
+        ("generate.mts", Variant::Plain),
+        ("generate.mts", Variant::Collision("oracle.json")),
+        // #1281: the probe child fails (a foreign raw/index.json collides with
+        // probe.mts's index write), so the parent must still clean the probe
+        // roots it allocated before launching the child.
+        ("generate.mts", Variant::Collision("raw/index.json")),
     ] {
         let root = std::env::temp_dir().join(format!("pdrs-1253-factory-{}", uuid::Uuid::new_v4()));
         for name in ["run-existing", "snapshot-contract-existing"] {
@@ -786,12 +801,7 @@ fn factory_generators_clean_only_owned_work() {
             fs::write(root.join(name).join("keep"), "foreign")
                 .expect("#1253 cleanup foreign marker");
         }
-        let collision_path = if script == "probe.mts" {
-            "raw/resume-missing.json"
-        } else {
-            "oracle.json"
-        };
-        if collision {
+        if let Variant::Collision(collision_path) = variant {
             let file = root.join(collision_path);
             fs::create_dir_all(file.parent().expect("#1253 cleanup collision parent"))
                 .expect("#1253 cleanup collision directory");
@@ -815,6 +825,12 @@ fn factory_generators_clean_only_owned_work() {
         } else {
             command.arg(&root);
         }
+        // #1281: the snapshot failure hook exists only in this cell's own
+        // environment; plain generate.mts cells spawn file-snapshot-test.mts
+        // with the inherited, hook-free environment.
+        if matches!(variant, Variant::SnapshotFailure) {
+            command.env("PDRS_1253_SNAPSHOT_FAIL", "1");
+        }
         let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
             &mut command,
             "session-factory",
@@ -822,8 +838,8 @@ fn factory_generators_clean_only_owned_work() {
         )
         .expect("#1253 cleanup generator bounded execution");
         assert!(
-            status.success() != collision,
-            "#1253 factory generator completes before cleanup: {script}: {}{}",
+            status.success() == matches!(variant, Variant::Plain),
+            "#1253 factory generator completes before cleanup: {script} {variant:?}: {}{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
@@ -842,7 +858,7 @@ fn factory_generators_clean_only_owned_work() {
         assert_eq!(
             scratch,
             ["run-existing", "snapshot-contract-existing"],
-            "#1253 factory generator removes only owned scratch: {script} collision={collision}"
+            "#1253 factory generator removes only owned scratch: {script} {variant:?}"
         );
         for name in ["run-existing", "snapshot-contract-existing"] {
             assert_eq!(
@@ -852,7 +868,7 @@ fn factory_generators_clean_only_owned_work() {
                 "#1253 cleanup foreign marker unchanged"
             );
         }
-        if collision {
+        if let Variant::Collision(collision_path) = variant {
             assert_eq!(
                 fs::read_to_string(root.join(collision_path))
                     .expect("#1253 cleanup collision retained"),

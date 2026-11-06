@@ -526,56 +526,76 @@ restore_tests! { cold_missing=>"cold-missing", cold_fresh=>"cold-fresh", cold_st
 #[test]
 #[ignore = "requires the pinned Node v22.22.0 TS baseline"]
 fn generator_cleans_owned_work() {
-    let scratch = std::env::temp_dir().join(format!("pdrs-1011-cleanup-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&scratch).expect("#1011 generator scratch");
-    // Foreign work directories must survive: only the generator's own root is removable.
-    std::fs::create_dir(scratch.join("work-foreign")).expect("#1011 foreign work sentinel");
-    let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
-    let mut command = std::process::Command::new("node");
-    command
-        .arg("--disable-warning=ExperimentalWarning")
-        .arg("--import")
-        .arg(format!("{base}/node_modules/tsx/dist/loader.mjs"))
-        .arg(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
+    // #1281: both exit paths must clean the owned work root — the success run
+    // and the oracle.json wx collision, which fails after the whole matrix.
+    for collision in [false, true] {
+        let scratch =
+            std::env::temp_dir().join(format!("pdrs-1011-cleanup-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&scratch).expect("#1011 generator scratch");
+        // Foreign work directories must survive: only the generator's own root is removable.
+        std::fs::create_dir(scratch.join("work-foreign")).expect("#1011 foreign work sentinel");
+        if collision {
+            std::fs::write(scratch.join("oracle.json"), "foreign report")
+                .expect("#1011 collision oracle sentinel");
+        }
+        let base = std::env::var("PDRS_BASELINE").expect("#1011 pinned baseline configured");
+        let mut command = std::process::Command::new("node");
+        command
+            .arg("--disable-warning=ExperimentalWarning")
+            .arg("--import")
+            .arg(format!("{base}/node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/session-factory/projection-cache/generate.mts"),
+            )
+            .arg(&scratch);
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+            &mut command,
+            "session-factory/projection-cache",
+            Duration::from_secs(180),
         )
-        .arg(&scratch);
-    let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
-        &mut command,
-        "session-factory/projection-cache",
-        Duration::from_secs(180),
-    )
-    .expect("#1011 generator bounded run");
-    assert!(
-        status.success(),
-        "#1011 generator completed: {}{}",
-        String::from_utf8_lossy(&stdout),
-        String::from_utf8_lossy(&stderr)
-    );
-    let mut names: Vec<_> = std::fs::read_dir(&scratch)
-        .expect("#1011 inspect generator OUT")
-        .map(|entry| {
-            entry
-                .expect("#1011 OUT entry")
-                .file_name()
-                .to_string_lossy()
-                .into_owned()
-        })
-        .collect();
-    names.sort();
-    assert_eq!(
-        names,
-        [".generation-owner", "oracle.json", "work-foreign"],
-        "#1011 generator left files behind in OUT"
-    );
-    assert_eq!(
-        std::fs::read_to_string(scratch.join(".generation-owner"))
-            .expect("#1011 read generator owner"),
-        "session-factory/projection-cache\n",
-        "#1011 generator owner identifies fixture"
-    );
-    std::fs::remove_dir_all(scratch).expect("#1011 remove owned test scratch");
+        .expect("#1011 generator bounded run");
+        assert!(
+            status.success() != collision,
+            "#1011 generator completed: {}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&scratch)
+            .expect("#1011 inspect generator OUT")
+            .map(|entry| {
+                entry
+                    .expect("#1011 OUT entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        // Both runs keep oracle.json: the successful run writes its report, and
+        // the colliding run leaves the foreign file untouched (asserted
+        // byte-for-byte below). Neither run may keep work-*.
+        assert_eq!(
+            names,
+            [".generation-owner", "oracle.json", "work-foreign"],
+            "#1011 generator left files behind in OUT"
+        );
+        assert_eq!(
+            std::fs::read_to_string(scratch.join(".generation-owner"))
+                .expect("#1011 read generator owner"),
+            "session-factory/projection-cache\n",
+            "#1011 generator owner identifies fixture"
+        );
+        if collision {
+            assert_eq!(
+                std::fs::read_to_string(scratch.join("oracle.json"))
+                    .expect("#1011 collision oracle retained"),
+                "foreign report",
+                "#1011 collision oracle bytes retained"
+            );
+        }
+        std::fs::remove_dir_all(scratch).expect("#1011 remove owned test scratch");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

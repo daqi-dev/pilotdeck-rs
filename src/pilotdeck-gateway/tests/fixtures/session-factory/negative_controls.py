@@ -29,7 +29,10 @@ oracle = Path(__file__).with_name('oracle.json')
 test_source = factory.with_name('factory_tests.rs')
 snapshot = Path(__file__).with_name('file-snapshot.mts')
 probe = Path(__file__).with_name('probe.mts')
+generator = Path(__file__).with_name('generate.mts')
+snapshot_test = Path(__file__).with_name('file-snapshot-test.mts')
 prefix = 'runtime::session::factory::tests::'
+delta_prefix = 'runtime::session::factory::projection_delta_tests::'
 cases = [
     ('same-key-concurrent', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_concurrent', '#745 same-key-concurrent conclusion'),
     ('same-key-cached', owner, 'dirty: false,', 'dirty: true,', None, prefix+'same_key_cached', '#745 same-key-cached conclusion'),
@@ -302,6 +305,25 @@ cases = [
      '(Err(error), Some(pending)) => aggregate(',
      None, prefix+'recreation_cancelled_timeout_busy_is_not_aggregated_with_failed_disposal_by_close',
      '#1218 close keeps only the failed disposal error beside a retriable BUSY'),
+    # #1281 cell ①: a failing probe child (foreign raw/index.json collides
+    # with probe.mts's index write) must still make the parent clean the probe
+    # roots it allocated. The mutation models "cleanup only runs when the main
+    # probe child succeeded".
+    dict(name='generator-probe-child-failure-cleanup-skipped',
+         changes=[(generator, 'try {', 'let probeChildOk=false;try {'),
+                  (generator, "process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts')],{env:probeEnv(),encoding:'utf8',timeout:120000}));",
+                              "process.stdout.write(execFileSync(process.execPath,['--import',path.join(base,'node_modules/tsx/dist/loader.mjs'),path.join(here,'probe.mts')],{env:probeEnv(),encoding:'utf8',timeout:120000}));probeChildOk=true;"),
+                  (generator, 'for(const work of ownedProbeRoots)fs.rmSync(work,{recursive:true,force:true});',
+                              'if(probeChildOk)for(const work of ownedProbeRoots)fs.rmSync(work,{recursive:true,force:true});')],
+         test=delta_prefix+'factory_generators_clean_only_owned_work',
+         assertion='#1253 factory generator removes only owned scratch: generate.mts Collision("raw/index.json")'),
+    # #1281 cell ②: file-snapshot-test.mts's own finally must clean its
+    # snapshot-contract root even when the body fails after mkdtemp.
+    ('snapshot-failure-cleanup-skipped', snapshot_test,
+     '}finally{fs.rmSync(root,{recursive:true,force:true});}',
+     "}finally{if(process.env.PDRS_1253_SNAPSHOT_FAIL!=='1')fs.rmSync(root,{recursive:true,force:true});}",
+     None, delta_prefix+'factory_generators_clean_only_owned_work',
+     '#1253 factory generator removes only owned scratch: file-snapshot-test.mts SnapshotFailure'),
 ]
 
 # These cfg(test) branches are selected at compile time by option_env!.
@@ -371,8 +393,12 @@ def audit():
                 if changed == current:
                     raise ValueError('mutation leaves source unchanged')
                 accumulated[path] = changed
-            source = factory.with_name('factory_tests.rs').read_text()
-            test_name = test.removeprefix(prefix)
+            # #1281: bound tests live in factory_tests.rs and (since the
+            # cleanup cells moved there) projection_delta_tests.rs; the short
+            # name keeps both module prefixes auditable the same way.
+            source = '\n'.join(factory.with_name(name).read_text()
+                              for name in ('factory_tests.rs', 'projection_delta_tests.rs'))
+            test_name = test.removeprefix(prefix).rsplit('::', 1)[-1]
             compact = ''.join(source.split())
             if 'fn' + test_name + '(' not in compact and test_name + '=>' not in compact:
                 raise ValueError('bound full test not found: ' + test)
@@ -394,7 +420,8 @@ def audit():
             if not test_name.endswith('regenerates_identically') and not any(
                 marker_matches(literal) for literal in literals
                 if '#745 ' in literal or '#1022 ' in literal or '#1027 ' in literal
-                or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal):
+                or '#1020 ' in literal or '#1122 ' in literal or '#1218 ' in literal
+                or '#1253 ' in literal):
                 raise ValueError('bound failure message not found: ' + assertion)
             rows.append(dict(mutation=name, status='CHECKED', test=test, assertion=assertion))
         except Exception as error:
@@ -478,8 +505,12 @@ source_guard_error = None
 
 if source_cases:
     try:
+        # #1281: PDRS_NEGATIVE_BASELINE lets an uncommitted sandbox candidate
+        # run its controls against the exact working tree, mirroring the
+        # turn-runner/spill-isolation runners; committed hosts keep HEAD.
         with mutating_sources(root, list(dict.fromkeys(
-                path for case in source_cases for path, _old, _new in row_parts(case)[1]))) as originals:
+                path for case in source_cases for path, _old, _new in row_parts(case)[1])),
+                baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')) as originals:
             for case in source_cases:
                 name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
@@ -521,7 +552,7 @@ elif switch_cases:
         # HEAD too. The official guard with an empty mutation set performs the
         # same pristine check and holds the same tree lock without owning any
         # source bytes (option_env! switches never write product sources).
-        with mutating_sources(root, []):
+        with mutating_sources(root, [], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE', 'HEAD')):
             for case in switch_cases:
                 name,changes,scope,test,assertion = row_parts(case)
                 row=dict(mutation=name,test=test,assertion=assertion,status='INVALID',reason='',compiled=False)
