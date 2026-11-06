@@ -90,7 +90,15 @@ MUTATIONS = [
      '        .status(408)',
      '        .status(200)',
      'request_timeout_answers_408_and_releases_stop',
-     '#1336 requestTimeout answers 408'),
+     '#1336 requestTimeout answers 408 Request Timeout'),
+    # The 408 must close the connection like Node's `requestTimeout`; the
+    # ledger entry (A8.3-WECOM-CALLBACK-408-001) names this mutation as its
+    # machine criterion, so it has to exist here.
+    ('wecom-408-without-close', source / 'http.rs',
+     '        .header(header::CONNECTION, "close")\n',
+     '',
+     'request_timeout_answers_408_and_releases_stop',
+     '#1336 the 408 closes the connection like Node\'s requestTimeout'),
     # The 408 is a zero-length response: a body would leave the client reading
     # past the pinned `\r\n\r\n` tail (A8.3-WECOM-CALLBACK-408-001).
     ('wecom-408-with-body', source / 'http.rs',

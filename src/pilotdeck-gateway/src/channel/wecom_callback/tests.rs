@@ -545,7 +545,10 @@ async fn http_request(
     };
     let _ = stream.write_all(request.as_bytes()).await;
     let mut raw = Vec::new();
-    let _ = stream.read_to_end(&mut raw).await;
+    // Bounded like every other blocking step: a regression that stops writing
+    // the response (or stops honouring `Connection: close`) must fail on the
+    // case marker, not hang the suite (`DEADLINE` contract above).
+    let _ = bounded(context, stream.read_to_end(&mut raw)).await;
     parse_raw_response(context, &raw)
 }
 
@@ -767,7 +770,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                 let mut stream = sockets.remove(label).expect("#1336 open socket");
                 let _ = stream.shutdown().await;
                 let mut raw = Vec::new();
-                let _ = stream.read_to_end(&mut raw).await;
+                let _ = bounded(&context, stream.read_to_end(&mut raw)).await;
                 record
                     .lock()
                     .expect("#1336 record mutex")
@@ -1239,7 +1242,13 @@ async fn stop_after_stalled_request(
 ///
 /// The reply path points at a loopback port nothing listens on, so this test
 /// never touches the golden run's qyapi fake (18998) or its port.
-#[tokio::test]
+///
+/// Multi-threaded on purpose (#1336 r3 boundary/sibling P1): the regression
+/// this pins is a claim block split back into two `state.lock()` scopes. The
+/// block is pure synchronous code, so on the default `current_thread` runtime
+/// no second task can run between the scopes and the mutant would pass. Two
+/// workers, as the module's own comment assumes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_posts_for_one_chat_dispatch_once() {
     const PORT: u16 = 18994;
     const REQUESTS: usize = 8;
@@ -1349,7 +1358,10 @@ async fn concurrent_posts_for_one_chat_dispatch_once() {
     );
     // Open the gate: the winning turn streams its (empty) script and the
     // channel writes the one response all eight clients are waiting on.
-    let _ = gate(&gates, "hold").send(true);
+    // `send_replace` (not `send`): with two workers the producer may not have
+    // subscribed yet, and `watch::Sender::send` silently drops the value when
+    // there is no receiver — the parked turn would then never be released.
+    let _ = gate(&gates, "hold").send_replace(true);
     for request in requests {
         bounded(&context, request)
             .await

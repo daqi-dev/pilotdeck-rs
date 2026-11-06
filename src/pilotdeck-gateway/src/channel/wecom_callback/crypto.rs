@@ -64,13 +64,18 @@ pub(crate) fn verify_msg_signature(
 
 /// Node `Buffer.from(value, "base64")`: ignore characters outside the base64
 /// alphabet (the base64url spelling `-`/`_` included, which Node accepts and
-/// maps to 62/63), tolerate missing padding, and ignore a trailing single
-/// quartet character. `ciphertextB64`/the 43-character `encodingAesKey` both
-/// arrive this way.
+/// maps to 62/63), **stop at the first `=`**, tolerate missing padding, and
+/// ignore a trailing single quartet character. `ciphertextB64`/the
+/// 43-character `encodingAesKey` both arrive this way.
 fn node_base64(value: &str) -> Vec<u8> {
     let mut filtered = String::with_capacity(value.len());
     for ch in value.chars() {
         match ch {
+            // Node's decoder ends at the first pad character; everything after
+            // it is discarded (`Buffer.from("QUJD=RA==","base64")` -> "ABC",
+            // measured on v22.22.0). Dropping the `=` and decoding on would
+            // read a longer key than the TS baseline.
+            '=' => break,
             '-' => filtered.push('+'),
             '_' => filtered.push('/'),
             _ if ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' => filtered.push(ch),
@@ -207,5 +212,16 @@ mod tests {
         assert_eq!(node_base64("+/8="), vec![0xfb, 0xff]);
         assert_eq!(node_base64("A$B="), vec![0x00]);
         assert_eq!(node_base64("AAAAA"), vec![0x00, 0x00, 0x00]);
+        // Node v22.22.0 probes (2026-11-06): a pad character ends the decode,
+        // whatever follows it is discarded; other invalid characters are
+        // simply skipped. `'QUJD=RA=='` -> 'ABC', `'QU=JD'` -> 'A',
+        // `'=QUJD'` -> empty, `'QUJD RA=='` -> 'ABCD', `'QU!JD'` -> 'ABC',
+        // `'QUJDRA==='` -> 'ABCD'.
+        assert_eq!(node_base64("QUJD=RA=="), b"ABC");
+        assert_eq!(node_base64("QU=JD"), b"A");
+        assert_eq!(node_base64("=QUJD"), Vec::<u8>::new());
+        assert_eq!(node_base64("QUJD RA=="), b"ABCD");
+        assert_eq!(node_base64("QU!JD"), b"ABC");
+        assert_eq!(node_base64("QUJDRA==="), b"ABCD");
     }
 }
