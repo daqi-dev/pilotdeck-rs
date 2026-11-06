@@ -1440,6 +1440,92 @@ def run():
                         "rows = [1] * 3\nprint(_d, rows)\n"
                       + _gw_tail) is not None)
 
+    # r32：模块名再绑成表、星号解包、builtins 也走容器、把可调用对象存在属性
+    # 上、for 目标取自被跟踪容器、集合运算、dict 视图、enumerate、把换名后的
+    # 反射结果当参数交给消费者。每条都对应 r31 复审的一条发现，且都在探针
+    # （/tmp/t1527-probe-r32.py）上先复现成 PASSES 再改。
+    case("gateway 模块名随后绑成表（属性）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\nboth = sys\nboth = sys.path\n"
+                        "both.append('/tmp/evil')\n" + _gw_tail) is None)
+    case("gateway 模块名随后绑成表（容器）→ 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\n_t = [sys.path]\nboth = sys\nboth = _t\n"
+                        "both[0].append('/tmp/evil')\n" + _gw_tail) is None)
+    case("gateway sys 表经星号解包换名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\n_xs = (sys, sys.path)\n"
+                        "both, _p = (*_xs,)\n_p.append('/tmp/evil')\n"
+                      + _gw_tail) is None)
+    case("gateway 模块名先绑表再被容器接走 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\n_p = sys.path\n_c = [_p]\n_x = _c\n"
+                        "both = sys\nboth = _p\nboth = _x.copy()\n"
+                        "both[0].append('/tmp/evil')\n" + _gw_tail) is None)
+    case("gateway builtins 从容器里取出后改绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\ndef _apply(f):\n    return f(common)\n"
+                        "_b = [builtins][0]\n_b.sorted = _apply\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway builtins 经解包取出后改绑消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import builtins\ndef _apply(f):\n    return f(common)\n"
+                        "_b, = (builtins,)\n_b.sorted = _apply\n"
+                        "sorted(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 把 dict.update 存在属性上再喂被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    pass\n_o = _C()\n"
+                        "_o.g = dict.update\n"
+                        "_o.g(common, {'A2_SCRIPTS': ()})\n" + _gw_tail) is None)
+    case("gateway for 目标取自被跟踪容器 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\nfor e in x:\n    e.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway for 目标取自 sys 表容器 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys\n_ml = [sys.path]\nfor t in _ml:\n"
+                        "    t.append('/tmp/evil')\n" + _gw_tail) is None)
+    case("gateway 集合差集后仍拿到被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "s = {common} - _x\nnext(iter(s)).A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 集合交集后仍拿到被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "s = {common} & _x\nnext(iter(s)).A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 集合对称差后仍拿到被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "s = {common} ^ _x\nnext(iter(s)).A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway dict 视图再取出被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "d = {'k': common}\nvs = d.values()\n"
+                        "list(vs)[0].A2_SCRIPTS = ()\n" + _gw_tail) is None)
+    case("gateway enumerate 后逐元素取出被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [common]\ny = enumerate(x)\n"
+                        "_a, e = list(y)[0]\ne.A2_SCRIPTS = ()\n"
+                      + _gw_tail) is None)
+    case("gateway 换名后的反射结果当参数交给消费者 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_g = dict.update\n"
+                        "map(_g, (common,), ({'A2_SCRIPTS': ()},))\n"
+                      + _gw_tail) is None)
+    # 正控：同样的拼法落在自己的数据上不该被跟随。
+    case("gateway 自己的列表乘零 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP + "rows = [1] * 0\nprint(rows)\n"
+                      + _gw_tail) is not None)
+    case("gateway 推导式元素与目标无关 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [1]\nq = 2\ny = [q for e in x]\nprint(y)\n"
+                      + _gw_tail) is not None)
+    case("gateway for 遍历自己的列表 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "x = [1, 2]\nfor e in x:\n    print(e)\n"
+                      + _gw_tail) is not None)
+
     # 白名单每个成员都要有配对的负控（名单漂移即红）与正控（干净数据不误拦）。
     for _consumer in sorted(cfd._LAMBDA_CONSUMERS):
         case(f"gateway 无主 lambda 交给 {_consumer} 且同时喂被看护对象 → 不可判定",
