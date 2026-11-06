@@ -1085,10 +1085,7 @@ async fn failed_handshake_directory_cleanup(cancel_close: bool) {
 /// the real session registry own the final stop.
 #[tokio::test(start_paused = true)]
 async fn registry_dispose_joins_retired_directory_after_cancelled_close() {
-    use pilotdeck_gateway::runtime::mcp::{
-        registry::SessionMcpRuntimeRegistry,
-        runtime::{McpRuntime, McpRuntimeOptions},
-    };
+    use pilotdeck_gateway::runtime::mcp::registry::SessionMcpRuntimeRegistry;
     use std::sync::Arc;
     struct ClockHold(tokio::task::JoinHandle<()>);
     impl Drop for ClockHold {
@@ -1607,13 +1604,14 @@ async fn list_tools_error(
 /// `mcp_call_failed`, `MCP call failed (server=mock): type must be JSONType or
 /// JSONType[]: nope`, client status stays `ready`.
 ///
-/// The nameless edge is deliberately out of scope and is *not* covered here:
-/// measured on the same Node build (`probe-schema-edge.mts`, rows 3–4), the
-/// baseline rejects a nameless/non-string-named tool at the result-shape
-/// layer (`Invalid input: expected string, received undefined`) before Ajv ever
-/// sees the schema, while the port's `let Some(name) = … else { continue }`
-/// skips it and returns the listing. Aligning that needs whole-result shape
-/// validation, so it is tracked as a follow-up instead (review r4 boundary P2a).
+/// A tool without a string `name` never reaches the Ajv loop: both sides
+/// reject the listing at the result-shape layer first (baseline probe
+/// `probe-nameless.mts`: one Zod issue, `path ["tools",0,"name"]`; port
+/// `protocol.rs` `tool()` requires `name: string` and `wire.rs` parses the
+/// result before iterating). The `let Some(name) = … else { continue }` in the
+/// loop is therefore unreachable for a missing name — see
+/// `list_tools_rejects_a_tool_without_a_name`, which pins the byte-identical
+/// message.
 #[tokio::test]
 async fn list_tools_rejects_a_bad_output_schema_type() {
     let tools = concat!(
@@ -1638,6 +1636,47 @@ async fn list_tools_rejects_a_bad_output_schema_type() {
     assert_eq!(
         status, "ready",
         "#401 a schema rejection leaves the shared connection usable"
+    );
+}
+
+/// #401 review r6 boundary P2: a tool with no string `name` is rejected by the
+/// result-shape layer, not silently skipped. TS oracle (Node v22.22.0,
+/// `probe-schema-edge.mts` row "nameless tool with a bad outputSchema"):
+/// `mcp_call_failed` and a Zod issue list, status stays `ready`.
+#[tokio::test]
+async fn list_tools_rejects_a_tool_without_a_name() {
+    let tools = r#"[{"inputSchema":{"type":"object"},"outputSchema":{"type":"object"}}]"#;
+    let (code, message, status) = list_tools_error(
+        "mcp-client-output-schema-nameless",
+        tools,
+        "#401 a nameless tool must reject the whole tools/list",
+    )
+    .await;
+    assert_eq!(
+        code, "mcp_call_failed",
+        "#401 a shape rejection is a call failure, not the timeout path"
+    );
+    assert_eq!(
+        message,
+        concat!(
+            "MCP call failed (server=mock): [\n",
+            "  {\n",
+            "    \"expected\": \"string\",\n",
+            "    \"code\": \"invalid_type\",\n",
+            "    \"path\": [\n",
+            "      \"tools\",\n",
+            "      0,\n",
+            "      \"name\"\n",
+            "    ],\n",
+            "    \"message\": \"Invalid input: expected string, received undefined\"\n",
+            "  }\n",
+            "]"
+        ),
+        "#401 the port reproduces the baseline's Zod issue text byte for byte"
+    );
+    assert_eq!(
+        status, "ready",
+        "#401 a shape rejection leaves the shared connection usable"
     );
 }
 

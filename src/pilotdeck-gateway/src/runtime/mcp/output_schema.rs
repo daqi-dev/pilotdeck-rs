@@ -10,7 +10,7 @@
 //! its **full** formats here (`addFormats(ajv)` with no `mode`), `nullable`
 //! is a first-class Ajv keyword, `$id` fragment anchors resolve, and invalid
 //! schemas throw while Ajv compiles them (the SDK does that inside
-//! `tools/list`, so [`check_schema`] is called from `McpClient::list_tools`).
+//! `tools/list`, so [`check_schema`] is called from `SdkClient::list_tools`).
 //!
 //! Ajv evaluates keywords in rule groups — untyped, then number, string,
 //! array, object — each in vocabulary order (measured:
