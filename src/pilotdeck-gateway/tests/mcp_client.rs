@@ -699,7 +699,10 @@ async fn close_during_handshake_then_start_keeps_one_connection() {
             format!(r#"{{"initialize":[{{"wait_file":"g0"}},{INIT_REPLY}]}}"#),
             format!(r#"{{"initialize":[{INIT_REPLY}]}}"#),
         ],
-        None,
+        // Same reason as the dispose case below: pin the handshake timeout so
+        // the default 10 s one cannot fire first on a loaded machine and take
+        // the epoch-mismatch branch out of play.
+        Some(120_000.0),
     );
     let first = tokio::spawn({
         let client = client.clone();
