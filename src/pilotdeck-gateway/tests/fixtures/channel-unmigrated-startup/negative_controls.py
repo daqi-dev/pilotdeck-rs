@@ -78,11 +78,13 @@ MUTATIONS = [
 def main():
     guarded = [assembly, loader]
     args = ['--check'] if sys.argv[1:] == ['--check-anchors'] else sys.argv[1:]
+    # No `any_cell`: both assembly mutations break both named cells (deleting
+    # the call site or swallowing its error hands `expect_err` an `Ok`), so
+    # requiring every cell keeps `startup_refuses_unimplemented_feishu` from
+    # silently weakening while the row still passes.
     return matrix_main(root, __file__, 'native_process::channels_tests::', MUTATIONS,
                        passed_count=1, child_count=0, paths=guarded,
-                       exact=True, args=args,
-                       any_cell=('assembly-reject-call-removed',
-                                 'assembly-reject-silently-skipped'))
+                       exact=True, args=args)
 
 
 if __name__ == '__main__':

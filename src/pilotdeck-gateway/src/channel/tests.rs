@@ -1102,7 +1102,7 @@ async fn stop_prefix_can_reenter_close() {
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The six keys #1302 B keeps in Rust (out of `UNMIGRATED_CHANNEL_KEYS`);
+/// The six keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
 /// `reject_unmigrated_channels` must leave them alone. This is *not* a
 /// "fully assembled" list: `weixin` is built by the native assembly, `feishu`
 /// is refused by `reject_unimplemented_bundle_channels` until #1329, and the
