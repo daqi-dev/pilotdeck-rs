@@ -43,10 +43,15 @@ def scratch(label, *, deadline=580):
         for sig, handler in previous.items():
             signal.signal(sig, handler)
         if root is not None:
-            assert not root.exists(), f'temporary directory leaked: {root}'
+            # #1666: explicit raise, not `assert` -- `-O` strips asserts and
+            # this is the only check that a control did not leak its scratch
+            # directory or dirty the tree.
+            if root.exists():
+                raise RuntimeError(f'temporary directory leaked: {root}')
             print(f'temporary directory removed: {root}', flush=True)
         after = subprocess.check_output(['git', 'status', '--short'], cwd=REPO)
-        assert after == status, 'negative control changed git status'
+        if after != status:
+            raise RuntimeError('negative control changed git status')
         print('git status --short unchanged (including pending repair edits)', flush=True)
 
 
@@ -87,7 +92,9 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
                 # 69 (EX_UNAVAILABLE) = 本机没有统一闸（CI 就没有）：没有共享名额可等，
                 # 直接继续。2/3/4/64 = 闸坏了，必须硬失败，不得当成有名额。
                 break
-            assert slot.returncode == 1 and time.monotonic() < deadline, 'cargo slots full'
+            if slot.returncode != 1 or time.monotonic() >= deadline:
+                raise RuntimeError(f'cargo slots full: gate returned {slot.returncode}'
+                                   ' and the wait budget is spent')
             time.sleep(10)
     print(f'--- {name} ---', flush=True)
     # A file avoids pipe backpressure; the complete raw output is printed before
@@ -106,14 +113,23 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
     print(output, end='', flush=True)
     print(f'{name}: exit={code}; pid={child.pid}; reaped={child.poll() is not None}', flush=True)
     if command[0] == 'cargo':
-        assert 'running 1 test' in output, 'compilation or zero-test failure is not evidence'
+        # #1666: these four decide KILLED vs PASS. As `assert` they vanished
+        # under `-O`, so a mutant that never compiled or never ran the bound
+        # test would have been recorded KILLED -- a ruler passing without
+        # measuring anything.
+        if 'running 1 test' not in output:
+            raise RuntimeError('compilation or zero-test failure is not evidence')
         expected = 'test result: FAILED' if diagnostic else 'test result: ok. 1 passed'
-        assert expected in output, name
+        if expected not in output:
+            raise RuntimeError(f'{name}: expected {expected!r} in the output')
     if diagnostic:
-        assert code != 0 and diagnostic in output, name
+        if code == 0 or diagnostic not in output:
+            raise RuntimeError(f'{name}: the bound test did not fail with the expected '
+                               f'diagnostic {diagnostic!r} (exit={code})')
         print(f'{name}: KILLED', flush=True)
     else:
-        assert code == 0, name
+        if code != 0:
+            raise RuntimeError(f'{name}: exited {code}, expected 0')
         print(f'{name}: PASS', flush=True)
 
 

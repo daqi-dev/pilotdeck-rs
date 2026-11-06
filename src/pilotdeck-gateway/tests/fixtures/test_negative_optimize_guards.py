@@ -19,7 +19,6 @@ Run from this directory: ``python3 -m unittest test_negative_optimize_guards``.
 import ast
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -90,8 +89,12 @@ SCANNED_EXTRA = (
     'turn-runner/runner_negative.py',
     'turn-runner/_negative_common.py',
     'network-timing/negative_private.py',
+    # Shared harness with live callers (`session-domain/fix2-negative.py`,
+    # `recorder/fix3-negative.py`, `run-registry/count-negative.py`,
+    # `background-output/`, `test_negative_adaptive.py`): its `run()` decides
+    # KILLED vs PASS and `scratch()` checks the tree is untouched.
+    '_shared/negative_control.py',
 )
-BARE_ASSERT = re.compile(r'^\s*assert\b', re.MULTILINE)
 _CLEANUP = []
 
 
@@ -113,7 +116,10 @@ def uses_a_bare_assert(path):
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return bool(BARE_ASSERT.search(source))
+        # Fail closed: a file this interpreter cannot parse is not evidence of
+        # cleanliness, and the line-anchored regex would miss exactly the
+        # inline forms AST was adopted for.
+        return True
     return any(isinstance(node, ast.Assert) for node in ast.walk(tree))
 
 

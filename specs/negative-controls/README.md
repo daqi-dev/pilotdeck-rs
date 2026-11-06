@@ -114,7 +114,9 @@
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
-`shared-runner-failclosed` 是登记在表内的豁免（手工运行、失败关闭、无退出码消费方）。
+登记表由 AST 守住、`rglob` 扫任意深度，另加三个已迁移的异名入口与共享 harness
+`_shared/negative_control.py`（`mutation_suite` 与 `run()` 的判杀守卫）。
+`negative.py` / `*_negative.py` 命名的同族入口仍不在扫描面内（#1666 后续批次）。
 
 1. **分母是静态字面量，不是运行期表长度**。表后写 `EXPECTED_NAMES`，启动即
    `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
@@ -151,4 +153,5 @@
 （`network-timing` 在 `mutation_suite` / `baseline_only` 内部占目录，同样在守卫之后）。
 这条由 `test_negative_optimize_guards.py` 机检：每个入口用不存在的变异名拒跑后，
 断言的输出目录不存在；另有一条「目录已存在 → rc=2 且不写入」的用例覆盖全族
-（`_shared/negative_control.py` 的 `mutation_suite` 也走同一拒跑）——不是靠读代码维持。
+——不是靠读代码维持。共享执行器 `mutation_suite` 的同类拒跑也由这条用例顺带覆盖
+（它的四分见 `tests/fixtures/README.md`，不与本节互相替代）。
