@@ -283,6 +283,33 @@ MUTANT_ROWS = [
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a missing declaration must be refused',
     ),
+    # #1890 r8: the table-row form needs a left boundary, or a longer name that
+    # merely ends in the short name (`xcase_a =>`) satisfies the binding.
+    (
+        'audit-binding-suffix-name-allowed',
+        SUITE,
+        "    if re.search(r'(?<!\\w)' + escaped + '=>', compact):",
+        "    if short + '=>' in compact:",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#1890 a longer name ending in the short name must not count',
+    ),
+    (
+        'audit-binding-embedded-fn-allowed',
+        SUITE,
+        "        if not head or not re.search(r'\\w$', head) or head.endswith(_FN_QUALIFIERS):",
+        "        if True:",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#1890 a longer identifier must not satisfy the fn form',
+    ),
+    (
+        'audit-binding-longer-macro-allowed',
+        SUITE,
+        "    return bool(macro) and re.search(\n"
+        "        r'(?<!\\w)' + re.escape(macro) + r'\\(' + escaped + ',', compact) is not None",
+        "    return bool(macro) and macro + '(' + escaped + ',' in compact",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#1890 a longer macro name must not satisfy the table form',
+    ),
 ]
 
 

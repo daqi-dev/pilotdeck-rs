@@ -57,18 +57,32 @@ def bind_module_file(test, modules):
     raise ValueError('bound test module not audited: ' + test)
 
 
+_FN_QUALIFIERS = ('async', 'const', 'unsafe', 'extern', 'pub', 'default')
+
+
 def declares_test(source, short, macro=None):
     """True when ``source`` declares ``short`` as a function or a table row.
 
     Whitespace is stripped before matching so the three drifted spellings
     (``'fn ' + name``, ``'fn' + name``, ``name + ' =>'``) collapse into one
-    rule. ``macro`` accepts the table form ``macro!(short, ...)`` used by the
-    live-stream cases.
+    rule. Every form requires a left boundary: a longer identifier that merely
+    ends in ``short`` -- ``run_fncase_a(`` or ``xcase_a =>`` -- must not
+    satisfy the binding. Compaction also glues the function qualifiers onto
+    ``fn`` (``async fn foo`` becomes ``asyncfnfoo``), so the ``fn`` form
+    accepts an identifier character before it only when it is one of those
+    qualifiers. ``macro`` accepts the table form ``macro!(short, ...)`` used by
+    the live-stream cases.
     """
     compact = ''.join(source.split())
-    if 'fn' + short + '(' in compact or short + '=>' in compact:
+    escaped = re.escape(short)
+    for match in re.finditer(r'fn' + escaped + r'\(', compact):
+        head = compact[:match.start()]
+        if not head or not re.search(r'\w$', head) or head.endswith(_FN_QUALIFIERS):
+            return True
+    if re.search(r'(?<!\w)' + escaped + '=>', compact):
         return True
-    return bool(macro) and macro + '(' + short + ',' in compact
+    return bool(macro) and re.search(
+        r'(?<!\w)' + re.escape(macro) + r'\(' + escaped + ',', compact) is not None
 
 
 def case_labels(cases):

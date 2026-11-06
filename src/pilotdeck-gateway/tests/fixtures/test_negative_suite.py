@@ -1530,6 +1530,18 @@ class AuditBindingTests(unittest.TestCase):
         message = '#1890 a missing declaration must be refused'
         # A declaration that merely starts with the short name must not count.
         self.assertFalse(suite.declares_test('fn case_ab() {', 'case_a'), message)
+        # Nor may a longer table-row name that merely ends with it.
+        self.assertFalse(
+            suite.declares_test('xcase_a => 1,', 'case_a'),
+            '#1890 a longer name ending in the short name must not count')
+        # A longer identifier that merely embeds `fn` + the short name is not a
+        # declaration either; the boundary is enforced on every form.
+        self.assertFalse(
+            suite.declares_test('let x = run_fncase_a();', 'case_a'),
+            '#1890 a longer identifier must not satisfy the fn form')
+        self.assertFalse(
+            suite.declares_test('mycase!(case_a,);', 'case_a', 'case!'),
+            '#1890 a longer macro name must not satisfy the table form')
         # The macro form is only accepted when the caller names the macro.
         self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'), message)
         self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'), message)
@@ -1547,9 +1559,12 @@ def baseline_scanned_files(root):
     Both runner families count: ``negative*.py`` at any depth and the
     ``*_negative.py`` spelling used by ``turn-runner`` and its siblings
     (``input_negative.py``, ``recording_negative.py``, ...). ``test_*.py`` is
-    excluded on purpose: the meta suite carries the probe strings below and
-    ``negative-restore/test_restore.py`` embeds a reverse-mutation payload, so
-    scanning them would report the scan itself.
+    excluded on purpose: the meta suite (``test_negative_suite.py``,
+    ``test_negative_panic.py``, ``test_negative_optimize_guards.py`` …) carries
+    the literal ``'HEAD'`` probe strings below, so scanning it would report the
+    scan itself. ``negative-restore/test_restore.py`` is out of the glob by
+    name (it does not contain ``negative`` in its file name); the ``test_``
+    filter is what keeps the meta files out.
     """
     return [path for path in sorted(Path(root).rglob('*negative*.py'))
             if not path.name.startswith('test_')]
@@ -1632,7 +1647,11 @@ class BaselineDefaultTests(unittest.TestCase):
                      'session-factory/negative_controls.py',
                      'negative_suite.py'):
             self.assertIn(name, scanned, '#1890 the baseline scan must read ' + name)
-        self.assertGreater(len(scanned), 100, '#1890 the baseline scan must not be empty')
+        # Measured at 261 files; the prefix-only glob this replaced yields 239,
+        # so the bound sits between them instead of at a floor that a
+        # half-broken glob would still clear.
+        self.assertGreaterEqual(len(scanned), 250,
+                                '#1890 the baseline scan must keep the *_negative.py family')
 
 
 if __name__ == '__main__':
