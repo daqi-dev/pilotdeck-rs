@@ -1247,6 +1247,54 @@ async fn peer_exits_when_its_host_is_killed() {
     println!("HOST_PASS killed host: peer {pid} exited instead of orphaning");
 }
 
+/// #1779: 父死子死 also covers the peer's own descendants. `grandchild-close`
+/// spawns a 60 s sleeper and records its pid; a killed host never reaches the
+/// host-side `killpg`, so only the watchdog's `lifetime.track` registry can take
+/// the sleeper down. Without this test `_kill_tracked` could regress and every
+/// host-side test would stay green while the leak came back.
+#[cfg(unix)]
+#[tokio::test]
+async fn peer_takes_its_grandchild_down_when_the_host_is_killed() {
+    let mode = "grandchild-close";
+    let (owned, receipt) = owned_receipt(mode);
+    let mut probe = Command::new("python3");
+    probe
+        .arg(orphan_probe())
+        .arg(fixture_script())
+        .arg(mode)
+        .arg(&receipt.0)
+        .arg(&owned)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut probe = probe.spawn().unwrap();
+    let status = probe.wait().await.unwrap();
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&status),
+        Some(9),
+        "the probe must die by SIGKILL, like a killed test process: {status:?}"
+    );
+    let read_pid = |name: &str| -> u32 {
+        std::fs::read_to_string(owned.join(name))
+            .unwrap_or_else(|error| panic!("missing {name} receipt: {error}"))
+            .trim()
+            .parse()
+            .unwrap()
+    };
+    let peer = read_pid("fixture.pid");
+    // The peer writes this before it answers the handshake, so the probe cannot
+    // have died before the descendant existed.
+    let grandchild = read_pid(&format!("{mode}.pid"));
+    for (role, pid) in [("peer", peer), ("grandchild", grandchild)] {
+        timeout(Duration::from_secs(5), assert_reaped(pid))
+            .await
+            .unwrap_or_else(|_| panic!("{role} {pid} outlived its host (#1779)"));
+    }
+    println!(
+        "HOST_PASS killed host: peer {peer} and its descendant {grandchild} exited instead of orphaning"
+    );
+}
+
 /// #1779: stdin EOF is not a terminating signal. The `while True:
 /// signal.pause()` this replaces waited forever when the host closed stdin and
 /// died before escalating; the bounded wait must fail loudly instead.

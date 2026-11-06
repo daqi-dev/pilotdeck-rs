@@ -17,9 +17,9 @@ and every unbounded wait additionally gets a ceiling.
 
 Three layers, cheapest first:
   * ``install`` -- a daemon thread polls ``os.getppid()``. Reparenting means the
-    host is gone: write ``.orphan``, say why on stderr, take the process group
-    (and so the ``grandchild-*`` descendants) down, exit 70. Covers the mbp2
-    scenario within one poll interval.
+    host is gone: write ``.orphan``, say why on stderr, kill the descendants
+    registered through ``track`` (the ``grandchild-*`` sleepers), exit 70.
+    Covers the mbp2 scenario within one poll interval.
   * ``bounded_close_wait`` -- the `close-*` waits get a hard ceiling after EOF
     instead of an unbounded ``signal.pause()``.
   * the lifetime ceiling (``PDRS_A6_FIXTURE_MAX_LIFETIME``) -- a backstop for
@@ -29,7 +29,10 @@ Three layers, cheapest first:
 
 What is *not* covered: a descendant nobody handed to ``track``. Every fixture
 mode that spawns one registers it, so today there is none; a future mode has to
-opt in.
+opt in. ``os.killpg(0, SIGKILL)`` is deliberately not used as a catch-all: the
+fixture is spawned as its own group leader (``connection.rs:65``), so a group
+kill would SIGKILL this process too, and the exit code (70/71) is part of the
+contract the tests assert.
 
 Nothing here sends signals to processes this fixture does not own: the watchdog
 only kills itself, its registered descendants, and this process.
@@ -62,11 +65,29 @@ EXIT_MAX_LIFETIME = 71
 # Descendants this fixture owns (see ``track``). Deliberately a registry, not a
 # process-table scan.
 _TRACKED = []
+# ``track`` and the watchdog's decision to give up share this lock, so a
+# descendant spawned microseconds before the watchdog fires cannot slip between
+# ``Popen`` and registration: it is either in ``_TRACKED`` already or it sees
+# ``_EXITING`` and is killed by ``track`` itself.
+_TRACK_LOCK = threading.Lock()
+_EXITING = False
 
 
 def track(process):
     """Register a descendant so it dies with us on the orphan/lifetime paths."""
-    _TRACKED.append(process)
+    global _EXITING
+    with _TRACK_LOCK:
+        _TRACKED.append(process)
+        exiting = _EXITING
+    if exiting:
+        _kill_one(process)
+
+
+def _kill_one(process):
+    try:
+        process.kill()
+    except Exception:
+        pass
 
 
 def _knob(name, default):
@@ -117,12 +138,17 @@ def _kill_tracked():
     Only pids handed to ``track`` are touched -- never a scan of the process
     table, which would reach processes this fixture does not own. Called from
     the watchdog thread; ``Popen.kill`` is safe there.
+
+    Also closes the fork -> ``track`` window: ``_EXITING`` is published under
+    the same lock ``track`` takes, so a ``track`` that runs after this returns
+    kills its own process instead of registering into a registry nobody reads.
     """
-    for process in list(_TRACKED):
-        try:
-            process.kill()
-        except Exception:
-            pass
+    global _EXITING
+    with _TRACK_LOCK:
+        _EXITING = True
+        tracked = list(_TRACKED)
+    for process in tracked:
+        _kill_one(process)
 
 
 def install(receipt, mode):
