@@ -12,6 +12,7 @@ mod baseline;
 use baseline::regeneration_masks as masks;
 use std::{fs, path::Path};
 
+const CHANNEL_SMS_GENERATOR_SOURCE: &str = include_str!("fixtures/channel-sms/generate.mts");
 const RUN_REGISTRY_ORACLE: &[u8] = include_bytes!("fixtures/run-registry/oracle.json");
 const RUN_REGISTRY_NORMAL_AFTER: &[u8] = include_bytes!("fixtures/run-registry/normal.after.json");
 const PROVIDER_TIMING_ORACLE: &[u8] = include_bytes!("fixtures/provider-timing/oracle.json");
@@ -194,21 +195,57 @@ fn fixture_generators_do_not_call_the_old_guard_api() {
     );
 }
 
+/// #1970 reads `STALLED_PROBE_DEADLINE_MS` out of the fixture that owns it
+/// instead of keeping a second hand-copied truth here. Fails closed: a missing
+/// or reshaped declaration panics rather than silently falling back to a stale
+/// number, because a wrong floor would let the generator get killed mid-cell.
+fn stalled_probe_deadline_secs() -> u64 {
+    const DECL: &str = "const STALLED_PROBE_DEADLINE_MS";
+    let line = CHANNEL_SMS_GENERATOR_SOURCE
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .strip_prefix(DECL)
+                .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+        })
+        .unwrap_or_else(|| panic!("#1970 generate.mts no longer declares `{DECL}`"));
+    let literal = line
+        .split_once('=')
+        .map(|(_, value)| value.trim())
+        .and_then(|value| value.strip_suffix(';'))
+        .unwrap_or_else(|| {
+            panic!(
+                "#1970 cannot parse `{}` as `{DECL} = <milliseconds>;`",
+                line.trim()
+            )
+        });
+    let millis: u64 = literal
+        .replace('_', "")
+        .parse()
+        .unwrap_or_else(|_| panic!("#1970 `{literal}` is not an integer millisecond deadline"));
+    assert!(
+        millis > 0 && millis.is_multiple_of(1000),
+        "#1970 `{DECL} = {millis}` must be a positive whole number of seconds"
+    );
+    millis / 1000
+}
+
 /// #1901 pins the floor of the `channel-sms` regeneration budget against the
 /// fixture's own probe deadline. `generate.mts` waits up to
-/// `STALLED_PROBE_DEADLINE_MS` (480 s) for a stalled body read and replays
-/// every case twice, so one cell can cost `2 * 480 = 960 s` before the other
-/// 55 cases run; a budget under that would kill the generator mid-cell and
-/// surface as a spurious timeout instead of the oracle drift the run is for.
+/// `STALLED_PROBE_DEADLINE_MS` for a stalled body read and replays every case
+/// twice, so one cell can cost `2 * STALLED_PROBE_DEADLINE_MS`; a budget under
+/// that would kill the generator mid-cell and surface as a spurious timeout
+/// instead of the oracle drift the run is for. The deadline is parsed from the
+/// fixture source (#1970), so raising it there moves this floor with it.
 /// Only the floor is pinned: raising the budget for a slower host stays fine.
 #[test]
 fn channel_sms_regeneration_budget_covers_two_probe_deadlines() {
-    const STALLED_PROBE_DEADLINE_SECS: u64 = 480;
+    let stalled_probe_deadline_secs = stalled_probe_deadline_secs();
     let sms = baseline::default_regen_timeout_secs("channel-sms");
     assert!(
-        sms >= 2 * STALLED_PROBE_DEADLINE_SECS,
+        sms >= 2 * stalled_probe_deadline_secs,
         "#1901 channel-sms budget {sms}s cannot cover two \
-         {STALLED_PROBE_DEADLINE_SECS}s stalled-probe waits"
+         {stalled_probe_deadline_secs}s stalled-probe waits from generate.mts"
     );
     let shared = baseline::default_regen_timeout_secs("run-registry");
     assert_eq!(
