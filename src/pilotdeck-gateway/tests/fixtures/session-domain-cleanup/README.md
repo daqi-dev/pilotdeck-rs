@@ -112,14 +112,23 @@ return path is audited there) or routes through the shared call itself; every
 other call — `report['status'] = _clean()`, `report.update(_payload(report))` —
 fails closed (`fix-r12`).  A helper whose only exit is a plain `raise` is not
 an optimistic exit either, so the delegation family no longer reports it as
-`inline exit code` (`fix-r12`).  A non-zero exit literal on its own
+`inline exit code` (`fix-r12`).  Enumeration is symmetric across the two exit
+families: every `sys.exit(...)` / `os._exit(...)` / `exit(...)` / `quit(...)`
+call *and* every `raise SystemExit` / `raise SystemExit(...)`, whatever the
+argument, is an exit-code computation of its own (`fix-r15`, `fix-r16`); an
+attribute head (`helpers.cleanup_status(...)`) never inherits the `(rel, name)`
+registration of the file it is written in, because the attribute may name any
+module's member (`fix-r16`).  The registries that answer "is this call a proven
+slot source" are asserted disjoint by the self test: a forwarding wrapper must
+name the registered point it forwards to, and an exempt point that still
+supplies a slot must carry its measured face as a reason (`fix-r16`).  A non-zero exit literal on its own
 (`return 2` for BLOCKED, `return 3` for NOT_RUN) is not an optimistic exit and
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests seventy-nine probe functions: seventy-eight inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests eighty-one probe functions: eighty inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the seventy-eight (the nine helpers
+function.  `probe892` is the authoritative list for the eighty (the nine helpers
 it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
 `_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
@@ -293,7 +302,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 97 mutants:
+`JUDGES`, keyed by the same names. The current table has 99 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -339,7 +348,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-exempt-callee-write`, `calibrate-param-augassign-opaque`,
 `calibrate-quit-exit`, `calibrate-partial-raise-point`,
 `calibrate-augassign-cross-file-call`, `calibrate-exit-call-unregistered`,
-`calibrate-tuple-status-target`.
+`calibrate-tuple-status-target`, `calibrate-attr-collision`,
+`calibrate-bare-raise-exit`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -469,7 +479,14 @@ point `sys.exit('BLOCKED')` as its only evidence (the raise family enumerated a
 status payload, the call family enumerated nothing), and
 `calibrate-tuple-status-target` writes `report['status'], code = 'PASS', 0` (the
 enumeration only knew the plain subscript target, while the slot layer has
-expanded tuple targets since `fix-r9`).  Two boundaries stay open and are
+expanded tuple targets since `fix-r9`).  The two `fix-r16` mutants pin the r15-round gaps:
+`calibrate-attr-collision` writes a status through an **attribute** callee
+(`helpers.cleanup_status(audit)`) inside the very file that registers
+`cleanup_status` — the bare attribute name matched the `(rel, name)` registry, so
+the write looked proven (GLM boundary r15 P1-1); `calibrate-bare-raise-exit`
+gives an unregistered point `raise SystemExit(0)` as its only evidence, the
+optimistic spelling the raise family skipped while the exit-call family already
+enumerated every call (MiniMax sibling r15 P1-1).  Two boundaries stay open and are
 recorded here so they are not re-reported as new: an augmented assignment on a
 *parameter* is only judged by its own payload (a `|=` set-union of two
 parameters is not treated as an aggregation point), a `{**payload}`

@@ -1030,6 +1030,31 @@ def calibrate_tuple_status_target(rows):
         'aggregation-audit: tuple-target status enumeration flagged, passed=False')
 
 
+def calibrate_attr_collision(rows):
+    """#892 r16: an attribute head may not inherit this file's registration
+    (GLM boundary r15 P1-1)."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    failures = row.get('failures') or []
+    if not any('inline status/exit assignment helpers.cleanup_status(audit)' in failure
+               for failure in failures):
+        return False, (f'failures={failures!r}, want the attribute-callee status write '
+                       f'flagged')
+    return True, 'aggregation-audit: attribute-head callee no longer inherits (rel, name)'
+
+
+def calibrate_bare_raise_exit(rows):
+    """#892 r16: ``raise SystemExit(0)`` is an exit-code computation like
+    ``sys.exit(0)`` (MiniMax sibling r15 P1-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'raise-exit-status',
+        'aggregation-audit: bare raise SystemExit enumerated, passed=False')
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1786,6 +1811,22 @@ MUTATIONS = [
      "    report['status'], code = 'PASS', 0\n"
      "    return report\n\n"
      "def _failure(error, policy, common):"),
+    # #892 fix-r16 (GLM boundary r15 P1-1): a registered point writes its status
+    # through an *attribute* callee whose bare name is registered for this very
+    # file, so the name-only lookup inherited the registration and the write was
+    # never judged.
+    ('calibrate-attr-collision', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    report['status'] = helpers.cleanup_status(audit)\n"),
+    # #892 fix-r16 (MiniMax sibling r15 P1-1): the raise family only enumerated
+    # raises carrying a status word, so the most optimistic spellings -- a bare
+    # ``raise SystemExit`` and ``raise SystemExit(0)`` -- stayed invisible.
+    ('calibrate-bare-raise-exit', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def publish(report):\n"
+     "    print(report)\n"
+     "    raise SystemExit(0)\n\n"
+     "def _failure(error, policy, common):"),
 ]
 
 JUDGES = {
@@ -2055,6 +2096,10 @@ JUDGES = {
         'aggregation-audit', calibrate_exit_call_unregistered, False, ()),
     'calibrate-tuple-status-target': (
         'aggregation-audit', calibrate_tuple_status_target, False, ()),
+    'calibrate-attr-collision': (
+        'aggregation-audit', calibrate_attr_collision, False, ()),
+    'calibrate-bare-raise-exit': (
+        'aggregation-audit', calibrate_bare_raise_exit, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (

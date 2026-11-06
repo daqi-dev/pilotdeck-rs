@@ -958,6 +958,16 @@ NON_AGGREGATION_POINTS = {
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'census_enumeration_failure_control'):
         'test-only synthetic census payload ({status: None}); the control asserts the fixture fails closed',
+    # #892 r16: the raise family now enumerates every ``raise SystemExit(...)``
+    # like the exit-call family, so the three exit paths below -- each of which
+    # leaves the process without aggregating a batch -- need an explicit reason.
+    ('scripts/gateway-parity/_guard.py', 'run_entry'):
+        'guard exit path: relays the guarded entry point own exit code (2 for an apparatus error, the child code otherwise); no child batch is aggregated here',
+    ('scripts/gateway-parity/native_evidence.py', 'main'):
+        'library entry guard: refuses to run native_evidence.py as a script; no batch',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/negative_controls.py',
+     'terminate_cleanly'):
+        'signal-driven abort path: raises SystemExit to unwind after restoring the mutated tree, not a batch status',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'census_snapshot_race_control'):
         'test-only synthetic census snapshot used to force the race; not a batch summary',
@@ -1124,20 +1134,45 @@ _FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
 # may not widen this set: ``report['status'] = cleanup_status(...)`` would then
 # look like a proven relay while the very same callee is exempted from the
 # return-path audit (MiniMax sibling r12 P1-1).  Wrappers that only forward to a
-# registered point are listed one by one, with the point they forward to.
-PROVEN_WRAPPER_CALLEES = frozenset({
-    ('scripts/gateway-parity/session_domain.py', 'deadline_report'),
-    ('scripts/gateway-parity/session_domain.py', 'retirement_report'),
-    ('scripts/gateway-parity/session_domain.py', 'validate_calibration'),
-    ('scripts/gateway-parity/session_domain.py', '_retirement_network_verdict'),
-    ('scripts/gateway-parity/session_domain.py', 'cleanup_status'),
-})
+# registered point are listed one by one, **with the point they forward to**, so
+# the claim is machine-checkable instead of prose.
+#
+# Two registries, because "exempt" and "proven" are different claims and the
+# r12 rule above only holds while they cannot be confused (MiniMax boundary
+# r15 P1-1):
+#
+# * ``PROVEN_WRAPPER_CALLEES`` maps a wrapper to the *registered point* it
+#   forwards to.  Every target must be in ``AGGREGATION_POINTS``, and no wrapper
+#   may also appear in the exemption list.
+# * ``EXEMPT_PROVEN_CALLEES`` lists points that are exempt from the batch rule
+#   yet legitimately supply one status slot, each with the measured face it
+#   carries.  Every key must already be in ``NON_AGGREGATION_POINTS`` (so the
+#   exemption is justified there) and none may be a wrapper.
+#
+# Both properties are asserted by the in-file self test, so a future entry
+# cannot re-open the contradiction by simply adding a name (the check is
+# ``probe892_...`` registry assertions, not this comment).
+PROVEN_WRAPPER_CALLEES = {
+    ('scripts/gateway-parity/session_domain.py', 'deadline_report'):
+        ('scripts/gateway-parity/session_domain.py', '_deadline_report'),
+}
+EXEMPT_PROVEN_CALLEES = {
+    ('scripts/gateway-parity/session_domain.py', 'retirement_report'):
+        'error-shape face built by _retirement_budget_blocked from the round budget, not a batch',
+    ('scripts/gateway-parity/session_domain.py', 'validate_calibration'):
+        'six-cell calibration report built from the measured raw folder, not a child batch',
+    ('scripts/gateway-parity/session_domain.py', '_retirement_network_verdict'):
+        'NETWORK_FALLBACK verdict computed from the lsof observation row set',
+    ('scripts/gateway-parity/session_domain.py', 'cleanup_status'):
+        'VERIFIED->PASS mapping of the launcher audit processTreeCleanup face',
+}
 # Keyed like every other registry (``(rel, name)``): a bare name trusted a
 # same-named def in *another* file, so ``_guard.py`` defining its own ``main``
 # inherited the registration of ``controls/session_domain.py:main`` (GLM
 # boundary r13 P0-1).  The name-only view is kept for the in-file probes, which
 # are scanned under a synthetic ``<self-test>`` rel.
-AUDITED_CALLEE_KEYS = frozenset(AGGREGATION_POINTS) | PROVEN_WRAPPER_CALLEES
+AUDITED_CALLEE_KEYS = (frozenset(AGGREGATION_POINTS) | frozenset(PROVEN_WRAPPER_CALLEES)
+                       | frozenset(EXEMPT_PROVEN_CALLEES))
 AUDITED_CALLEE_NAMES = frozenset(name for _rel, name in AUDITED_CALLEE_KEYS)
 
 
@@ -1923,6 +1958,13 @@ def _delegated_exit(value, module, seen=None, bindings=None):
         return False
     if not isinstance(value.func, (ast.Name, ast.Attribute)):
         return False
+    if isinstance(value.func, ast.Attribute) and not _calls_aggregate(value):
+        # ``helpers.exit_code(report)``: the attribute head names a member of
+        # some other module, and resolving it by its bare attribute name found
+        # this module's own same-named def -- so ``return helpers.main(report)``
+        # was audited as if it were the local ``main`` (GLM boundary r15 P1-1).
+        # Only the shared aggregator's own attribute spelling is proven.
+        return True
     seen = set() if seen is None else seen
     names = _callee_names(value, bindings or {})
     target = next((module[name] for name in names if name in module), None)
@@ -2129,6 +2171,12 @@ def _proven_callee(call, bindings, module=None, rel=None):
     """
     if _calls_aggregate(call):
         return True
+    if isinstance(call.func, ast.Attribute):
+        # Same shape as ``_delegated_exit``: an attribute head may name any
+        # module member, so matching its bare name against the ``(rel, name)``
+        # registry trusted ``helpers.cleanup_status(...)`` inside the file that
+        # registers ``cleanup_status`` (GLM boundary r15 P1-1).
+        return False
     names = _callee_names(call, bindings or {})
     if rel is None or rel.startswith('<'):
         return any(name in AUDITED_CALLEE_NAMES for name in names)
@@ -2565,10 +2613,12 @@ def aggregation_markers(function, module=None, rel=None):
             if isinstance(value, ast.IfExp) and (
                     _status_literals(value) or _has_passed_aggregate(value)):
                 markers.add('return-conditional-status')
-        elif (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
-              and isinstance(node.exc.func, ast.Name) and node.exc.func.id == 'SystemExit'
-              and node.exc.args and (_status_literals(node.exc.args[0])
-                                     or _has_passed_aggregate(node.exc.args[0]))):
+        elif (isinstance(node, ast.Raise) and _is_system_exit_raise(node)):
+            # Every ``raise SystemExit(...)`` -- with a status word, with a bare
+            # zero, with no argument at all -- leaves the process with an exit
+            # code, exactly like ``sys.exit(...)`` above; requiring a status word
+            # made the most optimistic spellings invisible (MiniMax sibling r15
+            # P1-1).
             markers.add('raise-exit-status')
         elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
               and isinstance(node.value.func, ast.Attribute)
@@ -3052,7 +3102,13 @@ def aggregation_audit():
         "def _tuple_slot_write(rows):\n"
         "    report = {'cases': rows}\n"
         "    report['status'], code = 'PASS', 0\n"
-        "    return report\n")
+        "    return report\n"
+        "def _bare_raise_exit(report):\n"
+        "    print(report)\n"
+        "    raise SystemExit\n"
+        "def _zero_raise_exit(report):\n"
+        "    print(report)\n"
+        "    raise SystemExit(0)\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
     if not direct or 'return-report-status' not in direct[0] or calls_shared(direct[1]):
@@ -3355,6 +3411,40 @@ def aggregation_audit():
             or not unshared_status_slots(tuple_slot[1])):
         failures.append('#892 aggregation-audit: detector self-test did not enumerate a '
                         'tuple-target status write')
+    for probe_name, message in (
+            ('_bare_raise_exit', 'a bare raise SystemExit (exits 0)'),
+            ('_zero_raise_exit', 'raise SystemExit(0)')):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe or 'raise-exit-status' not in probe[0]:
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'{message}')
+    # GLM boundary r15 P1-1: an attribute head may name any module member, so it
+    # may never inherit the ``(rel, name)`` registration of the file it is
+    # written in.  Both call sites are asserted against the one rel that
+    # registers ``cleanup_status`` / ``main``.
+    registered_rel = 'scripts/gateway-parity/session_domain.py'
+    attribute_call = ast.parse("report['status'] = helpers.cleanup_status(audit)\n").body[0].value
+    if _proven_callee(attribute_call, {}, None, registered_rel):
+        failures.append('#892 aggregation-audit: detector self-test trusted an attribute callee '
+                        'through the (rel, name) registry')
+    delegated = ast.parse('def publish(report):\n    return helpers.main(report)\n').body[0].body[0].value
+    delegated_module = {node.name: node for node in
+                        ast.parse('def main(report):\n    return 0\n').body}
+    if not _delegated_exit(delegated, delegated_module):
+        failures.append('#892 aggregation-audit: detector self-test audited an attribute callee '
+                        'against the same-named local def')
+    # MiniMax boundary r15 P1-1: the exemption list and the proven list are
+    # different claims; assert the r12 rule instead of restating it in prose.
+    if set(AGGREGATION_POINTS) & set(NON_AGGREGATION_POINTS):
+        failures.append('#892 aggregation-audit: a point is both registered and exempt')
+    if any(target not in AGGREGATION_POINTS for target in PROVEN_WRAPPER_CALLEES.values()):
+        failures.append('#892 aggregation-audit: a proven wrapper forwards to an unregistered point')
+    if set(EXEMPT_PROVEN_CALLEES) & set(PROVEN_WRAPPER_CALLEES):
+        failures.append('#892 aggregation-audit: a callee is registered as both exempt and wrapper')
+    if any(key not in NON_AGGREGATION_POINTS for key in EXEMPT_PROVEN_CALLEES):
+        failures.append('#892 aggregation-audit: an exempt-proven callee has no exemption reason')
+    if any(not reason.strip() for reason in EXEMPT_PROVEN_CALLEES.values()):
+        failures.append('#892 aggregation-audit: an exempt-proven callee has an empty reason')
     return {'mode': 'aggregation-audit', 'points': points,
             'nonPoints': sorted(f'{rel}:{name}' for rel, name in NON_AGGREGATION_POINTS),
             'unclassified': unclassified, 'failures': failures,
