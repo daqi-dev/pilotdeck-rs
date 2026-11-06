@@ -213,9 +213,15 @@ CARGO_TEST_TIMEOUT_SECONDS = 600
 # the same shape. Both are bounded here instead: every cargo / slot call is
 # capped by the remaining budget, and a deadline or SIGTERM restores the
 # sources, publishes a TIMEOUT summary and exits non-zero. Default 90 min;
-# CI job 120 min.
+# CI job 150 min (deadline + the two self-check steps + upload).
 DEADLINE_SECONDS = 5400
 DEADLINE_ENV = 'PDRS_NEGCTL_DEADLINE'
+# Upper bound for the override (#1692 review P2): `time.monotonic() + budget`
+# raises OverflowError on a huge value (after the output dir was created, so the
+# run dies with a traceback and no summary), and a budget past the job's own
+# timeout would hand the platform the kill this deadline exists to preempt. One
+# day is far above any real run and far below float overflow.
+MAX_DEADLINE_SECONDS = 86400
 
 # Set in the main run (and by the self-check probe); `bounded` refuses every
 # subprocess after it expires. None means "no deadline" (self-check modes that
@@ -272,6 +278,9 @@ def deadline_seconds(value=None):
     seconds = int(raw)
     if seconds <= 0:
         raise ValueError(f'{DEADLINE_ENV} must be positive, got {raw!r}')
+    if seconds > MAX_DEADLINE_SECONDS:
+        raise ValueError(f'{DEADLINE_ENV} must be at most {MAX_DEADLINE_SECONDS}s, '
+                         f'got {raw!r}')
     return seconds
 
 
@@ -296,7 +305,7 @@ def _stop_on_signal(signum, _frame):
     raise RunTerminated(f'signal {signum} before the run finished')
 
 
-def run(full):
+def run(full, log_path=None):
     # No -q/--quiet: libtest must print `test <name> ... ok` lines (#273, #978).
     # --locked: the gate runs on the committed lockfile, like the shared entry
     # that builds the scanner (`negative_process.py` uses --locked for the same
@@ -312,12 +321,18 @@ def run(full):
             timeout=bounded(CARGO_TEST_TIMEOUT_SECONDS, 'cargo test'))
         return result.returncode, result.stdout + result.stderr
     except subprocess.TimeoutExpired as error:
+        collected = (error.output or '') + (error.stderr or '')
         # If the cap WAS the remaining budget, the deadline is what ended this
         # call: report TIMEOUT rather than a plain INVALID mutant (review P1).
         if deadline - time.monotonic() <= 0:
+            # The caller's own `write_text(log)` never runs once this raises,
+            # so the output collected before the kill has to be written here or
+            # the deadline path loses exactly the evidence §4 exists to keep
+            # (#1692 review P2).
+            if log_path is not None:
+                log_path.write_text(collected)
             raise RunDeadlineExceeded(
                 f'cargo test: overall deadline of {deadline_budget}s reached')
-        collected = (error.output or '') + (error.stderr or '')
         return 124, f'{collected}\nTIMEOUT after {error.timeout}s\n'
 
 
@@ -440,6 +455,38 @@ def deadline_probe():
                     problems.append(f'{label}: an expired deadline did not refuse')
             if spawned:
                 problems.append(f'{len(spawned)} subprocess start(s) slipped past the deadline')
+            # The deadline path must keep the output the killed cargo call had
+            # already produced: the caller's own `write_text(log)` never runs
+            # once `run()` raises, so `run(log_path=...)` has to write it
+            # itself or the deadline loses exactly the evidence §4 keeps
+            # (#1692 review P2). `bounded()` must see a live deadline; the
+            # fake call then moves the clock past it and times out with output.
+            def killed_cargo(*_args, **_kwargs):
+                global deadline
+                deadline = time.monotonic() - 1
+                raise subprocess.TimeoutExpired(
+                    ['cargo', 'test'], 300, output='partial stdout\n',
+                    stderr='partial stderr\n')
+
+            deadline = time.monotonic() + 5
+            run_owned = killed_cargo
+            probe_log = out / 'probe-deadline.log'
+            try:
+                run('probe::deadline-cut', log_path=probe_log)
+            except RunDeadlineExceeded:
+                pass
+            else:
+                problems.append('log probe: an expired deadline did not raise')
+            written = probe_log.read_text() if probe_log.exists() else ''
+            if not probe_log.exists():
+                problems.append('log probe: no log was written before the deadline raised')
+            elif 'partial stdout' not in written or 'partial stderr' not in written:
+                problems.append('log probe: the collected output was not written before '
+                                'the deadline raised')
+            else:
+                print('deadline probe log: collected output written before raising', flush=True)
+            run_owned = refuse
+            deadline = time.monotonic()
             append_progress(event='probe', status='OK')
             lines = (out / 'progress.jsonl').read_text().splitlines()
             if not lines or json.loads(lines[-1]).get('event') != 'probe':
@@ -454,7 +501,12 @@ def deadline_probe():
                 problems.append('summary.json.tmp: the summary was not renamed atomically')
             else:
                 print('deadline probe summary.json: TIMEOUT row published atomically', flush=True)
-            for bad in ('0', '-3', 'abc', '1.5'):
+            # Every rejecting rule of `deadline_seconds` needs its own pair, or
+            # reverting it to a plain `int()` would keep the probe green
+            # (#1692 review P2): underscores, signs, surrounding spaces,
+            # non-ASCII digits and the new upper bound.
+            for bad in ('0', '-3', 'abc', '1.5', '1_000', ' 120 ', '+120',
+                        '１２０', str(MAX_DEADLINE_SECONDS + 1), '9' * 400):
                 try:
                     deadline_seconds(bad)
                 except ValueError:
@@ -463,6 +515,8 @@ def deadline_probe():
                     problems.append(f'{DEADLINE_ENV}={bad!r} was not refused')
             if deadline_seconds('120') != 120:
                 problems.append(f'{DEADLINE_ENV} did not parse whole seconds')
+            if deadline_seconds(str(MAX_DEADLINE_SECONDS)) != MAX_DEADLINE_SECONDS:
+                problems.append(f'{DEADLINE_ENV} refused its own upper bound')
         finally:
             if progress is not None:
                 progress.close()
@@ -658,8 +712,9 @@ STUB_GATE_ARG = ("'--slot-guard-probe',\n"
                  "/ 'cargo-slots-free.sh'), str(timeout)],")
 STUB_GATE_TEXT = '#!/bin/sh\necho "cargo-slots: 0 / cap 1"\nexit 0\n'
 # Each meta-control copy runs a full `--self-check` (measured 12-13 s per copy,
-# 79 s for control + 5 cases on this machine). Six copies at this cap stay well
-# inside the slack the structural guard pins (`job >= deadline + 900 s`).
+# ~90 s for control + 6 cases on this machine). The structural guard derives the
+# job margin from `len(self_check_controls) + 1`, so adding a case widens it
+# instead of silently eating the headroom.
 CONTROL_TIMEOUT_SECONDS = 120
 # The emptied-table cases rewrite a 17-line literal table. Locate it by its
 # opening line and the anchor line that follows it, by plain text surgery: the
@@ -713,6 +768,25 @@ self_check_controls = [
        ''),
       (REAL_GATE_ARG, STUB_GATE_ARG)],
      False, 'no slot guard cases defined', 0),
+    # The tightened deadline parser is only load-bearing together with its
+    # extended bad-value pair: reverting to a plain `int()` (which accepts
+    # '1_000', ' 120 ', '+120', full-width digits and 86401) must turn the
+    # probe red through those very values (#1692 review P2, both families).
+    ('deadline-parser-loosened',
+     [('    if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():\n'
+       "        raise ValueError(f'{DEADLINE_ENV} must be whole seconds, got {raw!r}')\n",
+       ''),
+      ('    if seconds > MAX_DEADLINE_SECONDS:\n'
+       "        raise ValueError(f'{DEADLINE_ENV} must be at most {MAX_DEADLINE_SECONDS}s, '\n"
+       "                         f'got {raw!r}')\n",
+       '')],
+     True, 'was not refused', None),
+    # Dropping the log write loses the output of the cargo call the deadline
+    # killed, which is the evidence §4 exists to keep (#1692 review P2).
+    ('deadline-log-dropped',
+     [('            if log_path is not None:\n'
+       '                log_path.write_text(collected)\n', '')],
+     True, 'no log was written before the deadline raised', None),
 ]
 
 if not self_check_controls:
@@ -868,8 +942,9 @@ with stop_run(), mutating_sources(
     baseline_ok = set()
     for full in dict.fromkeys(test for *_, test, _ in mutations):
         take_slot('baseline-' + full.rsplit('::', 1)[-1])
-        code, log = run(full)
-        (out / f'baseline-{full.rsplit("::", 1)[-1]}.log').write_text(log)
+        log_path = out / f'baseline-{full.rsplit("::", 1)[-1]}.log'
+        code, log = run(full, log_path=log_path)
+        log_path.write_text(log)
         ok = code == 0 and baseline_passed(log, full)
         print(f'baseline {full}: {"PASS" if ok else "INVALID"}', flush=True)
         append_progress(event='baseline', test=full,
@@ -898,8 +973,9 @@ with stop_run(), mutating_sources(
             take_slot(name)
             append_progress(event='mutation-start', name=name)
             path.write_text(changed)
-            code, log = run(full)
-            (out / f'{name}.log').write_text(log)
+            log_path = out / f'{name}.log'
+            code, log = run(full, log_path=log_path)
+            log_path.write_text(log)
             evidence = panic_evidence(log, full)
             killed = (full in baseline_ok and code == 101
                       and named_test_failed(log, full)
