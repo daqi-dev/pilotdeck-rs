@@ -1584,9 +1584,13 @@ fn upload_cleanup_never_deletes_through_a_symlinked_root() {
 }
 
 // #1646 review r4: the gate is an equality test on the resolved path, not a
-// "is it inside the project" test. A `.tmp` linked to another directory the
-// *project itself* owns would pass a prefix check and hand that directory's
-// children to the sweep, so the criterion is pinned here directly.
+// "is it inside the project" test. Two different arms refuse a root that
+// resolves elsewhere, and both are pinned here:
+//
+// * a symlinked `.tmp/chat-uploads` is caught by the leading directory stats
+//   (a symlink is not a directory to `symlink_metadata`);
+// * a root that *stats* as a directory but resolves to a different path — the
+//   aliased project below — can only be caught by the equality comparison.
 #[test]
 fn plain_root_rejects_a_root_that_resolves_elsewhere() {
     let scratch = Scratch::new();
@@ -1623,6 +1627,20 @@ fn plain_root_rejects_a_root_that_resolves_elsewhere() {
         }
         _ => panic!("a plain uploads root is accepted"),
     }
+
+    // Both stats say "a directory is here", yet the resolve lands elsewhere:
+    // the project itself is reached through a symlink. Only the equality arm
+    // can refuse this, so this cell is what makes
+    // `plain-root-accepts-any-resolve` (the pre-r4 "resolve and accept" shape)
+    // a killed mutation instead of a green one.
+    let real = scratch.dir("p-plain-alias-real");
+    fs::create_dir_all(real.join(".tmp/chat-uploads")).unwrap();
+    let aliased = real.parent().unwrap().join("p-plain-alias-link");
+    std::os::unix::fs::symlink(&real, &aliased).unwrap();
+    assert!(
+        matches!(plain_root(&aliased, "chat-uploads"), PlainRoot::Blocked),
+        "a root whose resolve lands on a different literal path must be blocked"
+    );
 }
 
 // #1646 review r2: the plain-root gate only covers the moment the round

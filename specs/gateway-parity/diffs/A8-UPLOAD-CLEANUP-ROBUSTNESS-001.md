@@ -129,6 +129,18 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
 - `plain_root` 的两次 `symlink_metadata` 与紧随的 `canonicalize` 之间的换链窗口由等值判据
   兜住（解析结果必须字面等于 `<project>/.tmp/<leaf>`，换成任何链接都不等值）；但
   「快照取到正确路径、条目在检查后被换成链接」仍属上面的指令级窗口，同样要 dirfd 才能根除。
+- 本轮守卫只覆盖清理半轮、孤儿分支、租约半轮与 `release` 四个删除点。`cancel`
+  L389 `remove_tree(&task_dir(&updated).join("files"))` 与 `acquire_attachment_lease`
+  失败回收 L630 `remove_tree(&dir)` 仍未过 `plain_root` / `inside_root`（r5 两家评审
+  P2 / P3）：`cancel` 的窗口覆盖整次 `mutate` 的 metadata 重写（temp + fsync + rename，
+  毫秒级，可反复重试），比本单登记的「几条指令」窗口宽。威胁模型同上（能写 `.tmp`
+  者已有项目树写权），本单不扩范围，登记于此。
+- `plain_root` 的等值臂在真实场景里只由「两次 stat 之后、`canonicalize` 之前换链」
+  的竞态触发，没有可控换链点；回归测试用的是「项目路径本身是符号链接」这一别名形态，
+  它同样要求解析结果字面等于入参路径，因此能钉住该判据，但不是生产里会出现的输入。
+- `release` 的 `realpath` 非 `NotFound` 分支（继续向上抛 `UploadError::io`）没有直接
+  回归测试：要在测试里造出非 `NotFound` 的解析失败得靠权限位注入（`.tmp` 置 000），
+  在 CI 文件系统上不稳；与 `future` 的 `Err` 分支同属「无注入点」一族，登记于此。
 - `release` 的守卫是「删除前再判一次」，不是「acquire 时的快照」：`dir` 本身没保存
   acquire 时的根快照，所以根被换链时 release 直接跳过、返回 `Ok(())`。**跳过的租约目录
   不会被自动回收**：租约清扫同样拒绝符号链接根，也不会去扫项目外的树；只有原树重新
@@ -144,8 +156,9 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   孤儿半轮的 `orphan-rm` 失败只跳过该条：同轮后一个孤儿、到期记录、租约半轮照常）、
   `upload_cleanup_keeps_fresh_orphan_directories`（L1161）、
   `upload_cleanup_never_deletes_through_a_symlinked_root`（L1188）、
-  `plain_root_rejects_a_root_that_resolves_elsewhere`（L1231，直接钉等值判据：
-  指向项目内另一目录 / 指向项目外 / 真目录三格）、
+  `plain_root_rejects_a_root_that_resolves_elsewhere`（L1231，四格：指向项目内另一目录 /
+  指向项目外（这两格由两次 `symlink_metadata` 挡下）/ 真目录 / 项目路径本身是符号链接的
+  别名格——只有最后一格走得到等值比较，也是负控的靶子）、
   `store_swapping_tmp`（L1277，`now` 回调首次调用时换链并计数，三个换链测试共用）、
   `upload_cleanup_does_not_follow_a_root_swapped_mid_round`（L1301）、
   `upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round`（L1339）、
@@ -165,12 +178,15 @@ cc7c4e6 `src/gateway/dialog/UploadStore.ts`（node v22.22.0 实测，证据存�
   `cleanup-orphan-root-recanonicalized`、`cleanup-lease-symlink-root-swept`、
   `cleanup-record-rm-follows-swapped-root`、`cleanup-lease-entry-symlink-swept`、
   `cleanup-lease-root-recanonicalized`、`lease-release-symlink-root-swept`、
-  `plain-root-accepts-inside-project-link`、`cleanup-orphan-rm-silent`、
+  `plain-root-accepts-any-resolve`、`cleanup-orphan-rm-silent`、
   `cleanup-schedule-stop-on-failure`
   （各绑上述具名测试与唯一失败文案，共 15 条；整份文件 37 条锚点）。
-  `plain-root-accepts-inside-project-link` 把等值判据改回「在项目内即可」
-  （`real.starts_with(project)`），钉 `plain_root_rejects_a_root_that_resolves_elsewhere`
-  的第一格；`cleanup-orphan-rm-silent` 把孤儿删除失败改成静默吞掉（不写 skip 日志）；
+  `plain-root-accepts-any-resolve` 把等值判据改回加闸前的「解析了就收」
+  （`Ok(real) => PlainRoot::Plain(real)`），钉
+  `plain_root_rejects_a_root_that_resolves_elsewhere` 的别名项目格——**不是**
+  `starts_with(project)`：符号链接根的几格在两次 `symlink_metadata` 就被挡下，
+  根本走不到等值比较，改前缀判据的变异杀不掉（r5 codex P2）；
+  `cleanup-orphan-rm-silent` 把孤儿删除失败改成静默吞掉（不写 skip 日志）；
   `cleanup-schedule-stop-on-failure` 让调度循环在失败后 `return`。
   其中 `cleanup-symlink-root-swept` / `cleanup-lease-symlink-root-swept` 的变异是
   「只 `canonicalize` 根、不加闸」的老写法：两层防护（`plain_root` 等值闸 + `inside_root`）
