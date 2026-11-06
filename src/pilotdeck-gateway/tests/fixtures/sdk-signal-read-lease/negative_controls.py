@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (
     _collect,
     _ensure_workspace_scanner,
+    _head_bytes,
     _kill_group,
     exclusive_write,
     mutating_sources,
@@ -86,7 +87,29 @@ WRITER_EXIT_BUDGET = HOLD_SECONDS + 120
 # 50 ms poll granularity and far below a window-scale wait.
 LEASE_MARKER = '#1662 read lease wait ms='
 MIN_LEASE_WAIT_MS = 500
+# ``--stop-check`` only exercises the writer's exit contract, so it can use a
+# short hold: nothing waits on the lease there.
+STOP_CHECK_HOLD_SECONDS = 5
+# ``epoch_ms()`` truncates, so a timestamp is a whole millisecond *bucket*, not
+# an instant: the writer's ``end_ms`` bucket also covers the release, and a
+# reader refused right after that release by the *next* exclusive holder could
+# still report the same number. GREEN therefore requires the refusal to sit at
+# least this far inside the published interval. One second is ~1 % of the hold
+# and far above any scheduling slop, yet it makes ``blocked <= end_ms - margin``
+# mean "refused at least a second before this writer let go" -- while the writer
+# demonstrably still held the exclusive lock (#1662 review r8 P0).
+WITNESS_MARGIN_MS = 1000
 CARGO_TIMEOUT = 1800
+
+
+class _Stopped(Exception):
+    """The writer was asked to stop; its unwind restored and re-verified first.
+
+    Raised from the SIGTERM handler and caught around ``mutating_sources``, so a
+    requested stop is a *success* (exit 0) while any failure of its own -- a
+    restore or a HEAD re-read that raises -- still exits non-zero and is
+    reported by the controller (#1662 review r8 P1).
+    """
 
 
 def cargo_argv(suffix):
@@ -146,11 +169,27 @@ def read_hold(out):
 
 
 def read_released(out):
-    """Instants after the real release, or None when the writer never got that far."""
+    """``(released_ms, restored)`` after the real release, or None if never published.
+
+    ``restored`` is the writer's *direct observation* that the guarded file is
+    back to its HEAD bytes at the moment it recorded the release -- not an
+    inference from the exit status, and not implied by the record's existence.
+    The controller checks it (#1662 review r8 P2).
+    """
     path = out / 'writer-released.json'
     if not path.is_file():
         return None
-    return int(json.loads(path.read_text())['released_ms'])
+    record = json.loads(path.read_text())
+    return int(record['released_ms']), bool(record.get('restored'))
+
+
+def capture_matches_head():
+    """Is the guarded file byte-identical to its HEAD version right now?"""
+    try:
+        return capture.read_bytes() == _head_bytes(root, capture.relative_to(root), 'HEAD')
+    except Exception:
+        # Unreadable HEAD or unreadable file: no restoration claim either way.
+        return False
 
 
 def writer(out, hold):
@@ -169,6 +208,13 @@ def writer(out, hold):
     a failing restore) can still leave the mutant on disk; the next
     ``mutating_sources`` run then refuses the dirty tree instead of silently
     mutating a mutated baseline.
+
+    A requested stop exits 0: the handler raises a private ``_Stopped`` and the
+    unwind through ``mutating_sources.__exit__`` restores and re-reads every
+    guarded byte before the exception reaches the handler here. Every other way
+    out -- a failing restore, an unreadable HEAD, a signalling bug -- still exits
+    non-zero, which is what lets the controller judge the exit status
+    unconditionally (#1662 review r8 P1).
     """
     armed = [True]
     entered = [False]
@@ -176,27 +222,45 @@ def writer(out, hold):
     def stop(_signum, _frame):
         if armed[0]:
             armed[0] = False
-            raise SystemExit('#1662 writer stopped before its window closed')
+            # A private exception, not ``SystemExit``: the controller must be able
+            # to tell "we asked it to stop, it restored and left cleanly" from
+            # "it failed on its own". Only the former exits 0 (#1662 r8 P1).
+            raise _Stopped('#1662 writer stopped before its window closed')
 
     signal.signal(signal.SIGTERM, stop)
     try:
-        with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
-            try:
-                entered[0] = True
-                capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
-                # Publish the window atomically: a reader that sees the file must
-                # also see the mutant bytes (#166 tmp-and-rename).
-                opened = epoch_ms()
-                publish_hold(out, opened, None)
-                publish(out / 'writer-window-open', 'open\n')
-                time.sleep(hold)
-                # Recorded while the lock is still held: the reader can only
-                # acquire it after this instant.
-                publish_hold(out, opened, epoch_ms())
-            finally:
-                # Disarm on every path out of the window, including an exception:
-                # restoration must never run with the handler still armed.
-                armed[0] = False
+        try:
+            with mutating_sources(root, [capture], lock_timeout=WRITER_LOCK_TIMEOUT):
+                try:
+                    capture.write_text(capture.read_text() + CAPTURE_RESIDUE)
+                    # Publish the window atomically: a reader that sees the file must
+                    # also see the mutant bytes (#166 tmp-and-rename).
+                    opened = epoch_ms()
+                    publish_hold(out, opened, None)
+                    publish(out / 'writer-window-open', 'open\n')
+                    # Only now is the window *published*: before this point a
+                    # SIGTERM leaves a "released" record with no window behind it,
+                    # which is exactly the fake evidence r7 removed (#1662 r8 P3).
+                    entered[0] = True
+                    time.sleep(hold)
+                    # Recorded while the lock is still held: the reader can only
+                    # acquire it after this instant.
+                    publish_hold(out, opened, epoch_ms())
+                    if os.environ.get('PDRS_1662_WRITER_FAIL_AFTER_HOLD'):
+                        # Negative-control hook for ``--stop-check``: a writer that
+                        # fails on its own must exit non-zero, so the controller's
+                        # unconditional exit-status rule can be shown to fire
+                        # (#1662 review r8 P1).
+                        raise RuntimeError('#1662 injected writer failure after the hold')
+                finally:
+                    # Disarm on every path out of the window, including an exception:
+                    # restoration must never run with the handler still armed.
+                    armed[0] = False
+        except _Stopped as stopped:
+            # ``mutating_sources.__exit__`` restored every guarded byte, re-read
+            # it and only then released the lock -- the stop request is fulfilled
+            # exactly as designed, so it is not a failure: exit 0.
+            print(stopped, file=sys.stderr)
     finally:
         # ``mutating_sources.__exit__`` has restored every guarded byte and
         # released the lock by now, so this instant is the earliest another
@@ -204,13 +268,31 @@ def writer(out, hold):
         # SIGTERM unwind, so each run can show, rather than argue, that the
         # recorded ``end_ms`` lies strictly inside the real hold
         # (#1662 review r7 arbitration evidence). Only when the window was
-        # actually entered: a SIGTERM during lock acquisition never held the
-        # lock, and a "released" record there would be fake evidence
-        # (#1662 review r7 P3).
+        # actually published: a SIGTERM before that never held a published
+        # window, and a "released" record there would be fake evidence
+        # (#1662 review r7 P3 / r8 P3). ``restored`` is measured here, not
+        # assumed: the record itself says whether the bytes are back (#1662 r8 P2).
         if entered[0]:
             publish(out / 'writer-released.json',
-                    json.dumps({'released_ms': epoch_ms()}) + '\n')
+                    json.dumps({'released_ms': epoch_ms(),
+                                'restored': capture_matches_head()}) + '\n')
     return 0
+
+
+def _drain(process, out):
+    """Best effort: read and close a writer's pipes so nothing leaks.
+
+    ``communicate()`` keeps whatever the writer printed; the point is that the
+    streams are closed here rather than at GC time, and that a full pipe cannot
+    leave the writer blocked in ``write`` (#1662 review r8 P3). Any failure is
+    swallowed: this runs on an error path and must not mask the stop verdict.
+    """
+    try:
+        stdout, stderr = _collect(process, 30)
+        exclusive_write(out / 'writer.force-stop.stdout', stdout or '')
+        exclusive_write(out / 'writer.force-stop.stderr', stderr or '')
+    except Exception:
+        pass
 
 
 def force_stop(process, out):
@@ -220,16 +302,20 @@ def force_stop(process, out):
     which restores every guarded byte), then a bounded wait, and only then a
     kill -- a kill during restoration can leave a mutant or a truncated file on
     disk (#1662 review r5/r6). Returns True when the writer exited on its own,
-    which is what makes the restoration claim true (the SIGTERM path exits with
-    a non-zero status by design, so the exit *status* is not the question).
+    which is what makes the restoration claim true. A requested stop exits 0
+    (#1662 review r8), but this path stays about *whether* it stopped: the
+    caller of ``force_stop`` only has a fallback, and a non-zero status here is
+    judged by ``stop_writer``'s own contract, not swallowed.
     """
     if process.poll() is not None:
+        _drain(process, out)
         return True
     try:
         process.terminate()
         process.communicate(timeout=WRITER_EXIT_BUDGET)
-        # It exited: the handler either restored or had already disarmed. Any
-        # exit status is fine here -- SystemExit from the handler is non-zero.
+        # It exited: a requested stop restores and then leaves with status 0, so
+        # the status is judged by ``stop_writer``; here only *that* it stopped
+        # matters.
         return True
     except subprocess.TimeoutExpired:
         pass
@@ -243,6 +329,7 @@ def force_stop(process, out):
         while process.poll() is None and time.monotonic() < deadline:
             time.sleep(0.5)
         if process.poll() is not None:
+            _drain(process, out)
             return True
     try:
         _kill_group(process)
@@ -255,18 +342,17 @@ def force_stop(process, out):
 def stop_writer(process, out):
     """Bounded stop: let the writer restore first, then terminate, then kill.
 
-    Only a *self-inflicted* failure is judged by the exit status: once we
-    terminate the writer ourselves its SIGTERM handler raises ``SystemExit``, so
-    it exits non-zero **by design** after restoring every guarded byte -- the
-    same reason ``force_stop`` ignores the status (#1662 review r7 P1).
+    The exit status is judged unconditionally: a writer we terminated ourselves
+    restores and then exits 0, so anything else -- a restore that raised, a HEAD
+    re-read that failed, a status set before our signal ever landed -- is a real
+    failure and must be reported (#1662 review r8 P1). Only a kill we performed
+    is exempt, and that raises on its own.
     """
-    terminated = False
     killed = False
     try:
         stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
     except subprocess.TimeoutExpired:
         # Graceful first: the handler unwinds mutating_sources and restores.
-        terminated = True
         process.terminate()
         try:
             stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
@@ -279,7 +365,7 @@ def stop_writer(process, out):
     if killed:
         raise RuntimeError('#1662 writer had to be killed; '
                            'source restoration is NOT confirmed')
-    if not terminated and process.returncode != 0:
+    if process.returncode != 0:
         raise RuntimeError(f'#1662 writer exited {process.returncode}')
 
 
@@ -371,6 +457,7 @@ def green(out):
             # The stop itself can be interrupted (SIGINT during communicate).
             # Recover gracefully and only kill as a last resort; ``stopped``
             # records whether we can still claim the sources were restored.
+            fallback_note = ''
             try:
                 stopped = force_stop(process, out)
             except BaseException as stop_failure:
@@ -378,12 +465,21 @@ def green(out):
                 # errors and, above all, still re-raise an interrupt below
                 # instead of losing it here (#1662 review r7 P1).
                 stopped = False
-                if not isinstance(stop_failure, Exception) and hard_interrupt is None:
-                    hard_interrupt = stop_failure
+                if not isinstance(stop_failure, Exception):
+                    if hard_interrupt is None:
+                        hard_interrupt = stop_failure
+                else:
+                    # An ordinary failure of the fallback is not an interrupt to
+                    # re-raise, but it must not vanish either: the audit trail is
+                    # the only place the operator can see why the stop is
+                    # unconfirmed (#1662 review r8 P3).
+                    fallback_note = (f'; the stop fallback itself failed: '
+                                     f'{type(stop_failure).__name__}: {stop_failure}')
             if not stopped:
                 stop_error = RuntimeError(
                     f'{type(error).__name__}: {error}; the writer had to be killed or '
-                    f'could not be stopped, source restoration is NOT confirmed')
+                    f'could not be stopped, source restoration is NOT confirmed'
+                    f'{fallback_note}')
     for interrupt in (failure, hard_interrupt):
         if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
             # Interrupts still abort the run; the writer is already stopped above.
@@ -416,14 +512,17 @@ def green(out):
     # nothing but a real holder produces it. Requiring that instant to fall
     # inside this writer's hold leaves no room for a scheduler pause (before the
     # call, or after an uncontended acquisition) and none for a later lock
-    # holder (#1662 review r4/r5 P0).
+    # holder (#1662 review r4/r5 P0). It must fall ``WITNESS_MARGIN_MS`` inside
+    # both ends, because the timestamps are truncated milliseconds: see the
+    # constant for the boundary path that margin closes (#1662 review r8 P0).
     waited, first, blocked, at = max(waits, key=lambda row: row[0])
     if blocked == 0:
         return 'INVALID', ('the resident test never observed a refused attempt, so it never '
                            'met an exclusive holder; this row is no evidence for the lease')
-    if not (start_ms <= blocked <= end_ms):
+    if not (start_ms + WITNESS_MARGIN_MS <= blocked <= end_ms - WITNESS_MARGIN_MS):
         return 'INVALID', (f'resident test was refused at {blocked} ms, outside the writer '
-                           f'hold [{start_ms}, {end_ms}]: that refusal was not this writer')
+                           f'hold [{start_ms}, {end_ms}] less the {WITNESS_MARGIN_MS} ms '
+                           f'witness margin: that refusal was not this writer')
     released = read_released(out)
     if released is None:
         # The writer never published the instant it released the lock, so the
@@ -431,12 +530,19 @@ def green(out):
         # not evidence (#1662 review r7 P1).
         return 'INVALID', ('the writer never published writer-released.json; the hold '
                            'interval cannot be shown to end before the real release')
-    if released <= end_ms:
+    released_ms, restored = released
+    if not restored:
+        # The record exists but the writer's own restore/HEAD re-read did not
+        # complete: the lock was dropped, the bytes may not be back. A record
+        # alone is not a restoration claim (#1662 review r8 P2).
+        return 'INVALID', (f'writer released the lock at {released_ms} ms but did not '
+                           f'confirm that the guarded sources were restored')
+    if released_ms <= end_ms:
         # Would mean the writer released the lock at or before the instant it
         # recorded as inside its hold; the whole boundary argument rests on this
         # being false, so refuse to publish a verdict if it ever is not.
         return 'INVALID', (f'writer recorded end_ms={end_ms} but released at '
-                           f'{released} ms; the hold interval is not conservative')
+                           f'{released_ms} ms; the hold interval is not conservative')
     if not first <= blocked <= at:
         return 'INVALID', (f'inconsistent marker: first={first} blocked={blocked} at={at}')
     if waited < MIN_LEASE_WAIT_MS:
@@ -444,7 +550,7 @@ def green(out):
                            f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
     return 'KILLED', (f'resident test was refused inside the writer hold '
                       f'[{start_ms}, {end_ms}], waited {waited} ms and then passed'
-                      f'{"" if released is None else f" (lock released at {released} ms)"}')
+                      f' (lock released at {released_ms} ms)')
 
 
 def red(out):
@@ -462,12 +568,97 @@ def red(out):
     return judge(result)
 
 
+def stop_check(out):
+    """Self-check the writer's exit contract against the real tree lock.
+
+    Two runs, no cargo:
+
+    * ``sigterm`` -- SIGTERM lands inside the window. A *requested* stop must
+      restore the guarded bytes, record ``restored: true`` and exit 0; that is
+      what lets ``stop_writer`` judge the exit status unconditionally.
+    * ``own-failure`` -- the writer fails on its own after the hold
+      (``PDRS_1662_WRITER_FAIL_AFTER_HOLD``). It must exit non-zero, and
+      ``stop_writer`` must *report* it instead of returning cleanly (#1662
+      review r8 P1).
+    """
+    _ensure_workspace_scanner()
+    before = capture.read_bytes()
+    rows = []
+    for label, signal_it in (('sigterm', True), ('own-failure', False)):
+        run_out = out / label
+        run_out.mkdir(parents=True, exist_ok=False)
+        environment = dict(os.environ)
+        if not signal_it:
+            environment['PDRS_1662_WRITER_FAIL_AFTER_HOLD'] = '1'
+        process = subprocess.Popen(
+            [sys.executable, '-I', str(Path(__file__).resolve()), '--writer',
+             str(run_out), str(STOP_CHECK_HOLD_SECONDS)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True, env=environment)
+        reported = None
+        try:
+            deadline = time.monotonic() + WRITER_ENTRY_BUDGET
+            while not (run_out / 'writer-window-open').is_file():
+                if process.poll() is not None:
+                    break
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f'#1662 {label}: writer never opened its window')
+                time.sleep(0.05)
+            if signal_it:
+                # Exactly what ``stop_writer`` does once its wait times out.
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=WRITER_EXIT_BUDGET)
+                exclusive_write(run_out / 'stop-check.stdout', stdout or '')
+                exclusive_write(run_out / 'stop-check.stderr', stderr or '')
+            else:
+                try:
+                    stop_writer(process, run_out)
+                except RuntimeError as error:
+                    reported = str(error)
+        finally:
+            if process.poll() is None:
+                _kill_group(process)
+                _collect(process, 30)
+        row = {'label': label, 'rc': process.returncode,
+               'bytes_back': capture.read_bytes() == before,
+               'released': read_released(run_out), 'reported': reported}
+        rows.append(row)
+        print(f'{label}: rc={row["rc"]} bytes_back={row["bytes_back"]} '
+              f'released={row["released"]} reported={row["reported"]!r}', flush=True)
+    sigterm, own_failure = rows
+    failed = []
+    if sigterm['rc'] != 0:
+        failed.append(f'a requested stop exited {sigterm["rc"]}, not 0')
+    if not sigterm['bytes_back']:
+        failed.append('a requested stop left the guarded bytes mutated')
+    if not (sigterm['released'] and sigterm['released'][1]):
+        failed.append(f'a requested stop did not record restored: true '
+                      f'(record={sigterm["released"]})')
+    if own_failure['rc'] == 0:
+        failed.append('a writer that failed on its own exited 0')
+    if own_failure['reported'] is None:
+        failed.append('stop_writer accepted a non-zero writer exit')
+    return ('KILLED' if not failed else 'INVALID'), (
+        '; '.join(failed) if failed else
+        f'requested stop exited 0 and restored, own failure exited '
+        f'{own_failure["rc"]} and was reported by stop_writer')
+
+
 def main():
     arguments = sys.argv[1:]
     if arguments[:1] == ['--writer']:
         if len(arguments) != 3:
             raise SystemExit('#1662 writer usage: --writer OUT HOLD_SECONDS')
         return writer(Path(arguments[1]), float(arguments[2]))
+    if arguments[:1] == ['--stop-check']:
+        if len(arguments) != 2:
+            raise SystemExit('#1662 stop-check usage: --stop-check NEW_OUTPUT_DIR')
+        out = new_output_directory(arguments[1])
+        status, reason = stop_check(out)
+        print(f'writer exit contract: {status}: {reason}', flush=True)
+        publish_summary(out, [{'name': 'writer-exit-contract',
+                               'status': status, 'reason': reason}])
+        return 0 if status == 'KILLED' else 1
     if len(arguments) != 1 or arguments[0].startswith('-'):
         raise SystemExit('usage: negative_controls.py NEW_OUTPUT_DIR')
     if not os.environ.get('CARGO_TARGET_DIR'):
