@@ -144,9 +144,15 @@ SHA256。编码器会展开输出并与真实 TS 原始字节比较；Rust 回�
 另把最后一例已经过 TS 逐字节验证的周期扩展到 1,048,576 个 inline 元素（恰好 10 MiB），
 `reparented_wide_subtrees_stay_fast` 覆盖宽子树重挂 8 MiB；这条是 Rust 宽度压力回归，
 **不声称完整平铺 10 MiB 已跑过 TS**。三个计时测试共用 `tests/common/timing.rs`
-（与 `html_compat` 的 deep-frame 单测同一份）。`large_shallow` 与 `ten_mib` 仍把
-主重复减半：半幅展开后先断言字节数在全幅的 40%–60% 之间（否则「输入翻倍」前提
-不成立），再交错采样取各自最快值，断言 full ≤ 3 × half + 150 ms（二次约 4x）。
+（与 `html_compat` 的 deep-frame 单测同一份）。三个测试都采 3 轮（`reparented` 5 轮）
+交错样本，判据取每轮 `large/small` 比值的**中位数**，最快样本只留给每样本绝对上限兜底：
+宿主整轮抢占只污染少数轮次，中位数把它们丢掉；旧 `fastest half vs fastest full` 会让
+最快半幅与最快全幅落在不同负载区间（CI 实测 half 1.360/2.106/2.297 s、full
+4.518/4.605/4.480 s：最快比 3.29x 假红，成对比值 3.32/2.19/1.95、中位数 2.19x）。
+带宽取几何中点 `factor^1.5`：输入翻倍为 2^1.5 ≈ 2.83x，比旧的 3x + 150 ms 更紧。
+`large_shallow` 与 `ten_mib` 仍把主重复减半：半幅展开后先断言字节数在全幅的 50%–60%
+之间（实测各例均 ≥ 0.50），再由**实测字节比**推导 `factor = full/half`——0.6 时
+factor 1.667x、二次比 2.78x，硬编码 factor 2.0 的 2.83x 带会放过它，推导后的 2.15x 带不会。
 #978 第三批起 `large_shallow` 的采样改为子进程 CPU 秒（`timing::cpu_time_isolated`
 拉起本二进制里 `#[ignore]` 的 `large_shallow_cpu_worker`，用例与幅面经
 `PDRS_HTML_CPU_CASE`/`PDRS_HTML_CPU_SIZE` 选择；与 #987 给 `html_compat`
@@ -156,7 +162,7 @@ deep-frame 改的是同一份助手）：负载只会拉长墙钟，不再污染
 git/file 复核，成为每个样本的常数 CPU（本机实测 table 12.23 s → 0.188 s；
 宿主原件里 table / paragraphs 的约 3.8 s 常数同源）。剔除后二次 join 的比值不再
 被常数稀释：本机 `materializing-join` half 9.68 s / full 38.58 s = 3.99x，由
-3x + 150 ms 线性带直接拦下；宿主原件里被稀释到约 2.7–2.8x 的同一变异，扣除同一常数
+2^1.5 = 2.83x 带直接拦下；宿主原件里被稀释到约 2.7–2.8x 的同一变异，扣除同一常数
 后预计回到带外（宿主复跑由协调者确认）。每样本 5 s 上限仍保留为常数因子 /
 防挂起兜底（宿主 dense-inline full 修复后约 1.6 s，留约 3x 余量），负控对
 `materializing-join` 仍接受 band
@@ -177,10 +183,10 @@ CI 慢跑机实测单样本全幅 31.5–34 秒（46033287、193e8a1e，比开�
 回落到约 1.6 s，仍由同一 5 s 上限兜底；阈值未放宽。采样次数由
 `PDRS_TIMING_SAMPLES` 控制（`large_shallow`/`ten_mib`/
 `html_compat` 默认 3，`reparented` 默认 5，有效 1..=9）；
-`tests/fixtures/html-timing/negative_controls.py` 的负控将其降为 1——红跑证明的是
-「判据能抓到变异体」（变异体每个样本都同样慢，采样更多只会更红；每样本兜底
-不被采样稀释），不是复刻 CI 的 3 样本形状。负控逐项记 KILLED / SURVIVED /
-INVALID 并在最后汇总，任一非 KILLED 即非零退出。
+`tests/fixtures/html-timing/negative_controls.py` 的红跑与绿跑使用**同一默认采样数**
+（3，`reparented` 5），因此红跑真正走 CI 判的中位数路径，而不是退化到单样本
+（变异体每轮都同样慢，采样更多只会更红；每样本兜底不被采样稀释）。负控逐项记
+KILLED / SURVIVED / INVALID 并在最后汇总，任一非 KILLED 即非零退出。
 输入与期望构造不计入转换计时。错误累计后统一失败，恢复旧节点上限时四例都必须报错，
 不能只靠第一例失败冒充全部负控。
 为避免并行压力影响有界耗时判据，性能自证用 `--test-threads=1`。

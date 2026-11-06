@@ -141,6 +141,24 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
         .await
         .expect("bounded wait timed out")
 }
+/// #978: liveness margin for the real Python sidecar in
+/// `session_hooks_wrap_real_turn_and_retain_lease_through_end`. The product's
+/// own per-frame waits are 60 s (handshake and io), but wrapping every await in
+/// the shared 10 s `bounded()` capped them, so raising `Limits` alone left an
+/// effective 10 s margin. This is a watchdog, not an assertion: every await
+/// still has to complete, and no assertion or threshold changed. Measured on
+/// cb8 (20 cores, 32 busy-loop burners, load 34; 24 runs, 3696 awaits
+/// timestamped): p50 0.4 ms, p90 24.5 ms, p99 75.4 ms, max 282 ms, so 60 s
+/// leaves ~213x over the slowest single await observed there. The historical
+/// false reds came from a host where the same sidecar went past the 5 s io
+/// default; 60 s is no longer capped at 10 s by the outer bound.
+const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
+
+async fn bounded_liveness<T>(future: impl Future<Output = T>) -> T {
+    timeout(SIDECAR_LIVENESS, future)
+        .await
+        .expect("sidecar liveness wait timed out")
+}
 // dispose signals cancellation; a detached handler disposer may still own the
 // last lease after the stream ends. Observe release with a deadline rather than
 // treating either stream EOF or child reaping as a lease barrier (#842).
@@ -1546,10 +1564,13 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 // `abort-terminal` then reported status `failed` instead of
                 // `idle` (31/48 loaded copies, the highest hit rate in the
                 // scan). The waits are liveness margins only: every await is
-                // still bounded by `bounded()` below, and no assertion changed.
+                // still bounded by `bounded_liveness()` below, and no assertion
+                // changed. `close_timeout` is the product default 1 s, not an
+                // artificially short 20 ms: `Limits` warns that a shorter value
+                // silently discards late-but-valid terminals.
                 let factory = TurnHostFactory::new(factory_registry.clone(), deployment,
                     Limits {
-                        close_timeout: Duration::from_millis(20),
+                        close_timeout: Duration::from_secs(1),
                         handshake_timeout: Duration::from_secs(60),
                         io_timeout: Duration::from_secs(60),
                         ..Default::default()
@@ -1576,7 +1597,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     Ok(host)
                 })
             },
-        ).with_close_timeout(Duration::from_millis(20));
+        ).with_close_timeout(Duration::from_secs(1));
         for round in 0..if case == "reuse" { 2 } else { 1 } {
             let input =
                 parse_json(r#"{"type":"text","text":"hello"}"#).expect("#743 production input");
@@ -1631,10 +1652,10 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     tokio::select! {
                         _ = async { while !entered.exists() { tokio::time::sleep(Duration::from_millis(5)).await; } } => {},
                         result = &mut next => panic!("#743 production command must enter: {case}: {result:?}"),
-                        _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("#743 production command entry deadline: {case}"),
+                        _ = tokio::time::sleep(SIDECAR_LIVENESS) => panic!("#743 production command entry deadline: {case}"),
                     }
                     if case == "dispose-start" {
-                        bounded(session.dispose())
+                        bounded_liveness(session.dispose())
                             .await
                             .expect("#743 production dispose start returns while stream held");
                     } else {
@@ -1644,7 +1665,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     }
                     acted = true;
                 }
-                let Some(event) = timeout(Duration::from_secs(10), next)
+                let Some(event) = timeout(SIDECAR_LIVENESS, next)
                     .await
                     .expect("#743 production bounded stream")
                     .expect("#743 production next")
@@ -1714,14 +1735,19 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                             "#743 terminal waits durable steer close"
                         );
                         drop(next);
-                        let result = bounded(enqueue).await.expect("#743 steer enqueue settles");
+                        let result = bounded_liveness(enqueue)
+                            .await
+                            .expect("#743 steer enqueue settles");
                         assert!(
                             !result.accepted,
                             "#743 steer in-flight insert rejected after close"
                         );
                     } else {
                         assert!(
-                            bounded(enqueue).await.expect("#743 steer enqueue").accepted,
+                            bounded_liveness(enqueue)
+                                .await
+                                .expect("#743 steer enqueue")
+                                .accepted,
                             "#743 steer pending accepted"
                         );
                     }
@@ -1734,7 +1760,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     ) || (case == "reuse" && round == 0))
                 {
                     if case == "dispose-turn" {
-                        bounded(session.dispose())
+                        bounded_liveness(session.dispose())
                             .await
                             .expect("#743 production dispose model returns before drain");
                     } else {
@@ -1758,7 +1784,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 }
                 if kind == "turn_completed" {
                     if let Some(mailbox) = &mailbox {
-                        let result = bounded(mailbox.enqueue(
+                        let result = bounded_liveness(mailbox.enqueue(
                             turn_id.clone(),
                             crate::runtime::steer::SteerMessage {
                                 item_id: "late-terminal".into(),
@@ -1790,7 +1816,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 if kind == "session_ended" {
                     ended = true;
                     if let Some(mailbox) = &mailbox {
-                        let result = bounded(mailbox.enqueue(
+                        let result = bounded_liveness(mailbox.enqueue(
                             turn_id.clone(),
                             crate::runtime::steer::SteerMessage {
                                 item_id: "late-end".into(),
@@ -1957,7 +1983,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 );
             }
         }
-        bounded(registry.dispose())
+        bounded_liveness(registry.dispose())
             .await
             .expect("#743 production dispose");
     }

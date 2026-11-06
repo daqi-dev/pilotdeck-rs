@@ -9,15 +9,15 @@ catch it, then the restored tree must pass the same test. Run with no other
 writers/builds in this worktree.
 
 Release mode, because the mutants must stay observable without debug-only
-checks. The red runs set ``PDRS_TIMING_SAMPLES=1``: a mutant full sample costs
-tens of seconds even in release. That proves the criterion can catch the
-mutant, which is not the same shape as the CI's multi-sample run; for every
-mutant here more samples only redden it further (a quadratic mutant is equally
-slow in every round, the median of the paired ratios stays high, and the
-per-sample cap is never divided by the sample count). The green runs use the
-caller's default (three rounds, five for the reparented test).
-``CARGO_TARGET_DIR`` must come from the caller; a private build directory would
-hide slot contention from cargo-slots.sh.
+checks. The red runs use the caller's default sample count (three rounds, five
+for the reparented test), exactly like the green runs and CI: a forced
+``PDRS_TIMING_SAMPLES=1`` would let the mutant fall out on the one-sample path
+and never prove that the median criterion CI judges can turn red (#978 first
+review). Every mutant here is equally slow in every round, so the median of
+the paired ratios stays high and the per-sample cap is never divided by the
+sample count; more samples only redden them further. ``CARGO_TARGET_DIR`` must
+come from the caller; a private build directory would hide slot contention
+from cargo-slots.sh.
 
 Every mutation is executed and recorded as KILLED, SURVIVED or INVALID (with a
 reason); the script exits non-zero unless all of them are KILLED. A non-zero
@@ -121,7 +121,7 @@ mutations = [
      # The quadratic join's ratio was diluted to about 2.7–2.8x on the host by the
      # CPU worker's repeated provenance (a ~3.8 s constant per sample). After
      # #978 fix-r2 the worker times conversion only, so the same mutant reds
-     # the 3x band (local: 38.58 s / 9.68 s = 3.99x). The per-sample cap stays
+     # the 2^1.5 = 2.83x band (local: 38.58 s / 9.68 s = 3.99x). The per-sample cap stays
      # as this test's anti-hang backstop; accept either dedicated #978 line so
      # a host that trips one first still binds the mutant to this test.
      dict(all=('#978',), any=('did not scale from', 'per-sample budget'))),
@@ -233,7 +233,15 @@ with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ 
 
             path.write_text(changed)
             mutated = True
-            result = run_timing_test(target, {'PDRS_TIMING_SAMPLES': '1'}, timeout=1800)
+            # Same sample count as CI: this red run must exercise the median
+            # criterion, not a degenerate one-sample path (#978 first review).
+            # The helper collects every round before it asserts, so the red run
+            # now costs what the green run does times the mutant's slowdown;
+            # the per-call bound stays at this fixture's original 1800 s, which
+            # covers the slowest mutant (a quadratic join, tens of seconds per
+            # 8 MiB sample) with room to spare and keeps a hung mutant INVALID
+            # instead of blocking the chain.
+            result = run_timing_test(target, {}, timeout=1800)
             log, killed, failure = outcome(result, test, expects)
             (out / f'{name}.red.log').write_text(log)
             entry.update(returncode=result.returncode, failure=failure)
