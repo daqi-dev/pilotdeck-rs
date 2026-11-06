@@ -9,10 +9,11 @@
 //! exhausting the Rust stack.
 //!
 //! Measured (A6.8-pr4 review, Node 22): `String(a)` throws from depth 2516,
-//! both at top level and one call deeper. Known divergence: Rust's limit is a
-//! fixed constant, while V8's shrinks as the caller's stack grows, so the
-//! constant sits below the measured value and depths between it and V8's
-//! real limit throw here but convert in TS.
+//! both at top level and one call deeper; the A6-JSVALUE-DEPTH-001 oracle
+//! (#1550) has 2100 converting and 3000 throwing, and nested objects trip it
+//! as early as 1887. Known divergence: Rust's limit is a fixed constant, while
+//! V8's varies with the caller's stack shape, so the constant sits low and
+//! depths between it and V8's real limit throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
@@ -114,11 +115,12 @@ impl ToStringError {
     }
 }
 
-/// `String(value)` including `ToPrimitive` on objects, also inside arrays
-/// (node probe, A6.4-pr7 修复轮 4: `{toString:null}` and `[{toString:null}]`
-/// throw `TypeError: Cannot convert object to primitive value`). Errors are
-/// reported in element order, like the joining walk.
-pub(crate) fn to_string_units_checked(value: &JsValue) -> Result<Vec<u16>, ToStringError> {
+/// Both throw surfaces of `String(value)`: an own `toString` property (JSON
+/// cannot carry a callable one, so `ToPrimitive` throws) and nesting past
+/// [`MAX_ARRAY_DEPTH`]. An explicit stack keeps the walk off the Rust call
+/// stack, like every other container traversal here; errors are reported in
+/// element order, like the joining walk.
+fn validate_coercion(value: &JsValue) -> Result<(), ToStringError> {
     let mut pending = vec![(value, 0usize)];
     while let Some((value, depth)) = pending.pop() {
         match value {
@@ -134,34 +136,22 @@ pub(crate) fn to_string_units_checked(value: &JsValue) -> Result<Vec<u16>, ToStr
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// `String(value)` including `ToPrimitive` on objects, also inside arrays
+/// (node probe, A6.4-pr7 修复轮 4: `{toString:null}` and `[{toString:null}]`
+/// throw `TypeError: Cannot convert object to primitive value`).
+pub(crate) fn to_string_units_checked(value: &JsValue) -> Result<Vec<u16>, ToStringError> {
+    validate_coercion(value)?;
     to_string_units(value).map_err(|_| ToStringError::StackOverflow)
 }
 
-/// Validation-only twin of [`to_string_units_checked`] for callers that only
-/// need "would `String(value)` throw?": same two throw surfaces and the same
-/// element order, but no joined text is materialized, so a wide array costs
-/// no copy of its own stringification. Recursion is bounded by
-/// [`MAX_ARRAY_DEPTH`] (the frame count is capped at 2000), which keeps
-/// pathological transcripts from aborting the process.
+/// Validation-only entry point for callers that only need "would
+/// `String(value)` throw?": same walk, no joined text materialized, so a wide
+/// array costs no copy of its own stringification.
 pub(crate) fn string_coercible_checked(value: &JsValue) -> Result<(), ToStringError> {
-    fn walk(value: &JsValue, depth: usize) -> Result<(), ToStringError> {
-        match value {
-            JsValue::Array(items) => {
-                if depth >= MAX_ARRAY_DEPTH {
-                    return Err(ToStringError::StackOverflow);
-                }
-                for item in items {
-                    walk(item, depth + 1)?;
-                }
-                Ok(())
-            }
-            JsValue::Object(object) if object.get_property("toString").is_some() => {
-                Err(ToStringError::NotPrimitive)
-            }
-            _ => Ok(()),
-        }
-    }
-    walk(value, 0)
+    validate_coercion(value)
 }
 
 /// `String(value)` as UTF-16 units (lone surrogates kept). Inside arrays,
@@ -330,6 +320,27 @@ mod tests {
             value = JsValue::Array(vec![value]);
         }
         value
+    }
+
+    /// Untrusted wire values reach this walk from `storage` and `session_model`,
+    /// so it must not spend Rust stack: 128 KiB is the small-stack size the
+    /// protocol decoder is pinned on.
+    #[test]
+    fn coercion_validation_survives_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                assert_eq!(
+                    string_coercible_checked(&nested(MAX_ARRAY_DEPTH + 1)),
+                    Err(ToStringError::StackOverflow)
+                );
+                assert!(string_coercible_checked(&nested(MAX_ARRAY_DEPTH)).is_ok());
+                let wide = JsValue::Array(vec![JsValue::Number(7.0); 100_000]);
+                assert!(string_coercible_checked(&wide).is_ok());
+            })
+            .expect("spawn small-stack thread")
+            .join()
+            .expect("the coercion walk must fit a 128 KiB stack");
     }
 
     #[test]

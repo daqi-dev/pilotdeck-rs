@@ -376,29 +376,47 @@ pub(super) fn selection(entries: &[JsValue]) -> Result<JsValue, Error> {
 mod coercion_depth_tests {
     use super::*;
 
-    fn nested(depth: usize) -> JsValue {
+    /// A `tool_result` block whose inner block `type` is `depth` arrays deep.
+    /// `isContentBlock` runs `String(block.type)` on inner blocks
+    /// (`CompactSnapshot.ts:41-43`), so this is the shape that reaches
+    /// `checked_string` through `snapshot` → `valid_message` → `valid_block`.
+    fn tool_result_with_deep_type(depth: usize) -> JsValue {
         let mut value = JsValue::from("text");
         for _ in 0..depth {
             value = JsValue::Array(vec![value]);
         }
-        value
+        let inner = object([("type", value), ("text", JsValue::from("x"))]);
+        object([
+            ("type", JsValue::from("tool_result")),
+            ("toolCallId", JsValue::from("t")),
+            ("content", JsValue::Array(vec![inner])),
+        ])
     }
 
     /// `session_model_get` reads the same untrusted `chats/<key>.jsonl` as the
-    /// storage adapter, so a deeply nested `block.type` must surface as the RPC
-    /// error TS builds for a caught `RangeError` (code `gateway_request_failed`,
-    /// message verbatim, no name field) instead of aborting the process.
+    /// storage adapter, so this goes through the real entry (`valid_block`),
+    /// not the private helper: a deeply nested `block.type` must surface as the
+    /// RPC error TS builds for a caught `RangeError` (code
+    /// `gateway_request_failed`, message verbatim, no name field) instead of
+    /// aborting the process.
     #[test]
     fn deep_block_type_is_a_gateway_error_not_a_stack_overflow() {
-        let failed = checked_string(&nested(crate::js_value::MAX_ARRAY_DEPTH + 1))
-            .expect_err("past the shared bound the coercion throws");
+        let failed = valid_block(&tool_result_with_deep_type(
+            crate::js_value::MAX_ARRAY_DEPTH + 1,
+        ))
+        .expect_err("past the shared bound the coercion throws");
         assert_eq!(failed.code, "gateway_request_failed");
         assert_eq!(
             failed.message.to_utf8().expect("utf-8 message"),
             crate::js_value::StackOverflow::MESSAGE
         );
-        // At the bound TS `String()` still succeeds, so the port must too.
-        checked_string(&nested(crate::js_value::MAX_ARRAY_DEPTH))
-            .expect("at the shared bound the coercion succeeds");
+        // At the bound TS `String()` still succeeds, so the port must too; the
+        // joined text `"text"` is not one of the accepted inner kinds.
+        assert!(
+            !valid_block(&tool_result_with_deep_type(
+                crate::js_value::MAX_ARRAY_DEPTH
+            ))
+            .expect("at the shared bound the coercion succeeds")
+        );
     }
 }
