@@ -20,7 +20,10 @@
 """
 from __future__ import annotations
 
-import argparse
+try:
+    import argparse
+except Exception:  # noqa: BLE001 - 连标准库都起不来：走下面的保守字面扫描（只漏不多删）
+    argparse = None
 import os
 import sys
 
@@ -71,7 +74,15 @@ def tmp_owner_pid(name):
     if not (name.startswith(prefix) and name.endswith(suffix)):
         return None
     middle = name[len(prefix):-len(suffix)]
-    return int(middle) if middle.isdigit() else None
+    if not middle.isdigit():
+        return None
+    try:
+        return int(middle)
+    except ValueError:
+        # isdigit() 为真但 int() 拒绝（superscript ``²``、>4300 位数字串，3.11+ 上限）：
+        # 当成「不是我们的产物」而不是抛异常——异常会让模块体失效段整段崩掉（rc1），
+        # 后面的 --output 目录不再失效，旧 PASS 冒充本轮（DeepSeek r11 P1）。
+        return None
 
 
 def pid_alive(pid):
@@ -171,14 +182,19 @@ def early_outputs(argv):
     分类全部交给 argparse（见 ``build_classifier``）：不手抄规则、不猜缩写、不猜
     位置参数——那些猜测正是前几轮误删别人证据 / 留旧 PASS 的来源（两家评审 P0）。
 
-    ``ok=False`` 表示连宽松孪生解析器都起不来（例如 3.12 的 ``parse_known_args``
-    在某种形状上抛 ``ArgumentError``）：此时**不猜也不删**，由调用方按输入不可用
-    rc2 退出——这比删错目录安全，残余登记在差异条目「机器判据」段。
+    ``ok=False`` 表示**分类不可用**（argparse 导入失败，或宽松孪生解析器在某种形状上
+    抛 ``ArgumentError`` / ``SystemExit``）：调用方改走 ``literal_outputs`` 的保守
+    字面扫描——只认 ``--output 值`` / ``--output=值`` 且值不以 ``-`` 开头，
+    **只漏不多删**——然后按输入不可用 rc2 退出。扫不到的形状登记在差异条目「机器判据」段。
 
     空值（``--output=`` / ``--output ''``）不收集：``Path('')`` 就是当前工作目录，
     绝不能把 CWD 当输出目录失效（两家评审：会删掉调用者目录里的 summary）；
     ``main`` 另行判参数错误 rc2。
     """
+    if argparse is None:
+        print('negative_controls: cannot import argparse; using literal --output scan',
+              file=sys.stderr)
+        return [], False
     try:
         namespace, _extras = build_classifier().parse_known_args(argv)
     except (argparse.ArgumentError, SystemExit) as error:
@@ -192,12 +208,48 @@ def early_outputs(argv):
 # ``load_checker()``——那些启动依赖一失败就到不了失效，旧 PASS 会冒充本轮。
 # **逐个都试一遍再退出**：前一个目录不可删（如 ``/dev/null``）不能让后面显式点名的
 # 目录跳过失效（两家评审：短路会让后者旧 PASS 冒充本轮）。
+def literal_outputs(argv):
+    """**保守**失效清单：只认字面 ``--output 值`` / ``--output=值``。
+
+    仅在分类不可用时使用（argparse 连导入都失败，或宽松孪生解析器报错）：模块体
+    失效段不能因此整段跳过，否则上一轮的 PASS 留在盘上，下游按「文件存在」读成本轮
+    通过。方向是**只漏不多删**：
+
+    * 取值必须以非 ``-`` 开头——这种 token 在任何一版 argparse 里都不可能是选项，
+      所以它一定是值，删它不会碰到别人的证据；
+    * 遇到裸 ``--`` 停止（之后的 ``--output`` 只是位置参数，argparse 也不收）；
+    * 缩写 ``--out``、短选项内联、``--output=-h``、``-²`` 这类形状一律**漏掉**——
+      漏掉等价于「本轮之前的行为」（不删），不会比现在更糟。
+    """
+    values = []
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == '--':
+            break
+        if token == '--output':
+            if index + 1 < len(argv):
+                value = argv[index + 1]
+                if value and not value.startswith('-'):
+                    values.append(value)
+                index += 2
+                continue
+        elif token.startswith('--output='):
+            value = token[len('--output='):]
+            if value and not value.startswith('-'):
+                values.append(value)
+        index += 1
+    return values
+
+
 if __name__ == '__main__':
     _outputs, _classified = early_outputs(sys.argv[1:])
     if not _classified:
-        raise SystemExit(2)
+        # argparse 起不来时**不猜复杂形状**，但字面写出的输出目录仍必须失效，
+        # 否则旧 PASS 冒充本轮（Codex r12 P0）。清完按入口失败 rc2 退出。
+        _outputs = literal_outputs(sys.argv[1:])
     _failures = [path for path in _outputs if not invalidate_stale_summary(path)]
-    if _failures:
+    if _failures or not _classified:
         raise SystemExit(2)
 
 if not sys.flags.isolated:
@@ -280,12 +332,56 @@ class OutputError(Exception):
     """
 
 
-def write_output(path, text):
-    """写盘失败一律折成 ``OutputError``（rc2），不当判据 FAIL。"""
+def write_output(path, text, exclusive=False):
+    """写盘失败一律折成 ``OutputError``（rc2），不当判据 FAIL；**从不跟随符号链接**。
+
+    输出目录完全由调用方给（可以是 ``/tmp`` 或共享 CI 目录），预置
+    ``OUT/N1/driver/methods.json -> ~/.bashrc`` 这类符号链接会让 ``Path.write_text``
+    以本进程权限截断目标（``O_WRONLY|O_CREAT|O_TRUNC`` 跟随链接）。``O_NOFOLLOW`` 让
+    链接本身直接 ``ELOOP`` 失败（DeepSeek r11 P1 / concurrency）。
+    ``exclusive`` 再叠 ``O_EXCL``：路径已存在（含链接）即失败，用于原子发布的 tmp。
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, 'O_NOFOLLOW', 0)
+    if exclusive:
+        flags |= os.O_EXCL
     try:
-        Path(path).write_text(text, encoding='utf-8')
-    except (OSError, ValueError) as error:
+        handle = os.fdopen(os.open(path, flags, 0o600), 'w', encoding='utf-8')
+    except OSError as error:
         raise OutputError(f'cannot write {path}: {error}') from error
+    try:
+        with handle:
+            handle.write(text)
+    except OSError as error:
+        raise OutputError(f'cannot write {path}: {error}') from error
+
+
+def ensure_dir(path, root):
+    """创建 ``root`` 之下**我们自己的**目录；中间任一层是符号链接就 rc2。
+
+    ``mkdir(parents=True, exist_ok=True)`` 对「已存在的符号链接指向别处」不报错，
+    于是 ``OUT/N1 -> ~/.ssh`` 这类预置链接会把后续写盘整个引到目标目录
+    （DeepSeek r11 P1 / concurrency）。逐层 ``is_symlink()`` 才能挡住中间层——
+    只看最后一段 ``OUT/N1/round-01`` 会漏掉 ``N1`` 这层。``root`` 是调用方给的输出
+    目录，允许它本身是链接（macOS 的 ``/tmp`` 就是），只核它下面我们自己建的部分。
+    """
+    target = Path(path)
+    base = Path(root)
+    try:
+        rel = target.relative_to(base)
+    except ValueError as error:
+        raise OutputError(f'{target} is outside the output directory {base}') from error
+    current = base
+    for part in rel.parts:
+        current = current / part
+        if current.is_symlink():
+            raise OutputError(f'{current} is a symlink; refusing to write through it')
+    try:
+        current.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OutputError(f'cannot create {current}: {error}') from error
+    if current.is_symlink() or not current.is_dir():
+        raise OutputError(f'{current} is not a real directory')
+    return current
 
 
 def read_round(data_dir, name):
@@ -295,12 +391,9 @@ def read_round(data_dir, name):
     return [dict(row) for row in rows], [json.loads(json.dumps(frame)) for frame in frames]
 
 
-def write_round(out_dir, rows, frames):
-    driver = Path(out_dir) / 'driver'
-    try:
-        driver.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        raise OutputError(f'cannot create {driver}: {error}') from error
+def write_round(out_root, control_id, name, rows, frames):
+    control_dir = ensure_dir(Path(out_root) / control_id, out_root)
+    driver = ensure_dir(control_dir / name / 'driver', out_root)
     write_output(driver / 'methods.json',
                  json.dumps({'methods': rows}, ensure_ascii=False) + '\n')
     write_output(driver / 'frames.jsonl',
@@ -735,7 +828,7 @@ def run_control(control, out_root, oracle):
         record.update(verdict='INVALID', reason=f'build failed: {error!r}')
         return record
     for name, (rows, frames) in bundles.items():
-        write_round(out_dir / name, rows, frames)
+        write_round(out_root, control.id, name, rows, frames)
     # 旧产物不留在目录里冒充本轮输出（缺失即失败）。
     try:
         (out_dir / 'check-output.json').unlink(missing_ok=True)
@@ -891,7 +984,12 @@ def main(argv=None):
         # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
         # 会把另一进程写了一半的内容发布成最终文件）。
         tmp = out_root / f'summary.json.{os.getpid()}.tmp'
-        write_output(tmp, json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
+        try:
+            Path(tmp).unlink(missing_ok=True)  # 只删链接自己/残留，绝不跟随
+        except OSError as error:
+            raise OutputError(f'cannot clear stale {tmp}: {error}') from error
+        write_output(tmp, json.dumps(summary, ensure_ascii=False, indent=2) + '\n',
+                     exclusive=True)
         try:
             tmp.replace(target)  # 原子发布：先写 *.tmp 再 replace
         except OSError as error:
