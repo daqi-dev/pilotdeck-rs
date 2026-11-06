@@ -149,7 +149,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '9a85db9328696476a22dc3ec464105c737442b5628c88a49a79c4b06178a97ae'
+PINNED_DEVICE_SHA256 = 'd41b4c6a2e5a5bb7fe011389782367e9ef2c0d3efed51ae3c957fb523df12bae'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -715,6 +715,47 @@ finally:
     sys.stdout = _saved_out
 check('rc=9 收尾输出遇断管道不抛出（rc 不被改写成 1）',
       broke_ok, '' if broke_ok else broke_detail)
+
+# ⑥ _PipeSafe：读端提前退出时 write/flush 都不抛，并把 fd 1 静音（否则退出码会被改写）。
+_silenced = []
+_real_silence = fa._silence_stdout
+fa._silence_stdout = lambda: _silenced.append(1)
+try:
+    _w = fa._PipeSafe(_BrokenOut())
+    _wrote = _w.write('x' * 10)
+    _w.flush()
+    pipe_ok, pipe_detail = True, ''
+except BaseException as exc:  # noqa: BLE001 —— 这里就是要它「什么都不抛」
+    pipe_ok, pipe_detail = False, repr(exc)
+finally:
+    fa._silence_stdout = _real_silence
+check('_PipeSafe 吞掉断管道错误并静音 fd 1（write 返回长度、flush 不抛）',
+      pipe_ok and _wrote == 10 and len(_silenced) == 2,
+      pipe_detail or f'wrote={_wrote} silenced={len(_silenced)}')
+
+# ⑦ 真实进程 + 短读者：输出 2000 行、读一行就关管道，退出码必须是真实 rc=3 —— 而不是
+#    CPython 退出 flush 失败的 120（缓冲）或无缓冲时的 1（改前实测见 README「验证记录」）。
+import subprocess  # noqa: E402 —— 只这一处需要起真进程
+
+with tempfile.TemporaryDirectory() as tdir:
+    rounds_dir = os.path.join(tdir, 'rounds')
+    os.makedirs(rounds_dir)
+    for _i in range(1, 2001):
+        os.makedirs(os.path.join(rounds_dir, f'ts-r{_i}'))
+    for flags, tag in (([], '默认缓冲'), (['-u'], '-u 无缓冲')):
+        p = subprocess.Popen(
+            [sys.executable, '-I', *flags, os.path.join(HERE, 'frame_attrib.py'),
+             rounds_dir, 'deadline', '--negctl-out', os.path.join(tdir, f'out-{len(flags)}')],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        first = p.stdout.readline()
+        p.stdout.close()
+        try:
+            rc = p.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            rc = 'timeout'
+        check(f'输出接短读者（{tag}，读一行即关管道）时 rc 是真实值 3，不是 120 / 1',
+              rc == 3 and b'rc=3' in first, f'rc={rc} first={first[:80]!r}')
 
 print()
 if FAILS:
