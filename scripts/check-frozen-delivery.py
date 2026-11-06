@@ -193,9 +193,10 @@ def merge_base(root, base, head='HEAD'):
 def exists_at(root, commit, path):
     """True/False/None -- None when the question cannot be answered.
 
-    ``git cat-file -e`` returns the same status for "path absent" and "commit
-    unknown", so the commit is resolved first and an uninterrogable tree is an
-    error (None), never a silent "not there".
+    Two ``rev-parse --verify --quiet`` queries: the commit is resolved first,
+    so a bad SHA is an error (None) instead of a silent "not there"; then the
+    path query answers 0 (present), 1 ("no such path in that tree", measured
+    with git 2.54) or anything else (the query failed -> None).
     """
     code, _, _ = git(root, 'rev-parse', '--verify', '--quiet', f'{commit}^{{commit}}')
     if code != 0:
@@ -617,8 +618,17 @@ def base_event_issues(root, kind, mb):
         if mode != '100644' or kind_name != 'blob':
             issues.append(f'{name}: base event is not a regular file (append-only)')
             continue
-        head_code, head_out, _ = git(root, 'rev-parse', '--verify', '--quiet',
-                                     f'{pinned_head()}:{name}')
+        head_code, head_out, head_err = git(root, 'rev-parse', '--verify',
+                                            '--quiet', f'{pinned_head()}:{name}')
+        if head_code and head_code != 1:
+            # Same rule as ``exists_at``: only exit 1 means "no such path in
+            # that tree" (measured with git 2.54).  Anything else is the query
+            # itself failing, and folding it into "the event was rewritten"
+            # blocks with a message that blames the append-only rule.
+            issues.append(
+                f'{name}: cannot tell whether the base event survives at HEAD '
+                f'({head_err.strip() or f"git exit {head_code}"}) (append-only)')
+            continue
         if head_code or head_out.strip() != oid:
             issues.append(f'{name}: base event changed/deleted/renamed (append-only)')
             continue
@@ -3864,6 +3874,7 @@ def _admin_dir(root):
 # while the entry was still on disk.  Callers must treat any sighting of this
 # value as "not proven clean" (fail closed).
 _UNREADABLE_GITDIR = object()
+_URL_SCHEME = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]+://')
 
 
 # ``.git/worktrees`` entries whose ``gitdir`` could not be read in this run.
@@ -3893,14 +3904,21 @@ def _recorded_gitdir(entry):
     does not end in ``/.git`` -- is corrupt too, and one shape matters: a
     *truncated* non-empty write (``/tmp/snap/tree`` cut to ``/tmp/snap/tr``)
     is readable, differs from the target, and would otherwise prove "not
-    ours" while the entry is still on disk.
+    ours" while the entry is still on disk.  A cut that happens to land on an
+    earlier ``/.git`` component (``/tmp/.git/folder/.../tree/.git`` cut to
+    ``/tmp/.git``) still ends in ``/.git``; ``_admin_match`` recognises that
+    one as a torn write of our own path, because no other worktree can be
+    registered at a directory that contains this run's fresh holder.
     """
     try:
         text = (entry / 'gitdir').read_text(encoding='utf-8',
                                             errors='surrogateescape').strip()
     except OSError:
         return _UNREADABLE_GITDIR
-    if (not text or '\x00' in text or '://' in text
+    # A URL is never a gitdir, but ``://`` may also appear inside a perfectly
+    # ordinary directory name (``/tmp/cache://v1/wt/.git``); only a leading
+    # scheme marks a non-path.
+    if (not text or '\x00' in text or _URL_SCHEME.match(text)
             or not text.endswith('/.git')):
         return _UNREADABLE_GITDIR
     path = Path(text)
@@ -3909,6 +3927,25 @@ def _recorded_gitdir(entry):
         # relative to ``.git/worktrees/<id>`` (measured with git 2.54).
         path = entry / path
     return _real_path(path)
+
+
+def _admin_match(recorded, wanted):
+    """Classify one readable ``gitdir`` against this holder's ``<tree>/.git``.
+
+    ``ours`` / ``other`` / ``torn``.  A recorded path that is a *strict
+    ancestor* of ``wanted`` cannot name a different worktree here: this run's
+    holder is a fresh ``mkdtemp`` directory, so nothing git registered earlier
+    can sit above it and inside it at the same time.  That shape is a
+    truncated write of our own path (see ``_recorded_gitdir``) and must stay
+    "unproven", not become "proven not ours" -- the latter deregisters the
+    holder and calls a leftover entry clean.
+    """
+    if recorded == wanted:
+        return 'ours'
+    prefix = recorded.rstrip('/') + '/'
+    if wanted.startswith(prefix):
+        return 'torn'
+    return 'other'
 
 
 def _scan_admin(admin, wanted):
@@ -3925,8 +3962,11 @@ def _scan_admin(admin, wanted):
         if recorded is _UNREADABLE_GITDIR:
             unreadable.append(str(entry))
             continue
-        if recorded == wanted:
+        verdict = _admin_match(recorded, wanted)
+        if verdict == 'ours':
             return True, []
+        if verdict == 'torn':
+            unreadable.append(str(entry))
     return (None if unreadable else False), unreadable
 
 
@@ -3951,7 +3991,6 @@ def admin_entry_present(root, target):
         if admin is None:
             return None
         wanted = _real_path(target / '.git')
-        unreadable = []
         for attempt in range(3):
             try:
                 state, seen = _scan_admin(admin, wanted)
@@ -3959,14 +3998,12 @@ def admin_entry_present(root, target):
                 return False      # no ``.git/worktrees`` directory at all
             except OSError:
                 return None       # the directory itself cannot be read
-            if seen:
-                unreadable = seen
             if state is not None:
                 return state
             if attempt < 2:
                 time.sleep(0.05)
         # Persistent: name these entries, and only these, in the verdict.
-        _UNVERIFIED_ADMIN_ENTRIES.update(unreadable)
+        _UNVERIFIED_ADMIN_ENTRIES.update(seen)
         return None
     except OSError:
         return None
@@ -4009,11 +4046,31 @@ def drop_admin_entry(root, target):
                 # ``admin_entry_present`` below reports None and names it, so
                 # the holder stays registered for the atexit retry.
                 continue
-            if recorded == wanted:
+            verdict = _admin_match(recorded, wanted)
+            if verdict == 'torn':
+                # A truncated write of our own gitdir: same rule as above.
+                continue
+            if verdict == 'ours':
                 shutil.rmtree(entry, ignore_errors=True)
     except OSError:
         return False
     return admin_entry_present(root, target) is False
+
+
+def _still_there(path):
+    """True when ``path`` is on disk *or* cannot be proven gone.
+
+    ``Path.exists()`` answers False for EACCES as well, so using it to prove a
+    holder was removed would deregister one whose directory is still there --
+    the same hole ``drop_admin_entry`` closed for ``.git/worktrees``.
+    """
+    try:
+        os.stat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
 
 
 def drop_holder(root, holder):
@@ -4040,7 +4097,7 @@ def drop_holder(root, holder):
         shutil.rmtree(holder, ignore_errors=True)
     except Exception:  # noqa: BLE001 -- cleanup must not mask the exit path
         return False
-    if holder.exists():
+    if _still_there(holder):
         return False
     if entry_gone is False:
         return False

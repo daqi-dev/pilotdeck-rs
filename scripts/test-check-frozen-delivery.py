@@ -63,6 +63,13 @@ def write(root, name, text):
     (root / name).write_text(text)
 
 
+def scripted_git(seq):
+    """按序返回预设 ``(code, out, err)`` 的 git 替身；用完即 StopIteration。"""
+    def call(*_args, **_kwargs):
+        return seq.pop(0)
+    return call
+
+
 def row(root, kind, path, digest, text=None):
     """在 base 的 FROZEN.md 里给 path 写一条清单行（注册起点是行，不是 blob）。"""
     write(root, f"specs/{kind}/FROZEN.md",
@@ -218,6 +225,7 @@ def delivery(root, kind, payload, files=(), events=(), source="", dirty=None,
 
 def run():
     fails = 0
+    skips = 0
 
     def case(name, ok, detail=""):
         nonlocal fails
@@ -3304,14 +3312,33 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         real_git = cfd.git
         try:
             for code, want in ((128, None), (1, False)):
-                cfd.git = (lambda seq: (lambda *_a, **_k: seq.pop(0)))(
-                    [(0, "deadbeef", ""), (code, "", "boom")])
+                cfd.git = scripted_git([(0, "deadbeef", ""), (code, "", "boom")])
                 got = cfd.exists_at(root, "deadbeef",
                                     "scripts/x/check_frozen.py")
                 case(f"exists_at：git 退出码 {code} → {want!r}",
                      got is want, f"code={code} got={got!r}")
         finally:
             cfd.git = real_git
+
+    # P2（GLM sibling）：同源的 base 事件存在性查询没跟着立规矩——任何非零
+    # 都折进「历史事件被改写」，瞬时 git 故障会假 BLOCK 且文案诬指 append-only。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "seed.txt", "S\n")
+        commit(root, "base")
+        real_git = cfd.git
+        try:
+            cfd.git = scripted_git([
+                (0, "100644 blob deadbeef\tspecs/fake/frozen/20260101-e1.md\0", ""),
+                (128, "", "boom"),
+            ])
+            issues = cfd.base_event_issues(root, "fake", "HEAD")
+        finally:
+            cfd.git = real_git
+        case("base_event_issues：rev-parse 非 1 退出码 → 报「查不出」而非「事件被改写」",
+             len(issues) == 1 and "cannot tell whether the base event survives"
+             in issues[0], f"{issues}")
 
     # P0（两家独立撞上）：``specs/<alias>`` 是符号链接（120000 blob）时，discover
     # 以前按「不是 tree」静默 continue：该装置根本不跑，父预检报 READY 而子装置
@@ -3583,6 +3610,19 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              all(row[1] and row[2] is None and row[3] is False and row[4]
                  and row[5] for row in results), f"{results}")
 
+    # 反向：``://`` 也可能出现在合法目录名里，只有前导 scheme 才算非路径。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        entry = root / ".git" / "worktrees" / "urlpath"
+        entry.mkdir(parents=True)
+        (entry / "gitdir").write_text(
+            str(Path(td) / "cache://v1" / "wt" / ".git") + "\n")
+        recorded = cfd._recorded_gitdir(entry)
+        case("gitdir 路径中部含 ://（合法目录名）→ 仍可读，不误判不可读",
+             recorded is not cfd._UNREADABLE_GITDIR, f"recorded={recorded!r}")
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "repo"
         root.mkdir()
@@ -3624,7 +3664,18 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              "--detach", str(real_target), "HEAD"],
             capture_output=True, text=True, timeout=TIMEOUT)
         if made.returncode != 0:
-            print("SKIP  真实 git --relative-paths 建树（本机 git 不支持该选项）")
+            err = (made.stderr or "").strip()
+            # 只有「这个 git 不认识该选项」才允许跳过；磁盘满 / 权限 / 其它
+            # 失败都是真失败，跳过会把「没验到」伪装成通过（codex P2）。
+            unsupported = (("relative-paths" in err or "relative_paths" in err)
+                           and ("unknown option" in err.lower()
+                                or "unrecognized" in err.lower()
+                                or err.startswith("usage:")))
+            if unsupported:
+                skips += 1
+                print("SKIP  真实 git --relative-paths 建树（本机 git 不支持该选项）")
+            else:
+                case("真实 git --relative-paths 建树", False, err)
         else:
             entry = next(iter((root / ".git" / "worktrees").iterdir()))
             payload = (entry / "gitdir").read_text().strip()
@@ -3674,7 +3725,7 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
             return (None, ["broken"]) if len(calls) == 1 else (False, [])
 
         cfd._scan_admin = flaky
-        cfd._UNVERIFIED_ADMIN_ENTRIES.discard("/virtual/repo/.git/worktrees/broken")
+        cfd._UNVERIFIED_ADMIN_ENTRIES.discard("broken")
         try:
             present = cfd.admin_entry_present(root, target)
         finally:
@@ -3696,7 +3747,43 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         case("repo_relative_any：嵌套根取最深前缀，非嵌套不变",
              nested == "a.md" and plain == "a.md", f"nested={nested} plain={plain}")
 
-    print(f"SUMMARY failed={fails}")
+    # P1（codex）：截断位置正好落在**更早的 `/.git` 组件**上时，前缀本身以
+    # `/.git` 结尾，长度判据拦不住：TMPDIR 位于 `/x/.git/folder` 时，
+    # `/x/.git/folder/h/tree/.git` 截成 `/x/.git` 仍「可读且以 /.git 结尾」，
+    # 与 wanted 不等 → 被当成「证明不是我们的」→ 摘登记、残留当干净。
+    # 判据：recorded 是 wanted 的严格祖先 → 只能是自家路径的撕裂写，按不可读。
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td) / "repo"
+        root.mkdir()
+        init_repo(root)
+        holder = Path(td) / "parent" / ".git" / "folder" / "cfd-snapshot-torn"
+        target = holder / "tree"
+        target.mkdir(parents=True)
+        entry = root / ".git" / "worktrees" / "treeTorn"
+        entry.mkdir(parents=True)
+        (entry / "gitdir").write_text(str(Path(td) / "parent" / ".git") + "\n")
+        recorded = cfd._recorded_gitdir(entry)
+        verdict = (cfd._admin_match(recorded, cfd._real_path(target / ".git"))
+                   if recorded is not cfd._UNREADABLE_GITDIR else "unreadable")
+        present = cfd.admin_entry_present(root, target)
+        cfd._SNAPSHOT_HOLDERS.append((root, holder))
+        try:
+            dropped = cfd.drop_holder(root, holder)
+            kept = (root, holder) in cfd._SNAPSHOT_HOLDERS
+        finally:
+            cfd._SNAPSHOT_HOLDERS.clear()
+        case("gitdir 截断在更早的 /.git 组件（自家路径的严格祖先）→ 不当作旁人记账",
+             verdict == "torn" and present is None and dropped is False
+             and kept and entry.exists(),
+             f"verdict={verdict} recorded={recorded!r} present={present!r} "
+             f"dropped={dropped!r} kept={kept} entry_exists={entry.exists()}")
+        case("_admin_match：等式 / 旁人 / 祖先 三分",
+             cfd._admin_match("/a/tree/.git", "/a/tree/.git") == "ours"
+             and cfd._admin_match("/a/other/.git", "/a/tree/.git") == "other"
+             and cfd._admin_match("/a/.git", "/a/.git/x/tree/.git") == "torn",
+             "ok")
+
+    print(f"SUMMARY failed={fails} skipped={skips}")
     return 1 if fails else 0
 
 
