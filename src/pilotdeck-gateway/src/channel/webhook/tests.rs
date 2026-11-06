@@ -1935,6 +1935,44 @@ fn webhook_channel_regenerates_identically() {
     crate::test_baseline::regenerates_identically("webhook-channel");
 }
 
+/// #1813: a zero-step cell replays no request at all, so a scenario whose
+/// whole `steps` array went missing would still replay "successfully" against
+/// a recording it never exercised (`steps` itself is required, but an empty
+/// array is legal). Only the two cells whose scenario ends at the bind failure
+/// may carry zero steps; every other cell must record at least one step.
+#[test]
+fn zero_step_cells_are_the_two_named_cells() {
+    // #1813 negative control: the recorded shape has no whitelist, so a
+    // third zero-step cell used to slip through this comparison; the switch
+    // shrinks the allowance by one named cell.
+    const ZERO_STEP: &[&str] = &["invalid-port", "port-in-use"];
+    let allowed: &[&str] = if crate::mutants::on("webhook-zero-step-whitelist") {
+        &["invalid-port"]
+    } else {
+        ZERO_STEP
+    };
+    let recorded = oracle();
+    let cases = recorded["cases"]
+        .as_array()
+        .expect("#1334 oracle cases array");
+    let mut zero: Vec<&str> = Vec::new();
+    for case in cases {
+        let name = case["name"].as_str().expect("#1334 oracle case name");
+        let steps = recorded_steps(case).expect("#1334 steps validated array");
+        if steps.is_empty() {
+            zero.push(name);
+        }
+    }
+    zero.sort_unstable();
+    let mut allowed = allowed.to_vec();
+    allowed.sort_unstable();
+    negative_assert_eq!(
+        zero,
+        allowed,
+        "#1334 only the named cells may replay zero steps"
+    );
+}
+
 #[test]
 fn extract_text_field_order_is_text_first() {
     let body = parse_json(r#"{"text":"a","message":"b"}"#).expect("#1334 body JSON");

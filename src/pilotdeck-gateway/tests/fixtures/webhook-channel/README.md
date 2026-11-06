@@ -16,4 +16,6 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 忽略测试 `webhook_channel_regenerates_identically` 必须在具备固定基线的宿主显式运行。Rust 直测补金样覆盖不到的状态格（假钟 prune 边界、限流窗口滑动、activeChats 重入、turn 中 stop、双 stop、热重载端口释放、原生 `/health` 原始字节 pin），不冒充 TS 行为。
 
+#1813：新增 1 个开关（共 **46** 个）：`zero_step_cells_are_the_two_named_cells` 钉住「只有 `port-in-use` / `invalid-port` 两例可以是零步」，某个 cell 丢掉整段 `steps` 时不再静默退化为零覆盖重放。
+
 #1729：`negative_controls.py` 现有 **45** 个开关（以 `switches` 表为准；`#1729` 之前为 20 个），新增 25 个录制字段保护，覆盖每个录制字段的读取点（含终态比对的 `expected` 容器）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1334、字段和实际值；既有 webhook 差异条目（`A8.3-CH-WEBHOOK-001/002/003`）不含开关计数判据。`steps` 按必填字段读取：键缺席即失败（不再静默变成零步重放），但空数组合法——`port-in-use` / `invalid-port` 两例本就录制为零步，故不照搬 sms 的空数组拒绝。

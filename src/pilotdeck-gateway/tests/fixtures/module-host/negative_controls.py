@@ -3,7 +3,8 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module_host transport gate and is killed by the replay
-cell that pins that gate's TS bytes (20 switches). Run one sample in the
+cell that pins that gate's TS bytes (21 switches; #1813 added the
+recording-field guard). Run one sample in the
 authoring session; the coordinator runs the complete list after the patch is
 committed.
 """
@@ -62,6 +63,13 @@ switches = [
     ('module-host-principal-trim-off', SOURCE, 'principal_whitespace', '#1349 cell principal-whitespace normalized response'),
     # NDJSON newline off: every framed NDJSON event loses its terminator.
     ('module-host-ndjson-newline-off', SOURCE, 'ndjson_objects', '#1349 cell ndjson-objects normalized response'),
+    # #1813: recording type/absence drift must fail before replay can use the
+    # `false` default (the old `as_bool().unwrap_or(false)` read).
+    ('module-host-oracle-recorded-half-close',
+     ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
+     ['recorded_half_close_rejects_wrong_type', 'recorded_half_close_rejects_absence'],
+     ['#1349 #1813 rejects halfClose type drift',
+      '#1349 #1813 halfClose is a required recording field']),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

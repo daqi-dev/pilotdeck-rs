@@ -377,6 +377,68 @@ fn recorded_checked<'a, T>(
     }
 }
 
+/// #1813: the recorder's explicit `null` is the absence sentinel for the
+/// optional `turn` / `permissionError` / `permissionGate` / `sendBlockAt` /
+/// `sendError` fields — `generate.mts` writes `?? null` for each of them, and
+/// an omitted field never appears as `null` in the oracle. Every one of those
+/// readers goes through here, and so does `permissionDelivered`, which the
+/// recorder writes as `?? true` and therefore never records as `null`: routing
+/// it through the same helper keeps a hand-edited oracle from making one field
+/// treat `null` differently from its siblings.
+fn recorded_present<'a>(value: &'a Value, field: &str) -> Option<&'a Value> {
+    let present = value.get(field);
+    // #1813 negative control: the switch restores the old per-field split, in
+    // which only `permissionDelivered` had no null filter.
+    if crate::mutants::on("sms-oracle-null-sentinel") {
+        return if field == "permissionDelivered" {
+            present
+        } else {
+            present.filter(|value| !value.is_null())
+        };
+    }
+    present.filter(|value| !value.is_null())
+}
+
+/// #1813: every sentinel-bearing field must read explicit `null` the same way.
+/// The generated oracle writes `null` for the unconfigured optional fields and
+/// `true` for an unconfigured `permissionDelivered`; a hand-edited oracle that
+/// spells absence as `null` must not turn into a type error on one field only.
+#[test]
+fn null_sentinels_are_absence_for_every_sentinel_field() {
+    let nulls = json!({
+        "turn": null,
+        "permissionError": null,
+        "permissionGate": null,
+        "permissionDelivered": null,
+        "sendBlockAt": null,
+        "sendError": null,
+    });
+    crate::negative_assert!(
+        matches!(recorded_turn_checked(&nulls), Ok(None)),
+        "#1339 #1813 null turn is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_permission_error_checked(&nulls), Ok(None)),
+        "#1339 #1813 null permissionError is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_permission_gate_checked(&nulls), Ok(None)),
+        "#1339 #1813 null permissionGate is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_permission_delivered_checked(&nulls), Ok(None)),
+        "#1339 #1813 null permissionDelivered is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_send_block_checked(&nulls), Ok(None)),
+        "#1339 #1813 null sendBlockAt is absence"
+    );
+    crate::negative_assert!(
+        matches!(recorded_send_error_checked(&nulls), Ok(None)),
+        "#1339 #1813 null sendError is absence"
+    );
+}
+
 fn recorded_header_map_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
         value.get("headers"),
@@ -698,7 +760,7 @@ fn recorded_cron_text_panics_on_wrong_type() {
 
 fn recorded_turn_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        value.get("turn").filter(|value| !value.is_null()),
+        recorded_present(value, "turn"),
         "turn",
         "an object",
         |value| value.is_object().then_some(value),
@@ -843,9 +905,7 @@ fn recorded_turn_hold_panics_on_wrong_type() {
 
 fn recorded_permission_error_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value
-            .get("permissionError")
-            .filter(|value| !value.is_null()),
+        recorded_present(value, "permissionError"),
         "permissionError",
         "a string",
         Value::as_str,
@@ -874,7 +934,7 @@ fn recorded_permission_error_panics_on_wrong_type() {
 
 fn recorded_permission_gate_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("permissionGate").filter(|value| !value.is_null()),
+        recorded_present(value, "permissionGate"),
         "permissionGate",
         "a string",
         Value::as_str,
@@ -903,7 +963,7 @@ fn recorded_permission_gate_panics_on_wrong_type() {
 
 fn recorded_permission_delivered_checked(value: &Value) -> Result<Option<bool>, String> {
     recorded_checked(
-        value.get("permissionDelivered"),
+        recorded_present(value, "permissionDelivered"),
         "permissionDelivered",
         "a boolean",
         Value::as_bool,
@@ -1153,12 +1213,16 @@ fn recorded_log_text_panics_on_wrong_type() {
 }
 
 fn recorded_sends_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    // #1813: `count` is required. The TS recorder's `waitUntil` compares
+    // `length >= step.count`, and `n >= undefined` is never true, so an absent
+    // count can never be satisfied there (3 s timeout); reading it as 0 here
+    // made the same input a no-op wait (`len() >= 0`).
     recorded_checked(
         value.get("count"),
         "wait-sends.count",
         "a u64",
         Value::as_u64,
-        false,
+        true,
         crate::mutants::on("sms-oracle-recorded-sends-count"),
     )
 }
@@ -1181,13 +1245,31 @@ fn recorded_sends_count_panics_on_wrong_type() {
     recorded_sends_count(&json!({"count": []}));
 }
 
+#[test]
+fn recorded_sends_count_rejects_absence() {
+    crate::negative_assert!(
+        recorded_sends_count_checked(&json!({})).is_err(),
+        "#1339 #1813 wait-sends.count is a required recording field"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 wait-sends.count must be a u64, got <missing>")]
+fn recorded_sends_count_panics_when_absent() {
+    recorded_sends_count(&json!({}));
+}
+
 fn recorded_rpcs_count_checked(value: &Value) -> Result<Option<u64>, String> {
+    // #1813: `count` is required. The TS recorder's `waitUntil` compares
+    // `length >= step.count`, and `n >= undefined` is never true, so an absent
+    // count can never be satisfied there (3 s timeout); reading it as 0 here
+    // made the same input a no-op wait (`len() >= 0`).
     recorded_checked(
         value.get("count"),
         "wait-rpcs.count",
         "a u64",
         Value::as_u64,
-        false,
+        true,
         crate::mutants::on("sms-oracle-recorded-rpcs-count"),
     )
 }
@@ -1241,7 +1323,7 @@ fn recorded_stop_reason_panics_on_wrong_type() {
 
 fn recorded_send_block_checked(value: &Value) -> Result<Option<u64>, String> {
     recorded_checked(
-        value.get("sendBlockAt").filter(|value| !value.is_null()),
+        recorded_present(value, "sendBlockAt"),
         "sendBlockAt",
         "a u64",
         Value::as_u64,
@@ -1299,7 +1381,7 @@ fn recorded_send_fail_panics_on_wrong_type() {
 
 fn recorded_send_error_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
-        value.get("sendError").filter(|value| !value.is_null()),
+        recorded_present(value, "sendError"),
         "sendError",
         "a string",
         Value::as_str,
@@ -1839,17 +1921,21 @@ fn absent_recording_fields_keep_defaults() {
         recorded_log_text(&json!({"text":"value"})).is_some(),
         "#1339 valid wait-log.text"
     );
+    // #1813: `wait-sends.count` / `wait-rpcs.count` are required. The old
+    // `unwrap_or_default()` turned an absent count into 0, and `len() >= 0` is
+    // always true — but the TS recorder's `n >= undefined` is never true, so
+    // the same recording times out there. Absence must fail here too.
     assert!(
-        recorded_sends_count(&empty).is_none(),
-        "#1339 absent wait-sends.count"
+        recorded_sends_count_checked(&empty).is_err(),
+        "#1339 #1813 absent wait-sends.count must fail, not default to 0"
     );
     assert!(
         recorded_sends_count(&json!({"count":1})).is_some(),
         "#1339 valid wait-sends.count"
     );
     assert!(
-        recorded_rpcs_count(&empty).is_none(),
-        "#1339 absent wait-rpcs.count"
+        recorded_rpcs_count_checked(&empty).is_err(),
+        "#1339 #1813 absent wait-rpcs.count must fail, not default to 0"
     );
     assert!(
         recorded_rpcs_count(&json!({"count":1})).is_some(),
