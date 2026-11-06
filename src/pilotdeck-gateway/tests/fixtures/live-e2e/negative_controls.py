@@ -77,6 +77,11 @@ def main():
         text = (TURN / tests).read_text()
         if test.rsplit('::', 1)[1] not in text or f'"{assertion}"' not in text:
             raise RuntimeError('#748 stale production test binding: ' + name)
+    # #1194/#1398: the feature switches above cannot see a plain-Python guard,
+    # so bind it by text here. Behaviour is proven by
+    # test_acceptance.py::test_capture_second_signal_preserves_cleanup.
+    if '\n    if sys.exception() is not None:\n        return\n' not in (FIXTURE / 'capture.py').read_text():
+        raise RuntimeError('#748 capture second-signal guard missing')
     if args.check:
         print(f'#748 {len(ALL_BINDINGS)} feature switches and assertion bindings: OK')
         return 0

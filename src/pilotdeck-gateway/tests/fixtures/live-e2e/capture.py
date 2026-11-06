@@ -69,6 +69,12 @@ def reclaim(process, output):
 def interrupted(number, _frame):
     # selectors.select retries InterruptedError as EINTR, swallowing that
     # exception while communicate() is blocked. A RuntimeError escapes it.
+    # #1194: a second signal delivered while this RuntimeError unwinds must not
+    # cut the finally cleanup (reclaim) short. The in-flight error is a
+    # RuntimeError rather than KeyboardInterrupt, so suppress on "any active
+    # exception" instead of matching the class.
+    if sys.exception() is not None:
+        return
     raise RuntimeError('#748 capture interrupted by signal ' + str(number))
 
 
