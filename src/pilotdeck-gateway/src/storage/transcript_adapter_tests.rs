@@ -590,7 +590,7 @@ fn real_ts_scenarios_match_outcomes_calls_and_bytes() {
         panic!("scenarios")
     };
     // Keep in sync with transcript-adapter/generate.mts and its README.
-    assert_eq!(scenarios.len(), 483, "adapter oracle scenario count");
+    assert_eq!(scenarios.len(), 485, "adapter oracle scenario count");
     let scratch = Scratch::new();
     for scenario in scenarios {
         let name = s(field(scenario, "name"));

@@ -73,13 +73,14 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
             metadata_reduce_supported(entry)?;
         }
 '''
-        P_MESSAGE = '''        for entry in entries {
-            if matches!(
-                lossy_value(field(entry, "type")).as_str(),
-                "assistant_message" | "tool_result_message" | "durable_message"
-            ) {
+        P_MESSAGE_LOOP = '''        for entry in entries {
+            if is_durable_message_entry(entry) {
                 validate_hydrated_message(field(entry, "message"))?;
             }
+        }
+'''
+        P_ARTIFACT_LOOP = '''        for entry in entries {
+            file_artifact_supported(entry)?;
         }
 '''
         P_COMPACT = '''        for entry in entries {
@@ -87,12 +88,22 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
                 compact_budget_supported(entry)?;
             }
         }'''
-        P_MESSAGE_COMMENT = '''        // WebHistory's fileArtifact reducer reads `message.content` (via
-        // messageContainsToolResult) and is registered before its tokenUsage
-        // reducer (`WebHistoryProjections.ts:266-270`), so a malformed message
-        // wins over a missing `compactMetadata` on the whole-log order.
+        P_WEBHOOK_COMMENT = '''        // WebHistory's fileArtifact reducer (`WebHistoryProjections.ts:75-88`)
+        // is registered before its tokenUsage reducer
+        // (`WebHistoryProjections.ts:266-270`) and walks the log once. Per entry
+        // it reads `message.content.some` (via messageContainsToolResult) on
+        // durable messages and `entry.artifacts.length` on `file_artifacts`
+        // entries, so the first malformed entry of either kind wins over a
+        // missing `compactMetadata` (Codex #1985 r3 measured both orders).
 '''
-        restore_passes = P_METADATA + P_MESSAGE_COMMENT + P_MESSAGE + P_COMPACT
+        P_FILEARTIFACT = '''        for entry in entries {
+            if is_durable_message_entry(entry) {
+                validate_hydrated_message(field(entry, "message"))?;
+            }
+            file_artifact_supported(entry)?;
+        }
+'''
+        restore_passes = P_METADATA + P_WEBHOOK_COMMENT + P_FILEARTIFACT + P_COMPACT
         changes = [
           ('premature-malformed-restore-refusal', '        // Hydration runs every registered reducer over the whole log, reducer by', '''        for entry in entries {
             if field(entry, "type").as_string().is_some_and(|t| t.equals_str("session_metadata")) {
@@ -103,9 +114,11 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         // Hydration runs every registered reducer over the whole log, reducer by'''),
           ('list-denials-not-array', '            if !matches!(denials, JsValue::Array(_)) {', '            if !js_iterable(denials) {'),
           ('restore-metadata-before-webhistory', restore_passes,
-           P_MESSAGE_COMMENT + P_MESSAGE + P_COMPACT + P_METADATA),
+           P_WEBHOOK_COMMENT + P_FILEARTIFACT + P_COMPACT + P_METADATA),
           ('restore-message-after-posttok', restore_passes,
-           P_METADATA + P_COMPACT + P_MESSAGE_COMMENT + P_MESSAGE),
+           P_METADATA + P_WEBHOOK_COMMENT + P_COMPACT + P_FILEARTIFACT),
+          ('restore-artifact-read-missing', '            file_artifact_supported(entry)?;\n', ''),
+          ('restore-artifact-pass-split', P_FILEARTIFACT, P_MESSAGE_LOOP + P_ARTIFACT_LOOP),
           ('list-title-trim-dropped', '''        Some(_) => {
             return Err(AdapterError::Type(
                 "metadata.title?.trim is not a function".into(),
@@ -128,6 +141,6 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         run('restore-loses-domain-state', True)
         restore()
         run('restored', False)
-        print('PASS: 10 / 10 adapter mutants killed', flush=True)
+        print('PASS: 12 / 12 adapter mutants killed', flush=True)
     finally:
         restore()
