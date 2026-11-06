@@ -473,6 +473,66 @@ def provider_cases(requests, cases):
     return covered
 
 
+# The gateway wraps every in-process iterator yield in its own WS envelope, then
+# sends exactly one terminal envelope carrying ``lastError ?? lastCompleted ??
+# fallback`` (TS GatewayWsConnection.ts:137-169, Rust runtime/connection/
+# mod.rs:373-408).  The terminal is therefore a deterministic function of the
+# yields; it is never an extra observation of its own.
+WS_TERMINAL_FALLBACK = {
+    'type': 'error',
+    'code': 'result_unknown',
+    'message': 'Gateway stream ended without a terminal result.',
+    'recoverable': True,
+}
+
+
+def terminal_source(frames, terminal):
+    """Name the derivation rule that must have produced ``terminal``.
+
+    ``frames`` are the in-process yields, so the only admissible terminal is the
+    last error, else the last completion, else the empty-stream fallback.
+    """
+    last_error = next((frame for frame in reversed(frames) if frame.get('type') == 'error'), None)
+    last_completed = next((frame for frame in reversed(frames) if frame.get('type') == 'turn_completed'), None)
+    expected = last_error if last_error is not None else last_completed
+    if expected is None:
+        need(terminal == WS_TERMINAL_FALLBACK, 'terminal envelope must be the empty-stream fallback')
+        return 'fallback'
+    need(terminal == expected, 'terminal envelope must repeat lastError ?? lastCompleted')
+    return 'error' if last_error is not None else 'turn_completed'
+
+
+def project_envelopes(request_id, envelopes):
+    """Project one request's raw WS envelopes onto the in-process iterator.
+
+    The partition key is the protocol field ``final``, never event content: a
+    ``final: false`` envelope is one iterator yield, the single trailing
+    ``final: true`` envelope is the derived terminal.  Frames are never
+    deduplicated, reordered or normalised, so a gateway that repeats a yield
+    keeps both frames; only the terminal is kept out of ``frames``.
+    """
+    need(isinstance(request_id, str) and bool(request_id), 'projection request id')
+    need(isinstance(envelopes, list) and envelopes, 'projection needs at least one envelope')
+    frames = []
+    terminal = None
+    for index, envelope in enumerate(envelopes):
+        need(isinstance(envelope, dict), 'projection envelope must be an object')
+        need(envelope.get('type') == 'event' and envelope.get('id') == request_id,
+             'projection envelope identity')
+        need(type(envelope.get('seq')) is int and envelope['seq'] == index,
+             'projection envelope sequence')
+        need(type(envelope.get('final')) is bool and isinstance(envelope.get('event'), dict),
+             'projection envelope final flag')
+        if envelope['final']:
+            need(terminal is None and index == len(envelopes) - 1,
+                 'projection has one trailing terminal envelope')
+            terminal = envelope['event']
+        else:
+            frames.append(envelope['event'])
+    need(terminal is not None, 'projection has a terminal envelope')
+    return {'frames': frames, 'terminal': {'source': terminal_source(frames, terminal), 'event': terminal}}
+
+
 def session_chain(contract, rows, observer, provider, driver, sources, cases):
     home, endpoint = session_profile(contract, cases)
     need([row.get('case') for row in rows] == cases, 'case identity full manifest order')
@@ -504,8 +564,9 @@ def session_chain(contract, rows, observer, provider, driver, sources, cases):
             need(frame.get('type') == 'event' and type(frame.get('seq')) is int
                  and frame['seq'] == len(received[request_id]) and type(frame.get('final')) is bool
                  and isinstance(frame.get('event'), dict), 'observer event envelope/sequence')
-            if isinstance(frame.get('event'), dict):
-                received[request_id].append(frame['event'])
+            # Retain the whole envelope: the projection below decides what is an
+            # in-process yield and what is the derived terminal.
+            received[request_id].append(frame)
             if frame.get('final') is True:
                 finals.add(request_id)
     need(len(submitted) == len(cases) and set(submitted) == finals, 'observer submit/final coverage')
@@ -523,7 +584,7 @@ def session_chain(contract, rows, observer, provider, driver, sources, cases):
         need(identity['runId'] not in seen_runs, 'case run identity reused')
         seen_runs.add(identity['runId'])
         original = disk_observation(source, identity, home)
-        original['frames'] = received[identity['requestId']]
+        original['frames'] = project_envelopes(identity['requestId'], received[identity['requestId']])['frames']
         observation = row.get('observation')
         # Absence is kept for the existing NOT_RUN scorer, never promoted.
         if observation is not None:
