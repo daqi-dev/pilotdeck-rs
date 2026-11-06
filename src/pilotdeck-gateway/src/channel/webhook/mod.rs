@@ -563,10 +563,15 @@ async fn route_request(
 /// Node answers every HTTP/1.0 request with a `Connection: close` response on
 /// a closed socket, even one asking to keep alive; an explicit 1.0 response
 /// version keeps hyper's `fix_keep_alive` in its HTTP/1.0 branch — the same
-/// #1209 trick (whose hyper `HTTP/1.0` status line against Node's `HTTP/1.1`
-/// is the registered A8.4-NATIVE-HTTP-001 diff). Without it the channel's own
-/// `Connection: close` is rewritten to `keep-alive` (the response version is
-/// still 1.1) and the socket stays open — the #1684 probe's divergence.
+/// #1209 trick, whose hyper `HTTP/1.0` status line against Node's `HTTP/1.1`
+/// is the draft (unapproved) entry A8.3-CH-WEBHOOK-004, the channel's own
+/// record of the A8.4-NATIVE-HTTP-001 item 4 class. Without it `fix_keep_alive`
+/// runs on the response as built (1.1), sees the request's keep-alive and
+/// overwrites this channel's `Connection: close`, so the socket stays open —
+/// the #1684 probe's divergence. The status line does not distinguish the two
+/// paths: `enforce_version` rewrites it to `HTTP/1.0` for a 1.0 request either
+/// way, which is why the `webhook-http10-finalize-off` mutation is caught by
+/// the framing/close assertions rather than by the status-line assertion.
 ///
 /// The body is also made unsized: Node's HTTP/1.0 replies are close-delimited
 /// (no `content-length`, no chunking — the recorded `http10` cell), while
@@ -574,8 +579,9 @@ async fn route_request(
 /// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
 /// body and closes, matching Node's bytes.
 /// Sibling: the 1.0 version switch is kept in sync with `finalize` in
-/// `src/module_host.rs`, `src/module_host/approvals.rs`, `src/api_web.rs` and
-/// the 1.0 branch in `src/native_http.rs`. The unsized wrapper is webhook-only
+/// `src/module_host.rs`, `src/module_host/approvals.rs`, `src/api_web.rs`,
+/// `src/user_dialog/http_store.rs` and the 1.0 branch in `src/native_http.rs`
+/// (the `sms` lane has none yet — #1913). The unsized wrapper is webhook-only
 /// because this channel answers with `handler_response_with_length` bodies,
 /// while those paths stream an unknown-size body that a 1.0 connection already
 /// frames by closing.

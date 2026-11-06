@@ -1935,8 +1935,9 @@ replay_tests! {
 
 /// #1684: oracle cases with a dedicated direct test instead of a generic
 /// replay. `http10` records Node's `HTTP/1.1` status line for an HTTP/1.0
-/// request, but hyper writes its own `HTTP/1.0` line (the registered
-/// transport diff A8.4-NATIVE-HTTP-001), and the oracle's `closed` flag only
+/// request, but hyper writes its own `HTTP/1.0` line (the draft entry
+/// A8.3-CH-WEBHOOK-004, the channel's record of the
+/// A8.4-NATIVE-HTTP-001 item 4 class), and the oracle's `closed` flag only
 /// records zero-byte closes, so the socket close is asserted directly too.
 const PINNED_CASE_NAMES: &[&str] = &["http10"];
 
@@ -1983,8 +1984,8 @@ fn replay_cases_cover_exactly_the_oracle() {
 /// #1684: an HTTP/1.0 request — even one asking for `Connection: keep-alive`
 /// — draws a close-delimited response and a closed socket, as Node does.
 /// Only the status line differs: Node echoes `HTTP/1.1`, hyper writes its own
-/// `HTTP/1.0` (the registered transport diff A8.4-NATIVE-HTTP-001, oracle
-/// case `http10` records Node's line), matching the other listeners
+/// `HTTP/1.0` (the draft entry A8.3-CH-WEBHOOK-004, oracle case `http10`
+/// records Node's line), matching the other listeners
 /// (`src/native_http.rs`, `src/module_host.rs`, `src/module_host/approvals.rs`).
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
@@ -2031,7 +2032,7 @@ async fn http10_request_closes_the_connection() {
 
     assert!(
         raw.starts_with("HTTP/1.0 200 OK\r\n"),
-        "#1684 pin http10: hyper answers with its own 1.0 status line (Node's 1.1 line is the registered A8.4-NATIVE-HTTP-001 diff): {raw:?}"
+        "#1684 pin http10: hyper answers with its own 1.0 status line (Node's 1.1 line is the draft entry A8.3-CH-WEBHOOK-004): {raw:?}"
     );
     assert!(
         closed,
