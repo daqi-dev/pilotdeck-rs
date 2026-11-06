@@ -150,6 +150,24 @@ cases = [
      'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
      'drop(owner);\n            let result = write(&recorder, &session, &turn);\n            drop(lease);\n            result',
      None, test_prefix + 'forward_status_fail_drop', '#1219 dropped owner leaves the failing worker its slot'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: retrying the failed status write
+    # must die on the attempt counter (Rust attempts 1, TS 2).
+    ('status-fail-retry', base / 'runner.rs',
+     'r.writer().record_agent_status_message(s, t, &status)?',
+     'r.writer().record_agent_status_message(s, t, &status).or_else(|_| r.writer().record_agent_status_message(s, t, &status))?',
+     None, test_prefix + 'forward_status_fail_drop', '#1219 failed status write is attempted once'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: leaking the lease must die on
+    # the cleanup observer's deadline.
+    ('status-fail-lease-hold', base / 'runner.rs',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            drop(lease);\n            result',
+     'let result = write(&recorder, &session, &turn);\n            drop(owner);\n            std::mem::forget(lease);\n            result',
+     None, test_prefix + 'forward_status_fail_drop', '#741h cleanup releases slot and lease within 10 seconds'),
+    # #1219 / A7.2-LIVE-DROP-COMPLETION-001-R2: a fault that no longer fires
+    # degrades the case to its success variant; the transcript guard must die.
+    ('status-fail-inject-off', base / 'live_stream_tests.rs',
+     'if self.attempts.load(Ordering::SeqCst) <= self.fail {',
+     'if false && self.attempts.load(Ordering::SeqCst) <= self.fail {',
+     None, test_prefix + 'forward_status_fail_drop', '#1219 [status-fail-drop]: the failing write must not reach the transcript'),
 ]
 
 def audit():

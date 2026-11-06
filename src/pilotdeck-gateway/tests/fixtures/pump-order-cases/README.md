@@ -37,9 +37,15 @@ Rust 的取消终态仍按 **未批准** 差异 `specs/gateway-parity/diffs/A7.2
   `model_event`；取消和开放场景分别在 `#741k [cancel/open]: user_prompt_submitted must follow input_accepted`
   断言失败，证明新宿主前缀既不丢失，也不能被其他事件替代。
 
+- `pre-cancel-skip-complete`：把 `live.rs` 的终态记录分支 `_ if terminal && self.accepted`
+  收窄成「非 aborted 终态」，使取消格不再写 durable `turn_result`；由
+  `gates_pump_cancel_never_starts_the_pump` 的
+  `#1219 [cancel]: pre-cancel must append exactly one durable turn_result` 判杀
+  （#1219 / `diffs/A7.2-TURN-ABORT-001-R1.md`）。
+
 运行复用 `negative_suite.py`：每个绑定用完整测试名和 `--exact` 独立执行
 positive → mutant → restored；`gate-order` 的三个场景分别判杀。只有点名测试
 确实失败且含指定语义断言才是 KILLED，未变红为 SURVIVED，编译错误、错误 panic、
 超时及恢复失败为 INVALID。初始化和清理消息不在有效判杀列表中。所有选定项
-跑完写 `summary.json`；任何非 KILLED 都令进程非零退出。五种源码锚点各唯一，
+跑完写 `summary.json`；任何非 KILLED 都令进程非零退出。六种源码锚点各唯一，
 任何源码恢复失败或非干净基线均拒绝继续变异。

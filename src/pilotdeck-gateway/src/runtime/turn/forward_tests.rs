@@ -854,6 +854,15 @@ async fn forward_status_fail_drop() {
         0,
         "#1219 [status-fail-drop]: no out-of-order turn_result from the failed worker"
     );
+    // A fault that silently degrades to zero (for example a `noFail` row)
+    // would leave every other assertion above true on a *successful* write,
+    // and the ledger would keep claiming the same-tick failure is covered.
+    let transcript = std::fs::read_to_string(&f.key.transcript_path)
+        .expect("#1219 transcript must stay readable after cleanup");
+    assert!(
+        !transcript.contains("agent_status_message"),
+        "#1219 [status-fail-drop]: the failing write must not reach the transcript"
+    );
 }
 
 case!(forward_malformed_null_first,);
