@@ -352,6 +352,25 @@ class _BrokenStderr:
         raise BrokenPipeError('#1398 stderr gone')
 
 
+class _ReentrantStderr:
+    """A stderr already mid-write: CPython raises ``RuntimeError: reentrant call``.
+
+    The first signal's cleanup prints to stderr; when the second signal lands
+    inside that write, the handler's own print re-enters the same buffered
+    writer and ``_io`` refuses the nested call.  That RuntimeError would
+    replace the in-flight KeyboardInterrupt exactly like the closed-pipe
+    OSError this guard already swallows.  Measured on CPython 3.14 with a real
+    ``BufferedWriter`` and a 0.2ms ITIMER_REAL handler: 636 hits in 300k timed
+    writes.
+    """
+
+    def write(self, *_args):
+        raise RuntimeError('#1398 reentrant call inside <_io.BufferedWriter>')
+
+    def flush(self):
+        raise RuntimeError('#1398 reentrant call inside <_io.BufferedWriter>')
+
+
 class _Exited(Exception):
     """Stands in for ``sys.exit`` so round.py's ``__main__`` block can be exec'd."""
 
@@ -506,6 +525,35 @@ class SignalUnwindControls(unittest.TestCase):
         self._assert_second_signal_ignored(
             registered[signal.SIGINT],
             '#1194 common.py must survive a failing stderr')
+
+    def test_round_guard_survives_reentrant_stderr(self):
+        handler, _recorder, shim = load_round_shutdown()
+        shim.stderr = _ReentrantStderr()
+        self._assert_second_signal_ignored(
+            handler, '#1194 a reentrant stderr must not re-break the guard')
+
+    def test_calibrate_guard_survives_reentrant_stderr(self):
+        recorder = _SignalRecorder()
+        shim = _SysShim()
+        shim.stderr = _ReentrantStderr()
+        with patch.dict(L, {'signal': recorder, 'run': lambda *args, **kwargs: 0,
+                            'sys': shim}):
+            self.assertEqual(L['main']([str(CALIBRATE)]), 0,
+                             '#1194 calibrate.sh main must return the supervisor code')
+            L['RECEIVED'] = signal.SIGINT
+            self._assert_second_signal_ignored(
+                L['_interrupted'],
+                '#1194 calibrate.sh must survive a reentrant stderr')
+            self.assertEqual(L['RECEIVED'], signal.SIGINT,
+                             '#1194 the first signal record must survive the second signal')
+
+    def test_gateway_guard_survives_reentrant_stderr(self):
+        shim = _SysShim()
+        shim.stderr = _ReentrantStderr()
+        registered = load_gateway_shutdown(shim)
+        self._assert_second_signal_ignored(
+            registered[signal.SIGINT],
+            '#1194 common.py must survive a reentrant stderr')
 
     def test_round_second_signal_ignored_during_cleanup(self):
         handler, recorder, shim = load_round_shutdown()

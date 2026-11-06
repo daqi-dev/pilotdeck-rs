@@ -162,13 +162,13 @@ MUTATIONS = [
      '    signal.signal(signal.SIGTERM, interrupt)',
      '    signal.signal(signal.SIGTERM, interrupt)'),
     # #1398 P2a: the guard's diagnostic line must not be able to re-break the
-    # guard.  Square the try/except (OSError, ValueError) away and a closed
-    # stderr replaces the in-flight cancellation again.
+    # guard.  Square the try/except away and a closed stderr replaces the
+    # in-flight cancellation again.
     ('a1-stderr-write-unguarded', ROUND,
      "            try:\n"
      "                print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "                      file=sys.stderr, flush=True)\n"
-     "            except (OSError, ValueError):\n"
+     "            except Exception:\n"
      "                pass\n",
      "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "                  file=sys.stderr, flush=True)\n"),
@@ -176,7 +176,7 @@ MUTATIONS = [
      "        try:\n"
      "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "                  file=sys.stderr, flush=True)\n"
-     "        except (OSError, ValueError):\n"
+     "        except Exception:\n"
      "            pass\n",
      "        print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "              file=sys.stderr, flush=True)\n"),
@@ -184,10 +184,23 @@ MUTATIONS = [
      "            try:\n"
      "                print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "                      file=sys.stderr, flush=True)\n"
-     "            except (OSError, ValueError):\n"
+     "            except Exception:\n"
      "                pass\n",
      "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
      "                  file=sys.stderr, flush=True)\n"),
+    # #1398 r5: the narrowed tuple is the real production-invariant failure —
+    # a reentrant write raises RuntimeError, not OSError/ValueError, and that
+    # replaces the in-flight cancellation.  Paired with the *_reentrant_stderr
+    # positives below.
+    ('a1-stderr-reentrant-unguarded', ROUND,
+     '            except Exception:',
+     '            except (OSError, ValueError):'),
+    ('b2-stderr-reentrant-unguarded', B2_SHELL,
+     '        except Exception:',
+     '        except (OSError, ValueError):'),
+    ('gateway-stderr-reentrant-unguarded', GATEWAY,
+     '            except Exception:',
+     '            except (OSError, ValueError):'),
     # B2: calibrate.sh gets its unconditional EXIT release back.
     ('b2-shell-unconditional-trap', B2_SHELL,
      'exec python3 -I - "$B2_SCRIPT_DIR/calibrate.py" "$@" <<\'PY\'',
@@ -301,6 +314,15 @@ CHECKS = {
     'gateway-stderr-write-unguarded': (
         'SignalUnwindControls.test_gateway_guard_survives_broken_stderr',
         '#1194 common.py must survive a failing stderr'),
+    'a1-stderr-reentrant-unguarded': (
+        'SignalUnwindControls.test_round_guard_survives_reentrant_stderr',
+        '#1194 a reentrant stderr must not re-break the guard'),
+    'b2-stderr-reentrant-unguarded': (
+        'SignalUnwindControls.test_calibrate_guard_survives_reentrant_stderr',
+        '#1194 calibrate.sh must survive a reentrant stderr'),
+    'gateway-stderr-reentrant-unguarded': (
+        'SignalUnwindControls.test_gateway_guard_survives_reentrant_stderr',
+        '#1194 common.py must survive a reentrant stderr'),
     'runner-baseexception-narrowed': (
         'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
         '#1059 P0-2 a cancellation after the last row must not keep KILLED'),
