@@ -526,3 +526,54 @@ fn a_shared_port_fence_would_lock_out_the_submit_path() {
         "#1326 the self-lock surfaces as session_busy"
     );
 }
+
+/// #1326 fix-r1 P1 (MiniMax, both the concurrency and boundary roles): after
+/// the port fence stopped being the owner's admission, a refused admission is
+/// answered by the submit path as an ordinary `Ok` stream carrying a terminal
+/// `session_busy` error event. `run_turn` must surface that as `Err`, not
+/// drain it into a silent success.
+#[test]
+fn a_refused_admission_is_not_drained_into_success() {
+    let event =
+        |fields: Vec<(&'static str, pilotdeck_protocol::JsValue)>| crate::metadata::object(fields);
+    let busy = event(vec![
+        ("type", "error".into()),
+        ("code", "session_busy".into()),
+        (
+            "message",
+            "Session cron:task-1 already has an active turn.".into(),
+        ),
+        ("recoverable", pilotdeck_protocol::JsValue::Bool(true)),
+    ]);
+    let rejection = super::rejected_admission(&busy).expect("#1326 busy rejection surfaced");
+    assert_eq!(rejection.code(), Some("session_busy"));
+    assert_eq!(
+        String::from_utf16_lossy(rejection.message().units()),
+        "Session cron:task-1 already has an active turn."
+    );
+
+    // The SDK-flavoured code and a mid-turn error are the negative controls:
+    // the first is still a rejection, the second is #1305's to interpret.
+    let sdk = event(vec![
+        ("type", "error".into()),
+        ("code", "SESSION_BUSY".into()),
+        ("message", "SDK".into()),
+    ]);
+    assert_eq!(
+        super::rejected_admission(&sdk)
+            .expect("#1326 SDK busy rejection surfaced")
+            .code(),
+        Some("SESSION_BUSY")
+    );
+    let mid_turn = event(vec![
+        ("type", "error".into()),
+        ("code", "model_failed".into()),
+        ("message", "boom".into()),
+    ]);
+    assert!(
+        super::rejected_admission(&mid_turn).is_none(),
+        "#1326 a mid-turn error is not a rejected admission"
+    );
+    let delta = event(vec![("type", "text_delta".into())]);
+    assert!(super::rejected_admission(&delta).is_none());
+}
