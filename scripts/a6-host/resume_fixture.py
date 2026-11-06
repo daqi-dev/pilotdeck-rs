@@ -13,8 +13,13 @@ from pathlib import Path
 import sys
 import time
 
+import lifetime  # #1779: parent-death + lifetime watchdog, same directory
+
 mode = sys.argv[1]
 receipt = Path(sys.argv[2])
+# #1779: reconnect peers are spawned by the same host; a SIGKILLed host leaves
+# them reparented to init, so install the same watchdog before any wait.
+lifetime.install(receipt, mode)
 state_path = receipt.with_suffix('.state')
 state = json.loads(state_path.read_text()) if state_path.exists() else {'spawns': 0, 'acks': []}
 state['spawns'] += 1
