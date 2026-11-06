@@ -782,6 +782,54 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 12,
                          '#1632 dropping a row must change the pinned count')
 
+    def test_dispatch_case_table_cannot_shrink_silently(self):
+        # #1938 r1（GLM boundary P1）：`dispatch_probe` 的用例表只被 `for` 消费——
+        # 删掉 1..n-1 行，探针少驱动几格仍打印通过并 exit 0；整表清空更是零次。
+        # 与 `mutations` / `self_check_controls` 同法：行数、顺序与标签逐一钉死，
+        # 再用内存内变异证明少一行会红。夹具侧的 fail-closed 守卫单独核在下面。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+
+        def rows(text):
+            for node in ast.walk(ast.parse(text)):
+                if (isinstance(node, ast.Assign)
+                        and isinstance(node.value, ast.Tuple)
+                        and any(isinstance(target, ast.Name) and target.id == 'invocations'
+                                for target in node.targets)):
+                    return node.value.elts
+            self.fail('#1938 the fixture must define a literal invocations table')
+
+        pinned = rows(source)
+        labels = [ast.literal_eval(row.elts[1]) for row in pinned]
+        self.assertEqual(labels, [
+            '(no arguments)',
+            '-x',
+            '-x no-such-mutation',
+            '--slot-guard-probe only-one',
+            '--slot-guard-probe /bin/true not-a-timeout',
+            '--made-up-mode extra',
+        ], '#1938 the six dispatch cases are exactly these, not merely six rows')
+        self.assertEqual(len(pinned), 6, '#1938 six cases drive the dispatcher')
+        # 守卫本身也钉一次：`empty-dispatch-cases` / `empty-dispatch-guard-removed`
+        # 两条 meta 负控证明它承重，这里证明它没有被悄悄改成永不触发。
+        self.assertEqual(source.count(
+            '    if not invocations:\n'
+            "        sys.exit('no dispatch cases defined: the probe would pass without '\n"
+            "                 'driving the dispatcher')\n"), 1,
+            '#1938 the emptied-table guard is present exactly once')
+        dropped = ast.get_source_segment(source, pinned[0])
+        mutant = source.replace(dropped + ',', '', 1)
+        self.assertNotIn(dropped, mutant, '#1938 the mutant row really left the table')
+        with self.assertRaises(AssertionError,
+                               msg='#1938 dropping a dispatch case must be caught'):
+            self.assertEqual([ast.literal_eval(row.elts[1]) for row in rows(mutant)],
+                             labels)
+        print('#1938 dispatch case row-removed: KILLED', flush=True)
+        with self.assertRaises(AssertionError,
+                               msg='#1938 dropping one row must change the pinned count'):
+            self.assertEqual(len(rows(mutant)), len(pinned))
+        print('#1938 dispatch case row-count: KILLED', flush=True)
+
     # r2 GLM sibling P1：`--self-check-controls` 的本体 `self_check_controls_run()`
     # 是自检链的第六个函数，r1 只钉了前五个——删掉它任何一条 `problems.append`
     # （INVALID×2 / SURVIVED×1），`--self-check-controls` 会打印 SURVIVED 却 exit 0，
@@ -1081,8 +1129,9 @@ class EnvironmentControls(unittest.TestCase):
                 "f'dispatch {label}: no usage diagnostic: {text[-200:]}'",
                 "'dispatch marker: a probe child ran the main path ' '(no refusal within the probe timeout)'",
                 "f'dispatch marker: a probe child ran the main path: ' f'{text[-200:]}'",
+                "f'dispatch: the probe output directory vanished before it ' f'could be checked: {directory}'",
                 "f'dispatch: an argument became an output path: {created}'",
-                "f'dispatch: the probe started a stubbed cargo, rustc or ' f'git: {calls.read_text().strip()[:200]}'",
+                "f'dispatch: the probe started a stubbed cargo, rustc or ' f'git: {stub_calls.strip()[:200]}'",
                 "f'dispatch: the probe touched the real tree lock: {lock} ' f'went from {lock_before} to {lock_after}'",
             ],
             'self_check_controls_run': [
@@ -1117,7 +1166,7 @@ class EnvironmentControls(unittest.TestCase):
         sites = [site for function in self.PROBLEM_FUNCTIONS for site in raw[function]]
         self.assertEqual({function: len(rows) for function, rows in pinned.items()},
                          {'self_check': 14, 'slot_timeout_probe': 5, 'restore_probe': 11,
-                          'dispatch_probe': 8, 'deadline_probe': 15,
+                          'dispatch_probe': 9, 'deadline_probe': 15,
                           'self_check_controls_run': 6},
                          '#1843 C the pinned witness count per function')
         self.assertEqual(len(set(sites)), len(sites),
@@ -1150,14 +1199,16 @@ class EnvironmentControls(unittest.TestCase):
                   'negative_controls.py').read_text()
         rows = self.self_check_controls_rows(source)
         names = [ast.literal_eval(row.elts[0]) for row in rows]
-        self.assertEqual(len(rows), 16,
-                         '#1843 D sixteen meta controls cover the self-check guards')
+        self.assertEqual(len(rows), 18,
+                         '#1843 D eighteen meta controls cover the self-check guards')
         self.assertEqual(names, [
             'deadline-refusal-removed',
             'progress-flush-removed',
             'tree-lock-not-held',
             'empty-gates-table',
             'empty-gates-guard-removed',
+            'empty-dispatch-cases',
+            'empty-dispatch-guard-removed',
             'deadline-parser-loosened',
             'deadline-log-dropped',
             'slot-guard-exit-not-rerouted',
@@ -1203,7 +1254,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = 'e12099d65cda01ddb14b8de3860ee2254eb9269e5a1a89220b423fc899affe0c'
+    SESSION_CONTROLS_SHA256 = '0b823cbe934404a52775f2098da4c8626c8de4827c4251a05b96f356bcdef3c3'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -1224,12 +1275,17 @@ slot_timeout_probe.recorder | return | return subprocess.CompletedProcess([], 0,
 slot_timeout_probe | return | return problems
 _send_signals_after | return | return threading.Thread(target=run, daemon=True)
 restore_probe | return | return problems
+_lock_snapshot | return | return path.stat().st_mtime_ns
+_lock_snapshot | return | return None
+dispatch_probe | sys.exit() | sys.exit('no dispatch cases defined: the probe would pass without ' 'driving the dispatcher')
 dispatch_probe | return | return problems
 self_check | sys.exit() | sys.exit('no slot guard cases defined: self-check would pass without testing the guard')
 self_check | return | return 1
 self_check | return | return 0
 _empty_gates_table | return | return text, 0
 _empty_gates_table | return | return text[:start] + ' gates = {}\n' + text[end:], 1
+_empty_invocations_table | return | return text, 0
+_empty_invocations_table | return | return text[:start] + ' invocations = ()\n' + text[end:], 1
 <module> | sys.exit() | sys.exit('no meta control cases defined: --self-check-controls would pass ' 'without testing a single guard')
 _self_check_variant | return | return copy_path
 self_check_controls_run | return | return problems
