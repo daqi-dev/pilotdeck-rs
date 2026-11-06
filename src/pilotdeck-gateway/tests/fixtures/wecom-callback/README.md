@@ -52,8 +52,10 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 `ChannelAdapter::deliver_cron_result` + `im_cron::deliver_chat_cron_result` 一并实现，
 由 `deliver_cron_result_follows_the_shared_helper` 钉住（金样不含 cron 场景）。
 
-已登记（未批准，非已接受差异）的差异只有两条，都在
+已登记（未批准，非已接受差异）的差异有三条，都在
 `specs/gateway-parity/diffs/` 下：`A8.3-WECOM-CALLBACK-408-001`（hyper 帧化的
-408）与 `A8.3-WECOM-CALLBACK-KEEPALIVE-001`（空闲 keep-alive 时限与缺
-`Keep-Alive: timeout=5` 头）。22 个场景都不含 408 格与空闲 keep-alive 格
-（全部带 `Connection: close`），故这两条不影响任何金样判分。
+408）、`A8.3-WECOM-CALLBACK-KEEPALIVE-001`（空闲 keep-alive 时限与缺
+`Keep-Alive: timeout=5` 头）与 `A8.3-WECOM-CALLBACK-BODY-LIMIT-001`（#1941：
+`POST *` 请求体 1 MiB 上限，超限零字节关闭；TS 的 `readBody` 无上限）。22 个
+场景都不含 408 格、空闲 keep-alive 格与超限格（全部带 `Connection: close`，
+body 远小于 1 MiB），故这三条不影响任何金样判分。
