@@ -5,10 +5,12 @@ import subprocess
 import inspect
 import os
 import re
+import signal
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+import capture
 import run_host
 import stdio_mitm
 
@@ -142,6 +144,33 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(process.stdin.close.call_count, 1, '#748 EOF closes owned input')
         self.assertEqual(process.stdout.close.call_count, 0, '#748 only reader closes stdout')
 
+    def test_capture_second_signal_preserves_cleanup(self):
+        # #1194/#1398: capture's handler raises RuntimeError (to escape the
+        # selectors EINTR retry, #748), so the KeyboardInterrupt-shaped guard
+        # the other owners use cannot apply here. Without an equivalent guard a
+        # second signal delivered while that RuntimeError unwinds re-raises and
+        # skips the finally reclaim, leaking the detached sidecar group.
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            for first, second in ((signal.SIGINT, signal.SIGTERM), (signal.SIGTERM, signal.SIGINT)):
+                reached, caught = [], None
+                signal.signal(signal.SIGINT, capture.interrupted)
+                signal.signal(signal.SIGTERM, capture.interrupted)
+                try:
+                    try:
+                        os.kill(os.getpid(), first)
+                    finally:
+                        os.kill(os.getpid(), second)
+                        reached.append('cleanup-completed')
+                except RuntimeError as error:
+                    caught = error
+                self.assertEqual(reached, ['cleanup-completed'],
+                                 f'#1398 second signal preserved cleanup after {first}')
+                self.assertIsNotNone(caught, f'#1398 first signal still cancels ({first})')
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
 
     def test_negative_controls_kill_old_behaviors(self):
         probes = [
@@ -159,6 +188,9 @@ class AcceptanceTests(unittest.TestCase):
             (stdio_mitm, 'reap_after_host_eof', 'for stream in (process.stdin,):',
              'for stream in (process.stdout, process.stdin):', 'test_reader_owns_stdout_close',
              '#748 only reader closes stdout', 'stdout-close-race'),
+            (capture, 'interrupted', '    if sys.exception() is not None:\n        return\n', '',
+             'test_capture_second_signal_preserves_cleanup',
+             '#1398 second signal preserved cleanup', 'capture-secondary-signal'),
         ]
         outcomes = []
         for module, function, old, new, test, message, label in probes:
