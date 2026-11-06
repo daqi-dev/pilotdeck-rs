@@ -85,6 +85,14 @@ CHECK_REL = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
              'check_cleanup.py')
 NEG_REL = ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/'
            'negative_controls.py')
+# #892 fix-r26: the file that *defines* the cross-file proven source, and the
+# ``rel`` the audit reports for it -- a judge binds the failure to it instead
+# of trusting any single definition in the batch.
+NEGATIVE_PROCESS = (ROOT / 'src/pilotdeck-gateway/tests/fixtures/'
+                    'negative_process.py')
+NEGATIVE_PROCESS_REL = ('src/pilotdeck-gateway/tests/fixtures/'
+                        'negative_process.py')
+GUARD_REL = 'scripts/gateway-parity/_guard.py'
 
 _MISSING = object()
 
@@ -1332,6 +1340,20 @@ def _not_shared(rows, rel, function, detail):
     return True, detail
 
 
+def _audit_needle(rows, needle, detail):
+    """#892 fix-r26: an aggregation-audit failure line containing *needle*."""
+    ok, reason = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, reason
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    if not any(needle in failure for failure in (row.get('failures') or [])):
+        return False, (f'failures={row.get("failures")!r}, want the {needle!r} '
+                       'failure')
+    return True, detail
+
+
 def calibrate_conditional_def(rows):
     """#892 r25: a same-named ``def`` inside a module-level ``if`` runs at
     import time but the binding graph only walked the top level (GLM boundary
@@ -1385,6 +1407,57 @@ def calibrate_shadowed_global_loader(rows):
     loader spelling even when the same function shadows ``_load`` (GLM sibling
     r24 P1-1)."""
     return calibrate_shadowed_common(rows)
+
+
+def calibrate_module_walrus(rows):
+    """#892 fix-r26: a module-scope walrus rebinds the proven source with no
+    ``Assign`` statement (GLM concurrency r25 P0-1 / boundary r25 P0-2)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: module-scope walrus rebind flagged, passed=False')
+
+
+def calibrate_dynamic_receiver_write(rows):
+    """#892 fix-r26: ``globals()['md'] = <stub>`` moves the relay receiver
+    behind the binding graph's back (GLM boundary r25 P0-1)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: dynamic receiver write flagged, passed=False')
+
+
+def calibrate_setattr_shared_write(rows):
+    """#892 fix-r26: ``setattr(md, <key>, <stub>)`` over a literal dict key
+    replaces the shared attribute (GLM concurrency r25 P1-6)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: setattr shared write flagged, passed=False')
+
+
+def calibrate_exec_nonliteral(rows):
+    """#892 fix-r26: ``exec(<non-literal>)`` can write any name in this module
+    (GLM boundary r25 P1-3)."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: non-literal exec flagged, passed=False')
+
+
+def calibrate_negative_process_redefine(rows):
+    """#892 fix-r26: a second same-named def in the file that *defines* a
+    cross-file proven source keeps every importer's trust (GLM sibling r25
+    #2 / boundary r25 P1-5)."""
+    return _audit_needle(
+        rows, 'no longer resolves to exactly one undecorated definition',
+        f'aggregation-audit: {NEGATIVE_PROCESS_REL} second definition '
+        'flagged, passed=False')
+
+
+def calibrate_decorated_guard_load(rows):
+    """#892 fix-r26: a decorated ``_guard.load`` is no longer the sanctioned
+    loader even though its ``[None]`` binding is unchanged (GLM sibling r25
+    #5 / boundary r25 P1-7)."""
+    return _audit_needle(
+        rows, 'no longer defines exactly one undecorated load(...)',
+        f'aggregation-audit: {GUARD_REL} decorated loader flagged, passed=False')
 
 
 def calibrate_computed_status_write(rows):
@@ -2515,6 +2588,76 @@ MUTATIONS = [
      "    _load = lambda *a, **k: SimpleNamespace(\n"
      "        aggregate_status=lambda *x: ('FAIL', 1))\n"
      "    common = _load('common', _apparatus / 'common.py')\n"),
+    # #892 fix-r26 (GLM concurrency r25 P0-1 / boundary r25 P0-2): a
+    # module-scope walrus rebinds the proven source with no ``Assign``
+    # statement, and every consumer kept reading the ``def`` binding.
+    ('calibrate-module-walrus', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if (load_session_domain := (lambda *a, **k: None)):\n"
+     "    pass\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r26 (GLM boundary r25 P0-1): ``globals()['md'] = <stub>`` inside
+    # the function that owns the relay replaces the module receiver with no
+    # binding statement anywhere the module walk reads.
+    ('calibrate-dynamic-receiver-write', CHECK,
+     "    global md\n    md = load_session_domain()",
+     "    global md\n"
+     "    globals()['md'] = SimpleNamespace(\n"
+     "        common=SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0)))\n"
+     "    md = load_session_domain()"),
+    # #892 fix-r26 (GLM concurrency r25 P1-6): the shared attribute of the relay
+    # replaced key by key, through a literal dict the key spelling comes from.
+    ('calibrate-setattr-shared-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    for _k, _v in {'common': None}.items():\n"
+     "        setattr(md, _k, _v)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r26 (GLM boundary r25 P1-3): ``exec`` whose source is not a
+    # literal at all still writes this module's namespace.
+    ('calibrate-exec-nonliteral', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "_code = 'load_session_domain = None'\n"
+     "exec(_code)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r26 (GLM sibling r25 #2 / boundary r25 P1-5): the registry keys
+    # on the importing file, so a same-named redefinition in the *defining*
+    # file kept every importer's trust.
+    ('calibrate-negative-process-redefine', NEGATIVE_PROCESS,
+     "def committed_status_contract(",
+     "def committed_status_contract(*_a, **_k):\n"
+     "    return None\n"
+     "\n"
+     "\n"
+     "def committed_status_contract("),
+    # #892 fix-r26 (GLM sibling r25 #5 / boundary r25 P1-7): a decorator
+    # replaces the sanctioned loader object while its ``[None]`` binding stays.
+    ('calibrate-decorated-guard-load', GUARD_SOURCE,
+     "def load(name, path):",
+     "def _swap(fn):\n"
+     "    return fn\n"
+     "\n"
+     "\n"
+     "@_swap\n"
+     "def load(name, path):"),
 ]
 
 JUDGES = {
@@ -2862,6 +3005,18 @@ JUDGES = {
         'aggregation-audit', calibrate_sys_modules_poison, False, ()),
     'calibrate-shadowed-global-loader': (
         'aggregation-audit', calibrate_shadowed_global_loader, False, ()),
+    'calibrate-module-walrus': (
+        'aggregation-audit', calibrate_module_walrus, False, ()),
+    'calibrate-dynamic-receiver-write': (
+        'aggregation-audit', calibrate_dynamic_receiver_write, False, ()),
+    'calibrate-setattr-shared-write': (
+        'aggregation-audit', calibrate_setattr_shared_write, False, ()),
+    'calibrate-exec-nonliteral': (
+        'aggregation-audit', calibrate_exec_nonliteral, False, ()),
+    'calibrate-negative-process-redefine': (
+        'aggregation-audit', calibrate_negative_process_redefine, False, ()),
+    'calibrate-decorated-guard-load': (
+        'aggregation-audit', calibrate_decorated_guard_load, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
