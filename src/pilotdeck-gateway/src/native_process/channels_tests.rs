@@ -617,7 +617,8 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
 
 // #1763 / #1386 / #1302 B: the production native startup must refuse a config
 // that enables a channel this process does not implement. These drive
-// `assembly::start` — the entry `native_process::run` uses — so deleting the
+// `assembly::start` (the `#[cfg(test)]` facade over the same `start_impl` that
+// `native_process::run` reaches through `start_with_webhook`), so deleting the
 // call site, downgrading it to a warning, or turning it into a silent skip
 // fails here; the seam-level tests in `channel::tests` alone would stay green.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;

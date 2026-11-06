@@ -78,10 +78,15 @@ MUTATIONS = [
     # Only a hot-reload keeps the route; inverting the guard clears it for
     # hot-reload (the case's url_verification falls to 404) and keeps it for
     # "done" (the stopped-route case answers 200 instead of 404).
-    ('hot-reload-clears', source / 'mod.rs',
+    # Inverting the stop condition clears the slot only on a hot reload, i.e.
+    # the mirror image of `pilotdeckServer.stopRunningChannel`. Both directions
+    # change cells, but the oracle runs `stopped-route-falls-through-404`
+    # (index 10) before `hot-reload-keeps-route` (index 12), so the stop
+    # direction is the first mismatch and the one the receipt must name.
+    ('route-clear-inverted', source / 'mod.rs',
      '            if reason != "hot-reload"',
      '            if reason == "hot-reload"',
-     'channel_matches_real_ts', '#1329 case hot-reload-keeps-route matches the TS oracle'),
+     'channel_matches_real_ts', '#1329 case stopped-route-falls-through-404 matches the TS oracle'),
     # Dropping a case from the parsed oracle must trip the generator's
     # literal 13, not silently pass with fewer cells.
     ('oracle-shrunk-list', tests,

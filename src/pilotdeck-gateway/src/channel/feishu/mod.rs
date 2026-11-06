@@ -848,12 +848,6 @@ impl Runtime {
         self.generation(chat_id) == generation
     }
 
-    fn shift_turn(&self, chat_id: &str) -> Option<QueuedTurn> {
-        let mut state = self.state.lock().expect("#1329 state mutex");
-        let entry = state.chats.get_mut(chat_id)?;
-        entry.queue.pop_front()
-    }
-
     fn set_active_run(&self, chat_id: &str, run: ActiveRun) {
         self.state
             .lock()
@@ -887,18 +881,28 @@ impl Runtime {
 
     async fn run_queued_turns(self: &Arc<Self>, chat_id: &str, first: QueuedTurn) {
         let mut pending = first;
+        // True when `pending` came off the front of this chat's queue (the
+        // lost-admit hand-off below): re-queueing it at the back would let a
+        // newer turn overtake it, so it goes back to the front.
+        let mut pending_from_queue = false;
         loop {
             let mut slot = match ActiveChat::admit(self.active_chats.clone(), chat_id.to_owned()) {
                 Some(slot) => slot,
                 None => {
                     // Lost the race with the running drain: the turn must still
                     // be queued, exactly like the `active` branch in
-                    // `dispatch_turn`. The push happens under the same state
-                    // lock the holder takes to decide "queue empty and release",
-                    // so exactly one of the two observes the other.
+                    // `dispatch_turn`. The push, the "is someone still holding
+                    // the slot" check and the take-back all happen under the one
+                    // state lock the holder takes to decide "queue empty and
+                    // release", so the two sides cannot both conclude "the other
+                    // one has it".
                     let mut state = self.state.lock().expect("#1329 state mutex");
                     let entry = state.chats.entry(chat_id.to_owned()).or_default();
-                    entry.queue.push_back(pending);
+                    if pending_from_queue {
+                        entry.queue.push_front(pending);
+                    } else {
+                        entry.queue.push_back(pending);
+                    }
                     while entry.queue.len() > MAX_PENDING_TURNS_PER_CHAT {
                         entry.queue.pop_front();
                     }
@@ -907,6 +911,14 @@ impl Runtime {
                         .lock()
                         .expect("#1329 active chats mutex")
                         .contains(chat_id);
+                    // Take the turn back inside that same critical section: a
+                    // racer that admits in the gap between this lock and the
+                    // next one must never see the queue it will later drain.
+                    let taken = if holder_active {
+                        None
+                    } else {
+                        entry.queue.pop_front()
+                    };
                     drop(state);
                     if holder_active {
                         self.log(
@@ -916,11 +928,12 @@ impl Runtime {
                         return;
                     }
                     // The holder released between our `admit` and our push:
-                    // take the turn back and become the drainer ourselves. If a
-                    // third racer already admitted and drained it, stop here.
-                    match self.shift_turn(chat_id) {
+                    // become the drainer ourselves. If a third racer already
+                    // drained the queue, stop here.
+                    match taken {
                         Some(turn) => {
                             pending = turn;
+                            pending_from_queue = true;
                             continue;
                         }
                         None => return,
@@ -1039,7 +1052,8 @@ impl Runtime {
                                 // The attachment itself is out of scope; the
                                 // controller still flushes the text it has.
                                 if !js_trim(&live.text).is_empty() {
-                                    self.send_final(chat_id, &live.text).await;
+                                    self.send_final(chat_id, turn.generation, &live.text)
+                                        .await;
                                 }
                                 live.text.clear();
                             }
@@ -1053,19 +1067,21 @@ impl Runtime {
         // streaming must not deliver anything to the chat: its buffered text —
         // including the synthesized "Please retry." fragment — belongs to the
         // session that no longer exists, and TS aborts that turn instead of
-        // flushing it. The reaction cleanup is gated the same way.
-        let current = self.is_current(chat_id, turn.generation);
-        if current {
+        // flushing it.
+        if self.is_current(chat_id, turn.generation) {
             self.interaction.elicitation_clear(chat_id);
             self.interaction.permission_clear_after_turn(chat_id);
             if !js_trim(&live.text).is_empty() {
-                self.send_final(chat_id, &live.text).await;
+                self.send_final(chat_id, turn.generation, &live.text).await;
             }
-            if let (Some(message_id), Some(reaction_id), Some(api)) =
-                (&turn.message_id, reaction_id, api)
-            {
-                api.remove_reaction(message_id, &reaction_id).await;
-            }
+        }
+        // The reaction is not part of the flush: TS removes it in a `finally`,
+        // so an aborted (superseded) turn still clears the reaction it put on
+        // the user's message. Gating this on `current` would strand it.
+        if let (Some(message_id), Some(reaction_id), Some(api)) =
+            (&turn.message_id, reaction_id, api)
+        {
+            api.remove_reaction(message_id, &reaction_id).await;
         }
         if self
             .active_run(chat_id)
@@ -1083,11 +1099,18 @@ impl Runtime {
     /// pair, which splits at `liveTextLimit()` and sends each segment as a
     /// final `post`, falling back to a plain text message per segment when
     /// the post call reports `false`.
-    async fn send_final(self: &Arc<Self>, chat_id: &str, text: &str) {
+    async fn send_final(self: &Arc<Self>, chat_id: &str, generation: u64, text: &str) {
         let Some(api) = self.api() else {
             return;
         };
         for chunk in live_chunks(text, live_text_limit(MAX_TEXT_MESSAGE_LENGTH)) {
+            // A segment send is an await point: `/new` can bump the generation
+            // while the previous segment is in flight, and TS has already
+            // aborted the turn by then. Re-check before every segment so the
+            // rest of a superseded turn never reaches the chat.
+            if !self.is_current(chat_id, generation) {
+                return;
+            }
             let is_final = !chunk.ends_with(render::DEFAULT_LIVE_REPLY_CURSOR);
             let kind = activity_kind_from_text(&chunk);
             if api

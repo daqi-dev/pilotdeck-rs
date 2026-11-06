@@ -185,7 +185,13 @@ fn parse_v2_event(raw: &JsValue) -> Option<ParsedEvent> {
     if !is_supported_type(message_type.as_deref()) {
         return Some(ParsedEvent::Ignore);
     }
-    let chat_id = string_prop_value(message.get("chat_id"))?;
+    // `if (!chatId || content === undefined) return undefined;`: the empty
+    // string is falsy, so `"chat_id": ""` takes the "not this shape" exit
+    // instead of becoming `feishu:chat=:general`.
+    let chat_id = match string_prop_value(message.get("chat_id")) {
+        Some(value) if !value.is_empty() => value,
+        _ => return None,
+    };
     let content_value = message.get("content");
     if is_undefined(content_value) {
         return None;
@@ -204,7 +210,12 @@ fn parse_v2_event(raw: &JsValue) -> Option<ParsedEvent> {
 
 fn parse_v1_event(raw: &JsValue, clock: &dyn Clock) -> Option<ParsedEvent> {
     let event = raw.get("event").and_then(JsValue::as_object)?;
-    let chat_id = string_prop_value(event.get("chat_id"))?;
+    // `if (!event?.chat_id || event.text === undefined) return undefined;`:
+    // the empty string is falsy here too.
+    let chat_id = match string_prop_value(event.get("chat_id")) {
+        Some(value) if !value.is_empty() => value,
+        _ => return None,
+    };
     if is_undefined(event.get("text")) {
         return None;
     }
@@ -347,6 +358,27 @@ mod tests {
 
         let other = r#"{"header":{"event_id":"e3","event_type":"im.chat.updated_v1"},"event":{"message":{"chat_id":"c","message_type":"text","content":"{}"}}}"#;
         assert_eq!(parse(other, &clock, &log), ParsedEvent::Ignore);
+    }
+
+    #[test]
+    fn empty_chat_id_is_not_a_message_in_either_event_shape() {
+        // FeishuChannel.ts:287 `if (!chatId || message.content === undefined)
+        // return undefined;` and :1174 `if (!event?.chat_id || event.text ===
+        // undefined) return undefined;`: the empty string is falsy, so neither
+        // shape dispatches a turn for `feishu:chat=:general`.
+        let clock = FixedClock(0.0);
+        let log = no_log();
+        let v2 = r#"{"header":{"event_id":"e1","event_type":"im.message.receive_v1"},"event":{"message":{"chat_id":"","message_type":"text","content":"{\"text\":\"hi\"}"}}}"#;
+        assert_eq!(parse(v2, &clock, &log), ParsedEvent::Ignore);
+        let v1 = r#"{"event":{"chat_id":"","text":"x"}}"#;
+        assert_eq!(parse(v1, &clock, &log), ParsedEvent::Ignore);
+        // The direct shape keeps the baseline `typeof raw.chatId === "string"`
+        // gate, which does not exclude the empty string.
+        let ParsedEvent::Message(message) = parse(r#"{"chatId":"","text":"hi"}"#, &clock, &log)
+        else {
+            panic!("#1329 direct empty chat id");
+        };
+        assert_eq!(message.chat_id, "");
     }
 
     #[test]
