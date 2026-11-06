@@ -777,6 +777,173 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(len(rows(mutant)), 12,
                          '#1632 dropping a row must change the pinned count')
 
+    def self_check_appends(self, source):
+        """`self_check()` 里每一处 `problems.append(...)` 的参数源码，按出现顺序（#1843 C）。"""
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.FunctionDef) and node.name == 'self_check':
+                function = node
+                break
+        else:
+            self.fail('#1843 the fixture must define self_check()')
+        sites = [node for node in ast.walk(function)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == 'append'
+                 and isinstance(node.func.value, ast.Name)
+                 and node.func.value.id == 'problems' and len(node.args) == 1]
+        return [ast.get_source_segment(source, node.args[0])
+                for node in sorted(sites, key=lambda node: (node.lineno, node.col_offset))]
+
+    def test_self_check_every_problem_is_pinned(self):
+        # #1843 C（GLM r2 sibling P2）：r14 只钉了 gates 循环那三处；tree-lock 段与
+        # real-gate 段后来新增的每一条诊断都是「删掉仍绿」——见证没了，自检照常打印通过。
+        # 这里把 `self_check()` 里**每一条** `problems.append` 的参数源码钉死，并逐条做内存内
+        # 变异（换成 `None`）证明删改任何一条都会红；总数一并钉住，防止新增一条却不钉。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+        sites = self.self_check_appends(source)
+        pinned = [' '.join(site.split()) for site in sites]
+        self.assertEqual(pinned, [
+            "f'{label}: the slot guard never returned within {wall}s'",
+            "f'{label}: expected rc={expected}, ' f'got rc={result.returncode}'",
+            "f'{label}: exit did not report {needle!r}'",
+            "f'{label}: took {elapsed:.1f}s for a {timeout}s deadline'",
+            "'tree-lock case: the tree lock was not actually held'",
+            "f'tree-lock case: the guard never returned within {wall}s'",
+            "'tree-lock case: the guard was not bounded while the tree ' "
+            "f'lock was held (rc={result.returncode})'",
+            "f'tree-lock case: took {elapsed:.1f}s for a {timeout}s ' "
+            "'deadline while holding the tree lock'",
+            "f'real gate: never returned within {wall}s'",
+            "'real gate: rc=0 without the guard reporting a slot'",
+            "f'real gate: rc=0 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
+            "'real gate: rc=1 without the bounded-busy verdict ' "
+            "'(gate broken rather than busy)'",
+            "f'real gate: rc=1 took {elapsed:.1f}s for a ' f'{timeout}s deadline'",
+            "'real gate: expected a bounded 0/1 verdict, ' f'got rc={result.returncode}'",
+        ], '#1843 C every self_check() witness is pinned, in order')
+        self.assertEqual(len(sites), 14, '#1843 C the pinned witness count')
+        self.assertEqual(len(set(sites)), len(sites),
+                         '#1843 C each witness is one uniquely anchored site')
+        for index, site in enumerate(sites):
+            mutant = source.replace(site, 'None', 1)
+            self.assertNotEqual(mutant, source, f'#1843 C site {index} is uniquely anchored')
+            with self.assertRaises(AssertionError,
+                                   msg=f'#1843 C dropping witness {index} must be caught'):
+                self.assertEqual(
+                    [' '.join(changed.split()) for changed in self.self_check_appends(mutant)],
+                    pinned)
+            print(f'#1843 C self-check witness {index}: KILLED', flush=True)
+
+    def self_check_controls_rows(self, source):
+        """夹具里字面量的 `self_check_controls` 表（#1843 D）。"""
+        for node in ast.walk(ast.parse(source)):
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.List)
+                    and any(isinstance(target, ast.Name) and target.id == 'self_check_controls'
+                            for target in node.targets)):
+                return node.value.elts
+        self.fail('#1843 the fixture must define a literal self_check_controls table')
+
+    def test_self_check_control_table_cannot_shrink_silently(self):
+        # #1843 D（Claude r2 boundary P2）：这张表只被 `len()` 用来派生 job 余量，
+        # 于是删掉 1..n-1 行仍然全绿——少一条 meta 负控等于少一格守卫，没人知道。
+        # 对照 `mutations` 表的钉法：行数 + 名字逐一钉死，并证明少一行会红。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+        rows = self.self_check_controls_rows(source)
+        names = [ast.literal_eval(row.elts[0]) for row in rows]
+        self.assertEqual(len(rows), 14,
+                         '#1843 D fourteen meta controls cover the self-check guards')
+        self.assertEqual(names, [
+            'deadline-refusal-removed',
+            'progress-flush-removed',
+            'tree-lock-not-held',
+            'empty-gates-table',
+            'empty-gates-guard-removed',
+            'deadline-parser-loosened',
+            'deadline-log-dropped',
+            'slot-guard-exit-not-rerouted',
+            'slot-timeout-guard-removed',
+            'restore-mask-removed',
+            'stop-signal-second-armed',
+            'restore-watchdog-removed',
+            'restore-failclosed-removed',
+            'unknown-mode-guard-removed',
+        ], '#1843 D the meta controls are exactly these, not merely fourteen rows')
+        # 只钉行数等于允许「换掉一条真负控、行数不变」：名字逐一钉死后，换名同样会红。
+        dropped = ast.get_source_segment(source, rows[-1])
+        mutant = source.replace(dropped + ',', '', 1)
+        self.assertNotIn(dropped, mutant, '#1843 D the mutant row really left the table')
+        with self.assertRaises(AssertionError,
+                               msg='#1843 D dropping a meta control must be caught'):
+            self.assertEqual(len(self.self_check_controls_rows(mutant)), len(rows))
+        print('#1843 D self-check control row-removed: KILLED', flush=True)
+        renamed = source.replace("'restore-watchdog-removed'", "'restore-watchdog-renamed'", 1)
+        self.assertNotEqual(renamed, source, '#1843 D the renamed control is uniquely anchored')
+        with self.assertRaises(AssertionError,
+                               msg='#1843 D renaming a meta control must be caught'):
+            self.assertEqual([ast.literal_eval(row.elts[0])
+                              for row in self.self_check_controls_rows(renamed)], names)
+        print('#1843 D self-check control row-renamed: KILLED', flush=True)
+
+    def write_source_atomic_body(self, source):
+        """`write_source_atomic` 的函数体源码（#1692 §9）。"""
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.FunctionDef) and node.name == 'write_source_atomic':
+                return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
+        self.fail('#1692 §9 the fixture must define write_source_atomic()')
+
+    def test_mutation_source_writes_are_published_atomically(self):
+        # #1692 §9：变异写入与还原都是截断式原地写（`write_text` / `write_bytes` 先截断再写）。
+        # 一次 SIGKILL 落在两者之间，源码文件就只剩空/半截——下一次 `mutating_sources` 的
+        # pristine 检查读到「基线不符」，而且直到有人手工修树为止，每次运行都会这样。
+        # 正确形态是同目录 tmp + fsync + 一次 rename：读者只会看到旧字节或新字节。
+        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
+                  'negative_controls.py').read_text()
+        body = self.write_source_atomic_body(source)
+        self.assertIn("open('wb')", body, '#1692 §9 the publish writes a same-directory temp')
+        self.assertIn('os.fsync(stream.fileno())', body,
+                      '#1692 §9 the bytes are flushed to disk before the rename')
+        self.assertIn('os.replace(temporary, path)', body,
+                      '#1692 §9 the publish is ONE rename, never a truncating write')
+        self.assertLess(body.index('os.fsync(stream.fileno())'), body.index('os.replace('),
+                        '#1692 §9 the rename happens only after the fsync')
+        self.assertIn('temporary.unlink(missing_ok=True)', body,
+                      '#1692 §9 a failed publish leaves no untracked temp behind')
+        # 两个调用点都必须走它：写入变异体一条、还原一条。
+        self.assertEqual(source.count('write_source_atomic(path, changed.encode())'), 1,
+                         '#1692 §9 the mutant is published atomically')
+        self.assertEqual(source.count('write_source_atomic(path, original)'), 1,
+                         '#1692 §9 the restore is published atomically')
+        # `log_path.write_text(…)` 之类是别的文件，不算源码树；只看变量名恰为 `path` 的。
+        self.assertEqual(re.findall(r'(?<![\w.])path\.write_text\(', source), [],
+                         '#1692 §9 no truncating in-place write of a mutated source')
+        self.assertEqual(re.findall(r'(?<![\w.])path\.write_bytes\(', source), [],
+                         '#1692 §9 no truncating in-place restore of a source')
+        for label, old, new, fragment in (
+                ('atomic-publish-loses-fsync', '            os.fsync(stream.fileno())\n', '',
+                 'os.fsync(stream.fileno())'),
+                ('atomic-publish-copies-instead-of-renaming', 'os.replace(temporary, path)',
+                 'shutil.copyfile(temporary, path)', 'os.replace(temporary, path)'),
+                ('atomic-publish-keeps-the-temp',
+                 '        temporary.unlink(missing_ok=True)\n', '        pass\n',
+                 'temporary.unlink(missing_ok=True)'),
+                ('mutant-write-back-to-truncating',
+                 'write_source_atomic(path, changed.encode())', 'path.write_text(changed)',
+                 'path.write_text('),
+                ('restore-write-back-to-truncating',
+                 'write_source_atomic(path, original)', 'path.write_bytes(original)',
+                 'path.write_bytes(')):
+            self.assertEqual(source.count(old), 1, f'#1692 §9 unique anchor: {label}')
+            mutant = source.replace(old, new, 1)
+            with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
+                if fragment.startswith('path.write'):
+                    self.assertEqual(
+                        re.findall(r'(?<![\w.])' + re.escape(fragment.rstrip('(')) + r'\(', mutant),
+                        [], '#1692 §9 no truncating in-place write of a source')
+                else:
+                    self.assertIn(fragment, self.write_source_atomic_body(mutant))
+            print(f'#1692 §9 atomic-publish mutant {label}: KILLED', flush=True)
+
     def documented_exit_codes(self, script):
         """脚本头部「退出码…」那张表的码集（#1556 后是多行表，续行不算新码）。"""
         lines = script.splitlines()
@@ -795,22 +962,45 @@ class EnvironmentControls(unittest.TestCase):
                 continue  # 续行：解释上一格，不引入新码
         return codes
 
+    def fail_closed_codes(self, script):
+        """`scripts/cargo-slots.sh` 头部「…；2 / 3 / 4 / 64 一律 fail-closed…」点名的码集。"""
+        header = next((line for line in script.splitlines()
+                       if re.match(r'#\s*退出码', line)), None)
+        self.assertIsNotNone(header, '#1692 §10 cargo-slots.sh documents its exit codes')
+        phrase = re.search(r'([0-9][0-9\s/]*)一律 fail-closed', header)
+        self.assertIsNotNone(
+            phrase, '#1692 §10 the exit-code header names the fail-closed codes')
+        codes = {int(code) for code in re.findall(r'\d+', phrase[1])}
+        self.assertTrue(codes, '#1692 §10 the fail-closed set is not empty')
+        return codes
+
+    def used_exit_codes(self, script):
+        """脚本里真正写出来的非 0 `exit N`（不是文档，是可执行字节）。"""
+        return {int(code) for code in re.findall(r'\bexit (\d+)', script)} - {0}
+
     def script_guards(self, script):
-        """每处 `cargo-slots:` 诊断 + 紧随其后的 `exit N` 算一条守卫（同行或后三行都认）。"""
+        """每一条真实的 `exit N` 守卫：诊断（echo / printf）+ 紧随其后的 `exit N`（#1692 §10）。
+
+        旧口径以「`echo "(cargo-slots: …)"` 这一行」为锚，于是守卫只要换一种同样真实的失败
+        形态（`printf '…\\n' >&2` 后再换行 `exit N`）就从表里消失，而脚本本身并没有少一条守卫。
+        现在的锚是 **exit**：先取每一处非 0 `exit N`（N≠0），再向回最多 3 行找属于它的
+        `cargo-slots:` 诊断（同行也算），诊断写在 `echo` 还是 `printf` 里、消息是否折行都不影响。
+        """
         lines = script.splitlines()
         guards = []
         for index, line in enumerate(lines):
             if line.lstrip().startswith('#'):
                 continue
-            message = re.search(r'echo "(cargo-slots: [^"\n]*)"', line)
-            if not message:
+            code = re.search(r'\bexit (\d+)', line)
+            if not code or code[1] == '0':
                 continue
-            code = next((found[1] for found in
-                         (re.search(r'\bexit (\d+)', follow) for follow in lines[index:index + 4])
-                         if found), None)
-            # 码 0 是 --refresh-cap 的成功提示、无 exit 的是状态输出，都不是守卫。
-            if code is not None and code != '0':
-                guards.append((message[1], code))
+            for back in range(index, max(index - 4, -1), -1):
+                # `printf` 的消息以 `\n` 结尾，那是格式串的换行而不是诊断的一部分。
+                message = re.search(r'(?:echo|printf)\s+(["\'])(cargo-slots: .*?)(?:\\n)?\1',
+                                    lines[back])
+                if message:
+                    guards.append((message[2], code[1]))
+                    break
         return guards
 
     def slot_guard_cases(self, source, script):
@@ -833,23 +1023,36 @@ class EnvironmentControls(unittest.TestCase):
         # **两边码集相等**（#1632 r14 评审 MiniMax boundary P1：只核「不多」时，脚本真会走到的
         # 69 / 4 / 64 三格可以永远不被自检覆盖，CI 依然绿）。
         documented = self.documented_exit_codes(script)
+        # #1692 §10: 码集口径不再写死 `documented - {0, 1, 2}`。三份事实各有出处：
+        #   · used     —— 脚本里真实写出的非 0 `exit N`；
+        #   · fail_closed —— 头部用法行点名的「一律 fail-closed」码集（2 / 3 / 4 / 64）；
+        #   · reserved —— 其中脚本从不主动写出的那几个（实际只有 2：bash 自身的语法错误）。
+        # 文档码集必须恰好 = used ∪ reserved ∪ {0, 1}；0 / 1 是仅有的两个「不靠 exit 行」的裁决码
+        # （结尾那条 `[ … ]` 测试的退出状态就是脚本的退出状态）。任一侧漂移都红。
+        fail_closed = self.fail_closed_codes(script)
+        used = self.used_exit_codes(script)
+        reserved = fail_closed - used
+        self.assertEqual(documented, used | reserved | {0, 1},
+                         '#1692 §10 the documented codes are exactly the raised ones, the '
+                         'reserved fail-closed ones, and the two implicit verdicts 0/1')
+        self.assertEqual(reserved, {2},
+                         '#1692 §10 rc 2 is the only fail-closed code the script never raises')
         self.assertEqual(set(codes.values()), documented,
                          '#1632 the fixture models exactly the codes cargo-slots.sh documents')
-        self.assertLessEqual({int(code) for code in re.findall(r'\bexit (\d+)', script)}, documented,
+        self.assertLessEqual(used, documented,
                              '#1632 every exit in cargo-slots.sh is a documented code')
         # 上面两条只覆盖「不多出一个码」这一向（#1632 r8 评审 MiniMax boundary P1）：
         # 把「ps 输出为空」那条守卫整行删掉后，剩下的 `exit 3` 仍让码集自洽，两条断言照绿，
         # 而空输出会重新变成「在跑 0 → 放行」的假 PASS——正是脚本自己注释禁掉的那一格。
-        # 所以把每条「先报诊断、再退出」的守卫逐条钉死（诊断与 `exit` 同行或下一行都认，
+        # 所以把每条「先报诊断、再退出」的守卫逐条钉死（诊断与 `exit` 同行或往上三行都认，
         # #1556 后的守卫多数是分行写的）：增删任意一条守卫、把某条守卫的码改掉，都必须红。
-        # 码 2 是文档化的「保留、脚本从不主动使用」，所以守卫码集是 documented - {0, 1, 2}
-        # （0 是 --refresh-cap 的成功提示，不是守卫）；口径重写见 #1692 §10。
         guards = self.script_guards(script)
         self.assertEqual(Counter(int(code) for _, code in guards),
                          Counter({3: 2, 4: 9, 64: 1, 69: 2}),
                          '#1632 every cargo-slots.sh guard: how many guards exit with which code')
-        self.assertEqual({int(code) for _, code in guards}, documented - {0, 1, 2},
-                         '#1632 the guards above are the documented non-trivial codes')
+        self.assertEqual({int(code) for _, code in guards}, used,
+                         '#1692 §10 every raised non-zero code is a guarded failure, and '
+                         'every guard exits with a code the script really raises')
         self.assertEqual([msg for msg, _ in guards if msg.startswith('cargo-slots: ps ')],
                          ['cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）',
                           'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）'],
@@ -877,24 +1080,64 @@ class EnvironmentControls(unittest.TestCase):
                          '#1632 each gate case yields a name and its (script, rc, needle)')
         # 表再全，`--self-check` 不接它也是空转（#1632 r12 MiniMax boundary P1）：删掉这条分发行，
         # CI 的自检命令会落到主路径——把 `--self-check` 当成输出目录、跑完整 11 条扫描后 exit 0，
-        # 步骤照样绿，而「`-O` 下仍有界」这条不变性再无人验证。同族的 `--slot-guard-probe`
-        # 分支有天然负控（删掉后子进程未知变异名 → rc=1 → self_check 红），这条没有。
-        self.assertEqual(
-            source.count("if sys.argv[1:] == ['--self-check']:\n    sys.exit(self_check())\n"), 1,
-            '#1632 --self-check really dispatches to self_check()')
+        # 步骤照样绿，而「`-O` 下仍有界」这条不变性再无人验证。
+        # #1692 r15-4：两个 flag 曾是两套口径（`--slot-guard-probe` 前缀匹配 + 长度校验、
+        # `--self-check` 全等），于是 `--self-check extra` 落回主路径被当成「输出目录 + 变异名」，
+        # 未知 `--flag` 也能变成目录。现在只有一条分发规则，逐条钉住它的每一段。
+        for fragment in (
+                'mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 '
+                'else (None, [])',
+                "if mode == '--slot-guard-probe':",
+                '    if len(arguments) != 2:',
+                "if mode in ('--self-check', '--self-check-controls'):",
+                # 这两段必须连行匹配：同一段源码也出现在本文件的 meta 负控锚点里（那里是
+                # 带 `\n` 转义的字符串字面量），只匹配单行会数到 2。
+                "    if arguments:\n"
+                "        sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')",
+                '        sys.exit(self_check())',
+                "if mode is not None and mode.startswith('--'):\n"
+                "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')"):
+            self.assertEqual(source.count(fragment), 1,
+                             f'#1692 r15-4 the single dispatch rule keeps: {fragment}')
+        # 旧的两套口径必须彻底消失：留着任何一条，flag 就又能被当成目录名 / 变异名。
+        for legacy in ("sys.argv[1:] ==", "sys.argv[1:2] =="):
+            self.assertNotIn(legacy, source,
+                             f'#1692 r15-4 no whole-argv dispatch remains ({legacy})')
         # 分发钉住了，裁决还没钉（#1632 r14 评审 GLM boundary P1）：删掉 `if problems: return 1`
         # 后自检照常逐个起子进程、照常往 stderr 打 `self-check FAILED: …`，但 `self_check()`
         # 返回 None → `sys.exit(None)` → exit 0，CI 步骤照样绿；删掉任一条 `problems.append`
         # 更隐蔽——见证那一格的唯一记录没了，剩下的全绿。r6「删一格」与 r12「删分发行」是同一
-        # 个洞的上两层，这是第三层，所以三处收集点与聚合分支逐条钉死。
-        for fragment in ("problems.append(f'{label}: the slot guard never returned within {wall}s')",
-                         "problems.append(f'{label}: expected rc={expected}, '",
-                         "problems.append(f'{label}: exit did not report {needle!r}')"):
-            self.assertEqual(source.count(fragment), 1,
-                             f'#1632 self-check collects this problem: {fragment}')
+        # 个洞的上两层，这是第三层，所以三处收集点与聚合分支逐条钉死；#1843 C 把 `self_check()`
+        # 里的**每一条** `problems.append` 都钉死（见 test_self_check_every_problem_is_pinned）。
         self.assertEqual(source.count('    if problems:\n        return 1\n'), 1,
                          '#1632 the collected problems decide the exit status')
         return cases
+
+    def self_check_ci_gate(self, source):
+        """#1843 F：真闸那格只在 CI 判定，其余主机打印跳过并说明理由。
+
+        真 `scripts/cargo-slots.sh` 的 rc 同时是**本机**的现场（忙 / 冷启动 / ops 正在更新），
+        在开发机上随机红绿，那不是在测守卫；把它钉在 `CI == 'true'` 里，六个假闸照旧在所有
+        环境覆盖 0/1/2/3/4/64（上面 `slot_guard_cases` 已逐条钉死）。
+        """
+        function = next((node for node in ast.walk(ast.parse(source))
+                         if isinstance(node, ast.FunctionDef) and node.name == 'self_check'), None)
+        self.assertIsNotNone(function, '#1843 F the fixture has a self_check()')
+        gates = [node for node in ast.walk(function) if isinstance(node, ast.If)
+                 and "os.environ.get('CI')" in ast.get_source_segment(source, node.test)]
+        self.assertEqual(len(gates), 1,
+                         '#1843 F the real gate probe has exactly one host-condition guard')
+        self.assertEqual(ast.get_source_segment(source, gates[0].test),
+                         "os.environ.get('CI') == 'true'",
+                         '#1843 F the guard is the CI condition, not some other environment')
+        body = ast.get_source_segment(source, gates[0])
+        self.assertIn("'--slot-guard-probe'", body,
+                      '#1843 F the real cargo-slots.sh probe runs inside the CI branch')
+        self.assertIn('skipped outside CI', body,
+                      '#1843 F every other host says the probe was skipped')
+        self.assertIn('not a verdict about the guard', body,
+                      '#1843 F the skip names why a host verdict is not evidence')
+        return gates[0]
 
     def test_slot_guard_case_table_cannot_shrink_silently(self):
         # #1632 r6 评审（sibling，P1）：`--self-check` 的分支表与变异表是同一类洞——
@@ -904,6 +1147,19 @@ class EnvironmentControls(unittest.TestCase):
                   'negative_controls.py').read_text()
         script = (Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh').read_text()
         cases = self.slot_guard_cases(source, script)
+        # #1843 F：真闸探针的宿主条件（见 self_check_ci_gate 的说明），三种失效形态。
+        self.self_check_ci_gate(source)
+        for label, old, new in (
+                ('ci-gate-widened-to-every-host',
+                 "if os.environ.get('CI') == 'true':", 'if True:'),
+                ('ci-gate-reversed-to-non-CI',
+                 "if os.environ.get('CI') == 'true':", "if os.environ.get('CI') != 'true':"),
+                ('ci-gate-skip-loses-its-reason',
+                 r"'(this host\'s slot state is not a verdict about the guard)'", "''")):
+            self.assertEqual(source.count(old), 1, f'#1843 F unique anchor: {label}')
+            with self.assertRaises(AssertionError, msg=f'#1843 F {label} must be caught'):
+                self.self_check_ci_gate(source.replace(old, new, 1))
+            print(f'#1843 F real-gate host gate mutant {label}: KILLED', flush=True)
         # 每条新断言各配一条内存内变异，证明它们真能杀（不落盘，不改夹具字节）。
         for label, old, new in (
                 ('gate-exits-free', r"exit 2\n'", r"exit 0\n'"),
@@ -933,27 +1189,75 @@ class EnvironmentControls(unittest.TestCase):
                                msg='#1632 dropping the empty-sample guard must be caught'):
             self.slot_guard_cases(source, script.replace(empty_guard, '', 1))
         print('#1632 slot-guard mutant script-drops-empty-output-guard: KILLED', flush=True)
-        # 分发行负控（r12 评审 P1）：删掉 `--self-check` 的分发后 CI 步骤仍绿，只有这条能杀。
-        dispatch = "if sys.argv[1:] == ['--self-check']:\n    sys.exit(self_check())\n"
-        self.assertEqual(source.count(dispatch), 1,
-                         '#1632 unique anchor: the --self-check dispatch')
+        # #1692 §10：守卫的真实失败形态不止 `echo "…"` 一种。把「ps 输出为空」那条改成
+        # `printf '…\n' >&2` + 换行 `exit 3`（脚本行为完全等价），exit-锚口径必须仍认出同一条
+        # 守卫；旧口径只数 echo 行，会凭空少一条——那就是「脚本没变形、尺子自己变红」的假 FAIL。
+
+        def echo_only_guards(text):
+            """#1692 之前的读法（只在诊断同一行后面找 exit），只用于证明新口径的必要性。"""
+            rows = text.splitlines()
+            found = []
+            for index, line in enumerate(rows):
+                if line.lstrip().startswith('#'):
+                    continue
+                message = re.search(r'echo "(cargo-slots: [^"\n]*)"', line)
+                if not message:
+                    continue
+                code = next((hit[1] for hit in
+                             (re.search(r'\bexit (\d+)', follow) for follow in rows[index:index + 4])
+                             if hit), None)
+                if code is not None and code != '0':
+                    found.append((message[1], code))
+            return found
+
+        printf_form = ('[ -n "$snap" ] || {\n'
+                       "  printf 'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）\\n' >&2\n"
+                       '  exit 3\n'
+                       '}\n')
+        refactored = script.replace(empty_guard, printf_form, 1)
+        self.assertEqual(refactored.count("printf 'cargo-slots: ps 输出为空"), 1,
+                         '#1692 §10 the printf-shaped guard is really in the mutant')
+        self.assertEqual(self.script_guards(refactored), self.script_guards(script),
+                         '#1692 §10 a printf-shaped guard is still recognised as a guard')
+        self.assertEqual(len(echo_only_guards(refactored)) + 1, len(echo_only_guards(script)),
+                         '#1692 §10 the echo-only reading loses a guard the script still has')
+        print('#1692 §10 slot-guard mutant printf-diagnostic: KILLED', flush=True)
+        # 反向：诊断整段删掉、只留 `exit 3`，守卫表必须变（那条码不再有可读的失败原因）。
+        no_diagnostic = refactored.replace(
+            "  printf 'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）\\n' >&2\n", '', 1)
+        self.assertNotEqual(no_diagnostic, refactored,
+                            '#1692 §10 the diagnostic line is unique in the mutant')
         with self.assertRaises(AssertionError,
-                               msg='#1632 dropping the --self-check dispatch must be caught'):
-            self.slot_guard_cases(source.replace(dispatch, '', 1), script)
-        print('#1632 slot-guard mutant script-drops-self-check-dispatch: KILLED', flush=True)
-        # 裁决路径负控（r14 评审 GLM boundary P1）：分发钉住以后，删掉聚合分支或任一条
-        # `problems.append` 仍让自检「打印 FAILED 但 exit 0」。替换成 `None` / `pass` 而不是
-        # 删行，免得把负控变成语法错（那样杀它的是 SyntaxError，证明不了断言有效）。
+                               msg='#1692 §10 an exit without its diagnostic must be caught'):
+            self.slot_guard_cases(source, no_diagnostic)
+        print('#1692 §10 slot-guard mutant exit-without-diagnostic: KILLED', flush=True)
+        # 分发行负控（r12 评审 P1 / #1692 r15-4）：删掉 `--self-check` 的分发后 CI 步骤仍绿，
+        # 只有这条能杀；其余三条是新的「一条分发规则」各自的失效形态。
+        for label, old, new in (
+                ('script-drops-self-check-dispatch',
+                 '        sys.exit(self_check())\n', '        pass\n'),
+                ('script-self-check-accepts-extra-args',
+                 "    if arguments:\n"
+                 "        sys.exit(f'{mode} takes no arguments: {arguments!r}\\n{USAGE}')\n",
+                 '    if False:\n        pass\n'),
+                ('script-unknown-mode-becomes-main-path',
+                 "if mode is not None and mode.startswith('--'):\n"
+                 "    sys.exit(f'unknown mode: {mode}\\n{USAGE}')\n",
+                 'if False:\n    pass\n'),
+                ('script-slot-probe-matches-by-prefix',
+                 "if mode == '--slot-guard-probe':",
+                 "if mode and mode.startswith('--slot-guard-probe'):")):
+            self.assertEqual(source.count(old), 1, f'#1692 r15-4 unique anchor: {label}')
+            with self.assertRaises(AssertionError, msg=f'#1692 r15-4 {label} must be caught'):
+                self.slot_guard_cases(source.replace(old, new, 1), script)
+            print(f'#1692 r15-4 dispatch mutant {label}: KILLED', flush=True)
+        # 裁决路径负控（r14 评审 GLM boundary P1）：分发钉住以后，删掉聚合分支仍让自检
+        # 「打印 FAILED 但 exit 0」。替换成 `pass` 而不是删行，免得把负控变成语法错
+        # （那样杀它的是 SyntaxError，证明不了断言有效）。逐条 `problems.append` 的负控
+        # 移到 #1843 C 的 `test_self_check_every_problem_is_pinned`（那里覆盖全部 14 条）。
         for label, old, new in (
                 ('script-drops-self-check-verdict',
-                 '    if problems:\n        return 1\n', '    if problems:\n        pass\n'),
-                ('script-drops-timeout-problem',
-                 "problems.append(f'{label}: the slot guard never returned within {wall}s')", 'None'),
-                ('script-drops-exit-mismatch-problem',
-                 "problems.append(f'{label}: expected rc={expected}, '\n"
-                 "                                    f'got rc={result.returncode}')", 'None'),
-                ('script-drops-missing-needle-problem',
-                 "problems.append(f'{label}: exit did not report {needle!r}')", 'None')):
+                 '    if problems:\n        return 1\n', '    if problems:\n        pass\n'),):
             self.assertEqual(source.count(old), 1, f'#1632 unique anchor: {label}')
             with self.assertRaises(AssertionError, msg=f'#1632 {label} must be caught'):
                 self.slot_guard_cases(source.replace(old, new, 1), script)
