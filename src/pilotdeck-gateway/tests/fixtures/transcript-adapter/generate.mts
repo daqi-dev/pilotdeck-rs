@@ -522,6 +522,57 @@ try {
       { op: 'state' }, { op: 'read' }, open(), { op: 'restore' }],
   }, ['open:0', 'error:TypeError', 'state:2', 'ok', 'state:3', 'read:3/0', 'open:0', 'error:TypeError']);
 
+  // #1550: compact control_boundary restore shapes. Real compaction writes
+  // compactMetadata, so the live path always carries it; these pins cover the
+  // full read-side shape table: a valid snapshot restores (previously the
+  // whole session failed to open), legacy replacementMessages restore, an
+  // invalid snapshot field degrades to a warning, and the exact hydrate
+  // TypeErrors (metadata postTokens, boundary kind, cloneMessages on a
+  // truthy replacement) stay errors with the TS class and message.
+  {
+    const compactMeta = { compactionId: 'c1', trigger: 'auto', preTokens: 100, postTokens: 40 };
+    const snapshot = (messages: any) => ({ version: 1, messages });
+    const compactCases: Array<[string, any, boolean]> = [
+      ['snapshot', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([user('retained')]) }, true],
+      ['snapshot-tool-result', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: [{ type: 'text', text: 'r' }] }] }]) }, true],
+      ['snapshot-tool-result-object-type', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: [{ type: {}, text: 'y' }] }] }]) }, true],
+      ['snapshot-valid-replacement-junk', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([user('retained')]), replacementMessages: 'junk' }, true],
+      ['snapshot-invalid-empty-messages', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: { version: 1, messages: [] } }, true],
+      ['snapshot-invalid-wrong-version', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: { version: 2, messages: [user('x')] } }, true],
+      ['snapshot-invalid-tool-result-content', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, snapshot: snapshot([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: 5 }] }]) }, true],
+      ['replacement', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [user('pending')] }, true],
+      ['replacement-empty', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [] }, true],
+      ['replacement-falsy-zero', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: 0 }, true],
+      ['neither', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta }, true],
+      ['metadata-primitive', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: 5, snapshot: snapshot([user('retained')]) }, true],
+      ['subtype-microcompact', { kind: 'compact', subtype: 'microcompact_boundary', microCompactMetadata: { trigger: 'time_based', toolCallIds: [] } }, true],
+      ['subtype-missing', { kind: 'compact', compactMetadata: compactMeta }, true],
+      ['kind-resume', { kind: 'resume', metadata: {} }, true],
+      ['boundary-primitive', 'junk', true],
+      ['boundary-array', [], true],
+      ['metadata-missing', { kind: 'compact', subtype: 'compact_boundary', snapshot: snapshot([user('retained')]) }, false],
+      ['metadata-null', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: null, snapshot: snapshot([user('retained')]) }, false],
+      ['replacement-string', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: 'junk' }, false],
+      ['replacement-null-message', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [null] }, false],
+      ['replacement-null-block', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [{ role: 'user', content: [null] }] }, false],
+      ['replacement-tool-result-no-content', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [{ role: 'user', content: [{ type: 'tool_result', toolCallId: 'x' }] }] }, false],
+      ['replacement-tool-result-content-number', { kind: 'compact', subtype: 'compact_boundary', compactMetadata: compactMeta, replacementMessages: [{ role: 'user', content: [{ type: 'tool_result', toolCallId: 'x', content: 5 }] }] }, false],
+      ['boundary-null', null, false],
+      ['boundary-undefined', undefined, false],
+    ];
+    for (const [suffix, boundary, restores] of compactCases) {
+      await scenario(`restore-compact-${suffix}`, {
+        files: { 's1.jsonl': line(at(1, 'accepted_input', { messages: [user('old')] }))
+          + line({ type: 'control_boundary', sessionId: 's1', turnId: 'turn-1', sequence: 2, createdAt: NOW, entryId: 'l-2', parentEntryId: 'l-1', boundary }) },
+        steps: [open(), { op: 'restore' }, { op: 'state' },
+          { op: 'metadata', turnId: 'turn-1', metadata: { title: 'after hydrate' } },
+          { op: 'state' }, { op: 'read' }, open(), { op: 'restore' }],
+      }, restores
+        ? ['open:0', 'restored:2/0@2', 'state:2', 'ok', 'state:3', 'read:3/0', 'open:0', 'restored:3/0@3']
+        : ['open:0', 'error:TypeError', 'state:2', 'ok', 'state:3', 'read:3/0', 'open:0', 'error:TypeError']);
+    }
+  }
+
   await scenario('domain-append-failure', {
     store: { failBefore: [1, 3] },
     steps: [open(),
@@ -561,7 +612,7 @@ try {
   }
 
   // Changing scenarios requires updating the exact Rust count and README too.
-  assert.equal(scenarios.length, 397, 'adapter oracle scenario count');
+  assert.equal(scenarios.length, 423, 'adapter oracle scenario count');
   assert.equal(new Set(scenarios.map(s => s.name)).size, scenarios.length, "scenario directories must be independent");
   const oracle = JSON.stringify({ sourceCommit, sourceSha256, node: process.version, now: NOW, projectRoot: PROJECT_ROOT, scenarios }, null, 2) + '\n';
   for (const dir of [scratch, output, baseline]) assert.ok(!oracle.includes(dir), `oracle.json contains ${dir}`);

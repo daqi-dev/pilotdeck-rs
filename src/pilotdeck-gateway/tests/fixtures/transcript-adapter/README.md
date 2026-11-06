@@ -28,6 +28,7 @@ Rust 默认测试 `real_ts_scenarios_match_outcomes_calls_and_bytes` 逐场景�
 | no-capabilities / replace-delete / read-limit | 可选能力缺省；replace 不重置 writer 序号；delete/deleteSession；`maxBytes` |
 | list / list-read-failure | 过滤（空、错误诊断、无摘要）、title/aiTitle/prompt 摘要优先级、metadata 合并（title 遇 null 保留、其它键 spread）、Date.parse 失败为 null、稳定降序、offset/limit 的负数/小数/0；读失败整体拒绝 |
 | node-only-* | 历史命名保留，三个场景与其他场景一样逐字节对拍：turn_started 成功落盘、畸形 accepted_input 恢复成功、null turn_result 列表抛 TS TypeError |
+| restore-compact-* | #1550：compact `control_boundary` 恢复形状（26 场景）。合法 snapshot（含 tool_result 内层块、普通对象 type 字符串化落空清单）、legacy replacementMessages、空数组、falsy replacement、两者皆无、非法 snapshot 字段、原始值 compactMetadata、microcompact/缺失 subtype、resume/原始值/数组 boundary——restore 全部成功并续写；compactMetadata 缺失/null、boundary null/undefined、truthy 非数组 replacement、null 消息/块、tool_result 缺 content/非数组 content——restore 抛 TS 同名同文案 TypeError，失败后仍延续原 sequence 与 parent 链 |
 | domain-* | 真实 TS 域日志经过 recordEntry 校验、store 调用与 JSONL 落盘；另测失败不发布状态、恢复后继续 step、域校验失败、全日志 envelope 校验先于域校验 |
 
 `generate.mts <dir> --cross-ts-write` / `--cross-ts-verify` 由 Rust 忽略测试 `real_ts_and_rust_continue_each_others_transcripts` 调用：TS 写主记录与 sidechain 并留下坏尾 → Rust restore 后续写主记录、恢复 sidechain writer 后续写 → TS restore 校验序号、parent 链与 sidechain 后继续写 → Rust 再读。
@@ -45,4 +46,6 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway transc
 
 修复负控：在仓根运行 `python3 src/pilotdeck-gateway/tests/fixtures/session-domain/fix1-negative.py`。脚本核启动器 target、逐 cargo 核 slot、对子进程组设期限，实际修改产品源码后验证行为失败并在 finally 恢复。除消息错误、短路和原始值 block 外，还把 restore 的锁移到读盘之后，要求确定性的锁范围回归测试转红。
 
-修复轮 2（#562）：生成器与 Rust 测试均精确断言 397 场景；增删场景时须同步修改两处计数与本 README，防止金样再生或合并时覆盖静默缩水。现有 61 条 restore-message 场景继续读取 writer 状态、追加 metadata、读取磁盘并再次 restore；对齐 SessionRuntime.ts:106-115 与 ProjectSessionStorage.ts:337-346 的 envelope→domain→状态安装→hydrate 顺序，hydrate 失败后仍延续原 sequence 与 parent 链。
+修复轮 2（#562）：生成器与 Rust 测试均精确断言场景数；增删场景时须同步修改两处计数与本 README，防止金样再生或合并时覆盖静默缩水。现有 61 条 restore-message 场景继续读取 writer 状态、追加 metadata、读取磁盘并再次 restore；对齐 SessionRuntime.ts:106-115 与 ProjectSessionStorage.ts:337-346 的 envelope→domain→状态安装→hydrate 顺序，hydrate 失败后仍延续原 sequence 与 parent 链。
+
+#1550：原 397 场景增至 423，新增 26 条 `restore-compact-*`（见上表）。此前 `projection_supported` 对全部 kind:"compact" 的 control_boundary 返回 `ProjectionUnavailable`（A7.5），compacted 会话在 Rust 侧整个打不开；本单按 TS hydrate reducer 实际行为重写该门（`AgentTranscriptProjections.ts:105-135` conversation reducer 先于 `WebHistoryProjections.ts:379-381` tokenUsage，`readCompactSnapshot` 的 `??` 短路与 cloneMessages 抛错面一并复刻），错误场景逐字节对拍 TS 的 TypeError name+message。仓内其他引用该计数的守卫（`../session-domain/fix2-negative.py` 的 drop-adapter-scenarios 断言、`../transcript-resolve/README.md`）同步改为 423。

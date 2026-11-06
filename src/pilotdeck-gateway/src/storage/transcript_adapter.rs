@@ -1310,11 +1310,8 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
                     || matches!(field(result, "errors"), JsValue::Array(_)))
         }
         "control_boundary" => {
-            let boundary = field(entry, "boundary");
-            plain_object(boundary)
-                && !field(boundary, "kind")
-                    .as_string()
-                    .is_some_and(|k| k.equals_str("compact"))
+            control_boundary_supported(entry)?;
+            true
         }
         "session_metadata" => {
             let metadata = field(entry, "metadata");
@@ -1333,6 +1330,231 @@ fn projection_supported(entry: &JsValue) -> AdapterResult<()> {
             "Session projection of this {kind} entry shape is not implemented (A7.5)."
         )))
     }
+}
+/// The JS TypeError message for a property read on null or undefined.
+fn cannot_read(value: &JsValue, property: &str) -> AdapterError {
+    AdapterError::Type(format!(
+        "Cannot read properties of {} (reading '{property}')",
+        if matches!(value, JsValue::Null) {
+            "null"
+        } else {
+            "undefined"
+        }
+    ))
+}
+/// TS restore (ProjectSessionStorage.restore → SessionProjectionDriver.hydrate
+/// → buildCell) runs every registered reducer without catching, so the gate
+/// must mirror the control_boundary reads of the default registry in
+/// registration order: the conversation reducer
+/// (AgentTranscriptProjections.ts:105-135) before web-history token usage
+/// (WebHistoryProjections.ts:379-381). Shapes the reducers ignore restore
+/// fine; the checks below reproduce only what throws. Live appends go through
+/// `drive`, which catches reducer errors instead.
+fn control_boundary_supported(entry: &JsValue) -> AdapterResult<()> {
+    let boundary = field(entry, "boundary");
+    // Conversation reducer: `entry.boundary.kind` runs before any shape check.
+    if nullish(boundary) {
+        return Err(cannot_read(boundary, "kind"));
+    }
+    let Some(object) = boundary.as_object() else {
+        // Primitives and arrays: `.kind` reads undefined and every reducer
+        // ignores the entry.
+        return Ok(());
+    };
+    if !is_str(field(boundary, "kind"), "compact") {
+        // resume/manual and unknown kinds never reach the compact logic.
+        return Ok(());
+    }
+    let compact =
+        object.contains_key("subtype") && is_str(field(boundary, "subtype"), "compact_boundary");
+    if !compact {
+        // Microcompact and unknown subtypes never reach the compact logic.
+        return Ok(());
+    }
+    // Conversation reducer: `readCompactSnapshot(entry) ?? replacementMessages`
+    // followed by cloneMessages — a truthy non-array replacement, a null
+    // replacement message, or a tool_result block with a non-array content
+    // throws. A valid snapshot short-circuits the replacementMessages read.
+    if compact_snapshot_messages(boundary)?.is_none()
+        && let Some(error) = replacement_clone_error(field(boundary, "replacementMessages"))
+    {
+        return Err(error);
+    }
+    // Web-history token-usage reducer reads `compactMetadata.postTokens` for
+    // the same subtype, after every agent-transcript cell has reduced the log.
+    let metadata = field(boundary, "compactMetadata");
+    if nullish(metadata) {
+        return Err(cannot_read(metadata, "postTokens"));
+    }
+    Ok(())
+}
+/// readCompactSnapshot (CompactSnapshot.ts:5-27) restricted to a boundary
+/// already known to be `kind: "compact", subtype: "compact_boundary"`:
+/// Some(messages) only for a version-1 snapshot with non-empty, fully valid
+/// messages. The `String(block.type)` coercion inside the tool_result check
+/// can itself throw, exactly as in TS.
+fn compact_snapshot_messages(boundary: &JsValue) -> AdapterResult<Option<&JsValue>> {
+    let snapshot = field(boundary, "snapshot");
+    if snapshot.as_object().is_none() || field(snapshot, "version").as_number() != Some(1.0) {
+        return Ok(None);
+    }
+    let JsValue::Array(messages) = field(snapshot, "messages") else {
+        return Ok(None);
+    };
+    if messages.is_empty() || !snapshot_messages_valid(messages)? {
+        return Ok(None);
+    }
+    Ok(Some(field(snapshot, "messages")))
+}
+fn snapshot_messages_valid(messages: &[JsValue]) -> AdapterResult<bool> {
+    for message in messages {
+        if message.as_object().is_none()
+            || !(is_str(field(message, "role"), "user")
+                || is_str(field(message, "role"), "assistant"))
+            || !(field(message, "metadata").is_undefined()
+                || field(message, "metadata").as_object().is_some())
+        {
+            return Ok(false);
+        }
+        let JsValue::Array(blocks) = field(message, "content") else {
+            return Ok(false);
+        };
+        for block in blocks {
+            if !snapshot_block_valid(block)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+/// isContentBlock (CompactSnapshot.ts:16-47).
+fn snapshot_block_valid(block: &JsValue) -> AdapterResult<bool> {
+    if block.as_object().is_none() {
+        return Ok(false);
+    }
+    let text = |key: &str| field(block, key).as_string().is_some();
+    Ok(
+        match field(block, "type")
+            .as_string()
+            .and_then(|s| s.to_utf8().ok())
+            .as_deref()
+        {
+            Some("text" | "thinking") => text("text"),
+            Some("image" | "audio") => {
+                (is_str(field(block, "source"), "base64") || is_str(field(block, "source"), "url"))
+                    && text("data")
+                    && text("mimeType")
+            }
+            Some("pdf") => {
+                is_str(field(block, "source"), "base64")
+                    && text("data")
+                    && is_str(field(block, "mimeType"), "application/pdf")
+                    && field(block, "bytes").as_number().is_some()
+            }
+            Some("tool_call") => text("id") && text("name"),
+            Some("tool_result") => {
+                if !text("toolCallId") {
+                    return Ok(false);
+                }
+                let JsValue::Array(content) = field(block, "content") else {
+                    return Ok(false);
+                };
+                for inner in content {
+                    if inner.as_object().is_none() {
+                        return Ok(false);
+                    }
+                    checked_string(field(inner, "type"))?;
+                    if !["text", "image", "pdf"]
+                        .iter()
+                        .any(|t| is_str(field(inner, "type"), t))
+                        || !snapshot_block_valid(inner)?
+                    {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            Some("tool_result_reference" | "media_reference") => {
+                if !(text("path")
+                    && field(block, "originalBytes").as_number().is_some()
+                    && text("preview")
+                    && field(block, "hasMore").as_bool().is_some())
+                {
+                    return Ok(false);
+                }
+                if is_str(field(block, "type"), "tool_result_reference") {
+                    text("toolCallId")
+                } else if text("mimeType") {
+                    checked_string(field(block, "mediaType"))?;
+                    ["image", "pdf", "audio"]
+                        .iter()
+                        .any(|t| is_str(field(block, "mediaType"), t))
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        },
+    )
+}
+/// The `String(...)` coercion inside isContentBlock throws for an object
+/// carrying a `toString` property (same convention as replay.rs and js_value
+/// `NotPrimitive`); a plain object just stringifies and fails the membership
+/// check, which the caller reports as an invalid block.
+fn checked_string(value: &JsValue) -> AdapterResult<()> {
+    if crate::config::string_coercible(value) {
+        Ok(())
+    } else {
+        Err(AdapterError::Type(
+            "Cannot convert object to primitive value".into(),
+        ))
+    }
+}
+/// JS truthiness: the `if (!replacement)` guard runs before cloneMessages.
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(b) => *b,
+        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+        JsValue::String(s) => !s.is_empty(),
+        _ => true,
+    }
+}
+/// cloneMessages(replacement) (model/protocol/clone.ts:50 with
+/// cloneContentBlock :21-48): `.map` on a truthy non-array replacement throws
+/// before any state changes; a nullish replacement message, a null block, or
+/// a tool_result block with a non-array content throws while cloning.
+fn replacement_clone_error(replacement: &JsValue) -> Option<AdapterError> {
+    if !truthy(replacement) {
+        return None;
+    }
+    let JsValue::Array(messages) = replacement else {
+        return Some(AdapterError::Type("messages.map is not a function".into()));
+    };
+    for message in messages {
+        if nullish(message) {
+            return Some(cannot_read(message, "content"));
+        }
+        if let JsValue::Array(blocks) = field(message, "content") {
+            for block in blocks {
+                if nullish(block) {
+                    return Some(cannot_read(block, "type"));
+                }
+                if is_str(field(block, "type"), "tool_result") {
+                    let content = field(block, "content");
+                    if nullish(content) {
+                        return Some(cannot_read(content, "map"));
+                    }
+                    if !matches!(content, JsValue::Array(_)) {
+                        return Some(AdapterError::Type(
+                            "tr.content.map is not a function".into(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// TS projectSessionInfo (AsyncTranscriptStorageAdapter.ts:444-478).
