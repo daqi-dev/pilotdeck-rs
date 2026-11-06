@@ -342,11 +342,10 @@ impl TurnGateway {
         )
     }
     /// [`Self::start_with_cleanup`] for an embedding that bounds its own
-    /// teardown: the failure path waits `teardown_budget` plus
-    /// [`INITIALIZATION_TEARDOWN_SLACK`], so a cleanup that legitimately runs
-    /// to its own budget is never cut mid-poll by a shorter host bound. The
-    /// slack covers the refused-owner shutdown that runs before the cleanup,
-    /// which the embedding's budget does not account for.
+    /// teardown: the failure path gives the embedding cleanup `teardown_budget`
+    /// plus [`INITIALIZATION_TEARDOWN_SLACK`], so a cleanup that legitimately
+    /// runs to its own budget is never cut mid-poll by a shorter host bound.
+    /// The refused-owner shutdown that runs before it is bounded separately.
     pub fn start_with_cleanup_budget(
         options: TurnReplayOptions,
         teardown_budget: Duration,
@@ -642,13 +641,17 @@ impl HostedConnection {
 /// it handed over (only the refusal branch) are disposed here.
 ///
 /// #1746: this path runs before the embedding ever had a chance to hand in a
-/// shutdown budget, so the two awaits share one deadline of their own. The
-/// deadline is not a fixed guess: [`TurnGateway::start_with_cleanup_budget`]
-/// derives it from the cleaning-up embedding's own teardown budget, so the
-/// production cleanup — which bounds itself by the drain budget — can never be
-/// cut mid-poll by a shorter host bound. It only keeps an embedding whose
-/// cleanup (or whose refused owner, bound to a host this thread does not
-/// drive) never settles from turning a fast builder failure into a hung
+/// shutdown budget, and neither await may starve the other. The refused owner —
+/// which may be bound to a host this thread does not drive — gets at most the
+/// default teardown bound, and the embedding cleanup then gets its own full
+/// deadline on a clock that starts after the shutdown, so an owner shutdown
+/// that runs long cannot leave the cleanup with an already-expired deadline.
+/// The deadline is not a fixed guess either:
+/// [`TurnGateway::start_with_cleanup_budget`] derives it from the cleaning-up
+/// embedding's own teardown budget, so the production cleanup — which bounds
+/// itself by the drain budget — is never cut mid-poll by a shorter host bound.
+/// It only keeps an embedding whose cleanup (or whose refused owner) never
+/// settles from turning a fast builder failure into a hung
 /// `start_with_cleanup`. The two synchronous disposals below always run.
 async fn dispose_initialization(
     coordinator: &TurnEventCoordinator,
@@ -656,20 +659,36 @@ async fn dispose_initialization(
     cleanup: Option<Call<'static, Result<(), String>>>,
     teardown_deadline: Duration,
 ) {
-    let deadline = tokio::time::Instant::now() + teardown_deadline;
     let interactions = services
         .as_ref()
         .map(|services| services.interactions.clone());
+    let (owner_bound, cleanup_bound) = initialization_teardown_bounds(teardown_deadline);
     if let Some(services) = services {
-        let _ = tokio::time::timeout_at(deadline, services.submitter.owner.shutdown()).await;
+        let shutdown_deadline = tokio::time::Instant::now() + owner_bound;
+        let _ =
+            tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
     }
     if let Some(cleanup) = cleanup {
-        let _ = tokio::time::timeout_at(deadline, cleanup).await;
+        let cleanup_deadline = tokio::time::Instant::now() + cleanup_bound;
+        let _ = tokio::time::timeout_at(cleanup_deadline, cleanup).await;
     }
     coordinator.dispose();
     if let Some(interactions) = interactions {
         interactions.dispose(&"gateway_disposed".into());
     }
+}
+
+/// #1746: the two awaits of [`dispose_initialization`] do not share a clock,
+/// so neither can leave the other with no time at all. Returns
+/// `(refused-owner shutdown bound, embedding cleanup bound)`: the owner is
+/// capped at the default teardown bound (it is the host's own resource, not
+/// something the embedding budgeted for), while the cleanup always gets the
+/// full deadline its embedding declared.
+fn initialization_teardown_bounds(teardown_deadline: Duration) -> (Duration, Duration) {
+    (
+        teardown_deadline.min(INITIALIZATION_TEARDOWN_DEADLINE),
+        teardown_deadline,
+    )
 }
 
 /// Default bound for the teardown a failed initialization runs before it
@@ -684,8 +703,10 @@ const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_secs(30);
 const INITIALIZATION_TEARDOWN_DEADLINE: Duration = Duration::from_millis(50);
 
 /// Room on top of an embedding-declared teardown budget: that budget bounds the
-/// cleanup alone, while the deadline also has to cover the refused-owner
-/// shutdown that runs before it (#1746).
+/// embedding's cleanup alone, and the deadline handed to the host is a little
+/// longer so the host's own timer never fires before the cleanup's inner one
+/// (#1746). The refused-owner shutdown is bounded separately, by
+/// [`INITIALIZATION_TEARDOWN_DEADLINE`].
 #[cfg(not(test))]
 const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(5);
 /// Tests observe the derived bound with values short enough to time.
