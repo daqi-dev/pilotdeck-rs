@@ -1096,13 +1096,17 @@ async fn stop_prefix_can_reenter_close() {
 }
 
 // #1386 A8.3 (#1302 B): the 13 unmigrated channels refuse native startup
-// through `reject_unmigrated_channels`, the single seam the future production
-// assembly calls before `load_enabled_channels` (assembly wiring is a separate
-// unit). The seam takes no mounts and no console callback, so a rejection can
+// through `reject_unmigrated_channels`, the seam production assembly calls
+// from `native_process/assembly.rs` (before `NativeChannels` is constructed,
+// #1763). The seam takes no mounts and no console callback, so a rejection can
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
-const UNMIGRATED_REJECTION_PHRASE: &str = "未迁移到 Rust，需继续使用 TS gateway";
-/// The six subset keys #1302 B keeps in Rust; enabling them must stay `Ok`.
+const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
+/// The six keys #1302 B keeps in Rust (out of `UNMIGRATED_CHANNEL_KEYS`);
+/// `reject_unmigrated_channels` must leave them alone. This is *not* a
+/// "fully assembled" list: `weixin` is built by the native assembly, `feishu`
+/// is refused by `reject_unimplemented_bundle_channels` until #1329, and the
+/// four loader-table keys have no native construction unit yet (#1302 B).
 const SUBSET_CHANNEL_KEYS: [&str; 6] = [
     "weixin",
     "feishu",

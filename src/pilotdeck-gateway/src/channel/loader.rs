@@ -128,10 +128,12 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
 pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
 
 /// The refusal reason both gates print. [`reject_unmigrated_channels`] keeps
-/// its own literal (the frozen negative-control fixture anchors on that exact
-/// line); this constant is the second gate's copy so the two messages cannot
-/// drift apart while the anchors stay unambiguous.
-const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gateway";
+/// its own literal on purpose: the frozen `channel-unmigrated`
+/// negative-control fixture pins byte anchors on that exact line
+/// (`rejection-silenced`, `rejection-message-loses-key`), and an interpolated
+/// copy would make those anchors ambiguous. Both test modules assert the
+/// exact text, so the two spellings cannot drift silently.
+pub const UNMIGRATED_REASON: &str = "未迁移到 Rust，需继续使用 TS gateway";
 
 /// `#1694 §7`: an enabled `ChannelAdapterBundle` key with no assembly
 /// implementation refuses startup exactly like an unmigrated loader key —

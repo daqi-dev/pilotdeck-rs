@@ -618,12 +618,12 @@ async fn runtime_status_sink_serves_lifecycle_and_login_reports() {
 // `assembly::start` — the entry `native_process::run` uses — so deleting the
 // call site, downgrading it to a warning, or turning it into a silent skip
 // fails here; the seam-level tests in `channel::tests` alone would stay green.
-const UNMIGRATED_REJECTION_PHRASE: &str = "未迁移到 Rust，需继续使用 TS gateway";
+const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
 
 /// The base config `management_tests::setup` writes, plus the given
 /// `adapters:` body (`""` leaves the section out entirely). Starts the real
-/// native assembly over it and returns the startup error text, if any.
-async fn start_with_adapters(adapters_yaml: &str) -> Result<(), String> {
+/// native assembly over it and returns the raw startup error, if any.
+async fn start_with_adapters(adapters_yaml: &str) -> Result<(), crate::ProxyError> {
     let (_scratch, requests) = super::management_tests::setup();
     crate::test_negative_receipt::expect_ok(
         requests.project.dispose().await,
@@ -654,12 +654,12 @@ async fn start_with_adapters(adapters_yaml: &str) -> Result<(), String> {
             );
             Ok(())
         }
-        Err(error) => Err(error.to_string()),
+        Err(error) => Err(error),
     }
 }
 
-fn startup_error(result: Result<(), String>, assertion: &'static str) -> String {
-    crate::test_negative_receipt::expect_err(result, assertion)
+fn startup_error(result: Result<(), crate::ProxyError>, assertion: &'static str) -> String {
+    crate::test_negative_receipt::expect_err(result, assertion).to_string()
 }
 
 #[tokio::test]
@@ -678,6 +678,25 @@ async fn startup_refuses_every_unmigrated_channel() {
             "#1763 startup error carries the unmigrated phrase"
         );
     }
+}
+
+// #1763 review P1: `main` is `async fn main() -> Result<(), ProxyError>`, and
+// std's `Termination for Result` prints `Error: {e:?}` — the Debug form, not
+// the Display form the seam returns. The ledger entries must describe what an
+// operator actually sees, so the exact stderr line is pinned here (measured
+// from a minimal `Termination` probe in the #1763 PR).
+#[tokio::test]
+async fn startup_rejection_reaches_stderr_in_the_debug_form() {
+    let error = crate::test_negative_receipt::expect_err(
+        start_with_adapters("  telegram: {enabled: true}\n").await,
+        "#1763 enabled unmigrated channel must refuse native startup",
+    );
+    let printed = format!("Error: {error:?}");
+    crate::negative_assert_eq!(
+        printed,
+        "Error: Error(\"[adapters] channel \\\"telegram\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
+        "#1763 the process stderr line is the Debug form of ChannelError"
+    );
 }
 
 // #1694 §7: `feishu` is a bundle key outside the unmigrated table with no
@@ -699,20 +718,27 @@ async fn startup_refuses_unimplemented_feishu() {
     );
 }
 
+// #1763 review P2: production feeds the parsed snapshot, where
+// `config/snapshot.rs`'s `bool_field` has already folded `enabled` to a bool.
+// Non-boolean spellings TS treats as truthy therefore read `false` here and do
+// not reject — a pre-existing snapshot divergence, pinned so it cannot drift
+// unnoticed (the seam-level truthiness contract stays in `channel::tests`).
+#[tokio::test]
+async fn startup_folds_non_boolean_enabled_spellings() {
+    for spelling in ["1", "\"true\"", "\"1\"", "[]", "{}"] {
+        crate::test_negative_receipt::expect_ok(
+            start_with_adapters(&format!("  telegram: {{enabled: {spelling}}}\n")).await,
+            "#1763 non-boolean enabled folds to false in the config snapshot",
+        );
+    }
+}
+
 // The control grid: the refusal must not misfire on configs TS starts with.
 #[tokio::test]
 async fn startup_accepts_configs_without_an_unmigrated_channel() {
     crate::test_negative_receipt::expect_ok(
         start_with_adapters("").await,
         "#1763 a config with no adapters starts",
-    );
-    crate::test_negative_receipt::expect_ok(
-        start_with_adapters(
-            "  apiServer: {enabled: true}\n  webhook: {enabled: true}\n  \
-             sms: {enabled: true}\n  wecomCallback: {enabled: true}\n",
-        )
-        .await,
-        "#1763 the in-scope subset channels start",
     );
     let mut disabled = String::new();
     for key in crate::channel::loader::UNMIGRATED_CHANNEL_KEYS {
