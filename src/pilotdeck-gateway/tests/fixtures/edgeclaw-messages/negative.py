@@ -40,7 +40,7 @@ messages = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/messages.rs
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 out.mkdir(parents=True, exist_ok=True)
 
 oracle_groups = {case['group'] for case in

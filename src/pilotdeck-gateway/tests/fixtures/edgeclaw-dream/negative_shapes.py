@@ -60,7 +60,7 @@ out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 if not target:
     sys.exit('negative_shapes.py requires CARGO_TARGET_DIR from the caller')
-baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 out.mkdir(parents=True, exist_ok=True)
 
 oracle = json.loads((fixtures / 'oracle.json').read_text())

@@ -83,7 +83,7 @@ mutations = [
     # the hydrated-row counter observes that a valid cache was consumed.
     ('hydrate-branch-removed',
      'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
-     'if let Some(checkpoint) = checkpoint {',
+     'if let Some(checkpoint) = checkpoint.filter(|_| ordered) {',
      'if let Some(checkpoint) = checkpoint.filter(|_| false) {',
      'runtime::session::factory::projection_cache_tests::fresh_load',
      '#1011 valid cache is hydrated'),

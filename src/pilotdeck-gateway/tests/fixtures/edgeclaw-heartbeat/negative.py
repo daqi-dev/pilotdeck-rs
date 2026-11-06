@@ -55,7 +55,7 @@ paths = {
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 out.mkdir(parents=True, exist_ok=True)
 
 GENERIC = 'heartbeat_helpers_match_ts'

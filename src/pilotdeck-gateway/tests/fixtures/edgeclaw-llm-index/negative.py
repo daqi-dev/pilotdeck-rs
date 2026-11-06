@@ -174,7 +174,7 @@ failed = []
 # This guard intentionally rejects uncommitted product sources. Do not bypass it;
 # an uncommitted tree can pass NEGATIVE_BASELINE (a commit holding exactly the
 # working-tree bytes) instead, never a shadow repo or second build directory.
-baseline_commit = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+baseline_commit = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 with mutating_sources(root, [source, text], baseline=baseline_commit) as snapshots:
     originals = {path: snapshots[path].decode() for path in (source, text)}
     anchors(originals)
