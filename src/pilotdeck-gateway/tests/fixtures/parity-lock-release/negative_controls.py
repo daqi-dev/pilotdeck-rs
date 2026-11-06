@@ -161,6 +161,33 @@ MUTATIONS = [
      '    signal.signal(signal.SIGINT, interrupt)\n'
      '    signal.signal(signal.SIGTERM, interrupt)',
      '    signal.signal(signal.SIGTERM, interrupt)'),
+    # #1398 P2a: the guard's diagnostic line must not be able to re-break the
+    # guard.  Square the try/except (OSError, ValueError) away and a closed
+    # stderr replaces the in-flight cancellation again.
+    ('a1-stderr-write-unguarded', ROUND,
+     "            try:\n"
+     "                print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "                      file=sys.stderr, flush=True)\n"
+     "            except (OSError, ValueError):\n"
+     "                pass\n",
+     "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "                  file=sys.stderr, flush=True)\n"),
+    ('b2-stderr-write-unguarded', B2_SHELL,
+     "        try:\n"
+     "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "                  file=sys.stderr, flush=True)\n"
+     "        except (OSError, ValueError):\n"
+     "            pass\n",
+     "        print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "              file=sys.stderr, flush=True)\n"),
+    ('gateway-stderr-write-unguarded', GATEWAY,
+     "            try:\n"
+     "                print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "                      file=sys.stderr, flush=True)\n"
+     "            except (OSError, ValueError):\n"
+     "                pass\n",
+     "            print(f'#1194 second signal {signum} ignored during cleanup',\n"
+     "                  file=sys.stderr, flush=True)\n"),
     # B2: calibrate.sh gets its unconditional EXIT release back.
     ('b2-shell-unconditional-trap', B2_SHELL,
      'exec python3 -I - "$B2_SCRIPT_DIR/calibrate.py" "$@" <<\'PY\'',
@@ -265,6 +292,15 @@ CHECKS = {
     'gateway-sigint-registration-removed': (
         'SignalUnwindControls.test_gateway_second_signal_ignored_during_cleanup',
         '#1194 common.py must route SIGINT and SIGTERM to one handler'),
+    'a1-stderr-write-unguarded': (
+        'SignalUnwindControls.test_round_guard_survives_broken_stderr',
+        '#1194 a failing stderr must not re-break the guard'),
+    'b2-stderr-write-unguarded': (
+        'SignalUnwindControls.test_calibrate_guard_survives_broken_stderr',
+        '#1194 calibrate.sh must survive a failing stderr'),
+    'gateway-stderr-write-unguarded': (
+        'SignalUnwindControls.test_gateway_guard_survives_broken_stderr',
+        '#1194 common.py must survive a failing stderr'),
     'runner-baseexception-narrowed': (
         'RunnerInvalidationControls.test_final_guard_interrupt_rewrites_summary',
         '#1059 P0-2 a cancellation after the last row must not keep KILLED'),
