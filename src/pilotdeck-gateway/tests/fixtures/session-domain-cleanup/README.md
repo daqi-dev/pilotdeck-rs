@@ -961,7 +961,9 @@ file that does read `_guard` from `sys.modules`, and are judged by the
 `rebinds the shared aggregator module` failure (`fix-r34`).
 
 Known boundaries stay open and are recorded here so they are not re-reported
-as new: an exit alias rebound inside a *called helper* is not resolved (the
+as new (the r34-measured constructs, each with its minimal spelling and probe
+exit code, are tabulated in `## Known boundaries` at the end of this file): an
+exit alias rebound inside a *called helper* is not resolved (the
 helper's body is walked for exit calls with the module-level aliases plus its
 own bindings, so `bail = sys.exit` in the helper itself is seen, but a name
 bound in a third function and passed in is not); an exit spelled as an
@@ -1010,3 +1012,45 @@ A fake already-exited entry pins the gate refusal without calling `process.kill`
 ownership gate, replaces the real senders with a recorder, and requires the
 mutated copy to fail (`KILLED`). It never signals a real process and never
 touches the repository source.
+
+## Known boundaries
+
+`aggregation-audit` is a static approximation, not a proof.  **Its guarantee is
+the set of spellings registered in this README and in `negative_controls.py`;
+anything outside that set needs runtime observation instead of a static PASS.**
+A green `--mode all` therefore means "none of the registered shapes is present",
+never "no unaggregated write exists".
+
+The constructs below were measured against the ruler at
+`1aad2b626e3db5c27a950489ce7db3beace3312e` (r34) and are **not** detected.  They
+are recorded here so they are not re-reported as new.  Repro: copy the tree to a
+detached worktree at that commit and run
+`BASE_TREE=<tree> python3 -I _tmp/20261106-issue-892/r34-review-probes/probe.py`
+(probe + raw output archived with PR #1634).  `rc=0` = the ruler reported PASS,
+i.e. missed the write; `rc=1` = caught.  Every injection is wrapped in
+`if False:` (the same convention `negative_controls.py` uses), and each case
+against the injected tree is a full `--mode aggregation-audit` run.
+
+| ID | Shape **not** covered | Minimal spelling | Probe | rc |
+|---|---|---|---|---|
+| A | Binding that reaches the write through a **loop back edge**.  `_bindings_at` filters bindings by text line only, so a binding written *after* the call site is invisible on the next iteration. | `dict = builtins.dict`<br>`for i in (0, 1):`<br>`    if i: dict.update({'status': 'PASS'})`<br>`    dict = report` | `A-loop-backedge` | 0 |
+| B | **Same physical line**: the call and a later rebind share a line, and only the line number is compared, so the rebind excuses the call. | `dict = report; dict.update({'status': 'PASS'}); dict = builtins.dict` | `B-sameline-restore` | 0 |
+| C | Two **sibling alias paths** to the same binding.  The recursive resolvers share one `seen` set across `or`-ed candidates, so the second path to an already-visited binding returns `None`; `found` becomes `{setattr, None}` and `len(found) != 1` drops the write. | `a = setattr`<br>`h = a`<br>`h = a`<br>`h(report, 'status', 'PASS')` | `C-shared-seen` | 0 |
+| D | Nested lambda **inside a decorator expression**.  `_walk_scoped` assigns the decorator lambda to the decorated function's scope, so a capture of `md` is resolved against the inner function's unrelated `x = object()`. | `def outer():`<br>`    x = md`<br>`    @((lambda y=x: (lambda f: (setattr(y, 'common', object()), f)[1]))())`<br>`    def inner(): x = object()`<br>`outer()` | `D-decorator-lambda` | 0 |
+| E | A `nonlocal` name rebound through a **walrus**.  `_local_bound_names` collects plain assignments only, so `nonlocal common` plus `(common := ...)` is not seen as a write. | `def middle():`<br>`    def inner():`<br>`        nonlocal common`<br>`        (common := types.SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0)))`<br>`    inner()`<br>`middle()` | `E-nonlocal-walrus` | 0 |
+| F | A dynamic write handle handed through a **container or a generator**.  `_handle_escapes` inspects the immediate parent node only; a handle stored in a list/tuple/dict or produced by `yield` never reaches a call. | `n = '__setattr__'`<br>`hs = [getattr(md, n)]; hs[0]('common', object())`<br>— or —<br>`hs = {'x': getattr(md, n)}; hs['x']('common', object())`<br>— or —<br>`def handles(): yield getattr(md, n)`<br>`next(handles())('common', object())` | `F1-handle-list`<br>`F2-handle-dict`<br>`F3-handle-yield` | 0<br>0<br>0 |
+| G | **`__getattribute__` as the managed attribute name.**  The known-string allowlist covers `__setattr__` / `__setitem__` / `setattr` / `setitem`, but not the read that yields a writable `__dict__`. | `_pdrs_attr_name = '__getattribute__'`<br>`getattr(md, _pdrs_attr_name)('__dict__')['common'] = object()` | `G-getattribute-named` | 0 |
+| H | **False FAIL, not a miss**: a starred target is bound to *every* element of the right-hand side, including the ones already consumed by the leading target, so `rest[0]` is treated as `md` and an unrelated object is withdrawn. | `a, *rest = (md, object())`<br>`rest[0].common = object()` | `H-star-overbind-false-fail` | 1 |
+
+Also measured at the same head, tracked in #1954 rather than accepted here (they
+are P2-level and narrower than A–H): `from operator import attrgetter as _ag;
+_ag('__setattr__')(md)('common', object())` (probe `I-attrgetter-fromimport`,
+rc=0 — the from-import alias list does not carry `attrgetter`); an `attrgetter`
+handle registered through an annotated assignment rather than a bare `Assign`
+(`J-attrgetter-annassign`, rc=0); and `a, *rest = (None, md.__dict__);
+rest[0]['common'] = object()` (`K-namespace-dict-subscript`, rc=0 —
+`namespace_dict_roots` does not descend a `Subscript` the way `receiver_roots`
+now does).  Separately, an alias chain of ~1,100 hops exhausts the Python
+recursion limit instead of resolving (codex's measurement, not independently
+reproduced here); the README's "bounded by the chain's own length" statement
+holds only below the interpreter's recursion limit.
