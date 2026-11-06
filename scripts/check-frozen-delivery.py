@@ -203,7 +203,11 @@ def exists_at(root, commit, path):
     code, _, _ = git(root, 'rev-parse', '--verify', '--quiet', f'{commit}:{path}')
     if code == 0:
         return True
-    return None if code == GIT_ERROR else False
+    # 1 is git's "no such path in that tree" (measured: a missing path and an
+    # unknown commit both exit 1, and the commit was verified above).  Any
+    # other non-zero code is the query itself failing, and answering False
+    # there would let a transient git error look like "the runner is gone".
+    return False if code == 1 else None
 
 
 def blob_at(root, commit, path):
@@ -3884,13 +3888,20 @@ def _recorded_gitdir(entry):
     ``worktree.useRelativePaths``, git >= 2.48) and is resolved against this
     entry's own directory, which is what git writes it relative to.  Rejecting
     it as unreadable would block every cleanup on such a repository.
+
+    Anything that cannot be a gitdir git wrote -- a NUL, a URL, or a path that
+    does not end in ``/.git`` -- is corrupt too, and one shape matters: a
+    *truncated* non-empty write (``/tmp/snap/tree`` cut to ``/tmp/snap/tr``)
+    is readable, differs from the target, and would otherwise prove "not
+    ours" while the entry is still on disk.
     """
     try:
         text = (entry / 'gitdir').read_text(encoding='utf-8',
                                             errors='surrogateescape').strip()
     except OSError:
         return _UNREADABLE_GITDIR
-    if not text:
+    if (not text or '\x00' in text or '://' in text
+            or not text.endswith('/.git')):
         return _UNREADABLE_GITDIR
     path = Path(text)
     if not path.is_absolute():
@@ -3901,22 +3912,22 @@ def _recorded_gitdir(entry):
 
 
 def _scan_admin(admin, wanted):
-    """One pass over ``.git/worktrees``: True / False / None (unreadable entry).
+    """One pass over ``.git/worktrees``.
 
-    Every entry whose ``gitdir`` cannot be read is remembered in
-    ``_UNVERIFIED_ADMIN_ENTRIES`` so a blocking message can name it instead of
-    blaming the snapshot it may not belong to.
+    Returns ``(state, unreadable)``: state is True / False / None (an entry
+    could not be read); ``unreadable`` names the entries that pass could not
+    read.  Only the caller that finally answers ``None`` publishes them, so a
+    window that a later pass resolves does not stay in ``holder_verdict``.
     """
-    unreadable = False
+    unreadable = []
     for entry in admin.iterdir():
         recorded = _recorded_gitdir(entry)
         if recorded is _UNREADABLE_GITDIR:
-            unreadable = True
-            _UNVERIFIED_ADMIN_ENTRIES.add(str(entry))
+            unreadable.append(str(entry))
             continue
         if recorded == wanted:
-            return True
-    return None if unreadable else False
+            return True, []
+    return (None if unreadable else False), unreadable
 
 
 def admin_entry_present(root, target):
@@ -3940,17 +3951,22 @@ def admin_entry_present(root, target):
         if admin is None:
             return None
         wanted = _real_path(target / '.git')
+        unreadable = []
         for attempt in range(3):
             try:
-                state = _scan_admin(admin, wanted)
+                state, seen = _scan_admin(admin, wanted)
             except FileNotFoundError:
                 return False      # no ``.git/worktrees`` directory at all
             except OSError:
                 return None       # the directory itself cannot be read
+            if seen:
+                unreadable = seen
             if state is not None:
                 return state
             if attempt < 2:
                 time.sleep(0.05)
+        # Persistent: name these entries, and only these, in the verdict.
+        _UNVERIFIED_ADMIN_ENTRIES.update(unreadable)
         return None
     except OSError:
         return None
@@ -3990,9 +4006,8 @@ def drop_admin_entry(root, target):
             recorded = _recorded_gitdir(entry)
             if recorded is _UNREADABLE_GITDIR:
                 # Cannot prove this entry is (or is not) ours: leave it alone.
-                # ``admin_entry_present`` below then reports None, so the
-                # holder stays registered for the atexit retry.
-                _UNVERIFIED_ADMIN_ENTRIES.add(str(entry))
+                # ``admin_entry_present`` below reports None and names it, so
+                # the holder stays registered for the atexit retry.
                 continue
             if recorded == wanted:
                 shutil.rmtree(entry, ignore_errors=True)
@@ -4014,16 +4029,22 @@ def drop_holder(root, holder):
     and the return value says whether that happened.
     """
     target = holder / 'tree'
+    entry_gone = None
     try:
         code, _, _ = git(root, 'worktree', 'remove', '--force', str(target))
         if code:
-            drop_admin_entry(root, target)
+            # Already verifies (with the same backoff) that no entry for this
+            # target remains; re-checking below would double the blocking
+            # path's scan-and-sleep budget for nothing.
+            entry_gone = drop_admin_entry(root, target)
         shutil.rmtree(holder, ignore_errors=True)
     except Exception:  # noqa: BLE001 -- cleanup must not mask the exit path
         return False
     if holder.exists():
         return False
-    if admin_entry_present(root, target) is not False:
+    if entry_gone is False:
+        return False
+    if entry_gone is None and admin_entry_present(root, target) is not False:
         return False
     if (root, holder) in _SNAPSHOT_HOLDERS:
         _SNAPSHOT_HOLDERS.remove((root, holder))
