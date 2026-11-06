@@ -4,8 +4,8 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one module-host approvals transport or store gate and is
 killed by the replay cell that pins that gate's TS bytes or the fix-r1
-component test that pins its code (23 switches; #1813 added the
-recording-field guard). Run one sample in the
+component test that pins its code: #1813 added the recording-field guard and
+#1696 the pad/budget guards. Run one sample in the
 authoring session; the coordinator runs the complete list after the patch
 is committed.
 """
@@ -89,6 +89,14 @@ switches = [
      ['recorded_half_close_rejects_wrong_type', 'recorded_half_close_rejects_absence'],
      ['#1350 #1813 rejects halfClose type drift',
       '#1350 #1813 halfClose is a required recording field']),
+    # #1696: a recorded pad size past the replay budget must fail the read
+    # instead of aborting the test binary on a huge allocation.
+    ('approvals-oracle-pad-size', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_pad_size_rejects_drift',
+     '#1350 #1696 rejects pad size drift'),
+    # #1696: the budget cells' expanded bodies must be the recorded boundary
+    # lengths, so a tiny pad cannot leave `budget-exact`/`budget-over` green.
+    ('approvals-oracle-boundary-body-length', ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs', 'recorded_budget_body_length_rejects_drift',
+     '#1350 #1696 rejects boundary body length drift'),
 ]
 GUARDED = [SOURCE, PENDING,
     ROOT / 'src/pilotdeck-gateway/src/module_host/approvals/tests.rs',

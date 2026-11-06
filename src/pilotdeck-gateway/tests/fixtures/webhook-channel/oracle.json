@@ -685,7 +685,7 @@
  },
  "node": "v22.22.0",
  "icu": "78.2",
- "expectedCaseCount": 19,
+ "expectedCaseCount": 20,
  "cases": [
   {
    "name": "health-and-routing",
@@ -2491,6 +2491,53 @@
      [
       "info",
       "webhook: stopping (no reason)"
+     ]
+    ],
+    "cron": []
+   }
+  },
+  {
+   "name": "http10",
+   "options": {
+    "port": 0,
+    "routes": {
+     "main": {
+      "secret": "__INSECURE_NO_AUTH__"
+     }
+    }
+   },
+   "steps": [
+    {
+     "op": "request",
+     "label": "http10-keepalive",
+     "method": "GET",
+     "target": "/health",
+     "version": "HTTP/1.0",
+     "headers": {
+      "Connection": "keep-alive"
+     },
+     "mode": "close"
+    }
+   ],
+   "scripts": [],
+   "expected": {
+    "responses": [
+     {
+      "label": "http10-keepalive",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close"
+      ],
+      "body": "{\"status\":\"ok\",\"platform\":\"webhook\"}"
+     }
+    ],
+    "gateway": [],
+    "logs": [
+     [
+      "info",
+      "webhook: listening on http://127.0.0.1:0 — routes: main"
      ]
     ],
     "cron": []
