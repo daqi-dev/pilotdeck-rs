@@ -226,14 +226,22 @@ class Gateway:
         return case
 
     def _events(self, connection, request, expectation):
-        for seq, label in enumerate(expectation['frames']):
+        frames = [raw(label) for label in expectation['frames']]
+        for seq, event in enumerate(frames):
             self._send_frame(connection, {'type': 'event', 'id': request.get('id'), 'seq': seq,
-                                          'final': False, 'event': raw(label)})
-        # The final response frame carries a prefix-type event: the frozen
-        # projection filters those, like the real gateway's finish frame.
+                                          'final': False, 'event': event})
+        # The gateway emits one final:false envelope per iterator yield and then
+        # one final:true envelope carrying lastError ?? lastCompleted ?? the
+        # empty-stream fallback (GatewayWsConnection.ts:157-169,
+        # runtime/connection/mod.rs:386-408).  Deriving it here keeps the mock on
+        # the real wire shape instead of inventing a finish frame.
+        terminal = (next((event for event in reversed(frames) if event['type'] == 'error'), None)
+                    or next((event for event in reversed(frames) if event['type'] == 'turn_completed'), None)
+                    or {'type': 'error', 'code': 'result_unknown',
+                        'message': 'Gateway stream ended without a terminal result.',
+                        'recoverable': True})
         self._send_frame(connection, {'type': 'event', 'id': request.get('id'),
-                                      'seq': len(expectation['frames']), 'final': True,
-                                      'event': {'type': 'turn_started', 'event': 'completed'}})
+                                      'seq': len(frames), 'final': True, 'event': terminal})
 
     def close(self, timeout=30):
         self.stopping.set()

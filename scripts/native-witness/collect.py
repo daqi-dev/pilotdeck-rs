@@ -328,7 +328,6 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
     transcript = marker.parent / 'chats' / (session + '.jsonl')
     w.need(transcript.is_file(), 'expected exactly one transcript for session ' + session)
     request_id = request_id or run_id
-    w.need(all(frame.get('id') == request_id for frame in received), 'frame belongs to another request')
     identity = {'projectKey': project, 'sessionKey': session, 'runId': run_id,
                 'requestId': request_id, 'transcriptPath': str(transcript)}
     document = home / 'runs.json'
@@ -336,7 +335,10 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
               'transcriptPath': str(transcript), 'transcriptText': transcript.read_text(),
               'registryPath': str(document), 'registryText': document.read_text() if document.is_file() else None}
     observation = w.native.disk_observation(source, identity, str(home))
-    observation['frames'] = [frame['event'] for frame in received if isinstance(frame.get('event'), dict)]
+    # The recorder keeps whole envelopes; the frozen projection owns the
+    # request-identity check and the yield/terminal split, so the collector and
+    # the frozen audit can never disagree about what an in-process frame is.
+    observation['frames'] = w.native.project_envelopes(request_id, received)['frames']
     return (observation, identity, source) if retain else observation
 
 

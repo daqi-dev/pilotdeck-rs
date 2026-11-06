@@ -625,10 +625,20 @@ def native_capture_fixture(output):
         params['message'] = message
         observer.append(control_wire({'type': 'request', 'id': identity['requestId'], 'method': 'submit_turn', 'params': params}, 'send'))
         observation = observation_from_expectation(expectations[case])
-        observation['frames'].append({'type': 'turn_started', 'event': 'completed'})
-        for seq, event in enumerate(observation['frames']):
+        frames = observation['frames']
+        for seq, event in enumerate(frames):
             observer.append(control_wire({'type': 'event', 'id': identity['requestId'], 'seq': seq,
-                                          'final': seq == len(observation['frames']) - 1, 'event': event}))
+                                          'final': False, 'event': event}))
+        # The real gateway emits one final:false envelope per iterator yield and
+        # then one final:true envelope carrying lastError ?? lastCompleted ??
+        # empty-stream fallback (GatewayWsConnection.ts:137-169).  The synthetic
+        # capture must have that same shape, or the projection is being tuned to
+        # a frame the product never sends.
+        terminal = (next((event for event in reversed(frames) if event['type'] == 'error'), None)
+                    or next((event for event in reversed(frames) if event['type'] == 'turn_completed'), None)
+                    or n.WS_TERMINAL_FALLBACK)
+        observer.append(control_wire({'type': 'event', 'id': identity['requestId'],
+                                      'seq': len(frames), 'final': True, 'event': terminal}))
         entries = [dict(entry, type='agent_status_message') for entry in observation['durableStatus']['entries']]
         observation['durableStatus']['entries'] = entries
         registry = observation['registry']
