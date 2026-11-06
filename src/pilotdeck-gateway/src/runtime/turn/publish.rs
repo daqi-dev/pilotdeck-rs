@@ -94,14 +94,6 @@ impl FileRegistry {
     /// durable write from happening at all. The wait bound is a parameter so a
     /// test can exercise the timeout branch without blocking a worker for the
     /// production bound.
-    fn witnessed(
-        jobs: mpsc::Sender<RegistryJob>,
-        gate: mpsc::Receiver<bool>,
-        run: RunRef,
-        event: JsValue,
-    ) -> RegistryFuture<()> {
-        Self::witnessed_within(jobs, gate, run, event, WITNESS_SETTLE)
-    }
     fn witnessed_within(
         jobs: mpsc::Sender<RegistryJob>,
         gate: mpsc::Receiver<bool>,
@@ -149,16 +141,14 @@ impl TurnRunRegistry for FileRegistry {
         // receipt is released. Nothing below waits for that first poll.
         let run = run.clone();
         let event = event.clone();
-        // The receipt write settles this gate itself (`registry_stimulus_queued_pending`),
-        // so a caller that invokes `append` but withholds the returned future
-        // cannot park the single registry worker on an unpolled future.
-        let (settled, gate) = mpsc::channel::<bool>();
-        let witness = crate::storage::stimulus::registry_stimulus_queued_pending(
+        // The receipt write settles the gate itself
+        // (`registry_stimulus_queued_pending`), so a caller that invokes
+        // `append` but withholds the returned future cannot park the single
+        // registry worker on an unpolled future.
+        let Some((witness, gate)) = crate::storage::stimulus::registry_stimulus_queued_pending(
             self.stimulus.as_ref(),
             &event,
-            settled,
-        );
-        let Some(witness) = witness else {
+        ) else {
             return self.call(move |registry| registry.append(&run, &event));
         };
         // The job keeps this invocation's FIFO slot: it is queued on the same
@@ -166,7 +156,7 @@ impl TurnRunRegistry for FileRegistry {
         // plain append overtake it, and the worker order would stop matching the
         // host's call order. The job itself waits for the receipt it owes, so a
         // witness failure still fails the append before anything is written.
-        let append = Self::witnessed(self.jobs.clone(), gate, run, event);
+        let append = Self::witnessed_within(self.jobs.clone(), gate, run, event, WITNESS_SETTLE);
         Box::pin(async move {
             witness.await?;
             append.await
