@@ -349,6 +349,9 @@ REQUIRE_RUN = 'exit 1'
 RETIREMENT_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'timeout-minutes', 'steps'})
 AGGREGATE_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'steps'})
 RETIREMENT_JOB_CONDITION = "${{ needs.scope.outputs.docs_only != 'true' }}"
+# 聚合 `check` job 自己是**必需检查**。GitHub 把被跳过的 job 报成 success，所以
+# `check` 带上 `if: false` 会让必需检查整体「成功」——这一侧没有人再兜底。
+AGGREGATE_JOB_CONDITION = '${{ always() }}'
 # 聚合闸门的 Require step 本来就该带 `always()` 条件，所以不能像 job 内 step 那样
 # 一律拒 `if:`；要求它**恰好**是这一条（归一化空白后逐字相等）——只核前缀 + 子串
 # 挡不住在末尾追加 `&& false`（条件恒假 → step 从不执行，job 仍 success）。
@@ -549,6 +552,10 @@ def check_wiring(workflow=None):
     except OSError as error:
         raise CheckFailure(f'cannot read {path}: {error}') from error
     lines = _live_lines(text)
+    if any(line.rstrip() == '---' or line.startswith('%YAML') for line in lines):
+        raise CheckFailure(
+            f'{path}: YAML document separators / directives are not accepted; the runner '
+            'rejects a multi-document workflow, and the guard would only read the first one')
 
     retirement = _job_block(lines, RETIREMENT_JOB)
     _require_job_keys(path, retirement, RETIREMENT_JOB, RETIREMENT_JOB_KEYS)
@@ -608,6 +615,13 @@ def check_wiring(workflow=None):
     aggregate = _job_block(lines, AGGREGATE_JOB)
     _require_job_keys(path, aggregate, AGGREGATE_JOB, AGGREGATE_JOB_KEYS)
     aggregate_keys = dict(_job_entries(path, aggregate, AGGREGATE_JOB))
+    aggregate_condition = _normalised_expression(aggregate_keys.get('if', ''))
+    expected_aggregate_condition = _normalised_expression(AGGREGATE_JOB_CONDITION)
+    if aggregate_condition != expected_aggregate_condition:
+        raise CheckFailure(
+            f'{path}: `{AGGREGATE_JOB}` job condition is `{aggregate_condition}` but must '
+            f'be exactly `{expected_aggregate_condition}`; a skipped required job is '
+            "reported as success by GitHub, so nothing else would block the merge")
     if RETIREMENT_JOB not in _needs_list(aggregate_keys.get('needs', '')):
         raise CheckFailure(
             f'{path}: `{AGGREGATE_JOB}` no longer needs `{RETIREMENT_JOB}`; without the '
@@ -873,6 +887,22 @@ def wiring_samples():
         + lines[if_index + 1:])))
     samples.append(('exit-zero-require-step', ''.join(
         lines[:require_run] + ['        run: exit 0\n'] + lines[require_run + 1:])))
+
+    # 聚合 `check` job 自己是必需检查：GitHub 把被跳过的 job 报成 success，所以给它
+    # 加 `if: false`（或任何别的条件）之后没有任何东西会挡合并。
+    check_job_start = next(index for index, line in enumerate(lines)
+                           if line.rstrip('\n') == f'  {AGGREGATE_JOB}:')
+    check_job_end = next((index for index in range(check_job_start + 1, len(lines))
+                          if JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+    check_job_if = next((index for index in range(check_job_start, check_job_end)
+                         if lines[index].startswith('    if:')), None)
+    if check_job_if is None:
+        raise CheckFailure(f'the `{AGGREGATE_JOB}` job has no `if:` line to weaken')
+    samples.append(('aggregate-job-if-false', ''.join(
+        lines[:check_job_if] + ['    if: false\n'] + lines[check_job_if + 1:])))
+
+    # 多文档：守卫只读第一份，`---` 之后的文档被静默忽略。
+    samples.append(('multi-document', text + '---\n  ignored: job\n'))
     return samples
 
 
