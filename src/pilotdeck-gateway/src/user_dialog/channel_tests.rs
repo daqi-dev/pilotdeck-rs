@@ -1954,6 +1954,102 @@ fn a_registration_replaced_during_its_store_write_ends_without_publishing_a_bus_
 }
 
 #[test]
+fn a_registration_replaced_during_its_owner_claim_ends_without_publishing_a_bus_entry() {
+    use crate::negative_assert;
+
+    // #1599: `claim_stored_owner` is the last host call inside `persist`, and
+    // it runs after the store re-check. A claim hook that reenters and
+    // registers the same request id takes over the bus bucket by id
+    // (`GatewayUserDialogBus.ts:150-160`); the original must not publish a
+    // registration afterwards. This is the only window the `begin` guard after
+    // `persist` covers, so the matching negative control is bound here.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-owner-claim",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let store = Arc::new(ReentrantStore::default());
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    let claims = Arc::new(Mutex::new(Vec::new()));
+    options.claim_stored_owner = Some(Arc::new({
+        let claims = claims.clone();
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        // Only the first claim reenters: the replacement's own claim has to run
+        // normally, or this would recurse instead of exercising the guard.
+        let reentered = AtomicBool::new(false);
+        move |request_id: &JsString, owner_id: &JsString| {
+            claims
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            if !reentered.swap(true, Ordering::SeqCst) {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first owner claim");
+                let next = replacement_dialog(&channel);
+                replacement.lock().unwrap().replace(next);
+            }
+            Ok(true)
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded while its owner claim runs".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#1599 the replacement must be the only pending dialog after the original gives up"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-replacement".into()),
+            "#1599 a registration replaced during its owner claim must not publish a bus entry"
+        );
+    }
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("store write"),
+            "#1599 a registration replaced during its owner claim must end with the replacement error"
+        ),
+        other => panic!(
+            "#1599 a registration replaced during its owner claim must end with the replacement error, \
+             got {other:?}"
+        ),
+    }
+    negative_assert!(
+        replacement.lock().unwrap().is_some(),
+        "#1599 the claim hook must have registered the replacement"
+    );
+    negative_assert!(
+        claims.lock().unwrap().len() == 2,
+        "#1599 both registrations must reach the owner claim"
+    );
+}
+
+#[test]
 fn a_registration_replaced_while_its_journal_write_runs_keeps_the_replacement_row() {
     use crate::negative_assert;
 
@@ -2301,8 +2397,12 @@ fn a_registration_replaced_by_the_change_observer_ends_without_installing_a_poll
             message.contains("timer read"),
             "#1599 a registration replaced by the change observer must end with the replacement error"
         ),
+        // #1599 r11: the fallback arm carries the same wording as the bound
+        // negative-control anchor. The mutant leaves this request pending
+        // (`None`), so this is the arm that fires, and a kill is only counted
+        // when the row's own assertion is in the panic evidence.
         other => panic!(
-            "#1599 a registration replaced by the change observer must end with an error, \
+            "#1599 a registration replaced by the change observer must end with the replacement error, \
              got {other:?}"
         ),
     }
