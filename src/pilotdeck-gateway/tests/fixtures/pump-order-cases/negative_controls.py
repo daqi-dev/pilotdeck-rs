@@ -236,7 +236,9 @@ def compile_cases(selected, out):
     # `live.rs`. `reject-completes` anchors in `runner.rs`, so a fixed `[path]`
     # snapshot would KeyError on `originals[source]` and poison the rest of the
     # compile-only preflight (fail-closed but a false red).
-    sources = list(dict.fromkeys(entry[0] for entry in mutations.values()))
+    # anchor_selfcheck.py 只允许对表做下标读写，`mutations.values()` 会被判
+    # 「unsupported dictionary mutation table update」；这里按名字下标取源路径。
+    sources = list(dict.fromkeys(mutations[name][0] for name in mutations))
     try:
         with mutating_sources(root, sources) as originals:
             for name in selected:
