@@ -26,12 +26,21 @@ const NEGATIVE_CONTROLS: u64 = 73;
 /// #1662 upper bound for waiting out one committed-mode negative control that
 /// holds the tree lock; far above the Python side's 900 s acquisition budget.
 const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
-/// One stderr line per lease acquisition: the measured wait (ms) and the
-/// wall-clock instant of the acquisition (epoch ms). The paired GREEN control in
-/// `sdk-signal-read-lease/` reads both: the wait is its contention witness, and
-/// the instant is what ties that witness to the writer whose hold it published.
-/// Both sides must agree on this exact spelling.
+/// One stderr line per lease acquisition: the measured wait (ms), the instant of
+/// the *first* attempt (epoch ms) and the instant of the acquisition (epoch ms).
+/// The paired GREEN control in `sdk-signal-read-lease/` uses the first attempt
+/// as its witness: it must land inside the writer's published hold, so the wait
+/// cannot be a scheduler stall after an uncontended acquisition, and cannot
+/// belong to a later lock holder. Both sides must agree on this exact spelling.
 const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
+
+/// Wall-clock milliseconds since the Unix epoch.
+fn epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0)
+}
 
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
@@ -65,20 +74,16 @@ fn fixture_read_lease() -> fs::File {
         .expect("#1662 negative source lock file must open");
     let deadline = Instant::now() + READ_LEASE_WAIT;
     let started = Instant::now();
+    // Taken before the first attempt: this is the instant the reader actually
+    // met the writer's lock, and it is what the paired control checks against
+    // the writer's hold interval (cargo test only shows it with --nocapture).
+    let first = epoch_ms();
     loop {
         match file.try_lock_shared() {
             Ok(()) => {
-                // The measured wait is the only honest evidence that a reader
-                // really met a writer: elapsed cargo time also counts startup,
-                // the package-cache lock and rebuilds. The acquisition instant
-                // says *which* holder it waited on. The paired GREEN control
-                // parses this line (cargo test only shows it with --nocapture).
-                let at = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|elapsed| elapsed.as_millis())
-                    .unwrap_or(0);
+                let at = epoch_ms();
                 eprintln!(
-                    "{READ_LEASE_MARKER}{} at={at}",
+                    "{READ_LEASE_MARKER}{} first={first} at={at}",
                     started.elapsed().as_millis()
                 );
                 return file;
