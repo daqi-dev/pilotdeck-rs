@@ -513,12 +513,21 @@ with mutating_sources(root, sorted({root / row[1]
                         f'{path.relative_to(root).as_posix()} was not restored '
                         f'to its baseline bytes')
             if restore_failure is not None:
-                failures.append(name)
-                summary.append(dict(name=name, test=test, status='INVALID',
-                                    reason=f'restore failed: {restore_failure}',
-                                    baseline=baseline_sha,
-                                    baselineSource=baseline_source,
-                                    hostEvidence=baseline_source == 'HEAD'))
+                # Rewrite this mutant's own verdict rather than appending a
+                # second row: a restore failure invalidates a KILLED verdict,
+                # and two rows with one name make summary.json contradict
+                # itself (and `mutations` below list the name twice).
+                row = next((row for row in reversed(summary)
+                            if row['name'] == name), None)
+                if row is None:
+                    row = dict(name=name, test=test, baseline=baseline_sha,
+                               baselineSource=baseline_source,
+                               hostEvidence=baseline_source == 'HEAD')
+                    summary.append(row)
+                row.update(status='INVALID',
+                           reason=f'restore failed: {restore_failure}')
+                if name not in failures:
+                    failures.append(name)
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
             (out / 'baseline.json').write_text(json.dumps(
