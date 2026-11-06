@@ -3025,6 +3025,217 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    # #892 fix-r30: the managed-write spellings r29's resolver still missed --
+    # ``operator.setitem`` / ``getattr`` / ``functools.partial`` targets, a
+    # tuple assignment target, and the namespace writes spelled through an
+    # alias, a literal ``eval``/``exec`` namespace or an unbound mapping call.
+    ('calibrate-operator-setitem', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    operator.setitem(md.__dict__, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-dunder-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    getattr(md, '__setattr__')('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-getattr-builtin-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import builtins as _bi\n"
+     "    getattr(_bi, 'setattr')(md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-partial-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import functools as _ft\n"
+     "    _ft.partial(setattr, md)('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-partial-handle', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    import functools as _ft\n"
+     "    _p = _ft.partial(setattr, md)\n"
+     "    _p('common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-tuple-attribute-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    md.common, _x = None, None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-eval-literal-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    eval(\"setattr(md, 'common', None)\")\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-exec-receiver-dict', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    exec('common = None', md.__dict__)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-locals-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    locals()['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-namespace-unbound-update', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    dict.update(globals(), common=None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-type-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    from builtins import dict as _bd\n"
+     "    _bd.update(md.__dict__, common=None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-dict-alias-augassign', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _d = md.__dict__\n"
+     "    _d |= {'common': None}\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-walrus-receiver-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    (m := md)\n"
+     "    setattr(m, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-alias-chain-reverse', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _e = _d\n"
+     "    _d = _c\n"
+     "    _c = _b\n"
+     "    _b = _a\n"
+     "    _a = md.__dict__\n"
+     "    _e['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    # #892 fix-r30: the ``sys.modules`` pre-seed through a loop pair, a loop
+    # key rebound in the body, and the unbound ``dict.update`` spelling.
+    ('calibrate-sm-pair-value', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "_saved = sys.modules.get('_guard')\n"
+     "for _n, _p in (('_guard', _saved),):\n"
+     "    sys.modules[_n] = object()\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    ('calibrate-sm-loop-rebind', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "_saved = sys.modules.get('_guard')\n"
+     "for _n, _p in (('common', _saved),):\n"
+     "    _n = '_guard'\n"
+     "    sys.modules[_n] = object()\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    ('calibrate-sm-unbound-update', CONTROLS_SOURCE,
+     "_guard = sys.modules.get('_guard')\n",
+     "dict.update(sys.modules, {'_guard': object()})\n"
+     "_guard = sys.modules.get('_guard')\n"),
+    ('calibrate-getattr-dict-subscript', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    getattr(md, '__dict__')['common'] = None\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-builtins-subscript-setattr', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    __builtins__['setattr'](md, 'common', None)\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -3102,6 +3313,145 @@ def calibrate_helper_setattr(rows):
     return _not_shared(
         rows, CHECK_REL, 'main',
         'aggregation-audit: helper-module setattr flagged, passed=False')
+
+
+def calibrate_operator_setitem(rows):
+    """#892 fix-r30: ``operator.setitem(md.__dict__, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: operator.setitem write flagged, passed=False')
+
+
+def calibrate_getattr_dunder_write(rows):
+    """#892 fix-r30: ``getattr(md, '__setattr__')('common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: getattr dunder write flagged, passed=False')
+
+
+def calibrate_getattr_builtin_write(rows):
+    """#892 fix-r30: ``getattr(builtins, 'setattr')(md, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: getattr builtin write flagged, passed=False')
+
+
+def calibrate_partial_write(rows):
+    """#892 fix-r30: ``functools.partial(setattr, md)('common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: partial write flagged, passed=False')
+
+
+def calibrate_partial_handle(rows):
+    """#892 fix-r30: a named ``partial`` handle keeps the write callable."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: partial handle write flagged, passed=False')
+
+
+def calibrate_tuple_attribute_write(rows):
+    """#892 fix-r30: ``md.common, _x = None, None``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: tuple attribute write flagged, passed=False')
+
+
+def calibrate_eval_literal_write(rows):
+    """#892 fix-r30: a literal ``eval`` can write anything."""
+    return _audit_needle(
+        rows, f'{CHECK_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CHECK_REL} eval write flagged, passed=False')
+
+
+def calibrate_exec_receiver_dict(rows):
+    """#892 fix-r30: ``exec(src, md.__dict__)`` writes the receiver."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: exec receiver dict flagged, passed=False')
+
+
+def calibrate_locals_write(rows):
+    """#892 fix-r30: ``locals()['common'] = <stub>`` at module scope."""
+    return _audit_needle(
+        rows, f'{CHECK_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CHECK_REL} locals write flagged, passed=False')
+
+
+def calibrate_namespace_unbound_update(rows):
+    """#892 fix-r30: ``dict.update(globals(), common=<stub>)``."""
+    return _audit_needle(
+        rows, f'{CHECK_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CHECK_REL} unbound namespace update flagged, '
+        'passed=False')
+
+
+def calibrate_builtins_type_alias(rows):
+    """#892 fix-r30: ``from builtins import dict as _bd`` names the type."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: builtins type alias flagged, passed=False')
+
+
+def calibrate_dict_alias_augassign(rows):
+    """#892 fix-r30: ``_d = md.__dict__; _d |= {'common': <stub>}``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __dict__ alias augassign flagged, passed=False')
+
+
+def calibrate_walrus_receiver_write(rows):
+    """#892 fix-r30: ``(m := md); setattr(m, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: walrus receiver write flagged, passed=False')
+
+
+def calibrate_alias_chain_reverse(rows):
+    """#892 fix-r30: a reverse-order alias chain needs a real fixpoint."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: reverse alias chain flagged, passed=False')
+
+
+def calibrate_sm_pair_value(rows):
+    """#892 fix-r30: a loop pair's *value* variable is not the written value."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} loop pair value flagged, '
+        'passed=False')
+
+
+def calibrate_sm_loop_rebind(rows):
+    """#892 fix-r30: a loop key rebound in the body is unbounded."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} sys.modules loop rebind flagged, '
+        'passed=False')
+
+
+def calibrate_sm_unbound_update(rows):
+    """#892 fix-r30: ``dict.update(sys.modules, {'_guard': <stub>})``."""
+    return _audit_needle(
+        rows, f'{CONTROLS_REL} rebinds the shared aggregator module',
+        f'aggregation-audit: {CONTROLS_REL} unbound sys.modules update '
+        'flagged, passed=False')
+
+
+def calibrate_getattr_dict_subscript(rows):
+    """#892 fix-r30: ``getattr(md, '__dict__')['common'] = <stub>``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: getattr __dict__ subscript write flagged, '
+        'passed=False')
+
+
+def calibrate_builtins_subscript_setattr(rows):
+    """#892 fix-r30: ``__builtins__['setattr'](md, 'common', <stub>)``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: __builtins__ subscript setattr flagged, '
+        'passed=False')
 
 
 JUDGES = {
@@ -3505,6 +3855,44 @@ JUDGES = {
         'aggregation-audit', calibrate_dict_setitem_unbound, False, ()),
     'calibrate-helper-setattr': (
         'aggregation-audit', calibrate_helper_setattr, False, ()),
+    'calibrate-operator-setitem': (
+        'aggregation-audit', calibrate_operator_setitem, False, ()),
+    'calibrate-getattr-dunder-write': (
+        'aggregation-audit', calibrate_getattr_dunder_write, False, ()),
+    'calibrate-getattr-builtin-write': (
+        'aggregation-audit', calibrate_getattr_builtin_write, False, ()),
+    'calibrate-partial-write': (
+        'aggregation-audit', calibrate_partial_write, False, ()),
+    'calibrate-partial-handle': (
+        'aggregation-audit', calibrate_partial_handle, False, ()),
+    'calibrate-tuple-attribute-write': (
+        'aggregation-audit', calibrate_tuple_attribute_write, False, ()),
+    'calibrate-eval-literal-write': (
+        'aggregation-audit', calibrate_eval_literal_write, False, ()),
+    'calibrate-exec-receiver-dict': (
+        'aggregation-audit', calibrate_exec_receiver_dict, False, ()),
+    'calibrate-locals-write': (
+        'aggregation-audit', calibrate_locals_write, False, ()),
+    'calibrate-namespace-unbound-update': (
+        'aggregation-audit', calibrate_namespace_unbound_update, False, ()),
+    'calibrate-builtins-type-alias': (
+        'aggregation-audit', calibrate_builtins_type_alias, False, ()),
+    'calibrate-dict-alias-augassign': (
+        'aggregation-audit', calibrate_dict_alias_augassign, False, ()),
+    'calibrate-walrus-receiver-write': (
+        'aggregation-audit', calibrate_walrus_receiver_write, False, ()),
+    'calibrate-alias-chain-reverse': (
+        'aggregation-audit', calibrate_alias_chain_reverse, False, ()),
+    'calibrate-sm-pair-value': (
+        'aggregation-audit', calibrate_sm_pair_value, False, ()),
+    'calibrate-sm-loop-rebind': (
+        'aggregation-audit', calibrate_sm_loop_rebind, False, ()),
+    'calibrate-sm-unbound-update': (
+        'aggregation-audit', calibrate_sm_unbound_update, False, ()),
+    'calibrate-getattr-dict-subscript': (
+        'aggregation-audit', calibrate_getattr_dict_subscript, False, ()),
+    'calibrate-builtins-subscript-setattr': (
+        'aggregation-audit', calibrate_builtins_subscript_setattr, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (

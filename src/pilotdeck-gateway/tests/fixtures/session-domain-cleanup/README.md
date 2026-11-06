@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 164 mutants:
+`JUDGES`, keyed by the same names. The current table has 183 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -388,7 +388,16 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-dict-alias-write`, `calibrate-import-call-modules`,
 `calibrate-dict-update-unbound`, `calibrate-dict-setdefault-unbound`,
 `calibrate-dict-pop-unbound`, `calibrate-dict-setitem-unbound`,
-`calibrate-helper-setattr`.
+`calibrate-helper-setattr`, `calibrate-operator-setitem`,
+`calibrate-getattr-dunder-write`, `calibrate-getattr-builtin-write`,
+`calibrate-partial-write`, `calibrate-partial-handle`,
+`calibrate-tuple-attribute-write`, `calibrate-eval-literal-write`,
+`calibrate-exec-receiver-dict`, `calibrate-locals-write`,
+`calibrate-namespace-unbound-update`, `calibrate-builtins-type-alias`,
+`calibrate-dict-alias-augassign`, `calibrate-walrus-receiver-write`,
+`calibrate-alias-chain-reverse`, `calibrate-sm-pair-value`,
+`calibrate-sm-loop-rebind`, `calibrate-sm-unbound-update`,
+`calibrate-getattr-dict-subscript`, `calibrate-builtins-subscript-setattr`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -784,6 +793,48 @@ a helper module's `attr.setattr(md, 'common', <stub>)`
 <stub>)` and `builtins.dict.__setitem__(md.__dict__, 'common', <stub>)` were
 *already* red in r28 -- its non-bound three-argument branch covers them -- and
 `calibrate-dict-setitem-unbound` pins that path rather than closing a new hole.
+
+`fix-r30` closed the spellings the r29 resolver itself still missed, each
+measured on the r29 head with `_tmp`-style probe modules (before: PASS, after:
+FAIL).  The receiver rule now decodes every call target through one resolver
+(`_write_call_target`): `operator.setitem(md.__dict__, 'common', <stub>)`
+(`calibrate-operator-setitem`), `getattr(md, '__setattr__')('common', <stub>)`
+(`calibrate-getattr-dunder-write`), `getattr(builtins, 'setattr')(md, 'common',
+<stub>)` (`calibrate-getattr-builtin-write`), `functools.partial(setattr,
+md)('common', <stub>)` (`calibrate-partial-write`) and a *named* partial handle
+(`calibrate-partial-handle`, which fails the whole receiver set closed because
+the target is no longer nameable) and the dict-valued `__builtins__` the
+fixture sees when it runs as `__main__`
+(`__builtins__['setattr'](md, 'common', <stub>)`,
+`calibrate-builtins-subscript-setattr`).  Tuple assignment targets are walked leaf by
+leaf, so `md.common, _x = None, None` (`calibrate-tuple-attribute-write`) is the
+plain attribute write, `exec(src, md.__dict__)` / `eval(src, md.__dict__)`
+(`calibrate-exec-receiver-dict`) writes the receiver's mapping with no AST node
+to read, and a reverse-order alias chain needs a real fixpoint instead of four
+rounds (`calibrate-alias-chain-reverse`).  The mapping-root rule decodes the
+call spelling too, so `getattr(md, '__dict__')['common'] = <stub>` and the alias
+form `_d = getattr(md, '__dict__'); _d['common'] = <stub>` are the same write as
+`md.__dict__['common']` (`calibrate-getattr-dict-subscript`).  The module-namespace side gained
+`locals()` (a `locals()['common'] = <stub>` binding at module scope,
+`calibrate-locals-write`), the unbound `dict.update(globals(), ...)`
+(`calibrate-namespace-unbound-update`), a namespace alias `|=` replacement
+(`g = globals(); g |= {...}`, folded into `calibrate-alias-augassign`),
+`from builtins import dict as _bd` (`calibrate-builtins-type-alias`), a walrus
+receiver (`calibrate-walrus-receiver-write`) and a literal `eval` source, which
+withdraws the whole file (`calibrate-eval-literal-write`).  The `sys.modules`
+pre-seed pass reads the *actual* right-hand side of a loop-keyed write instead
+of always substituting the loop pair's value, honours a key the loop body
+rebinds, and accepts the unbound `dict.update(sys.modules, ...)` /
+`operator.setitem(sys.modules, ...)` spellings (`calibrate-sm-pair-value`,
+`calibrate-sm-loop-rebind`, `calibrate-sm-unbound-update`); a removal
+(`sys.modules.pop`) is not a write and stays ignored.  The status ruler
+`_call_written_values` follows the same alias and unbound teachings
+(`sa = setattr; sa(report, 'status', ...)`, `dict.setdefault(report, ...)`,
+`getattr(report, '__setitem__')(...)`, `__builtins__['setattr'](report, ...)`),
+pinned by three probes in the in-file
+detector self-test rather than by mutants.  The proven-source import check now
+requires *every* import of a name to come from a proven module (`all`, not
+`any`).
 One resolver `_mapping_method_call` now names the target for both spellings --
 `_builtin_type_name` decides whether the receiver is the builtin type (a bare
 `dict`/`type`, `builtins.dict`, `__builtins__.dict`) and, if so, takes the
@@ -799,8 +850,11 @@ own bindings, so `bail = sys.exit` in the helper itself is seen, but a name
 bound in a third function and passed in is not); an exit spelled as an
 attribute of an object that is not one of `sys` / `os` / `builtins` / `posix`
 (`helpers.exit(0)`) is not treated as a process exit; the write family resolves
-`setattr` / `setitem` spellings but not a *name* bound to one
-(`from operator import setitem as put; put(report, 'status', 'PASS')`); an
+`setattr` / `setitem` spellings including a *name* bound to one
+(`from operator import setitem as put; put(report, 'status', 'PASS')` is read
+through the alias graph since fix-r30), but not a write handle produced by
+`operator.attrgetter('__setattr__')(md)` (`calibrate`-less, reported as a
+follow-up); an
 alias chain longer than the hops `_exit_target` follows is not resolved; a
 `Starred` element inside a returned tuple is judged only through the tuple's
 other arms; an augmented assignment on a *parameter* is only judged by its own
