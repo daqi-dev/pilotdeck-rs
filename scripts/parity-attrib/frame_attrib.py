@@ -215,7 +215,11 @@ def check_request_evidence(ts_recs, rust_recs, skip_rust=frozenset()):
 
 
 def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
-    """返回 (结论, 证据行列表)。结论 ∈ {PASS, ATTRIB_6, NOT_6}。
+    """返回 (结论, 证据行列表)。结论 ∈ {PASS, ATTRIB_6, NOT_6, UNKNOWN}。
+
+    `UNKNOWN` = 比较器没跑成（超时 / 输出不可解析 / 输出里没有该场景），**不是**「不是 #6」。
+    装置/比较器故障与「反证命中」必须分开：把前者折成 `NOT_6` 会把 rc=2「反证命中」这个最强
+    的否定结论发给工具故障（#1926 评审 P1）。
 
     `per` 可注入该场景的 G03 结果（`per_scenario[scenario]`）：自测用桩数据覆盖 C1–C6
     的编排层，不必真跑冻结比较器；生产调用传 None，由 `g03()` 现算。
@@ -226,7 +230,9 @@ def judge(scenario, ts_dir, rust_dir, ts_recs, rust_recs, per=None):
     if per is None:
         per, _, err = g03(ts_dir, rust_dir, scenario)
         if per is None:
-            return 'NOT_6', [f'C2 失败：{err}']
+            return 'UNKNOWN', [f'C2 未运行：{err}（装置/比较器故障，未判定，不当作反证）']
+    if not per:
+        return 'UNKNOWN', [f'C2 未运行：G03 输出里没有场景 {scenario} 的结果（未判定，不当作反证）']
     diffs = per.get('channel', {}).get('differences') or []
     verdict = per.get('verdict')
     rules = sorted(per.get('triggered_rules') or [])
@@ -312,7 +318,14 @@ def round_problem(d, side):
     if ledger.get('identity_ok') is not True:
         return 'run.json identity_ok 不为 true'
     started = ledger.get('started_wall')
-    if type(started) not in (int, float) or not math.isfinite(started):
+    if type(started) not in (int, float):
+        return 'run.json missing/invalid started_wall'
+    try:
+        finite = math.isfinite(started)
+    except (OverflowError, ValueError):
+        # 任意精度 int 超出 double 范围时 isfinite 抛 OverflowError，不能让它逃出闸门。
+        finite = False
+    if not finite:
         return 'run.json missing/invalid started_wall'
     # summary.json **缺失即无效**：冻结 `score.py:154-156` 是无条件 read，缺失会抛异常把轮次判无效；
     # 这里若放行，「blocked 未知」就会被当成「未 blocked」，静默参与判定（#1926 评审 P1）。
@@ -341,14 +354,18 @@ def collect_rounds(root, side, trace):
     return good, bad
 
 
-def verdict_exit(npass, n6, not6, invalid_rounds):
+def verdict_exit(npass, n6, not6, invalid_rounds, unjudged=0):
     """把计数折成退出码（纯函数，自测可覆盖）。
 
-    rc=0 只在「确实归因到了 #6 且没有 NOT_6、批次完整」时给出：全 PASS 的批次虽然没出错，
+    rc=0 只在「确实归因到了 #6 且没有 NOT_6 / 未判定、批次完整」时给出：全 PASS 的批次虽然没出错，
     但它**没有复现任何 FAIL**，不能当作「#6 已归因」的验收证据（#1926 评审 P1）。
+    `unjudged`（比较器故障未判定）优先于 `invalid_rounds`：批次不完整时也不能给 rc=0；
+    但真正的 `NOT_6` 比它更硬——已经证伪就不受未判定影响。
     """
     if not6:
         return 2
+    if unjudged:
+        return 8
     if invalid_rounds:
         return 6
     if n6 == 0:
@@ -385,8 +402,9 @@ def run(root, scenario):
     print()
     print('## 逐 pair 判定')
     print(f'{"pair":16s} {"G03":6s} {"判定":9s} 证据')
-    npass = n6 = not6 = 0
+    npass = n6 = not6 = nun = 0
     bad = []
+    unjudged = []
     for td in ts_all:
         for rd in ru_all:
             ts_recs = load(os.path.join(td, 'artifacts', trace))
@@ -402,20 +420,28 @@ def run(root, scenario):
                 npass += 1
             elif verdict == 'ATTRIB_6':
                 n6 += 1
+            elif verdict == 'UNKNOWN':
+                nun += 1
+                unjudged.append((name, ev))
             else:
                 not6 += 1
                 bad.append((name, ev))
-    total = npass + n6 + not6
+    total = npass + n6 + not6 + nun
     print()
-    print(f'## 汇总：{total} pair 中 PASS={npass} · 归因 #6={n6} · 不能归因={not6}')
+    print(f'## 汇总：{total} pair 中 PASS={npass} · 归因 #6={n6} · 不能归因={not6}'
+          + (f' · 未判定={nun}' if nun else ''))
     if total == 0:  # 兜底：对拍为空时绝不打印「全部可归因」（尺子假 PASS）
         print('## 失败：0 pair 被判，拒绝给出结论', file=sys.stderr)
         return 5
+    if nun:
+        print('## 未判定（比较器故障 / 未产出该场景，已排除在结论外）：')
+        for name, ev in unjudged:
+            print(' ', name, ev)
     if not6:
         print('## 反证命中（不能归因 #6）：')
         for name, ev in bad:
             print(' ', name, ev)
-        return verdict_exit(npass, n6, not6, bool(ts_bad or ru_bad))
+        return verdict_exit(npass, n6, not6, bool(ts_bad or ru_bad), nun)
     if ts_bad or ru_bad:
         # 批次不完整：结论只覆盖有效轮次，不得作为验收证据（fail-closed，不静默通过）。
         print(f'## 警告：{len(ts_bad) + len(ru_bad)} 个轮次无效，已排除：')
@@ -423,7 +449,11 @@ def run(root, scenario):
             for name, why in bad_rounds:
                 print(f'   {side}/{name}: {why}')
         print('## 结论仅覆盖上面列出的有效轮次；含无效轮次的批次不算验收证据。')
-        return verdict_exit(npass, n6, not6, True)
+        return verdict_exit(npass, n6, not6, True, nun)
+    if nun:
+        print(f'## 结论：{nun} 个 pair 因装置/比较器故障**未判定**（rc=8），'
+              '不得据此断言「全部是 #6」。')
+        return verdict_exit(npass, n6, not6, False, nun)
     if n6 == 0:
         print(f'## 结论：本批次 {npass} 个 pair 全部 PASS，没有任何 FAIL 可归因；'
               '该批次不能作为 #6 归因证据。')
