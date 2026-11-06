@@ -15,15 +15,13 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import (baseline_passed, refuse, registered, select,
+from negative_selection import (claim_dir, baseline_passed, refuse, registered, select,
                                verdict_exit)
 from negative_process import mutating_sources, run_owned
 
 ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/runtime/interaction'
 # Source occurrences, independent of first/last replacement selection.
 ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
@@ -125,6 +123,7 @@ except ValueError as error:
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
     refuse('CARGO_TARGET_DIR must be supplied by the caller')
+out = claim_dir(sys.argv[1])
 summary = []
 failures = []
 
@@ -237,6 +236,7 @@ counts = {state: sum(row['status'] == state for row in summary)
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+killed_rows = sum(1 for row in summary if row['status'] == 'KILLED')
+print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
 # #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
 sys.exit(verdict_exit(summary, key='status'))

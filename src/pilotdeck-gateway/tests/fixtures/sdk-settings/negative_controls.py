@@ -13,7 +13,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, judge, passed
-from negative_selection import refuse, registered
+from negative_selection import claim_dir, refuse, registered
 
 root = Path(__file__).resolve().parents[5]
 settings = root / 'src/pilotdeck-cli/src/sdk/settings.rs'
@@ -133,8 +133,7 @@ def main():
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = claim_dir(args[0])
     command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-cli','--test','sdk_settings_exit']
 
     def run(label, test, run_env, compile=False):

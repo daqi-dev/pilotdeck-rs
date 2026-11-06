@@ -590,8 +590,22 @@ def main():
     args = ap.parse_args()
     rows = mutations
     if args.selection:
+        # #1666: an `assert` here is stripped by `python3 -O`, silently
+        # dropping unknown names and running a shorter green selection. The
+        # refusal is inline rather than `negative_selection.refuse()` because
+        # this entry rejects any fixtures path entry (#1023), so it cannot
+        # import the shared helper; the exit code and stderr shape are the same.
+        unknown = sorted(set(args.selection) - {mutation[0] for mutation in mutations})
+        # A repeated name (`a a` for `a b`) folds into a one-row subset and
+        # exits green; `negative_selection.select` refuses it, so does this.
+        duplicated = sorted({name for name in args.selection
+                             if args.selection.count(name) > 1})
+        if unknown or duplicated:
+            sys.stderr.write('INVALID: unknown/duplicate controls: '
+                             f'unknown={", ".join(unknown) or "none"} '
+                             f'duplicated={", ".join(duplicated) or "none"}\n')
+            raise SystemExit(2)
         rows = [mutation for mutation in mutations if mutation[0] in args.selection]
-        assert len(rows) == len(args.selection), 'unknown mutation name'
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
     summary = []

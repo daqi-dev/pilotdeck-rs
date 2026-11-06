@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
-from negative_selection import refuse, registered, verdict_exit
+from negative_selection import claim_dir, refuse, registered, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -226,7 +226,13 @@ def _check_anchor_coverage(names):
             f' dead={sorted(anchored - set(names))})')
 
 
-_check_anchor_coverage([row[0] for row in cases])
+# #1666 / #1734: a drift detected at import must be a refusal ("never started",
+# 2), not an uncaught traceback: the host triage table reads 1 as "ran and did
+# not come out green", which would hide a roster that proves nothing.
+try:
+    _check_anchor_coverage([row[0] for row in cases])
+except ValueError as error:
+    refuse(f'#1666 {error}')
 
 
 def selection(test):
@@ -329,8 +335,7 @@ def baseline_only(rows, output):
     """
     if not os.environ.get('CARGO_TARGET_DIR'):
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
-    output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    output = claim_dir(output)
     with tree_lock(root, timeout=BASELINE_LOCK_SECONDS):
         return locked_baseline(rows, output)
 

@@ -18,13 +18,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import (baseline_passed, refuse, registered, select,
+from negative_selection import (claim_dir, baseline_passed, refuse, registered, select,
                                verdict_exit)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 source = root / 'src/pilotdeck-gateway/src/project_files.rs'
 dirent_test = root / 'src/pilotdeck-gateway/src/project_files/tests/linux_dirent.rs'
 test = 'project_files::tests::linux_dirent::linux_dirent_matches_node_v22_on_raw_byte_names'
@@ -108,6 +106,7 @@ except ValueError as error:
     refuse(str(error))
 if 'CARGO_TARGET_DIR' not in os.environ:
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+out = claim_dir(sys.argv[1])
 if 'PDRS_BASELINE' not in os.environ:
     refuse('set PDRS_BASELINE to the pinned PilotDeck TS checkout before running')
 env = os.environ.copy()
@@ -199,6 +198,7 @@ counts = {state: sum(row['status'] == state for row in summary)
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+killed_rows = sum(1 for row in summary if row['status'] == 'KILLED')
+print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
 # #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
 sys.exit(verdict_exit(summary, key='status'))

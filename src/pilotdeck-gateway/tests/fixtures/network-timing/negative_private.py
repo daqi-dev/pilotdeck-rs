@@ -14,6 +14,7 @@ import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -68,24 +69,52 @@ cases = [
   [cell(p+'/body/fulfilled/continuation-first') for p in ['mcp_get','mcp_post','hooks']]),
 ]
 
-def catalog():
+def catalog(rows=None):
     data = []
-    for name, path, old, new, tests in cases:
-        assert (root/path).read_text().count(old) == 1, (name, 'mutation anchor must be unique')
+    for name, path, old, new, tests in (cases if rows is None else rows):
+        if (root/path).read_text().count(old) != 1:
+            raise RuntimeError(f'{name}: mutation anchor must be unique')
         data.append(dict(name=name, path=path, tests=[dict(target=t, name=n, assertionAnchor=a) for t,n,a in tests]))
     return data
 
+# #1666: the denominator is this literal roster, never `len(cases)`.
+EXPECTED_NAMES = (
+    'private-io-kind',
+    'private-response',
+    'private-frame',
+    'private-timeout',
+    'private-parent',
+    'private-io-parent',
+    'private-retry-tie',
+    'mcp-get-retry',
+    'mcp-post-retry',
+    'mcp-retry-message',
+    'mcp-error-name',
+    'mcp-jitter-501',
+    'hook-failure-shape',
+    'hook-failure-outcome',
+    'hook-body-abort',
+    'fixture-redirect-target',
+    'fixture-route-boundary',
+    'fixture-body-content',
+)
+
 if sys.argv[1:] == ['--catalog']:
     print(json.dumps(catalog(), indent=2)); sys.exit(0)
-assert os.environ.get('CARGO_TARGET_DIR'), 'caller must set CARGO_TARGET_DIR'
+if not os.environ.get('CARGO_TARGET_DIR'):
+    refuse('caller must set CARGO_TARGET_DIR')
 env = os.environ.copy()
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
-selected = set(sys.argv[2:])
-if selected:
-    cases = [c for c in cases if c[0] in selected]
-    assert len(cases) == len(selected), 'unknown control'
-catalog()
+# Every startup guard runs before the evidence directory exists, so a
+# `refuse()` ("never started", exit 2) really leaves nothing behind.
+try:
+    registered(cases, EXPECTED_NAMES)
+    run_cases = select(cases, sys.argv[2:], always=())
+except ValueError as error:
+    refuse(str(error))
+out = claim_dir(sys.argv[1])
+catalog(run_cases)
+verdicts = []
+
 def save(name, text):
     with (out/name).open('x') as stream: stream.write(text)
 def run(name, tests):
@@ -99,28 +128,36 @@ def run(name, tests):
     save(name+'.log', 'command: '+repr(command)+'\n'+log+'\nexit: '+str(result.returncode)+'\n')
     return result.returncode, log
 summary=[]
-for name, relative, old, new, tests in cases:
+for name, relative, old, new, tests in run_cases:
     path=root/relative
     code,log=run(name+'-positive',tests)
-    assert code==0 and '0 failed;' in log, (name,'positive',code)
+    if not (code==0 and '0 failed;' in log):
+        raise RuntimeError(f'{name}: positive control did not pass (exit {code})')
     with mutating_sources(root,[path]) as originals:
         source=originals[path].decode()
-        assert source.count(old)==1,(name,'unique anchor')
+        if source.count(old)!=1:
+            raise RuntimeError(f'{name}: mutation anchor is not unique')
         changed=source.replace(old,new)
         save(name+'.patch',''.join(difflib.unified_diff(source.splitlines(True),changed.splitlines(True),fromfile=relative,tofile=relative)))
         path.write_text(changed)
         code,log=run(name+'-negative',tests)
-        assert code==101 and 'test result: FAILED.' in log,(name,'must fail during test execution',code)
+        if not (code==101 and 'test result: FAILED.' in log):
+            raise RuntimeError(f'{name}: mutant must fail during test execution (exit {code})')
         for target,test,anchor in tests:
             pattern=r"thread '"+re.escape(test)+r"'[^\n]*\n[^\n]*"+re.escape(anchor)
-            assert re.search(pattern,log),(name,'bound test/anchor did not fail',test,anchor)
+            if not re.search(pattern,log):
+                raise RuntimeError(f'{name}: bound test/anchor did not fail: {test} / {anchor}')
         killed=[]
         for line in log.splitlines():
             if '{"id":' in line:
                 row=json.loads(line[line.index('{"id":'):])
                 if row['ts']!=row['rust']:killed.append(row['id'])
     code,log=run(name+'-restored',tests)
-    assert code==0 and '0 failed;' in log,(name,'restored',code)
+    if not (code==0 and '0 failed;' in log):
+        raise RuntimeError(f'{name}: restored control did not pass (exit {code})')
     summary.append(dict(name=name,source=relative,sha256=hashlib.sha256(source.encode()).hexdigest(),tests=tests,killedCells=sorted(set(killed)),restored=True))
+    verdicts.append({'verdict': 'KILLED'})
     print(name+': bound failures and restored PASS',flush=True)
 save('summary.json',json.dumps(summary,indent=2)+'\n')
+# Zero rows can never read as success: a run that proves nothing exits 1.
+sys.exit(verdict_exit(verdicts))

@@ -51,10 +51,11 @@ jobs:
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
       # #1666 / #1734：负控脚本的守卫不得依赖 assert —— `python3 -O` /
       # `PYTHONOPTIMIZE=1` 会把 assert 整条剥离，靠 assert 的守卫在优化解释器下静默
-      # 放行（未知变异名 → `0/0 killed`、rc=0）。这两个自测把每个脚本的拒绝路径在
-      # 加与不加 `-O` 的解释器下各复算一遍，且第一个用例先自证本解释器确实剥离
-      # assert（否则整组结论无意义）。两者都不需要 cargo，只读源码。
-      - name: 网关负控守卫 -O 不变性自测（#1666 / #1734）
+      # 放行（未知变异名 → `0/0 killed`、rc=0）。这两个自测在加与不加 `-O` 的解释器下
+      # 各复算**未知变异名**这一条拒绝路径（其余拒绝路径由 settings-gateway 的进程内
+      # 用例覆盖，不在 -O 下），且第一个用例先自证本解释器确实剥离 assert（否则整组
+      # 结论无意义）；另有一条只减不增的裸 assert 存量登记。两者都不需要 cargo。
+      - name: 网关负控守卫 -O 不变性自测（#1666/#1734）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards

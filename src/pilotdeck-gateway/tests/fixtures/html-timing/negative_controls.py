@@ -38,15 +38,13 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 # #1734: caller-owned preconditions are checked before the evidence directory
 # exists, so "never started" (2) really leaves nothing behind.
 if not os.environ.get('CARGO_TARGET_DIR'):
     refuse('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
 
 # Local rehearsals of an uncommitted fix point this at ``git stash create``,
 # the same pre-commit escape hatch used by the other fixtures' controls
@@ -174,6 +172,7 @@ try:
     run_rows = select(mutations, selected, always=())
 except ValueError as error:
     refuse(str(error))
+out = claim_dir(sys.argv[1])
 
 
 def run_timing_test(target, extra_env, timeout):

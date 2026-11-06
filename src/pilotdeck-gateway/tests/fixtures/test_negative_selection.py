@@ -8,11 +8,13 @@ next to a valid name looked like a successful subset and, worse, dropped the
 baseline.
 """
 import io
+from pathlib import Path
+import tempfile
 import unittest
 from contextlib import redirect_stderr
 
-from negative_selection import (baseline_passed, refuse, registered, select,
-                                verdict_exit)
+from negative_selection import (baseline_passed, claim_dir, refuse, registered,
+                                select, verdict_exit)
 
 ROWS = [('baseline', 'pass'), ('mutant-a', 'kill'), ('mutant-b', 'kill')]
 
@@ -34,10 +36,15 @@ class SubsetSelection(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unknown controls: typo'):
             select(ROWS, ['mutant-a', 'typo'])
 
+    def test_repeated_control_name_is_rejected(self):
+        # #1666 / #1734: a `a a` typo used to fold into a one-row subset, print
+        # `1/1 killed` and exit 0. The specification says rc 2 instead.
+        with self.assertRaisesRegex(ValueError, 'repeated control name'):
+            select(ROWS, ['mutant-a', 'mutant-a'])
+
     def test_missing_baseline_is_rejected(self):
         with self.assertRaisesRegex(ValueError, r'missing baseline control\(s\): baseline'):
             select([('mutant-a', 'kill')], [])
-
     def test_baseline_passed_requires_the_named_test(self):
         ok = ('running 1 test\n'
               'test pkg::tests::target ... ok\n'
@@ -85,6 +92,18 @@ class VerdictExit(unittest.TestCase):
         self.assertEqual(verdict_exit(rows, key='status'), 0)
         self.assertEqual(verdict_exit([], key='status'), 1)
         self.assertEqual(verdict_exit([{'status': 'SKIPPED'}], key='status'), 1)
+
+
+class ClaimDir(unittest.TestCase):
+    """#1734: an existing evidence directory is "never started" (2), not 1."""
+
+    def test_existing_directory_is_a_refusal(self):
+        with tempfile.TemporaryDirectory() as base:
+            directory = Path(base) / 'out'
+            self.assertEqual(claim_dir(directory), directory.resolve())
+            with self.assertRaises(SystemExit) as caught:
+                claim_dir(directory)
+            self.assertEqual(caught.exception.code, 2)
 
 
 class StaticRoster(unittest.TestCase):

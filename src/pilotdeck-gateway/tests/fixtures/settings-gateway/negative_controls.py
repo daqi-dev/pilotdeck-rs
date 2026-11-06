@@ -232,9 +232,9 @@ selected = sys.argv[2:]
 # `python3 -O` an assert is stripped, a misspelt name silently selected
 # nothing, and the loop below ran zero mutants, printed `0/0 killed` and
 # exited 0. It also reports the names that are actually unknown rather than
-# echoing the whole selection, and folds a repeated name instead of calling
-# it unknown. Exit code 2 keeps "never ran" distinguishable from "ran and
-# did not kill" (1) for the host gate.
+# echoing the whole selection, and refuses a repeated name (a `a a` typo used
+# to fold into a one-row green run, #1734). Exit code 2 keeps "never ran"
+# distinguishable from "ran and did not kill" (1) for the host gate.
 try:
     rows = select(mutations, selected, always=())
 except ValueError as error:

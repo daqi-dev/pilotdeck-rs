@@ -7,6 +7,7 @@ failing baseline makes the whole run INVALID before any mutant verdict counts.
 """
 import re
 import sys
+from pathlib import Path
 
 
 def baseline_passed(raw, test_name):
@@ -41,6 +42,12 @@ def select(controls, requested, *, name=lambda row: row[0], always=('baseline',)
     missing = [item for item in always if item not in names]
     if missing:
         raise ValueError(f'missing baseline control(s): {", ".join(missing)}')
+    requested = list(requested)
+    # A repeated name is a caller-side typo (`a a` for `a b`), not a subset.
+    # Folding it silently turns a mistyped selection into a green run, which is
+    # the same class of false green as an unknown name (#1666 / #1734).
+    if len(set(requested)) != len(requested):
+        raise ValueError(f'repeated control name in the selection: {requested}')
     requested = set(requested)
     unknown = requested - names
     if unknown:
@@ -74,6 +81,24 @@ def registered(rows, expected_names, *, name=lambda row: row[0]):
             f' (missing={missing or "none"} extra={extra or "none"}'
             f' runtime={names} expected={expected})')
     return names
+
+
+def claim_dir(path):
+    """Claim the evidence directory; an existing one means "never started".
+
+    A bare ``mkdir(exist_ok=False)`` raises ``FileExistsError``, which the exit
+    code table reads as "the run happened and did not come out green" (1).
+    Nothing was measured when the directory could not be claimed, so it is a
+    refusal (2), and it must not be mistaken for a surviving mutant (#1734).
+    """
+    directory = Path(path).resolve()
+    try:
+        directory.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        refuse(f'output directory already exists: {directory}')
+    except OSError as error:
+        refuse(f'cannot create the output directory {directory}: {error}')
+    return directory
 
 
 def refuse(message):
