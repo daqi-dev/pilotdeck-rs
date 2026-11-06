@@ -395,13 +395,16 @@ def load_round_shutdown():
     return namespace['interrupted'], recorder, shim
 
 
-def load_gateway_shutdown():
-    """Exec common.py's real ``install_shutdown`` against a recording shim."""
+def load_gateway_shutdown(sys_module=None):
+    """Exec common.py's real ``install_shutdown`` against a recording shim.
+
+    ``sys_module`` lets a case substitute a ``sys`` whose ``stderr`` fails.
+    """
     tree = ast.parse(GATEWAY_COMMON.read_text())
     node = next(node for node in tree.body
                 if isinstance(node, ast.FunctionDef) and node.name == 'install_shutdown')
     recorder = _SignalRecorder()
-    namespace = {'sys': sys, 'signal': recorder}
+    namespace = {'sys': sys_module or sys, 'signal': recorder}
     module = ast.Module(body=[node], type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(GATEWAY_COMMON), 'exec'),
          namespace)
@@ -428,7 +431,16 @@ class SignalUnwindControls(unittest.TestCase):
                     # production shape is the same frame state — inside a
                     # propagating ``finally`` sys.exception() is the in-flight
                     # KeyboardInterrupt too (verified against CPython 3.14).
-                    handler(second, None)
+                    try:
+                        handler(second, None)
+                    except KeyboardInterrupt:
+                        raise
+                    except BaseException as leaked:
+                        # Anything else escaping the guard replaced the in-flight
+                        # cancellation (e.g. an unguarded stderr write) — report
+                        # it as a bound FAIL so the mutation is KILLED, not an
+                        # out-of-assertion ERROR.
+                        self.fail(f'{message} (second={second}, guard leaked {leaked!r})')
                     raise
             except KeyboardInterrupt as caught:
                 self.assertIs(caught, first, f'{message} (second={second})')
@@ -471,6 +483,29 @@ class SignalUnwindControls(unittest.TestCase):
         shim.stderr = _BrokenStderr()
         self._assert_second_signal_ignored(
             handler, '#1194 a failing stderr must not re-break the guard')
+
+    def test_calibrate_guard_survives_broken_stderr(self):
+        recorder = _SignalRecorder()
+        shim = _SysShim()
+        shim.stderr = _BrokenStderr()
+        with patch.dict(L, {'signal': recorder, 'run': lambda *args, **kwargs: 0,
+                            'sys': shim}):
+            self.assertEqual(L['main']([str(CALIBRATE)]), 0,
+                             '#1194 calibrate.sh main must return the supervisor code')
+            L['RECEIVED'] = signal.SIGINT
+            self._assert_second_signal_ignored(
+                L['_interrupted'],
+                '#1194 calibrate.sh must survive a failing stderr')
+            self.assertEqual(L['RECEIVED'], signal.SIGINT,
+                             '#1194 the first signal record must survive the second signal')
+
+    def test_gateway_guard_survives_broken_stderr(self):
+        shim = _SysShim()
+        shim.stderr = _BrokenStderr()
+        registered = load_gateway_shutdown(shim)
+        self._assert_second_signal_ignored(
+            registered[signal.SIGINT],
+            '#1194 common.py must survive a failing stderr')
 
     def test_round_second_signal_ignored_during_cleanup(self):
         handler, recorder, shim = load_round_shutdown()
