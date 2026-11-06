@@ -2978,6 +2978,697 @@ async fn a_panicking_process_message_does_not_leak_the_active_chat() {
         .expect("#1738 panic-leak test stop");
 }
 
+/// #1790: a gateway whose `permissionDecide` panics on its first call and
+/// succeeds afterwards; `submitTurn` returns an empty stream. The decide call
+/// log is the observable a stuck chat never grows.
+struct PermissionPanickingGateway {
+    decides: Arc<SyncMutex<Vec<String>>>,
+}
+
+impl SmsGateway for PermissionPanickingGateway {
+    fn submit_turn(
+        &self,
+        _request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        Box::pin(async {
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::new(),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        let decides = self.decides.clone();
+        Box::pin(async move {
+            let first = {
+                let mut decides = decides.lock().expect("#1790 decides mutex");
+                decides.push(String::from_utf16_lossy(decision.session_key.units()));
+                decides.len() == 1
+            };
+            if first {
+                panic!("#1790 injected permission_decide panic");
+            }
+            Ok(PermissionDecisionOutcome { delivered: true })
+        })
+    }
+}
+
+/// Seed one delivered permission prompt for `chat`, leaving the state the
+/// production flow has after the user saw the prompt and the turn ended:
+/// `pending` holds one entry, `answering`/`initial_prompt_pending` are clear.
+fn seed_pending_permission(shared: &Arc<SmsShared>, chat: &JsString, request_id: &str) {
+    let session = JsString::from(format!(
+        "sms:chat={}:general",
+        String::from_utf16_lossy(chat.units())
+    ));
+    let event = to_js(&json!({
+        "requestId": request_id,
+        "toolName": "Bash",
+        "payload": {"command": "ls"},
+    }));
+    let mut permissions = shared.lock_permissions();
+    let prompt = permissions.capture(chat, &session, &event);
+    crate::negative_assert!(
+        prompt.is_some(),
+        "#1790 preset must deliver the initial permission prompt"
+    );
+    permissions.confirm_initial_prompt(chat, true, Some(&JsString::from(request_id)));
+}
+
+/// #1790: a panic inside `permissionDecide` must not leave the chat stuck in
+/// "权限决定处理中". `begin_answer` sets `answering`/`in_flight` before the
+/// await; pre-fix only the Ok/Err arms clear them, a panic skips both and the
+/// chat can never advance until restart.
+#[tokio::test]
+async fn a_panicking_permission_decide_does_not_lock_the_chat() {
+    let decides = Arc::new(SyncMutex::new(Vec::<String>::new()));
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: None,
+        mapper: None,
+        gateway: Some(Arc::new(PermissionPanickingGateway {
+            decides: decides.clone(),
+        })),
+        env: None,
+        twilio_factory: None,
+        record_unhandled: None,
+    });
+    let shared = channel.shared.clone();
+    let chat = JsString::from("+15550010");
+    seed_pending_permission(&shared, &chat, "req-1790-decide");
+
+    // The production shape: only the fire-and-forget task dies.
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    })
+    .await;
+    let error = joined.expect_err("#1790 the injected panic must fail the spawned task");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1790 the spawn must end in the panic, not a clean return"
+    );
+
+    // C1: the answer flags must not survive the unwind.
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not survive the permission_decide panic"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive the permission_decide panic"
+        );
+    }
+    // C2: the chat must still be able to decide — the second "1" reaches the
+    // gateway instead of the "权限决定处理中" status short-circuit.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the decision after the panic returns Ok");
+    crate::negative_assert_eq!(
+        decides.lock().expect("#1790 decides mutex").len(),
+        2,
+        "#1790 the chat must be able to decide again after the panic"
+    );
+}
+
+/// #1790: a loopback sender that records every body and can panic on the first
+/// body carrying a marker. The one-shot latch mirrors a provider that fails
+/// once; the retry after the panic must be able to succeed.
+struct ProbeSender {
+    sends: Arc<SyncMutex<Vec<String>>>,
+    panic_on_marker: Option<&'static str>,
+    panicked: Arc<SyncMutex<bool>>,
+}
+
+impl ProbeSender {
+    fn new(panic_on_marker: Option<&'static str>) -> (Self, Arc<SyncMutex<Vec<String>>>) {
+        let sends = Arc::new(SyncMutex::new(Vec::new()));
+        let sender = Self {
+            sends: sends.clone(),
+            panic_on_marker,
+            panicked: Arc::new(SyncMutex::new(false)),
+        };
+        (sender, sends)
+    }
+}
+
+impl SmsSender for ProbeSender {
+    fn send(&self, message: SmsOutgoingMessage) -> BoxFuture<Result<(), ChannelError>> {
+        let body = String::from_utf16_lossy(message.body.units());
+        let sends = self.sends.clone();
+        let marker = self.panic_on_marker;
+        let panicked = self.panicked.clone();
+        Box::pin(async move {
+            sends.lock().expect("#1790 sends mutex").push(body.clone());
+            let should_panic = marker.is_some_and(|marker| body.contains(marker));
+            if should_panic {
+                let mut flag = panicked.lock().expect("#1790 panic flag mutex");
+                if !*flag {
+                    *flag = true;
+                    drop(flag);
+                    panic!("#1790 injected prompt-send panic");
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Install `sender` as the channel's Twilio boundary; `send_reply` then
+/// reaches it instead of returning the "twilio not installed" false.
+async fn install_sender(shared: &Arc<SmsShared>, sender: ProbeSender) {
+    shared.runtime.lock().await.client = Some(Arc::new(sender));
+}
+
+/// Build a bare channel around `gateway` (no Twilio boundary, no extra cfg).
+fn channel_with_gateway(gateway: Arc<dyn SmsGateway>) -> Arc<SmsShared> {
+    SmsChannel::new(SmsChannelOptions {
+        extra: None,
+        mapper: None,
+        gateway: Some(gateway),
+        env: None,
+        twilio_factory: None,
+        record_unhandled: None,
+    })
+    .shared
+    .clone()
+}
+
+/// Count recorded bodies carrying the permission-prompt marker.
+fn prompt_sends(sends: &Arc<SyncMutex<Vec<String>>>) -> usize {
+    sends
+        .lock()
+        .expect("#1790 sends mutex")
+        .iter()
+        .filter(|body| body.contains("需要权限才能继续执行。"))
+        .count()
+}
+
+/// #1790: `permissionDecide` always succeeds; `submitTurn` yields one
+/// `permission_request`, which drives the initial-prompt send through
+/// `process_message`.
+struct PermissionRequestGateway {
+    request_id: &'static str,
+}
+
+impl SmsGateway for PermissionRequestGateway {
+    fn submit_turn(
+        &self,
+        _request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        let event = to_js(&json!({
+            "type": "permission_request",
+            "requestId": self.request_id,
+            "toolName": "Bash",
+            "payload": {"command": "ls"},
+        }));
+        Box::pin(async move {
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::from([event]),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        _decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        Box::pin(async { Ok(PermissionDecisionOutcome { delivered: true }) })
+    }
+}
+
+/// #1790: `permissionDecide` always succeeds; `submitTurn` yields an empty
+/// stream. Drives the permission branch without any gateway-side failure.
+struct DecideOkGateway;
+
+impl SmsGateway for DecideOkGateway {
+    fn submit_turn(
+        &self,
+        _request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        Box::pin(async {
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::new(),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        _decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        Box::pin(async { Ok(PermissionDecisionOutcome { delivered: true }) })
+    }
+}
+
+/// #1790: `permissionDecide` rejects on the first call and succeeds after —
+/// the no-panic regression that proves the flags do not linger across an
+/// error/retry either.
+struct DecisionErrThenOkGateway {
+    decides: Arc<SyncMutex<Vec<String>>>,
+}
+
+impl SmsGateway for DecisionErrThenOkGateway {
+    fn submit_turn(
+        &self,
+        _request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        Box::pin(async {
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::new(),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        let decides = self.decides.clone();
+        Box::pin(async move {
+            let count = {
+                let mut decides = decides.lock().expect("#1790 decides mutex");
+                decides.push(String::from_utf16_lossy(decision.session_key.units()));
+                decides.len()
+            };
+            if count == 1 {
+                return Err(ChannelError::Error(
+                    "#1790 injected decide error".to_owned(),
+                ));
+            }
+            Ok(PermissionDecisionOutcome { delivered: true })
+        })
+    }
+}
+
+/// #1790: the first `permissionDecide` parks forever behind a gate, so the
+/// caller can be cancelled or timed out mid-await; every later call succeeds.
+struct ParkingDecisionGateway {
+    decides: Arc<SyncMutex<Vec<String>>>,
+    gates: Gates,
+}
+
+impl SmsGateway for ParkingDecisionGateway {
+    fn submit_turn(
+        &self,
+        _request: SubmitTurnRequest,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        Box::pin(async {
+            Ok(Box::new(MockTurnStream {
+                events: VecDeque::new(),
+                hold: None,
+                await_error_settled: false,
+                gates: Arc::new(SyncMutex::new(HashMap::new())),
+            }) as Box<dyn TurnEventStream>)
+        })
+    }
+
+    fn respond_elicitation(
+        &self,
+        _response: ElicitationResponse,
+    ) -> BoxFuture<Result<(), ChannelError>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn permission_decide(
+        &self,
+        decision: PermissionDecision,
+    ) -> BoxFuture<Result<PermissionDecisionOutcome, ChannelError>> {
+        let decides = self.decides.clone();
+        let gates = self.gates.clone();
+        Box::pin(async move {
+            let first = {
+                let mut decides = decides.lock().expect("#1790 decides mutex");
+                decides.push(String::from_utf16_lossy(decision.session_key.units()));
+                decides.len() == 1
+            };
+            if first {
+                released(gate(&gates, "1790-park")).await;
+            }
+            Ok(PermissionDecisionOutcome { delivered: true })
+        })
+    }
+}
+
+/// Seed two delivered/queued permissions so the first decision has a queued
+/// follow-up prompt to deliver (`next_prompts` is only rebuilt by
+/// `finish_answer` from `pending`).
+fn seed_two_pending_permissions(shared: &Arc<SmsShared>, chat: &JsString) {
+    seed_pending_permission(shared, chat, "req-1790-first");
+    let session = JsString::from(format!(
+        "sms:chat={}:general",
+        String::from_utf16_lossy(chat.units())
+    ));
+    let event = to_js(&json!({
+        "requestId": "req-1790-second",
+        "toolName": "Bash",
+        "payload": {"command": "pwd"},
+    }));
+    let mut permissions = shared.lock_permissions();
+    let prompt = permissions.capture(chat, &session, &event);
+    crate::negative_assert!(
+        prompt.is_none(),
+        "#1790 the second capture must queue without a prompt"
+    );
+}
+
+/// #1790: a panic while the *next* prompt is being delivered must release
+/// `prompt_delivering`. Pre-fix `take_next_prompt` refuses forever and every
+/// later message is silently dropped (`BeginAnswer::None`).
+#[tokio::test]
+async fn a_panicking_prompt_delivery_does_not_lock_the_chat() {
+    let shared = channel_with_gateway(Arc::new(DecideOkGateway));
+    let chat = JsString::from("+15550011");
+    seed_two_pending_permissions(&shared, &chat);
+    let (sender, sends) = ProbeSender::new(Some("需要权限才能继续执行。"));
+    install_sender(&shared, sender).await;
+
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    })
+    .await;
+    let error = joined.expect_err("#1790 the injected prompt-send panic must fail the task");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1790 the prompt-send spawn must end in the panic"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_prompt_delivering(&chat),
+            "#1790 prompt_delivering must not survive the prompt-send panic"
+        );
+    }
+    // The queued prompt is still pending: the next decision retries delivery
+    // and only then releases the answer lock.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the retry after the prompt panic returns Ok");
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_prompt_delivering(&chat),
+            "#1790 the retried prompt delivery must clear prompt_delivering"
+        );
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 the retried prompt delivery must release the answer lock"
+        );
+    }
+    crate::negative_assert_eq!(
+        prompt_sends(&sends),
+        2,
+        "#1790 the panic and the retry each send one prompt"
+    );
+}
+
+/// #1790: a panic while the *initial* permission prompt is being sent must
+/// release `initial_prompt_pending`. Pre-fix every later message gets
+/// "权限提示发送中，请稍候。" forever.
+#[tokio::test]
+async fn a_panicking_initial_prompt_delivery_does_not_lock_the_chat() {
+    let shared = channel_with_gateway(Arc::new(PermissionRequestGateway {
+        request_id: "req-1790-initial",
+    }));
+    let chat = JsString::from("+15550012");
+    let (sender, sends) = ProbeSender::new(Some("需要权限才能继续执行。"));
+    install_sender(&shared, sender).await;
+
+    let joined = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("hello")).await }
+    })
+    .await;
+    let error = joined.expect_err("#1790 the injected initial-prompt panic must fail the task");
+    crate::negative_assert!(
+        error.is_panic(),
+        "#1790 the initial-prompt spawn must end in the panic"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_initial_prompt_pending(&chat),
+            "#1790 initial_prompt_pending must not survive the prompt-send panic"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive the initial-prompt panic"
+        );
+    }
+    // The captured request is still queued; the next "1" retries the prompt
+    // and settles the answer.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the retry after the initial-prompt panic returns Ok");
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_initial_prompt_pending(&chat),
+            "#1790 the retried prompt delivery must clear initial_prompt_pending"
+        );
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 the retried prompt delivery must release the answer lock"
+        );
+    }
+    crate::negative_assert_eq!(
+        prompt_sends(&sends),
+        2,
+        "#1790 the panic and the retry each send one prompt"
+    );
+}
+
+/// #1790: an error return must not leave the flags set either — the same
+/// release runs without any panic, so the guard is not the only path.
+#[tokio::test]
+async fn permission_flags_do_not_linger_without_a_panic() {
+    let decides = Arc::new(SyncMutex::new(Vec::<String>::new()));
+    let shared = channel_with_gateway(Arc::new(DecisionErrThenOkGateway {
+        decides: decides.clone(),
+    }));
+    let chat = JsString::from("+15550013");
+    seed_pending_permission(&shared, &chat, "req-1790-retry");
+    let (sender, sends) = ProbeSender::new(None);
+    install_sender(&shared, sender).await;
+
+    // First decision rejects: the entry is restored and the flags are clear.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the rejected decision still returns Ok");
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not linger after a rejected decision"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not linger after a rejected decision"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 the rejected decision must restore the pending permission"
+        );
+    }
+    // Second decision succeeds: no flag survives a normal completion either.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the retried decision returns Ok");
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not linger after the retried decision"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not linger after the retried decision"
+        );
+        crate::negative_assert!(
+            !permissions.is_prompt_delivering(&chat),
+            "#1790 prompt_delivering must not linger after the retried decision"
+        );
+        crate::negative_assert!(
+            !permissions.has_pending(&chat),
+            "#1790 the retried decision must consume the pending permission"
+        );
+    }
+    crate::negative_assert_eq!(
+        decides.lock().expect("#1790 decides mutex").len(),
+        2,
+        "#1790 both decisions reach the gateway"
+    );
+    crate::negative_assert_eq!(
+        sends
+            .lock()
+            .expect("#1790 sends mutex")
+            .iter()
+            .filter(|body| body.contains("已允许一次，继续执行。"))
+            .count(),
+        1,
+        "#1790 only the successful decision sends a confirmation"
+    );
+}
+
+/// #1790: the fire-and-forget task can be cancelled while the decision is in
+/// flight (channel stop / task abort). The guard must release the flags on
+/// drop, or the chat is stuck until restart.
+#[tokio::test]
+async fn cancelled_permission_decide_does_not_lock_the_chat() {
+    let decides = Arc::new(SyncMutex::new(Vec::<String>::new()));
+    let shared = channel_with_gateway(Arc::new(ParkingDecisionGateway {
+        decides: decides.clone(),
+        gates: Arc::new(SyncMutex::new(HashMap::new())),
+    }));
+    let chat = JsString::from("+15550014");
+    seed_pending_permission(&shared, &chat, "req-1790-cancel");
+
+    let handle = tokio::spawn({
+        let shared = shared.clone();
+        let chat = chat.clone();
+        async move { handle_incoming(&shared, chat, JsString::from("1")).await }
+    });
+    until("the decision is parked", || {
+        decides.lock().expect("#1790 decides mutex").len() == 1
+    })
+    .await;
+    handle.abort();
+    let error = handle
+        .await
+        .expect_err("#1790 the aborted task must not complete");
+    crate::negative_assert!(
+        error.is_cancelled(),
+        "#1790 the aborted task must report cancellation, not a panic"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not survive cancellation"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive cancellation"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 cancellation must restore the pending permission"
+        );
+    }
+    // The chat still advances: a later decision reaches the gateway again.
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the decision after cancellation returns Ok");
+    crate::negative_assert_eq!(
+        decides.lock().expect("#1790 decides mutex").len(),
+        2,
+        "#1790 the chat must be able to decide again after cancellation"
+    );
+}
+
+/// #1790: the same release must run when the caller times out the in-flight
+/// decision instead of cancelling the whole task.
+#[tokio::test]
+async fn timed_out_permission_decide_does_not_lock_the_chat() {
+    let decides = Arc::new(SyncMutex::new(Vec::<String>::new()));
+    let shared = channel_with_gateway(Arc::new(ParkingDecisionGateway {
+        decides: decides.clone(),
+        gates: Arc::new(SyncMutex::new(HashMap::new())),
+    }));
+    let chat = JsString::from("+15550015");
+    seed_pending_permission(&shared, &chat, "req-1790-timeout");
+
+    let timed_out = tokio::time::timeout(
+        Duration::from_millis(50),
+        handle_incoming(&shared, chat.clone(), JsString::from("1")),
+    )
+    .await;
+    crate::negative_assert!(
+        timed_out.is_err(),
+        "#1790 the parked decision must time out"
+    );
+    crate::negative_assert_eq!(
+        decides.lock().expect("#1790 decides mutex").len(),
+        1,
+        "#1790 the timed-out decision reached the gateway once"
+    );
+
+    {
+        let permissions = shared.lock_permissions();
+        crate::negative_assert!(
+            !permissions.is_answering(&chat),
+            "#1790 answering must not survive the timeout"
+        );
+        crate::negative_assert!(
+            !permissions.is_in_flight(&chat),
+            "#1790 in_flight must not survive the timeout"
+        );
+        crate::negative_assert!(
+            permissions.has_pending(&chat),
+            "#1790 the timeout must restore the pending permission"
+        );
+    }
+    handle_incoming(&shared, chat.clone(), JsString::from("1"))
+        .await
+        .expect("#1790 the decision after the timeout returns Ok");
+    crate::negative_assert_eq!(
+        decides.lock().expect("#1790 decides mutex").len(),
+        2,
+        "#1790 the chat must be able to decide again after the timeout"
+    );
+}
+
 /// #1339 fix-r1 (P2 #6): a JSON `null` body throws on the TS side with the
 /// socket left hanging (probes/null-body.txt — no response byte ever
 /// arrives), so the oracle cannot pin it. The port reports the exact
@@ -3316,15 +4007,13 @@ async fn sms_permission_lock_split() {
         "payload": {"command": "ls"},
     }));
     {
-        let mut runtime = channel.shared.runtime.lock().await;
-        let prompt = runtime.permissions.capture(&chat, &session, &event);
+        let mut permissions = channel.shared.lock_permissions();
+        let prompt = permissions.capture(&chat, &session, &event);
         crate::negative_assert!(
             prompt.is_some(),
             "#1589 permission lock split preset must deliver a prompt"
         );
-        runtime
-            .permissions
-            .confirm_initial_prompt(&chat, true, Some(&JsString::from("req-1589")));
+        permissions.confirm_initial_prompt(&chat, true, Some(&JsString::from("req-1589")));
     }
     let incoming = {
         let shared = channel.shared.clone();
@@ -3335,8 +4024,7 @@ async fn sms_permission_lock_split() {
     };
     tokio::task::yield_now().await;
     {
-        let mut runtime = channel.shared.runtime.lock().await;
-        runtime.permissions.clear(&chat);
+        channel.shared.lock_permissions().clear(&chat);
     }
     bounded("permission lock split incoming", incoming)
         .await

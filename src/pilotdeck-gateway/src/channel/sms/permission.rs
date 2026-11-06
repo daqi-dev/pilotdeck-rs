@@ -3,6 +3,7 @@
 //! into `begin_answer` / `finish_answer` / `fail_answer`; each phase runs under
 //! the channel's state lock exactly like a JS run-to-completion block.
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 
 use pilotdeck_protocol::{JsString, JsValue};
 
@@ -513,6 +514,169 @@ impl ImPermissionHelper {
         {
             self.generations.remove(chat_id);
         }
+    }
+}
+
+/// The permission state cell shared with `SmsShared`. It lives behind a `std`
+/// mutex — never locked across an `await` — so the `Drop` guards below can
+/// release cross-`await` flags synchronously on panic/cancel/unwind, the same
+/// shape #1738 gave `active_chats`.
+pub type PermissionState = Arc<StdMutex<ImPermissionHelper>>;
+
+/// Recover a poisoned mutex instead of re-raising: a guard runs while another
+/// panic is already unwinding, so `.expect()` here would abort the process
+/// (#1790: "不得二次 panic").
+fn lock_state(state: &PermissionState) -> MutexGuard<'_, ImPermissionHelper> {
+    state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// #1790: [`ImPermissionHelper::begin_answer`] sets `answering` + `in_flight`
+/// before the `permissionDecide` await; only the Ok/Err arms clear them. This
+/// guard owns the release for every other exit — a gateway panic, or the
+/// fire-and-forget task being cancelled or timing out — so the chat can never
+/// be left stuck in "权限决定处理中" until restart.
+pub struct AnswerGuard {
+    state: PermissionState,
+    chat_id: JsString,
+    generation: u32,
+    /// Clones of the values `fail_answer` restores; taken on drop so a
+    /// settled guard never touches the state.
+    entry: Option<PendingPermission>,
+    shifted_rest: Vec<PendingPermission>,
+    settled: bool,
+}
+
+impl AnswerGuard {
+    pub fn new(
+        state: PermissionState,
+        chat_id: JsString,
+        generation: u32,
+        entry: PendingPermission,
+        shifted_rest: Vec<PendingPermission>,
+    ) -> Self {
+        Self {
+            state,
+            chat_id,
+            generation,
+            entry: Some(entry),
+            shifted_rest,
+            settled: false,
+        }
+    }
+
+    /// Disarm after the explicit `finish_answer`/`fail_answer` ran.
+    pub fn settle(&mut self) {
+        self.settled = true;
+    }
+}
+
+impl Drop for AnswerGuard {
+    fn drop(&mut self) {
+        if self.settled || crate::mutants::on("sms-permission-answer-guard-off") {
+            return;
+        }
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        let shifted_rest = std::mem::take(&mut self.shifted_rest);
+        lock_state(&self.state).fail_answer(&self.chat_id, self.generation, entry, shifted_rest);
+    }
+}
+
+/// #1790: [`ImPermissionHelper::take_next_prompt`] sets `prompt_delivering`
+/// before the prompt send. A panic or cancellation during that send would,
+/// pre-fix, leave the flag set — `take_next_prompt` then refuses forever and
+/// `begin_answer` silently drops every later message. `release_answer` is the
+/// reentrant-safe recovery (retry the prompt, or settle the answer).
+pub struct PromptGuard {
+    state: PermissionState,
+    chat_id: JsString,
+    answer_token: Option<u32>,
+    settled: bool,
+}
+
+impl PromptGuard {
+    pub fn new(state: PermissionState, chat_id: JsString, answer_token: Option<u32>) -> Self {
+        Self {
+            state,
+            chat_id,
+            answer_token,
+            settled: false,
+        }
+    }
+
+    /// Disarm after `confirm_next_prompt` ran.
+    pub fn settle(&mut self) {
+        self.settled = true;
+    }
+}
+
+impl Drop for PromptGuard {
+    fn drop(&mut self) {
+        if self.settled || crate::mutants::on("sms-permission-prompt-guard-off") {
+            return;
+        }
+        lock_state(&self.state).release_answer(&self.chat_id, self.answer_token);
+    }
+}
+
+/// #1790: [`ImPermissionHelper::capture`] sets `answering`,
+/// `initial_prompt_pending` and the queued prompt before the initial prompt
+/// send. A panic or cancellation during that send would leave them set and the
+/// chat stuck in "权限提示发送中，请稍候。"; `confirm_initial_prompt(delivered =
+/// false)` is the recorded not-delivered recovery (queue a retry).
+pub struct InitialPromptGuard {
+    state: PermissionState,
+    chat_id: JsString,
+    expected_request_id: Option<JsString>,
+    settled: bool,
+}
+
+impl InitialPromptGuard {
+    pub fn new(
+        state: PermissionState,
+        chat_id: JsString,
+        expected_request_id: Option<JsString>,
+    ) -> Self {
+        Self {
+            state,
+            chat_id,
+            expected_request_id,
+            settled: false,
+        }
+    }
+
+    /// Disarm after `confirm_initial_prompt` ran.
+    pub fn settle(&mut self) {
+        self.settled = true;
+    }
+}
+
+impl Drop for InitialPromptGuard {
+    fn drop(&mut self) {
+        if self.settled || crate::mutants::on("sms-permission-initial-guard-off") {
+            return;
+        }
+        lock_state(&self.state).confirm_initial_prompt(
+            &self.chat_id,
+            false,
+            self.expected_request_id.as_ref(),
+        );
+    }
+}
+
+#[cfg(test)]
+impl ImPermissionHelper {
+    pub fn is_in_flight(&self, chat_id: &JsString) -> bool {
+        self.in_flight.contains(chat_id)
+    }
+
+    pub fn is_prompt_delivering(&self, chat_id: &JsString) -> bool {
+        self.prompt_delivering.contains(chat_id)
+    }
+
+    pub fn is_initial_prompt_pending(&self, chat_id: &JsString) -> bool {
+        self.initial_prompt_pending.contains(chat_id)
     }
 }
 
