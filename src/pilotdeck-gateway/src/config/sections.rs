@@ -534,8 +534,8 @@ pub(super) fn always_on(raw: &JsValue, d: &mut Diagnostics) -> Result<(), Error>
         d.warn("ALWAYS_ON_FIELD_REMOVED","alwaysOn.enabled has been removed. Always-On is active when any project in alwaysOn.projects is enabled; this field is ignored.","alwaysOn.enabled");
     }
     let language = field(raw, "language");
-    if !string_coercible(language) {
-        return Err(primitive_error());
+    if let Err(kind) = string_coercible(language) {
+        return Err(coercion_error(kind));
     }
     if !language.is_undefined() && !eq(language, "en") && !eq(language, "zh-CN") {
         d.warn(

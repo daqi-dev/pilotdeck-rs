@@ -43,10 +43,15 @@ pub(super) fn js_string(v: &JsValue) -> String {
         JsValue::Number(v) if *v == f64::NEG_INFINITY => "-Infinity".into(),
         // Iterative (explicit stack): a deep array used to recurse one Rust
         // frame per level here as well, aborting the process (#1550 修 r4).
+        // The joined units then take the same injective escape as the scalar
+        // branch: every diagnostic is decoded by `DiagnosticText`, which panics
+        // on a raw U+001F and would silently drop a raw escape tail
+        // (#1550 修 r5).
         JsValue::Array(_) => match crate::js_value::to_string_units(v) {
-            Ok(units) => String::from_utf16_lossy(&units),
-            // Callers that can see untrusted input reject depth first
-            // (`string_coercible`); keep the message finite otherwise.
+            Ok(units) => diagnostic_string(&JsString::from_utf16(units)),
+            // A caller that skipped `string_coercible` gets an empty message
+            // rather than the TS RangeError; every config call site that can
+            // see an array checks the bound first (#1550 修 r5).
             Err(crate::js_value::StackOverflow) => String::new(),
         },
         JsValue::Object(o) => format!("[object {}]", o.native_tag().unwrap_or("Object")),
@@ -140,24 +145,19 @@ pub(crate) fn builtin_property(s: &JsString) -> bool {
     .iter()
     .any(|v| s.equals_str(v))
 }
-/// Would `String(v)` throw? Delegates to the shared bounded walk: config files
-/// and binding rows are parsed JSON, and a deep array used to recurse one Rust
-/// frame per level until the process aborted (#1550 修 r4).
-pub(crate) fn string_coercible(v: &JsValue) -> bool {
-    crate::js_value::string_coercible_checked(v).is_ok()
+/// Would `String(v)` throw, and how? Delegates to the shared bounded walk:
+/// config files and binding rows are parsed JSON, and a deep array used to
+/// recurse one Rust frame per level until the process aborted (#1550 修 r4).
+/// The error kind is kept (not collapsed to a flag) because TS reports
+/// `RangeError` past the depth bound and `TypeError` for an own `toString`
+/// (#1550 修 r5).
+pub(crate) fn string_coercible(v: &JsValue) -> Result<(), crate::js_value::ToStringError> {
+    crate::js_value::string_coercible_checked(v)
 }
 /// The error TS raises for a failed `String(v)`, with the class V8 picks
 /// (`RangeError` past the shared depth bound, `TypeError` otherwise).
 pub(super) fn coercion_error(kind: crate::js_value::ToStringError) -> super::Error {
     let mut e = super::Error::new("gateway_request_failed", kind.message());
     e.name = kind.name();
-    e
-}
-pub(super) fn primitive_error() -> super::Error {
-    let mut e = super::Error::new(
-        "gateway_request_failed",
-        "Cannot convert object to primitive value",
-    );
-    e.name = "TypeError";
     e
 }

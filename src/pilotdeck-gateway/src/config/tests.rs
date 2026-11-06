@@ -475,3 +475,76 @@ fn binding_path_argument_preserves_lone_surrogate_units() {
         "#934 binding path argument must keep the Node wording"
     );
 }
+
+/// #1550 修 r5: every diagnostic message is decoded by `DiagnosticText`, which
+/// reads U+001F as its own escape prefix and hits `unreachable!` on any other
+/// tail. `js_string` therefore has to escape arrays exactly like scalars; the
+/// r4 explicit-stack rewrite handed the decoder raw UTF-16 and a config value
+/// `schemaVersion: ["\u001fX"]` aborted the gateway.
+#[test]
+fn array_stringification_keeps_the_diagnostic_escape() {
+    let value = parse_json("[\"\\u001fX\",\"\\ud800\"]").unwrap();
+    assert_eq!(
+        DiagnosticText::from(js_string(&value)).0.units(),
+        &[0x1f, u16::from(b'X'), u16::from(b','), 0xd800],
+        "array elements must keep the injective diagnostic escape"
+    );
+}
+
+/// The same input through the real config entry, where the message goes
+/// through `Diagnostics::check` and back out of `load`.
+#[test]
+fn config_array_values_keep_control_units_in_diagnostics() {
+    let metadata = Metadata {
+        home: PathBuf::from("<PILOT_HOME>"),
+        cwd: PathBuf::from("/offline"),
+        files: FixtureFiles {
+            data: "schemaVersion: [\"\\x1fX\",\"\\ud800\"]\n"
+                .as_bytes()
+                .to_vec(),
+            kind: None,
+        },
+    };
+    let error = match super::load(&metadata, &Env::new()) {
+        Ok(_) => panic!("fatal schemaVersion diagnostic must fail the load"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "CONFIG_SCHEMA_VERSION_UNSUPPORTED");
+    assert_eq!(
+        error.message.units(),
+        "Unsupported schemaVersion "
+            .encode_utf16()
+            .chain([
+                0x1f,
+                u16::from(b'X'),
+                u16::from(b','),
+                0xd800,
+                u16::from(b'.')
+            ])
+            .collect::<Vec<_>>(),
+        "the fatal message must carry the array's units unchanged"
+    );
+}
+
+/// `schemaVersion` / `alwaysOn.language` reject a throwing `String(value)`
+/// before reading it, so the kind has to survive `string_coercible`: TS calls
+/// `String(value)` there and reports `RangeError` past the depth bound,
+/// `TypeError` for an own `toString` (#1550 修 r5). YAML caps nesting at 782
+/// (`pilotdeck-yaml` `CONVERSION_DEPTH`), so the deep case is only reachable
+/// if a JSON config source lands later.
+#[test]
+fn string_coercion_errors_keep_their_class() {
+    let mut deep = JsValue::Number(1.0);
+    for _ in 0..crate::js_value::MAX_ARRAY_DEPTH + 1 {
+        deep = JsValue::Array(vec![deep]);
+    }
+    assert_eq!(
+        string_coercible(&deep).map_err(|kind| kind.name()),
+        Err("RangeError")
+    );
+    assert_eq!(
+        string_coercible(&object([("toString", JsValue::Null)])).map_err(|kind| kind.name()),
+        Err("TypeError")
+    );
+    assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
+}

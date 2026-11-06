@@ -308,8 +308,8 @@ fn load_project_with_files_inner<F: Files>(
         }
     }
     let version = field(&raw, "schemaVersion");
-    if !string_coercible(version) {
-        return Err(primitive_error());
+    if let Err(kind) = string_coercible(version) {
+        return Err(coercion_error(kind));
     }
     if version.is_undefined() {
         d.warn(
