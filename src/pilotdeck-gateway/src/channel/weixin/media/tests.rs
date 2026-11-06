@@ -16,6 +16,7 @@ use super::*;
 use pilotdeck_protocol::{JsValue, parse_json};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
@@ -690,17 +691,22 @@ async fn download_replays_the_oracle_cases() {
         let expected = &case["expected"];
         let recorded = case["input"]["url"].as_str().expect("#1823 download url");
         if case["input"]["server"] == "closed" {
-            // Bind and drop: the port is then refused, like a dead CDN host.
-            let listener = TcpListener::bind(("127.0.0.1", 0))
-                .await
+            // A bound socket that never listens answers a SYN with RST, i.e.
+            // the same ECONNREFUSED a dead CDN host gives. Keeping the socket
+            // alive for the whole probe also pins the port: bind-then-drop
+            // would let a sibling test re-bind it in the window before the
+            // connect and turn this cell into a real HTTP exchange.
+            let socket = tokio::net::TcpSocket::new_v4().expect("#1823 probe socket");
+            socket
+                .bind("127.0.0.1:0".parse().expect("#1823 probe addr"))
                 .expect("#1823 probe bind");
-            let port = listener.local_addr().expect("#1823 probe addr").port();
-            drop(listener);
+            let port = socket.local_addr().expect("#1823 probe port").port();
             let url = recorded.replace("<port>", &port.to_string());
             let error = client
                 .download(&url)
                 .await
                 .expect_err("#1823 a closed port must fail");
+            drop(socket);
             crate::negative_assert_eq!(
                 error.formatted(),
                 expected["error"].as_str().expect("#1823 download error"),
@@ -805,5 +811,103 @@ async fn a_terminated_body_reports_the_fetch_type_error() {
         error.formatted(),
         "TypeError: terminated",
         "#1823 truncated body reports terminated"
+    );
+}
+
+// Baseline: `clearTimeout` runs as soon as `fetch` resolves, so the 60 s
+// `AbortController` deadline never bounds `arrayBuffer()`. A body that keeps
+// arriving after that deadline must still be read to completion.
+#[tokio::test]
+async fn a_slow_body_outlives_the_fetch_deadline() {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("#1823 slow body bind");
+    let port = listener.local_addr().expect("#1823 slow body addr").port();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("#1823 slow body accept");
+        let _ = read_head(&mut stream).await;
+        // Headers now, first body frame well after the injected deadline.
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n")
+            .await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let _ = stream.write_all(b"abc").await;
+        let _ = stream.shutdown().await;
+    });
+    let bytes = WeixinCdnClient::new()
+        .with_fetch_timeout(Duration::from_millis(100))
+        .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
+        .await
+        .expect("#1823 a slow body must outlive the fetch deadline");
+    task.await.expect("#1823 slow body server");
+    crate::negative_assert_eq!(
+        bytes,
+        b"abc".to_vec(),
+        "#1823 slow body is not bounded by the fetch deadline"
+    );
+}
+
+// The other half: the header phase *is* under the 60 s deadline, so a server
+// that accepts the connection and never answers must abort, not hang.
+#[tokio::test]
+async fn the_header_phase_still_aborts_at_the_fetch_deadline() {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("#1823 stalled header bind");
+    let port = listener
+        .local_addr()
+        .expect("#1823 stalled header addr")
+        .port();
+    let task = tokio::spawn(async move {
+        let (mut stream, _) = listener
+            .accept()
+            .await
+            .expect("#1823 stalled header accept");
+        let _ = read_head(&mut stream).await;
+        // Hold the connection open without ever sending a response.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let _ = stream.shutdown().await;
+    });
+    let error = WeixinCdnClient::new()
+        .with_fetch_timeout(Duration::from_millis(100))
+        .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
+        .await
+        .expect_err("#1823 a stalled header phase must abort");
+    task.abort();
+    crate::negative_assert_eq!(
+        error.formatted(),
+        "AbortError: This operation was aborted",
+        "#1823 stalled header phase aborts at the fetch deadline"
+    );
+}
+
+// `Number.isFinite(Number("infinity"))` is false: the declared-size guard is
+// skipped. `Number("0x4000000")` is 67108864, i.e. the guard fires.
+#[test]
+fn content_length_uses_js_number_finite_semantics() {
+    crate::negative_assert_eq!(
+        finite_js_number("0x4000000"),
+        Some(67108864.0),
+        "#1823 hex content-length parses like Number"
+    );
+    crate::negative_assert_eq!(
+        finite_js_number("Infinity"),
+        None,
+        "#1823 non-finite content-length skips the guard"
+    );
+    crate::negative_assert_eq!(
+        finite_js_number(""),
+        Some(0.0),
+        "#1823 empty content-length is zero"
+    );
+    crate::negative_assert_eq!(
+        finite_js_number("not a number"),
+        None,
+        "#1823 unparsable content-length skips the guard"
+    );
+    crate::negative_assert_eq!(
+        finite_js_number("52428801"),
+        Some(52428801.0),
+        "#1823 decimal content-length parses"
     );
 }

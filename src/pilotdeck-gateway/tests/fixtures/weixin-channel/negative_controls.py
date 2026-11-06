@@ -211,18 +211,41 @@ MUTATIONS = [
     # *received* size, which no oracle case can record (a 50 MiB body would
     # bloat the fixture), so a dedicated loopback cell kills it.
     ('media-download-received-cap-removed', weixin / 'media.rs',
-     '            read_body(response.into_body(), WEIXIN_ATTACHMENT_MAX_BYTES, None)',
-     '            read_body(response.into_body(), usize::MAX, None)',
+     '        read_body(\n            response.into_body(),\n            WEIXIN_ATTACHMENT_MAX_BYTES,',
+     '        read_body(\n            response.into_body(),\n            usize::MAX,',
      'channel::weixin::media::tests::the_received_body_is_capped_at_the_limit',
      '#1823 received body is capped at the limit'),
+    # Baseline scopes the 60 s `AbortController` to `fetch` itself: the timer
+    # is cleared before `arrayBuffer()`, and the body is bounded only by
+    # undici's 300 s `bodyTimeout`. Handing the fetch deadline to the body
+    # read is exactly the regression the slow-body cell pins.
+    ('media-download-body-on-fetch-deadline', weixin / 'media.rs',
+     '            Some(WEIXIN_CDN_BODY_TIMEOUT),',
+     '            Some(self.fetch_timeout),',
+     'channel::weixin::media::tests::a_slow_body_outlives_the_fetch_deadline',
+     '#1823 slow body is not bounded by the fetch deadline'),
+    # The other half of the same deadline: the header phase must still abort.
+    ('media-download-fetch-deadline-removed', weixin / 'media.rs',
+     '        let response = timeout(\n            self.fetch_timeout,',
+     '        let response = timeout(\n            Duration::MAX,',
+     'channel::weixin::media::tests::the_header_phase_still_aborts_at_the_fetch_deadline',
+     '#1823 stalled header phase aborts at the fetch deadline'),
+    # `Number.isFinite(Number("Infinity"))` is false, so the baseline skips the
+    # declared-size guard; keeping the infimum would reject a response the
+    # baseline accepts.
+    ('media-download-content-length-non-finite-guard-dropped', weixin / 'media.rs',
+     '    number.is_finite().then_some(number)',
+     '    Some(number)',
+     'channel::weixin::media::tests::content_length_uses_js_number_finite_semantics',
+     '#1823 non-finite content-length skips the guard'),
     # A body that errors mid-stream is `TypeError: terminated` (undici's
     # `arrayBuffer()` rejection), not the connection-level `fetch failed`.
     ('media-download-terminated-mapped-to-fetch-failed', weixin / 'media.rs',
-     '                    BodyError::Terminated => WeixinClientError {\n'
-     '                        name: "TypeError".into(),\n'
-     '                        message: "terminated".into(),\n'
-     '                    },',
-     '                    BodyError::Terminated => WeixinClientError::fetch_failed(),',
+     '            BodyError::Terminated => WeixinClientError {\n'
+     '                name: "TypeError".into(),\n'
+     '                message: "terminated".into(),\n'
+     '            },',
+     '            BodyError::Terminated => WeixinClientError::fetch_failed(),',
      'channel::weixin::media::tests::a_terminated_body_reports_the_fetch_type_error',
      '#1823 truncated body reports terminated'),
 ]

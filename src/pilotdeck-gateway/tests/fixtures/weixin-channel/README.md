@@ -97,7 +97,13 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 
 Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 `redirect: "follow"` 语义，含 bad-port 表、多 `Location` join、fragment 剥离），
-不是本模块内联的第二份循环。**收到字节的上限**另有一条 Rust-only 用例
+不是本模块内联的第二份循环。**期限的层次与基线一致**：60 s 的
+`AbortController` 只压在取响应头上（基线 `finally { clearTimeout() }` 在
+`arrayBuffer()` 之前就跑完了），正文由 undici 默认的 `bodyTimeout`（300 s，
+帧间空闲而非整段期限）约束；两条都有 loopback 用例钉住
+（`the_header_phase_still_aborts_at_the_fetch_deadline` /
+`a_slow_body_outlives_the_fetch_deadline`），慢链路上的大附件不会被 60 s 掐断。
+**收到字节的上限**另有一条 Rust-only 用例
 `the_received_body_is_capped_at_the_limit`：基线 `saveFromUrl` 先
 `arrayBuffer()` 全量缓冲再比大小，无 `content-length` 的流式 CDN 会把内存撑爆，
 本移植改为读时即封顶（`fetch_redirect::read_body`），超限报
@@ -116,6 +122,9 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 | `media-pkcs7-strip-dropped` | `decryption_strips_the_pkcs7_padding`（`media-image-owner-hex-aes128`，尾部 padding 未剥） |
 | `media-base64-single-char-guard`（去掉 1 字符保护） | `node_base64_semantics` 的 `"A"` / `"!"`（index 越界 panic） |
 | `media-download-received-cap-removed`（读 body 上限改 `usize::MAX`） | `the_received_body_is_capped_at_the_limit` |
+| `media-download-body-on-fetch-deadline`（正文空闲期限改用 60 s fetch 期限） | `a_slow_body_outlives_the_fetch_deadline` |
+| `media-download-fetch-deadline-removed`（取头期限改 `Duration::MAX`） | `the_header_phase_still_aborts_at_the_fetch_deadline` |
+| `media-download-content-length-non-finite-guard-dropped`（去掉 `is_finite`） | `content_length_uses_js_number_finite_semantics` 的 `"Infinity"` |
 | `media-download-terminated-mapped-to-fetch-failed`（断流映射回 `fetch failed`） | `a_terminated_body_reports_the_fetch_type_error` |
 | `replay-missing-case`（`remove(0)` 丢掉一条渠道场景） | `weixin_replays_the_ts_channel_oracle` 的 `#1328 weixin oracle case count` |
 | `media-oracle-missing-case`（`pop()` 丢掉一条媒体用例） | `weixin_replays_the_ts_channel_oracle` 的 `#1823 weixin generator media declaration` |
@@ -151,8 +160,9 @@ listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 
   总是跟随）、qrstatus 粘滞（脚本耗尽后重复最后答案）。
 - #1823 媒体格没有随机源：明文/密钥/ciphertext 都是常量，AES-ECB 确定性，
   CDN 端口与临时目录都进掩码；同一基线两次重生成逐字节相同（实测 r6==r7）。
-  解密输入清一色 16 字节整数倍，诱饵格在生成时就断言「明文与它的解密结果都
-  是 known file」，不成立直接生成失败，不会录进一格空转用例。
+  解密输入除 `media-image-not-block-multiple`（37 字节，故意非 16 字节整数倍）
+  外都是 16 字节整数倍；诱饵格在生成时就断言「明文与它的解密结果都是 known
+  file」，不成立直接生成失败，不会录进一格空转用例。
 
 ## 重生成（输出用 `recursive:true` + `flag:'wx'`，写到**新**目录）
 

@@ -35,7 +35,7 @@ use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::TokioExecutor,
 };
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 use std::{collections::HashSet, time::Duration};
 use tokio::time::timeout;
 
@@ -47,8 +47,15 @@ use crate::metadata::js_trim;
 pub const WEIXIN_CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 /// `ImAttachmentStore.ts` `DEFAULT_MAX_BYTES`.
 pub const WEIXIN_ATTACHMENT_MAX_BYTES: usize = 50 * 1024 * 1024;
-/// `ImAttachmentStore.ts` `DEFAULT_FETCH_TIMEOUT_MS`.
+/// `ImAttachmentStore.ts` `DEFAULT_FETCH_TIMEOUT_MS`. The baseline races this
+/// against `fetch` only: the `AbortController` timer is cleared as soon as the
+/// `Response` arrives, so it never bounds reading the body.
 const WEIXIN_CDN_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+/// undici's default `bodyTimeout`, which is what actually bounds the
+/// baseline's `arrayBuffer()` after that 60 s timer is cleared: the longest
+/// gap between two body frames (including the wait for the first), not a
+/// deadline for the whole body.
+const WEIXIN_CDN_BODY_TIMEOUT: Duration = Duration::from_secs(300);
 const AES_BLOCK: usize = 16;
 
 /// `isKnownImageBuffer`: JPEG / PNG / GIF87a / GIF89a / WebP magic.
@@ -358,6 +365,8 @@ type CdnHttpClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<By
 /// the proxy and connect-timeout settings).
 pub struct WeixinCdnClient {
     client: CdnHttpClient,
+    /// `AbortController` deadline for the header phase (60 s in production).
+    fetch_timeout: Duration,
 }
 
 impl Default for WeixinCdnClient {
@@ -372,22 +381,35 @@ impl WeixinCdnClient {
         Self {
             client: Client::builder(TokioExecutor::new())
                 .build(crate::runtime::model::http::https_connector(config)),
+            fetch_timeout: WEIXIN_CDN_FETCH_TIMEOUT,
         }
     }
 
-    /// `ImAttachmentStore.saveFromUrl`'s fetch step: GET with a 60 s deadline
-    /// through the shared undici redirect policy
-    /// ([`crate::fetch_redirect::follow`], not a private copy),
-    /// `response.ok` required, and the 50 MiB limit enforced on both the
-    /// declared and the received size. The attachment store itself (paths,
-    /// names, metadata) belongs to #1822.
+    /// Test seam: the production deadline is the baseline's 60 s, far past any
+    /// test's patience, so the header deadline is injectable.
+    #[cfg(test)]
+    pub(super) fn with_fetch_timeout(mut self, fetch_timeout: Duration) -> Self {
+        self.fetch_timeout = fetch_timeout;
+        self
+    }
+
+    /// `ImAttachmentStore.saveFromUrl`'s fetch step: GET through the shared
+    /// undici redirect policy ([`crate::fetch_redirect::follow`], not a
+    /// private copy), a 60 s `AbortController` deadline on the **header
+    /// phase only**, `response.ok` required, and the 50 MiB limit enforced on
+    /// both the declared and the received size. The attachment store itself
+    /// (paths, names, metadata) belongs to #1822.
     pub async fn download(&self, url: &str) -> Result<Vec<u8>, WeixinClientError> {
-        let exchange = async {
-            let target = url::Url::parse(url).map_err(|_| WeixinClientError {
-                name: "TypeError".into(),
-                message: format!("Failed to parse URL from {url}"),
-            })?;
-            let response = follow(
+        let target = url::Url::parse(url).map_err(|_| WeixinClientError {
+            name: "TypeError".into(),
+            message: format!("Failed to parse URL from {url}"),
+        })?;
+        // Baseline: `await fetch(...)` races the 60 s timer, then `finally {
+        // clearTimeout(timeout) }` runs before `arrayBuffer()`. A legitimately
+        // slow 50 MiB body therefore outlives the 60 s fetch deadline.
+        let response = timeout(
+            self.fetch_timeout,
+            follow(
                 target,
                 Method::GET,
                 HeaderMap::new(),
@@ -399,47 +421,49 @@ impl WeixinCdnClient {
                         .await
                         .map_err(|_| WeixinClientError::fetch_failed())
                 },
-            )
-            .await?;
-            let status = response.status();
-            if !status.is_success() {
-                return Err(WeixinClientError::error(format!(
-                    "Attachment download failed HTTP {}.",
-                    status.as_u16()
-                )));
-            }
-            if let Some(declared) = response
-                .headers()
-                .get(header::CONTENT_LENGTH)
-                .and_then(|value| value.to_str().ok())
-                .and_then(js_number)
-                && declared > WEIXIN_ATTACHMENT_MAX_BYTES as f64
-            {
-                return Err(WeixinClientError::error(format!(
-                    "Attachment is {declared} bytes (limit {WEIXIN_ATTACHMENT_MAX_BYTES})."
-                )));
-            }
-            read_body(response.into_body(), WEIXIN_ATTACHMENT_MAX_BYTES, None)
-                .await
-                .map_err(|error| match error {
-                    // The baseline buffers `arrayBuffer()` and only then
-                    // reports the exact size; a hostile CDN could make that
-                    // unbounded, so the port stops at the limit and reports
-                    // the smallest size that must have arrived.
-                    BodyError::TooLong => attachment_too_large(WEIXIN_ATTACHMENT_MAX_BYTES + 1),
-                    // `arrayBuffer()` on a body that errors mid-stream rejects
-                    // with `TypeError: terminated` (undici), the same shape
-                    // `fetch_redirect`'s other call sites report.
-                    BodyError::Terminated => WeixinClientError {
-                        name: "TypeError".into(),
-                        message: "terminated".into(),
-                    },
-                    BodyError::Aborted => WeixinClientError::abort(),
-                })
-        };
-        timeout(WEIXIN_CDN_FETCH_TIMEOUT, exchange)
-            .await
-            .map_err(|_| WeixinClientError::abort())?
+            ),
+        )
+        .await
+        .map_err(|_| WeixinClientError::abort())??;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(WeixinClientError::error(format!(
+                "Attachment download failed HTTP {}.",
+                status.as_u16()
+            )));
+        }
+        if let Some(declared) = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(finite_js_number)
+            && declared > WEIXIN_ATTACHMENT_MAX_BYTES as f64
+        {
+            return Err(WeixinClientError::error(format!(
+                "Attachment is {declared} bytes (limit {WEIXIN_ATTACHMENT_MAX_BYTES})."
+            )));
+        }
+        read_body(
+            response.into_body(),
+            WEIXIN_ATTACHMENT_MAX_BYTES,
+            Some(WEIXIN_CDN_BODY_TIMEOUT),
+        )
+        .await
+        .map_err(|error| match error {
+            // The baseline buffers `arrayBuffer()` and only then reports the
+            // exact size; a hostile CDN could make that unbounded, so the
+            // port stops at the limit and reports the smallest size that must
+            // have arrived.
+            BodyError::TooLong => attachment_too_large(WEIXIN_ATTACHMENT_MAX_BYTES + 1),
+            // `arrayBuffer()` on a body that errors mid-stream rejects with
+            // `TypeError: terminated` (undici), the same shape
+            // `fetch_redirect`'s other call sites report.
+            BodyError::Terminated => WeixinClientError {
+                name: "TypeError".into(),
+                message: "terminated".into(),
+            },
+            BodyError::Aborted => WeixinClientError::abort(),
+        })
     }
 }
 
@@ -449,13 +473,14 @@ fn attachment_too_large(bytes: usize) -> WeixinClientError {
     ))
 }
 
-/// JS `Number(value)` for a `content-length` header: `""` is `0`, anything
-/// unparsable is `NaN` (and therefore not greater than the limit).
-fn js_number(value: &str) -> Option<f64> {
-    if value.trim().is_empty() {
-        return Some(0.0);
-    }
-    value.trim().parse::<f64>().ok()
+/// `Number.isFinite(Number(value))` for the `content-length` header: `""` is
+/// `0`, hex/binary/octal literals parse like JS (`Number("0x4000000")` is
+/// 67108864), and anything unparsable or non-finite (`"Infinity"`) is `None`
+/// and skips the declared-size check, exactly like the baseline guard.
+fn finite_js_number(value: &str) -> Option<f64> {
+    let number =
+        crate::channel::api_server::server::js_number(&JsValue::String(JsString::from(value)));
+    number.is_finite().then_some(number)
 }
 
 // ── JS boundary helpers ─────────────────────────────────────────────────────
