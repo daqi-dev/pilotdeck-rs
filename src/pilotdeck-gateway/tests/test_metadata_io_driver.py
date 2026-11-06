@@ -1230,11 +1230,26 @@ class EnvironmentControls(unittest.TestCase):
         self.assert_accumulator_pinned(source, function, 'problems')
         # 全文件的出口清单：任何位置新增一个 `sys.exit` / `raise SystemExit`（例如主路径
         # 变异循环里的早退 `sys.exit(0)`）都会让这张清单变长，逼着重新过一遍链。
+        # 全文件的出口清单（r7 GLM sibling/concurrency/boundary P1）：只钉两个桶的
+        # 计数，等于 `_EXIT_TARGETS` 里另外四种形态「收了不钉」——`exit(0)` /
+        # `os._exit(0)` 插进来两个桶都不动。整份清单逐条比对，任何位置任何形态的
+        # 新增/删除都会红。
         inventory = self.exit_calls(source, tree)
-        self.assertEqual(inventory.count('sys.exit(…)'), 20,
-                         '#1692 r6 the fixture has exactly the 20 reviewed sys.exit calls')
-        self.assertEqual(inventory.count('raise SystemExit(…)'), 3,
-                         '#1692 r6 the fixture has exactly the 3 reviewed SystemExit raises')
+        self.assertEqual(sorted(inventory),
+                         sorted(['sys.exit(…)'] * 20 + ['raise SystemExit(…)'] * 3),
+                         '#1692 r7 every process-ending call in the fixture is reviewed')
+        # r7（GLM sibling P1）：`--self-check` 链的四个被调方与 controls 的那个同层，
+        # 同样可能自己早退或把见证重置后再归还。五个函数一视同仁。
+        for name, reviewed in (('deadline_probe', ['raise SystemExit(…)']),
+                               ('slot_timeout_probe', []),
+                               ('restore_probe', []),
+                               ('dispatch_probe', [])):
+            probe = next((node for node in ast.walk(tree)
+                          if isinstance(node, ast.FunctionDef) and node.name == name), None)
+            self.assertIsNotNone(probe, f'#1692 r7 the fixture defines {name}()')
+            self.assertEqual(self.exit_calls(source, probe), reviewed,
+                             f'#1692 r7 {name} only exits where it was reviewed')
+            self.assert_accumulator_pinned(source, probe, 'problems')
 
     def main_verdict_pins(self, source):
         """主路径的「见证 → 退出码」链：`failures` / `timed_out` → `sys.exit(1)`。
@@ -1261,10 +1276,19 @@ class EnvironmentControls(unittest.TestCase):
             "byte-for-byte', flush=True)",
         ], '#1692 r6 the main verdict is exactly these six statements')
         # 见证侧同样钉死：`failures` 只许初始化一次、之后只 `append`，裁决语句里的读取
-        # 逐字钉在上面那段里。
-        self.assert_accumulator_pinned(source, tree, 'failures', extra=tail[3:])
-        self.assertEqual(source.count('failures.append('), 3,
-                         '#1692 r6 every main-path failure mode reports through failures')
+        # 逐字钉在上面那段里。r7（GLM boundary P1）：`append` 的条数走 AST 而不是文本
+        # 计数——把一句 `failures.append(...)` 注释掉，文本还在、AST 里少一个。
+        self.assert_accumulator_pinned(source, tree, 'failures', extra=tail[3:],
+                                       expected_witnesses=3)
+        # r7（GLM sibling P1）：`timed_out` 的读侧被六语句序列钉住，写侧没人钉。
+        # 它只有两处赋值：`stop_run` 里记下原因、模块级初始化成 None。
+        self.assertEqual(sorted(self.statement_text(source, node) for node in ast.walk(tree)
+                                if isinstance(node, ast.Assign)
+                                and any(isinstance(target, ast.Name) and target.id == 'timed_out'
+                                        for target in node.targets)),
+                         sorted(["timed_out = f'{type(error).__name__}: {error}'",
+                                 'timed_out = None']),
+                         '#1692 r7 timed_out is written in exactly two reviewed places')
         # 同族的第三条链（r6 GLM sibling P2）：`--self-check` 自己的归还层。
         # `sys.exit(self_check())` 已被上面钉住，但 `self_check()` 内部把 `return 1`
         # 改成 `return 0` 同样让 CI 那一步照绿。裁决两句话 + 累加器一起钉死。
@@ -1277,6 +1301,16 @@ class EnvironmentControls(unittest.TestCase):
                          ['if problems:\nreturn 1', 'return 0'],
                          '#1692 r6 --self-check still exits 1 on a surviving guard')
         self.assert_accumulator_pinned(source, self_check, 'problems', extra=verdict)
+        # r7（GLM sibling P1）：四条 `problems.extend(<probe>())` 是 --self-check 的
+        # 全部覆盖面，删掉一条钉子只要求「至少一个 append」，照绿。
+        self.assertEqual([self.statement_text(source, node) for node in ast.walk(self_check)
+                          if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                          and node.func.attr == 'extend'],
+                         ['problems.extend(deadline_probe())',
+                          'problems.extend(slot_timeout_probe())',
+                          'problems.extend(restore_probe())',
+                          'problems.extend(dispatch_probe())'],
+                         '#1692 r7 every probe is still wired into --self-check')
 
     @staticmethod
     def statement_text(source, statement):
@@ -1303,7 +1337,8 @@ class EnvironmentControls(unittest.TestCase):
                     found.append('raise SystemExit(…)')
         return found
 
-    def assert_accumulator_pinned(self, source, scope, name, extra=()):
+    def assert_accumulator_pinned(self, source, scope, name, extra=(),
+                                  expected_witnesses=None):
         """`name` 这个见证累加器只许初始化一次，之后只 `append` 或整份交出。
 
         r6（DeepSeek sibling P1 / DeepSeek concurrency P1）：只钉 `return problems`
@@ -1324,14 +1359,22 @@ class EnvironmentControls(unittest.TestCase):
                    and node.func.attr in ('append', 'extend')
                    and isinstance(node.func.value, ast.Name) and node.func.value.id == name]
         self.assertGreater(len(appends), 0, f'#1692 r6 {name} witnesses go through append')
+        if expected_witnesses is not None:
+            self.assertEqual(len(appends), expected_witnesses,
+                             f'#1692 r6 {name} keeps exactly {expected_witnesses} witnesses')
         allowed.update(id(node.func.value) for node in appends)
         allowed.update(id(node.value) for node in ast.walk(scope)
                        if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
                        and node.value.id == name)
-        # `for problem in problems:` / `if problems:` 是对累加器的只读消费。
+        # `for problem in problems:` 与 `if problems:` / `elif not problems:` 都是
+        # 对累加器的只读消费。
         allowed.update(id(node.iter) for node in ast.walk(scope)
                        if isinstance(node, ast.For) and isinstance(node.iter, ast.Name)
                        and node.iter.id == name)
+        for node in ast.walk(scope):
+            if isinstance(node, (ast.If, ast.While, ast.Assert)):
+                allowed.update(id(inner) for inner in ast.walk(node.test)
+                               if isinstance(inner, ast.Name) and inner.id == name)
         for statement in extra:
             allowed.update(id(node) for node in ast.walk(statement)
                            if isinstance(node, ast.Name) and node.id == name)
@@ -1431,6 +1474,37 @@ class EnvironmentControls(unittest.TestCase):
                  '    if problems:\n        return 0\n',
                  self.main_verdict_pins,
                  '    if problems:\n        return 1\n'),
+                # r7（GLM sibling/concurrency/boundary 的六条 P1）各打一个洞。
+                ('probe-early-exit',
+                 'def dispatch_probe():\n',
+                 'def dispatch_probe():\n    sys.exit(0)\n',
+                 self.controls_verdict_pins,
+                 'def dispatch_probe():\n'),
+                ('probe-accumulator-reset',
+                 '    return problems\n\n\ndef _send_signals_after(',
+                 '    problems = []\n    return problems\n\n\ndef _send_signals_after(',
+                 self.controls_verdict_pins,
+                 '    return problems\n\n\ndef _send_signals_after('),
+                ('probe-dropped-from-self-check',
+                 '    problems.extend(restore_probe())\n', '',
+                 self.main_verdict_pins,
+                 '    problems.extend(restore_probe())\n'),
+                ('exit-inventory-new-shape',
+                 'def publish_summary(rows, timed_out=None):\n',
+                 'def publish_summary(rows, timed_out=None):\n    os._exit(0)\n',
+                 self.controls_verdict_pins,
+                 'def publish_summary(rows, timed_out=None):\n'),
+                ('timed-out-cleared',
+                 'if timed_out:\n    print(f\'not finished',
+                 'timed_out = None\nif timed_out:\n    print(f\'not finished',
+                 self.main_verdict_pins,
+                 'if timed_out:\n    print(f\'not finished'),
+                # r7（DeepSeek concurrency P1）：写入点本身被抹掉，读侧全绿。
+                ('main-timeout-witness-dropped',
+                 "        timed_out = f'{type(error).__name__}: {error}'",
+                 '        timed_out = None',
+                 self.main_verdict_pins,
+                 "        timed_out = f'{type(error).__name__}: {error}'"),
         ):
             self.assertIn(anchor, source, f'#1692 r6 verdict anchor: {label}')
             mutant = source.replace(old, new, 1)
