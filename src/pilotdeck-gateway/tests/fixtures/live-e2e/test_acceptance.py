@@ -15,8 +15,9 @@ class AcceptanceTests(unittest.TestCase):
     def test_exact_test_inventory(self):
         for target, names in run_host.EXPECTED_TESTS.items():
             # Cargo prints `running N tests` before the per-test rows; the
-            # runner cross-checks both, so the fixture must carry the header.
-            header = f'running {len(names)} tests\n'
+            # runner cross-checks both, so the fixture must carry the header in
+            # libtest's exact singular/plural form.
+            header = f'running {len(names)} test{"s" if len(names) != 1 else ""}\n'
             rows = [f'test {name} ... ok\n' for name in sorted(names)]
             def accepted(log, code=0):
                 return run_host.completed_tests(target, subprocess.CompletedProcess([], code, log, ''))['passed']
@@ -39,11 +40,11 @@ class AcceptanceTests(unittest.TestCase):
                + ''.join(f'test {name} ... ok\n' for name in present))
         record = run_host.completed_tests('live_e2e', subprocess.CompletedProcess([], 0, log, ''))
         self.assertFalse(record['passed'])
-        self.assertEqual(record['expectedCount'], 11)
+        self.assertEqual(record['expectedCount'], len(expected))
         self.assertEqual(record['observedCount'], len(present))
         message = run_host.failure_message('live_e2e', record)
         print(f'missing-cell diagnostic: {message}', flush=True)
-        self.assertIn('expected 11 / observed 9', message)
+        self.assertIn(f'expected {len(expected)} / observed {len(present)}', message)
         self.assertIn('missing:', message)
         for name in absent:
             self.assertIn(name, message)
@@ -60,6 +61,12 @@ class AcceptanceTests(unittest.TestCase):
         # #589 close-out: a remote runner host has no ~/ws/pdrs-ops; the gate
         # lives under ~/ws/pdrs-runner-tools. Silence must never mean "skip the
         # quota", so a missing gate is an error with the tried paths.
+        def make_gate(path):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('#!/bin/sh\nexit 0\n')
+            path.chmod(0o755)
+            return path
+
         with tempfile.TemporaryDirectory(prefix='pdrs-run-host-gate-') as temp:
             home = Path(temp)
             env = {'HOME': str(home)}
@@ -67,18 +74,10 @@ class AcceptanceTests(unittest.TestCase):
                 run_host.slot_gate(env)
             self.assertIn('no executable cargo slot gate', str(caught.exception))
             self.assertIn('PDRS_CARGO_SLOT_BIN', str(caught.exception))
-            ops = home / 'ws/pdrs-ops/bin/cargo-slot'
-            ops.parent.mkdir(parents=True)
-            ops.write_text('#!/bin/sh\nexit 0\n')
-            ops.chmod(0o755)
+            ops = make_gate(home / 'ws/pdrs-ops/bin/cargo-slot')
             self.assertEqual(run_host.slot_gate(env), str(ops))
-            runner = home / 'ws/pdrs-runner-tools/bin/cargo'
-            runner.parent.mkdir(parents=True)
-            runner.write_text('#!/bin/sh\nexit 0\n')
-            runner.chmod(0o755)
-            explicit = home / 'explicit-gate'
-            explicit.write_text('#!/bin/sh\nexit 0\n')
-            explicit.chmod(0o755)
+            runner = make_gate(home / 'ws/pdrs-runner-tools/bin/cargo')
+            explicit = make_gate(home / 'explicit-gate')
             self.assertEqual(run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(explicit))), str(explicit))
             with self.assertRaises(RuntimeError):
                 run_host.slot_gate(dict(env, PDRS_CARGO_SLOT_BIN=str(home / 'missing-gate')))

@@ -32,7 +32,9 @@ PASSED_TESTS = re.compile(r'^test ([A-Za-z0-9_:]+) \.\.\. ok$', re.MULTILINE)
 
 # Unified cargo quota gate (#589 close-out): coordinator hosts install it under
 # ~/ws/pdrs-ops, remote runner hosts under ~/ws/pdrs-runner-tools. Both are the
-# same `cargo-slot --status` implementation.
+# same `cargo-slot --status` implementation. This list must stay a superset of
+# `scripts/cargo-slots.sh`'s own gate resolution (same two paths, that script
+# owns the single source for every other `wait_for_slot` caller).
 SLOT_GATE_CANDIDATES = ('ws/pdrs-ops/bin/cargo-slot', 'ws/pdrs-runner-tools/bin/cargo')
 
 
@@ -44,6 +46,7 @@ def slot_gate(environ=None):
     path, into 69 = "no shared quota, continue"), which silently skips the
     per-host cargo quota. `PDRS_CARGO_SLOT_BIN` still wins when the caller sets
     it; an explicit but non-executable path is an error rather than an opt-out.
+    An empty value counts as unset, matching `cargo-slots.sh`'s `[ -n ]`.
     """
     environ = os.environ if environ is None else environ
     configured = environ.get('PDRS_CARGO_SLOT_BIN')
@@ -80,6 +83,8 @@ def completed_tests(target, result):
         reasons.append(f'cargo exit {result.returncode}')
     if announced_count is None:
         reasons.append('cargo did not print "running N tests"')
+    elif len(announced) != 1:
+        reasons.append(f'cargo printed {len(announced)} "running N tests" headers')
     elif announced_count != len(names):
         reasons.append(f'cargo announced {announced_count} tests but {len(names)} reported ok')
     if missing:
@@ -88,13 +93,27 @@ def completed_tests(target, result):
         reasons.append('unexpected: ' + ', '.join(unexpected))
     if duplicated:
         reasons.append('duplicated: ' + ', '.join(duplicated))
-    if len(names) != len(expected):
-        reasons.append(f'expected {len(expected)} / observed {len(names)}')
+    # The expected/observed counts are not repeated here: failure_message
+    # already prints them, and missing/unexpected/duplicated cover every way
+    # the two sets can differ.
     return {'passed': not reasons,
             'expected': sorted(expected), 'observed': names,
             'expectedCount': len(expected), 'observedCount': len(names),
             'announcedCount': announced_count,
             'missing': missing, 'unexpected': unexpected, 'reasons': reasons}
+
+
+def cargo_slot(timeout=900):
+    """Wait for a cargo slot after re-resolving the gate.
+
+    Re-resolution is deliberate: if the gate vanished between rounds, the
+    pinned path would send `cargo-slots.sh` down its explicit-but-not-executable
+    branch (69 = "no shared quota, continue") and the next cargo run would
+    silently bypass the per-host quota. Failing loudly is the point.
+    """
+    gate = slot_gate()
+    os.environ['PDRS_CARGO_SLOT_BIN'] = gate
+    return gate, wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=timeout)
 
 
 def failure_message(target, record):
@@ -116,7 +135,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     records = []
     for target, test in [('live_e2e', 'live_'), ('generator_provenance', 'live_e2e_')]:
-        slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
+        gate, slot = cargo_slot()
         (output / (target + '.slots.log')).write_text(slot.stdout + slot.stderr)
         command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p',
                    'pilotdeck-gateway', '--test', target, test, '--', '--include-ignored', '--test-threads=1']
