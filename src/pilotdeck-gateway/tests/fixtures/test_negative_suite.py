@@ -1531,7 +1531,10 @@ class AuditBindingTests(unittest.TestCase):
         self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'))
 
 
-BASELINE_DEFAULT = re.compile(r"\.get\(\s*['\"][A-Z_]*BASELINE['\"]\s*,\s*['\"]HEAD['\"]\s*\)")
+BASELINE_DEFAULTS = (
+    re.compile(r"\.get\(\s*['\"][A-Z_]*BASELINE['\"]\s*,\s*['\"]HEAD['\"]\s*\)"),
+    re.compile(r"sys\.argv\[2\]\s+if\s+len\(sys\.argv\)\s*>\s*2\s+else\s+['\"]HEAD['\"]"),
+)
 
 
 def unpinned_baseline_reads(root):
@@ -1540,13 +1543,16 @@ def unpinned_baseline_reads(root):
     ``os.environ.get(NAME, 'HEAD')`` keeps an exported-but-empty variable
     verbatim, and ``git show ':path'`` resolves the empty revspec to the index:
     a staged-but-uncommitted tree then becomes the guard's baseline and the
-    mutation run reports PASS against its own bytes. ``get(NAME) or 'HEAD'``
-    is the rule; this scan is what keeps the copies from drifting apart again.
+    mutation run reports PASS against its own bytes. The positional
+    ``sys.argv[2] if len(sys.argv) > 2 else 'HEAD'`` spelling has the same hole
+    for an explicitly empty argument. ``get(NAME) or 'HEAD'`` (and the argv
+    form folded the same way) is the rule; this scan is what keeps the copies
+    from drifting apart again.
     """
     found = []
     for path in sorted(Path(root).rglob('negative*.py')):
         for number, line in enumerate(path.read_text().splitlines(), 1):
-            if BASELINE_DEFAULT.search(line):
+            if any(pattern.search(line) for pattern in BASELINE_DEFAULTS):
                 found.append(f'{path.relative_to(root)}:{number}')
     return found
 
@@ -1560,12 +1566,16 @@ class BaselineDefaultTests(unittest.TestCase):
 
     def test_scan_catches_a_literal_head_default(self):
         with tempfile.TemporaryDirectory() as root:
-            probe = Path(root) / 'edgeclaw-probe' / 'negative.py'
-            probe.parent.mkdir()
-            probe.write_text("baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')\n")
+            env_probe = Path(root) / 'edgeclaw-probe' / 'negative.py'
+            env_probe.parent.mkdir()
+            env_probe.write_text("baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')\n")
+            argv_probe = Path(root) / 'argv-probe' / 'negative_controls.py'
+            argv_probe.parent.mkdir()
+            argv_probe.write_text("baseline = sys.argv[2] if len(sys.argv) > 2 else 'HEAD'\n")
             self.assertEqual(
-                unpinned_baseline_reads(Path(root)), ['edgeclaw-probe/negative.py:1'],
-                '#1890 the scan must see a literal HEAD default')
+                unpinned_baseline_reads(Path(root)),
+                ['argv-probe/negative_controls.py:1', 'edgeclaw-probe/negative.py:1'],
+                '#1890 the scan must see both literal HEAD default spellings')
 
 
 if __name__ == '__main__':
