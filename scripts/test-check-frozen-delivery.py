@@ -1039,6 +1039,85 @@ def run():
          gw_inventory(GW_BOOTSTRAP
                       + "sorted([{'k': 0}], key=lambda o: o.setdefault('k', 1))\n"
                       + _gw_tail) is not None)
+
+    # ---------------------------------------------------------------- r27 负控
+    # r26 的复审把三处收得过紧 / 过松：sys 模块名在解包时被从两张表里同时挤掉
+    # （回归）；无主 lambda 的「所在调用点」被当成唯一调用点（partial 换壳后
+    # 假通过）；接收者/属性名只按裸名匹配（`[_m][0].update(...)` /
+    # `getattr([common][0], _n)` 绕过去）。另一头 `_C()._swap(*rows)` 这类干净
+    # 展开不该再被判不可判定。
+    case("gateway import sys as _s 后解包模块名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "import sys as _s\n_p, _q = _s, 0\n"
+                        "_p.modules['apparatus'] = None\n" + _gw_tail) is None)
+    case("gateway 无主 lambda 被 partial 包一层再调用 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "from functools import partial\n"
+                        "_f = partial(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                        "_f(common)\n" + _gw_tail) is None)
+    case("gateway 绑定方法在容器里取别名 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_g, _h = _C()._swap, None\n_g(common)\n" + _gw_tail) is None)
+    case("gateway getattr 取绑定方法再调用 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "_g = getattr(_C(), '_swap')\n_g(common)\n" + _gw_tail) is None)
+    case("gateway 被调函数内解包带星号目标 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    _a, *_b = None, x\n"
+                        "    _b[0].update({'A2_SCRIPTS': ()})\n_swap(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 被调函数内解包形参后属性写 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x):\n    _a, _b = x, None\n"
+                        "    _a.A2_SCRIPTS = ()\n_swap(common)\n"
+                      + _gw_tail) is None)
+    case("gateway 表别名装进容器后就地改 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_m = sys.modules\n[_m][0].update({'apparatus': None})\n"
+                      + _gw_tail) is None)
+    case("gateway getattr 的接收者装进容器 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_n = A2_SCRIPTS\ngetattr([common][0], _n)\n"
+                      + _gw_tail) is None)
+    case("gateway 属性调用展开的是干净数据 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "rows = [{'k': 0}]\n_C()._swap(*rows)\n"
+                      + _gw_tail) is not None)
+    case("gateway 别名指向不写的绑定方法 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _noop(self, x):\n        return x\n"
+                        "_g = _C()._noop\n_g(common)\n" + _gw_tail) is not None)
+    case("gateway 同名函数两条定义 + 零实参属性调用 → 不崩（按默认值判不可判定）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _swap(x=common):\n    x.update({'A2_SCRIPTS': ()})\n"
+                        "class _C:\n    def _swap(self, x=common):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n_C()._swap()\n"
+                      + _gw_tail) is None)
+    case("gateway 无主 lambda 交给本文件 helper，由 helper 喂被看护对象 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "def _apply(f):\n    return f(common)\n"
+                        "_apply(lambda o: o.update({'A2_SCRIPTS': ()}))\n"
+                      + _gw_tail) is None)
+    case("gateway 就地改的方法绑到名字后再调用 → 不可判定",
+         gw_inventory(GW_BOOTSTRAP
+                      + "_g = common.update\n_g({'A2_SCRIPTS': ()})\n"
+                      + _gw_tail) is None)
+    case("gateway 绑定方法只给了被改形参的无关默认值 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x, notes=common):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n_C()._swap(1)\n"
+                      + _gw_tail) is not None)
+    case("gateway 属性调用展开的是干净字面量 → 仍可判定（不过度拦截）",
+         gw_inventory(GW_BOOTSTRAP
+                      + "class _C:\n    def _swap(self, x):\n"
+                        "        x.update({'A2_SCRIPTS': ()})\n"
+                        "obj = _C()\nobj._swap(*[1])\n" + _gw_tail) is not None)
     case("gateway 清单函数里出现 lambda → 不可判定",
          gw_inventory(GW_BOOTSTRAP + "A2_SCRIPTS = common.A2_SCRIPTS\n"
                       "\ndef manifest_inventory(root):\n"
@@ -1873,6 +1952,9 @@ def run():
          ui_registrable(UI_APPARATUS, UI_FROZEN
                         + "\n_a, _b = [REQUIRED, None]\n"
                           "_a.update({'evil.md'})\n") is None)
+    case("ui 块外把 REQUIRED 装进容器后就地改 → 不可判定",
+         ui_registrable(UI_APPARATUS, UI_FROZEN
+                        + "\n[REQUIRED][0].update({'evil.md'})\n") is None)
     case("改写名单含 sort / reverse（list 就地改）",
          {'sort', 'reverse'} <= cfd._MUTATOR_ATTRS)
 
