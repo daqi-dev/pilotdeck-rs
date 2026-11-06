@@ -377,6 +377,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
             None,
         ))),
         upload_gateway: Arc::new(UploadGateway::unavailable()),
+        prepare_weixin_login: None,
         settings: Requests::stub_settings(owner),
     }
 }
