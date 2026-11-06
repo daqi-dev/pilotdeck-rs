@@ -52,7 +52,9 @@ sys.pycache_prefix = _PYCACHE_ROOT
 atexit.register(shutil.rmtree, _PYCACHE_ROOT, ignore_errors=True)
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import KILL_TIMEOUT, mutating_sources, run_owned, wait_for_slot
+from negative_process import (KILL_TIMEOUT, defer_signal_exit, mutating_sources,
+                             restore_critical, run_owned, take_deferred_signal,
+                             wait_for_slot)
 from negative_process import committed_status_contract
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -1100,6 +1102,57 @@ def calibrate_dunder_setitem_status(rows):
         rows, "inline status/exit assignment report.__setitem__('status', 'PASS')")
 
 
+def calibrate_local_import_alias(rows):
+    """#892 r18: ``import sys as s`` inside a function body binds the same
+    exit as the module header does (GLM boundary r17 P0-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: function-local import alias enumerated, passed=False')
+
+
+def calibrate_module_alias_binding(rows):
+    """#892 r18: a module-level ``bail = sys.exit`` binds the same exit as the
+    import it copies (GLM sibling r17 P1-1)."""
+    return _unregistered_point(
+        rows, 'publish', 'exit-call-status',
+        'aggregation-audit: module-level assignment alias enumerated, passed=False')
+
+
+def calibrate_attr_status(rows):
+    """#892 r18: ``report.status = 'PASS'`` writes the same slot as
+    ``report['status'] = 'PASS'`` (MiniMax sibling r17 P1-1)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment 'PASS'")
+
+
+def calibrate_dunder_setattr_status(rows):
+    """#892 r18: ``report.__setattr__('status', ...)`` is the same slot under
+    the dunder spelling (MiniMax sibling r17 P1-1)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment report.__setattr__('status', 'PASS')")
+
+
+def calibrate_unbound_setitem_status(rows):
+    """#892 r18: ``dict.__setitem__(report, 'status', ...)`` writes the slot
+    through the unbound three-argument form (GLM sibling r17 P2-2)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment dict.__setitem__(report, 'status', 'PASS')")
+
+
+def calibrate_builtins_setattr_status(rows):
+    """#892 r18: ``builtins.setattr(report, 'status', ...)`` is the qualified
+    spelling of the bare builtin (GLM sibling r17 P2-2)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment builtins.setattr(report, 'status', 'PASS')")
+
+
+def calibrate_operator_setitem_status(rows):
+    """#892 r18: ``operator.setitem(report, 'status', ...)`` is the qualified
+    unbound spelling (GLM sibling r17 P2-2)."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment operator.setitem(report, 'status', 'PASS')")
+
+
 def calibrate_delegated_attribute(rows):
     """#892 r10: ``return helpers.exit_code(report)`` hides the exit code behind
     an attribute callee the audit never followed (GLM boundary r9 P1-2)."""
@@ -1897,6 +1950,41 @@ MUTATIONS = [
     ('calibrate-dunder-setitem-status', SOURCE,
      "                    report['status'] = overall\n",
      "                    report.__setitem__('status', 'PASS')\n"),
+    # #892 fix-r18 (GLM boundary r17 P0-1): the alias sources a real tree uses.
+    # ``_module_exit_aliases`` walked direct module children and
+    # ``_name_bindings`` never collected ``import`` statements, so a
+    # function-local or ``try:``-guarded alias was invisible.
+    ('calibrate-local-import-alias', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "def publish(report):\n"
+     "    import sys as s\n"
+     "    s.exit(0)\n\n"
+     "def _failure(error, policy, common):"),
+    ('calibrate-module-alias-binding', GUARD_SOURCE,
+     "def _failure(error, policy, common):",
+     "bail = sys.exit\n\n"
+     "def publish(report):\n"
+     "    bail(0)\n\n"
+     "def _failure(error, policy, common):"),
+    # #892 fix-r18 (MiniMax sibling r17 P1-1): the attribute spelling of a
+    # status write had no branch in either the enumeration or the slot layer.
+    ('calibrate-attr-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    report.status = 'PASS'\n"),
+    ('calibrate-dunder-setattr-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    report.__setattr__('status', 'PASS')\n"),
+    # #892 fix-r18 (GLM sibling r17 P2-2): the unbound three-argument
+    # spellings, which ``_call_written_values`` read as ordinary calls.
+    ('calibrate-unbound-setitem-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    dict.__setitem__(report, 'status', 'PASS')\n"),
+    ('calibrate-builtins-setattr-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    builtins.setattr(report, 'status', 'PASS')\n"),
+    ('calibrate-operator-setitem-status', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    operator.setitem(report, 'status', 'PASS')\n"),
 ]
 
 JUDGES = {
@@ -2178,6 +2266,20 @@ JUDGES = {
         'aggregation-audit', calibrate_setattr_status, False, ()),
     'calibrate-dunder-setitem-status': (
         'aggregation-audit', calibrate_dunder_setitem_status, False, ()),
+    'calibrate-local-import-alias': (
+        'aggregation-audit', calibrate_local_import_alias, False, ()),
+    'calibrate-module-alias-binding': (
+        'aggregation-audit', calibrate_module_alias_binding, False, ()),
+    'calibrate-attr-status': (
+        'aggregation-audit', calibrate_attr_status, False, ()),
+    'calibrate-dunder-setattr-status': (
+        'aggregation-audit', calibrate_dunder_setattr_status, False, ()),
+    'calibrate-unbound-setitem-status': (
+        'aggregation-audit', calibrate_unbound_setitem_status, False, ()),
+    'calibrate-builtins-setattr-status': (
+        'aggregation-audit', calibrate_builtins_setattr_status, False, ()),
+    'calibrate-operator-setitem-status': (
+        'aggregation-audit', calibrate_operator_setitem_status, False, ()),
     'calibrate-update-unregistered': (
         'aggregation-audit', calibrate_update_unregistered, False, ()),
     'calibrate-walrus-exit': (
@@ -2209,6 +2311,24 @@ JUDGES = {
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
+
+# #892 fix-r18: the restore window must defer the fixture's own SIGTERM exit
+# instead of unwinding mid-restore (MiniMax concurrency r17 P1-1).  The raise
+# lands on an arbitrary bytecode boundary; landing inside the write-back loop
+# leaves a mutant in the tree and the next run reads it as a real kill.  The
+# deferral protocol is deterministic and checked here on every import; the
+# boundary itself is not reproducible by construction (recorded in the PR).
+if defer_signal_exit(15) is not False:
+    raise SystemExit('defer_signal_exit must not defer outside restore_critical')
+with restore_critical():
+    if defer_signal_exit(15) is not True:
+        raise SystemExit('defer_signal_exit must defer inside restore_critical')
+    if take_deferred_signal() != 15:
+        raise SystemExit('take_deferred_signal must hand back the deferred signum')
+    if take_deferred_signal() is not None:
+        raise SystemExit('take_deferred_signal must consume the deferred signum once')
+if defer_signal_exit(15) is not False:
+    raise SystemExit('defer_signal_exit must not defer after the window closes')
 
 
 def pgrep_launcher():
@@ -2290,7 +2410,16 @@ def terminate_cleanly(signum, _frame):
     ``cleanupPending`` and refuses to take over such an owner, so the lock has
     to be removed by hand (``scripts/gateway-parity/README.md``); #1719 tracks
     the recovery steps (MiniMax concurrency r11 P1-1 / GLM concurrency r11 P1-1).
+
+    The raise lands wherever the interpreter happens to be, including inside
+    the write-back loop of ``negative_process.mutating_sources``: an exit there
+    leaves a mutant in the tree and the next run reads it as a real kill
+    (MiniMax concurrency r17 P1-1).  While that restore is in progress the
+    exit is therefore recorded and re-raised by ``mutating_sources`` once the
+    sources and the lease are settled; the process still ends with 128+signum.
     """
+    if defer_signal_exit(signum):
+        return
     raise SystemExit(128 + signum)
 
 

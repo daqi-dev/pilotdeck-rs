@@ -42,6 +42,12 @@ CARGO_SLOTS_WAIT_SECONDS = 600
 # call cannot swallow the whole wait without a retry chance.
 CARGO_SLOTS_CALL_SECONDS = 300.0
 
+# Depth of the source-restore critical section and the signal it swallowed.
+# Read and written from a signal handler, which runs on the main thread between
+# bytecodes, so plain globals are enough.
+_RESTORE_DEPTH = 0
+_DEFERRED_SIGNAL = None
+
 
 def _kill_group(process):
     for attempt in range(2):
@@ -715,6 +721,44 @@ def published_module(name, path, source):
 
 
 @contextmanager
+def restore_critical():
+    """Shield the source-restore window from the fixture's own SIGTERM exit.
+
+    ``terminate_cleanly`` raises ``SystemExit`` from the signal handler so the
+    ``finally`` blocks unwind and the mutated sources are written back.  That
+    raise lands on an arbitrary bytecode boundary -- including *inside* the
+    write-back loop -- and an exit there leaves a mutant in the tree, which the
+    next run then reads as a real kill (MiniMax concurrency r17 P1-1).  Inside
+    this section the handler only records the signal; ``take_deferred_signal``
+    hands it back once the restore and its byte verification are complete, so
+    the process still exits with 128+signum, just not mid-restore.
+    """
+    global _RESTORE_DEPTH
+    _RESTORE_DEPTH += 1
+    try:
+        yield
+    finally:
+        _RESTORE_DEPTH -= 1
+
+
+def defer_signal_exit(signum):
+    """Record *signum* instead of exiting when the restore is in progress."""
+    global _DEFERRED_SIGNAL
+    if not _RESTORE_DEPTH:
+        return False
+    _DEFERRED_SIGNAL = signum
+    return True
+
+
+def take_deferred_signal():
+    """The signum deferred during the restore, consumed once."""
+    global _DEFERRED_SIGNAL
+    signum = _DEFERRED_SIGNAL
+    _DEFERRED_SIGNAL = None
+    return signum
+
+
+@contextmanager
 def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
 
@@ -768,16 +812,23 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
             try:
                 yield {alias: snapshot[path] for alias, path, _relative in normalized}
             finally:
-                for _alias, path, _relative in normalized:
-                    path.write_bytes(snapshot[path])
-                for _alias, path, relative in normalized:
-                    if path.read_bytes() != snapshot[path]:
-                        raise RuntimeError(f"restore failed: {relative}")
-                    if _head_bytes(root, relative, baseline) != snapshot[path]:
-                        raise RuntimeError(
-                            f"restored {relative} does not match {baseline}")
+                with restore_critical():
+                    for _alias, path, _relative in normalized:
+                        path.write_bytes(snapshot[path])
+                    for _alias, path, relative in normalized:
+                        if path.read_bytes() != snapshot[path]:
+                            raise RuntimeError(f"restore failed: {relative}")
+                        if _head_bytes(root, relative, baseline) != snapshot[path]:
+                            raise RuntimeError(
+                                f"restored {relative} does not match {baseline}")
                 if restored is not None:
                     restored[0] = True
+    # A SIGTERM that landed while the sources were being written back was
+    # recorded instead of raised; exit only now that the tree, the parity lease
+    # and its byte verification are all settled (MiniMax concurrency r17 P1-1).
+    pending = take_deferred_signal()
+    if pending is not None:
+        raise SystemExit(128 + pending)
 
 
 def wait_for_slot(script, *, timeout=900, interval=30):

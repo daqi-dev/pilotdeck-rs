@@ -126,9 +126,9 @@ supplies a slot must carry its measured face as a reason (`fix-r16`).  A non-zer
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests eighty-nine probe functions: eighty-eight inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests ninety-eight probe functions: ninety-seven inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the eighty-eight (the nine helpers
+function.  `probe892` is the authoritative list for the ninety-seven (the nine helpers
 it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
 `_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
@@ -158,7 +158,13 @@ inside an exit call's argument, and an exit call in `return` position.  The
 `fix-r8` probes added three: an annotated `report: dict = {**report, ...}`
 rebuild (the Assign branch's unpack re-judge did not reach the `AnnAssign`
 shape), a bare `verdict = 'PASS'` name write (the write family accepted only the
-`status` spelling), and `return bool(x)` as an exit code.
+`status` spelling), and `return bool(x)` as an exit code.  The `fix-r18`
+probes added nine: a module-level `bail = sys.exit` alias, a function-local
+`import sys as s` alias, a function-local `from sys import exit as bail`
+alias, an alias bound inside a module-level `try:` block, an attribute status
+write `report.status = 'PASS'`, and the four remaining write spellings
+`report.__setattr__` / `dict.__setitem__(report, ...)` /
+`operator.setitem(report, ...)` / `builtins.setattr(report, ...)`.
 A `code = 0` initializer is therefore judged by
 reachability, not by the presence of a shared assignment somewhere else in the
 function: only a later statement that rebinds the name from the shared call on
@@ -302,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 103 mutants:
+`JUDGES`, keyed by the same names. The current table has 110 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -351,7 +357,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-tuple-status-target`, `calibrate-attr-collision`,
 `calibrate-bare-raise-exit`, `calibrate-alias-sysexit`,
 `calibrate-alias-system-exit`, `calibrate-setattr-status`,
-`calibrate-dunder-setitem-status`.
+`calibrate-dunder-setitem-status`, `calibrate-local-import-alias`,
+`calibrate-module-alias-binding`, `calibrate-attr-status`,
+`calibrate-dunder-setattr-status`, `calibrate-unbound-setitem-status`,
+`calibrate-builtins-setattr-status`, `calibrate-operator-setitem-status`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -499,9 +508,40 @@ status into a registered point's summary through `setattr(report, 'status',
 'PASS')` / `report.__setitem__('status', 'PASS')`, the two spellings the write
 family (`update` / `setdefault` / `|=`) never read (GLM boundary r16 P1-1).
 Alias resolution is one resolver (`_exit_target`) used by all three predicate
-families, fed from two places: module-level `import ... as` / `from ... import
-... as` (`_module_exit_aliases`) and the function's own bindings
-(`_binding_exit_aliases`, e.g. `bail = sys.exit`).
+families, fed from three places: module-scope `import ... as` / `from ...
+import ... as` including a `try:`-guarded optional import
+(`_module_exit_aliases`), the function's own bindings (`_binding_exit_aliases`,
+e.g. `bail = sys.exit`), and the function's own `import` statements -- the
+shared `_import_exit_aliases` helper reads the same statements from either
+scope, so a function-local `import sys as s` no longer resolves `s` as an
+unknown bare name (`fix-r18`).
+
+The seven `fix-r18` mutants pin the r17-round gaps:
+`calibrate-local-import-alias` gives an unregistered point a *function-local*
+`import sys as s` plus `s.exit(0)` (the module walk read direct children only
+and the binding map never collected `import` statements, so the shape was
+invisible -- GLM boundary r17 P0-1); `calibrate-module-alias-binding` binds
+`bail = sys.exit` at module level and calls `bail(0)` (GLM sibling r17 P1-1);
+`calibrate-attr-status` writes `report.status = 'PASS'` and
+`calibrate-dunder-setattr-status` writes it through
+`report.__setattr__('status', 'PASS')` (neither the enumeration nor the slot
+layer had an attribute branch -- MiniMax sibling r17 P1-1); and
+`calibrate-unbound-setitem-status` / `calibrate-builtins-setattr-status` /
+`calibrate-operator-setitem-status` write the slot through the unbound
+three-argument spellings `dict.__setitem__(report, ...)` /
+`builtins.setattr(report, ...)` / `operator.setitem(report, ...)`
+(GLM sibling r17 P2-2).
+
+The restore window is shielded by `fix-r18`: `terminate_cleanly` raises
+`SystemExit` from the signal handler so the restore `finally` unwinds, and a
+raise landing on a bytecode boundary *inside* the write-back loop exited
+mid-restore and left a mutant in the tree, which the next run read as a real
+kill (MiniMax concurrency r17 P1-1).  `negative_process.restore_critical()`
+makes the handler record the signum instead (`defer_signal_exit`), and the
+pending exit is taken once after the restore and its byte verification
+(`take_deferred_signal`).  The deferral protocol is checked deterministically
+on every import of `negative_controls.py`; the bytecode boundary itself is not
+reproducible by construction and is recorded as such in the PR.
 
 Two boundaries stay open and are
 recorded here so they are not re-reported as new: an exit alias rebound inside a
@@ -510,7 +550,9 @@ the module-level aliases plus its own bindings, so `bail = sys.exit` in the
 helper itself is seen, but a name bound in a third function and passed in is
 not); and an exit spelled as an attribute of an object that is not one of
 `sys` / `os` / `builtins` / `posix` (`helpers.exit(0)`) is not treated as a
-process exit.Two boundaries stay open and are
+process exit.
+
+Two boundaries stay open and are
 recorded here so they are not re-reported as new: an augmented assignment on a
 *parameter* is only judged by its own payload (a `|=` set-union of two
 parameters is not treated as an aggregation point), a `{**payload}`
