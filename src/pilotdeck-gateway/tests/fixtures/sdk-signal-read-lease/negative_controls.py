@@ -18,9 +18,9 @@ above ``MIN_LEASE_WAIT_MS`` -- a pass without it never met the writer and
 proves nothing. GREEN failures of any kind are INVALID, never KILLED.
 
 The writer publishes the exact interval it holds the lock in; the resident test
-reports the instant it acquired the lease, and GREEN requires that instant to
-fall inside the interval. A wait measured against some later lock holder is
-therefore INVALID, never KILLED.
+reports the instant of its *first* lock attempt, and GREEN requires that instant
+to fall inside the interval. A wait measured against some later lock holder, or
+a stall after an uncontended acquisition, is therefore INVALID, never KILLED.
 
 Run only after commit (mutating_sources refuses a dirty tree):
     CARGO_TARGET_DIR=<target> python3 -I .../sdk-signal-read-lease/negative_controls.py NEW_OUTPUT_DIR
@@ -86,10 +86,6 @@ WRITER_EXIT_BUDGET = HOLD_SECONDS + 120
 # 50 ms poll granularity and far below a window-scale wait.
 LEASE_MARKER = '#1662 read lease wait ms='
 MIN_LEASE_WAIT_MS = 500
-# Slack between the writer's recorded release instant and the reader actually
-# getting the lock: the writer still has to restore the guarded bytes after that
-# instant, and the reader polls every 50 ms.
-HOLD_TOLERANCE_MS = 2000
 CARGO_TIMEOUT = 1800
 
 
@@ -224,9 +220,9 @@ def judge(result):
 
 
 def observations(log):
-    """Lease acquisitions the resident test reported: (wait ms, epoch ms)."""
-    return [(int(waited), int(at)) for waited, at in
-            re.findall(re.escape(LEASE_MARKER) + r'(\d+) at=(\d+)', log)]
+    """Lease acquisitions the resident test reported: (wait ms, first, at)."""
+    return [(int(waited), int(first), int(at)) for waited, first, at in
+            re.findall(re.escape(LEASE_MARKER) + r'(\d+) first=(\d+) at=(\d+)', log)]
 
 
 def green(out):
@@ -285,9 +281,18 @@ def green(out):
             stop_writer(process, out)
         except BaseException as error:
             stop_error = error
-    if isinstance(failure, BaseException) and not isinstance(failure, Exception):
-        # Interrupts still abort the run; the writer is already stopped above.
-        raise failure
+            # The stop itself can be interrupted (SIGINT during communicate).
+            # Force the writer group down anyway: it lives in its own session and
+            # would otherwise keep the tree lock with the mutant on disk.
+            try:
+                _kill_group(process)
+                _collect(process, 30)
+            except BaseException:
+                pass
+    for interrupt in (failure, stop_error):
+        if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
+            # Interrupts still abort the run; the writer is already stopped above.
+            raise interrupt
     if failure is not None or stop_error is not None:
         # Report both: a stop failure must not hide the primary reason (and the
         # other way round) -- the summary is the audit trail (#1662 review r3 P2).
@@ -311,19 +316,24 @@ def green(out):
     if end_ms is None:
         return 'INVALID', ('the writer never published the end of its hold; the acquisition '
                            'timestamp cannot be attributed to it')
-    # The acquisition must land in this writer's hold: it can only happen after
-    # the lock is released, and an unrelated later holder would push it far past
-    # the tolerance below (#1662 review r3 P0).
-    waited, at = max(waits)
-    if not (start_ms <= at <= end_ms + HOLD_TOLERANCE_MS):
-        return 'INVALID', (f'resident test acquired the lease at {at} ms, outside the '
-                           f'writer hold [{start_ms}, {end_ms}] (+{HOLD_TOLERANCE_MS} ms); '
-                           f'that wait was not against this writer')
+    # The *first attempt* is the witness, not the elapsed wait: it must fall
+    # inside this writer's hold. An attempt made after the release means the
+    # reader may have waited on some later lock holder (or on nothing at all and
+    # been descheduled), and neither is evidence for this writer (#1662 review
+    # r4 P0).
+    waited, first, at = max(waits, key=lambda row: row[0])
+    if not (start_ms <= first <= end_ms):
+        return 'INVALID', (f'resident test first tried the lease at {first} ms, outside the '
+                           f'writer hold [{start_ms}, {end_ms}]: that wait was not against '
+                           f'this writer')
+    if at < first:
+        return 'INVALID', (f'resident test reported acquisition {at} ms before its own first '
+                           f'attempt {first} ms; the marker is inconsistent')
     if waited < MIN_LEASE_WAIT_MS:
         return 'INVALID', (f'resident test waited {waited} ms, under the '
                            f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
-    return 'KILLED', (f'resident test waited {waited} ms and acquired the lease inside the '
-                      f'writer hold [{start_ms}, {end_ms}]')
+    return 'KILLED', (f'resident test tried the lease inside the writer hold '
+                      f'[{start_ms}, {end_ms}], waited {waited} ms and then passed')
 
 
 def red(out):

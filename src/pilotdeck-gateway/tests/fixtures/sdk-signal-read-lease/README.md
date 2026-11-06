@@ -22,11 +22,12 @@
   全程不持树锁，无死锁。
 
   **见证绑定到本次 writer**：writer 在**放锁前**把持锁区间
-  （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在拿到
-  共享锁时打的 marker 里带自己的取锁时刻 `at=<epoch ms>`。GREEN 要求
-  `start_ms ≤ at ≤ end_ms + HOLD_TOLERANCE_MS`（2 s：writer 放锁后还要重写 guarded
-  字节，读者按 50 ms 轮询）——「本次 writer 结束后另一个 committed 任务先抢到锁、读者
-  等的是它」会被这条判 INVALID，而不是记成 KILLED。
+  （`start_ms` / `end_ms`，epoch 毫秒）原子写进 `writer-hold.json`；常驻测试在
+  **第一次尝试取锁之前**记下时刻 `first=<epoch ms>`，marker 里同时带取锁时刻
+  `at=<epoch ms>`。GREEN 要求 `start_ms ≤ first ≤ end_ms`：第一次尝试就落在本次
+  writer 的持锁区间内，说明读者确实撞上了它。用 `first` 而不是等待时长作见证，是为了
+  排除两条假通过路径——「本次 writer 放锁后另一个 committed 任务先抢到锁、读者等的是
+  它」和「读者无竞争取锁后被调度暂停 ≥ 500 ms」。
 
   cargo 名额在起 writer **之前**取（`cargo-slots.sh` 是查询式），所以 90 s 的持锁
   只需要覆盖测试本身，不必覆盖最长 900 s 的名额排队。
@@ -50,11 +51,12 @@ GREEN 不能只看「测试通过」——没等到 writer 也会通过；也不
 的等待判小）。所以见证来自测试自己：
 
 - `fixture_read_lease()` 在拿到共享锁时打一行 stderr：
-  `#1662 read lease wait ms=<n> at=<epoch ms>`（取锁前后 `Instant` 实测 + 取锁时刻）。
+  `#1662 read lease wait ms=<n> first=<epoch ms> at=<epoch ms>`
+  （取锁前后 `Instant` 实测 + 第一次尝试时刻 + 取锁时刻）。
 - GREEN 用 `--nocapture` 跑常驻测试，解析这一行；没有该行 → INVALID（从未等过），
-  `at` 不在 writer 公布的持锁区间内 → INVALID（等的不是本次 writer），
+  `first` 不在 writer 公布的持锁区间内 → INVALID（等的不是本次 writer），
   等待 `< MIN_LEASE_WAIT_MS`（500 ms）→ INVALID。
-- 只有「测试 PASS + 等待 ≥ 500 ms + 取锁时刻落在本次 writer 的持锁区间」才是 KILLED。
+- 只有「测试 PASS + 第一次尝试落在本次 writer 的持锁区间 + 等待 ≥ 500 ms」才是 KILLED。
 - marker 字面量漂移守卫：`LEASE_MARKER` 不在 `sdk_signal_exit.rs` 文本里时 GREEN 直接
   INVALID，避免两侧改名后控制项静默失效。
 
