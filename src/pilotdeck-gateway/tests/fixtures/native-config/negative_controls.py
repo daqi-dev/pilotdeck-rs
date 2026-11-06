@@ -121,15 +121,31 @@ mutations = [
     # the loaded writer's next append then duplicates `sequence + 1` and the
     # bound test's chain assertion must catch it.
     ('transcript-live-bypass-config', CONFIG,
-     '            if let Some(recorder) = super::transcript_locks::live_recorder(&recorders, &key) {',
-     '            if let Some(recorder) = None::<Arc<crate::storage::recorder::Recorder>> {',
+     '            if let Some((owner, recorder)) =\n'
+     '                super::transcript_locks::live_recorder(&recorders, &key)\n'
+     '            {',
+     '            if let Some((owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
+     '            {',
      CFG + 'model_set_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
     ('transcript-live-bypass-rename', SESSION_DIR,
-     '            if let Some(recorder) = live {',
-     '            if let Some(recorder) = None::<Arc<crate::storage::recorder::Recorder>> {',
+     '            if let Some((_owner, recorder)) = live {',
+     '            if let Some((_owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)> {',
      DIR + 'rename_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
+    # ── fix-r3: the status live branch and the cold writer lease.
+    ('transcript-live-bypass-status', SESSION_DIR,
+     '        if let Some((_owner, recorder)) = live_recorder {',
+     '        if let Some((_owner, recorder)) =\n'
+     '            None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
+     '        {',
+     DIR + 'status_appends_through_the_loaded_writer',
+     '#1457 the transcript still loads'),
+    ('transcript-cold-lease-skipped', SESSION_DIR,
+     '            let Some(_lease) = super::transcript_locks::cold_write_lease(&storage.transcript_path)',
+     '            let Some(_lease) = Some::<()>(())',
+     DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
+     '#1457 a cold append must not run beside a session that owns the writer'),
     ('style-unavailable-method-name', CONFIG,
      'Err(session_config_unavailable("set_output_style"))',
      'Err(session_config_unavailable("unknown"))',

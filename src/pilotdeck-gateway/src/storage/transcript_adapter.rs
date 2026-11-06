@@ -59,6 +59,12 @@ pub enum AdapterError {
     /// forking the sequence chain. Rust-side composition constraint; TS has no
     /// fence and its `close()` is a silent no-op, not a rejection.
     Retired(String),
+    /// #1457 fix-r3: the writer is closing (its session was disposed) and the
+    /// entry would be dropped by the `closed` no-op. Only the "checked"
+    /// metadata appends raise this, so a request that reports success can
+    /// never be one whose entry never reached the log. Cleanup-hook appends
+    /// keep the silent no-op the TS `close()` models.
+    Closed(String),
     /// Error from the host store, propagated unchanged (TS rethrows it).
     Store(LedgerError),
 }
@@ -71,7 +77,7 @@ impl fmt::Display for AdapterError {
             Self::Domain { message, .. } | Self::ProjectionUnavailable(message) => {
                 f.write_str(message)
             }
-            Self::Retired(message) => f.write_str(message),
+            Self::Retired(message) | Self::Closed(message) => f.write_str(message),
             Self::Store(error) => error.fmt(f),
         }
     }
@@ -866,9 +872,35 @@ impl TranscriptWriter {
         turn_id: &JsString,
         metadata: JsValue,
     ) -> AdapterResult<()> {
+        self.append_session_metadata(session_id, turn_id, metadata, false)
+    }
+    /// #1457 fix-r3: the request-level variant. A close racing this append is
+    /// an error, not a success with no entry on disk.
+    pub fn record_session_metadata_checked(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        metadata: JsValue,
+    ) -> AdapterResult<()> {
+        self.append_session_metadata(session_id, turn_id, metadata, true)
+    }
+    fn append_session_metadata(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        metadata: JsValue,
+        reject_closed: bool,
+    ) -> AdapterResult<()> {
         let mut draft = draft("session_metadata");
         draft.insert("metadata".into(), metadata);
-        self.append(session_id, turn_id, draft)
+        self.append_with_policy(
+            session_id,
+            turn_id,
+            draft,
+            reject_closed,
+            || self.sources(),
+            Self::adapter_domain,
+        )
     }
     pub fn record_turn_result(
         &self,
@@ -886,6 +918,25 @@ impl TranscriptWriter {
         turn_id: &JsString,
         status: &JsValue,
     ) -> AdapterResult<()> {
+        self.append_agent_status(session_id, turn_id, status, false)
+    }
+    /// #1457 fix-r3: `record_agent_status_message` for a request path, where a
+    /// close racing the append must not be reported as `recorded: true`.
+    pub fn record_agent_status_message_checked(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        status: &JsValue,
+    ) -> AdapterResult<()> {
+        self.append_agent_status(session_id, turn_id, status, true)
+    }
+    fn append_agent_status(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        status: &JsValue,
+        reject_closed: bool,
+    ) -> AdapterResult<()> {
         let mut draft = draft("agent_status_message");
         for key in ["event", "kind", "text"] {
             draft.insert(key.into(), field(status, key).clone());
@@ -900,7 +951,14 @@ impl TranscriptWriter {
         } {
             draft.insert("detail".into(), detail.clone());
         }
-        self.append(session_id, turn_id, draft)
+        self.append_with_policy(
+            session_id,
+            turn_id,
+            draft,
+            reject_closed,
+            || self.sources(),
+            Self::adapter_domain,
+        )
     }
     /// TS recordEntry → SessionRuntime.appendRecorded: the caller's envelope is
     /// kept and validated against the current state.
@@ -953,9 +1011,31 @@ impl TranscriptWriter {
         sources: impl FnOnce() -> Result<(String, String), E>,
         validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
     ) -> Result<(), E> {
+        self.append_with_policy(session_id, turn_id, draft, false, sources, validate)
+    }
+    /// `reject_closed` (#1457 fix-r3): a request-level append must not report
+    /// success for an entry the closed writer drops. The check runs under the
+    /// commit lock, so "closed before or during this append" is observed
+    /// rather than raced.
+    fn append_with_policy<E: From<AdapterError>>(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: JsObject,
+        reject_closed: bool,
+        sources: impl FnOnce() -> Result<(String, String), E>,
+        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+    ) -> Result<(), E> {
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
-            return Ok(());
+            return if reject_closed {
+                Err(E::from(AdapterError::Closed(
+                    "#1457 the session writer closed before this entry; it was not persisted"
+                        .into(),
+                )))
+            } else {
+                Ok(())
+            };
         }
         // #1370 stimulus entry witness: this append queues behind the commit
         // lock (the TS writeTail) — record what arrived while a barrier holds
@@ -968,7 +1048,14 @@ impl TranscriptWriter {
         let mut inner = self.lock();
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
-            return Ok(());
+            return if reject_closed {
+                Err(E::from(AdapterError::Closed(
+                    "#1457 the session writer closed while this entry was queued; it was not persisted"
+                        .into(),
+                )))
+            } else {
+                Ok(())
+            };
         }
         // JsValue has a Drop impl, so the object is filled in place, not moved out.
         let mut entry = materialize(&JsValue::Object(draft))?;
