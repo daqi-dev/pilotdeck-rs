@@ -961,6 +961,7 @@ async fn requests_registry_switch_gates_run_reads() {
             )),
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
+            cron: None,
             settings: requests::Requests::stub_settings(&owner),
         };
         let described = requests

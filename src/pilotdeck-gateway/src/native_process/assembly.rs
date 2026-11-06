@@ -57,10 +57,11 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, Mutex, OnceLock, Weak},
     time::{Duration, SystemTime},
 };
 
+mod cron;
 mod mcp;
 mod memory;
 pub(crate) mod snapshot;
@@ -460,8 +461,9 @@ pub(super) async fn start_observed_with_upload_cleanup(
     let build_project = project.clone();
     // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
     // on the #1327 ChannelServer). The same config snapshot drives the
-    // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config.
-    let channel_assembly = {
+    // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
+    // #1326 takes the `cron` section off the same load.
+    let (channel_assembly, cron_section) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -507,20 +509,33 @@ pub(super) async fn start_observed_with_upload_cleanup(
             .await;
             return Err(error.into());
         }
-        Arc::new(super::channels::NativeChannels::new(
-            super::channels::NativeChannelsOptions {
-                pilot_home: options.home.clone(),
-                config: Arc::new(config),
-                weixin: crate::channel::weixin::WeixinChannelOptions::default(),
-                weixin_maker: None,
-                log: None,
-                report_status: None,
-                close_host: None,
-            },
-        ))
+        // #1326 A8 U8: the `cron:` section travels to the builder below, which
+        // is the only place that constructs `CronManager`.
+        let cron_section = config.get("cron").cloned();
+        (
+            Arc::new(super::channels::NativeChannels::new(
+                super::channels::NativeChannelsOptions {
+                    pilot_home: options.home.clone(),
+                    config: Arc::new(config),
+                    weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+                    weixin_maker: None,
+                    log: None,
+                    report_status: None,
+                    close_host: None,
+                },
+            )),
+            cron_section,
+        )
     };
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
+    // #1326: the builder constructs the one `CronManager` on the gateway
+    // thread, but this cleanup closure is built before the builder runs —
+    // the shared slot carries the started manager from the builder to the
+    // cleanup, which stops it before the channels (automation precedes
+    // closeServer, PilotDeckServerShutdownBundle.ts:33-37).
+    let build_cron_slot: Arc<OnceLock<Arc<crate::runtime::cron::CronManager>>> = Arc::default();
+    let cleanup_cron_slot = build_cron_slot.clone();
     let budget = options.drain_budget;
     let host = TurnGateway::start_with_cleanup(
         TurnReplayOptions::new(),
@@ -565,6 +580,17 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 &options.project,
                 &env,
             )?;
+            // #1326 A8 U8: the one `CronManager::new` of the native process.
+            // `None` (no `cron:` section) keeps the unconfigured shape — the
+            // six names stay out of capabilities and every call answers the
+            // `requireCron` gate. A build failure fails the whole assembly
+            // through the same `project.dispose()` fallback below.
+            let cron = match cron::build(cron_section.as_ref(), &options.home) {
+                Ok(cron) => cron,
+                Err(error) => return Err(error),
+            };
+            let cron_admission = owner.admission();
+            let cron_owner = owner.clone();
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
@@ -585,6 +611,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
+                cron: cron.clone(),
                 settings: settings.gateway,
             });
             let submitter = Arc::new(TurnSubmitter {
@@ -599,6 +626,30 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 )),
                 projector,
             });
+            // #1326: bind the live gateway port before `start()` — the
+            // manager's own bind gate enforces the order. The admission is
+            // the owner's one `SessionAdmission` (never a second instance), so
+            // cron turns fence against the same volatile turn budget as the
+            // WS gateway's admissions; `start()` failing here fails the
+            // assembly through the `project.dispose()` fallback below.
+            if let Some(cron) = cron.as_ref() {
+                let body = Arc::new(cron::NativeCronGatewayBody::new(
+                    cron_owner.clone(),
+                    submitter.clone(),
+                    tokio::runtime::Handle::current(),
+                ));
+                cron.bind_agent_gateway(Arc::new(
+                    crate::runtime::cron::SessionAdmissionCronGateway::new(
+                        cron_admission.clone(),
+                        body,
+                    ),
+                ))
+                .map_err(cron::cron_io_error)?;
+                cron.start().map_err(cron::cron_io_error)?;
+                build_cron_slot
+                    .set(cron.clone())
+                    .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
+            }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
             // The builder runs exactly once per host, so a second publish is
@@ -617,6 +668,22 @@ pub(super) async fn start_observed_with_upload_cleanup(
             })
         },
         async move {
+            // #1326 A8 U8: stop the cron manager first — automation precedes
+            // closeServer (PilotDeckServerShutdownBundle.ts:33-37). `stop()`
+            // aborts active cron runs through the bound gateway (the
+            // synchronous abort prefix) and releases task sessions; a stop
+            // failure is observed but never blocks the remaining teardown.
+            let cron_stop = match cleanup_cron_slot.get() {
+                Some(cron) => {
+                    cleanup_observer(
+                        "cron",
+                        cron.stop()
+                            .map_err(|error| String::from_utf16_lossy(error.message().units())),
+                    )
+                    .await
+                }
+                None => Ok(()),
+            };
             // #1328 A8.3: stop the channel assembly and flush its durable
             // mapper state — the closeServer + flushChannelState pair
             // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
@@ -646,7 +713,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                 cleanup_diagnostic(error);
             }
             let mut outcome = sessions.and(project);
-            for failure in [channel_stop.err(), channel_flush.err()]
+            for failure in [cron_stop.err(), channel_stop.err(), channel_flush.err()]
                 .into_iter()
                 .flatten()
             {

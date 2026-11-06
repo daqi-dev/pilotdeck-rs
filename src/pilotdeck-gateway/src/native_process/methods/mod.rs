@@ -6,6 +6,7 @@ use pilotdeck_protocol::{JsString, JsValue};
 mod active_turn;
 mod always_on;
 mod config;
+mod cron;
 mod history;
 mod interaction;
 mod management;
@@ -72,6 +73,7 @@ register_families! {
     interaction: interaction::METHODS,
     always_on: always_on::METHODS,
     weixin_login: weixin_login::METHODS,
+    cron: cron::METHODS,
     settings: settings::METHODS,
 }
 
