@@ -527,53 +527,115 @@ fn a_shared_port_fence_would_lock_out_the_submit_path() {
     );
 }
 
-/// #1326 fix-r1 P1 (MiniMax, both the concurrency and boundary roles): after
-/// the port fence stopped being the owner's admission, a refused admission is
-/// answered by the submit path as an ordinary `Ok` stream carrying a terminal
-/// `session_busy` error event. `run_turn` must surface that as `Err`, not
-/// drain it into a silent success.
-#[test]
-fn a_refused_admission_is_not_drained_into_success() {
-    let event =
-        |fields: Vec<(&'static str, pilotdeck_protocol::JsValue)>| crate::metadata::object(fields);
-    let busy = event(vec![
-        ("type", "error".into()),
-        ("code", "session_busy".into()),
+/// #1326 fix-r1 P1 (MiniMax, both the concurrency and boundary roles) and
+/// fix-r2 P1 (MiniMax: only `session_busy` was read, so `workspace_busy`,
+/// `CAPABILITY_UNAVAILABLE`, registry refusals and mid-turn failures still
+/// drained into a silent `Ok`; boundary: the test only covered the pure
+/// classifier, so deleting the drain loop's `return Err` would have survived).
+///
+/// The test drives `drain_turn` itself over a scripted stream — the submit
+/// path answers every refusal and every mid-turn failure as an ordinary `Ok`
+/// stream ending in an `error` event, and the port must answer `Err`.
+#[tokio::test]
+async fn a_refused_or_failed_turn_is_not_drained_into_success() {
+    use pilotdeck_protocol::JsValue;
+    use std::collections::VecDeque;
+
+    use crate::runtime::turn::submit::SubmitError;
+
+    /// One step per `next_event`; exhausting the script ends the stream.
+    struct Scripted(VecDeque<Result<Option<JsValue>, SubmitError>>);
+    impl super::CronTurnStream for Scripted {
+        fn next_event(
+            &mut self,
+        ) -> impl std::future::Future<Output = Result<Option<JsValue>, SubmitError>> {
+            let step = self.0.pop_front().unwrap_or(Ok(None));
+            async move { step }
+        }
+    }
+
+    let event = |fields: Vec<(&'static str, JsValue)>| crate::metadata::object(fields);
+    let error_event = |code: &'static str, message: &'static str, recoverable: bool| {
+        event(vec![
+            ("type", "error".into()),
+            ("code", code.into()),
+            ("message", message.into()),
+            ("recoverable", JsValue::Bool(recoverable)),
+        ])
+    };
+    let drain = |events: Vec<JsValue>| {
+        let mut stream = Scripted(events.into_iter().map(|event| Ok(Some(event))).collect());
+        async move { super::drain_turn(&mut stream).await }
+    };
+
+    // Every preflight refusal `runtime/turn/submit.rs` can emit, plus the
+    // mid-turn failures the old `session_busy`-only table let through.
+    for (code, message, recoverable) in [
         (
-            "message",
-            "Session cron:task-1 already has an active turn.".into(),
+            "session_busy",
+            "Session cron:task-1 already has an active turn.",
+            true,
         ),
-        ("recoverable", pilotdeck_protocol::JsValue::Bool(true)),
-    ]);
-    let rejection = super::rejected_admission(&busy).expect("#1326 busy rejection surfaced");
-    assert_eq!(rejection.code(), Some("session_busy"));
+        ("SESSION_BUSY", "SDK", true),
+        ("workspace_busy", "Workspace is busy.", true),
+        (
+            "CAPABILITY_UNAVAILABLE",
+            "Workspace snapshot host capability is unavailable.",
+            true,
+        ),
+        ("conflict", "registry refused", true),
+        ("model_failed", "boom", false),
+        ("turn_timeout", "timed out", false),
+        ("agent_aborted", "aborted", false),
+    ] {
+        let failure = drain(vec![
+            event(vec![("type", "text_delta".into())]),
+            error_event(code, message, recoverable),
+        ])
+        .await
+        .expect_err("#1326 a turn that never finished must not report success");
+        assert_eq!(
+            failure.code(),
+            Some(code),
+            "#1326 {code} keeps its own code for the firing half"
+        );
+        assert_eq!(
+            String::from_utf16_lossy(failure.message().units()),
+            message,
+            "#1326 {code} keeps its message"
+        );
+    }
+
+    // A stream with no error event is a finished turn.
+    drain(vec![
+        event(vec![("type", "text_delta".into())]),
+        event(vec![("type", "agent_status".into())]),
+    ])
+    .await
+    .expect("#1326 a clean turn drains to Ok");
+
+    // An error event with neither code nor message still fails, under the
+    // transport-level default rather than an empty projection.
+    let bare = drain(vec![event(vec![("type", "error".into())])])
+        .await
+        .expect_err("#1326 a bare error event is still a failure");
+    assert_eq!(bare.code(), Some("cron_run_failed"));
     assert_eq!(
-        String::from_utf16_lossy(rejection.message().units()),
-        "Session cron:task-1 already has an active turn."
+        String::from_utf16_lossy(bare.message().units()),
+        "cron_run_failed"
     );
 
-    // The SDK-flavoured code and a mid-turn error are the negative controls:
-    // the first is still a rejection, the second is #1305's to interpret.
-    let sdk = event(vec![
-        ("type", "error".into()),
-        ("code", "SESSION_BUSY".into()),
-        ("message", "SDK".into()),
-    ]);
+    // A transport failure (not an event) maps to the same default.
+    let mut broken = Scripted(VecDeque::from([Err(SubmitError {
+        code: "channel_closed".into(),
+        message: "closed".into(),
+    })]));
+    let failure = super::drain_turn(&mut broken)
+        .await
+        .expect_err("#1326 a broken stream is a failed turn");
+    assert_eq!(failure.code(), Some("cron_run_failed"));
     assert_eq!(
-        super::rejected_admission(&sdk)
-            .expect("#1326 SDK busy rejection surfaced")
-            .code(),
-        Some("SESSION_BUSY")
+        String::from_utf16_lossy(failure.message().units()),
+        "Error: closed"
     );
-    let mid_turn = event(vec![
-        ("type", "error".into()),
-        ("code", "model_failed".into()),
-        ("message", "boom".into()),
-    ]);
-    assert!(
-        super::rejected_admission(&mid_turn).is_none(),
-        "#1326 a mid-turn error is not a rejected admission"
-    );
-    let delta = event(vec![("type", "text_delta".into())]);
-    assert!(super::rejected_admission(&delta).is_none());
 }
