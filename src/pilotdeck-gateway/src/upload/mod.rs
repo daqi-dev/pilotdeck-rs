@@ -637,7 +637,11 @@ impl UploadStore {
                 // by the composer (it accepts any in-root regular file). The
                 // link itself is the ground truth: compare the linked inode
                 // with the identity recorded on the verified handle.
-                if !lease_link_matches(&destination, identities.get(index).copied().flatten()) {
+                if !lease_link_matches(
+                    &destination,
+                    identities.get(index).copied().flatten(),
+                    &string(attachment, "sha256").unwrap_or_default(),
+                ) {
                     return Err(UploadError::dialog(
                         "ATTACHMENT_TAMPERED",
                         "Attachment artifact changed between verification and lease acquisition.",
@@ -1428,8 +1432,8 @@ fn lease_root_unavailable() -> UploadError {
 }
 
 /// The `(dev, inode)` pair recorded on the verified handle. Non-Unix has no
-/// cross-platform file identity, so the lease-link comparison is skipped
-/// there (`lease_link_matches` returns true); Unix is the shipped target.
+/// cross-platform file identity, so `lease_link_matches` keeps only its
+/// content term there (#1889); Unix is the shipped target.
 #[cfg(unix)]
 type AttachmentIdentity = (u64, u64);
 #[cfg(not(unix))]
@@ -1458,18 +1462,56 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 /// 2026-11-06: after `fs::hard_link(link, dest)`, `fs::symlink_metadata(dest)`
 /// reports a symlink; Python's `os.link` is the one that follows.
 #[cfg(unix)]
-fn lease_link_matches(destination: &Path, expected: Option<AttachmentIdentity>) -> bool {
+fn lease_link_matches(
+    destination: &Path,
+    expected: Option<AttachmentIdentity>,
+    expected_sha256: &str,
+) -> bool {
     match (fs::symlink_metadata(destination), expected) {
         (Ok(linked), Some(want)) => {
-            linked.file_type().is_file() && attachment_identity(&linked) == Some(want)
+            linked.file_type().is_file()
+                && attachment_identity(&linked) == Some(want)
+                && lease_link_content_matches(destination, expected_sha256)
         }
         _ => false,
     }
 }
 
 #[cfg(not(unix))]
-fn lease_link_matches(_destination: &Path, _expected: Option<AttachmentIdentity>) -> bool {
-    true
+fn lease_link_matches(
+    destination: &Path,
+    _expected: Option<AttachmentIdentity>,
+    expected_sha256: &str,
+) -> bool {
+    // The identity term has no cross-platform answer (see above); the content
+    // term does, so it applies here too rather than being skipped with it.
+    lease_link_content_matches(destination, expected_sha256)
+}
+
+/// #1889: `(dev, inode)` is not an identity on every filesystem. Measured
+/// 2026-11-07 (`_tmp/20261107-issue-1887/inode-probe/`): ext4 (cb8) hands the
+/// just-freed inode number straight back to a file recreated at the same path
+/// (20000/20000 rounds — deterministic), so a delete-and-recreate in the
+/// `[verified, hard link]` window compares equal and pins the attacker's
+/// bytes; APFS never reused one (0/20000). A ctid-style `ctime` term cannot
+/// close it either: `link(2)` itself bumps the inode ctime (5/5 on both
+/// filesystems), so it differs even for the untouched file.
+///
+/// The auxiliary identity is therefore the content digest `verified` already
+/// bound to the opened handle: it compared the handle's bytes with the
+/// record's `sha256`, and this re-reads the entry the link actually created
+/// and compares the same digest. An inode-reusing replacement — and, for free,
+/// an in-place rewrite that keeps the inode — no longer matches. Cost is one
+/// extra sequential read of the attachment per lease.
+fn lease_link_content_matches(destination: &Path, expected_sha256: &str) -> bool {
+    if expected_sha256.is_empty() {
+        return false;
+    }
+    match File::open(destination) {
+        Ok(mut file) => hash_file(&mut file).is_ok_and(|digest| digest == expected_sha256),
+        // Unreadable is never a match.
+        Err(_) => false,
+    }
 }
 
 fn hash_file(file: &mut File) -> Result<String> {
