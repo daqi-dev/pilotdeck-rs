@@ -127,14 +127,18 @@ mutations = [
      'config::store::tests::panicked_watcher_task_is_not_a_clean_stop',
      '#1899 a panicked watcher must not look like a clean stop'),
     # #1899: the watcher loop panics on its first poll — the #1650 silent-death
-    # path. The drop-the-store test must fail at the join evidence instead of
-    # passing on a task that is merely "finished".
+    # path. The drop-the-store test must fail instead of passing on a task that
+    # is merely "finished": the injected panic kills it at the liveness check
+    # (the watcher must still be running before the store is dropped) or, if it
+    # is only observed at the join, at the clean-stop assertion — both markers
+    # are the same defect seen one step apart.
     ('watch-loop-panic-injected', source,
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      '    panic!("#1899 injected: simulated watch_loop failure");\n'
      '    let mut ticker = tokio::time::interval(effective_poll_interval(&options));',
      'config::store::tests::dropping_the_handle_or_the_store_ends_the_task',
-     '#1899 dropping the store must stop the watcher cleanly'),
+     ['#1899 the watcher must still be running before the store is dropped',
+      '#1899 dropping the store must stop the watcher cleanly']),
 ]
 
 
@@ -152,7 +156,7 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#1736/#1739/#1899 {len(mutations)} unique anchors checked')
+        print('\n'.join(errors) if errors else f'#1736/#1739/#1794/#1899 {len(mutations)} unique anchors checked')
         return int(bool(errors))
     if not args:
         raise SystemExit('provide NEW_OUT and optional mutation names, or --check')

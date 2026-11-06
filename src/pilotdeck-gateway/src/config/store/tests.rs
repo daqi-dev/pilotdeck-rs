@@ -78,7 +78,10 @@ async fn settle() {
 }
 
 /// How long a detached watcher task gets to stop once its last owner is gone.
-const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// It notices the dropped owner on its next poll, so the wait must clear the
+/// slowest poll interval the store accepts ([`MAX_POLL_INTERVAL`], 60 s) or a
+/// cleanly stopped watcher would be reported as a timeout on that path.
+const STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// #1899: wait for the detached watcher task and report how it ended.
 async fn watcher_stop(task: Option<JoinHandle<()>>) -> Result<(), String> {
@@ -690,6 +693,14 @@ async fn dropping_the_handle_or_the_store_ends_the_task() {
         .start_watching(WatchOptions::default())
         .expect("#879 healthy watcher paths");
     settle().await;
+    assert!(
+        !watch
+            .task
+            .as_ref()
+            .expect("#1899 the watcher task handle is present")
+            .is_finished(),
+        "#1899 the watcher must still be running before the store is dropped"
+    );
     drop(store);
     assert_eq!(
         watcher_stop(watch.task.take()).await,
