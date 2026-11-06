@@ -166,7 +166,8 @@ excluded.
 `tests/fixtures/negative_suite.py`; its `mutations` table is the register of
 what is covered (health / models routing, auth bypass, CORS `Vary`, SSE
 `[DONE]`, session header, visible-failure name, gateway status, active-chat
-guard, body limit, body-limit boundary, body-read timeout, default port). Each row requires the
+guard, body limit, body-limit boundary, body-read timeout, request-timeout 408
+shape, default port). Each row requires the
 positive control to pass and the named `#1333` assertion to fail. It must run
 after this change is committed (the shared guard compares against `HEAD`); see
 the script header for the exact command.

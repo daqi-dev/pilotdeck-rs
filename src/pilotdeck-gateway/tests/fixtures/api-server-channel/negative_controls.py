@@ -154,6 +154,18 @@ mutations = [
         PARTIAL_BODY,
         "#1333 a stalled body is answered at the body-read deadline",
     ),
+    (
+        # #1620: let the requestTimeout 408 go through `finish` — the only place
+        # this lane adds `Date`. Node's 51-byte `requestTimeoutResponse` has no
+        # `Date`, so status / `Connection: close` / empty body all still pass
+        # and only the "no Date" assertion turns red.
+        "api-server-timeout-response-date",
+        SERVER,
+        "return Ok(crate::channel::webhook::node_request_timeout_response());",
+        "return Ok(finish(crate::channel::webhook::node_request_timeout_response(), keep_alive));",
+        PARTIAL_BODY,
+        "#1333 the requestTimeout 408 must not gain a Date header",
+    ),
 ]
 
 def mutate(text, scope, replacements):
