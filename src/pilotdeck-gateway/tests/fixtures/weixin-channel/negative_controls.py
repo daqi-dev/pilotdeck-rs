@@ -201,6 +201,14 @@ MUTATIONS = [
      '#1823 decryption strips the pkcs7 padding'),
     # The trailing-single-character guard is what keeps `chunk[1]` in range;
     # `node_base64_semantics` feeds "A" and "!".
+    # `typeof [] === "object"`: the baseline's object guard admits an array
+    # owner (it just has no `aeskey`/`media`), so the zero shape — not
+    # `keyShape=none` — is the baseline's answer.
+    ('media-array-owner-reports-none', weixin / 'media.rs',
+     '    if !is_object_like(media_owner) {',
+     '    if media_owner.as_object().is_none() {',
+     'channel::weixin::media::tests::array_media_owner_reports_the_zero_shape_like_typeof',
+     '#1823 array owner reports the zero shape'),
     ('media-base64-single-char-guard', weixin / 'media.rs',
      '        if chunk.len() < 2 {\n            break;\n        }',
      '        if chunk.len() < 2 && chunk.is_empty() {\n            break;\n        }',

@@ -485,6 +485,32 @@ fn decryption_strips_the_pkcs7_padding() {
     );
 }
 
+// `typeof [] === "object"`: an array owner passes the baseline's object guard
+// and simply has no `aeskey`/`media` properties, so it reports the zero shape
+// rather than `keyShape=none`. `null`/primitives stay `none`.
+#[test]
+fn array_media_owner_reports_the_zero_shape_like_typeof() {
+    crate::negative_assert_eq!(
+        summarize_weixin_media_key_shape(&js(&json!([]))),
+        "keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0",
+        "#1823 array owner reports the zero shape"
+    );
+    crate::negative_assert_eq!(
+        summarize_weixin_media_key_shape(&JsValue::Null),
+        "keyShape=none",
+        "#1823 null owner reports none"
+    );
+    crate::negative_assert_eq!(
+        summarize_weixin_media_key_shape(&js(&json!("text"))),
+        "keyShape=none",
+        "#1823 string owner reports none"
+    );
+    crate::negative_assert!(
+        extract_weixin_media_keys(&js(&json!([]))).is_empty(),
+        "#1823 array owner yields no keys"
+    );
+}
+
 // ── oracle replay: decryption ───────────────────────────────────────────────
 
 #[test]
@@ -827,15 +853,17 @@ async fn a_slow_body_outlives_the_fetch_deadline() {
         let (mut stream, _) = listener.accept().await.expect("#1823 slow body accept");
         let _ = read_head(&mut stream).await;
         // Headers now, first body frame well after the injected deadline.
+        // The 3x gap keeps a preempted test thread from turning the injected
+        // deadline into a flake while still leaving the body clearly outside it.
         let _ = stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\n")
             .await;
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
         let _ = stream.write_all(b"abc").await;
         let _ = stream.shutdown().await;
     });
     let bytes = WeixinCdnClient::new()
-        .with_fetch_timeout(Duration::from_millis(100))
+        .with_fetch_timeout(Duration::from_millis(500))
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
         .await
         .expect("#1823 a slow body must outlive the fetch deadline");
@@ -869,7 +897,7 @@ async fn the_header_phase_still_aborts_at_the_fetch_deadline() {
         let _ = stream.shutdown().await;
     });
     let error = WeixinCdnClient::new()
-        .with_fetch_timeout(Duration::from_millis(100))
+        .with_fetch_timeout(Duration::from_millis(500))
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
         .await
         .expect_err("#1823 a stalled header phase must abort");
