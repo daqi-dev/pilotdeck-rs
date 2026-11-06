@@ -1845,23 +1845,15 @@ def _writes_status_slot(target):
 
     ``status = 'PASS'`` (the bare variable) and ``x['status']`` are the same
     write family; only the subscript form used to be seen (MiniMax boundary P0-1).
+    The slot layer and the aggregation-point enumeration used to keep a private
+    four-branch copy of this shape each, and the copies drifted twice (tuple
+    targets MiniMax simplify r14 P2-2, attribute spelling MiniMax sibling
+    r17 P1-1, each time in only one layer); both families flagged the
+    duplication again in r22 (GLM simplify P2-1 + anthropic simplify P2-1),
+    so both callers share this one implementation via ``_is_status_target``
+    and a shape change can no longer land in one layer only.
     """
-    if isinstance(target, ast.Name):
-        # Only the ``status`` variable: ``verdict = ...`` is an ordinary local
-        # name in several per-case helpers, not a batch status key.
-        return target.id == 'status'
-    if isinstance(target, ast.Subscript):
-        return _status_key(target.slice)
-    if isinstance(target, ast.Attribute):
-        # ``self.report.status = 'PASS'`` is the attribute spelling of the very
-        # same write ``setattr(self.report, 'status', 'PASS')`` makes; modelling
-        # one and not the other gave the same intent two verdicts, and the
-        # attribute form is the ordinary one in class-based entry points
-        # (MiniMax sibling r17 P1-1).
-        return target.attr in _STATUS_KEYS
-    if isinstance(target, (ast.Tuple, ast.List)):
-        return any(_writes_status_slot(element) for element in target.elts)
-    return False
+    return _is_status_target(target)
 
 
 def _status_write_values(target, value, out):
@@ -2391,6 +2383,29 @@ def _delegated_exit(value, module, seen=None, bindings=None, aliases=None):
     return _helper_exits_zero(target, module, seen, aliases)
 
 
+def _exit_argument_violation(argument, bindings, function, module, point,
+                             lineno, label, aliases=None):
+    """Three-way judgement of one exit argument (#892 r23).
+
+    The ``sys.exit(...)`` / ``os._exit(...)`` statement form and the
+    ``raise SystemExit(...)`` form used to keep a private copy of this
+    argument judgement each, so a shape taught to one spelling never reached
+    the other; both spellings now share this one implementation (anthropic
+    simplify r22 P2-3), with *label* naming the spelling in the
+    optimistic-exit message.
+    """
+    if argument is None or _constant_exit_zero(argument) or (
+            isinstance(argument, ast.Name)
+            and _name_is_optimistic(argument.id, bindings, lineno)):
+        return f'inline optimistic exit ({label}) at line {lineno}'
+    if (_status_literals(argument) or _has_passed_aggregate(argument)) \
+            and not _calls_aggregate(argument):
+        return f'inline status/exit {ast.unparse(argument)[:60]} at line {lineno}'
+    if _exit_provenance(argument, bindings, function, module, point, aliases):
+        return f'inline exit code {ast.unparse(argument)[:60]} at line {lineno}'
+    return None
+
+
 def _exit_call_violation(call, bindings, function, module, point, lineno,
                          aliases=None):
     """Judge the argument of ``sys.exit(...)`` / ``os._exit(...)`` (#892 r7).
@@ -2398,18 +2413,13 @@ def _exit_call_violation(call, bindings, function, module, point, lineno,
     ``sys.exit(...)`` takes the same exit-code provenance as ``return``; the
     statement form and the ``return sys.exit(0)`` form share this one judgement
     so the two spellings cannot drift apart again (GLM r6 sibling P1-1/P1-2).
+    The three-way judgement itself lives in ``_exit_argument_violation``,
+    shared with the ``raise SystemExit(...)`` form (r23).
     """
     argument = call.args[0] if call.args else None
-    if argument is None or _constant_exit_zero(argument) or (
-            isinstance(argument, ast.Name)
-            and _name_is_optimistic(argument.id, bindings, lineno)):
-        return f'inline optimistic exit ({ast.unparse(call)[:50]}) at line {lineno}'
-    if (_status_literals(argument) or _has_passed_aggregate(argument)) \
-            and not _calls_aggregate(argument):
-        return f'inline status/exit {ast.unparse(argument)[:60]} at line {lineno}'
-    if _exit_provenance(argument, bindings, function, module, point, aliases):
-        return f'inline exit code {ast.unparse(argument)[:60]} at line {lineno}'
-    return None
+    return _exit_argument_violation(
+        argument, bindings, function, module, point, lineno,
+        ast.unparse(call)[:50], aliases)
 
 
 def _exit_provenance(argument, bindings, function, module, point,
@@ -2976,18 +2986,11 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
             exc = node.exc
             argument = (exc.args[0] if isinstance(exc, ast.Call) and exc.args
                         else None)
-            if argument is None or _constant_exit_zero(argument) or (
-                    isinstance(argument, ast.Name)
-                    and _name_is_optimistic(argument.id, bindings, node.lineno)):
-                violations.append(f'inline optimistic exit (SystemExit) at line {node.lineno}')
-            elif (_status_literals(argument) or _has_passed_aggregate(argument)) \
-                    and not _calls_aggregate(argument):
-                violations.append(f'inline status/exit {ast.unparse(argument)[:60]} '
-                                  f'at line {node.lineno}')
-            elif _exit_provenance(argument, bindings, function, module, point,
-                                  aliases):
-                violations.append(f'inline exit code {ast.unparse(argument)[:60]} '
-                                  f'at line {node.lineno}')
+            violation = _exit_argument_violation(
+                argument, bindings, function, module, point, node.lineno,
+                'SystemExit', aliases)
+            if violation:
+                violations.append(violation)
             continue
         if not isinstance(node, ast.Return):
             continue
@@ -4422,6 +4425,16 @@ def aggregation_audit():
     if not _is_status_target(ast.parse("report.status = 'PASS'").body[0].targets[0]):
         failures.append('#892 aggregation-audit: detector self-test rejected an attribute '
                         'status target')
+    # GLM + anthropic simplify r22 P2-1: the slot layer delegates to the
+    # enumeration's predicate, so the four spellings must agree in one place;
+    # a probe per spelling pins the delegation instead of trusting the same
+    # body to stay in sync by inspection.
+    for snippet in ("status = 'PASS'", "x['status'] = 'PASS'",
+                    "report.status = 'PASS'", "status, other = 'PASS', 1"):
+        target = ast.parse(snippet).body[0].targets[0]
+        if _writes_status_slot(target) != _is_status_target(target):
+            failures.append('#892 aggregation-audit: detector self-test found the slot '
+                            f'layer and the enumeration disagreeing on `{snippet}`')
     # GLM boundary r18 P0-1 / P1-1: an exit code handed back as an attribute or
     # as a subscript that no shared call produced has no traceable origin, so
     # it gets the same fail-closed verdict as the bare name one branch up; the
