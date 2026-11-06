@@ -201,6 +201,10 @@ struct Batch {
 struct QueuedTurn {
     session_key: String,
     message: String,
+    /// Registered diff A8.3-CH-FEISHU-006: TS forwards `projectKey` with
+    /// `submitTurn`, the A7 `TurnRequest` port has no such field, so the turn
+    /// carries it until the port grows one.
+    #[allow(dead_code)]
     project_key: Option<String>,
     message_id: Option<String>,
     generation: u64,
@@ -208,7 +212,12 @@ struct QueuedTurn {
 
 #[derive(Clone, Debug)]
 struct ActiveRun {
+    /// Registered diff A8.3-CH-FEISHU-004: `abortTurn({ sessionKey, runId })`
+    /// is the only consumer in TS; the A7 port has no abort, so the pair is
+    /// recorded for the day the port grows one.
+    #[allow(dead_code)]
     session_key: String,
+    #[allow(dead_code)]
     run_id: Option<String>,
     generation: u64,
 }
@@ -861,7 +870,17 @@ impl Runtime {
     async fn run_queued_turns(self: &Arc<Self>, chat_id: &str, first: QueuedTurn) {
         let _slot = match ActiveChat::admit(self.active_chats.clone(), chat_id.to_owned()) {
             Some(slot) => slot,
-            None => return,
+            None => {
+                // Lost the race with the running drain: the turn must still be
+                // queued, exactly like the `active` branch in `dispatch_turn`.
+                let mut state = self.state.lock().expect("#1329 state mutex");
+                let entry = state.chats.entry(chat_id.to_owned()).or_default();
+                entry.queue.push_back(first);
+                while entry.queue.len() > MAX_PENDING_TURNS_PER_CHAT {
+                    entry.queue.pop_front();
+                }
+                return;
+            }
         };
         let mut next = Some(first);
         while let Some(turn) = next {
@@ -1108,23 +1127,8 @@ impl FeishuChannel {
         )
     }
 
-    pub(crate) fn with_webhook_slot(
-        options: FeishuOptions,
-        interaction: Arc<dyn InteractionPort>,
-        slot: Arc<FeishuWebhookSlot>,
-    ) -> Self {
-        Self::build(
-            options,
-            interaction,
-            Some(slot),
-            Arc::new(SystemClock),
-            FeishuSessionMapper::random_uuid(),
-            None,
-            None,
-        )
-    }
-
     /// The parity seams: a deterministic clock, session-key uuid and slot.
+    #[cfg(test)]
     pub(crate) fn with_seams(
         options: FeishuOptions,
         interaction: Arc<dyn InteractionPort>,
@@ -1166,11 +1170,6 @@ impl FeishuChannel {
             key: ChannelKey::new(CHANNEL_KEY),
             runtime,
         }
-    }
-
-    /// The shared webhook slot this channel registers itself into.
-    pub(crate) fn webhook_slot(&self) -> Option<Arc<FeishuWebhookSlot>> {
-        self.runtime.slot.clone()
     }
 }
 

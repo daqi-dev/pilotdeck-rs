@@ -1022,3 +1022,50 @@ async fn token_invalid_code_drops_the_cached_token() {
     );
     let _ = bounded("token pin stop", handle.stop("done")).await;
 }
+
+/// Losing the `ActiveChat` admission race must not drop the turn: the running
+/// drain already holds the chat slot, so `run_queued_turns` has to append to
+/// the chat queue exactly like the `active` branch in `dispatch_turn`. The
+/// real window (admission checked, guard taken, drain already running) is not
+/// stably reproducible, so the pin pre-takes the slot and calls the drain
+/// entry directly: the turn must still be in the queue and nothing may run.
+#[tokio::test]
+async fn losing_the_admission_race_requeues_the_turn() {
+    let (channel, _slot) = case_channel(LARK_PORT);
+    let chat_id = "race-chat";
+    assert!(
+        channel
+            .runtime
+            .active_chats
+            .lock()
+            .expect("#1329 active chats mutex")
+            .insert(chat_id.to_owned()),
+        "#1329 the pin takes the admission slot itself"
+    );
+
+    let turn = QueuedTurn {
+        session_key: format!("feishu:chat={chat_id}:general"),
+        message: "queued after the race".to_owned(),
+        project_key: None,
+        message_id: None,
+        generation: 0,
+    };
+    channel.runtime.run_queued_turns(chat_id, turn).await;
+
+    let state = channel.runtime.state.lock().expect("#1329 state mutex");
+    let entry = state.chats.get(chat_id).expect("#1329 chat entry");
+    crate::negative_assert_eq!(
+        entry.queue.len(),
+        1,
+        "#1329 the admission race loser is queued, never dropped"
+    );
+    crate::negative_assert_eq!(
+        entry.queue.front().expect("#1329 queued turn").message,
+        "queued after the race",
+        "#1329 the queued turn is the one that lost the race"
+    );
+    crate::negative_assert!(
+        entry.active_run.is_none(),
+        "#1329 the race loser does not start a run"
+    );
+}

@@ -34,6 +34,10 @@ impl SendResult {
     pub(crate) fn is_failed(&self) -> bool {
         matches!(self, Self::Failed)
     }
+    /// Registered diff A8.3-CH-FEISHU-005: TS reads the created message id to
+    /// edit that same message in place; the Rust path sends each segment once
+    /// and never re-reads the id.
+    #[allow(dead_code)]
     pub(crate) fn message_id(&self) -> Option<&str> {
         match self {
             Self::Ok(Some(id)) => Some(id),
@@ -256,7 +260,10 @@ impl ApiClient {
     }
 
     /// `editPostMessage` / `editTextMessage`: the same PUT with a different
-    /// `msg_type`.
+    /// `msg_type`. Registered diff A8.3-CH-FEISHU-005: the Rust live-reply
+    /// path flushes once instead of editing a message, so nothing calls this
+    /// until that path is ported.
+    #[allow(dead_code)]
     pub(crate) async fn edit_message(
         &self,
         message_id: &str,

@@ -143,7 +143,10 @@ pub fn live_chunks(text: &str, limit: usize) -> Vec<String> {
 
 /// `splitForTransport`: 4000-unit chunks, preferring the last newline and
 /// then the last space in the second half, dropping the newlines that start a
-/// continuation.
+/// continuation. Registered diff A8.3-CH-FEISHU-005: the transport splitter
+/// exists but the current live-reply path chunks with `live_chunks` and never
+/// calls this.
+#[allow(dead_code)]
 pub fn split_for_transport(text: &str, max: usize) -> Vec<String> {
     let units: Vec<u16> = text.encode_utf16().collect();
     if max == 0 || units.len() <= max {

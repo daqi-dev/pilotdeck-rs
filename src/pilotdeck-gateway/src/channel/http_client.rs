@@ -52,7 +52,8 @@ impl HttpClient {
         body: &str,
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
-        self.send(method, url, content_type, None, body, timeout).await
+        self.send(method, url, content_type, None, body, timeout)
+            .await
     }
 
     /// The `Authorization: Bearer <token>` variant the Lark Open API needs

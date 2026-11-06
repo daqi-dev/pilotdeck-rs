@@ -29,8 +29,8 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use url::Url;
 
 use super::{
-    im_cron::{CronResultDelivery, deliver_chat_cron_result},
     http_client::{HttpClient, encode_uri_component},
+    im_cron::{CronResultDelivery, deliver_chat_cron_result},
     im_interaction::{InteractionPort, NoInteraction},
     loader::ChannelAdapterConstructor,
     protocol::{

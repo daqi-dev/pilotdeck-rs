@@ -54,18 +54,9 @@ impl FeishuSessionMapper {
         Arc::new(|| JsString::from(uuid::Uuid::new_v4().to_string()))
     }
 
-    /// A mapper seeded with recorded state (the TS constructor's first
-    /// argument; used by the replay fixture to pin a snapshot round-trip).
-    pub fn with_state(state: FeishuSessionMapperState, uuid: Uuid) -> Self {
-        Self { state, uuid }
-    }
-
     /// The `ChannelStatePersistence.load` result handed to the constructor as
-    /// `new FeishuSessionMapper(saved)`.
-    pub fn from_saved(saved: &JsValue) -> Self {
-        Self::from_saved_with_uuid(saved, Self::random_uuid())
-    }
-
+    /// `new FeishuSessionMapper(saved)`. The native assembly always passes the
+    /// per-channel uuid it already owns, so only this form is wired up.
     pub fn from_saved_with_uuid(saved: &JsValue, uuid: Uuid) -> Self {
         Self {
             state: state_from_js(saved),
@@ -122,6 +113,9 @@ impl FeishuSessionMapper {
         }
     }
 
+    /// `bindProject`: the native process has no project-binding caller yet, so
+    /// this is a parity seam exercised by the mapper tests.
+    #[cfg(test)]
     pub fn bind_project(&mut self, chat_id: &str, project_key: &str) {
         put(&mut self.state.project_by_chat_id, chat_id, project_key);
     }
@@ -130,13 +124,10 @@ impl FeishuSessionMapper {
         get(&self.state.project_by_chat_id, chat_id)
     }
 
-    /// `getSession(chatId)`: the current key, i.e. the general fallback when
-    /// the chat never ran `/new`.
-    pub fn get_session(&self, chat_id: &str) -> String {
-        self.current_session_key(chat_id)
-    }
-
-    /// `snapshot()`: the copied records, key order included.
+    /// `snapshot()`: the copied records, key order included. The native
+    /// process persists through [`Self::snapshot_js`]; the typed copy is the
+    /// replay test's view.
+    #[cfg(test)]
     pub fn snapshot(&self) -> FeishuSessionMapperState {
         self.state.clone()
     }
