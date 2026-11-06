@@ -137,6 +137,13 @@ MUTATIONS = [
      '        Some(expected) => Ok(expected),',
      'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
      '#1328 #1808 rejects expected type drift'),
+    # #1808: the absent arm is a separate guard; regress it to the old blind
+    # read (fall back to the case itself) and the same plain assertion dies.
+    ('weixin-recorded-expected-absent', weixin / 'replay_tests.rs',
+     '        None => Err("#1328 expected must be an object, got <missing>".into()),',
+     '        None => Ok(value),',
+     'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
+     '#1328 #1808 rejects absent expected'),
 ]
 
 

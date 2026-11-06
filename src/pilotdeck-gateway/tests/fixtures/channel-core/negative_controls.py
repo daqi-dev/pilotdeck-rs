@@ -129,6 +129,13 @@ MUTATIONS = [
      '        Some(expected) => Ok(expected),',
      'recorded_expected_rejects_wrong_type',
      '#1327 #1808 rejects expected type drift'),
+    # #1808: the absent arm is a separate guard; regress it to the old blind
+    # read (fall back to the case itself) and the same plain assertion dies.
+    ('channel-core-recorded-expected-absent', tests,
+     '        None => Err("#1327 expected must be an object, got <missing>".into()),',
+     '        None => Ok(value),',
+     'recorded_expected_rejects_wrong_type',
+     '#1327 #1808 rejects absent expected'),
 ]
 
 
