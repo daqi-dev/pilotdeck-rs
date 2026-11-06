@@ -3314,6 +3314,12 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
                                     "scripts/x/check_frozen.py")
                 case(f"exists_at：git 退出码 {code} → {want!r}",
                      got is want, f"code={code} got={got!r}")
+            # 第一查询（commit 解析）失败 → None；它是「exit 1 = 路径不存在」
+            # 这条判据的前提（GLM sibling P2）。
+            cfd.git = scripted_git([(128, "", "bad object")])
+            got = cfd.exists_at(root, "deadbeef", "scripts/x/check_frozen.py")
+            case("exists_at：commit 解析失败（128）→ None", got is None,
+                 f"got={got!r}")
         finally:
             cfd.git = real_git
 
@@ -3673,7 +3679,8 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
         made = subprocess.run(
             ["git", "-C", str(root), "worktree", "add", "--relative-paths",
              "--detach", str(real_target), "HEAD"],
-            capture_output=True, text=True, timeout=TIMEOUT)
+            capture_output=True, text=True, timeout=TIMEOUT,
+            env={**os.environ, "LC_ALL": "C"})
         if made.returncode != 0:
             err = (made.stderr or "").strip()
             # 只有「这个 git 不认识该选项」才允许跳过；磁盘满 / 权限 / 其它
@@ -3794,15 +3801,20 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
              and cfd._admin_match("/a/.git", "/a/.git/x/tree/.git") == "torn",
              "ok")
 
-    # 祖先若是**文件**，就是另一只真 worktree 的 gitdir（例如 TMPDIR 落在同仓
-    # 另一只 worktree 里），不能判撕裂，否则那里每次运行都永久 BLOCK（GLM P3）。
+    # 祖先一律判撕裂（不按「是文件」豁免：撕裂写到文件上无法与真 worktree
+    # 区分，两家评审都点到）。而 TMPDIR 落在同仓另一只 worktree 里的布局
+    # **不是**祖先关系（`<wt>/.git` 与 `<wt>/tmp/...` 是兄弟），不会永久 BLOCK。
     with tempfile.TemporaryDirectory() as td:
         outer = Path(td) / "wt"
         outer.mkdir()
         (outer / ".git").write_text("gitdir: /elsewhere\n")
-        case("_admin_match：严格祖先是文件（真 worktree 的 gitdir）→ other",
+        case("_admin_match：TMPDIR 在另一只 worktree 内（<wt>/.git vs <wt>/tmp/…）→ other，不误判撕裂",
              cfd._admin_match(str(outer / ".git"),
                               str(outer / "tmp" / "h" / "tree" / ".git")) == "other",
+             "")
+        case("_admin_match：严格祖先是文件也判 torn（撕裂写到文件上不可区分）",
+             cfd._admin_match(str(outer / ".git"),
+                              str(outer / ".git" / "h" / "tree" / ".git")) == "torn",
              "")
 
     # P2（GLM sibling）：`_still_there` 的 EACCES 分支零覆盖——stat 失败必须
