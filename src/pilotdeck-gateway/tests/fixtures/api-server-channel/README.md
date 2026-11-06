@@ -113,17 +113,18 @@ silently degrade a cell into "some short body":
   response used to be compared by nothing at all. Both ends now pin its shape:
   the generator refuses to record anything but a zero-byte close, and the
   replay asserts **every** `expect[i]` — not only the `oversized-*` ones — is
-  either a complete response (a `status` line, no `error`) or a clean error
-  close (`error` string, `bytes: 0`, no `status`); anything else panics
-  (`assert_recorded_error_shape`). The rule is shape-driven so a renamed or
-  newly added error cell cannot keep r8's measured fields uncompared, and the
-  two shapes are mutually exclusive so a cell cannot drop its `error` key and
-  leave the rest unread. The `oversized-*` branch additionally requires the
-  cell to record a connection error at all, so a baseline cap raised above the
-  recorded `OVER_CAP_BYTES` fails loudly instead of leaving the surface green.
-  `bytes` is a
-  **measurement**, not a constant: it is counted on the socket, so it is
-  recorded even when the connection dies before the `response` callback runs
+  either a complete response (numeric `status`, object `headers`, no `error`)
+  or a clean error close (`error` string, `bytes: 0`, no `status`); anything
+  else panics (`assert_recorded_error_shape`). The rule is shape-driven so a
+  renamed or newly added error cell cannot keep r8's measured fields
+  uncompared, and the two shapes are mutually exclusive so a cell cannot drop
+  its `error` key and leave the rest unread. The `oversized-*` branch
+  additionally requires every recorded expectation to be a connection error,
+  so a baseline cap raised above the recorded `OVER_CAP_BYTES` fails loudly
+  instead of leaving the surface green.
+  `bytes` is a **measurement**, not a constant: it is counted on the socket, so
+  it is recorded even when the connection dies before the `response` callback
+  runs
   (Node raises `req`'s `'error'` synchronously and `IncomingMessage`'s on the
   next tick). A connection that dies after the status line and part of the body
   records the byte count it actually received and the status line it actually
