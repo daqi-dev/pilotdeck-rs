@@ -707,6 +707,36 @@ fn sequence_less_append_joins_the_projection() {
 }
 
 #[test]
+fn sequence_less_tail_keeps_the_ordinal_watermark() {
+    // GLM r3: a sequence-less row parked at the tail must not hide the last
+    // numeric ordinal. If it does, a late duplicate of an earlier entry looks
+    // new, joins the live projection twice, and replay (which sees one row)
+    // disagrees with the snapshot -- the divergence #1500 exists to remove.
+    let row = delivery();
+    let entries = array(field(&row, "entries")).expect("#1500 watermark entries");
+    let store = store();
+    for entry in &entries[..2] {
+        append(&store, entry);
+    }
+    append(&store, &without_sequence(&entries[1]));
+    append(&store, &entries[1]);
+    let live = lock(&store.projection.entries).clone();
+    assert_eq!(
+        live.len(),
+        3,
+        "#1500 a sequence-less tail does not resurrect a duplicate"
+    );
+    assert_eq!(
+        store
+            .projection
+            .snapshot()
+            .expect("#1500 watermark snapshot"),
+        project(&live).expect("#1500 watermark replay"),
+        "#1500 live projection equals replay after a sequence-less tail"
+    );
+}
+
+#[test]
 fn restore_merging_a_read_prefix_keeps_sequence_less_entries() {
     let row = delivery();
     let entries = array(field(&row, "entries")).expect("#1500 delivery entries");

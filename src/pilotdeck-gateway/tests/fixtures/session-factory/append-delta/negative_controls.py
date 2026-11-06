@@ -98,15 +98,16 @@ mutations = [
     ('tail-collector-outside-owned-root', 'src/pilotdeck-gateway/tests/fixtures/turn-runner-tail/generate.mts',
      "const workspace=path.join(runDir,'collector',c.name);", "const workspace=path.join(ROOT,'collector',c.name);",
      'tail_generator_cleans_only_owned_work', '#1253 foreign collector contains only its original file'),
-    ('duplicate-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(ordinal)) => existing >= ordinal,', '(Some(existing), Some(entry)) => existing > entry,', 'duplicate_sequence_append_is_idempotent', '#1253 duplicate sequence does not double count'),
-    ('stale-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '(Some(existing), Some(ordinal)) => existing >= ordinal,', '(Some(existing), Some(entry)) => existing == entry,', 'out_of_order_append_is_idempotent', '#1253 lower sequence does not double count'),
+    ('duplicate-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '.is_some_and(|existing| existing >= ordinal)', '.is_some_and(|existing| existing > ordinal)', 'duplicate_sequence_append_is_idempotent', '#1253 duplicate sequence does not double count'),
+    ('stale-sequence-reprojected', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '.is_some_and(|existing| existing >= ordinal)', '.is_some_and(|existing| existing == ordinal)', 'out_of_order_append_is_idempotent', '#1253 lower sequence does not double count'),
     # #1500: the guard used to compare `Option<f64>` ordinals, so a `None`
     # sequence read as "already projected" (`Some(n) >= None` is always true)
     # and the entry never joined the live projection while `project()` replayed
     # it from disk. Treating a missing ordinal as already projected is exactly
     # that mutant. A live row and an appended row are the only sources: the
     # restore-side brother below drops a published suffix row instead.
-    ('sequence-less-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '_ => false,', '_ => true,', 'sequence_less_append_joins_the_projection', '#1500 durable entry without a sequence is not silently skipped'),
+    ('sequence-less-skipped', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', 'None => false,', 'None => true,', 'sequence_less_append_joins_the_projection', '#1500 durable entry without a sequence is not silently skipped'),
+    ('sequence-less-tail-hides-watermark', 'src/pilotdeck-gateway/src/runtime/session/factory.rs', '.find_map(|existing| field(existing, "sequence").as_number())', '.last().and_then(|existing| field(existing, "sequence").as_number())', 'sequence_less_tail_keeps_the_ordinal_watermark', '#1500 a sequence-less tail does not resurrect a duplicate'),
     ('restore-merge-drops-sequence-less', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'None => true,', 'None => false,', 'restore_merging_a_read_prefix_keeps_sequence_less_entries', '#1500 restore merge keeps the sequence-less entry'),
     ('checkpoint-hydrated-over-sequence-less', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', 'if let Some(checkpoint) = checkpoint.filter(|_| ordered) {', 'if let Some(checkpoint) = checkpoint {', 'checkpoint_keeps_replay_when_a_row_has_no_sequence', '#1500 a sequence-less row keeps the replayed checkpoint state'),
     ('racing-restore-index-lost', 'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs', '*lock(&self.projection.completed_turns) = completed_turns(&entries);', '*lock(&self.projection.completed_turns) = completed_turns(&entries[..0]);', 'restore_racing_completion_keeps_late_message', '#1253 racing restore preserves completed turn late message'),

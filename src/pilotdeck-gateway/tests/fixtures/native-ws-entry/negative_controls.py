@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import tree_lock, run_owned, wait_for_slot
-from negative_suite import ReceiptRun, judge, passed
+from negative_suite import ReceiptRun, bind_module_file, declares_test, judge, passed
 from _shared.mutant_switch import (preflight, clean_environment, record_sources,
                                    verify_unchanged, enforce_denominator)
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
@@ -127,19 +127,23 @@ def main():
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
-    tests = (ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs').read_text()
+    # #1890: one list feeds both the binding and the file reads, so widening
+    # `modules` cannot bind one file and check another (and cannot KeyError).
+    # #1942: rows may bind a test outside `native_ws::tests` (the failed
+    # initialization teardown lives in the turn-gateway suite), so the list
+    # carries that module too and every row is audited against its own file.
+    modules = ((PREFIX, TESTS), (TURN_TESTS, TURN_TESTS_SOURCE))
+    sources = {path: path.read_text() for _, path in modules}
     for _, _, test, assertion in switches:
-        # #1942: rows may bind a test outside `native_ws::tests` (the failed
-        # initialization teardown lives in the turn-gateway suite), so the
-        # stale-binding audit reads the module the row actually names instead
-        # of assuming every switch is witnessed by this file.
-        body = tests
-        name = test.split('::')[-1]
-        if test.startswith(TURN_TESTS):
-            body, name = TURN_TESTS_SOURCE.read_text(), test[len(TURN_TESTS):]
-        elif not test.startswith(PREFIX):
-            raise RuntimeError('#749 test binding names no audited test module: ' + test)
-        if 'fn ' + name + '(' not in body or '"' + assertion + '"' not in body:
+        # #1890: the same rule as the other audits -- exactly one module level
+        # under the listed prefix, and a declaration that exists in the file
+        # the binding returned. bind_module_file raises when a row names no
+        # listed module, which carries the #749 "test binding names no audited
+        # test module" guard (it also rejects an empty or extra-level short
+        # name, so the binding stays exact).
+        file, short = bind_module_file(test, modules)
+        source = sources[file]
+        if not declares_test(source, short) or '"' + assertion + '"' not in source:
             raise RuntimeError('#749 stale test/assertion binding: ' + test)
     if args.check:
         print(f'#749 {len(switches)} switch bindings valid')

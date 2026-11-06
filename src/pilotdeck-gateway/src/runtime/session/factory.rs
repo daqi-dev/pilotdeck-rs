@@ -453,18 +453,20 @@ impl TranscriptStore for ProjectedStore {
         // #1500: only a pair of numeric ordinals can prove that. `Option<f64>`
         // orders `None` below every number, so the old `Some(_) >= None` read
         // a sequence-less entry as already projected and silently dropped it,
-        // while `project()` replays it from disk. There is no ordinal to
-        // compare here, and the row cannot have been replayed already:
-        // `Recorder::restore` rejects a durable row without a positive
-        // sequence, so the live projection only ever holds this row once.
-        let already_projected = match (
-            entries
-                .last()
-                .and_then(|existing| field(existing, "sequence").as_number()),
-            field(entry, "sequence").as_number(),
-        ) {
-            (Some(existing), Some(ordinal)) => existing >= ordinal,
-            _ => false,
+        // while `project()` replays it from disk. A row without an ordinal is
+        // therefore never "already projected" on its own account, but it must
+        // not hide the watermark either: skip sequence-less rows when looking
+        // for the last ordinal, or one such row parked at the tail would make
+        // every later duplicate look new (GLM r3). `Recorder::restore` rejects a
+        // durable row without a positive sequence, so such a row can only come
+        // from this append path and is present exactly once.
+        let already_projected = match field(entry, "sequence").as_number() {
+            Some(ordinal) => entries
+                .iter()
+                .rev()
+                .find_map(|existing| field(existing, "sequence").as_number())
+                .is_some_and(|existing| existing >= ordinal),
+            None => false,
         };
         if !already_projected {
             entries.push(entry.clone());
@@ -765,6 +767,11 @@ impl FactoryStorage {
                     .restore(&read.entries)
                     .map_err(|e| RuntimeError::new(e.to_string()))?;
             } else if read.entries.iter().any(|entry| {
+                // #1500: `None` is deliberately not "ahead". A durable row
+                // without an ordinal cannot be the writer's own unadvanced
+                // commit (`Recorder::restore` refuses such a row), so it never
+                // justifies failing the reader closed; the projection guard
+                // above is what keeps it counted exactly once.
                 field(entry, "sequence").as_number() > Some(recorder.snapshot_state().0 as f64)
             }) {
                 // A store may commit bytes and then report failure. Never

@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 sys.path.insert(0, str(FIXTURE.parent))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed, invalidate_completed, publish_summary
+from negative_suite import Case, classify, declares_test, passed, invalidate_completed, publish_summary
 
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/main.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/tests/proxy_listen_address.rs'
@@ -64,7 +64,10 @@ def main():
         # its marker is bound against the gate's own source (the background-panic
         # provenance precedent); every other marker stays bound to the test file.
         markers = gate if path == ORACLE else tests
-        if f'fn {test}(' not in tests or assertion not in markers:
+        # #1890: one shared declaration rule instead of another bare-name
+        # spelling. This crate's tests carry no module path (a single
+        # integration-test file), so the binding is the file plus the name.
+        if not declares_test(tests, test) or assertion not in markers:
             raise RuntimeError(f'#1131 {name}: stale test/assertion binding')
     if args.check:
         print(f'#1131 {len(mutations)} anchors and test bindings valid')
