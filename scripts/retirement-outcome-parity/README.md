@@ -99,17 +99,26 @@ N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响�
 
 执行器**第一件事**是删同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
 为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
-的 PASS。**argparse 的错误退出（拼错参数 / 缺值，rc=2）也是早退路径**：解析前先从原始 argv
-认出输出目录并失效一次，解析后再按解析结果失效一次。失效只碰本执行器自己的产物名
-（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：`summary.json.backup`
-之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的执行器的原子发布打掉；
-并发互斥残余见跟进单）。前置自检除逐轮外还跑一次**跨轮合并**（`check --round round-01
---round round-02`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除「参考轮对本身已漂移」，
-N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired` 收口为 rc2）；注入用
-常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口成对设
-`sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
+的 PASS。**argparse 的错误退出（拼错参数 / 缺值 / 缩写 / `--` 之后）也是早退路径**：解析前先
+按**候选集**失效一次，解析后再按 `args.output` 失效一次。候选集的判定：
+
+- 已知带值选项（`--data` / `--oracle`，按 argparse 缩写规则）后面那个 token 不算位置参数；
+  `--` 之后全是位置参数。
+- **未知选项是否带一个值，解析前不可判定**，所以它后面的非选项 token 也算候选（宁可多列）。
+- 只对**已经像负控输出目录**的候选动手：目录存在、有 `summary.json`、且有 `N<n>` 控件目录。
+  绝不 `mkdir` 探到的路径，也不删无关目录（误删别人的证据同样算丢数据）。
+- `-h` / `--help` 路径不失效（没有跑）。
+
+失效只碰本执行器自己的产物名（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：
+`summary.json.backup` 之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的
+执行器的原子发布打掉；并发互斥残余见跟进单）。前置自检除逐轮外还跑一次**跨轮合并**
+（`check --round round-01 --round round-02`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
+「参考轮对本身已漂移」，N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired`
+收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口
+成对设 `sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
 `scripts/parity/*` 口径）：只挡写不挡读时，`spec_from_file_location` 仍可执行陈旧 `.pyc`
-（PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」。
+（PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」；没有可写临时目录时回退到
+指向一个不存在的目录（等价空缓存）——**启动依赖不得先于旧结果失效**。
 
 ## 为什么不在 `scripts/gateway-parity/`
 

@@ -30,7 +30,14 @@ from pathlib import Path
 # **不读**缓存字节码。只设 dont_write_bytecode 挡不住读取已有的
 # __pycache__/*.pyc（PEP 552 unchecked-hash 可直接执行），而本目录会被负控以
 # spec_from_file_location 再加载一次——陈旧字节码会让「跑的是当前源码」不成立。
-sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    # 没有可写临时目录（只读环境 / 临时目录被清理）也不能让判据起不来：指向一个
+    # 必然不存在的目录，效果等价于「读不到任何缓存」，写仍被 dont_write_bytecode
+    # 挡住。启动依赖不得先于任何判定（评审 P0）。
+    sys.pycache_prefix = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), f'.no-pycache-{os.getpid()}')
 sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
