@@ -37,9 +37,15 @@ server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));})
 await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.address() as any).port;
 // #1369: a ready line is the product's `eprintln!("native listening {address}")`
 // line and nothing else -- the phrase, exactly one space, the address, then the
-// line end. This mirrors the Rust judge `advertises` in tests/native_process.rs;
-// the old `[^\n]*` also accepted `native listening 127.0.0.1:4321 extra`.
-const LISTENING_NATIVE=/^native listening (\S+:\d+)\r?\n/m;
+// line end. This follows the Rust judge `advertises` in tests/native_process.rs
+// on line start / one space / non-empty whitespace-free address / line end, and
+// is deliberately stricter in two ways: the address must still carry `host:digits`
+// (Rust accepts any whitespace-free token) and only a single CR before the LF is
+// tolerated (Rust trims any run of CR/LF). `(?:^|\n)` instead of the `m` flag:
+// with `m`, `^` also matches after a bare CR / U+2028 / U+2029, which `advertises`
+// (it splits on LF) rejects. No `g` flag on purpose -- `exec` must stay stateless.
+// The old `[^\n]*` also accepted `native listening 127.0.0.1:4321 extra`.
+const LISTENING_NATIVE=/(?:^|\n)native listening (\S+:\d+)\r?\n/;
 async function launch(name:string,registry:string){
   const home=join(out,name,'home'),project=join(out,name,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});
   await writeFile(join(home,'pilotdeck.yaml'),`schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:${port}/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n`,{flag:'wx'});
@@ -77,10 +83,12 @@ const submit=async(ws:any,next:()=>Promise<any>,process:any,sessionKey:string,ru
 };
 try{
   // #1369: the matcher accepts the two line endings the product can print and
-  // keeps rejecting trailing content after the address (the shape the Rust
-  // `advertises` judge rejects).
+  // keeps rejecting everything the Rust `advertises` judge rejects -- trailing
+  // content, a missing address, a missing LF, a text prefix, a doubled space, a
+  // colon glued to the phrase, a bare CR used as a line start (the `m`-flag trap),
+  // and the empty string.
   for(const line of ['native listening 127.0.0.1:4321\n','native listening [::1]:4321\r\n'])assert.ok(LISTENING_NATIVE.exec(line),'#1369 listening line is an advertisement: '+JSON.stringify(line));
-  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n'])assert.equal(LISTENING_NATIVE.exec(line),null,'#1369 trailing content is not an advertisement: '+JSON.stringify(line));
+  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n','native listening: 127.0.0.1:4321\n','warn: x\rnative listening 127.0.0.1:4321\n',''])assert.strictEqual(LISTENING_NATIVE.exec(line),null,'#1369 not an advertisement: '+JSON.stringify(line));
   // off: the registry is absent end to end, but the turn, transcript and
   // signal drain keep their real production behavior.
   {
