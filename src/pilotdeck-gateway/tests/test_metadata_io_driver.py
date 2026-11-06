@@ -1115,6 +1115,9 @@ class EnvironmentControls(unittest.TestCase):
         }}}, '#922 ci profile preserves all tests, default threads, zero retries '
             'and exactly one success-output override')
         self.assert_success_output_filter_names_real_tests(self.nextest_success_output_filter)
+        # #1900: and the mirror — every test that prints a skip line must be
+        # named by this filter, or the note it writes is captured and lost.
+        self.assert_every_skip_line_reaches_nextest(self.nextest_success_output_filter)
 
     def assert_success_output_filter_names_real_tests(self, filter_text):
         # fix-r3: `test(=name)` is an exact match on the name nextest reports.
@@ -1174,6 +1177,133 @@ class EnvironmentControls(unittest.TestCase):
         if parts[-1] != 'tests':
             parts.append('tests')
         return '::'.join([*parts, leaf])
+
+    # #1900: the reverse direction of the check above. `stderr_skip_line` exists
+    # so that a skip note survives the harness's output capture, but nextest
+    # only replays the output of tests named in `nextest_success_output_filter`
+    # (`success-output = "final"`). A call site outside that list is captured and
+    # lost again — #1263's silent skip coming back through a test nobody
+    # registered. Key is `path::fn`; the value is (why it needs no entry, the
+    # filter entries that cover it). Coverage is checked against the filter, so
+    # a stale "covered by" cannot rot silently, and an entry whose call site is
+    # gone fails as stale.
+    skip_line_exceptions = {
+        'src/module_host/tests.rs::process_audit_is_linux_only': (
+            '#1349 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
+            'Linux CI job at all, so no nextest entry can name it', ()),
+        'src/native_process/review_tests.rs::session_writer_audit_is_linux_only': (
+            '#1316 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
+            'Linux CI job at all, so no nextest entry can name it', ()),
+        'src/skills/tests.rs::permission_not_run': (
+            '#1525 helper: the note is printed on behalf of the test that calls it',
+            ('skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore',
+             'skills::tests::real_ts_scenarios_match_outcomes_and_file_trees')),
+        'tests/workspace_snapshot.rs::replay_scenario': (
+            '#1263 helper: the note is printed on behalf of the scenario it replays',
+            ('scenarios_match_ts_outcomes_and_trees',)),
+    }
+    defining_function = re.compile(
+        r'^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z0-9_]+)\s*[<(]')
+
+    def assert_every_skip_line_reaches_nextest(self, filter_text, crate=None):
+        # #1900: forward check = every filter entry names a real test. This is
+        # the mirror: every test that prints a skip line must be named by the
+        # filter (or be a documented exception), otherwise the note it writes to
+        # the stderr handle is thrown away with the rest of the captured output.
+        crate = crate or Path(__file__).resolve().parents[1]
+        named = {entry[1:] for entry in re.findall(r'test\(([^)]*)\)', filter_text)
+                 if entry.startswith('=')}
+        seen = set()
+        unregistered = []
+        for source in sorted(crate.rglob('*.rs')):
+            if 'target' in source.parts or source.name == 'skip_line.rs':
+                continue
+            lines = source.read_text(errors='replace').splitlines()
+            for index, line in enumerate(lines):
+                if 'stderr_skip_line(' not in line:
+                    continue
+                owner = self.defining_function_at(lines, index)
+                key = f'{source.relative_to(crate)}::{owner}'
+                seen.add(key)
+                exception = self.skip_line_exceptions.get(key)
+                if exception is not None:
+                    reason, covered = exception
+                    self.assertTrue(reason, f'#1900 the exception for {key} states why')
+                    for name in covered:
+                        self.assertIn(name, named,
+                                      f'#1900 the exception for {key} claims {name} covers it, '
+                                      f'but the filter does not name that test')
+                    continue
+                visible = self.nextest_visible_name(crate, source, owner)
+                if visible not in named:
+                    unregistered.append(f'{key} (nextest-visible {visible})')
+        self.assertFalse(
+            unregistered,
+            '#1900 no nextest success-output entry covers these skip-line call sites, so the '
+            'note they print is captured and lost: ' + ', '.join(unregistered)
+            + '. Either add the nextest-visible name to nextest_success_output_filter or add a '
+              'skip_line_exceptions entry saying why no entry can exist.')
+        # Only the entries that point into the crate being scanned can go
+        # stale; an entry for a file this crate does not have (the controls
+        # below scan a temporary crate) is simply not in play.
+        applicable = {key for key in self.skip_line_exceptions
+                      if (crate/key.split('::')[0]).exists()}
+        stale = sorted(applicable - seen)
+        self.assertEqual(stale, [],
+                         '#1900 these skip_line_exceptions entries no longer match a '
+                         'stderr_skip_line call site, so they would excuse nothing: '
+                         + ', '.join(stale))
+
+    @classmethod
+    def defining_function_at(cls, lines, index):
+        # Walk back to the `fn` that encloses the call. Both the scan above and
+        # the negative control rely on this mapping, so it fails loudly instead
+        # of guessing a key that would silently excuse a call site.
+        for back in range(index, -1, -1):
+            match = cls.defining_function.match(lines[back])
+            if match:
+                return match.group(1)
+        raise AssertionError(
+            f'#1900 cannot map the stderr_skip_line call on line {index + 1} to a function')
+
+    def test_skip_line_reverse_guard_rejects_an_unregistered_call_site(self):
+        # #1900 controls for the reverse guard: a skip-printing test the filter
+        # does not name must fail the guard, and every exception entry must
+        # still be backed by a real call site and a real covering entry.
+        crate = self.root/'reverse-guard-crate'
+        (crate/'tests').mkdir(parents=True)
+        (crate/'tests'/'sample.rs').write_text(
+            'fn registered() {\n'
+            '    skip_line::stderr_skip_line("skip: registered\\n");\n'
+            '}\n'
+            '\n'
+            'fn unregistered() {\n'
+            '    skip_line::stderr_skip_line("skip: unregistered\\n");\n'
+            '}\n')
+        self.assert_every_skip_line_reaches_nextest('test(=registered) | test(=unregistered)',
+                                                   crate=crate)
+        with self.assertRaisesRegex(AssertionError,
+                                    'covers these skip-line call sites.*unregistered'):
+            self.assert_every_skip_line_reaches_nextest('test(=other)', crate=crate)
+        # An exception that names a covering entry the filter does not hold.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/sample.rs::unregistered': ('helper', ('missing_entry',))}):
+            with self.assertRaisesRegex(AssertionError, 'does not name that test'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=registered) | test(=unregistered)', crate=crate)
+        # An exception with no call site behind it would excuse nothing.
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/sample.rs::deleted_test': ('gone', ())}):
+            with self.assertRaisesRegex(AssertionError,
+                                        'no longer match a stderr_skip_line call site'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=registered) | test(=unregistered)', crate=crate)
+        # A call site above no `fn` at all must not be silently skipped.
+        (crate/'tests'/'sample.rs').write_text(
+            'skip_line::stderr_skip_line("skip: orphan\\n");\n')
+        with self.assertRaisesRegex(AssertionError, 'cannot map the stderr_skip_line call'):
+            self.assert_every_skip_line_reaches_nextest(
+                'test(=registered) | test(=unregistered)', crate=crate)
 
     def test_success_output_filter_rejects_a_renamed_test(self):
         # The filter is a list of nextest-visible test names: a rename would

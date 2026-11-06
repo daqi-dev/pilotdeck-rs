@@ -971,7 +971,14 @@ async fn session_writes_have_no_ts_writers() {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn session_writer_audit_is_linux_only() {
-    eprintln!("SKIP: #1316 the session-writer audit reads Linux /proc");
+    // #1900: the print-family macros are captured by the test harness, so on
+    // the hosts where this test exists the note would never reach the log. The
+    // shared writer goes straight to the stderr handle, like the module_host
+    // sibling. No nextest success-output entry: the test does not exist in the
+    // Linux CI job at all.
+    crate::test_skip_line::stderr_skip_line(
+        "SKIP: #1316 the session-writer audit reads Linux /proc\n",
+    );
 }
 
 /// #1632: a child that was already alive when the write window opened must not

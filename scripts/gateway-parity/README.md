@@ -238,3 +238,28 @@ python3 -I scripts/check-frozen-delivery.py --root _build/wt-<N>   # 审计另�
 脚本只读，绝不执行 `--write`、不改任何文件；最后一行 `BLOCKED n / READY m`
 按装置段落计数，任一阻塞即 exit 1。今天的 `#1355 fix-r2` 缺事件文件、
 协调者拒绝 `--write` 就是这一类：预检会在交付前直接指出缺哪一个事件文件/哪一条链。
+
+## 已知限制：没有与 `PDRS_REQUIRE_PERMISSION_FAULTS` 等价的强制开关（#1900）
+
+Rust 侧的 `src/pilotdeck-gateway/tests/common/permission_faults.rs` 有
+`PDRS_REQUIRE_PERMISSION_FAULTS`：宿主特权导致权限拒绝的探针跑不出来时，用例从
+「跳过」变成 panic。本装置**没有**对应开关。
+
+- 现状：`common.materialize_probe` 的 `unreadable-dir` 分支在 `os.geteuid() == 0`
+  时抛 `ProbeSkipped('root can read mode-000 directories')`；`test_safety.py` 与
+  `controls/prerequisites.py` 的共享探针循环把它记成 `passed: null` + `skipped: true`，
+  并只容忍 `common.DEGENERATE_PROBES` 声明的两类宿主退化。批状态取最悲观子项：
+  `PASS_WITH_SKIPS`，`BATCH_EXIT_CODES['PASS_WITH_SKIPS'] = 1` —— 非零退出，且报告
+  单列 skipped，不是假 PASS。
+- 缺口：root / `CAP_DAC_OVERRIDE` 宿主上权限面完全没验，形式宿主拿到的仍是
+  `PASS_WITH_SKIPS` 而不是失败；也没有「本装置必须真跑到、退化即红」的开关可供
+  形式宿主导出。
+- 今天靠什么覆盖：形式宿主与本仓 CI 都以非特权用户运行（实测 `id -u`：本机 502、
+  cb8 1000、mbp2 501），`os.geteuid() == 0` 不成立，`unreadable-dir` 探针每次都真
+  物化、真被拒。只要形式宿主保持非 root，权限面就是被对拍的；剩下的风险只有
+  「有人用 root 跑正式对拍」，此时报告仍写 `PASS_WITH_SKIPS` / exit 1 并列出跳过项。
+- 为什么本单不改：`common.py` 是带哈希行的冻结装置源（`specs/gateway-parity/FROZEN.md`
+  里 `../../scripts/gateway-parity/common.py` 那一行），按 CLAUDE.md「冻结尺子的变更」
+  需要独立 issue、理由、两家评审、真实数据复算（A1 二进制）与重新登记；新增一个
+  失败语义还属于改判分语义，需要明确授权。本单按 #1900「怎么算做完」第 5 条走
+  「不修 + 写进已知限制」这条路，另开跟进单 #1930 走冻结变更流程。

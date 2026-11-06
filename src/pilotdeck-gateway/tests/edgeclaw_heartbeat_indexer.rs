@@ -3050,11 +3050,40 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         manifest.is_file(),
         "#1207 the workspace manifest must exist before it is made read-only, got {manifest:?}"
     );
+    // #1900: the mode this test restores must be the *umask-degraded* one. A
+    // 0200/0222 umask masks the owner write bit out of everything
+    // `fs::write` creates, so the manifest is born 0444 and `original` (below)
+    // is 0444 — that is the mode both restore arms have to widen before the
+    // next heartbeat can rewrite the manifest. A process-wide `umask 0222`
+    // cannot reproduce it here: the harness's own `create_dir_all` loses its
+    // write bit first and the test dies at `#1098 create isolated repository
+    // root` before reaching this contract, so the degraded mode is built
+    // directly and pinned below.
+    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o444))
+        .expect("#1207 make the workspace manifest read-only");
     let original_permissions = fs::metadata(&manifest)
         .expect("#1207 read the workspace manifest's original mode")
         .permissions();
-    fs::set_permissions(&manifest, fs::Permissions::from_mode(0o444))
-        .expect("#1207 make the workspace manifest read-only");
+    assert_eq!(
+        original_permissions.mode() & 0o200,
+        0o000,
+        "#1900 premise: the captured original mode must be the write-bit-less one an \
+         0200/0222 umask produces, got {:o}",
+        original_permissions.mode()
+    );
+    // One writer for every restore in this test: the skip arm below and the
+    // tail must widen the same bits the same way, or one of them hands the
+    // next heartbeat a manifest it cannot rewrite (that divergence is #1900).
+    // The restore is proved by a real write open, not by the mode bits: that
+    // is the call the store's manifest repair makes, and a restore that is
+    // merely *meant* to widen the owner bit is what let the two arms drift.
+    let restore_manifest_writable = || {
+        let mut restore = original_permissions.clone();
+        restore.set_mode(restore.mode() | 0o200);
+        fs::set_permissions(&manifest, restore)?;
+        drop(fs::OpenOptions::new().write(true).open(&manifest)?);
+        Ok::<(), std::io::Error>(())
+    };
     // #1263: 0444 only stops an unprivileged writer. Under a root container
     // the mode is bypassed (CAP_DAC_OVERRIDE), the `expect_err` below would
     // fail red for environment reasons, and the re-arm contract would be
@@ -3064,9 +3093,8 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         // Restore the writability the next step needs: the original mode came
         // from `fs::write`, which drops the owner write bit under a 0200/0222
         // umask, and the re-arm below must be able to rewrite the manifest.
-        let mut restore = original_permissions.clone();
-        restore.set_mode(restore.mode() | 0o200);
-        let _ = fs::set_permissions(&manifest, restore);
+        restore_manifest_writable()
+            .expect("#1207 make the workspace manifest writable again before the skip");
         if permission_faults::require_permission_faults() {
             panic!(
                 "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
@@ -3127,8 +3155,7 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
     );
     // The next heartbeat's own manifest repair needs the manifest writable
     // again; the failure face under test is only the clear's mid-deletion one.
-    fs::set_permissions(&manifest, original_permissions)
-        .expect("#1207 make the workspace manifest writable again");
+    restore_manifest_writable().expect("#1207 make the workspace manifest writable again");
     let stats = lab
         .indexer
         .run_heartbeat(run_options())
@@ -4071,25 +4098,54 @@ async fn row_removed_by_repair_mid_heartbeat_reports_repair_not_clear() {
 #[test]
 #[ignore = "#1525 driven by require_permission_faults_env_matrix"]
 fn require_permission_faults_env_child() {
-    let expected =
-        std::env::var("PDRS_EXPECT_PERMISSION_FAULTS").expect("#1525 expectation") == "true";
     let case = std::env::var("PDRS_CASE_ID").expect("#1525 case id");
+    let expected = std::env::var("PDRS_EXPECT_PERMISSION_FAULTS").expect("#1525 expectation");
     let value = std::env::var("PDRS_REQUIRE_PERMISSION_FAULTS");
-    assert_eq!(
-        permission_faults::require_permission_faults(),
-        expected,
-        "#1525 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must parse as {expected}"
-    );
+    // #1900: an unrecognized value now panics, so the child catches it and
+    // still exits clean. `run_cases` only accepts a child that prints exactly
+    // one passed test and one receipt, and an uncaught panic would be
+    // indistinguishable from a crash there.
+    let parsed = std::panic::catch_unwind(permission_faults::require_permission_faults);
+    match expected.as_str() {
+        "true" => assert_eq!(
+            parsed.ok(),
+            Some(true),
+            "#1525 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must parse as true"
+        ),
+        "false" => assert_eq!(
+            parsed.ok(),
+            Some(false),
+            "#1525 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must parse as false"
+        ),
+        "panic" => assert!(
+            parsed.is_err(),
+            "#1900 PDRS_REQUIRE_PERMISSION_FAULTS={value:?} must be rejected — an unrecognized \
+             spelling used to read as off and disarm the gate on privileged hosts"
+        ),
+        other => panic!("#1525 unknown PDRS_EXPECT_PERMISSION_FAULTS={other:?}"),
+    }
     test_process::receipt(&case);
 }
 
 #[test]
 fn require_permission_faults_env_matrix() {
     let cases = [
-        ("one", Some("1"), true),
-        ("true", Some("true"), true),
-        ("zero", Some("0"), false),
-        ("unset", None, false),
+        ("one", Some("1"), "true"),
+        ("true", Some("true"), "true"),
+        ("zero", Some("0"), "false"),
+        ("unset", None, "false"),
+        // #1900: spellings that used to fall through the exact `1`/`true`
+        // match and silently disarm the switch on a privileged host.
+        ("capitalised", Some("True"), "true"),
+        ("upper-yes", Some("YES"), "true"),
+        ("padded", Some(" 1"), "true"),
+        ("on", Some("on"), "true"),
+        ("upper-off", Some("Off"), "false"),
+        ("padded-zero", Some("0 "), "false"),
+        // #1900: neither an on nor an off token is a configuration error; the
+        // parser refuses to guess instead of reading it as off (fail-open).
+        ("unknown", Some("maybe"), "panic"),
+        ("empty", Some(""), "panic"),
     ];
     test_process::run_cases(
         "require_permission_faults_env_child",
@@ -4109,7 +4165,7 @@ fn require_permission_faults_env_matrix() {
                         .chain([
                             (
                                 "PDRS_EXPECT_PERMISSION_FAULTS".to_owned(),
-                                expected.to_string(),
+                                (*expected).to_owned(),
                             ),
                             ("PDRS_CASE_ID".to_owned(), (*case).to_owned()),
                         ])
