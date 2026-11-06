@@ -514,6 +514,24 @@ fn tail_generator_cleans_only_owned_work() {
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
+        // #1406 review: a nonzero exit alone also matches an early crash or a
+        // deadline kill; pin the collision cell to the exclusive oracle write.
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        if collision {
+            assert!(
+                output.contains("EEXIST") && output.contains("oracle.json"),
+                "#1253 tail generator fails on the oracle wx write: {output}"
+            );
+        } else {
+            assert!(
+                !output.contains("EEXIST"),
+                "#1253 tail generator success cell reports no collision: {output}"
+            );
+        }
         let mut names: Vec<_> = fs::read_dir(&root)
             .expect("#1253 list generator output")
             .map(|entry| {

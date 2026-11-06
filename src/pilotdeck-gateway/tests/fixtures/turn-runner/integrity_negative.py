@@ -61,12 +61,29 @@ cases = [
 
 
 def audit():
+    # #1406 review: bind each bound test to the one file that declares its
+    # module. Concatenating the three bodies would accept a same-named short
+    # function from another module. Longest prefix first: forwarding:: lives
+    # inside stream_tests::.
+    modules = (('runtime::turn::live::stream_tests::forwarding::', live.with_name('forward_tests.rs'), 'case!'),
+               ('runtime::turn::live::stream_tests::', tests, None),
+               ('runtime::turn::live::tests::', live, None))
+    bodies = {path: path.read_text() for _, path, _ in modules}
     for name, path, old, new, scope, test, panic in cases:
         mutate(path.read_text(), scope, [(old, new)])
-        assert ('fn ' + test.rsplit('::', 1)[1] + '(' in
-                tests.read_text() + live.read_text() + live.with_name('forward_tests.rs').read_text()
-                or 'case!(' + test.rsplit('::', 1)[1] + ',' in
-                live.with_name('forward_tests.rs').read_text()), test
+        matched = next(((file, macro) for prefix, file, macro in modules
+                        if test.startswith(prefix)), None)
+        assert matched is not None, f'bound test module not audited: {test}'
+        file, macro = matched
+        prefix = next(prefix for prefix, candidate, _ in modules if candidate == file
+                      and test.startswith(prefix))
+        short = test[len(prefix):]
+        assert '::' not in short, f'bound test has an extra module level: {test}'
+        body = bodies[file]
+        found = ('fn ' + short + '(') in body
+        if macro and not found:
+            found = (macro + '(' + short + ',') in body
+        assert found, test
     return [{'mutation': n, 'test': t, 'panic': a} for n, _, _, _, _, t, a in cases]
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""#1253 source mutations; execute on the committed delivery, never a shadow HEAD."""
+"""#1253 source mutations; run on the committed delivery (HEAD) unless
+PDRS_NEGATIVE_BASELINE names a sandbox candidate snapshot."""
 import argparse
 import json
 import os
