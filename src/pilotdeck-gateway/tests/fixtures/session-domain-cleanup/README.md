@@ -94,7 +94,13 @@ ends hands `None` back (`SystemExit(None)` is exit 0), a `sys.exit(0)` or
 module-level helper reached through a local (`code = _exit_code(report)`) is
 judged like the direct call.  An augmented `report |= {'status': 'PASS'}`
 enumerates the function even when it is the only status evidence
-(`fix-r11`), and a point that ends in an ordinary `raise` has an exit path —
+(`fix-r11`); its payload call is resolved in the file the function lives in,
+exactly like every other delegation judgement (`fix-r15`).  An exit call is a
+status/exit computation of its own, so a function whose only evidence is
+`sys.exit(...)`, `os._exit(...)`, bare `exit(...)` or `quit(...)` is enumerated
+even when the argument carries no status word, and a tuple target
+(`report['status'], code = 'PASS', 0`) writes the same slot as the plain
+subscript form (`fix-r15`).  A point that ends in an ordinary `raise` has an exit path —
 a propagating error is not an optimistic exit, so it is not reported as
 `no return or exit path` (`fix-r11`).  `fix-r12` closes the two holes the r11
 reviews opened in that family: the receiver of `|=` / `update()` may be a
@@ -111,9 +117,9 @@ an optimistic exit either, so the delegation family no longer reports it as
 stays legal because it cannot claim a clean run; a *pair* that hands back a
 status dict with a literal code (`return {'status': 'BLOCKED'}, 2`) is still a
 batch computation and is flagged, because the pair must come from the shared map
-(`fix-r6` pins both sides).  The audit self-tests seventy-six probe functions: seventy-five inside `probe892` in
+(`fix-r6` pins both sides).  The audit self-tests seventy-nine probe functions: seventy-eight inside `probe892` in
 `check_cleanup.py` plus `_silent`, which is parsed and asserted outside that
-function.  `probe892` is the authoritative list for the seventy-five (the nine helpers
+function.  `probe892` is the authoritative list for the seventy-eight (the nine helpers
 it defines — `_exit_code`, `_exit_a`, `_exit_b`, `_relay_zero`, `_mixed_code`,
 `_bare_bail`, `_decoy_code`, `_exit_bare`,
 `_exit_statement` — are leaves reached through a probe, not probes themselves;
@@ -287,7 +293,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 94 mutants:
+`JUDGES`, keyed by the same names. The current table has 97 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -330,7 +336,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-param-update`, `calibrate-helper-local-relay`,
 `calibrate-helper-bare-sysexit`, `calibrate-attr-head-callee`,
 `calibrate-mixed-branch-helper`, `calibrate-cross-module-name`,
-`calibrate-exempt-callee-write`, `calibrate-param-augassign-opaque`.
+`calibrate-exempt-callee-write`, `calibrate-param-augassign-opaque`,
+`calibrate-quit-exit`, `calibrate-partial-raise-point`,
+`calibrate-augassign-cross-file-call`, `calibrate-exit-call-unregistered`,
+`calibrate-tuple-status-target`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -451,12 +460,24 @@ r13-round gaps: `calibrate-quit-exit` exits through the other site builtin,
 `quit(0)`, which raises the same `SystemExit` as `exit(0)` and used to reach no
 rule at all, and `calibrate-partial-raise-point` registers a point that raises
 on one branch and falls off the end on the other — the point-level reachability
-rule is now the same one the helper arm uses.  Two boundaries stay open and are
+rule is now the same one the helper arm uses.  The three `fix-r15` mutants pin the
+r14-round gaps: `calibrate-augassign-cross-file-call` applies `|=` to a summary
+with a call payload whose callee is a local lookalike of a registered point in
+*another* file (the enumeration had dropped `module`/`rel`, so the payload was
+trusted by bare name), `calibrate-exit-call-unregistered` gives an unregistered
+point `sys.exit('BLOCKED')` as its only evidence (the raise family enumerated a
+status payload, the call family enumerated nothing), and
+`calibrate-tuple-status-target` writes `report['status'], code = 'PASS', 0` (the
+enumeration only knew the plain subscript target, while the slot layer has
+expanded tuple targets since `fix-r9`).  Two boundaries stay open and are
 recorded here so they are not re-reported as new: an augmented assignment on a
 *parameter* is only judged by its own payload (a `|=` set-union of two
-parameters is not treated as an aggregation point), and a `{**payload}`
+parameters is not treated as an aggregation point), a `{**payload}`
 expansion whose names all resolve locally is not followed into the payload's
-contents.  The
+contents, and an **attribute receiver** (`self.report.update(payload)` /
+`self.report |= payload`) is only a summary write when the payload carries a
+status literal of its own — the audited tree has no classes, so an opaque
+payload on an attribute is not treated as a summary write either way.  The
 restored-positive mutant binds `check_cleanup.py --mode batch-aggregation`'s
 `negativeRestored.skipStatus/skipReturncode`, not an unrelated panic/timeout;
 `aggregation-exit-bypassed` binds `aggregation-audit`'s
