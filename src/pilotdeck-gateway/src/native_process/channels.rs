@@ -310,7 +310,12 @@ impl NativeChannels {
         }
     }
 
-    /// ChannelAdapterBundle.hotStartFeishu.
+    /// ChannelAdapterBundle.hotStartFeishu. Pure reservation: the TS bundle
+    /// only defines `hotStartWeixin` (the feishu login callback does not
+    /// exist), and the native process has no feishu config hot-reload event
+    /// source yet, so nothing calls this. Kept as the symmetric seam for the
+    /// day a feishu hot start is wired.
+    #[allow(dead_code)]
     pub async fn hot_start_feishu(&self) -> Result<(), ChannelError> {
         let channel = self.make_feishu().await;
         self.server.hot_start_channel(channel).await

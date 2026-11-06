@@ -91,8 +91,7 @@ pub(crate) type WebhookHandler = std::sync::Arc<
 /// read: a reload replaces the channel, and `stop` clears it, so the route
 /// must see the channel that is active *now*. `None` falls through to the
 /// rest of the router.
-pub(crate) type WebhookResolver =
-    std::sync::Arc<dyn Fn() -> Option<WebhookHandler> + Send + Sync>;
+pub(crate) type WebhookResolver = std::sync::Arc<dyn Fn() -> Option<WebhookHandler> + Send + Sync>;
 
 /// Routing inputs for one non-upgrade request. `loopback` mirrors the TS
 /// bind-host check (`127.0.0.1` or `localhost`); `static_root` mirrors
@@ -312,8 +311,7 @@ async fn route<B>(
         // "application/json"}); res.end(JSON.stringify(body))` — a whole
         // reply Node sizes up front, so the body is not chunked.
         return Ok(handler_response_with_length(
-            hyper::StatusCode::from_u16(status)
-                .unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR),
+            hyper::StatusCode::from_u16(status).unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR),
             "application/json",
             text,
             keep_alive,

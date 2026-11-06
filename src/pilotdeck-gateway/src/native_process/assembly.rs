@@ -133,6 +133,9 @@ pub(super) fn loop_stimulus_switch(env: &Env) -> Result<Option<PathBuf>, ProxyEr
         .map_err(Into::into)
 }
 
+/// Test/embedded entry: the production path is [`start_with_webhook`], which
+/// also hands the `/feishu/webhook` resolver to the listener.
+#[cfg(test)]
 pub async fn start(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
     start_observed(
         options,
@@ -150,6 +153,7 @@ pub(super) type CleanupObserver =
 
 // An observer runs only after the actual production disposal. Tests can inject
 // a failure or a deterministic completion gate without substituting resources.
+#[cfg(test)]
 pub(super) async fn start_observed(
     options: Options,
     env: Env,
@@ -166,6 +170,7 @@ pub(super) async fn start_observed(
     .await
 }
 
+#[cfg(test)]
 pub(super) async fn start_observed_with_upload_cleanup(
     options: Options,
     env: Env,
@@ -204,7 +209,10 @@ pub(super) async fn start_with_webhook(
     let slot = slot.get().cloned().ok_or_else(|| {
         ProxyError::from("feishu webhook slot was not constructed during assembly")
     })?;
-    Ok((host, crate::channel::feishu::FeishuWebhookSlot::resolver(&slot)))
+    Ok((
+        host,
+        crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
