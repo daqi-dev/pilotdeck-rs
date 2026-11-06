@@ -2,11 +2,28 @@
 //! SHA-1 signatures and the WeCom AES-256-CBC / PKCS#7 envelope.
 
 use aes::Aes256;
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{
+    Engine,
+    alphabet::STANDARD,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+};
 use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::NoPadding};
 use sha1::{Digest, Sha1};
 
 type Aes256CbcDec = cbc::Decryptor<Aes256>;
+
+/// Node's base64 decoder in `Buffer.from(value, "base64")`: it accepts a last
+/// quartet whose trailing bits are not zero (`AB==` -> `00`, Node v22.22.0
+/// probe) and is indifferent about padding. The stock `STANDARD` engine
+/// rejects both, which turned a valid baseline message into an empty buffer
+/// and then into a 500. Same configuration as `upload::gateway` uses for the
+/// same Node behaviour.
+const NODE_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_allow_trailing_bits(true)
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 /// `sha1Hex(s)` — lowercase hex, as Node `crypto.createHash("sha1")`.
 pub(crate) fn sha1_hex(text: &str) -> String {
@@ -46,14 +63,18 @@ pub(crate) fn verify_msg_signature(
 }
 
 /// Node `Buffer.from(value, "base64")`: ignore characters outside the base64
-/// alphabet, tolerate missing padding, and ignore a trailing single quartet
-/// character. `ciphertextB64`/the 43-character `encodingAesKey` both arrive
-/// this way.
+/// alphabet (the base64url spelling `-`/`_` included, which Node accepts and
+/// maps to 62/63), tolerate missing padding, and ignore a trailing single
+/// quartet character. `ciphertextB64`/the 43-character `encodingAesKey` both
+/// arrive this way.
 fn node_base64(value: &str) -> Vec<u8> {
     let mut filtered = String::with_capacity(value.len());
     for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' {
-            filtered.push(ch);
+        match ch {
+            '-' => filtered.push('+'),
+            '_' => filtered.push('/'),
+            _ if ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' => filtered.push(ch),
+            _ => {}
         }
     }
     // A single leftover character cannot form a byte; Node drops it.
@@ -63,7 +84,7 @@ fn node_base64(value: &str) -> Vec<u8> {
     while !filtered.len().is_multiple_of(4) {
         filtered.push('=');
     }
-    STANDARD.decode(filtered).unwrap_or_default()
+    NODE_BASE64.decode(filtered).unwrap_or_default()
 }
 
 /// A decrypt failure as JavaScript would print it (`Error: …` / `RangeError: …`).
@@ -176,5 +197,15 @@ mod tests {
         assert_eq!(node_base64("YQ"), b"a");
         assert_eq!(node_base64("Y!Q"), b"a");
         assert_eq!(node_base64("Y"), Vec::<u8>::new());
+        // Node v22.22.0 probes (node 22.22.0/ICU 78.2, 2026-11-06):
+        // `Buffer.from('AB==','base64')` -> 00, `'AAAB'` -> 000001,
+        // `'-_8='` -> fbff (base64url alphabet), `'A$B='` -> 00,
+        // `'AAAAA'` -> 000000 (the trailing single character is dropped).
+        assert_eq!(node_base64("AB=="), vec![0x00]);
+        assert_eq!(node_base64("AAAB"), vec![0x00, 0x00, 0x01]);
+        assert_eq!(node_base64("-_8="), vec![0xfb, 0xff]);
+        assert_eq!(node_base64("+/8="), vec![0xfb, 0xff]);
+        assert_eq!(node_base64("A$B="), vec![0x00]);
+        assert_eq!(node_base64("AAAAA"), vec![0x00, 0x00, 0x00]);
     }
 }

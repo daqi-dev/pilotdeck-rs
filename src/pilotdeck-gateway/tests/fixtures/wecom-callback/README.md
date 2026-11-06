@@ -6,8 +6,13 @@ esbuild 转译后以受控 require 装载，只替换四类边界：`ImElicitati
 `ImPermissionHelper`（脚本化假件，调用全部入 helpers 记录）、`gateway.submitTurn`
 （脚本化回合事件流）、qyapi（`https://qyapi.weixin.qq.com` 重写为 127.0.0.1:18998
 环回假服务，请求与脚本应答队列）、`node:http`/`node:crypto`/`node:url` 为基线真实
-模块。不启动真实服务器、账号或网络。渠道端口从 config 注入（18800-18820 与
+模块。不启动真实服务器、账号或网络。渠道端口从 config 注入（18900-18920 与
 坏端口 70000），每个用例一个频道实例与一个确定性 mapper uuid 计数器。
+
+端口段是**宿主全局**资源：本机并行跑 `pilotdeck-gateway` 的 lib 套件时，同段端口被
+别的渠道金样占用会以 `EADDRINUSE` 假红（#1336 r2 实测 channel-sms 占 18800-18854，
+因此本套改用 18900-18920）。重放前若端口被占，测试报的是金样失败而不是被测代码
+回归，先按 `lsof -nP -iTCP:18900-18920` 核占用方。
 
 22 个场景的输入步骤与 TS 结果都在 `oracle.json`。覆盖：缺必填配置两条（corpId 与
 secret/agentId，监听不启动）、EADDRINUSE 与 ERR_SOCKET_BAD_PORT、GET 面
@@ -22,7 +27,10 @@ errcode 40014 清 token 重取、stop 关监听（后续连接 ECONNREFUSED）�
 `qyapi`（method/path/query/contentType/body）、`gateway`（sessionKey/channelKey/message）、
 `helpers`（调用名+参数）、`logs`、`events`（stop 完成序）。跨步骤等待用 qyapi/helpers/
 gateway 计数或微任务 tick；stop 与在飞请求的相对位置由 `stop-pending`+`tcp-open`
-（连接建立后再写头）+`tcp-chunk` 固定。
+（连接建立后再写头）+`tcp-chunk` 固定。`tcp-open` 的「连接已建立」按服务端
+`connection` 事件判定（生成器包了 `node:http.createServer` 记录实例），客户端
+`connect` 后服务端未必已 accept，先写头会与 `server.close()` 竞争、偶发把本该
+进排空的请求判成拒绝；现存金样即在此屏障下重生成，两次运行逐字节一致。
 
 重生成到**新的**目录（输出用 `recursive:true` 和 `flag:'wx'`）：
 
