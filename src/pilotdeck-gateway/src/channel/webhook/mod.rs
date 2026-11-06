@@ -578,14 +578,17 @@ async fn route_request(
 /// hyper frames a known-length body with `content-length` on any version.
 /// With an unknown size hyper cannot chunk a 1.0 connection, so it writes the
 /// body and closes, matching Node's bytes.
-/// Sibling: the 1.0 version switch is kept in sync with the `finalize` helpers
-/// in `src/module_host.rs`, `src/module_host/approvals.rs` and `src/api_web.rs`,
-/// and with the inline 1.0 branches in `src/user_dialog/http_store.rs` and
-/// `src/native_http.rs` (the `sms` lane has none yet — #1913). The unsized
-/// wrapper is webhook-only
-/// because this channel answers with `handler_response_with_length` bodies,
-/// while those paths stream an unknown-size body that a 1.0 connection already
-/// frames by closing.
+/// Sibling: this is the one lane list — the same lanes are tabulated in
+/// `A8.3-CH-WEBHOOK-004`「范围」. The 1.0 version switch is kept in sync with
+/// the `finalize` helpers in `src/module_host.rs`,
+/// `src/module_host/approvals.rs` and `src/api_web.rs`, and with the inline 1.0
+/// branches in `src/user_dialog/http_store.rs` and `src/native_http.rs`.
+/// `src/channel/api_server/` (shared `src/http_proxy.rs` transport) has no
+/// local 1.0 pin and no 1.0 golden cell — its 1.0 keep-alive and status line
+/// are untested and tracked in #1688; the `sms` lane has none yet (#1913).
+/// The unsized wrapper is webhook-only because this channel answers with
+/// `handler_response_with_length` bodies, while those paths stream an
+/// unknown-size body that a 1.0 connection already frames by closing.
 fn finalize(mut response: hyper::Response<Body>, version: hyper::Version) -> hyper::Response<Body> {
     if version != hyper::Version::HTTP_10 || crate::mutants::on("webhook-http10-finalize-off") {
         return response;

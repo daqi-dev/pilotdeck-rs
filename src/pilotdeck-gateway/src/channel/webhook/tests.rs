@@ -1985,9 +1985,8 @@ fn replay_cases_cover_exactly_the_oracle() {
 /// — draws a close-delimited response and a closed socket, as Node does.
 /// Only the status line differs: Node echoes `HTTP/1.1`, hyper writes its own
 /// `HTTP/1.0` (the draft entry A8.3-CH-WEBHOOK-004, oracle case `http10`
-/// records Node's line), matching the other listeners
-/// (`src/native_http.rs`, `src/module_host.rs`, `src/module_host/approvals.rs`,
-/// `src/api_web.rs`, `src/user_dialog/http_store.rs`).
+/// records Node's line), as in the other listeners — the lane list lives in
+/// `finalize`'s `Sibling:` paragraph and in `A8.3-CH-WEBHOOK-004`「范围」.
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
     let case = case("http10");
