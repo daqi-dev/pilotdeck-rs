@@ -122,7 +122,10 @@ N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响�
 **逐个都试一遍再退出**：前一个目录不可删（如 `/dev/null`）不让后面显式点名的目录跳过失效
 （argparse 只有最后一个生效，但这条命令终究没跑完）。空值（`--output=` / `--output ''`）不
 失效且判参数错误 rc=2——`Path('')` 就是当前工作目录，否则会删掉调用者 CWD 里的
-`summary.json`。孪生解析器自己都起不来时**不猜也不删**，按输入不可用 rc2 退出。
+`summary.json`。**分类不可用**时（argparse 连导入都失败，或孪生解析器自己都起不来）
+改走保守的**字面扫描**：只认 `--output 值` / `--output=值` 且值不以 `-` 开头，遇裸 `--`
+停止——这种 token 在任何一版 argparse 里都必然是值，所以**只漏不多删**；扫完仍按输入
+不可用 rc2 退出（旧 PASS 不因启动依赖缺失而留盘，Codex r12 P0）。
 
 实测（`_tmp/20261106-issue-1477/verify-fix-r12/classifier_matrix.py`，3.12.13 与 3.14.3 各
 一遍）：37 种单 token 形状 + 19 种组合形状，孪生解析器与真实解析器的「收 / 不收」逐个一致，
@@ -144,7 +147,11 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 入口级失败一律 **rc=2**（输入或环境不可用，不是判据 FAIL）：缺 `-I`、checker 缺失 / 不可读 /
 **加载期任何异常**（含 `SyntaxError`：坏合并、半写入）、pycache 前缀候选耗尽、**argv 连宽松
 孪生解析器都分不了类**、`emit` 写金样失败（`--oracle=`、不可写路径、目标是目录）、**负控自己的
-写盘失败**（只读输出目录 / `N1` 已经是文件 / `summary.json` 已经是目录 / 父件不是目录）。
+写盘失败**（只读输出目录 / `N1` 已经是文件 / `summary.json` 已经是目录 / 父件不是目录 /
+输出目录下预置的符号链接）。**写盘从不跟随符号链接**：文件层用 `O_NOFOLLOW`
+（+ 原子发布的 tmp 用 `O_EXCL`），目录层逐段 `is_symlink()` 核对——预置
+`OUT/N1 -> ~/.ssh` 或 `OUT/N1/driver/methods.json -> ~/.bashrc` 会让
+`Path.write_text` / `mkdir(exist_ok=True)` 以本进程权限写穿到目标（DeepSeek r11 P1）。
 `emit` 的 tmp 用 `tempfile.mkstemp` 取不可预测的名字（`<name>.<pid>.tmp` 在世界可写目录里可被
 预置符号链接），失败路径先删 tmp 再收口。
 `raise SystemExit('消息')` 返回的是 **1**，会被下游当成「判据 FAIL」。
