@@ -189,6 +189,27 @@ def writer(out, hold):
     return 0
 
 
+def force_stop(process, out):
+    """Recover when ``stop_writer`` itself was interrupted.
+
+    Graceful first (the writer's SIGTERM handler unwinds ``mutating_sources``,
+    which restores every guarded byte), then a bounded wait, and only then a
+    kill -- a kill during restoration can leave a mutant or a truncated file on
+    disk (#1662 review r5 P0). Returns True when the writer exited cleanly.
+    """
+    if process.poll() is not None:
+        return process.returncode == 0
+    try:
+        process.terminate()
+        process.communicate(timeout=WRITER_EXIT_BUDGET)
+        return process.returncode == 0
+    except Exception:
+        pass
+    _kill_group(process)
+    _collect(process, 30)
+    return False
+
+
 def stop_writer(process, out):
     """Bounded stop: let the writer restore first, then terminate, then kill."""
     try:
@@ -220,9 +241,15 @@ def judge(result):
 
 
 def observations(log):
-    """Lease acquisitions the resident test reported: (wait ms, first, at)."""
-    return [(int(waited), int(first), int(at)) for waited, first, at in
-            re.findall(re.escape(LEASE_MARKER) + r'(\d+) first=(\d+) at=(\d+)', log)]
+    """Lease acquisitions the resident test reported.
+
+    Each row is ``(wait ms, first attempt, first refused attempt, acquisition)``
+    in epoch milliseconds; ``blocked`` is 0 when the first attempt succeeded.
+    """
+    return [(int(waited), int(first), int(blocked), int(at))
+            for waited, first, blocked, at in
+            re.findall(re.escape(LEASE_MARKER)
+                       + r'(\d+) first=(\d+) blocked=(\d+) at=(\d+)', log)]
 
 
 def green(out):
@@ -282,13 +309,13 @@ def green(out):
         except BaseException as error:
             stop_error = error
             # The stop itself can be interrupted (SIGINT during communicate).
-            # Force the writer group down anyway: it lives in its own session and
-            # would otherwise keep the tree lock with the mutant on disk.
-            try:
-                _kill_group(process)
-                _collect(process, 30)
-            except BaseException:
-                pass
+            # Recover gracefully and only kill as a last resort; ``restored``
+            # records whether we can still claim the sources were restored.
+            restored = force_stop(process, out)
+            if not restored:
+                stop_error = RuntimeError(
+                    f'{type(error).__name__}: {error}; writer had to be killed, '
+                    f'source restoration is NOT confirmed')
     for interrupt in (failure, stop_error):
         if isinstance(interrupt, BaseException) and not isinstance(interrupt, Exception):
             # Interrupts still abort the run; the writer is already stopped above.
@@ -316,23 +343,25 @@ def green(out):
     if end_ms is None:
         return 'INVALID', ('the writer never published the end of its hold; the acquisition '
                            'timestamp cannot be attributed to it')
-    # The *first attempt* is the witness, not the elapsed wait: it must fall
-    # inside this writer's hold. An attempt made after the release means the
-    # reader may have waited on some later lock holder (or on nothing at all and
-    # been descheduled), and neither is evidence for this writer (#1662 review
-    # r4 P0).
-    waited, first, at = max(waits, key=lambda row: row[0])
-    if not (start_ms <= first <= end_ms):
-        return 'INVALID', (f'resident test first tried the lease at {first} ms, outside the '
-                           f'writer hold [{start_ms}, {end_ms}]: that wait was not against '
-                           f'this writer')
-    if at < first:
-        return 'INVALID', (f'resident test reported acquisition {at} ms before its own first '
-                           f'attempt {first} ms; the marker is inconsistent')
+    # The witness is the *refused* attempt: ``try_lock_shared`` returning
+    # WouldBlock is a direct observation that an exclusive holder was there, and
+    # nothing but a real holder produces it. Requiring that instant to fall
+    # inside this writer's hold leaves no room for a scheduler pause (before the
+    # call, or after an uncontended acquisition) and none for a later lock
+    # holder (#1662 review r4/r5 P0).
+    waited, first, blocked, at = max(waits, key=lambda row: row[0])
+    if blocked == 0:
+        return 'INVALID', ('the resident test never observed a refused attempt, so it never '
+                           'met an exclusive holder; this row is no evidence for the lease')
+    if not (start_ms <= blocked <= end_ms):
+        return 'INVALID', (f'resident test was refused at {blocked} ms, outside the writer '
+                           f'hold [{start_ms}, {end_ms}]: that refusal was not this writer')
+    if not first <= blocked <= at:
+        return 'INVALID', (f'inconsistent marker: first={first} blocked={blocked} at={at}')
     if waited < MIN_LEASE_WAIT_MS:
         return 'INVALID', (f'resident test waited {waited} ms, under the '
                            f'{MIN_LEASE_WAIT_MS} ms floor: the lease was not contended')
-    return 'KILLED', (f'resident test tried the lease inside the writer hold '
+    return 'KILLED', (f'resident test was refused inside the writer hold '
                       f'[{start_ms}, {end_ms}], waited {waited} ms and then passed')
 
 
