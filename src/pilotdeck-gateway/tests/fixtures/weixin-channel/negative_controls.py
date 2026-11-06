@@ -20,7 +20,6 @@ fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
 native = root / 'src/pilotdeck-gateway/src/native_process'
 REPLAY = 'channel::weixin::replay_tests::weixin_replays_the_ts_channel_oracle'
-MEDIA_DOWNLOAD = 'channel::weixin::media::tests::download_replays_the_oracle_cases'
 UNSUPPORTED = ('native_process::methods::tests::'
                'prepare_weixin_login_without_callback_answers_unsupported')
 FORWARDED = ('native_process::methods::tests::'
@@ -216,6 +215,16 @@ MUTATIONS = [
      '            read_body(response.into_body(), usize::MAX, None)',
      'channel::weixin::media::tests::the_received_body_is_capped_at_the_limit',
      '#1823 received body is capped at the limit'),
+    # A body that errors mid-stream is `TypeError: terminated` (undici's
+    # `arrayBuffer()` rejection), not the connection-level `fetch failed`.
+    ('media-download-terminated-mapped-to-fetch-failed', weixin / 'media.rs',
+     '                    BodyError::Terminated => WeixinClientError {\n'
+     '                        name: "TypeError".into(),\n'
+     '                        message: "terminated".into(),\n'
+     '                    },',
+     '                    BodyError::Terminated => WeixinClientError::fetch_failed(),',
+     'channel::weixin::media::tests::a_terminated_body_reports_the_fetch_type_error',
+     '#1823 truncated body reports terminated'),
 ]
 
 

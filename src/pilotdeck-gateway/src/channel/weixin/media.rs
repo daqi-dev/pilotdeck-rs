@@ -427,7 +427,14 @@ impl WeixinCdnClient {
                     // unbounded, so the port stops at the limit and reports
                     // the smallest size that must have arrived.
                     BodyError::TooLong => attachment_too_large(WEIXIN_ATTACHMENT_MAX_BYTES + 1),
-                    BodyError::Terminated | BodyError::Aborted => WeixinClientError::fetch_failed(),
+                    // `arrayBuffer()` on a body that errors mid-stream rejects
+                    // with `TypeError: terminated` (undici), the same shape
+                    // `fetch_redirect`'s other call sites report.
+                    BodyError::Terminated => WeixinClientError {
+                        name: "TypeError".into(),
+                        message: "terminated".into(),
+                    },
+                    BodyError::Aborted => WeixinClientError::abort(),
                 })
         };
         timeout(WEIXIN_CDN_FETCH_TIMEOUT, exchange)
