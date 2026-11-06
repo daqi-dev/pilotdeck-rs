@@ -56,7 +56,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import marker_is_scoped, named_test_failed, panic_evidence
-from negative_selection import baseline_passed, missing_target, select, verdict_exit
+from negative_selection import (baseline_passed, missing_target, refuse_unusable_target,
+                                select, verdict_exit)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -274,6 +275,7 @@ for marker in MARKERS.values():
 # ("never started", exit 2: roster drift, missing CARGO_TARGET_DIR, unreadable
 # baseline or oracle, bad marker) leaves nothing behind for a host to read as
 # this run's evidence.
+refuse_unusable_target(env)  # #1666 fix-r9: dot / root / src are unusable too
 out = Path(sys.argv[1]).resolve()
 try:
     out.mkdir(parents=True, exist_ok=False)

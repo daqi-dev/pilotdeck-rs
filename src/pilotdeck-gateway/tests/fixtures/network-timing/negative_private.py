@@ -14,7 +14,7 @@ import re
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import claim_dir, missing_target, refuse, registered, select, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -103,6 +103,7 @@ if sys.argv[1:] == ['--catalog']:
     print(json.dumps(catalog(), indent=2)); sys.exit(0)
 if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('caller must set CARGO_TARGET_DIR')
+refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 env = os.environ.copy()
 # Every startup guard runs before the evidence directory exists, so a
 # `refuse()` ("never started", exit 2) really leaves nothing behind.

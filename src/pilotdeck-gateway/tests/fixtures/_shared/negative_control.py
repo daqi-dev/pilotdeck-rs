@@ -16,7 +16,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (CARGO_SLOTS_CALL_SECONDS, CARGO_SLOTS_WAIT_SECONDS,
                              mutating_sources, run_owned, wait_for_slot)
-from negative_selection import missing_target, refuse
+from negative_selection import (missing_target, refuse,
+                                refuse_unusable_target)
 import pending_reanchor as pending
 
 REPO = Path(__file__).resolve().parents[5]
@@ -288,6 +289,7 @@ def mutation_suite(label, rows, output, selection, passed, classify, *, guarded=
         # fix-r8). Callers such as `background-output/negative.py` have no
         # guard of their own, so this one has to be the whole family's.
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
     # #1666: a taken evidence directory means "never started" (2). Letting
     # `FileExistsError` escape printed a traceback and exited 1, which the host
     # triage table reads as "ran and did not pass" -- an investigation of a run

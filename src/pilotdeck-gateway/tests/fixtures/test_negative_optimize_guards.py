@@ -64,8 +64,8 @@ SCRIPTS = (
 # `negative_process.target_environment` default the shared tree target when the
 # variable is *absent* (#1166) -- a present-but-blank value is refused by their
 # own `blank_target()` guard, so only `missing` is exempt -- and
-# `cli-parity-mock-gateway` never compiles Cargo, so all three modes are moot.
-MODES = ('missing', 'empty', 'blank')
+# `cli-parity-mock-gateway` never compiles Cargo, so all four modes are moot.
+MODES = ('missing', 'empty', 'blank', 'dot')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
         ('target_environment defaults the shared tree target when the variable is absent (#1166)',
@@ -80,16 +80,24 @@ TARGET_OPTIONAL = {
 # Any read of the target variable is a target guard. Matching the call shapes
 # (not one spelling) keeps the exemption honest when a guard is reintroduced
 # with double quotes, `os.getenv`, an alias (`env = os.environ.copy()` then
-# `env.get(...)`, or `from os import environ`), a subscription, or the shared
-# predicates. An alias that only matched `os.environ...` would let the fully
-# exempt entry grow a guard that none of the three modes exercises
-# (#1666 fix-r8, raised by all four review roles).
-TARGET_READ = re.compile(r'''\w+\.environ\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
-                         | \w+\.get\s*\(\s*['"]CARGO_TARGET_DIR['"]
-                         | \w+\s*\[\s*['"]CARGO_TARGET_DIR['"]\s*\]
-                         | os\.getenv\s*\(\s*['"]CARGO_TARGET_DIR['"]
-                         | (?:missing|blank)_target\s*\(
-                         ''', re.X)
+# `env.get(...)`, or `from os import environ`), a subscription, `setdefault` /
+# `pop`, a bare `getenv` after `from os import getenv`, an f-string name, or the
+# shared predicates. An alias that only matched `os.environ...` would let the
+# fully exempt entry grow a guard that none of the modes exercises
+# (#1666 fix-r8, raised by all four review roles; the missing spellings were
+# #1666 fix-r9 boundary P2).
+_TARGET_NAME = r"""f?['"]CARGO_TARGET_DIR['"]"""
+TARGET_READ = re.compile(
+    r'\w+\.environ\s*\[\s*' + _TARGET_NAME + r'\s*\]'
+    + r'| \w+\.(?:get|setdefault|pop)\s*\(\s*' + _TARGET_NAME
+    + r'| \w+\s*\[\s*' + _TARGET_NAME + r'\s*\]'
+    # `os.getenv(...)` and a bare `getenv(...)` after `from os import getenv`.
+    + r'| \w*getenv\s*\(\s*' + _TARGET_NAME
+    # The shared predicates: presence half, value half, and the value half's
+    # refusing wrapper.
+    + r'| (?:missing|blank|unusable)_target\s*\('
+    + r'| refuse_unusable_target\s*\(',
+    re.X)
 
 
 def calls(source, name):
@@ -177,7 +185,7 @@ def uses_a_bare_assert(path):
 
 
 def run(script, args, flags=(), *, optimize, base, claim_exists=False,
-        target=None):
+        target=None, baseline=None):
     """Run ``script`` with a throwaway output directory.
 
     Returns ``(process, claimed_dir)``: the output directory path is part of
@@ -188,10 +196,15 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
     ``target`` selects one unusable-caller-target mode and drops the unknown
     mutation name, so the target guard is the first thing the script can hit:
     that refusal must also be rc 2 and must also leave no evidence directory.
-    The three modes are ``'missing'`` (variable unset), ``'empty'`` (``''``) and
-    ``'blank'`` (spaces): all three are equally unusable, and a presence-only
-    check let the last two reach the shared target normalisation, which rejects
-    them only after the evidence directory existed (#1666 fix-r7).
+    The modes are ``'missing'`` (variable unset), ``'empty'`` (``''``),
+    ``'blank'`` (spaces) and ``'dot'`` (``'.'``): all four are equally unusable.
+    A presence-only check let the middle two reach the shared target
+    normalisation, which rejects them only after the evidence directory existed
+    (#1666 fix-r7); ``'.'`` is presence-valid but rejected by the same rule, and
+    was refused by two entries only (#1666 fix-r9).
+
+    ``baseline`` overrides ``PDRS_BASELINE`` so the same three absent/empty/
+    blank modes can be exercised for that variable (#1666 fix-r9).
     """
     directory = Path(tempfile.mkdtemp(prefix='negctl-1666-', dir=base))
     _CLEANUP.append(directory)
@@ -201,7 +214,7 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
         command.append('-O')
     if claim_exists:
         out.mkdir()
-    if claim_exists or target:
+    if claim_exists or target or baseline is not None:
         command_entry = [str(out), *args]
     else:
         command_entry = [str(out), *args, UNKNOWN]
@@ -209,6 +222,8 @@ def run(script, args, flags=(), *, optimize, base, claim_exists=False,
     env = dict(os.environ)
     # Presence-only preconditions some scripts check before their roster guard.
     env.setdefault('PDRS_BASELINE', str(out.parent / 'pinned-ts-checkout'))
+    if baseline is not None:
+        env['PDRS_BASELINE'] = baseline
     if target == 'missing':
         env.pop('CARGO_TARGET_DIR', None)
     elif target in ('empty', 'blank'):
@@ -324,8 +339,11 @@ class UnknownControlIsRefused(unittest.TestCase):
                         result.returncode, 2,
                         f'{script} must refuse with a {mode} caller target: '
                         f'stdout={result.stdout!r} stderr={result.stderr!r}')
-                    self.assertIn('CARGO_TARGET_DIR', result.stderr,
-                                  f'{script} must name the unusable variable on stderr')
+                    # The dot message comes from the one shared rule and
+                    # names the cause rather than the variable.
+                    needle = 'CARGO_TARGET_DIR' if mode != 'dot' else 'target'
+                    self.assertIn(needle, result.stderr,
+                                  f'{script} must name the unusable target on stderr')
                     self.assertFalse(
                         out.exists(),
                         f'{script} refused but still created its evidence directory {out}')
@@ -363,24 +381,26 @@ class UnknownControlIsRefused(unittest.TestCase):
                     self.assertIn(needle, source,
                                   f'{script} no longer matches its exemption reason: {reason}')
 
-    def test_defaulting_entries_refuse_a_target_the_normalisation_rejects(self):
-        """A dot target is unusable too, and equally "never started" (#1666 fix-r8).
+    def test_every_entry_refuses_a_blank_baseline(self):
+        """``PDRS_BASELINE`` has the same absent/empty/blank split and needs a denominator.
 
-        The two entries that default the target when it is absent call
-        ``target_environment`` before claiming the directory; that helper raises
-        for a dot / root / ``src`` target. Uncaught, that was rc 1 with a
-        traceback -- the "ran and failed" bucket for a run that never began.
+        The guard became ``(value or '').strip()`` in fix-r8, but this
+        harness always supplies a real baseline path, so reverting it to a
+        presence-only check would not have failed anything (#1666 fix-r9).
         """
-        for script in ('interaction-values/negative_controls.py',
-                       'turn-submit-admission/negative_controls.py'):
-            with self.subTest(script=script):
-                result, out = run(script, [], optimize=False, base=self.base,
-                                  target='dot')
-                self.assertEqual(result.returncode, 2,
-                                 f'{script} must refuse a dot target: {result.stderr[-400:]}')
-                self.assertIn('target', result.stderr.lower(), f'{script}: name the cause')
+        script = 'project-files-linux-dirent/negative_controls.py'
+        for name, value in (('empty', ''), ('blank', '   ')):
+            with self.subTest(mode=name):
+                result, out = run(script, [], optimize=True, base=self.base,
+                                  baseline=value)
+                self.assertEqual(
+                    result.returncode, 2,
+                    f'{script} must refuse a {name} PDRS_BASELINE: '
+                    f'stdout={result.stdout!r} stderr={result.stderr!r}')
+                self.assertIn('PDRS_BASELINE', result.stderr,
+                              f'{script} must name the unusable variable on stderr')
                 self.assertFalse(out.exists(),
-                                 f'{script}: a refusal must not leave an evidence directory')
+                                 f'{script} refused but still created {out}')
 
     def test_optimize_and_plain_agree(self):
         # The point of the issue: the verdict must not depend on -O.

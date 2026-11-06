@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
-from negative_selection import claim_dir, missing_target, refuse, registered, verdict_exit
+from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
@@ -335,6 +335,7 @@ def baseline_only(rows, output):
     """
     if missing_target():  # #1666: absent, empty or blank, one shared predicate
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
     output = claim_dir(output)
     with tree_lock(root, timeout=BASELINE_LOCK_SECONDS):
         return locked_baseline(rows, output)
@@ -377,6 +378,7 @@ def main():
     # "ran and did not pass" (1) and leaves nothing behind.
     if missing_target():  # #1666: absent, empty or blank, one shared predicate
         refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
     try:
         registered(cases, EXPECTED_NAMES)
         selected = [row for row in cases if not requested or row[0] in requested]

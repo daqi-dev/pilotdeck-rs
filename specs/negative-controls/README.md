@@ -137,7 +137,7 @@
 |---|---|
 | 0 | 选中的变异全部 KILLED（`--compile-only` 时全部 COMPILED） |
 | 1 | 确实跑过但没拿到全绿结论：SURVIVED / INVALID / SKIPPED / 基线重放不通过 / 收尾恢复校验失败 |
-| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串或纯空白）、树脏或领锁超时、oracle 读不了 |
+| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在（`negative_selection.claim_dir`）、`CARGO_TARGET_DIR` 不可用（未设置、空串、纯空白，或 `target_environment` 拒绝的 dot / 文件系统或仓库根 / `src` 内）、树脏或领锁超时、oracle 读不了 |
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
@@ -146,11 +146,13 @@
 
 实现进度按行读：**已迁移脚本**对未知 / 重复变异名、名册漂移、输出目录已存在
 （走 `claim_dir`，`FileExistsError` 不再落成 1）、`CARGO_TARGET_DIR` 不可用
-（未设置 / 空串 / 纯空白，统一走 `negative_selection.missing_target()`）都返回 2；
+（未设置 / 空串 / 纯空白走 `negative_selection.missing_target()`，dot / 根 / `src` 内走
+`negative_selection.refuse_unusable_target()` —— 后者不重列取值，直接问
+`negative_process.target_environment`，取值规则只有那一处）都返回 2；
 `TARGET_OPTIONAL` 登记的三个入口按模式各自豁免：`interaction-values` 与
 `turn-submit-admission` 只在**变量未设置**这一档豁免（按 #1166 用共享默认 target），
-空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，`target_environment` 对
-dot / 文件系统或仓库根 / `src` 这类目标抛的 `RuntimeError` 也折算成 2；
+空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，dot / 文件系统或仓库根 /
+`src` 这类目标同样在领取证据目录之前由 `refuse_unusable_target()` 以 2 拒跑；
 `cli-parity-mock-gateway` 不编译 Cargo，**三档全豁免**，由登记表守卫断言它没有任何
 target 读取；
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
@@ -166,7 +168,7 @@ target 读取；
 `test_startup_refusal_leaves_written_evidence_in_place` 覆盖（`test_negative_optimize_guards.py`
 覆盖的是各入口自己的启动守卫，两者不互相替代）。
 这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、`CARGO_TARGET_DIR` 不可用
-（未设置 / 空串 / 纯空白三档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
+（未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
 `negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 不编译 Cargo，
 三档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
