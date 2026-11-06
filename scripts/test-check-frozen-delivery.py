@@ -3807,20 +3807,25 @@ os.execv(os.environ['CFD_SHIM_GIT'], [os.environ['CFD_SHIM_GIT']] + args)
 
     # P2（GLM sibling）：`_still_there` 的 EACCES 分支零覆盖——stat 失败必须
     # 按「未证已删」处理，否则 holder 目录还在盘上却被摘登记（`Path.exists()`
-    # 对 EACCES 也答 False，正是 drop_admin_entry 修过的同类洞）。
+    # 在 EACCES 上不可依赖：CPython 3.12/3.13 的 `_IGNORED_ERRNOS` 不含 EACCES，
+    # 它直接抛 `PermissionError`；3.14 起才改答 False。正是 drop_admin_entry
+    # 修过的同类洞，所以断言只钉「exists() 不答 True」这一条稳定语义）。
     with tempfile.TemporaryDirectory() as td:
         locked = Path(td) / "locked"
         holder = locked / "cfd-snapshot-stat"
         (holder / "tree").mkdir(parents=True)
         os.chmod(locked, 0o000)
         try:
-            exists = holder.exists()
+            try:
+                exists = holder.exists()
+            except PermissionError:
+                exists = "PermissionError"  # 3.12/3.13：exists() 抛，不答 False
             still = cfd._still_there(holder)
         finally:
             os.chmod(locked, 0o700)
-        case("holder 的 stat 失败（EACCES）→ _still_there 判未证已删（exists() 会答 False）",
-             exists is False and still is True,
-             f"exists={exists} still_there={still}")
+        case("holder 的 stat 失败（EACCES）→ _still_there 判未证已删（exists() 不答 True）",
+             exists is not True and still is True,
+             f"exists={exists!r} still_there={still!r}")
 
     print(f"SUMMARY failed={fails} skipped={skips}")
     return 1 if fails else 0
