@@ -166,6 +166,20 @@ impl ReloadExtensionsSource for RefreshBundle {
 
 // ---------------------------------------------------------------- the adapter
 
+/// The six U7 wire names [`SettingsGateway::dispatch`] owns, in dispatch
+/// order. A new method must land here and in `dispatch` together: the native
+/// process's settings family (`native_process/methods/settings.rs`)
+/// re-exports this list as its registry table, and the #1320 single-source
+/// test in `gateway_tests` pins both against `dispatch`.
+pub const METHODS: &[&str] = &[
+    "apply_flag_settings",
+    "update_settings",
+    "resolve_settings",
+    "reload_output_styles",
+    "reload_config",
+    "reload_extensions",
+];
+
 pub struct SettingsGatewayOptions {
     /// The #1011 router-facing admission/close port: `hasActiveTurn` drives
     /// the SESSION_BUSY gate and `close` is the post-success session close.

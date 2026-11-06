@@ -13,14 +13,16 @@
 //! `Harness`) is shared with #1320's native-route replay and lives in
 //! [`super::test_support`].
 //!
-//! The TS golden's `assemblyCases` (a gateway assembled without the five
+//! The TS golden's `assemblyCases` (a gateway assembled without the six
 //! options answers CAPABILITY_UNAVAILABLE / the unsupported projection; an
 //! unknown method throws "Unknown gateway method …") belong to the wiring
 //! layer this component deliberately does not touch, so the capability half
 //! is replayed through a bare component (the contract is the component's own
-//! option handling) while the unknown-method row is recorded only; the
-//! dispatch contract (`Some` for exactly the six methods, `None`
-//! otherwise) has its own dedicated test below.
+//! option handling; the golden's capability rows cover the five TS-side
+//! methods — `resolve_settings` is #1320-native and has no TS row) while the
+//! unknown-method row is recorded only; the dispatch contract (`Some` for
+//! exactly the six methods, `None` otherwise) has its own dedicated test
+//! below.
 //!
 //! The registry's `applyFlagSettingsForSdk` / `reloadOutputStylesForSdk` are
 //! mirrored over the probe's map state (the TS bodies are synchronous Map
@@ -103,7 +105,7 @@ async fn settings_gateway_replays_the_real_ts_oracle() {
         let input = field(case, "params").clone();
         let dispatch = harness.gateway().dispatch(&method, &input).await;
         let result = dispatch.unwrap_or_else(|| {
-            panic!("#1318 case {id}: dispatch must own the five settings methods")
+            panic!("#1318 case {id}: dispatch must own the case's settings method")
         });
         // A divergent row does not stop the replay: every row is compared so
         // one run reports the whole matrix (the negative controls bind one
@@ -215,6 +217,7 @@ async fn settings_gateway_dispatch_returns_none_for_non_settings_methods() {
     for method in [
         "apply_flag_settings",
         "update_settings",
+        "resolve_settings",
         "reload_output_styles",
         "reload_config",
         "reload_extensions",
@@ -225,6 +228,34 @@ async fn settings_gateway_dispatch_returns_none_for_non_settings_methods() {
             "#1318 dispatch must own the settings method {method}"
         );
     }
+}
+
+/// #1320 single-source: the six wire names live in one list —
+/// [`super::gateway::METHODS`] — and the native process's settings family
+/// re-exports it as its #1305 registry table
+/// (`native_process/methods/settings.rs`), so a new method added to one
+/// without the other cannot drift silently into
+/// `unknown settings method`.
+#[tokio::test]
+async fn settings_dispatch_and_native_family_share_one_method_list() {
+    let keys = vec!["s".to_string()];
+    let harness = harness(&keys);
+    // Like the dispatch test above: the owned methods run for real through
+    // the bundle's store delegate, so the harness needs a live tree.
+    harness.make_tree("t1", None).await;
+    let input = parse_json(r#"{"sessionKey":"s"}"#).expect("#1320 single-source input must parse");
+    for method in super::gateway::METHODS {
+        let dispatch = harness.gateway().dispatch(method, &input).await;
+        assert!(
+            dispatch.is_some(),
+            "#1320 single-source: dispatch must own every listed method, {method} went unowned"
+        );
+    }
+    assert_eq!(
+        crate::native_process::SETTINGS_FAMILY_METHODS,
+        super::gateway::METHODS,
+        "#1320 single-source: the native settings family must re-export the same list verbatim (length and order)"
+    );
 }
 
 /// The update closure's capture listener is detached `finally`-style,

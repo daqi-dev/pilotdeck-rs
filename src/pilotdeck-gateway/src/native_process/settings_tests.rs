@@ -1,9 +1,12 @@
 //! #1320: replay of the real TS native-settings oracle
-//! (`tests/fixtures/native-settings/generate.mts`) through the production
-//! request route. Every oracle row (21 `cases`, the `concurrency` /
+//! (`tests/fixtures/native-settings/generate.mts`) through the settings
+//! gateway layer. Every oracle row (21 `cases`, the `concurrency` /
 //! `reconnect` / `secondConnection` probes, and the 6-row production
 //! `matrix`) is replayed through [`Requests::settings_request`] — the
-//! #1305 native routing the six U7 methods answer through — over the same
+//! AfterAdmission layer the #1305 registry hands the six U7 methods to,
+//! NOT the full `GatewayRequests::request` route: the isolation admission
+//! gate and the registry lookup sit in front of it and are covered by the
+//! routing tests at the bottom of this file — over the same
 //! layers the TS generator drives: the real [`ConfigStore`] over real
 //! scratch YAML trees, the real #1011 session owner, and the real
 //! [`RefreshBundle`] with recording collaborators, one of them the settling
@@ -57,6 +60,7 @@ use crate::runtime::settings::test_support::{
     harness, harness_with, lock, scenario_keys, string,
 };
 use crate::runtime::settings::{SettingsGateway, SettingsGatewayOptions};
+use crate::runtime::turn::gateway::GatewayRequests;
 use crate::upload::gateway::UploadGateway;
 use crate::user_dialog::{DialogRuntime, GatewayUserDialogBus};
 use pilotdeck_protocol::{JsString, JsValue, stringify_json};
@@ -1984,6 +1988,94 @@ async fn settings_busy_gate_matrix() {
         Vec::<String>::new(),
         "#1320 busy-gate: the matrix assembly must serve reload_extensions"
     );
+}
+
+/// The isolation refusal the full route answers for a `projectKey` it does
+/// not serve: code and message must match the admission gate verbatim.
+fn assert_isolated(result: Result<JsValue, RequestError>) {
+    match result {
+        Err(error) => {
+            assert_eq!(
+                error.code, "gateway_request_failed",
+                "#1320 routing: the isolation refusal code"
+            );
+            assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                "The isolated native process serves only its configured project.",
+                "#1320 routing: the isolation refusal message"
+            );
+        }
+        Ok(_) => {
+            panic!("#1320 routing: an unserved projectKey must be refused by the admission gate")
+        }
+    }
+}
+
+/// #1320 routing: the S4 replay above drives [`Requests::settings_request`]
+/// — the gateway layer after the #1305 registry has already selected the
+/// settings family — so it never crosses the isolation admission gate or
+/// the registry lookup. Through the full `GatewayRequests::request` route:
+/// an own-project `projectKey` reaches the family and answers exactly like
+/// the gateway layer, while a foreign or non-string `projectKey` is
+/// refused before the family runs — so the golden's foreign-key rows
+/// (`styles-closes-matching` `"/proj-A"`, `extensions-project` `"/p"`) and
+/// the registered `U7-EXTENSIONS-RELOAD-STRING-COERCION-001` divergence
+/// (`projectKey:5`) hold at the gateway layer only.
+#[tokio::test]
+async fn settings_methods_route_through_the_native_request_gate() {
+    let stack = stack(&[]);
+    stack.harness.run_setup("tree:routing").await;
+    let mut requests = stack.requests.clone();
+    requests.settings = Arc::new(stack.harness.gateway());
+    let own_project = requests.options.project.to_string_lossy().into_owned();
+
+    // Own project: the route answers exactly like the gateway layer does.
+    let resolve_params =
+        pilotdeck_protocol::parse_json(&format!(r#"{{"projectKey":"{own_project}"}}"#))
+            .expect("#1320 routing: the own-project resolve params must parse");
+    let routed = requests
+        .request(JsString::from("resolve_settings"), resolve_params.clone())
+        .await;
+    let gateway = requests
+        .settings_request("resolve_settings".to_owned(), resolve_params)
+        .await;
+    match (&routed, &gateway) {
+        (Ok(routed), Ok(gateway)) => assert_eq!(
+            as_serde(routed),
+            as_serde(gateway),
+            "#1320 routing: the route must answer an own-project resolve_settings like the gateway layer"
+        ),
+        _ => panic!(
+            "#1320 routing: an own-project resolve_settings must succeed on both layers, got {routed:?} and {gateway:?}"
+        ),
+    }
+    let reload_params =
+        pilotdeck_protocol::parse_json(&format!(r#"{{"projectKey":"{own_project}"}}"#))
+            .expect("#1320 routing: the own-project reload params must parse");
+    let routed = requests
+        .request(JsString::from("reload_extensions"), reload_params)
+        .await;
+    assert!(
+        changed_paths(&routed, "#1320 routing: the own-project reload_extensions").is_empty(),
+        "#1320 routing: an own-project reload_extensions must succeed through the route"
+    );
+
+    // Foreign key: refused by the gate before the family runs.
+    let foreign = pilotdeck_protocol::parse_json(r#"{"projectKey":"/proj-A"}"#)
+        .expect("#1320 routing: the foreign params must parse");
+    let refused = requests
+        .request(JsString::from("resolve_settings"), foreign)
+        .await;
+    assert_isolated(refused);
+
+    // Non-string key: refused by the gate before the `String()` coercion of
+    // U7-EXTENSIONS-RELOAD-STRING-COERCION-001 can run on the native route.
+    let numeric = pilotdeck_protocol::parse_json(r#"{"projectKey":5}"#)
+        .expect("#1320 routing: the numeric params must parse");
+    let refused = requests
+        .request(JsString::from("reload_extensions"), numeric)
+        .await;
+    assert_isolated(refused);
 }
 
 /// Regeneration guard for the TS golden; run once with `PDRS_BASELINE` set.
