@@ -2154,12 +2154,13 @@ MUTATIONS = [
      "    if policy == 'traceback':"),
     # #892 fix-r20 (GLM boundary r19 P1-1): the spelling ``common.X`` was
     # trusted without asking whether ``common`` is still the shared module.
-    # ``object()`` is a builtin: the mutated ``_guard.py`` is exec'd in a fresh
-    # namespace, so anything that needs an import would die at load time and
-    # report INVALID instead of proving the audit caught the rebinding.
+    # The mutated ``_guard.py`` is exec'd in a fresh namespace, so the stub
+    # carries its own import: without it the file dies at load time and the
+    # harness reports INVALID instead of proving the audit caught the rebinding.
     ('calibrate-shadowed-common', GUARD_SOURCE,
      "def _failure(error, policy, common):",
-     "common = object()\n\n\n"
+     "from types import SimpleNamespace\n"
+     "common = SimpleNamespace(aggregate_status=lambda *a: ('PASS', 0))\n\n\n"
      "def _failure(error, policy, common):"),
     # #892 fix-r20 (GLM boundary r19 P1-2): a clean status assembled out of
     # constants is the same literal to the interpreter, but not a Constant node.
