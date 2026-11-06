@@ -27,7 +27,7 @@ use crate::runtime::{
     connection::{Call, RequestError},
     settings::SettingsError,
 };
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
 
 pub(super) const METHODS: &[&str] = &[
     "apply_flag_settings",
@@ -64,8 +64,16 @@ impl Requests {
             match gateway.dispatch(&method, &params).await {
                 Some(result) => result.map_err(settings_error),
                 // The registry selected this family, so the wire name is one
-                // of the six the component dispatches.
-                None => unreachable!("settings family checked against METHODS"),
+                // of the six the component dispatches; if the two lists ever
+                // drift apart, answer the caller with the WS layer's own
+                // unknown-method projection instead of panicking the process
+                // (#1320 fix-r1 F5).
+                None => Err(RequestError {
+                    code: "gateway_request_failed".into(),
+                    message: JsString::from(format!("unknown settings method: {method}")),
+                    details: None,
+                    validation: None,
+                }),
             }
         })
     }

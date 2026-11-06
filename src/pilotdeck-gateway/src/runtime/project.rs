@@ -165,6 +165,8 @@ pub use factory::{
     Resource, ResourceFamilySource, RuntimeContextSurface, RuntimeProfile, RuntimeProfileOverrides,
     SandboxMode, StageContext, StageSink, UnsupportedFamily,
 };
+// #1320 fix-r1 F3: shared with native_process::services.
+pub(crate) use factory::resolve_pilot_home;
 pub use memory_bundle::MemoryBundleFamilySource;
 impl<F> ProjectRuntimeFactory for F
 where

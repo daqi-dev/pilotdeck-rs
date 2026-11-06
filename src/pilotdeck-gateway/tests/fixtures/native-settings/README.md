@@ -5,8 +5,9 @@
 须 `LANG=en_US.UTF-8`）。#1320 把 `resolve_settings` / `apply_flag_settings` /
 `update_settings` / `reload_output_styles` / `reload_config` /
 `reload_extensions` 六方法接进原生请求路由；本金样按完成判据录
-「调用 → 通知 → 再读」：每行记 WS 响应帧、该响应帧**之前 / 之后**到达的通知帧
-（以响应帧在连接缓冲中的位置切分）、随后一次 `resolve_settings` 再读
+「调用 → 通知 → 再读」：每行记 WS 响应帧、该响应帧**之前 / 之后**连接收到的
+**全部**帧（含并发探针里的 response 帧，只有 `type` 不含 id；以响应帧在连接
+缓冲中的位置切分）、随后一次 `resolve_settings` 再读
 （证明写与读共享同一 store 代）与后置状态（会话 / 覆写 / 各场景树的
 version 与 YAML）。#1397 的三条原样输出并入本批：
 `styles-scalar-params`（标量 params 读 `projectKey` 得 undefined → 全量分支）、
@@ -45,9 +46,10 @@ extensions 5，含成功与忙、无效参数、组织策略拒绝、schema 错�
 [mid 响应, reload 响应, notification]，换新连接读 v2，续连 reload 到 v3 证明
 未换 store；`secondConnection`：广播到达每个连接）+ `matrix` 6 行（生产接线形态：
 仅 `interactionCoordinator` / `resolveSettings` / `reloadConfig` /
-`reloadExtensions` 四委托的 `InProcessGateway` —— 四拒绝方法答
-`CAPABILITY_UNAVAILABLE`、`reload_output_styles` 答
-`{reloaded:false,reason:"unsupported"}`）+ `divergenceCases` 2 行
+`reloadExtensions` 四委托的 `InProcessGateway` —— 三条拒绝方法
+`apply_flag_settings` / `update_settings` / `reload_output_styles` 答
+`CAPABILITY_UNAVAILABLE "<method> is unavailable."`；`resolve_settings`
+与两个 reload 在 matrix 中成功）+ `divergenceCases` 2 行
 （`U7-EXTENSIONS-RELOAD-STRING-COERCION-001` 登记差异：`changedPaths:[1,true,null]`
 与 `projectKey:5` 两格 TS 原值透传、Rust `String()` 强转；录 TS 真相为证据，
 Rust 重放在登记有效期间跳过该节，不改冻结账本）。事件流词汇：

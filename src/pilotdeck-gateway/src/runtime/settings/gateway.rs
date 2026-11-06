@@ -180,8 +180,9 @@ pub struct SettingsGatewayOptions {
 
 /// The six U7 methods with `InProcessGateway`'s method-level contract.
 ///
-/// Not part of the default routing: callers assemble this component when
-/// they want the methods; nothing in `dispatch.rs` references it yet (#1320).
+/// #1320: the native process routes the six methods through the #1305
+/// method registry (`native_process/methods/settings.rs`);
+/// `dispatch.rs` (LOCAL_METHODS) still does not reference it.
 pub struct SettingsGateway {
     options: SettingsGatewayOptions,
 }

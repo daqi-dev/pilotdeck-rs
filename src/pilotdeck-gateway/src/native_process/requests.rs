@@ -183,6 +183,21 @@ impl GatewayRequests for Requests {
                             "set_mcp_permission_mode_override",
                             "memory_list",
                             "memory_wipe",
+                            // #1320: TS advertises all four settings methods in
+                            // every config state (oracle.json `contract/`,
+                            // `contract/emptyStorage/`, `contract/missingStorage/`
+                            // capabilities: apply_flag_settings, update_settings,
+                            // resolve_settings, reload_output_styles — never
+                            // reload_config / reload_extensions). The native
+                            // process serves only `resolve_settings` for real;
+                            // the other three have no delegate here and always
+                            // answer CAPABILITY_UNAVAILABLE, so advertising them
+                            // would promise what cannot be delivered (the
+                            // `assert_ts_capability_subset` guard allows the
+                            // Rust set to be a subset of TS). Porting them is
+                            // #1671; deriving the list per provider from a
+                            // registry instead of this fixed list is #1352.
+                            "resolve_settings",
                             // TS advertises both in every config state
                             // (oracle.json:2801-2802, 2855-2856, 2956-2957).
                             // permission_list is fully wired; user_dialog_list

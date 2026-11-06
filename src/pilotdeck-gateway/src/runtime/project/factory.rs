@@ -438,7 +438,8 @@ fn loaded_at(now: &SystemTime) -> String {
 /// `resolvePilotHome` (paths.ts:20-22) with `normalizeHomePath` (paths.ts:98-108):
 /// `~` expands against the process home directory, `~/rest` resolves against
 /// it, and any other value resolves against the process cwd.
-fn resolve_pilot_home(env: &Env, cwd: &Path, homedir: Option<&Path>) -> PathBuf {
+// #1320 fix-r1: shared with native_process::services::native_settings_for_process.
+pub(crate) fn resolve_pilot_home(env: &Env, cwd: &Path, homedir: Option<&Path>) -> PathBuf {
     let raw = env
         .get("PILOT_HOME")
         .map(String::as_str)
