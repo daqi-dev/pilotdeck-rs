@@ -27,6 +27,7 @@ import contextlib
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -127,10 +128,24 @@ def output_lock(root):
         # 是为了让**别人**建在共享临时目录（`/tmp`、`$TMPDIR`）里的 0644 锁文件也能被
         # 本进程取到——`O_RDWR` 会在跨账号共享目录上直接 `EACCES`，把「等锁」变成
         # 「跑不了」。`O_NOFOLLOW` 挡住预置成指向别处的链接。
-        fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW
+        # `O_NONBLOCK`：预置同名 **FIFO** 时，不带它的只读打开会一直等写端（`O_NOFOLLOW`
+        # 拦不住 FIFO），整个装置挂死；加它后 FIFO 打开立即返回，再由下面的 `fstat`
+        # 判成非普通文件 → rc2。普通文件上 `O_NONBLOCK` 是空操作。
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
                      | getattr(os, 'O_CLOEXEC', 0), 0o644)
     except OSError as error:
         raise InputError(f'cannot open lock {root / LOCK_BASENAME}: {error}') from error
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            # 目录 / FIFO / 设备：都不是锁文件。目录虽然 `flock` 也能锁，但那是另一套
+            # 语义（谁建的目录谁以为在被锁），一律拒跑更安全。
+            raise InputError(f'lock {path} is not a regular file '
+                             f'(mode {info.st_mode:o}); refusing to use it as a lock')
+    except BaseException:
+        os.close(fd)
+        raise
+    locked = False
     try:
         # 创建时的 `0o644` 会被 umask 折损（`umask 077` 得 0600），跨账号共享临时目录里
         # 后来者再 `O_RDONLY` 打开就 `EACCES`。显式 `fchmod` 一次，让注释里「共享目录
@@ -153,13 +168,21 @@ def output_lock(root):
             # `ENOLCK` / `EOPNOTSUPP`（异构 FS 上 flock 不可用）与「缺 fcntl」「缺
             # O_NOFOLLOW」同一口径：rc2「跑不了」，不是裸 traceback 冒充判据 FAIL。
             raise InputError(f'cannot take lock {path}: {error}') from error
+        locked = True
         yield path
     finally:
-        # 显式解锁后关闭：异常路径也不会把锁留给后续进程。
+        # 只在**真的取到锁**之后解锁：取锁失败时 `LOCK_UN` 也会以同一个 errno 失败，
+        # 抛出来就是裸 OSError 覆盖上面刚折好的 InputError（负控入口只捕 InputError）。
+        # 清理本身的失败一律吞掉——`close(fd)` 无论如何都会释放 flock。
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:  # pragma: no cover - 解锁失败只影响提示，不影响正确性
+                pass
         try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
             os.close(fd)
+        except OSError:  # pragma: no cover - 同上
+            pass
 
 
 def error_value(response):

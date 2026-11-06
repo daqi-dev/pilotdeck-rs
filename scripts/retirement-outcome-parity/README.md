@@ -101,7 +101,11 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输�
 静默跳过），等锁期间在 stderr 打一行 `waiting for output lock …`。理由：并发跑两次是
 合法用法（CI 与本机各一次、审计者边跑边看），明确失败会被误读成数据问题；阻塞既能保证
 「一次只有一个进程在写」，又不会把合法的并发调用打红。缺 `fcntl` / `O_NOFOLLOW` 的平台
-按 rc2 拒跑（与 `require_safe_writes` 同口径），不静默退化成「没锁」。`emit` 写金样时用
+按 rc2 拒跑（与 `require_safe_writes` 同口径），不静默退化成「没锁」。锁文件必须打开成
+**普通文件**（`fstat` + `S_ISREG`）且用 `O_NONBLOCK` 打开：预置同名 FIFO 时不带
+`O_NONBLOCK` 的只读 `open` 会一直等写端（`O_NOFOLLOW` 拦不住 FIFO），整个装置连同 CI job
+一起挂死；预置目录则会被当成「锁」静默通过。三者（FIFO / 目录 / 符号链接）都在
+`self_check.py` 的 lock 用例里各造一次，必须快速 rc2。`emit` 写金样时用
 **同一把** `output_lock`（锁金样所在目录），两个入口不会在同一个目录里交错写。
 
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
@@ -226,7 +230,8 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 ## CI（#1809）
 
 `.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
-queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，4 s 级）：
+queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，本机实测
+六项全跑 2.3 s、变异自检 0.6 s）：
 
 | 步骤 | 判据 |
 |---|---|
@@ -234,6 +239,7 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
 | 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
 | `self_check.py`（六项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · CI 接线，六条守卫本身都还在 |
+| `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
 
@@ -242,11 +248,13 @@ python3 -I scripts/retirement-outcome-parity/self_check.py            # 六项�
 python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
-`--self-check-controls` 给每个守卫造违反样本，对应检查必须**变红**：体积预算用超大夹具、
-CI 接线用三个变异 workflow（删掉 retirement 行 / 整段注释掉 / 给闸门 step 加 `if: false`）。
-输出目录锁没有独立样本——它本身就是行为测试（删掉 `flock` 后第二个进程不再等，`check_lock`
-直接红），所以控件是同一正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI
-步骤 → 相应用例变红」的机器证据。
+`--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
+超大夹具；CI 接线用**六种**变异 workflow（删掉 retirement 行 / 整段注释掉 / 给 job 内闸门
+step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给聚合 `check` job 的
+Require step 换掉 `if:` 条件 · 加 `continue-on-error`）；输出目录锁用三种**预置敌意锁
+文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即挂起或假持锁）。
+`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一正向检查的重跑。
+守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」的机器证据。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
