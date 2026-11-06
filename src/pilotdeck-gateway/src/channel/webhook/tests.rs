@@ -1868,12 +1868,19 @@ fn extract_text_field_order_is_text_first() {
 #[tokio::test]
 async fn empty_text_request_is_not_a_delivery() {
     let case = case("no-text");
-    let options = &case["options"];
-    let routes = parse_json(&options["routes"].to_string())
-        .expect("#1334 oracle routes JSON")
-        .as_object()
-        .expect("#1334 oracle routes object")
-        .clone();
+    // #1729 fix-r2 (sibling P2-a): read the container through the checked
+    // accessors too, so a drifted `options`/`routes` type fails with the
+    // field-level #1334 diagnostic instead of a bare serde error.
+    let options = recorded_options(&case).expect("#1334 oracle options object");
+    let routes = parse_json(
+        &recorded_routes(options)
+            .expect("#1334 options.routes validated object")
+            .to_string(),
+    )
+    .expect("#1334 oracle routes JSON")
+    .as_object()
+    .expect("#1334 oracle routes object")
+    .clone();
     let channel = WebhookChannel::new(WebhookChannelOptions {
         port: Some(0.0),
         host: None,
