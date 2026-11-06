@@ -129,10 +129,13 @@ fn system_loaded_at() -> String {
 #[derive(Clone, Copy, Debug)]
 pub struct WatchOptions {
     /// Quiet period after the last change before reloading (baseline 250 ms).
+    /// Over-ceiling values are clamped to a one-hour ceiling in the watcher
+    /// (#1736).
     pub debounce: Duration,
     /// How often watched paths are checked; stands in for `fs.watch` events.
     /// Kept well below `debounce` so the sampling merge window stays small.
-    /// Sub-floor values are clamped to a 10 ms floor in the watcher (#1650).
+    /// Sub-floor values are clamped to a 10 ms floor in the watcher (#1650);
+    /// over-ceiling values to a 60 s ceiling (#1736).
     pub poll_interval: Duration,
 }
 
@@ -161,14 +164,75 @@ impl Default for WatchOptions {
 /// floor a mistyped period costs at most twice the default cadence.
 const MIN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// The period the watcher actually ticks at: every sub-floor value — `ZERO`
-/// included — lands on [`MIN_POLL_INTERVAL`] (#1650).
+/// The ceiling [`watch_loop`] clamps `debounce` to (#1736).
 ///
-/// Split out from `watch_loop` so the tests can pin the floor itself: a test
-/// that only proves "a zero interval still samples" also passes a regression
-/// that special-cases zero and lets any other sub-floor period through.
+/// The baseline imposes no upper bound of its own: `startWatching` hands
+/// `debounceMs ?? 250` straight to `setTimeout`, and Node does not clamp
+/// either — a delay over `2^31 - 1` ms draws a `TimeoutOverflowWarning` and
+/// is silently run as 1 ms (probe:
+/// `_tmp/20261106-issue-1736/r1/evidence/settimeout-overflow-probe.log`,
+/// fixed Node v22.22.0), while anything representable below that is a real
+/// timer measured in days. The ceiling is therefore ours to choose, and the
+/// choice is semantic, not arithmetic: hot reload exists so that an edit
+/// lands within the session that made it, and a quiet period longer than
+/// any interactive session is not a quiet period — it is hot reload
+/// switched off, the silent failure this fix exists to prevent. One hour
+/// is four orders of magnitude above the 250 ms default (ample room for
+/// intentional long-window batching) while still guaranteeing a reload
+/// inside one sitting; at a day, "watching" would be indistinguishable
+/// from "not watching". The bound sits far below `Instant`'s range, so
+/// [`deadline_after`] stays a second line of defence, not the only one.
+const MAX_DEBOUNCE: Duration = Duration::from_secs(60 * 60);
+
+/// The ceiling [`watch_loop`] clamps `poll_interval` to (#1736).
+///
+/// The baseline has no counterpart to clamp against at all: it is
+/// `fs.watch`-driven, so there is no polling cadence in the TS source and
+/// the ceiling is purely ours. The failure it prevents is mechanical —
+/// `tokio::time::interval` maps a period whose `deadline + period`
+/// overflows to `Instant::far_future` (tokio 1.48's `Interval::poll_tick`
+/// uses `checked_add(..).unwrap_or_else(Instant::far_future)`), so the
+/// first tick fires and the rest never do: the watcher samples once and
+/// stops while the handle still looks alive, with no log and no error
+/// return. The semantic bound is the same argument as `MAX_DEBOUNCE`'s:
+/// this poll stands in for event delivery, and a cadence that detects an
+/// edit only after the editor has given up checking is the same silent
+/// death. 60 s is ~3000x the 20 ms default; beyond it the detection latency
+/// alone exceeds any edit-then-check loop, and the 250 ms debounce it
+/// feeds becomes meaningless.
+const MAX_POLL_INTERVAL: Duration = Duration::from_secs(60);
+
+/// The period the watcher actually ticks at: every sub-floor value — `ZERO`
+/// included — lands on [`MIN_POLL_INTERVAL`], and every over-ceiling value
+/// on [`MAX_POLL_INTERVAL`] (#1650, #1736).
+///
+/// Split out from `watch_loop` so the tests can pin the bounds themselves:
+/// a test that only proves "a zero interval still samples" also passes a
+/// regression that special-cases zero and lets any other sub-floor period
+/// through.
 fn effective_poll_interval(options: &WatchOptions) -> Duration {
-    options.poll_interval.max(MIN_POLL_INTERVAL)
+    options
+        .poll_interval
+        .clamp(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
+}
+
+/// The quiet period the watcher actually debounces to: every over-ceiling
+/// value lands on [`MAX_DEBOUNCE`] (#1736) — the same clamp shape
+/// [`effective_poll_interval`] applies to `poll_interval`. No floor: a zero
+/// debounce is legal (`sleep_until(now)` fires immediately) and needs no
+/// #1650-style rescue.
+fn effective_debounce(options: &WatchOptions) -> Duration {
+    options.debounce.min(MAX_DEBOUNCE)
+}
+
+/// The debounce deadline for a caller-supplied duration: an unrepresentable
+/// `now + duration` falls back to the ceiling — or to `now` itself if even
+/// that overflows, an `Instant` within one hour of the clock's maximum —
+/// never panics (#1736). With [`effective_debounce`] in front this is the
+/// second line of defence, not the first.
+fn deadline_after(now: Instant, duration: Duration) -> Instant {
+    now.checked_add(duration)
+        .unwrap_or_else(|| now.checked_add(MAX_DEBOUNCE).unwrap_or(now))
 }
 
 struct State {
@@ -747,7 +811,11 @@ async fn watch_loop(
     mut changes: mpsc::UnboundedReceiver<()>,
 ) {
     // #1650: a zero/sub-floor period would panic this detached task and stop
-    // hot reload silently; see [`MIN_POLL_INTERVAL`].
+    // hot reload silently; see [`MIN_POLL_INTERVAL`]. #1736: an over-ceiling
+    // period would strand the ticker at `Instant::far_future` after its first
+    // tick, and an over-ceiling debounce would overflow `Instant + Duration`
+    // here — both stop hot reload with the handle still "alive"; see
+    // [`MAX_POLL_INTERVAL`] / [`MAX_DEBOUNCE`] and [`deadline_after`].
     let mut ticker = tokio::time::interval(effective_poll_interval(&options));
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
     ticker.tick().await;
@@ -762,7 +830,7 @@ async fn watch_loop(
         tokio::select! {
             biased;
             Some(()) = changes.recv() => {
-                deadline = Some(Instant::now() + options.debounce);
+                deadline = Some(deadline_after(Instant::now(), effective_debounce(&options)));
             }
             _ = ticker.tick() => {
                 if inner.strong_count() == 0 {
@@ -773,7 +841,7 @@ async fn watch_loop(
                     changed |= path.changed();
                 }
                 if changed {
-                    deadline = Some(Instant::now() + options.debounce);
+                    deadline = Some(deadline_after(Instant::now(), effective_debounce(&options)));
                 }
             }
             _ = timer => {
