@@ -1490,6 +1490,143 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         .expect("#1323 host shutdown");
 }
 
+/// #1431 P2-1/P2-4: the submit-side wiring (`Services::workspace_id` +
+/// `Services::snapshots`) and the management `snapshot_list` route must agree
+/// on one workspace id, and a `.cwd` marker spelled differently from the
+/// process cwd must still select the registered id over the legacy path slug.
+#[tokio::test]
+async fn submit_snapshot_wiring_matches_management_workspace_id() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let (scratch, requests) = setup();
+    let storage = requests.options.home.join("storage");
+    std::fs::create_dir_all(&storage).expect("#1431 storage root");
+    // Same project, different spelling: `resolve` folds `..` and the trailing
+    // slash, so the marker branch must still win over the legacy path slug.
+    std::fs::write(
+        requests.options.home.join("projects/a8-main/.cwd"),
+        format!("{}/../project/", requests.options.project.display()),
+    )
+    .expect("#1431 respelled marker");
+    let options = Options::parse(storage_root_args(
+        &requests,
+        storage.clone().into_os_string(),
+    ))
+    .expect("#1431 --storage-root parses");
+    let env = options.environment(crate::config::Env::new());
+    // Same composition the project staging does for `PersistenceResources`:
+    // resolve the immutable environment to one recorder and provider.
+    let config = crate::storage::resolve_workspace_snapshot_config(|key| env.get(key).cloned())
+        .expect("#1431 storage environment resolves")
+        .expect("#1431 storage environment enables snapshots");
+    let recorder = Arc::new(crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(config));
+    let services = crate::native_process::services::Services {
+        options: options.clone(),
+        project: requests.project.clone(),
+        env,
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: Some(recorder),
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_| Ok(std::path::PathBuf::new()),
+                || Ok(Vec::new()),
+            ),
+        )),
+    };
+    let project_key = options.project.to_string_lossy().into_owned();
+    let workspace = services
+        .workspace_id(&expand(
+            &json!({"projectKey": project_key.clone()}),
+            &scratch.0,
+        ))
+        .expect("#1431 submit workspace id")
+        .expect("#1431 submit snapshots enabled");
+    negative_assert_eq!(
+        workspace.to_utf8().expect("#1431 workspace id UTF-8"),
+        "a8-main",
+        "#1431 marker spelling selects the registered workspace id"
+    );
+    // The legacy slug differs, so the assertion above only passes through the
+    // marker branch.
+    negative_assert!(
+        crate::metadata::project_id(&crate::metadata::resolve(
+            std::path::Path::new(""),
+            &project_key
+        )) != "a8-main",
+        "#1431 legacy slug differs from the registered id"
+    );
+    let snapshots = services
+        .snapshots()
+        .expect("#1431 snapshots() exposes the recorder");
+    let result = snapshots
+        .capture(
+            crate::storage::WorkspaceSnapshotInput {
+                workspace_id: workspace.to_utf8().expect("#1431 capture workspace id"),
+                session_id: "a8-session".into(),
+                turn_id: "turn-1".into(),
+                run_id: "run-1".into(),
+                workspace_dir: project_key.clone(),
+                workspace_stable: Some(true),
+                failure_kind: None,
+                failure_reason: None,
+            },
+            true,
+        )
+        .await
+        .expect("#1431 pre_user capture");
+    negative_assert_eq!(result.phase.as_str(), "pre_user", "#1431 pre_user phase");
+    negative_assert_eq!(
+        result.state,
+        crate::storage::SnapshotState::Committed,
+        "#1431 capture committed"
+    );
+    let manifest = std::path::PathBuf::from(
+        result
+            .manifest_path
+            .as_deref()
+            .expect("#1431 manifest path"),
+    );
+    let expected = storage
+        .canonicalize()
+        .expect("#1431 canonical storage")
+        .join("workspaces/a8-main/sessions/a8-session/snapshots")
+        .join(&result.snapshot_id)
+        .join("manifest.json");
+    negative_assert_eq!(
+        manifest,
+        expected,
+        "#1431 manifest lands under the registered workspace id"
+    );
+    negative_assert!(expected.is_file(), "#1431 manifest exists on disk");
+    let listed = json_value(
+        &requests
+            .request(
+                "snapshot_list".into(),
+                expand(&json!({"projectKey": project_key}), &scratch.0),
+            )
+            .await
+            .expect("#1431 snapshot_list"),
+    );
+    negative_assert!(
+        listed["items"]
+            .as_array()
+            .expect("#1431 snapshot items")
+            .iter()
+            .any(|item| item["snapshotId"] == json!(result.snapshot_id)),
+        "#1431 snapshot_list returns the submit-captured snapshot"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1431 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1431 registry dispose");
+}
+
 #[tokio::test]
 async fn snapshot_success_matches_ts() {
     let (scratch, requests) = setup();

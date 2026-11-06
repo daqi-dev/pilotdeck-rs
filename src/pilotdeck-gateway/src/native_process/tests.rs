@@ -139,6 +139,10 @@ fn explicit_options_and_environment() {
         ("PILOTDECK_PROXY_UPSTREAM".into(), "outside".into()),
         ("PILOTDECK_AGENT_LOOP_TCP_HOST".into(), "outside".into()),
         ("PILOTDECK_AGENT_LOOP_TCP_PORT".into(), "99".into()),
+        // #1431 P2-2: without `--storage-root` both snapshot roots are ambient
+        // state; the isolated process must drop them, not inherit them.
+        ("PILOTDECK_STORAGE_ROOT".into(), "outside".into()),
+        ("PILOTDECK_SNAPSHOT_ROOT".into(), "outside".into()),
     ]);
     let env = options.environment(inherited);
     negative_assert_eq!(
@@ -156,6 +160,10 @@ fn explicit_options_and_environment() {
         "PILOTDECK_PROXY_UPSTREAM",
         "PILOTDECK_AGENT_LOOP_TCP_HOST",
         "PILOTDECK_AGENT_LOOP_TCP_PORT",
+        // #1431 P2-2: the None branch of `Options::environment` drops both
+        // snapshot roots; a mutant that keeps either must die here.
+        "PILOTDECK_STORAGE_ROOT",
+        "PILOTDECK_SNAPSHOT_ROOT",
     ] {
         negative_assert!(!env.contains_key(key), "#1071 inherited authority removed");
     }
@@ -172,6 +180,45 @@ fn explicit_options_and_environment() {
     negative_assert!(
         validate_environment(&Env::new()).is_ok(),
         "#1071 clean environment accepted"
+    );
+    // #1431 P2-2: an empty inherited value is still removed from the captured
+    // environment (the isolated process never reads ambient snapshot roots).
+    let blank = options.environment(Env::from_iter([
+        ("PILOTDECK_STORAGE_ROOT".into(), String::new()),
+        ("PILOTDECK_SNAPSHOT_ROOT".into(), String::new()),
+    ]));
+    negative_assert!(
+        !blank.contains_key("PILOTDECK_STORAGE_ROOT")
+            && !blank.contains_key("PILOTDECK_SNAPSHOT_ROOT"),
+        "#1431 blank inherited snapshot roots removed"
+    );
+    // #1431 P2-2: the Some branch injects the CLI root and never leaks the
+    // ambient storage value; a separate snapshot-root override is preserved
+    // for `resolve_workspace_snapshot_config`.
+    let storage = scratch.0.join("storage");
+    std::fs::create_dir_all(&storage).expect("#1431 storage root directory");
+    let mut with_storage = scratch.args();
+    with_storage.extend([
+        OsString::from("--storage-root"),
+        storage.clone().into_os_string(),
+    ]);
+    let options = Options::parse(with_storage).expect("#1431 storage root options");
+    let env = options.environment(Env::from_iter([
+        ("PILOTDECK_STORAGE_ROOT".into(), "inherited".into()),
+        (
+            "PILOTDECK_SNAPSHOT_ROOT".into(),
+            "inherited-snapshots".into(),
+        ),
+    ]));
+    negative_assert_eq!(
+        env.get("PILOTDECK_STORAGE_ROOT").map(String::as_str),
+        storage.to_str(),
+        "#1431 storage root injected from --storage-root"
+    );
+    negative_assert_eq!(
+        env.get("PILOTDECK_SNAPSHOT_ROOT").map(String::as_str),
+        Some("inherited-snapshots"),
+        "#1431 snapshot root override preserved"
     );
 }
 

@@ -15,6 +15,7 @@ from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
+SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
@@ -31,6 +32,8 @@ HOST = 'native_process::management_tests::production_host_management_and_restart
 SNAPSHOT_TEST = 'native_process::management_tests::snapshot_success_matches_ts'
 IMPORT_TEST = 'native_process::management_tests::skill_import_success_conflict_and_overwrite_match_ts'
 PRODUCTION = 'native_process::management_tests::production_entry_snapshot_capabilities_are_disabled'
+WIRING = 'native_process::management_tests::submit_snapshot_wiring_matches_management_workspace_id'
+ENVIRONMENT = 'native_process::tests::explicit_options_and_environment'
 mutations = [
     ('omit-snapshot', SOURCE, 'if method.starts_with("snapshot_") {', 'if method.starts_with("unwired_snapshot_") {', TEST, '#1231 routed first result'),
     ('omit-manager', SOURCE, 'if matches!(method, "manager_sessions" | "manager_browsers") {', 'if matches!(method, "unwired_manager_sessions" | "manager_browsers") {', TEST, '#1231 routed first result'),
@@ -118,6 +121,14 @@ mutations.append(('capability-permission_list', REQUESTS, '"permission_list",', 
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
 mutations.append(('capability-resolve_settings', REQUESTS, '"resolve_settings",', '"unwired_resolve_settings",', HOST, '#1231 exact wired capability set'))
+
+# #1431 P2-1/P2-2: the submit-side snapshot wiring and the environment branches
+# that feed it were merged without paired mutations. Each anchor is unique in
+# its file and every mutant must be killed by the bound assertion.
+mutations.append(('submit-workspace-id-unwired', SERVICES, 'if self.snapshot_recorder.is_some() {', 'if false {', WIRING, '#1431 submit snapshots enabled'))
+mutations.append(('submit-snapshots-unwired', SERVICES, 'self.snapshot_recorder.as_ref().map(|recorder| {', 'self.snapshot_recorder.as_ref().filter(|_| false).map(|recorder| {', WIRING, '#1431 snapshots() exposes the recorder'))
+mutations.append(('environment-keeps-snapshot-roots', ENTRY, '                inherited.remove("PILOTDECK_STORAGE_ROOT");\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', '                let _ = ();', ENVIRONMENT, '#1071 inherited authority removed'))
+mutations.append(('environment-storage-not-injected', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'let _ = root;', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('missing-storage-advertised', REQUESTS, 'self.snapshot_enabled\n                                || !matches!(', 'self.snapshot_enabled || true\n                                || !matches!(', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
