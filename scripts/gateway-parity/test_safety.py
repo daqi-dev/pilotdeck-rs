@@ -2363,6 +2363,30 @@ class WsProjection(unittest.TestCase):
         self.project(self.envelope(0, completed),
                      self.envelope(1, {'type': 'turn_completed', 'usage': {'inputTokens': 3.0}}, final=True))
 
+    def test_deeply_nested_terminals_compare_without_recursing(self):
+        # #1372 r4 review P1: json.loads accepts shapes deeper than the
+        # interpreter's recursion limit, so a recursive comparison raised
+        # RecursionError on a legal terminal instead of answering.  The walk
+        # must stay flat and give the same verdicts a shallow pair would.
+        def nested(leaf, depth):
+            value = {'leaf': leaf}
+            for _ in range(depth):
+                value = {'next': [value]}
+            return value
+
+        depth = 4000
+        self.assertTrue(self.native.same_json(nested(1, depth), nested(1, depth)))
+        self.assertFalse(self.native.same_json(nested(1, depth), nested(2, depth)))
+        self.assertFalse(self.native.same_json(nested(True, depth), nested(1, depth)))
+
+        deep = nested(1, depth)
+        projected = self.project(self.envelope(0, dict(deep, type='error')),
+                                 self.envelope(1, dict(deep, type='error'), final=True))
+        self.assertEqual(projected['terminal']['source'], 'error')
+        with self.assertRaises(self.native.Incomplete):
+            self.project(self.envelope(0, dict(deep, type='error')),
+                         self.envelope(1, nested(1, depth), final=True))
+
     def test_exactly_one_terminal_and_it_must_be_last(self):
         event = {'type': 'assistant_text_delta', 'text': 'x'}
         with self.assertRaises(self.native.Incomplete):
