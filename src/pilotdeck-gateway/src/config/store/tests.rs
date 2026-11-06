@@ -1066,12 +1066,27 @@ fn transient_read_failure_is_retried_until_the_content_is_seen() {
         before + 1,
         "#1792 the recovered sample reads the content exactly once"
     );
-    // Back on the committed fingerprints: quiet, and no content read.
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1792 r2 the reported tick commits no metadata shortcut"
+    );
+    // Back on the committed fingerprints: the reported tick committed no
+    // shortcut, so this one re-reads the content once more and only then
+    // commits.
     assert!(
         !watched.changed(),
         "#1792 a complete sample commits the metadata short-circuit again"
     );
-    assert_eq!(content_reads(&path), before + 1);
+    assert_eq!(
+        content_reads(&path),
+        before + 2,
+        "#1792 r2 the tick after a reported change re-reads the content once"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 r2 the quiet re-read commits the metadata shortcut"
+    );
+    assert_eq!(content_reads(&path), before + 2);
     // The committed state matches a fresh complete sample of the same file.
     let fresh = WatchedPath::new(path.clone()).expect("#1792 fresh watch");
     assert_eq!(fresh.fingerprint, watched.fingerprint);
@@ -1112,27 +1127,41 @@ fn startup_read_failure_is_retried_until_the_content_is_seen() {
         "#1792 the retry reads the content exactly once"
     );
     assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1792 r2 the reported tick commits no metadata shortcut"
+    );
+    // The reported tick committed no shortcut (r2 D11): this one re-reads
+    // the content once more, is quiet, and only then commits.
+    assert!(!watched.changed(), "#1792 back on the short-circuit");
+    assert_eq!(
+        content_reads(&path),
+        2,
+        "#1792 r2 the tick after a reported change re-reads the content once"
+    );
+    assert_eq!(
         watched.metadata_fingerprint,
         Some(fingerprint(&path, false, None, false).0),
         "#1792 a complete sample commits the metadata fingerprint"
     );
-    assert!(!watched.changed(), "#1792 back on the short-circuit");
     clear_content_read_failures(&path);
 }
 
-/// #1792 r1 (P2-1): a failed `stat` — not a `NotFound` — must leave the
-/// metadata fingerprint uncommitted, report nothing while it fails (the
-/// folded fingerprint is not evidence of a change), and let the first
-/// complete sample after recovery report once even though neither the
-/// content nor the metadata changed.
+/// #1792 r1 (P2-1) / r2 (D9): a failed `stat` — not a `NotFound` — must
+/// leave the metadata fingerprint uncommitted and report nothing while it
+/// fails (the folded sample is not evidence of a change). It must also
+/// commit no *full* fingerprint (r1 did): recovery compares against the
+/// last complete sample, so an unchanged recovery reports nothing and a
+/// real change — including one made during the outage — is still seen.
 #[test]
 fn stat_failure_leaves_the_metadata_fingerprint_uncommitted() {
     let root = Root::new();
     root.write(BASE);
     let path = root.0.join("pilotdeck.yaml");
     let mut watched = WatchedPath::new(path.clone()).expect("#1792 file watched");
-    arm_read_failures(&path, ReadOp::Stat, 3);
-    for tick in 0..3 {
+    // Two obscured ticks: each consumes three armed stats (the type probe,
+    // the metadata-only sample and the folded full sample).
+    arm_read_failures(&path, ReadOp::Stat, 6);
+    for tick in 0..2 {
         assert!(
             !watched.changed(),
             "#1792 a stat-failed sample {tick} reports no change"
@@ -1142,10 +1171,11 @@ fn stat_failure_leaves_the_metadata_fingerprint_uncommitted() {
             "#1792 a stat-failed sample {tick} commits no metadata fingerprint"
         );
     }
-    // The failures are exhausted; nothing about the file changed in between.
+    // The failures are exhausted; nothing about the file changed in between,
+    // so recovery is quiet (D9) — not an identity reload.
     assert!(
-        watched.changed(),
-        "#1792 the first complete sample after stat recovery reports the recovery"
+        !watched.changed(),
+        "#1792 r2 an unchanged recovery after stat failures reports nothing"
     );
     assert!(
         watched.metadata_fingerprint.is_some(),
@@ -1159,12 +1189,74 @@ fn stat_failure_leaves_the_metadata_fingerprint_uncommitted() {
         watched.metadata_fingerprint.is_some(),
         "#1792 the short-circuited sample keeps the metadata fingerprint"
     );
+    // A real change after recovery is still seen.
+    root.write(&other_model());
+    assert!(
+        watched.changed(),
+        "#1792 r2 a change after stat recovery is still seen"
+    );
     clear_read_failures(&path, ReadOp::Stat);
 }
 
-/// #1792 r1 (P2-1): a failed `read_dir` on a watched directory follows the
-/// same rule as a failed stat, and the directory still sees later changes
-/// once the reads recover.
+/// #1792 r2 (D9 core regression): a change made *during* a stat outage —
+/// a rewrite, and above all a delete — must be seen after recovery. The r1
+/// code committed the folded obscured sample as the full fingerprint; the
+/// folded fingerprint hashes a failed stat exactly like a missing entry, so
+/// a delete during the outage compared equal and was never reported.
+#[test]
+fn stat_failure_during_change_is_seen_after_recovery() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1792 r2 file watched");
+    // Three obscured ticks (three armed stats each: type probe, metadata
+    // sample, folded full sample).
+    arm_read_failures(&path, ReadOp::Stat, 9);
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the first obscured tick reports nothing"
+    );
+    // A rewrite made during the outage.
+    root.write(&other_model());
+    assert!(
+        !watched.changed(),
+        "#1792 r2 an obscured tick after a rewrite reports nothing"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the same unreadable state stays quiet"
+    );
+    // The failures are exhausted: the recovery sample differs from the last
+    // complete one, so the rewrite is reported.
+    assert!(
+        watched.changed(),
+        "#1792 r2 a rewrite made during a stat outage is seen after recovery"
+    );
+    // A delete made during a second outage: the recovery sample is a
+    // complete observation of absence and must differ from the last complete
+    // sample — comparing it against the folded sample instead would find
+    // them identical and drop the delete.
+    arm_read_failures(&path, ReadOp::Stat, 6);
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the first obscured tick of the second outage reports nothing"
+    );
+    std::fs::remove_file(&path).expect("#1792 r2 remove during the outage");
+    assert!(
+        !watched.changed(),
+        "#1792 r2 an obscured tick after the delete reports nothing"
+    );
+    assert!(
+        watched.changed(),
+        "#1792 r2 a delete made during a stat outage is seen after recovery"
+    );
+    clear_read_failures(&path, ReadOp::Stat);
+}
+
+/// #1792 r1 (P2-1) / r2 (D9): a failed `read_dir` on a watched directory
+/// follows the same rule as a failed stat — nothing committed, nothing
+/// reported while it fails, and an unchanged recovery is quiet — and the
+/// directory still sees later changes once the reads recover.
 #[test]
 fn read_dir_failure_leaves_the_metadata_fingerprint_uncommitted() {
     let root = Root::new();
@@ -1177,7 +1269,9 @@ fn read_dir_failure_leaves_the_metadata_fingerprint_uncommitted() {
         Some(true),
         "#1792 the startup probe classifies the directory"
     );
-    arm_read_failures(&dir, ReadOp::ReadDir, 2);
+    // Two obscured ticks: each consumes two armed `read_dir`s (the
+    // metadata-only sample and the folded full sample).
+    arm_read_failures(&dir, ReadOp::ReadDir, 4);
     for tick in 0..2 {
         assert!(
             !watched.changed(),
@@ -1188,11 +1282,11 @@ fn read_dir_failure_leaves_the_metadata_fingerprint_uncommitted() {
             "#1792 a read_dir-failed sample {tick} commits no metadata fingerprint"
         );
     }
-    // The failures are exhausted; the first complete sample commits again and
-    // reports the recovery.
+    // The failures are exhausted; the directory did not change in between,
+    // so recovery is quiet (D9) and commits again.
     assert!(
-        watched.changed(),
-        "#1792 the first complete sample after read_dir recovery reports the recovery"
+        !watched.changed(),
+        "#1792 r2 an unchanged recovery after read_dir failures reports nothing"
     );
     assert!(
         watched.metadata_fingerprint.is_some(),
@@ -1210,13 +1304,19 @@ fn read_dir_failure_leaves_the_metadata_fingerprint_uncommitted() {
 /// #1792 r1 (P2-2, D1): a dangling symlink inside a watched directory is a
 /// complete observation of absence, not an incomplete sample — the
 /// metadata fingerprint must commit instead of staying `None` forever —
-/// and the entry resolving is still seen.
+/// and the entry resolving is still seen. #1792 r2 (fix-r2 review P2-1):
+/// the symlink's target lives *outside* the watched directory, so its
+/// creation changes neither the directory's own metadata nor its name
+/// list — only the entry's stat result flips from `NotFound` to `Ok`, which
+/// is the cell this test exists to pin.
 #[test]
 fn missing_entry_is_a_complete_observation() {
     let root = Root::new();
     let dir = root.0.join("watched");
     std::fs::create_dir(&dir).expect("#1792 watch directory");
-    std::os::unix::fs::symlink("nowhere", dir.join("dangling")).expect("#1792 dangling symlink");
+    let target = root.0.join("outside.yaml");
+    std::os::unix::fs::symlink(&target, dir.join("dangling"))
+        .expect("#1792 dangling symlink to outside");
     let mut watched = WatchedPath::new(dir.clone()).expect("#1792 directory watched");
     assert!(
         watched.metadata_fingerprint.is_some(),
@@ -1230,7 +1330,7 @@ fn missing_entry_is_a_complete_observation() {
         watched.metadata_fingerprint.is_some(),
         "#1792 an unchanged dangling entry keeps the metadata fingerprint"
     );
-    std::fs::write(dir.join("nowhere"), "a: 1\n").expect("#1792 symlink target");
+    std::fs::write(&target, "a: 1\n").expect("#1792 symlink target outside the watch");
     assert!(
         watched.changed(),
         "#1792 the dangling entry resolving is seen"
@@ -1239,9 +1339,10 @@ fn missing_entry_is_a_complete_observation() {
 
 /// #1792 r1 (P1-1): a startup probe failure must not drop the path. The
 /// path is kept with an unknown mode and no sample; the first `changed()`
-/// re-probes, and that first successful sample records without reporting
-/// (no identity reload out of a failed probe), while a real change after
-/// it is still seen.
+/// re-probes and classifies. #1792 r2 (D8): the config may have changed
+/// while the probe — and every sample — was failing, so the first complete
+/// sample after the failed probe must report; only the tick after that is
+/// quiet, and a real change is still seen.
 #[test]
 fn startup_stat_failure_keeps_the_path_watched() {
     let root = Root::new();
@@ -1262,26 +1363,217 @@ fn startup_stat_failure_keeps_the_path_watched() {
         watched.metadata_fingerprint, None,
         "#1792 the startup probe failure commits no metadata fingerprint"
     );
-    // The failure is exhausted: the next tick probes again and samples.
+    // The config appears while the probe's failure is still armed: the first
+    // complete sample must report it (D8) — the probe never saw a predecessor
+    // to compare against.
+    std::fs::write(dir.join("pilotdeck.yaml"), BASE)
+        .expect("#1792 r2 config appears during the failed probe");
     assert!(
-        !watched.changed(),
-        "#1792 the first sample after a failed probe records without reporting"
+        watched.changed(),
+        "#1792 r2 the first complete sample after a failed probe reports the change made during the failure"
     );
     assert_eq!(
         watched.directory,
         Some(true),
         "#1792 the re-probe classifies the directory"
     );
+    // The reported tick committed no shortcut (D11); this one is quiet and
+    // commits it.
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the tick after the reported one is quiet"
+    );
     assert!(
         watched.metadata_fingerprint.is_some(),
-        "#1792 the first complete sample commits the metadata fingerprint"
+        "#1792 the quiet tick after the reported one commits the metadata fingerprint"
     );
-    std::fs::write(dir.join("pilotdeck.yaml"), BASE).expect("#1792 config appears");
+    std::fs::write(dir.join("late.yaml"), "a: 1\n").expect("#1792 r2 late entry");
     assert!(
         watched.changed(),
         "#1792 a change after a failed startup probe is still seen"
     );
     clear_read_failures(&dir, ReadOp::Stat);
+}
+
+/// #1792 r2 (D10, review P1-3): a startup probe failure leaves the mode
+/// unknown, and a `NotFound` on the re-probe is not evidence of a file —
+/// the path may still appear as a directory later. The mode must stay
+/// unknown (re-probed every tick, never short-circuited) until a probe
+/// classifies it; a mode fixed to file would sample only the parent's own
+/// metadata and miss an in-place rewrite of the config inside.
+#[test]
+fn probe_failure_then_directory_is_reclassified() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let file = dir.join("pilotdeck.yaml");
+    arm_read_failures(&dir, ReadOp::Stat, 1);
+    let mut watched = WatchedPath::new(file.clone())
+        .expect("#1792 r2 an unclassifiable startup probe keeps the path");
+    assert_eq!(
+        watched.directory, None,
+        "#1792 r2 the mode is unknown after the probe failure"
+    );
+    // The parent is really missing: two ticks must not panic or error.
+    let _ = watched.changed();
+    let _ = watched.changed();
+    assert!(
+        watched.directory.is_none(),
+        "#1792 r2 a NotFound re-probe must not fix the mode to file"
+    );
+    // The parent appears as a directory with the config inside.
+    std::fs::create_dir_all(&dir).expect("#1792 r2 parent directory appears");
+    std::fs::write(&file, BASE).expect("#1792 r2 config appears in the parent");
+    assert!(
+        watched.changed(),
+        "#1792 r2 the reclassified directory watch sees the config appear"
+    );
+    // An in-place rewrite of the config leaves the parent's own metadata
+    // alone; only the directory-mode sample (entry metadata plus the target
+    // content) can see it.
+    std::fs::write(&file, other_model().as_str()).expect("#1792 r2 in-place rewrite");
+    assert!(
+        watched.changed(),
+        "#1792 r2 an in-place rewrite is seen through the directory mode"
+    );
+    clear_read_failures(&dir, ReadOp::Stat);
+}
+
+/// #1792 r2 (D11, review P1-4): the tick that reports a change must not
+/// also commit the metadata shortcut — the metadata-only and the full
+/// sample happen at different times, and a match on the first is not
+/// evidence the second saw the same state (a file moved away and back with
+/// the same inode between the two samples would otherwise leave the
+/// snapshot stuck on "missing"). The next tick re-reads the content once,
+/// is quiet, and only then commits.
+#[test]
+fn a_reported_change_does_not_commit_the_metadata_shortcut() {
+    let root = Root::new();
+    root.write(BASE);
+    let path = root.0.join("pilotdeck.yaml");
+    let mut watched = WatchedPath::new(path.clone()).expect("#1792 r2 file watched");
+    root.write(&other_model());
+    assert!(watched.changed(), "#1792 r2 the rewrite is reported");
+    assert_eq!(
+        watched.metadata_fingerprint, None,
+        "#1792 r2 the reported tick commits no metadata shortcut"
+    );
+    let reads_after_report = content_reads(&path);
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the tick after the reported one is quiet"
+    );
+    assert_eq!(
+        content_reads(&path),
+        reads_after_report + 1,
+        "#1792 r2 the tick after a reported change re-reads the content exactly once"
+    );
+    assert!(
+        watched.metadata_fingerprint.is_some(),
+        "#1792 r2 the quiet re-read commits the metadata shortcut"
+    );
+    assert!(!watched.changed(), "#1792 r2 the shortcut holds");
+    assert_eq!(
+        content_reads(&path),
+        reads_after_report + 1,
+        "#1792 r2 the shortcut skips the content read"
+    );
+}
+
+/// #1792 r2 (D16, review boundary P2-1 raised to P1): a permanently
+/// unreadable sibling entry (an ELOOP-class stat failure) obscures every
+/// sample of the watched directory; the config file itself stays readable,
+/// and its changes must still be reported. Obscured samples are compared
+/// against the previous obscured sample only, so entering the obstruction
+/// reports nothing and the same obstructed state reports at most once.
+#[test]
+fn a_persistent_obstruction_still_reports_observable_changes() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let file = dir.join("pilotdeck.yaml");
+    let obstructed = dir.join("obstructed");
+    std::fs::create_dir(&dir).expect("#1792 r2 watch directory");
+    std::fs::write(&obstructed, "x").expect("#1792 r2 permanently unreadable sibling");
+    // Enough armed failures for every stat of the sibling this test makes.
+    arm_read_failures(&obstructed, ReadOp::Stat, 64);
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1792 r2 directory watched");
+    assert!(
+        !watched.changed(),
+        "#1792 r2 entering an obstruction reports nothing"
+    );
+    std::fs::write(&file, "a: 2\n").expect("#1792 r2 config inside the obstructed directory");
+    assert!(
+        watched.changed(),
+        "#1792 r2 a persistent obstruction must not silence observable changes"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the same obstructed state reports at most once"
+    );
+    clear_read_failures(&obstructed, ReadOp::Stat);
+}
+
+/// #1792 r2 (D17, review boundary P2-3): a vanished watched directory is a
+/// complete observation of absence — reported once, quiet while it stays
+/// gone — and its return is reported too. The `read_dir` `NotFound` branch
+/// previously had no test and no negative control at all.
+#[test]
+fn a_removed_directory_is_a_complete_observation() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    let file = dir.join("pilotdeck.yaml");
+    std::fs::create_dir(&dir).expect("#1792 r2 watch directory");
+    std::fs::write(&file, "a: 1\n").expect("#1792 r2 config entry");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1792 r2 directory watched");
+    assert!(
+        !watched.changed(),
+        "#1792 r2 an unchanged directory is quiet"
+    );
+    std::fs::remove_dir_all(&dir).expect("#1792 r2 remove the watched directory");
+    assert!(
+        watched.changed(),
+        "#1792 r2 a vanished directory is a complete observation and reports once"
+    );
+    assert!(
+        !watched.changed(),
+        "#1792 r2 the vanished directory stays quiet"
+    );
+    std::fs::create_dir_all(&dir).expect("#1792 r2 the directory returns");
+    std::fs::write(&file, "a: 2\n").expect("#1792 r2 the config returns");
+    assert!(
+        watched.changed(),
+        "#1792 r2 the directory coming back reports"
+    );
+}
+
+/// #1792 r2 (D15, review concurrency P2-1 raised to P1): a watched
+/// directory replaced by a plain file would hit `read_dir` ENOTDIR on
+/// every tick — under the r1 obscured early-return that meant Obscured
+/// forever and no reload ever again. One stat per tick keeps the mode in
+/// step with the path, so the replacement is seen and later rewrites of
+/// the replacement file are seen too.
+#[test]
+fn a_directory_replaced_by_a_file_is_seen() {
+    let root = Root::new();
+    let dir = root.0.join("watched");
+    std::fs::create_dir(&dir).expect("#1792 r2 watch directory");
+    std::fs::write(dir.join("seed.yaml"), "a: 1\n").expect("#1792 r2 seed entry");
+    let mut watched = WatchedPath::new(dir.clone()).expect("#1792 r2 directory watched");
+    assert_eq!(
+        watched.directory,
+        Some(true),
+        "#1792 r2 the startup probe classifies the directory"
+    );
+    std::fs::remove_dir_all(&dir).expect("#1792 r2 remove the directory");
+    std::fs::write(&dir, "x").expect("#1792 r2 replace it with a file");
+    assert!(
+        watched.changed(),
+        "#1792 r2 a directory replaced by a file is seen"
+    );
+    std::fs::write(&dir, "y").expect("#1792 r2 rewrite the replacement file");
+    assert!(
+        watched.changed(),
+        "#1792 r2 a later rewrite of the replacement file is still seen"
+    );
 }
 
 #[test]

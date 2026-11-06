@@ -27,9 +27,11 @@
 //!   store). The baseline uses `fs.watch`; this crate has no native watcher
 //!   dependency, so watched paths are polled for changes (see
 //!   [`WatchOptions::poll_interval`], 20 ms by default). The decision of what
-//!   to watch matches the baseline: an existing path is watched itself, a
+//!   to watch matches the baseline — an existing path is watched itself, a
 //!   missing one through its parent directory, and a path whose parent is
-//!   missing is not watched; relative config paths are anchored at
+//!   missing is not watched — except that a non-`NotFound` startup stat
+//!   failure keeps the path itself with an unknown mode for the first
+//!   `changed()` to re-probe (#1792 r1); relative config paths are anchored at
 //!   [`StoreOptions::cwd`] like the loader. Polling differs from `fs.watch` in
 //!   three observable ways: (1) latency — the debounce starts when a change
 //!   is *sampled*, up to one poll interval after it happened; (2) sampling
@@ -74,32 +76,40 @@
 //!
 //! A sample that fails any read — a `stat`, a `read_dir`, or the content
 //! read of the watched config file — is *incomplete* and commits no metadata
-//! fingerprint (#1792): the next tick re-samples until a complete one
-//! lands, without needing any metadata change. A `NotFound` is not a
-//! failure but a complete observation of absence (#1792 r1): a dangling
-//! directory entry or a vanished directory is stable, observable state and
-//! must not keep `metadata_fingerprint` permanently `None`; only a failure
-//! that can hide content (permission, descriptor exhaustion, I/O) does.
-//! What an incomplete sample reports splits by what failed. A failed
-//! content read still observed the metadata, so the change — content folded
-//! to unknown — is reported once while the read keeps failing and once more
-//! when it recovers. A failed `stat` or `read_dir` observed nothing
-//! trustworthy, so nothing is reported while it fails; the first complete
-//! sample after recovery reports once — an identity reload (version+1,
+//! fingerprint (#1792). A `NotFound` is not a failure but a complete
+//! observation of absence (#1792 r1): a dangling directory entry or a
+//! vanished directory is stable, observable state and must not keep
+//! `metadata_fingerprint` permanently `None`; only a failure that can hide
+//! content (permission, descriptor exhaustion, I/O) does. What an incomplete
+//! sample reports splits by what failed. A failed content read still
+//! observed the metadata, so the change — content folded to unknown — is
+//! reported once while the read keeps failing and once more when it
+//! recovers. A failed `stat` or `read_dir` (*obscured* sample, #1792 r2)
+//! observed nothing trustworthy: it commits nothing, is compared only
+//! against the previous obscured sample — a change among the entries that
+//! *are* observable is real even while one entry stays unreadable, and the
+//! same unreadable state stays quiet — and recovery compares against the
+//! last complete sample: a change (a delete included) made during the
+//! outage is reported, an unchanged recovery is not. A startup *probe*
+//! failure (`WatchedPath::new`'s stat) keeps the path watched with an
+//! unknown mode instead of dropping it (#1792 r1), and the first complete
+//! sample after it must report, because the config may have changed while
+//! the probe — and every sample — was failing: an identity reload (version+1,
 //! empty `changedPaths`) when nothing changed in between, where the
 //! baseline's `fs.watch` starts watching without reading and produces no
-//! such event (registered in `diffs/A6.3-CONFIG-POLL-001-R1.md`). The full
-//! fingerprint is committed either way, so a persistently unreadable path
-//! is not a reload storm. The startup sample of [`WatchedPath::new`]
-//! follows the same rule, and a startup *probe* failure keeps the path
-//! watched with an unknown mode instead of dropping it (#1792 r1); the
-//! first sample after such a failure records without reporting, so a
-//! recovered probe does not by itself produce a reload. The price of
-//! retrying is that while a path stays in the incomplete state every tick
-//! re-attempts the reads instead of short-circuiting on metadata — the
-//! failed reads themselves are cheap errors, and the content read is
-//! bounded by [`CONTENT_SAMPLE_LIMIT`] per tick per watched config file,
-//! at the cadence [`MIN_POLL_INTERVAL`] caps.
+//! such event (registered in `diffs/A6.3-CONFIG-POLL-001-R1.md`). Obscured
+//! samples commit no full fingerprint either, so a persistently unreadable
+//! path is not a reload storm and its folded absence cannot be mistaken
+//! for "unchanged". The price of retrying is that while a path stays in the
+//! incomplete state every tick re-attempts the reads instead of
+//! short-circuiting on metadata — the failed reads themselves are cheap
+//! errors, and the content read is bounded by [`CONTENT_SAMPLE_LIMIT`] per
+//! tick per watched config file, at the cadence [`MIN_POLL_INTERVAL`] caps.
+//! One further #1792 r2 rule: the tick that *reports* a change commits no
+//! metadata shortcut either — the metadata-only and the full sample happen
+//! at different times, and a match on the first is not evidence the second
+//! saw the same state — so one extra content read lands on the tick after
+//! every reported change.
 //! Only when metadata changed — or the last sample was incomplete — is up
 //! to [`CONTENT_SAMPLE_LIMIT`] bytes of the watched config file read (the
 //! file itself, or the missing config file's name inside a watched parent
@@ -928,6 +938,15 @@ struct WatchedPath {
     /// sampled, because ctime only records a tick — is spelled out in the
     /// module note and diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.
     metadata_fingerprint: Option<u64>,
+    /// #1792 r2: the folded sample of the last `Obscured` tick. A persistent
+    /// obstruction — one unreadable sibling entry such as a `loop -> loop`
+    /// symlink — obscures every sample, and without this slot the watcher
+    /// would go silent for good while the config file itself stays readable
+    /// (the baseline reported such changes and `fs.watch` reloads on them).
+    /// It is compared only against other obscured samples, never committed
+    /// into [`Self::fingerprint`], so a delete during an outage cannot be
+    /// mistaken for "unchanged".
+    obscured_fingerprint: Option<u64>,
 }
 
 impl WatchedPath {
@@ -976,12 +995,22 @@ impl WatchedPath {
         let metadata_fingerprint = (metadata_status == SampleStatus::Complete
             && status == SampleStatus::Complete)
             .then_some(metadata);
+        // #1792 r2: a startup sample that is already obscured commits the
+        // folded sample to the obscured slot only, so the first complete
+        // sample after recovery reports (there is no trustworthy previous
+        // full sample to compare against).
+        let (fingerprint, obscured_fingerprint) = if status == SampleStatus::Obscured {
+            (None, Some(fingerprint))
+        } else {
+            (Some(fingerprint), None)
+        };
         Self {
             path,
             directory: Some(directory),
             target,
-            fingerprint: Some(fingerprint),
+            fingerprint,
             metadata_fingerprint,
+            obscured_fingerprint,
         }
     }
 
@@ -994,14 +1023,37 @@ impl WatchedPath {
             target,
             fingerprint: None,
             metadata_fingerprint: None,
+            obscured_fingerprint: None,
         }
     }
 
+    /// #1792 r2: compares an obscured sample against the last obscured one —
+    /// a change among the entries that *are* observable is real even while
+    /// another entry stays unreadable. The first obscured tick after a
+    /// complete one reports nothing (there is nothing to compare against).
+    fn observe_obscured(&mut self, sample: u64) -> bool {
+        let previous = self.obscured_fingerprint.replace(sample);
+        previous.is_some_and(|previous| previous != sample)
+    }
+
     fn changed(&mut self) -> bool {
-        // #1792 r1: re-probe a startup probe that failed; a `NotFound` here
-        // is a complete observation of absence, so sampling continues as a
-        // file-shaped watch, while any other failure defers to the next
-        // tick with nothing committed.
+        // #1792 r2: a watched path can change type (a directory replaced by a
+        // file, or the reverse). Without this the directory branch would hit
+        // `read_dir` ENOTDIR on every tick, mark the sample obscured forever
+        // and never report again. One cheap stat per tick keeps the mode in
+        // step with the path (D15).
+        if let Some(directory) = self.directory
+            && let Ok(meta) = stat_path(&self.path)
+            && meta.is_dir() != directory
+        {
+            self.directory = Some(meta.is_dir());
+            self.metadata_fingerprint = None;
+        }
+        // #1792 r2: a startup probe that failed leaves the mode unknown;
+        // re-probe every tick until one classifies it. A `NotFound` here is
+        // not evidence of a file — the path may still appear as a directory
+        // later — so the mode stays unknown and this tick samples the
+        // absence as a file without ever short-circuiting (D10).
         let directory = match self.directory {
             Some(directory) => directory,
             None => match stat_path(&self.path) {
@@ -1010,16 +1062,14 @@ impl WatchedPath {
                     self.directory = Some(directory);
                     directory
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    self.directory = Some(false);
-                    false
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
                 Err(_) => {
                     self.metadata_fingerprint = None;
                     return false;
                 }
             },
         };
+        let unclassified = self.directory.is_none();
         // #1739: metadata first. At the default cadence (two watched paths
         // every 20 ms) the per-tick content read costs up to ~19% of a core
         // (measured: ~1.9 ms per 1 MiB read on cb8, page-cache hot; a
@@ -1031,44 +1081,50 @@ impl WatchedPath {
         let (next_metadata, metadata_status) =
             fingerprint(&self.path, directory, self.target.as_deref(), false);
         if metadata_status == SampleStatus::Obscured {
-            // #1792: a failed `stat` or `read_dir` observed nothing
-            // trustworthy, so the folded fingerprint is not evidence of a
-            // change — nothing is reported this tick. The folded fingerprint
-            // is still committed (the same unreadable state stays quiet, and
-            // the first complete sample after recovery differs from it and
-            // reports), and no metadata fingerprint is committed, so every
-            // later tick re-samples.
+            // #1792 r2: a failed `stat` or `read_dir` observed nothing
+            // trustworthy, so this folded sample is not evidence by itself —
+            // but the folded sample of the previous obscured tick is the only
+            // thing there is to compare against while the obstruction
+            // persists (D16). Never commit it into `fingerprint`: it hashes a
+            // failed stat exactly like a missing entry (D9).
+            let (next, _status) = fingerprint(&self.path, directory, self.target.as_deref(), true);
             self.metadata_fingerprint = None;
-            self.fingerprint = Some(next_metadata);
-            return false;
+            return self.observe_obscured(next);
         }
-        if metadata_status == SampleStatus::Complete
+        if !unclassified
+            && metadata_status == SampleStatus::Complete
             && self.metadata_fingerprint == Some(next_metadata)
         {
             return false;
         }
         let (next, status) = fingerprint(&self.path, directory, self.target.as_deref(), true);
-        // #1792: an incomplete sample — any stat, `read_dir`, or content read
-        // that failed — commits no metadata fingerprint: committing anyway
-        // closed the recovery path for good (identical metadata then
-        // short-circuited every later sample, so the read that failed was
-        // never retried and the change was invisible until the next metadata
-        // change). `None` keeps every later tick re-sampling until a complete
-        // one lands. The full `fingerprint` is committed regardless, so while
-        // a path stays unreadable the same fingerprint reports at most once —
-        // the content read is retried every tick, not the reload.
-        self.metadata_fingerprint = (metadata_status == SampleStatus::Complete
-            && status == SampleStatus::Complete)
-            .then_some(next_metadata);
-        let previous = self.fingerprint.replace(next);
         if status == SampleStatus::Obscured {
             // Same rule as the metadata branch above, reached when the
             // failure landed between the two samples.
-            return false;
+            self.metadata_fingerprint = None;
+            return self.observe_obscured(next);
         }
-        // The first sample after a startup probe failure only records (#1792
-        // r1): `None` must not be read as "changed from something".
-        previous.is_some_and(|previous| previous != next)
+        // #1792 r2: the config may have changed while the startup probe (and
+        // every sample) was failing, so the first complete sample with no
+        // trustworthy predecessor reports (D8): `None` is not "changed from
+        // something" but "nothing trustworthy was ever sampled".
+        self.obscured_fingerprint = None;
+        let previous = self.fingerprint.replace(next);
+        let changed = previous != Some(next);
+        // #1792 r2: a sample that reports a change must not also commit the
+        // short-circuit metadata — the two samples are taken at different
+        // times, and a match on the first is not evidence the second saw the
+        // same state (D11).
+        self.metadata_fingerprint = if changed
+            || unclassified
+            || metadata_status != SampleStatus::Complete
+            || status != SampleStatus::Complete
+        {
+            None
+        } else {
+            Some(next_metadata)
+        };
+        changed
     }
 }
 
@@ -1085,7 +1141,9 @@ enum SampleStatus {
     /// was not.
     ContentUnknown,
     /// A `stat` or `read_dir` failed with something other than `NotFound`:
-    /// the sample says nothing trustworthy about the path.
+    /// the sample says nothing trustworthy about the path. An obscured sample
+    /// commits nothing; it is compared against the previous obscured sample
+    /// only (see [`WatchedPath::observe_obscured`], #1792 r2).
     Obscured,
 }
 

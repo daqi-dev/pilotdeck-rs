@@ -40,11 +40,14 @@ loaded_at)` 返回与 `loadPilotConfig` 输出同形的 `version`、`schemaVersi
 250 ms 去抖触发 `reload("watch")` 并吞掉失败。基线用 `fs.watch`，本 crate 无原生
 watcher 依赖，改为按 `WatchOptions::poll_interval` 轮询被监视路径（默认 20 ms，
 夹到 10 ms – 60 s，`effective_poll_interval`）；
-监视对象的选取与基线一致。去抖夹到 1 h 上限（`effective_debounce`，基线不夹，
+监视对象的选取与基线一致，非 `NotFound` 的启动 stat 失败除外（保留该路径待首拍
+重探，#1792 r1）。去抖夹到 1 h 上限（`effective_debounce`，基线不夹，
 登记见 `specs/gateway-parity/diffs/A6.3-CONFIG-DEBOUNCE-CEILING-001.md`）。
 每次采样先比 metadata，未变则不读内容（#1739）；采样不完整（stat / `read_dir` / 内容读任一
-失败）不提交 metadata 指纹，下一 tick 重试直至完整样本落地（#1792），同一不可读状态至多再报
-一次变化、不会 reload 风暴。唯一的漏检窗口是「改写后 ctime 未跨
+失败，`NotFound` 除外：它是完整观测）不提交 metadata 指纹，下一 tick 重试直至完整样本落地
+（#1792）；stat / `read_dir` 失败的遮蔽采样不提交任何指纹（含折叠指纹），只与上一遮蔽采样
+比较后上报可观测变更，读恢复后与最后一次完整采样比较、有差才报（#1792 r2），同一不可读
+状态不会 reload 风暴、持续遮蔽也不会永久静默。唯一的漏检窗口是「改写后 ctime 未跨
 tick，且其余参与指纹的字段（len / is_dir / mtime / inode / dev）也都没变」；窗口宽度与采样间隔
 无关，具体表述见 `store.rs` 模块文档，登记与复算见
 `specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md`，勘误见同目录
