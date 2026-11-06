@@ -6,7 +6,10 @@
 //! canonicalize check and the open changes which file is read while every
 //! path-based check still passes. This helper asks the platform for the
 //! handle's own location instead — the object the descriptor references,
-//! not the spelling used to reach it:
+//! not the spelling the caller used to reach it. It is a name, not an
+//! identity: a rename after the open changes the answer, so callers pair it
+//! with an open-time `(dev, inode)` comparison (see `services.rs` step 0/3)
+//! rather than treating the containment check as sufficient on its own.
 //!
 //! - macOS: `fcntl(F_GETPATH)` through the already-locked `rustix::getpath`
 //!   wrapper (the workspace forbids `unsafe`, so the raw `libc::fcntl` call

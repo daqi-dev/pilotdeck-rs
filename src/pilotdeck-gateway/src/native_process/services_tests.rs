@@ -1512,8 +1512,8 @@ fn multi_step_swap_across_all_windows_is_not_found() {
     );
     negative_assert!(
         diagnostics_block(&blocks).contains(&format!(
-            "Image attachment not found: {path} (attachment handle resolved outside the lease \
-             root after open)."
+            "Image attachment not found: {path} (attachment handle is not the lease object \
+             approved before the open)."
         )),
         "#1468 the multi-step swap must be diagnosed not-found"
     );
@@ -1525,6 +1525,179 @@ fn multi_step_swap_across_all_windows_is_not_found() {
         note_block(&blocks).is_empty(),
         "#1468 the multi-step swap must never produce a note line"
     );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// #1468 (review concurrency#1 / boundary#1): the handle binding answers with
+/// the object's *current* name, so the symlink swap alone is not enough to
+/// pin it. Open the outside file through a swapped-in symlink, then rename
+/// that outside file over the leaf: the handle's name is now a genuine
+/// in-root spelling, the post-open canonicalize passes, and the path stat and
+/// the handle agree on `(dev, inode)` — only the identity recorded before the
+/// open (step 0) still shows that the approved file and the opened file are
+/// different objects. Without it the outside bytes are inlined (RED on the
+/// previous head, where the multi-step test also passed).
+#[cfg(unix)]
+#[test]
+fn rename_after_open_is_not_found() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1468 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-rename",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1468")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1468 outside rename fixture dir");
+    let outside_file = outside_root.join("outside.png");
+    std::fs::write(&outside_file, b"outside-bytes").expect("#1468 outside rename fixture");
+    let fired = Rc::new(Cell::new(0));
+    let _before = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let outside_file = outside_file.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
+            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let _after = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        move |_| {
+            std::fs::rename(&outside_file, &leaf)
+                .expect("#1468 rename the outside file over the leaf");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1468 a post-open rename must not fail the turn");
+    drop(_before);
+    drop(_after);
+    negative_assert!(
+        fired.get() == 2,
+        "#1468 both rename-sequence hooks must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks)
+            .contains("(attachment handle is not the lease object approved before the open)."),
+        "#1468 a renamed-in outside handle must be diagnosed not-found, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1468 a renamed-in outside handle must never inline outside bytes"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1468 a renamed-in outside handle must never register allowedReadFiles"
+    );
+    std::fs::remove_dir_all(&outside_root).ok();
+}
+
+/// #1468 (review deepseek boundary#2 / concurrency#2): the upload-store root
+/// is the second legitimate home of a lease object, and it must get the same
+/// containment guard as the lease root. `.tmp/chat-uploads` swapped for a
+/// symlink out of the project would otherwise turn the outside directory the
+/// link points at into an accepted home, and the very multi-swap sequence this
+/// PR closes starts passing again.
+#[cfg(unix)]
+#[test]
+fn upload_store_root_swapped_outside_project_is_not_a_second_home() {
+    use std::cell::Cell;
+    use std::os::unix::fs::symlink;
+    use std::rc::Rc;
+
+    let scratch = Scratch::new();
+    let path = scratch.lease("target.png");
+    std::fs::write(&path, b"lease-bytes").expect("#1468 lease fixture");
+    let outside_root = scratch.0.with_file_name(format!(
+        "{}-outside-store",
+        scratch
+            .0
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("pdrs-1468")
+    ));
+    std::fs::create_dir_all(&outside_root).expect("#1468 outside store fixture dir");
+    let outside_file = outside_root.join("outside.png");
+    std::fs::write(&outside_file, b"outside-bytes").expect("#1468 outside store fixture");
+    // The store root itself now points outside the project.
+    let store_root = scratch.0.join(".tmp").join("chat-uploads");
+    symlink(&outside_root, &store_root).expect("#1468 swap the store root outside the project");
+    let fired = Rc::new(Cell::new(0));
+    let _before = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let outside_file = outside_file.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf");
+            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let _after = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the swapped link");
+            std::fs::write(&leaf, b"lease-bytes").expect("#1468 restore the in-root leaf");
+            fired.set(fired.get() + 1);
+        }
+    });
+    // Third swap, exactly as in the multi-step sequence: the path stat must
+    // agree with the outside handle so that only the store-root guard stands
+    // between the outside directory and an accepted second home.
+    let _revalidate = swap_test_hook::set(swap_test_hook::SwapWindow::AfterRevalidate, {
+        let fired = Rc::clone(&fired);
+        let leaf = path.clone();
+        let outside_file = outside_file.clone();
+        move |_| {
+            std::fs::remove_file(&leaf).expect("#1468 remove the in-root leaf again");
+            symlink(&outside_file, &leaf).expect("#1468 swap the leaf onto the outside file again");
+            fired.set(fired.get() + 1);
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "image/png")],
+    )
+    .expect("#1468 a swapped store root must not fail the turn");
+    drop(_before);
+    drop(_after);
+    drop(_revalidate);
+    negative_assert!(
+        fired.get() == 3,
+        "#1468 all three store-root swap hooks must fire inside the production sequence"
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1468 a store root outside the project must not become a second accepted home"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1468 a store root outside the project must never register allowedReadFiles"
+    );
+    std::fs::remove_file(&store_root).ok();
     std::fs::remove_dir_all(&outside_root).ok();
 }
 
@@ -1544,8 +1717,11 @@ fn handle_path_unavailable_fails_closed() {
         .expect("#1468 spawn the pipe fixture");
     let stdin = child.stdin.take().expect("#1468 take the pipe write end");
     let pipe_file = std::fs::File::from(std::os::fd::OwnedFd::from(stdin));
+    let approved_path = scratch.lease("approved.txt");
+    std::fs::write(&approved_path, b"approved").expect("#1468 approved fixture");
+    let approved = std::fs::metadata(&approved_path).expect("#1468 approved stat");
     negative_assert!(
-        !handle_bound_to_upload_areas(&pipe_file, &lease_root, None),
+        !handle_bound_to_upload_areas(&pipe_file, &lease_root, None, &approved),
         "#1468 an unavailable handle path must fail closed"
     );
     drop(pipe_file);

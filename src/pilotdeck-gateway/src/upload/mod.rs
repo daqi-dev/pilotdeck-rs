@@ -682,6 +682,21 @@ impl UploadStore {
         // outside bytes while the checked spelling never changed (the same
         // race reproduced against the TS readAt, node v22.22.0,
         // `_tmp/20261106-issue-1468-1494/ts-probe/read_at_toctou_probe.mjs`).
+        // The identity the validated spelling resolved to, recorded before
+        // the open: the handle check below answers with the object's
+        // *current* name, so a rename after the open could move an outside
+        // record under the upload root. A rename cannot change which inode
+        // the descriptor references (same residual as `services.rs` step 0).
+        let approved = match fs::metadata(&canonical_path) {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(UploadError::io(e, "realpath", Some(&canonical_path))),
+        };
+        // No portable cross-platform file identity outside Unix; the handle
+        // containment check above is all that platform gets (the same honest
+        // residual as `services.rs`'s non-Unix `attachment_identity_matches`).
+        #[cfg(not(unix))]
+        let _ = &approved;
         #[cfg(test)]
         swap_test_hook::notify(
             swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen,
@@ -693,6 +708,8 @@ impl UploadStore {
             // directory swap, EIO, ...) is `read` without one (node v22.22.0,
             // `_tmp/20261025-issue-656/node-probe/read-stages.out`).
             Ok(mut file) => {
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::AfterOpen, &canonical_path);
                 // #1494: bind the approval to the opened handle — the
                 // platform's own resolved path for the descriptor must still
                 // name a location inside the canonical upload root, and a
@@ -707,6 +724,20 @@ impl UploadStore {
                         "PROJECT_PATH_FORBIDDEN",
                         "Upload metadata handle leaves the upload directory.",
                     ));
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let opened = match file.metadata() {
+                        Ok(metadata) => metadata,
+                        Err(e) => return Err(UploadError::io(e, "stat", None)),
+                    };
+                    if opened.dev() != approved.dev() || opened.ino() != approved.ino() {
+                        return Err(UploadError::dialog(
+                            "PROJECT_PATH_FORBIDDEN",
+                            "Upload metadata handle names a different file than the one validated.",
+                        ));
+                    }
                 }
                 let mut bytes = Vec::new();
                 match file.read_to_end(&mut bytes) {
@@ -1147,11 +1178,14 @@ fn future(record: &JsValue, field: &str, now: i64) -> Result<bool> {
 mod swap_test_hook {
     use std::path::Path;
 
-    /// The one #1494 window: after `read_at`'s canonicalize prefix check,
-    /// before the `File::open` that re-walks the path.
+    /// The #1494 windows: after `read_at`'s canonicalize prefix check and
+    /// before the `File::open` that re-walks the path, and (second) right
+    /// after the open succeeded, before the handle is validated — the window
+    /// a rename uses to give an outside vnode a name inside the upload root.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
         BetweenCanonicalizeAndOpen,
+        AfterOpen,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;

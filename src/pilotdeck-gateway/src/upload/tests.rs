@@ -920,6 +920,69 @@ fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
     );
 }
 
+/// #1494 (review concurrency#1, mirrored from #1468): the handle check
+/// answers with the object's *current* name. Let the open follow an outside
+/// symlink (so the descriptor references the outside record) and then rename
+/// that record over `metadata.json`: the handle now names a location inside
+/// the upload root, the prefix check ran on the pre-open spelling and passes,
+/// and only the identity recorded before the open exposes the swap. RED
+/// against the previous head, where this returned the forged record.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_record_renamed_after_open_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let outside = project.join("outside-renamed.json");
+    let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
+    set(&mut forged, "forgedMarker", text("outside"));
+    fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    let opened = Arc::new(AtomicBool::new(false));
+    let renamed = Arc::new(AtomicBool::new(false));
+    let link = {
+        let opened = opened.clone();
+        let metadata = metadata.clone();
+        let outside = outside.clone();
+        move |_path: &Path| {
+            fs::remove_file(&metadata).unwrap();
+            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            opened.store(true, Ordering::SeqCst);
+        }
+    };
+    let rename = {
+        let renamed = renamed.clone();
+        let metadata = metadata.clone();
+        let outside = outside.clone();
+        move |_path: &Path| {
+            fs::rename(&outside, &metadata).unwrap();
+            renamed.store(true, Ordering::SeqCst);
+        }
+    };
+    let _link = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, link);
+    let _rename = swap_test_hook::set(swap_test_hook::SwapWindow::AfterOpen, rename);
+    let result = h.store.get("upload-1");
+    drop(_link);
+    drop(_rename);
+    assert!(
+        opened.load(Ordering::SeqCst),
+        "#1494 the canonicalize→open hook must fire"
+    );
+    assert!(
+        renamed.load(Ordering::SeqCst),
+        "#1494 the after-open hook must fire — an unfired hook proves nothing"
+    );
+    let error = result.expect_err("#1494 a renamed-in outside record must never be read back");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata handle names a different file than the one validated."
+        )
+    );
+}
+
 /// #1494 chain segment 2: a forged record whose attachments describe its own
 /// outside bytes (path/bytes/sha256 all self-consistent, so `verified`'s
 /// integrity check passes) must not reach `acquire_attachment_lease`, which

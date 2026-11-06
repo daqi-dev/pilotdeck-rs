@@ -98,12 +98,31 @@ mutations = [
      '#1458 a registered pdf must not carry the pdf_size_estimate diagnostic'),
     ('handle-path-check-dropped', SERVICES,
      '''        Ok(handle) => {
-            handle.starts_with(lease_root)
-                || upload_store.is_some_and(|store| handle.starts_with(store))
+            let named_inside = handle.starts_with(lease_root)
+                || upload_store.is_some_and(|store| handle.starts_with(store));
+            // The name says the object has a legitimate home; the identity
+            // says it is the object the pre-open validation approved. A
+            // rename after the open satisfies the first and not the second.
+            let same_object = file
+                .metadata()
+                .map(|opened| attachment_identity_matches(approved, &opened))
+                .unwrap_or(false);
+            named_inside && same_object
         }''',
      '        Ok(_) => true,',
      'native_process::services_tests::multi_step_swap_across_all_windows_is_not_found',
      '#1468 a handle outside the lease root must never be read'),
+    # The pre-open identity is the one term inside the binding that a rename
+    # after the open defeats; dropping only it must let the renamed-in
+    # outside handle through, so the named test goes red.
+    ('approved-identity-dropped', SERVICES,
+     '''            let same_object = file
+                .metadata()
+                .map(|opened| attachment_identity_matches(approved, &opened))
+                .unwrap_or(false);''',
+     '            let same_object = true;',
+     'native_process::services_tests::rename_after_open_is_not_found',
+     '#1468 a renamed-in outside handle must be diagnosed not-found, got: {}'),
     ('handle-path-fail-open-passes', SERVICES,
      '''        // #1468: an unavailable handle path is never approved.
         Err(_) => false,''',
