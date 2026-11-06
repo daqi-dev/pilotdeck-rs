@@ -1032,7 +1032,7 @@ impl WeixinChannel {
                                 .await;
                         }
                         Some(turn) => {
-                            channel.enqueue_or_run(user, turn);
+                            let _ = channel.enqueue_or_run(user, turn);
                         }
                     }
                 });
@@ -1040,12 +1040,18 @@ impl WeixinChannel {
             DispatchStart::Turn { user, turn } => {
                 // Inline, so a later message in the same poll batch sees the
                 // chat as active exactly when TS's microtask would.
-                self.enqueue_or_run(user, turn);
+                let _ = self.enqueue_or_run(user, turn);
             }
         }
     }
 
-    fn enqueue_or_run(&self, user: JsString, turn: QueuedWeixinTurn) {
+    /// Returns the spawned turn task's handle so tests can observe the exact
+    /// cancellation window (#1780); production callers drop it.
+    fn enqueue_or_run(
+        &self,
+        user: JsString,
+        turn: QueuedWeixinTurn,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         let run_now = {
             let mut inner = self.lock_inner();
             if inner.active_chats.contains(&user) {
@@ -1064,29 +1070,43 @@ impl WeixinChannel {
                     String::from_utf16_lossy(user.units())
                 ),
             );
-            return;
+            return None;
         }
-        tokio::spawn(self.clone().run_queued_turns(user, turn));
-    }
-
-    async fn run_queued_turns(self, user: JsString, first_turn: QueuedWeixinTurn) {
-        self.lock_inner().active_chats.insert(&user);
         // #1780: TS clears the marker in `finally`, even on a rejected turn —
-        // and on a panicking one. This task is a bare `tokio::spawn` whose
-        // JoinHandle is dropped, so a panic in `process_message` only kills
-        // the task; without the guard the chat would stay in `active_chats`
-        // and every later message of that user would queue behind a dead
-        // consumer forever. Constructed after the insert and bound for the
-        // whole body, so `Drop` runs on the normal return *and* on unwind.
+        // and on a panicking one. This task is a bare `tokio::spawn`, so a
+        // panic in `process_message` only kills the task; without the guard
+        // the chat would stay in `active_chats` and every later message of
+        // that user would queue behind a dead consumer forever.
+        //
+        // The guard is taken *here*, after the admission insert and before the
+        // spawn, so the marker is owned from spawn rather than from the task's
+        // first poll: a task cancelled while still queued (runtime shutdown
+        // drops un-polled tasks) would otherwise never build the guard and
+        // leak the marker. Moving it into the future makes `Drop` run on the
+        // normal return, on unwind, and on cancellation before the first poll.
         //
         // Same `Drop`-guard shape as `channel::ActiveChat` (#1738); that type
         // owns a standalone `Arc<Mutex<HashSet<_>>>`, while this set lives in
         // the channel's single `Inner` mutex and must keep JS `Set` insertion
         // order for the notification paths, so release through `lock_inner`.
-        let _active = ActiveChatSlot {
+        let active = ActiveChatSlot {
             channel: self.clone(),
             user: user.clone(),
         };
+        Some(tokio::spawn(
+            self.clone().run_queued_turns(user, turn, active),
+        ))
+    }
+
+    async fn run_queued_turns(
+        self,
+        user: JsString,
+        first_turn: QueuedWeixinTurn,
+        active: ActiveChatSlot,
+    ) {
+        // Built by `enqueue_or_run` before the spawn and bound for the whole
+        // body, so `Drop` releases the marker on every exit path.
+        let _active = active;
         let mut next = Some(first_turn);
         while let Some(turn) = next.take() {
             self.process_message(&user, &turn).await;

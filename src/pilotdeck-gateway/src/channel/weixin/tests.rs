@@ -468,7 +468,14 @@ async fn panicking_turn_releases_active_chat_slot() {
     let channel = channel_with_gateway(&root, gateway.clone());
     let user = js("chat-panic");
 
-    channel.enqueue_or_run(user.clone(), queued_turn("first"));
+    let _ = channel.enqueue_or_run(user.clone(), queued_turn("first"));
+    // Positive control: `enqueue_or_run` admits the chat synchronously, before
+    // the task is spawned. Without this, a regression that drops the admission
+    // insert would leave the checks below vacuously green.
+    assert!(
+        channel.lock_inner().active_chats.contains(&user),
+        "#1780 the chat is admitted before the turn runs"
+    );
     tokio::time::timeout(Duration::from_secs(5), panicked.notified())
         .await
         .expect("#1780 the injected process_message panic never fired");
@@ -482,9 +489,85 @@ async fn panicking_turn_releases_active_chat_slot() {
 
     // (b) The user's next message must be consumed immediately instead of
     // queueing behind the dead task forever.
-    channel.enqueue_or_run(user.clone(), queued_turn("second"));
+    let _ = channel.enqueue_or_run(user.clone(), queued_turn("second"));
     until("the next message to reach submit_turn", || {
         gateway.submits.load(Ordering::SeqCst) >= 2
     })
     .await;
+}
+
+#[tokio::test]
+async fn turn_cancelled_before_first_poll_releases_active_chat_slot() {
+    let root = Root::new();
+    let panicked = Arc::new(tokio::sync::Notify::new());
+    let gateway = Arc::new(PanicOnceGateway {
+        submits: AtomicUsize::new(0),
+        panicked: panicked.clone(),
+    });
+    let channel = channel_with_gateway(&root, gateway.clone());
+    let user = js("chat-cancel");
+
+    let handle = channel
+        .enqueue_or_run(user.clone(), queued_turn("first"))
+        .expect("#1780 a fresh chat runs the turn immediately");
+    // Positive control: the admission marker exists before the cancellation;
+    // otherwise "released" below would be vacuous.
+    assert!(
+        channel.lock_inner().active_chats.contains(&user),
+        "#1780 the chat is admitted before the task is cancelled"
+    );
+    // Nothing has been awaited since the spawn, so on the current-thread test
+    // runtime the task has not been polled yet. Aborting here drops its future
+    // un-polled — the same shape as a runtime shutdown cancelling a task that
+    // is still queued. The admission marker was inserted by `enqueue_or_run`'s
+    // prelude, before the spawn, so a guard built inside the async body would
+    // never exist and the chat would stay active with no consumer.
+    handle.abort();
+    assert!(
+        handle.await.unwrap_err().is_cancelled(),
+        "#1780 the turn task is cancelled before its first poll"
+    );
+    assert_eq!(
+        gateway.submits.load(Ordering::SeqCst),
+        0,
+        "#1780 the cancelled task never reached submit_turn"
+    );
+    assert!(
+        !channel.lock_inner().active_chats.contains(&user),
+        "#1780 a task cancelled before its first poll still releases the chat"
+    );
+}
+
+#[tokio::test]
+async fn guard_releases_the_chat_through_a_poisoned_lock() {
+    let root = Root::new();
+    let gateway = Arc::new(PanicOnceGateway {
+        submits: AtomicUsize::new(0),
+        panicked: Arc::new(tokio::sync::Notify::new()),
+    });
+    let channel = channel_with_gateway(&root, gateway);
+    let user = js("chat-poison");
+
+    channel.lock_inner().active_chats.insert(&user);
+    // Poison the channel's `Inner` mutex the way a panic inside
+    // `process_message` does: unwind while the guard is held. The channel-wide
+    // `Drop` must then recover through `lock_inner` instead of aborting the
+    // process on a second panic inside a destructor.
+    let poison = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = channel.lock_inner();
+        panic!("#1780 poison the channel lock");
+    }));
+    assert!(
+        poison.is_err() && channel.0.inner.is_poisoned(),
+        "#1780 the injected panic poisons the channel lock"
+    );
+
+    drop(ActiveChatSlot {
+        channel: channel.clone(),
+        user: user.clone(),
+    });
+    assert!(
+        !channel.lock_inner().active_chats.contains(&user),
+        "#1780 the guard releases the chat even when the lock is poisoned"
+    );
 }
