@@ -18,10 +18,14 @@ import sys
 
 if not sys.flags.isolated:
     raise SystemExit(f'run with -I: python3 -I {__file__}')
+# 同族装置口径：不落 .pyc（本目录会被负控以 spec_from_file_location 再加载一次，
+# 陈旧字节码会让「跑的是当前源码」不成立）。
+sys.dont_write_bytecode = True
 
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
@@ -42,8 +46,25 @@ KNOWN_OUTCOMES = ('ok', 'error')
 KNOWN_SHAPES = ('request', 'stream')
 
 
+# 本装置的金样是第 5 份「101 方法」登记表；冻结 fixture 是四源集合的落点，
+# 二者必须逐名同形（否则单边漂移会让 P1 的期望集失效：漏跑新方法时
+# missing=∅ 仍 PASS —— 假 PASS；反向漂移则假 FAIL）。
+FROZEN_METHODS = (Path(__file__).resolve().parent.parent
+                  / 'gateway-parity' / 'fixtures' / 'retirement-methods.json')
+
+
 class InputError(Exception):
     """输入不可用 —— fail-closed，退出码 2，绝不当 PASS。"""
+
+
+def error_object(response):
+    """response 携带的错误对象；``"error": null`` 等同「无 error」。
+
+    serde 未 skip 成功响应时常见显式 null；把它判成「携带 error 对象」会对合法
+    Rust 轮假 FAIL。判据只禁止**非 null** 的 error 对象。
+    """
+    error = response.get('error')
+    return error if isinstance(error, dict) else None
 
 
 def violation(rule, round_name, method, detail):
@@ -61,7 +82,9 @@ def sha256_file(path):
 def read_json(path):
     try:
         text = Path(path).read_text(encoding='utf-8')
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
+        # UnicodeDecodeError ⊂ ValueError 但 ⊄ OSError：不显式接住就会 traceback
+        # 成 rc=1「判据 FAIL」，与登记口径 rc=2「输入不可用」矛盾。
         raise InputError(f'cannot read {path}: {error}') from error
     try:
         return json.loads(text)
@@ -104,7 +127,7 @@ def load_frames(round_dir):
     path = Path(round_dir) / 'driver' / 'frames.jsonl'
     try:
         text = Path(path).read_text(encoding='utf-8')
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         raise InputError(f'cannot read {path}: {error}') from error
     lines = text.split('\n')
     if lines and lines[-1] == '':
@@ -290,7 +313,7 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'stream ok with a response whose ok is not true'))
-                    if 'error' in response:
+                    if error_object(response) is not None:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'stream ok with a response carrying an error object'))
@@ -313,7 +336,7 @@ def analyze_round(round_name, rows, wire, oracle_index):
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'response.ok is not true for an ok outcome'))
-                    if 'error' in response:
+                    if error_object(response) is not None:
                         violations.append(violation(
                             'P6-WIRE-CODE', round_name, method,
                             'ok response carries an error object'))
@@ -351,6 +374,20 @@ def analyze_stability(per_round_values):
                 'P7-ROUND-STABILITY', rounds, method,
                 f'(outcome, errorCode) drift across rounds: {drift}'))
     return violations
+
+
+def load_frozen_methods(path=FROZEN_METHODS):
+    """冻结 fixture 的 method -> shape 表（101 条）。"""
+    data = read_json(path)
+    methods = data.get('methods') if isinstance(data, dict) else None
+    if not isinstance(methods, list):
+        raise InputError(f'{path}: frozen method fixture lacks a methods list')
+    shapes = {}
+    for entry in methods:
+        if not isinstance(entry, dict) or not isinstance(entry.get('method'), str):
+            raise InputError(f'{path}: malformed frozen method entry')
+        shapes[entry['method']] = entry.get('shape')
+    return shapes
 
 
 def load_oracle(path):
@@ -417,7 +454,23 @@ def load_oracle(path):
         raise InputError(
             f'{path}: oracle unavailable set {sorted(unavailable)} does not match '
             f'the registered gated set {sorted(REGISTERED_UNAVAILABLE_METHODS)}')
+    assert_matches_frozen({method: row['shape'] for method, row in index.items()},
+                          str(path))
     return data, index
+
+
+def assert_matches_frozen(shapes, label):
+    """方法集（名 + shape）必须与冻结 fixture 逐条相同，否则 rc2。"""
+    frozen = load_frozen_methods()
+    if shapes == frozen:
+        return
+    missing = sorted(set(frozen) - set(shapes))
+    extra = sorted(set(shapes) - set(frozen))
+    differ = sorted(name for name in set(frozen) & set(shapes)
+                    if frozen[name] != shapes[name])
+    raise InputError(
+        f'{label}: method set differs from the frozen fixture {FROZEN_METHODS} '
+        f'(missing={missing[:5]}, extra={extra[:5]}, shapeMismatch={differ[:5]})')
 
 
 def load_round_bundle(round_dir):
@@ -466,6 +519,9 @@ def run_emit(args):
     if len(self_index) != EXPECTED_METHOD_COUNT:
         raise InputError(
             f'first round holds {len(self_index)} methods, expected {EXPECTED_METHOD_COUNT}')
+    # 生成侧也核：金样是第 5 份登记表，生成时同样不得与冻结 fixture 漂移。
+    assert_matches_frozen({row['method']: row['shape'] for row in bundles[0]['rows']},
+                          str(bundles[0]['dir']))
     violations = []
     stats = []
     for bundle in bundles:
@@ -514,7 +570,7 @@ def run_emit(args):
     target = Path(args.oracle)
     target.parent.mkdir(parents=True, exist_ok=True)
     # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。
-    tmp = target.with_name(target.name + '.tmp')
+    tmp = target.with_name(f'{target.name}.{os.getpid()}.tmp')
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n',
                    encoding='utf-8')
     tmp.replace(target)
@@ -542,6 +598,10 @@ def run_check(args):
         'command': 'check',
         'oracle': {'path': str(args.oracle), 'methods': len(oracle_index)},
         'rounds': stats,
+        # 单轮时 P7 是空判（每个方法只有一项，distinct 恒为 1）：PASS 不等于
+        # 「跨轮稳定已核」。报告显式给出评估轮数，下游不得把 1 轮当 P7 证据。
+        'p7Rounds': len(bundles),
+        'p7Evaluated': len(bundles) > 1,
         'violations': violations,
         'violationsCount': len(violations),
     }

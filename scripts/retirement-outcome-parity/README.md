@@ -9,7 +9,7 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 |---|---|
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
-| `negative_controls.py` | N1–N15 汇总式控件执行器（见下）。 |
+| `negative_controls.py` | N1–N17 汇总式控件执行器（见下）。 |
 
 ## 金样来源
 
@@ -51,8 +51,12 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   P5-UNAVAILABLE-SET / P6-WIRE-CODE / P7-ROUND-STABILITY / P8-FAIL-CLOSED）、`round`、
   `method`、`detail`）。
 - rc=1：有 violation，逐条点名方法（+轮次 / 双方码）。
-- rc=2：输入不可用（缺文件、解析失败、缺字段、`errorCode` 非字符串、`events` 非整数、
-  **两个轮次目录同名**（P7 以目录名为键）、金样形状不对）——fail-closed，绝不当 PASS。
+- rc=2：输入不可用（缺文件、解析失败/**非法 UTF-8**、缺字段、`errorCode` 非字符串、`events`
+  非整数、**两个轮次目录同名**（P7 以目录名为键）、金样形状不对、**金样 `(method, shape)` 集
+  与冻结 fixture `scripts/gateway-parity/fixtures/retirement-methods.json` 不一致**）——
+  fail-closed，绝不当 PASS。
+- 报告含 `p7Rounds` / `p7Evaluated`：只跑 1 轮时 P7 是空判，`status: PASS` 不得当作
+  「跨轮稳定已核」的证据。
 - 两个入口都要求 `python3 -I`（首个语句断言 `sys.flags.isolated`，同装置族其它入口）。
 - **Rust 轮必须显式跑本装置**：判据尚未接进冻结装置 `session_domain.py`（见「容差与残余」③）。
 
@@ -62,13 +66,14 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
 - 不比较（理由在条目「范围」）：`elapsedMs`（纯计时，95/101 跨轮变动）、
   `error.message` 文本（含轮次绝对路径与 provider 措辞，只要求非空）、
   `events` 计数 / `lastEventType`（只要求 stream ok 有 `final: true` 帧且 `events >= 1`）。
+- 成功 response 的 `"error": null` 等同「无 error」（不判 FAIL）。
 - 残余：① 文案与帧数不比较；② 只覆盖单轮内方法级行为，hostAudit / entryInventory /
   网络面归 #1478；③ 未接进冻结装置，Rust 轮必须显式跑本装置，否则不得宣称覆盖；
   ④ P6 要求 error 行带同 id `response` 帧，比冻结装置 `EVIDENCE_BACKING` 对 stream
   error 的「任意 receive 帧」更严——只落 event 帧的 stream error 会判 FAIL（响亮失败，
   非假 PASS）；放宽需另立更正件。
 
-## 负控（N1–N15）
+## 负控（N1–N17）
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py <输出目录> \
@@ -85,12 +90,15 @@ rc=0**（原始数据本就有违规时，注入后的违规不能算作注入�
 N10（99/101 unavailable，线缆同步）是 F5 / DS-P0-1 的闭环证据：旧 `UNIFORM_UNAVAILABLE`
 语义（全 101 才 FAIL）在该形状下一条规则都不触发。N12（`shape` request↔`stream` 互换）与
 N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。N14
-（stream ok 方法加一条同 id 错误 response，事件侧 `final: true` 仍在）与 N15（两个 request
-ok 方法共用同一请求 id、只留一条 response）封住 P6 的两条假 PASS：矛盾 response 被忽略、
-一个方法的成功 response 被另一个方法借用。
+（stream ok 方法加一条同 id 错误 response，事件侧 `final: true` 仍在；该 stream 若本就有合法
+ok response 则改写成错误帧）与 N15（两个 request ok 方法共用同一请求 id、只留一条 response）
+封住 P6 的两条假 PASS：矛盾 response 被忽略、一个方法的成功 response 被另一个方法借用；
+N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响应/重复请求两条守卫配控件。
 
-执行器启动时先删同输出目录的旧 `summary.json`（旧结果不得冒充本轮），checker 子进程带
-600 s 超时；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。
+执行器**第一件事**是删同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
+为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
+的 PASS。checker 子进程带 600 s 超时（`TimeoutExpired` 收口为 rc2）；注入用常量取自判据实现
+（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
