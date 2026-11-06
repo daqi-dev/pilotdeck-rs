@@ -260,6 +260,10 @@ impl ProjectFileService {
         target: &Path,
     ) -> Result<Vec<(bool, String, JsObject)>, FilesError> {
         use rustix::fs::{AtFlags, Dir, FileType, statat};
+        // Deterministic boundary-probe seam: the realpath gate above has run,
+        // so a test may replace the directory before the pinned open.
+        #[cfg(test)]
+        test_hook::notify("tree");
         let directory = crate::project_files::open_beneath(&self.root, target)
             .map_err(|error| self.refusal("scandir", relative, target, error))?;
         let mut rows = Vec::new();
@@ -350,8 +354,7 @@ impl ProjectFileService {
         beneath: &Path,
         bytes: &[u8],
     ) -> Result<(), FilesError> {
-        let root =
-            fs::File::open(&self.root).map_err(|error| sys_error(&error, "open", &self.root))?;
+        let root = self.root_beneath(relative)?;
         if let Some(parent) = beneath.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -364,6 +367,55 @@ impl ProjectFileService {
         }
         crate::project_files::overwrite_at(&root, beneath, bytes)
             .map_err(|error| self.refusal("open", relative, target, error))
+    }
+
+    /// Pin the project root itself for the write walk. The root is opened by
+    /// the same from-`/` NOFOLLOW walk as every other component, so a root
+    /// swapped for a link inside the window fails closed; a root that simply
+    /// cannot be opened keeps the Node diagnostic on the root path.
+    #[cfg(unix)]
+    fn root_beneath(&self, relative: &str) -> Result<fs::File, FilesError> {
+        let pinned = match crate::project_files::open_directory_beneath(&self.root, &self.root) {
+            // TS `writeFile` runs `mkdir(dirname(target), {recursive: true})`
+            // first, so a project root that does not exist yet is created and
+            // the write succeeds instead of answering ENOENT.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::create_dir_all(&self.root)
+                    .map_err(|error| sys_error(&error, "mkdir", &self.root))?;
+                self.created_root()
+            }
+            other => other,
+        };
+        pinned.map_err(|error| {
+            if crate::project_files::nofollow_loop(&error)
+                || error.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error())
+            {
+                return FilesError::Workspace {
+                    raw: relative.to_owned(),
+                };
+            }
+            sys_error(&error, "open", &self.root)
+        })
+    }
+
+    /// Pin a root this call just created. The canonical form is walked so a
+    /// symlinked ancestor (macOS `/tmp`, `/var`) is not read as a raced link,
+    /// and a root that is no longer a direct child of its own parent is
+    /// refused as the raced replacement it is.
+    #[cfg(unix)]
+    fn created_root(&self) -> io::Result<fs::File> {
+        let real = fs::canonicalize(&self.root)?;
+        if let Some(parent) = self
+            .root
+            .parent()
+            .and_then(|path| fs::canonicalize(path).ok())
+            && real.parent() != Some(parent.as_path())
+        {
+            return Err(io::Error::from_raw_os_error(
+                rustix::io::Errno::LOOP.raw_os_error(),
+            ));
+        }
+        crate::project_files::open_directory_beneath(&real, &real)
     }
 
     /// The target below the root when the #1675 descriptor walk is armed. The

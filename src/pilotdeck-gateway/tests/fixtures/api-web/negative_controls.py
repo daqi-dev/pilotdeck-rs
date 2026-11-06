@@ -37,14 +37,21 @@ switches = [
     # instead of metadata only.
     ('api-web-read-limit-off', FILES, 'files_read_large', '#1348 cell files-read-large normalized response'),
     # #1675 NOFOLLOW descriptor hardening off: the write resolve is lexical
-    # again, so a planted directory symlink carries the write out of the root,
-    # and the read opens by path again, so a component swapped after the
-    # stat check serves outside content.
+    # again, so a planted directory symlink — in the root or replacing the
+    # root itself — carries the write out of the root, and the read opens by
+    # path again, so a component swapped after the stat check serves outside
+    # content.
     ('api-web-nofollow-off', FILES,
      ['write_rejects_a_symlink_that_leaves_the_root',
-      'read_rejects_a_file_swapped_inside_the_window'],
+      'write_rejects_a_component_swapped_inside_the_window',
+      'write_rejects_a_root_swapped_for_a_link',
+      'read_rejects_a_file_swapped_inside_the_window',
+      'read_tree_rejects_a_directory_swapped_inside_the_window'],
      ['#1675 mutated: a symlink carried the write out of the workspace',
-      '#1675 mutated: a raced read served content from outside the workspace']),
+      '#1675 mutated: the race window carried the write out of the workspace',
+      '#1675 mutated: the swapped root carried the write out of the workspace',
+      '#1675 mutated: a raced read served content from outside the workspace',
+      '#1675 mutated: the race window listed outside the workspace']),
 ]
 GUARDED = [ROUTER, FILES, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

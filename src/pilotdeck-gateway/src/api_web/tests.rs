@@ -903,6 +903,106 @@ fn write_rejects_a_component_swapped_inside_the_window() {
     }
 }
 
+/// #1675 probe (root race window): the project root itself is renamed away
+/// and a link to the outside directory takes its place after the realpath
+/// gate and before the write pins the root descriptor.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_root_swapped_for_a_link() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    let link_root = root.clone();
+    let parked_root = parent.join("parked");
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "write" {
+            fs::rename(&link_root, &parked_root).expect("#1675 park the checked root");
+            std::os::unix::fs::symlink(&link_target, &link_root)
+                .expect("#1675 install the racing root symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "raced.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("raced.txt"));
+    assert!(
+        leaked.is_err(),
+        "#1675 mutated: the swapped root carried the write out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "raced.txt",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a swapped root answers workspace_boundary, not a write error"),
+        Ok(()) => panic!("#1675 a write through a swapped root must be rejected"),
+    }
+}
+
+/// #1675 regression probe: the project root does not exist yet, and the write
+/// creates it like TS's `mkdir(dirname(target), {recursive: true})`.
+#[cfg(unix)]
+#[test]
+fn write_creates_a_missing_project_root() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("fresh");
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#1675 the fresh root is UTF-8"));
+    let result = service.write_file(
+        "nested/a.txt",
+        &pilotdeck_protocol::JsString::from("hello\n"),
+        false,
+    );
+    assert!(
+        result.is_ok(),
+        "#1675 a write below a missing root creates it"
+    );
+    assert_eq!(
+        fs::read_to_string(fresh.join("nested/a.txt")).expect("#1675 read the written file"),
+        "hello\n",
+        "#1675 the write landed inside the created root"
+    );
+}
+
+/// #1675 probe (tree race window): the listed directory is swapped for a link
+/// to the outside directory after the realpath gate and before the pinned
+/// enumeration.
+#[cfg(unix)]
+#[test]
+fn read_tree_rejects_a_directory_swapped_inside_the_window() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#1675 create the directory outside the root");
+    fs::write(outside.join("secret.txt"), b"top secret\n")
+        .expect("#1675 write the file outside the root");
+    fs::create_dir_all(root.join("listing")).expect("#1675 create the listed directory");
+    let link_root = root.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "tree" {
+            fs::remove_dir(link_root.join("listing")).expect("#1675 remove the listed directory");
+            std::os::unix::fs::symlink(&link_target, link_root.join("listing"))
+                .expect("#1675 install the racing symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#1675 the fixture root is UTF-8"));
+    let result = service.read_tree("listing");
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "listing",
+            "#1675 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!("#1675 a raced directory answers workspace_boundary, not a scandir error"),
+        Ok(_) => panic!("#1675 mutated: the race window listed outside the workspace"),
+    }
+}
+
 /// #1675 probe (read race window): the checked file is swapped for a symlink
 /// after the realpath/stat checks and before the content read.
 #[cfg(unix)]
