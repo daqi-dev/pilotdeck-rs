@@ -338,7 +338,11 @@ class ProcessControls(unittest.TestCase):
             gate.chmod(0o755)
             env = {k: v for k, v in os.environ.items() if k != "PDRS_CARGO_SLOT_BIN"}
             env.update(HOME=str(home),
-                       PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / "cache"))
+                       PDRS_CARGO_SLOTS_CACHE_DIR=str(temp / "cache"),
+                       # 真机上的 /private/tmp/pdrs-cargo-gate 本身就是「共享池迹象」，
+                       # 会让下面两步无论有没有新判定都退 4；指到不存在的路径才能
+                       # 让「runner-tools 目录在」「双装」成为唯一的 4 的理由。
+                       PDRS_CARGO_SLOTS_POOL_DIR=str(temp / "no-such-pool"))
             result = subprocess.run(["bash", str(script)], capture_output=True,
                                     text=True, timeout=120, env=env)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -348,6 +352,7 @@ class ProcessControls(unittest.TestCase):
             result = subprocess.run(["bash", str(script)], capture_output=True,
                                     text=True, timeout=60, env=env)
             self.assertEqual(result.returncode, 4, result.stdout + result.stderr)
+            self.assertIn("pdrs-runner-tools", result.stderr)
             # 双装宿主：ops 目录在但闸坏了，runner 副本完好 → 仍是 4，不许静默换闸
             # （两份 cargo_gate.py 的 SLOT_DEFAULTS 可各自漂移，用旧 cap 放行）。
             (home / "ws/pdrs-ops").mkdir(parents=True)
