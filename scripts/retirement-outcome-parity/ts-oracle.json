@@ -1,0 +1,754 @@
+{
+  "schema": "retirement-outcome-parity/ts-oracle v1",
+  "baseline": {
+    "revision": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "suite": "retirement"
+  },
+  "rounds": {
+    "k": 5,
+    "dirs": [
+      "round-01",
+      "round-02",
+      "round-03",
+      "round-04",
+      "round-05"
+    ],
+    "files": [
+      {
+        "round": "round-01",
+        "methodsSha256": "c46f74315569d5009592a42e05b01d523c1710b7587263d64f4c55cdb43bca0e",
+        "framesSha256": "0945e78eca71dce65135d0eb8a4bbcb4a828fc4f2f35ae16f3a566fa5dded034"
+      },
+      {
+        "round": "round-02",
+        "methodsSha256": "5b8398a91e3cd08c8697c81fa7f87076d0c8054be8b6f061b5a5731aca6acee0",
+        "framesSha256": "902366ef5363009121c6e72633c35aace41282b2533b7638c46bc6c93f83b2a4"
+      },
+      {
+        "round": "round-03",
+        "methodsSha256": "da8f21606c098f931530d7bc12de54a9819753e0471a45da53902bc89eb98ced",
+        "framesSha256": "0afa3a14ab2f552e9df0a3760f913755f68085db7f2f6acad7171af4392a7888"
+      },
+      {
+        "round": "round-04",
+        "methodsSha256": "820deb64fefdf44be769c5439fcc3382295b6b942a59fa61e1f1afd8849ebd03",
+        "framesSha256": "311657e03529f970b84ad133d576860cef368df434f97e8c66860761b59c9446"
+      },
+      {
+        "round": "round-05",
+        "methodsSha256": "b6ef2848952fdc4e736959597eb007d2c1a18275779046f101c3ddc1d2623b6d",
+        "framesSha256": "641d95cb2712bce5f68640a828049ca9f0550fb5afaa9c9fbba68c4cd814397b"
+      }
+    ]
+  },
+  "methods": [
+    {
+      "method": "submit_turn",
+      "shape": "stream",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "run_get",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "run_events",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "run_reattach",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "active_turn_snapshot",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "permission_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "list_sessions",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "memory_list",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "snapshot_list",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "snapshot_get",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "snapshot_restore",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "manager_sessions",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "manager_browsers",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "native_archive_manifest",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "native_archive_entries",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "native_archive_artifact",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "ARCHIVE_ARTIFACT_NOT_FOUND",
+      "wireCode": "ARCHIVE_ARTIFACT_NOT_FOUND"
+    },
+    {
+      "method": "describe_server",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "list_projects",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "describe_project",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "project_files_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "project_file_read",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "commands_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "model_catalog_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "session_model_get",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "session_model_set",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "ROUTER_AUTO_UNAVAILABLE",
+      "wireCode": "ROUTER_AUTO_UNAVAILABLE"
+    },
+    {
+      "method": "session_model_clear",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "supported_agents",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "usage_snapshot",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "model_usage_snapshot",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "output_styles_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "reload_output_styles",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "resolve_settings",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "read_session_messages",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "background_tasks",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "background_task_stop",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "BACKGROUND_TASK_NOT_FOUND",
+      "wireCode": "BACKGROUND_TASK_NOT_FOUND"
+    },
+    {
+      "method": "cron_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "user_dialog_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "mcp_server_status",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "sop_status",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "SOP_MODULE_DISABLED",
+      "wireCode": "SOP_MODULE_DISABLED"
+    },
+    {
+      "method": "memory_wipe",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "wireCode": "CAPABILITY_UNAVAILABLE"
+    },
+    {
+      "method": "seed_read_state",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "record_agent_status_message",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "hook_async_result",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "new_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "resume_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "export_session_transcript",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "restore_session_transcript",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "SESSION_BUSY",
+      "wireCode": "SESSION_BUSY"
+    },
+    {
+      "method": "fork_session",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "fork_entry_not_found",
+      "wireCode": "fork_entry_not_found"
+    },
+    {
+      "method": "replace_last_turn",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "replace_turn_conflict",
+      "wireCode": "replace_turn_conflict"
+    },
+    {
+      "method": "finalize_last_turn_replacement",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "replace_transaction_conflict",
+      "wireCode": "replace_transaction_conflict"
+    },
+    {
+      "method": "rewind_files",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "rename_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "tag_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "set_permission_mode",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "apply_flag_settings",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "update_settings",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "set_session_thinking",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "set_output_style",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "set_mcp_servers",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "mcp_server_reconnect",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "MCP_SERVER_NOT_FOUND",
+      "wireCode": "MCP_SERVER_NOT_FOUND"
+    },
+    {
+      "method": "mcp_server_toggle",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "MCP_SERVER_NOT_FOUND",
+      "wireCode": "MCP_SERVER_NOT_FOUND"
+    },
+    {
+      "method": "set_mcp_permission_mode_override",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "grant_session_permission",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "steer_turn",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "cancel_steer",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "abort_turn",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "reconnect_interaction",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "elicitation_respond",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "permission_decide",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "user_dialog_claim",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "user_dialog_release",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "INVALID_USER_DIALOG_RELEASE",
+      "wireCode": "INVALID_USER_DIALOG_RELEASE"
+    },
+    {
+      "method": "user_dialog_respond",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "read_subagent_messages",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "sop_resume",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "APPROVAL_INPUT_INVALID",
+      "wireCode": "APPROVAL_INPUT_INVALID"
+    },
+    {
+      "method": "upload_create",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "upload_get",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "wireCode": "UPLOAD_NOT_FOUND"
+    },
+    {
+      "method": "upload_part",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "wireCode": "UPLOAD_NOT_FOUND"
+    },
+    {
+      "method": "upload_complete",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "wireCode": "UPLOAD_NOT_FOUND"
+    },
+    {
+      "method": "upload_cancel",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "wireCode": "UPLOAD_NOT_FOUND"
+    },
+    {
+      "method": "cron_create",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "cron_update",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "cron_run_now",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "cron_stop",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "cron_delete",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "reload_config",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "reload_extensions",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "prepare_weixin_login",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_list",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_read",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "not_found",
+      "wireCode": "not_found"
+    },
+    {
+      "method": "skill_create",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_write",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_validate",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_scan",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "skill_import",
+      "shape": "request",
+      "outcome": "error",
+      "errorCode": "source_missing",
+      "wireCode": "source_missing"
+    },
+    {
+      "method": "skill_delete",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "always_on_apply",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "always_on_abort",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "always_on_rerun_plan",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "close_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "delete_session",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    },
+    {
+      "method": "close_project_sessions",
+      "shape": "request",
+      "outcome": "ok",
+      "errorCode": null,
+      "wireCode": null
+    }
+  ]
+}
