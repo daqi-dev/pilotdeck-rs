@@ -309,6 +309,15 @@ MUTATIONS = [
      'format!("MCP call failed (server={server_id}): bad output schema")',
      '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
      '#401 the Ajv compile text reaches the caller verbatim'),
+    ('output-schema-wrong-code', 'mcp/client.rs',
+     '                        return Err(McpClientError::client(\n'
+     '                            McpClientErrorCode::CallFailed,\n'
+     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n',
+     '                        return Err(McpClientError::client(\n'
+     '                            McpClientErrorCode::CallTimeout,\n'
+     '                            format!("MCP call failed (server={server_id}): {}", error.0),\n',
+     '--test=mcp_client', 'list_tools_rejects_a_bad_output_schema_type',
+     '#401 a schema compile failure is a call failure, not the timeout path'),
     # 同一条生产代码路径的两个不同拒绝理由（type / $ref）各有自己的回归；
     # 消息文本透传对两条测试都要能判杀，否则改弱其中一条断言不会被发现。
     ('output-schema-ref-message-text', 'mcp/client.rs',
