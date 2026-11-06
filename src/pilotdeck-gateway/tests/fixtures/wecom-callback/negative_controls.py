@@ -100,10 +100,14 @@ MUTATIONS = [
      'request_timeout_answers_408_and_releases_stop',
      '#1336 the 408 closes the connection like Node\'s requestTimeout'),
     # The 408 is a zero-length response: a body would leave the client reading
-    # past the pinned `\r\n\r\n` tail (A8.3-WECOM-CALLBACK-408-001).
+    # past the pinned header terminator (A8.3-WECOM-CALLBACK-408-001). The
+    # mutant body is `\r\n\r\n` on purpose — a plain `x` is caught even by a
+    # `raw.ends_with("\r\n\r\n")` pin, while this one is only caught when the
+    # pin splits at the *first* terminator and requires nothing after it
+    # (#1336 r5 Codex P1).
     ('wecom-408-with-body', source / 'http.rs',
      '.body(super::full(Bytes::new()))',
-     '.body(super::full(Bytes::from_static(b"x")))',
+     '.body(super::full(Bytes::from_static(b"\\r\\n\\r\\n")))',
      'request_timeout_answers_408_and_releases_stop',
      '#1336 the 408 has no body'),
     # The active-chat claim only holds if the winner inserts the chat while it
