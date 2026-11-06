@@ -498,18 +498,20 @@ with mutating_sources(root, sorted({root / row[1]
         finally:
             restore_failure = None
             for path in paths:
-                # A restore *write* can fail too (EROFS / EACCES / ENOSPC), and
-                # an exception escaping here would skip the evidence files
-                # below — leaving the previous run's all-KILLED summary on
-                # disk as the last word. Record it like a byte mismatch and
-                # keep going.
+                # A restore *write or re-read* can fail too (EROFS / EACCES /
+                # ENOSPC), and an exception escaping here would skip the
+                # evidence files below — leaving the previous run's all-KILLED
+                # summary on disk as the last word. Record it like a byte
+                # mismatch and keep going.
                 try:
                     path.write_bytes(snapshots[path])
+                    restored = (hashlib.sha256(path.read_bytes()).hexdigest()
+                                == before[path])
                 except OSError as error:
                     if restore_failure is None:
                         restore_failure = (
                             f'{path.relative_to(root).as_posix()} could not be '
-                            f'rewritten: {type(error).__name__}: {error}')
+                            f'restored or re-read: {type(error).__name__}: {error}')
                     continue
                 # #1538 / #1748 item 2: an explicit check, not a bare
                 # `assert` — `python3 -O` strips asserts, and an unverified
@@ -518,8 +520,6 @@ with mutating_sources(root, sorted({root / row[1]
                 # raising so the evidence files below still get written;
                 # raising first would leave the previous all-KILLED prefix on
                 # disk as the last word.
-                restored = (hashlib.sha256(path.read_bytes()).hexdigest()
-                            == before[path])
                 if not restored and restore_failure is None:
                     restore_failure = (
                         f'{path.relative_to(root).as_posix()} was not restored '
