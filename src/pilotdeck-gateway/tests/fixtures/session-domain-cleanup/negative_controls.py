@@ -4086,6 +4086,65 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-for-target-rebind-if', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    if False:\n"
+     "        _h = None\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-after-match', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    match 0:\n"
+     "        case 0:\n"
+     "            _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-dict-result', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _g = {0: _h for _h in (md,)}\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-name-iter', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _items = (md,)\n"
+     "    _g = [_h for _h in _items]\n"
+     "    _g[0].common = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
 
 def calibrate_dict_namespace_update(rows):
@@ -4773,6 +4832,41 @@ def calibrate_comp_result_receiver(rows):
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-comp-result-receiver flagged, '
         'passed=False')
+
+
+def calibrate_for_target_rebind_if(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): a conditional rebinding of the loop
+    target must not end the scan -- ``if False: _h = None`` is the attacker's
+    way to look like a cleanup while the handle stays live."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-rebind-if flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_after_match(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): the loop target used in a ``match`` case
+    after the loop still writes ``md``; the parent-chain scan missed it."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-after-match flagged, '
+        'passed=False')
+
+
+def calibrate_comp_dict_result(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): a dict comprehension relaying its target
+    builds a mapping of the receiver."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-dict-result flagged, passed=False')
+
+
+def calibrate_comp_name_iter(rows):
+    """#1953 fix-r1 r5 (codex r3 P0): the comprehension's iterable may be a
+    name bound to a literal container."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-name-iter flagged, passed=False')
 
 
 def _unrouted_status(rows, name):
@@ -5469,6 +5563,14 @@ JUDGES = {
         'aggregation-audit', calibrate_for_copy, False, ()),
     'calibrate-comp-result-receiver': (
         'aggregation-audit', calibrate_comp_result_receiver, False, ()),
+    'calibrate-for-target-rebind-if': (
+        'aggregation-audit', calibrate_for_target_rebind_if, False, ()),
+    'calibrate-for-target-after-match': (
+        'aggregation-audit', calibrate_for_target_after_match, False, ()),
+    'calibrate-comp-dict-result': (
+        'aggregation-audit', calibrate_comp_dict_result, False, ()),
+    'calibrate-comp-name-iter': (
+        'aggregation-audit', calibrate_comp_name_iter, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
