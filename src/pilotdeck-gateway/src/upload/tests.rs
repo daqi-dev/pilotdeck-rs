@@ -1,7 +1,7 @@
 //! Contract tests against fixtures recorded from the real TS UploadStore
 //! (tests/fixtures/upload/generate.mts). Golden byte tests are never ignored.
 use super::*;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 const ORACLE: &str = include_str!("../../tests/fixtures/upload/oracle.json");
 const SOURCE: &str = include_str!("mod.rs");
@@ -872,6 +872,120 @@ fn upload_metadata_directory_reports_the_read_stage() {
         "EISDIR: illegal operation on a directory, read"
     );
     assert!(!error.dialog);
+}
+
+/// #1494: `metadata.json` is swapped for an outside-project symlink inside
+/// `read_at`'s canonicalize→open window. The prefix check already passed on
+/// the pre-swap spelling, and `File::open` follows the link onto the outside
+/// bytes — the approval must instead be bound to the opened handle, whose
+/// own resolved path (`handle_path`, macOS F_GETPATH / Linux /proc/self/fd)
+/// names the outside file. The forged record carries the correct uploadId
+/// and projectKey, so only the handle binding can reject it. RED against the
+/// pre-fix code: the outside record is read back.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    created(&h);
+    let metadata = metadata_path(&project);
+    let outside = project.join("outside-forged.json");
+    let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
+    set(&mut forged, "forgedMarker", text("outside"));
+    fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        move |_path: &Path| {
+            fs::remove_file(&metadata).unwrap();
+            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+    let result = h.store.get("upload-1");
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the swap hook must fire inside the canonicalize→open window"
+    );
+    let error = result.expect_err("#1494 the swapped-in outside record must never be read back");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata handle leaves the upload directory."
+        )
+    );
+}
+
+/// #1494 chain segment 2: a forged record whose attachments describe its own
+/// outside bytes (path/bytes/sha256 all self-consistent, so `verified`'s
+/// integrity check passes) must not reach `acquire_attachment_lease`, which
+/// would hard-link those outside bytes into the gateway lease directory.
+/// Segment 1 — `read_at` returning the forged record — is
+/// `upload_read_at_metadata_swapped_between_canonicalize_and_open_is_rejected`
+/// above; the composer's lease handling of such bytes is covered by the
+/// existing services tests (same crate, same lease root). RED against the
+/// pre-fix code: the lease is granted over the outside bytes.
+#[cfg(unix)]
+#[test]
+fn upload_read_at_forged_record_cannot_reach_the_lease() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let metadata = metadata_path(&project);
+    let secret = project.join("outside-secret.bin");
+    fs::write(&secret, b"outside-secret-bytes").unwrap();
+    let mut forged = parse_json(&fs::read_to_string(&metadata).unwrap()).unwrap();
+    let mut attachments = array(&forged, "attachments").to_vec();
+    let mut attachment = attachments.remove(0);
+    set(&mut attachment, "path", path_value(&secret));
+    set(
+        &mut attachment,
+        "bytes",
+        JsValue::Number(b"outside-secret-bytes".len() as f64),
+    );
+    set(
+        &mut attachment,
+        "sha256",
+        text(&hash(b"outside-secret-bytes")),
+    );
+    attachments.insert(0, attachment);
+    set(&mut forged, "attachments", JsValue::Array(attachments));
+    set(&mut forged, "forgedMarker", text("outside"));
+    let outside = project.join("outside-forged.json");
+    fs::write(&outside, json_line(&forged).unwrap()).unwrap();
+    let fired = Arc::new(AtomicBool::new(false));
+    let swap = {
+        let fired = fired.clone();
+        move |_path: &Path| {
+            fs::remove_file(&metadata).unwrap();
+            std::os::unix::fs::symlink(&outside, &metadata).unwrap();
+            fired.store(true, Ordering::SeqCst);
+        }
+    };
+    let _guard = swap_test_hook::set(swap_test_hook::SwapWindow::BetweenCanonicalizeAndOpen, swap);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None);
+    drop(_guard);
+    assert!(
+        fired.load(Ordering::SeqCst),
+        "#1494 the swap hook must fire inside the canonicalize→open window"
+    );
+    let error = lease
+        .err()
+        .expect("#1494 a forged record must never reach the attachment lease");
+    assert_eq!(
+        (error.code.as_str(), error.message_string().as_str()),
+        (
+            "PROJECT_PATH_FORBIDDEN",
+            "Upload metadata handle leaves the upload directory."
+        )
+    );
 }
 
 #[test]
