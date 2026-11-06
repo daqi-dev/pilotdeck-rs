@@ -8,10 +8,17 @@
 
 import hashlib
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
+
+# 用例会 importlib 加载真装置（scripts/parity/check_frozen.py）：不写 __pycache__，
+# 否则 scripts/parity/ 下的 .pyc 会被装置自己判成「unregistered bytecode」。
+sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("cfd", HERE / "check-frozen-delivery.py")
@@ -155,6 +162,10 @@ def gw_inventory(check_frozen_body, common=None):
 
 
 HASH_LIST = "hash list differs from generated inventory; run check_frozen.py --write"
+
+# 真装置的原样报文（三份 check_frozen.py 都带这个括号；预检按整串匹配）。
+LACKS_CHAIN_MSG = ("hash change lacks exact new event chain "
+                   "(or has stale/duplicate event)")
 
 EVENT_FIELDS = ("Calibration-Evidence: test fixture\n"
                 "Independent-Reviews: A <a@example.invalid>; B <b@example.invalid>\n"
@@ -1765,8 +1776,7 @@ def run():
         # 分支把清单成员删掉：--write 删行，链收在 '-'（旧实现假 BLOCKED）。
         payload = dict(parity_payload,
                        errors=[HASH_LIST,
-                               "scripts/parity/gone.py: hash change lacks exact "
-                               "new event chain"])
+                               "scripts/parity/gone.py: " + LACKS_CHAIN_MSG])
         proc = delivery(Path(td), "parity", payload,
                         base_files=[("scripts/parity/gone.py", "OLD\n")],
                         removes=["scripts/parity/gone.py"])
@@ -1777,8 +1787,7 @@ def run():
     with tempfile.TemporaryDirectory() as td:
         payload = dict(parity_payload,
                        errors=[HASH_LIST,
-                               "scripts/parity/gone.py: hash change lacks exact "
-                               "new event chain"])
+                               "scripts/parity/gone.py: " + LACKS_CHAIN_MSG])
         body = "import json\nprint(json.dumps(" + repr(payload) + "))\n"
         proc = delivery(Path(td), "parity", payload,
                         base_files=[("scripts/parity/gone.py", "OLD\n"),
@@ -1795,7 +1804,8 @@ def run():
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
-        # 运行期间工作树被改：两次 status 采样之间落盘的改动同样要阻塞。
+        # 子装置改自己所在的树（相对路径 → 落到钉住快照里）：同一轮里兄弟装置的
+        # 证据与目标字节就会跨两个树，必须阻塞。
         touch = ("open('scripts/gateway-parity/fixtures/touched.json', 'w').write('x')\n")
         gw = {"status": "PASS", "failures": []}
         body = "import json\nprint(json.dumps(" + repr(gw) + "))\n" + touch
@@ -1806,8 +1816,27 @@ def run():
                                      f"{sha('{}\n')}  ../../scripts/gateway-parity/fixtures/touched.json\n"
                                      f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")],
                         source=touch)
-        case("运行期间工作树被改 → BLOCKED",
-             proc.returncode == 1 and "=== worktree === BLOCKED" in proc.stdout,
+        case("运行期间子装置改了自己所在的快照 → BLOCKED（快照不一致）",
+             proc.returncode == 1 and "=== snapshot === BLOCKED" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    with tempfile.TemporaryDirectory() as td:
+        # 快照隔离挡不住绝对路径回写被审树：`git status` 前后指纹必须报出差异，
+        # 这是「运行预检不会改被审树任何文件」这条承诺的可验证证据（P1-E）。
+        leak = (f"from pathlib import Path\n"
+                f"(Path({str(Path(td))!r}) / "
+                f"'scripts/gateway-parity/leak.json').write_text('x')\n")
+        gw = {"status": "PASS", "failures": []}
+        body = "import json\nprint(json.dumps(" + repr(gw) + "))\n" + leak
+        proc = delivery(Path(td), "gateway-parity", gw,
+                        base_files=[("specs/gateway-parity/FROZEN.md",
+                                     "# fake FROZEN\n\n"
+                                     f"{sha(body)}  ../../scripts/gateway-parity/check_frozen.py\n")],
+                        source=leak)
+        case("运行期间子装置回写被审树 → BLOCKED（status 指纹差异）",
+             proc.returncode == 1
+             and "=== worktree === BLOCKED" in proc.stdout
+             and "the audited working tree changed during the run" in proc.stdout,
              f"rc={proc.returncode} out={proc.stdout}")
 
     with tempfile.TemporaryDirectory() as td:
@@ -2571,16 +2600,79 @@ def run():
              f"rc={proc.returncode} out={proc.stdout}")
 
     # ------------------------------------------------------- fail-closed
-    with tempfile.TemporaryDirectory() as td:
-        # 子装置运行期间 HEAD 移动（并发 amend/commit）：证据与目标字节会跨两个
-        # 提交，旧实现照样判 READY。装置源码在打印报告后提交一次。
-        drift = ("import subprocess\n"
-                 "subprocess.run(['git', 'commit', '--allow-empty', '-qm', 'drift'])\n")
-        proc = delivery(Path(td), "ui-server-parity", {"verdict": "PASS", "errors": []},
-                        source=drift)
-        case("运行期间 HEAD 移动 → BLOCKED（快照不一致）",
-             proc.returncode == 1 and "=== snapshot === BLOCKED" in proc.stdout,
-             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as cd:
+        # 运行期被审树 HEAD A→B→A 漂移：起止采样点都是 A（旧实现漏检），子装置
+        # 若读运行时工作树就会看到 B 并给出与钉住证据不符的结论。子装置必须跑在
+        # 钉住提交的一次性快照里：它读到的 marker 恒为 A。
+        root, ctl = Path(td), Path(cd)
+        init_repo(root)
+        source = ("import json, time\n"
+                  "from pathlib import Path\n"
+                  f"ctl = Path({str(ctl)!r})\n"
+                  "root = Path(__file__).resolve().parents[2]\n"
+                  "(ctl / 'started').write_text('1')\n"
+                  "deadline = time.time() + 60\n"
+                  "while not (ctl / 'go').exists() and time.time() < deadline:\n"
+                  "    time.sleep(0.01)\n"
+                  "marker = (root / 'marker.txt').read_text().strip()\n"
+                  "(ctl / 'read').write_text(marker)\n"
+                  "print(json.dumps({'status': 'PASS' if marker == 'A' else 'FAIL',\n"
+                  "                  'failures': [] if marker == 'A'\n"
+                  "                              else ['unknown marker ' + marker]}))\n"
+                  "while not (ctl / 'restored').exists() and time.time() < deadline:\n"
+                  "    time.sleep(0.01)\n")
+        root.joinpath("scripts/parity").mkdir(parents=True)
+        write(root, "scripts/parity/check_frozen.py", source + PARITY_MANIFEST)
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha(source + PARITY_MANIFEST)}  ../../scripts/parity/check_frozen.py\n")
+        write(root, "marker.txt", "A\n")
+        commit(root, "base")
+        git(root, "update-ref", "refs/remotes/origin/main", git(root, "rev-parse", "HEAD"))
+        commit(root, "delivery")
+        a = git(root, "rev-parse", "HEAD")
+        write(root, "marker.txt", "B\n")
+        commit(root, "B")
+        b = git(root, "rev-parse", "HEAD")
+        git(root, "checkout", "-q", a)
+
+        def flip_and_release():
+            for _ in range(6000):
+                if (ctl / "started").exists():
+                    break
+                time.sleep(0.005)
+            else:
+                (ctl / "error").write_text("child never started")
+                return
+            try:
+                git(root, "checkout", "-q", b)
+            except subprocess.CalledProcessError as error:
+                (ctl / "error").write_text(f"checkout B: {error}")
+                return
+            (ctl / "go").write_text("1")
+            for _ in range(6000):
+                if (ctl / "read").exists():
+                    break
+                time.sleep(0.005)
+            try:
+                git(root, "checkout", "-q", a)
+            except subprocess.CalledProcessError as error:
+                (ctl / "error").write_text(f"checkout A: {error}")
+                return
+            (ctl / "restored").write_text("1")
+
+        thread = threading.Thread(target=flip_and_release)
+        thread.start()
+        try:
+            proc = run_tool("--root", str(root), "--base", "origin/main")
+        finally:
+            thread.join(timeout=90)
+        seen = (ctl / "read").read_text().strip() if (ctl / "read").exists() else "<none>"
+        error = (ctl / "error").read_text() if (ctl / "error").exists() else ""
+        case("运行期 A→B→A 漂移 → 子装置读钉住快照（marker=A，READY）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout
+             and seen == "A" and not error,
+             f"rc={proc.returncode} marker={seen} error={error} out={proc.stdout}")
     with tempfile.TemporaryDirectory() as td:
         # 事件文件内容也必须按起跑 SHA 读：HEAD 前进后写进去的行不能补链。
         root = Path(td)
@@ -2637,6 +2729,203 @@ def run():
         case("base 解析失败 → BLOCKED 1 / READY 0",
              proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
              f"rc={proc.returncode}")
+
+    # -------------------------------------------------- P0-A 已知报文整串匹配
+    with tempfile.TemporaryDirectory() as td:
+        ctx = {"root": Path(td), "kind": "parity", "mb": None, "edges": [],
+               "pending": set(), "dropped": set()}
+        case("hash list 报文原文仍判 ok",
+             cfd.classify(ctx, cfd.HASH_LIST_MSG)[0] == "ok")
+        for tail in ("; permission denied", "; corruption detected", " (retry)"):
+            verdict = cfd.classify(ctx, cfd.HASH_LIST_MSG + tail)
+            case(f"已知报文 + 未知后缀 {tail!r} → block（子串匹配会假 READY）",
+                 verdict[0] == "block", f"{verdict}")
+
+    # ---------------------------------- P0-B Pending 评审掩盖坏 / 多余 Change 行
+    PENDING_FIELDS = ("Calibration-Evidence: test fixture\n"
+                      "Independent-Reviews: Pending: 第二家未回\n"
+                      "Approved-By: test fixture\n"
+                      "Approval-Basis: test fixture\n")
+
+    def pending_delivery(td, rows, files=()):
+        payload = {"status": "FAIL", "failures": [HASH_LIST]}
+        return delivery(Path(td), "parity", payload, files=list(files),
+                        events=[("specs/parity/frozen/20260101-p.md",
+                                 PENDING_FIELDS + "".join(row + "\n" for row in rows))])
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = pending_delivery(td, ["Change: garbage-row"])
+        case("Pending 下的畸形 Change 行 → BLOCKED（回填评审后真装置才炸）",
+             proc.returncode == 1 and "invalid Change row" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        proc = pending_delivery(td,
+                                [f"Change: {sha('A\n')} {sha('A\n')} scripts/parity/x.py"],
+                                files=[("scripts/parity/x.py", "A\n")])
+        case("Pending 下的 old == new 行 → BLOCKED",
+             proc.returncode == 1
+             and "invalid Change path or equal hashes" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        duplicate = f"Change: - {sha('B\n')} scripts/parity/x.py"
+        proc = pending_delivery(td, [duplicate, duplicate],
+                                files=[("scripts/parity/x.py", "B\n")])
+        case("Pending 下的重复 Change 行 → BLOCKED",
+             proc.returncode == 1 and "duplicate Change row" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        proc = pending_delivery(td, [f"Change: {sha('A\n')} {sha('B\n')} "
+                                     "scripts/parity/absent.py"])
+        case("Pending 下的未使用边 → BLOCKED（--write 永远清不掉）",
+             proc.returncode == 1 and "not part of an exact chain" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        proc = pending_delivery(td, [f"Change: - {sha('B\n')} scripts/parity/x.py"],
+                                files=[("scripts/parity/x.py", "B\n")])
+        case("Pending 但行都合法 → READY（不回退成假 BLOCKED）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # 真装置的掩盖机制：read_events 先查评审字段，Pending 直接抛家族错误，
+    # Change 行循环根本走不到；回填评审后同一条坏行才报出来。
+    real_spec = importlib.util.spec_from_file_location(
+        "real_parity_cf", HERE / "parity/check_frozen.py")
+    REAL_PARITY = importlib.util.module_from_spec(real_spec)
+    real_spec.loader.exec_module(REAL_PARITY)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "specs/parity/frozen").mkdir(parents=True)
+        event = root / "specs/parity/frozen/20260101-m.md"
+
+        def real_failures(review, row):
+            event.write_text("Calibration-Evidence: e\n"
+                             f"Independent-Reviews: {review}\n"
+                             "Approved-By: human\nApproval-Basis: basis\n"
+                             + row + "\n")
+            _, failures = REAL_PARITY.read_events(root)
+            return failures
+
+        masked = real_failures("Pending: 第二家未回", "Change: garbage-row")
+        backfilled = real_failures("GLM: r1; MiniMax: r2", "Change: garbage-row")
+        case("真实装置在 Change 行之前就因 Pending 报错（掩盖的来源）",
+             len(masked) == 1 and "requires two distinct families" in masked[0],
+             f"{masked}")
+        case("真实装置回填评审后报 invalid Change row（预检必须提前拦）",
+             any("invalid Change row" in item for item in backfilled), f"{backfilled}")
+
+    # ----------------------------------- P1-D 真装置：已删除成员的合法交付
+    SPEC_DOCS = ("README.md", "acceptance.md", "normalization.md",
+                 "accepted-diffs.md", "multimodal.md")
+
+    def real_parity_delivery(td, chain):
+        root = Path(td)
+        init_repo(root)
+        (root / "scripts/parity").mkdir(parents=True)
+        (root / "specs/parity").mkdir(parents=True)
+        shutil.copyfile(HERE / "parity/check_frozen.py",
+                        root / "scripts/parity/check_frozen.py")
+        write(root, "scripts/parity/extra.py", "EXTRA = 1\n")
+        write(root, "scripts/parity/helper.py", "HELPER = 1\n")
+        for name in SPEC_DOCS:
+            write(root, f"specs/parity/{name}", f"# {name}\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# seed\n\n"
+              f"| `README.md` | `{sha('# README.md\n')}` | generated | frozen/ |\n")
+        commit(root, "seed")
+        subprocess.run([sys.executable, "-I",
+                        str(root / "scripts/parity/check_frozen.py"), "--write"],
+                       cwd=str(root), check=True, capture_output=True, timeout=TIMEOUT)
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        git(root, "rm", "-q", "scripts/parity/extra.py")
+        old = sha("EXTRA = 1\n") if chain else sha("WRONG\n")
+        write(root, "specs/parity/frozen/20260101-del.md",
+              "Calibration-Evidence: e\n"
+              "Independent-Reviews: GLM: r1; MiniMax: r2\n"
+              "Approved-By: human\nApproval-Basis: basis\n"
+              f"Change: {old} - scripts/parity/extra.py\n")
+        commit(root, "delivery")
+        return run_tool("--root", str(root), "--base", base)
+
+    with tempfile.TemporaryDirectory() as td:
+        proc = real_parity_delivery(td, chain=True)
+        case("真装置 + 已删除成员 + Change: <old> - 链 → READY（旧实现假 BLOCKED）",
+             proc.returncode == 0 and "BLOCKED 0 / READY 1" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+    with tempfile.TemporaryDirectory() as td:
+        proc = real_parity_delivery(td, chain=False)
+        case("真装置 + 已删除成员 + 错链 → BLOCKED",
+             proc.returncode == 1 and "BLOCKED 1 / READY 0" in proc.stdout,
+             f"rc={proc.returncode} out={proc.stdout}")
+
+    # ------------------------------- P1-D 后半：中止报文要能重新证明登记两半
+    APPARATUS_STUB = "import json\nprint(json.dumps({}))\n" + PARITY_MANIFEST
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py", APPARATUS_STUB)
+        write(root, "scripts/parity/x.py", "A\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('A\n')}  ../../scripts/parity/x.py\n")
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        write(root, "scripts/parity/x.py", "B\n")
+        write(root, "specs/parity/frozen/20260101-r.md",
+              f"Change: {sha('A\n')} {sha('B\n')} scripts/parity/x.py\n" + EVENT_FIELDS)
+        commit(root, "delivery")
+        edges, _, issues = cfd.event_evidence(root, "parity", base)
+        gaps = cfd.registration_gaps(root, "parity", base, edges, [])
+        case("registration_gaps：链齐全时为空（中止报文可折算）",
+             not issues and gaps == [], f"issues={issues} gaps={gaps}")
+        # 同一棵树也是 P0-A 的前置条件：名字已登记、链齐全时 classify 会走
+        # LACKS_CHAIN 分支并返回 ok，所以「原文 ok / 带尾巴 block」能区分
+        # fullmatch 与 match（裸临时目录会让 registrable() 返回 None，
+        # 两种匹配都落进 block，负控杀不死）。
+        ctx = {"root": root, "kind": "parity", "mb": base, "edges": edges,
+               "pending": set(), "dropped": set()}
+        clean = "scripts/parity/x.py: " + LACKS_CHAIN_MSG
+        case("lack-of-chain 原文（已登记、链齐全）→ ok",
+             cfd.classify(ctx, clean)[0] == "ok", f"{cfd.classify(ctx, clean)}")
+        case("lack-of-chain + 未知尾巴 → block（.match 会放行）",
+             cfd.classify(ctx, clean + " and more")[0] == "block",
+             f"{cfd.classify(ctx, clean + ' and more')}")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py", APPARATUS_STUB)
+        write(root, "scripts/parity/x.py", "A\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('A\n')}  ../../scripts/parity/x.py\n")
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        write(root, "scripts/parity/x.py", "B\n")
+        commit(root, "delivery")
+        gaps = cfd.registration_gaps(root, "parity", base, [], [])
+        case("registration_gaps：改字节无链 → 非空（中止报文不得折算）",
+             bool(gaps), f"gaps={gaps}")
+    with tempfile.TemporaryDirectory() as td:
+        # 只有 append-only 这一半能报出缺口：登记行全都可证（x.py 在交付里没动），
+        # 变的是 merge-base 里已有的历史事件文件。少了 base_event_issues 这一半，
+        # 中止报文就会被折算成可接受。
+        root = Path(td)
+        init_repo(root)
+        write(root, "scripts/parity/check_frozen.py", APPARATUS_STUB)
+        write(root, "scripts/parity/x.py", "A\n")
+        write(root, "specs/parity/FROZEN.md",
+              "# fake FROZEN\n\n"
+              f"{sha('A\n')}  ../../scripts/parity/x.py\n")
+        write(root, "specs/parity/frozen/20260101-old.md",
+              f"Change: - {sha('A\n')} scripts/parity/x.py\n" + EVENT_FIELDS)
+        commit(root, "base")
+        base = git(root, "rev-parse", "HEAD")
+        write(root, "specs/parity/frozen/20260101-old.md",
+              f"Change: - {sha('A\n')} scripts/parity/x.py\n" + EVENT_FIELDS + "\nedited\n")
+        commit(root, "delivery")
+        gaps = cfd.registration_gaps(root, "parity", base, [], [])
+        case("registration_gaps：历史事件被改写 → 非空（append-only 那一半）",
+             any("append-only" in gap for gap in gaps), f"gaps={gaps}")
 
     print(f"SUMMARY failed={fails}")
     return 1 if fails else 0
