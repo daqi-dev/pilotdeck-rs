@@ -886,11 +886,13 @@ async fn a_slow_body_outlives_the_fetch_deadline() {
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
         .await;
     task.await.expect("#1823 slow body server");
-    // With the body bound to the fetch deadline the mutant returns an error
-    // here; the receipt has to come from this assertion, not a std `expect`.
+    // Compare the payload itself, not just its length: with the body bound to
+    // the fetch deadline the mutant returns an error here, and a three-byte
+    // stand-in must not pass. The receipt has to come from this assertion,
+    // never from a std `expect` (which runs before the receipt is written).
     crate::negative_assert_eq!(
-        outcome_summary(&outcome),
-        "ok 3 bytes",
+        outcome.as_deref().map(<[u8]>::to_vec),
+        Some(b"abc".to_vec()),
         "#1823 slow body is not bounded by the fetch deadline"
     );
 }
@@ -916,14 +918,13 @@ async fn the_header_phase_still_aborts_at_the_fetch_deadline() {
         tokio::time::sleep(Duration::from_secs(5)).await;
         let _ = stream.shutdown().await;
     });
-    let error = WeixinCdnClient::new()
+    let outcome = WeixinCdnClient::new()
         .with_fetch_timeout(Duration::from_millis(500))
         .download(&format!("http://127.0.0.1:{port}/c2c/download?x=1"))
-        .await
-        .expect_err("#1823 a stalled header phase must abort");
+        .await;
     task.abort();
     crate::negative_assert_eq!(
-        error.formatted(),
+        outcome_summary(&outcome),
         "AbortError: This operation was aborted",
         "#1823 stalled header phase aborts at the fetch deadline"
     );
