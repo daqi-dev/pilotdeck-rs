@@ -139,41 +139,123 @@ async fn explicit_entry_selects_parser() {
     }
 }
 
-// How long a child may say nothing at all before the observation gives up.
-// It bounds silence only: a child that prints keeps resetting it, and the
-// read below returns as soon as the advertisement appears, so a slow but
-// healthy host never spends this (macmini-01 has documented 12-35 s process
-// startup stalls). Silence is still unjudgeable, never a kill.
-const CHILD_OBSERVATION_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+// The child's own stderr line once it is serving. Observations anchor on the
+// whole line (see read_stderr_until): a substring match would also fire on a
+// diagnostic that merely mentions the phrase.
+const NATIVE_LISTENING: &str = "native listening";
+// How long a child may say nothing at all, and the absolute budget for one
+// observation. The silence bound alone would let a child that logs once a
+// minute hold the read forever; the budget is generous because a slow host
+// still says something (#1401 review, both lineages). Silence is unjudgeable,
+// never a kill.
+const CHILD_SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+const CHILD_OBSERVATION_BUDGET: std::time::Duration = std::time::Duration::from_secs(180);
+// A rejected child exits by itself right after printing the rejection (the
+// measured median is 4.6 ms, README), so this only bounds a child that hangs
+// on its way out.
+const CHILD_EXIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+// A child that prints more than this before the observation resolves is not
+// the shape either test describes; the read stops rather than growing without
+// bound.
+const CHILD_STDERR_LIMIT: usize = 64 * 1024;
 
-// Reads a child's stderr line by line and returns as soon as `needle` shows
-// up, so a child that stays up after advertising listening costs one line,
-// not a whole deadline (#1401 review P2: `read_to_end` under a 5 s deadline
-// spent all 5 s on every intact run and read a slow host as a missing
-// advertisement). Otherwise the bytes collected before EOF, a read error or
-// the deadline come back with `false`.
+// Reads a child's stderr line by line and returns as soon as a line starts
+// with `needle`, so a child that stays up after advertising listening costs
+// one line, not a whole deadline (#1401 review P2: `read_to_end` under a 5 s
+// deadline spent all 5 s on every intact run and read a slow host as a
+// missing advertisement). Otherwise the bytes collected before EOF, a read
+// error, the silence bound or the total budget come back with `false`.
+//
+// `read_until` is not cancel safe, so a cancelled read may leave the line it
+// was building half-filled; those bytes are part of what the child said and
+// are returned with the rest (a final line without a newline therefore still
+// reaches the caller's own needle checks), and the same line is judged for
+// the advertisement -- fail-closed either way, never a false kill.
 async fn read_stderr_until(
     stderr: tokio::process::ChildStderr,
     needle: &str,
-    limit: std::time::Duration,
+    silence: std::time::Duration,
+    budget: std::time::Duration,
 ) -> (Vec<u8>, bool) {
     use tokio::io::AsyncBufReadExt;
+    let started = std::time::Instant::now();
     let mut reader = tokio::io::BufReader::new(stderr);
+    let mut line = Vec::new();
     let mut collected = Vec::new();
     loop {
-        let mut line = Vec::new();
-        match tokio::time::timeout(limit, reader.read_until(b'\n', &mut line)).await {
-            // EOF, read error and deadline are one case: no more observations
-            // and no advertisement, which every caller judges as INVALID.
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => return (collected, false),
-            Ok(Ok(_)) => {
+        let left = budget.saturating_sub(started.elapsed());
+        if left.is_zero() {
+            return (collected, false);
+        }
+        line.clear();
+        match tokio::time::timeout(silence.min(left), reader.read_until(b'\n', &mut line)).await {
+            // EOF, read error, silence and budget are one case: no more
+            // observations and no advertisement, which every caller judges as
+            // INVALID. Whatever the cancelled read already appended is kept
+            // (`read_until` appends block by block), so a child that prints
+            // its last line without a newline still leaves its evidence with
+            // the caller instead of turning a judgeable exit into silence.
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => {
                 collected.extend_from_slice(&line);
-                if String::from_utf8_lossy(&collected).contains(needle) {
+                let advertised = line.starts_with(needle.as_bytes());
+                return (collected, advertised);
+            }
+            Ok(Ok(_)) => {
+                if line.starts_with(needle.as_bytes()) {
+                    collected.extend_from_slice(&line);
                     return (collected, true);
                 }
+                if collected.len() + line.len() > CHILD_STDERR_LIMIT {
+                    return (collected, false);
+                }
+                collected.extend_from_slice(&line);
             }
         }
     }
+}
+
+// The observation both tests wait for: the child's own listening
+// advertisement, under the shared bounds. Kept as one unformatted call per
+// test because the fixture's `--check` binds this call inside each test body.
+async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, bool) {
+    read_stderr_until(
+        stderr,
+        NATIVE_LISTENING,
+        CHILD_SILENCE_LIMIT,
+        CHILD_OBSERVATION_BUDGET,
+    )
+    .await
+}
+
+// One complete valid profile for both child tests: with the entry gate or the
+// scrub displaced the child must not fail on anything else, so the
+// observations stay about the call site alone.
+const VALID_HOME_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n";
+
+// #1401 item 5: these tests bring their own scratch root so every failure
+// point carries the #1261 message instead of the shared helper's plain
+// expects. The owner token the shared `Scratch` also carries is not needed
+// here: the path is unique per run and nothing else ever writes it.
+struct Cleanup(std::path::PathBuf);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn scratch_root(tag: &str) -> (Cleanup, std::path::PathBuf) {
+    let root =
+        std::env::temp_dir().join(format!("pdrs-1261-native-{tag}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).expect("#1261 native entry scratch directory must be new");
+    (Cleanup(root.clone()), root)
+}
+
+// kill_on_drop only sends SIGKILL without waiting, so an explicit kill + wait
+// before the scratch root is removed keeps the removal from racing a child
+// that is still writing under home (#1401 review).
+async fn reap(child: &mut tokio::process::Child) {
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 // #1261: anchor run()'s validate_environment call site, not the function body
@@ -187,20 +269,7 @@ async fn read_stderr_until(
 // rejection nor the advertisement says nothing about the gate.
 #[tokio::test]
 async fn native_entry_process_rejects_inherited_authority() {
-    // #1401 item 5: this test's scratch is its own (not the shared
-    // `test_scratch::Scratch`) so every failure point below carries the
-    // #1261 message; the shared helper's plain expects stay out of this
-    // test's payload.
-    let root =
-        std::env::temp_dir().join(format!("pdrs-1261-native-entry-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).expect("#1261 native entry scratch directory must be new");
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(root.clone());
+    let (_cleanup, root) = scratch_root("entry");
     let home = root.join("home");
     let project = root.join("project");
     std::fs::create_dir(&home).expect("#1261 native entry home directory");
@@ -211,14 +280,8 @@ async fn native_entry_process_rejects_inherited_authority() {
     let sidecar = root.join("sidecar");
     std::fs::write(&sidecar, "#1261 never executed before the rejection\n")
         .expect("#1261 native entry sidecar file");
-    // A complete valid profile (the native-management precedent): with the
-    // entry gate displaced, the child must not fail on anything else, so the
-    // observations below are about the gate's position alone.
-    std::fs::write(
-        home.join("pilotdeck.yaml"),
-        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n",
-    )
-    .expect("#1261 native entry home config file");
+    std::fs::write(home.join("pilotdeck.yaml"), VALID_HOME_CONFIG)
+        .expect("#1261 native entry home config file");
     for key in [
         "PILOTDECK_STORAGE_ROOT",
         "PILOTDECK_SNAPSHOT_ROOT",
@@ -248,8 +311,7 @@ async fn native_entry_process_rejects_inherited_authority() {
             .stderr
             .take()
             .expect("#1261 native entry child stderr pipe");
-        let (collected, advertised) =
-            read_stderr_until(stderr, "native listening", CHILD_OBSERVATION_DEADLINE).await;
+        let (collected, advertised) = observe_child_stderr(stderr).await;
         let stderr = String::from_utf8_lossy(&collected);
         // The advertisement alone proves the entry gate accepted the inherited
         // authority, so this marked assertion covers every shape that prints
@@ -265,7 +327,7 @@ async fn native_entry_process_rejects_inherited_authority() {
             );
         }
         // The rejection is on stderr, so the child is on its way out.
-        let status = tokio::time::timeout(std::time::Duration::from_secs(5), child.wait())
+        let status = tokio::time::timeout(CHILD_EXIT_DEADLINE, child.wait())
             .await
             .expect("#1261 native entry child exit deadline")
             .expect("#1261 native entry child exit status");
@@ -288,6 +350,7 @@ async fn native_entry_process_rejects_inherited_authority() {
             leftover.is_empty(),
             "#1261 native entry rejects inherited {key}"
         );
+        reap(&mut child).await;
     }
 }
 
@@ -307,16 +370,7 @@ async fn native_entry_process_rejects_inherited_authority() {
 // host can only ever be INVALID.
 #[tokio::test]
 async fn native_entry_scrubs_inherited_process_environment() {
-    let root =
-        std::env::temp_dir().join(format!("pdrs-1261-native-scrub-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&root).expect("#1261 native entry scrub scratch directory must be new");
-    struct Cleanup(std::path::PathBuf);
-    impl Drop for Cleanup {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    let _cleanup = Cleanup(root.clone());
+    let (_cleanup, root) = scratch_root("scrub");
     let home = root.join("home");
     let project = root.join("project");
     std::fs::create_dir(&home).expect("#1261 native entry scrub home directory");
@@ -330,11 +384,8 @@ async fn native_entry_scrubs_inherited_process_environment() {
         "#1261 never executed before the scrub observation\n",
     )
     .expect("#1261 native entry scrub sidecar file");
-    std::fs::write(
-        home.join("pilotdeck.yaml"),
-        "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n",
-    )
-    .expect("#1261 native entry scrub home config file");
+    std::fs::write(home.join("pilotdeck.yaml"), VALID_HOME_CONFIG)
+        .expect("#1261 native entry scrub home config file");
     // Invalid on purpose: with the call site displaced the child must fail
     // fast on it; with the call intact the key is removed and this file is
     // never read.
@@ -364,8 +415,7 @@ async fn native_entry_scrubs_inherited_process_environment() {
         .stderr
         .take()
         .expect("#1261 native entry scrub child stderr pipe");
-    let (collected, advertised) =
-        read_stderr_until(stderr, "native listening", CHILD_OBSERVATION_DEADLINE).await;
+    let (collected, advertised) = observe_child_stderr(stderr).await;
     let stderr = String::from_utf8_lossy(&collected);
     // The inherited key surviving the scrub is the only kill: the child then
     // parses the injected file and exits with this message.
@@ -385,4 +435,5 @@ async fn native_entry_scrubs_inherited_process_environment() {
         );
     }
     println!("#1261 scrub child advertised listening; inherited config was not read");
+    reap(&mut child).await;
 }

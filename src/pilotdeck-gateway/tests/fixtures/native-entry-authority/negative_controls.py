@@ -9,22 +9,22 @@ real CARGO_BIN_EXE child exercises run()'s validate_environment call site.
 from pathlib import Path
 import difflib
 import os
-import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
+from negative_source import test_body
 from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
 TEST = 'native_entry_process_rejects_inherited_authority'
-# Only the three key assertions kill. Launch, pipe, decode and exit-wait
-# failures cannot be caused by displacing the validate_environment call and
-# stay unbound (INVALID). The deadline branch kills only after the child's
-# own listening advertisement independently proves the entry gate accepted
-# the authority; a slow host alone is not evidence.
+# Only the three key assertions kill (the marked check after the rejection
+# gate; a child that advertises listening reaches it too). Launch, pipe,
+# decode and exit-wait failures cannot be caused by displacing the
+# validate_environment call and stay unbound (INVALID): a child that says
+# neither the rejection nor its own listening advertisement is unjudgeable.
 MARKERS = [
     '#1261 native entry rejects inherited PILOTDECK_STORAGE_ROOT',
     '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
@@ -76,23 +76,6 @@ def mutate(case, text):
     return text.replace(case.old, case.new, 1)
 
 
-def test_body(source, name):
-    """The named test function's body, up to the next test attribute.
-
-    File-level needles cannot say *which* test observes what: both tests now
-    contain ``native listening``, so a file-level check passed with the
-    rejects test's own observation deleted (#1401 review P2, both lineages).
-    """
-    start = re.search(rf'^async fn {re.escape(name)}\(', source, re.M)
-    if start is None:
-        start = re.search(rf'^fn {re.escape(name)}\(', source, re.M)
-    if start is None:
-        raise SystemExit(f'#1261 test missing from native_process.rs: {name}')
-    following = re.search(r'^#\[(?:tokio::)?test\]', source[start.end():], re.M)
-    end = start.end() + following.start() if following else len(source)
-    return source[start.end():end]
-
-
 def main():
     selected_rows = [Case(*row) for row in mutations]
     if sys.argv[1:] == ['--check']:
@@ -116,19 +99,24 @@ def main():
         # listening advertisement -- must stay in the source; a drift here
         # would silently unbind the reorder and omitted mutants.
         for needle, what in (('leftover.is_empty()', 'home leftover observation'),
-                             ('read_stderr_until(stderr, "native listening"',
+                             ('observe_child_stderr(stderr)',
                               'listening advertisement observation')):
             if needle not in rejects:
                 raise SystemExit(f'#1261 missing {what} from {TEST}')
-        # #1401 item 6: the scrub mutant's marker and the two observations
+        # #1401 item 6: the scrub mutant's marker and the three observations
         # its verdict rests on must stay in the scrub test, so the runtime
         # kill cannot drift away from the anchor and an unjudgeable branch
-        # cannot be mistaken for the pass branch.
+        # cannot be mistaken for the pass branch. The unjudgeable panic is
+        # bound too: it is what makes an early exit INVALID instead of a
+        # spurious pass or a spurious kill (#1401 review).
         for needle, what in ((SCRUB_MARKER, 'scrub marker'),
                              ('Failed to parse default config YAML.',
                               'inherited config parse observation'),
-                             ('read_stderr_until(stderr, "native listening"',
-                              'scrub listening observation')):
+                             ('observe_child_stderr(stderr)',
+                              'scrub listening observation'),
+                             ('#1261 native entry scrub child neither advertised '
+                              'listening nor exited',
+                              'scrub unjudgeable panic')):
             if needle not in scrub:
                 raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
