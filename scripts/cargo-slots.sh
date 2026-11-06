@@ -4,8 +4,8 @@
 # ~/ws/pdrs-ops/scripts/cargo-slot/cargo_gate.py 的 SLOT_DEFAULTS，按主机：本机 2 / cb8 4 /
 # macmini 2 / mbp2 2，11-05 21:4x 人定）。本脚本不再自带数字——旧默认 4 与真闸 2 是两套口径，
 # 人照着跑会把「满」看成「有空位」，放行到超名额后白排队。
-# 可用 PDRS_CARGO_SLOT_BIN 指定闸的位置（默认 ~/ws/pdrs-ops/bin/cargo-slot；远端 runner 宿主
-# 没有 pdrs-ops 时回退到同一实现的 ~/ws/pdrs-runner-tools/bin/cargo），供换机 / 负控使用。
+# 可用 PDRS_CARGO_SLOT_BIN 指定闸的位置（默认 ~/ws/pdrs-ops/bin/cargo-slot；没有该安装的
+# 远端 runner 宿主回退到同一实现的 ~/ws/pdrs-runner-tools/bin/cargo），供换机 / 负控使用。
 # 计数口径：命令以 cargo 可执行文件开头的进程（含 build/test/check/clippy/run/bench/doc，及
 # cargo-clippy 等子命令二进制），不数 rustc（它是 cargo 的子进程，数了会重复）。
 # 同一进程树只算一次：`cargo clippy` 会派生 `cargo-clippy`，其下再派生 `cargo check`，三层首词都匹配 cargo(-xxx)，
@@ -100,8 +100,9 @@ done
 #   · 未指定且 HOME 未设 → 无法定位，fail-closed 4。
 #   · 未指定、HOME 有但闸不可执行 → 本机有 pdrs-ops 目录或共享池目录就是「装了但坏了」→ 4；
 #     两者都没有才是真的没有闸 → 69。
-#   闸路径：$HOME/ws/pdrs-ops/bin/cargo-slot；远端 runner 宿主（无 pdrs-ops）回退到
+#   闸路径：$HOME/ws/pdrs-ops/bin/cargo-slot；**没有**该安装目录的远端 runner 宿主回退到
 #   $HOME/ws/pdrs-runner-tools/bin/cargo（#589 收尾：同一实现的闸，此前只有 run_host.py 认）。
+#   双装宿主不回退：ops 闸坏掉仍按「装了但坏了」→ 4，不让 runner 副本静默顶替。
 if [ -n "${PDRS_CARGO_SLOT_BIN:-}" ]; then
   GATE=$PDRS_CARGO_SLOT_BIN
   if [ ! -x "$GATE" ]; then
@@ -113,15 +114,19 @@ elif [ -z "${HOME:-}" ] || [ ! -d "${HOME}" ]; then
   exit 4
 else
   GATE=$HOME/ws/pdrs-ops/bin/cargo-slot
-  if [ ! -x "$GATE" ] && [ -x "$HOME/ws/pdrs-runner-tools/bin/cargo" ]; then
-    # 远端 runner 宿主的闸（run_host.py 的候选表与这两条路径保持一致）。
+  if [ ! -d "$HOME/ws/pdrs-ops" ] && [ -x "$HOME/ws/pdrs-runner-tools/bin/cargo" ]; then
+    # 远端 runner 宿主的闸（run_host.py 的候选表与这两条路径保持一致）。回退只限
+    # 「本机没装 pdrs-ops」：双装宿主上 ops 闸掉 +x / 半更新必须继续走下面的
+    # fail-closed 4，不能被 runner 副本静默顶替（两份 cargo_gate.py 的 SLOT_DEFAULTS
+    # 可各自漂移，用旧 cap 放行与头注释「把满看成有空位」是同一类错）。
     GATE=$HOME/ws/pdrs-runner-tools/bin/cargo
+    echo "cargo-slots: 无 ~/ws/pdrs-ops，改用远端 runner 宿主的闸 ${GATE}" >&2
   fi
   if [ ! -x "$GATE" ]; then
     POOL_DIR=/private/tmp/pdrs-cargo-gate
     [ "$(uname -s)" = Darwin ] || POOL_DIR=/tmp/pdrs-cargo-gate
-    if [ -d "$HOME/ws/pdrs-ops" ] || [ -d "$POOL_DIR" ]; then
-      echo "cargo-slots: 本机有 pdrs-ops 或共享池（${POOL_DIR}）迹象，但闸 ${GATE} 不可执行 → fail-closed" >&2
+    if [ -d "$HOME/ws/pdrs-ops" ] || [ -d "$HOME/ws/pdrs-runner-tools" ] || [ -d "$POOL_DIR" ]; then
+      echo "cargo-slots: 本机有 pdrs-ops / pdrs-runner-tools 或共享池（${POOL_DIR}）迹象，但闸 ${GATE} 不可执行 → fail-closed" >&2
       exit 4
     fi
     echo "cargo-slots: 本机没有统一闸（${GATE} 不存在，$HOME 下也无 pdrs-ops / 共享池）→ 无共享名额可等" >&2
