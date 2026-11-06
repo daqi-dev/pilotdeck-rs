@@ -4005,6 +4005,18 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-getattribute-name-spelling', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _key = '__dict__'\n"
+     "    md.__getattribute__(_key)['common'] = object()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
     ('calibrate-for-wrapped-container', CHECK,
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
@@ -4652,6 +4664,16 @@ def calibrate_getattribute_attr_spelling(rows):
     return _not_shared(
         rows, CHECK_REL, 'main',
         'aggregation-audit: calibrate-getattribute-attr-spelling flagged, '
+        'passed=False')
+
+
+def calibrate_getattribute_name_spelling(rows):
+    """#1953 fix-r1 r2 (codex r2 P0): ``md.__getattribute__(_k)`` with ``_k``
+    bound to ``'__dict__'`` names the same mapping as the literal spelling; an
+    attribute name we cannot prove is a pure read must fail closed."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-getattribute-name-spelling flagged, '
         'passed=False')
 
 
@@ -5346,6 +5368,8 @@ JUDGES = {
         'aggregation-audit', calibrate_match_capture_setattr_receiver, False, ()),
     'calibrate-getattribute-attr-spelling': (
         'aggregation-audit', calibrate_getattribute_attr_spelling, False, ()),
+    'calibrate-getattribute-name-spelling': (
+        'aggregation-audit', calibrate_getattribute_name_spelling, False, ()),
     'calibrate-for-wrapped-container': (
         'aggregation-audit', calibrate_for_wrapped_container, False, ()),
 }

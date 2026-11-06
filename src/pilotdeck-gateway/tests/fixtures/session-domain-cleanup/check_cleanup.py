@@ -3068,21 +3068,6 @@ def _scoped_alias_assignments(tree):
             for name in _match_capture_names(node):
                 pairs.append((binding_scope(scope, name), name, node.subject,
                               scope))
-        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
-                               ast.DictComp)):
-            # Same table, same gap: a comprehension target bound to a literal
-            # element (``[h for h in (md,)]; h.common = <stub>``) is the
-            # receiver under another spelling (#1953 fix-r1 round 2).
-            for generator in node.generators:
-                if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
-                    elements = generator.iter.elts
-                else:
-                    elements = _iter_literal_elements(generator.iter)
-                for element in elements:
-                    for name, value in _target_value_pairs(generator.target,
-                                                           element, simple):
-                        pairs.append((binding_scope(scope, name), name, value,
-                                      scope))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
             for item in node.items:
                 if item.optional_vars is None:
@@ -3106,6 +3091,56 @@ def _scoped_alias_assignments(tree):
                 if default is not None:
                     pairs.append((node, argument.arg, default, parent))
     return pairs
+
+
+def _loop_target_used_as_handle(body, name):
+    """True when ``name`` is called or written through inside *body* (#1953 r3).
+
+    ``for h in hs:`` only hands the container's elements to ``h``; the handles
+    are used where ``h`` is *called* or where a mapping/attribute is stored
+    through it.  Iterating alone (``for h in hs: print(h)``) is a pure read, so
+    withdrawing on the iteration made clean code fail (codex r2 P1).
+    """
+    for node in body:
+        for child in ast.walk(node):
+            if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                    and child.func.id == name):
+                return True
+            if (isinstance(child, (ast.Subscript, ast.Attribute))
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == name
+                    and isinstance(getattr(child, 'ctx', None), ast.Store)):
+                return True
+    return False
+
+
+def _comprehension_uses_handle(node, name, kinds):
+    """True when *name* is called, written through, or used as a write receiver.
+
+    Companion to :func:`_comprehension_parts` for the receiver rules: a
+    comprehension target is bound to the element only inside its own
+    comprehension, so ``[setattr(h, 'common', <stub>) for h in (md,)]`` writes
+    the receiver while ``[h for h in (md,)]`` on its own writes nothing.
+    """
+    for part in _comprehension_parts(node):
+        for child in ast.walk(part):
+            if isinstance(child, ast.Call):
+                if isinstance(child.func, ast.Name) and child.func.id == name:
+                    return True
+                written = _write_call_target(child.func, kinds)
+                if written is not None:
+                    receiver = written[1]
+                    if receiver is None and child.args:
+                        receiver = child.args[0]
+                    if (isinstance(receiver, ast.Name)
+                            and receiver.id == name):
+                        return True
+            if (isinstance(child, (ast.Subscript, ast.Attribute))
+                    and isinstance(child.value, ast.Name)
+                    and child.value.id == name
+                    and isinstance(getattr(child, 'ctx', None), ast.Store)):
+                return True
+    return False
 
 
 def _receiver_attribute_writes(tree, receivers, shared):
@@ -3222,10 +3257,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # the same hand-over -- ``md.__getattribute__('__dict__')['common'] =
         # <stub>`` names the mapping just as ``getattr`` does, and only the
         # ``getattr`` spelling was decoded.
+        # round 3 (codex r2 P0): the attribute name need not be a literal --
+        # ``k = '__dict__'; md.__getattribute__(k)['common'] = <stub>`` is the
+        # same mapping, and an attribute name we cannot prove to be a pure read
+        # is exactly the case r35 already fails closed on.
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == '__getattribute__' and node.args
-                and _constant_string(node.args[0], None) == '__dict__'):
-            return receiver_roots(node.func.value, scope)
+                and node.func.attr == '__getattribute__' and node.args):
+            spelling = _constant_string(node.args[0], None)
+            if spelling is None or spelling == '__dict__':
+                return receiver_roots(node.func.value, scope)
         if isinstance(node, ast.Name):
             return _lookup(dict_roots, node.id, scope)
         return set()
@@ -3345,6 +3385,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
             iter_name = node.iter.args[0].id
         if iter_name is None:
             continue
+        # #1953 fix-r1 round 3 (codex r2 P1): iterating a container of dynamic
+        # handles only *hands them over* to the loop target, so
+        # ``for h in hs: print(h)`` is a pure read.  Judge the loop target's
+        # own use points -- a call or a store -- instead of withdrawing on the
+        # iteration itself.
+        target = node.target
+        if (not isinstance(target, ast.Name)
+                or not _loop_target_used_as_handle(node.body, target.id)):
+            continue
         for level in _chain(scope):
             if (level, iter_name) in handle_containers:
                 # ``for h in hs: h('common', <stub>)`` takes the same handles
@@ -3354,6 +3403,28 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     poisoned |= (receiver_roots(root, scope)
                                  | namespace_dict_roots(root, scope))
                 break
+
+    # #1953 fix-r1 round 3 (codex r2 P1): a comprehension target is local to
+    # its comprehension (Python 3), so carrying it in the enclosing alias table
+    # made ``h = object(); [h for h in (md,)]; h.common = <stub>`` withdraw a
+    # clean write.  Judge the write *inside* the comprehension instead, against
+    # the literal elements the target is bound to.
+    for scope, node in _walk_scoped(tree):
+        if not isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                                 ast.DictComp)):
+            continue
+        for generator in node.generators:
+            names = [name for name in _target_names(generator.target)
+                     if _comprehension_uses_handle(node, name, kinds)]
+            if not names:
+                continue
+            if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
+                elements = generator.iter.elts
+            else:
+                elements = _iter_literal_elements(generator.iter)
+            for element in elements:
+                poisoned |= (receiver_roots(element, scope)
+                             | namespace_dict_roots(element, scope))
 
     # #1953 fix-r1 (codex r1b P0): the handle is not only *called* -- a
     # mapping or attribute write through an element writes the object the
@@ -7515,6 +7586,48 @@ def aggregation_audit():
                                      rel=_1953_rel)):
         failures.append('#1953 aggregation-audit: detector self-test leaked a '
                         'comprehension-local binding into the function scope')
+    comp_receiver_probe = ast.parse(
+        "def main():\n"
+        "    [setattr(_h, 'common', object()) for _h in (md,)]\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(comp_receiver_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'receiver write inside a comprehension')
+    comp_receiver_scope_probe = ast.parse(
+        "def main():\n"
+        "    _h = object()\n"
+        "    [_h for _h in (md,)]\n"
+        "    _h.common = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(comp_receiver_scope_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test carried a '
+                        'comprehension target into the enclosing scope')
+    iterated_read_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        print(_h)\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(iterated_read_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a pure read of an iterated handle container')
+    getattribute_name_probe = ast.parse(
+        "def main():\n"
+        "    _key = '__dict__'\n"
+        "    md.__getattribute__(_key)['common'] = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(getattribute_name_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test trusted a '
+                        'non-literal __getattribute__ mapping name')
     receiver_local = _probe892_function('_shadowed_receiver_local')
     if receiver_local is None:
         failures.append('#892 aggregation-audit: detector self-test lost the '
