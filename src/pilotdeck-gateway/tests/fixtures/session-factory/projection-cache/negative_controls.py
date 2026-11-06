@@ -31,6 +31,15 @@ mutations = [
      'void ownedWork; // #1890 deadline expiry keeps its work root',
      'runtime::session::factory::projection_cache_tests::generator_deadline_cleans_owned_work',
      '#1011 deadline exit leaves no work-* behind'),
+    # #1890: a removal that throws must be named on stderr before the deadline
+    # exit; swallowing it leaves the caller unable to tell an owned work root
+    # was left behind.
+    ('generator-deadline-cleanup-silent',
+     'src/pilotdeck-gateway/tests/fixtures/session-factory/projection-cache/generate.mts',
+     'report.push(`#1011 generator deadline cleanup failed for ${ownedWork}: ${(error as Error).message}`);',
+     'void error; // #1890 swallow the cleanup failure',
+     'runtime::session::factory::projection_cache_tests::generator_deadline_reports_cleanup_failure',
+     '#1011 generator deadline names the cleanup failure'),
     ('stale-suffix-skipped',
      'src/pilotdeck-gateway/src/runtime/session/projection_cache.rs',
      'if sequence(entry) > watermark {',
