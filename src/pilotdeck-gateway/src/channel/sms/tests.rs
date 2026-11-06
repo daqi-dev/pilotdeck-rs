@@ -438,7 +438,7 @@ const OLD_NULL_REJECTING_FIELDS: [&str; 11] = [
 ///
 /// Scope: the top-level sentinel fields. The scalar sentinels are `?? null` /
 /// `?? true` in the recorder; the two collections are `?? {}` / `?? []`
-/// (`generate.mts:1041` / `:1048`), so a hand-edited explicit `null` is
+/// (`generate.mts:1097` / `:1104`), so a hand-edited explicit `null` is
 /// absence there too (#1879: the shared `sms-oracle-null-sentinel` switch
 /// restores the old fail-closed read for both, via `OLD_NULL_REJECTING_FIELDS`).
 /// The `turn.*` members and the per-step `truncate` / `halfClose` / `headers` /
@@ -531,7 +531,7 @@ fn null_turn_hold_is_absence() {
 
 fn recorded_header_map_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        // #1879: `effectiveHeaders` spreads `step.headers ?? {}` (generate.mts:335),
+        // #1879: `effectiveHeaders` spreads `step.headers ?? {}` (generate.mts:376),
         // the same `?? {}` absence signature as `env`, so a hand-edited explicit
         // `null` reads as "no overrides" on both sides.
         recorded_present(value, "headers"),
@@ -686,7 +686,7 @@ fn recorded_body_count_panics_on_wrong_type() {
 }
 
 fn recorded_truncate_checked(value: &Value) -> Result<Option<u64>, String> {
-    // #1879: `REQUEST(..., step.truncate ?? 0)` (generate.mts:887) — an
+    // #1879: `REQUEST(..., step.truncate ?? 0)` (generate.mts:941) — an
     // explicit null is the same as an absent `truncate`, i.e. "no truncation".
     recorded_checked(
         recorded_present(value, "truncate"),
@@ -901,7 +901,7 @@ fn recorded_turn_panics_on_wrong_type() {
 fn recorded_turn_gate_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         // #1879: TS reads `script.turn?.gate` with a falsy check
-        // (`generate.mts:99`), so an explicit JSON null is absence here too.
+        // (`generate.mts:108`), so an explicit JSON null is absence here too.
         // Only the null sentinel is aligned: `""` still parses as a gate name
         // and `false` / `0` stay a type drift, so a hand-edited `""` diverges
         // from the TS falsy skip by design.
@@ -968,7 +968,7 @@ fn recorded_turn_error_panics_on_wrong_type() {
 
 fn recorded_turn_events_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
     recorded_checked(
-        // #1879: `script.turn?.events ?? []` (`generate.mts:101`).
+        // #1879: `script.turn?.events ?? []` (`generate.mts:110`).
         recorded_present(value, "events"),
         "turn.events",
         "an array",
@@ -1185,7 +1185,7 @@ fn recorded_responses_panics_on_wrong_type() {
 
 fn recorded_env_map_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        // #1879: `generate.mts:1041` writes `env: definition.env ?? {}`, so an
+        // #1879: `generate.mts:1097` writes `env: definition.env ?? {}`, so an
         // explicit JSON null is absence exactly like an omitted key. Going
         // through `recorded_present` keeps that read identical to the scalar
         // sentinels; the shared switch restores the old fail-closed read.
@@ -1264,7 +1264,7 @@ fn recorded_steps_panics_on_wrong_type() {
 }
 
 fn recorded_half_close_checked(value: &Value) -> Result<Option<bool>, String> {
-    // #1879: `step.halfClose === true` (generate.mts:888) — an explicit null
+    // #1879: `step.halfClose === true` (generate.mts:945) — an explicit null
     // is falsy there, so it is absence here rather than a type drift.
     recorded_checked(
         recorded_present(value, "halfClose"),
@@ -1309,7 +1309,7 @@ fn recorded_log_level_checked(value: &Value) -> Result<Option<&str>, String> {
         "a string",
         Value::as_str,
         // #1879: the generator's `waitLog(level, message)` helper
-        // (`generate.mts:258`) always writes both keys and the TS replay
+        // (`generate.mts:299`) always writes both keys and the TS replay
         // compares `level === step.level` with no `??` fallback, so a missing
         // level is recording drift. Reading it as `""` used to turn the wait
         // into a bare empty-string comparison instead of a field-level error.
@@ -1492,7 +1492,7 @@ fn recorded_rpcs_count_panics_when_absent() {
 fn recorded_stop_reason_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         // #1879: the handler does `reason ?? "no reason"` (channel/sms/mod.rs), and
-        // the recorder's `stop(null)` writes `{reason: null}` (generate.mts:264), so
+        // the recorder's `stop(null)` writes `{reason: null}` (generate.mts:305), so
         // an explicit `null` is absence here too.
         recorded_present(value, "reason"),
         "stop.reason",
@@ -1567,7 +1567,7 @@ fn recorded_send_block_panics_on_wrong_type() {
 
 fn recorded_send_fail_checked(value: &Value) -> Result<Option<&Vec<Value>>, String> {
     recorded_checked(
-        // #1879: `generate.mts:1048` writes `sendFailAt: definition.sendFailAt
+        // #1879: `generate.mts:1104` writes `sendFailAt: definition.sendFailAt
         // ?? []`, so an explicit JSON null is absence, same as an omitted key
         // (same `recorded_present` read as `env`).
         recorded_present(value, "sendFailAt"),
@@ -1636,7 +1636,7 @@ fn recorded_send_error_panics_on_wrong_type() {
 
 fn recorded_extra_checked(value: &Value) -> Result<Option<&Value>, String> {
     recorded_checked(
-        // #1879: `definition.extra ?? {}` (generate.mts:323 / :337) has the same
+        // #1879: `definition.extra ?? {}` (generate.mts:364 / :378) has the same
         // signature as `env: definition.env ?? {}`, so an explicit `null` is
         // absence here too.
         recorded_present(value, "extra"),
@@ -2001,7 +2001,7 @@ fn absent_recording_fields_keep_defaults() {
     // reach the real replay path as absence too, not just the `_checked`
     // helpers — `validate_mock_recording` reads all four members through the
     // panicking wrappers, and `build_raw` keeps every body byte when
-    // `truncate` is null (TS `?? 0`, `generate.mts:887`).
+    // `truncate` is null (TS `?? 0`, `generate.mts:941`).
     validate_mock_recording(
         &json!({"turn":{"gate":null,"error":null,"events":null,"holdAfter":null}}),
     );
@@ -2017,7 +2017,7 @@ fn absent_recording_fields_keep_defaults() {
     );
     // Replay site `let half_close = recorded_half_close(step).unwrap_or(false)`
     // (tests.rs replay arm) must derive `false` from an explicit `null`, the
-    // same as TS `step.halfClose === true` (`generate.mts:888`).
+    // same as TS `step.halfClose === true` (`generate.mts:945`).
     assert!(
         !recorded_half_close(&null_step).unwrap_or(false),
         "#1339 #1879 null halfClose derives false, same as an absent key"
@@ -2025,8 +2025,8 @@ fn absent_recording_fields_keep_defaults() {
     // #1879: null `headers` / `stop.reason` reach the real replay paths too,
     // not just the `_checked` helpers. `build_raw` builds the request bytes via
     // `recorded_headers`, and the recorded step's `headers` is the
-    // `effectiveHeaders` output (`generate.mts:335` `{ ...(step.headers ?? {}) }`
-    // at `:350`), which `REQUEST` consumes as-is (`generate.mts:887`). The stop
+    // `effectiveHeaders` output (`generate.mts:376` `{ ...(step.headers ?? {}) }`
+    // at `:391`), which `REQUEST` consumes as-is (`generate.mts:941`). The stop
     // arm replays `recorded_stop_reason(step).unwrap_or("no reason")`, the same
     // default TS `handle.stop` applies to `reason ?? "no reason"`.
     assert_eq!(
