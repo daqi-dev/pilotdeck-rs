@@ -37,9 +37,13 @@ mutation. The nine mutants all target the U7 settings wiring:
   ``path``, so no source names a file any more; the anchor test's
   ``has_file_source`` guard must red instead of comparing ``("file", "",
   hash)`` with ``("file", "", hash)``.
-* ``empty-source-hash`` (#1762 review) — the serialized ``contentHash``
-  becomes ``""`` on every side; the strict ``text_of`` must reject the empty
-  string instead of letting ``("", "")`` compare equal to ``("", "")``.
+* ``empty-source-hash`` (#1762 review) — the wire projection re-emits an empty
+  ``contentHash`` for every source; the strict ``text_of`` must reject the
+  empty string instead of letting ``("", "")`` compare equal to ``("", "")``.
+  The injection sits in ``config/settings.rs`` rather than the record
+  serializer: ``put_truthy`` drops empty strings, so emptying the hash one
+  layer up would reach the guard as a *missing* field and trip the older
+  string check instead of the non-empty one.
 
 Every mutant is applied, proven to compile (``cargo test -p
 pilotdeck-gateway --lib --no-run``), run against its one named test, and
@@ -88,6 +92,11 @@ GATEWAY = 'src/pilotdeck-gateway/src/runtime/settings/gateway.rs'
 # #1762 review: the source-projection assertions live in the services suite but
 # the fields are built here, so the mutants anchor on the record serializer.
 SNAPSHOT = 'src/pilotdeck-gateway/src/config/snapshot.rs'
+# ...but the wire projection drops empty strings (`put_truthy`), so an emptied
+# hash never reaches the guard as "": it arrives as a missing field and trips
+# the older string check instead. The empty-hash mutant must therefore inject
+# after the projection, one layer down.
+SETTINGS = 'src/pilotdeck-gateway/src/config/settings.rs'
 REGISTRY = 'native_process::methods::tests::registry_matches_current_methods'
 REPLAY = 'native_process::settings_tests::native_settings_replays_the_real_ts_oracle'
 RECONNECT = 'native_process::settings_tests::resolve_settings_generation_across_reconnect'
@@ -171,9 +180,15 @@ mutations = [
      '        if let Some(path) = &self.path {\n'
      '            let _ = path;\n'
      '        }', ANCHORS),
-    ('empty-source-hash', SNAPSHOT,
-     '        o.insert("contentHash".into(), self.content_hash.as_str().into());',
-     '        o.insert("contentHash".into(), "".into());', ANCHORS),
+    ('empty-source-hash', SETTINGS,
+     '    for key in ["path", "contentHash", "phase"] {\n'
+     '        put_truthy(&mut out, value, key);\n'
+     '    }',
+     '    for key in ["path", "contentHash", "phase"] {\n'
+     '        put_truthy(&mut out, value, key);\n'
+     '    }\n'
+     '    // negative control: empty hash survives the truthiness filter\n'
+     '    out.insert("contentHash".into(), "".into());', ANCHORS),
     ('broadcast-before-dirty', REFRESH,
      '                if let Some(router) = router {\n'
      '                    router.mark_all_dirty("config_changed");\n'
