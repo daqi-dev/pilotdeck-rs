@@ -164,6 +164,17 @@ the blocking witness or the other side's completion, so host load cannot
 false-green their bound mutants and no wall-clock window participates in the
 discrimination (the probe waits themselves only bound pathological
 scheduling, like every other channel wait in the suite).
+The #1298 review adds five rows around the clear's abort face:
+`before-delete-l0-rearm-dropped` (the re-arm dropped from the
+`BeforeDeleteL0` abort arm — until then the recovery was only pinned at the
+later `L0IdsSelected` seam), `before-delete-l0-error-swallowed`,
+`l0-ids-selected-error-swallowed` and `before-remove-data-error-swallowed`
+(the seam's `?` turned into a `let _ =` at each of the three
+`ClearSessionStage` dispatch points, so a failed clear completes as if it had
+succeeded), and `before-delete-l0-rearm-error-overwrites` (the pre-#1298 `?`
+restored on the re-arm, so a re-arm that cannot run replaces the error that
+aborted the clear). The last one is bound to the closed-storage cell, which
+asserts the returned error still carries the injected text.
 After commit:
 
 ```sh
