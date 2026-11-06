@@ -728,14 +728,17 @@ def negative_controls():
              "def restored(row, name, test):\n    if not compile_only:",
              "def restored(row, name, test):\n    if False:")})),
     ])
+    # r22：restore 循环包进 `with restore_critical():`（MiniMax r17 P1-1）后整体缩进 +4，
+    # 锚点跟着源码走；write 锚点若停在旧的 20 空格，会作为 24 空格行的子串错位替换
+    # （CI 实测 IndentationError），head 锚点则 0 命中（ValueError stale anchor）。
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',
-         '                    path.write_bytes(snapshot[path])',
-         '                    try:\n                        path.write_bytes(snapshot[path])\n                    except OSError:\n                        pass'),
+         '                        path.write_bytes(snapshot[path])',
+         '                        try:\n                            path.write_bytes(snapshot[path])\n                        except OSError:\n                            pass'),
         ('readback', 'test_restore_readback_mismatch',
          'raise RuntimeError(f"restore failed: {relative}")', 'pass'),
         ('head', 'test_restore_head_mismatch',
-         'raise RuntimeError(\n                            f"restored {relative} does not match {baseline}")', 'pass'),
+         'raise RuntimeError(\n                                f"restored {relative} does not match {baseline}")', 'pass'),
     ]:
         variants.append(('real-guard-' + label + '-failure-swallowed', (RealGuardTests,),
                          {(RealGuardTests, test): f'#1037 real guard must reject {label} failure'},
