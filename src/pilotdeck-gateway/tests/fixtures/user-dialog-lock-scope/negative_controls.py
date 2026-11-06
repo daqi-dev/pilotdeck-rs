@@ -84,6 +84,7 @@ mutations = [
      '        }\n'
      '    }'),
 ]
+declared = [name for name, *_ in mutations]
 selected = sys.argv[3:]
 if selected:
     mutations = [mutation for mutation in mutations if mutation[0] in selected]
@@ -110,13 +111,25 @@ def wait_for_slot(name):
     (out / f'{name}.slots.log').write_text(slot.stdout + slot.stderr)
 
 
+def say(message):
+    # A closed pipe must not turn one result row into two (the print sits inside
+    # the per-mutation try, so an unguarded BrokenPipeError lands in its except).
+    try:
+        print(message, flush=True)
+    except OSError:
+        pass
+
+
 def publish_summary():
     # Publishes once, after the source guard has restored and verified the bytes
-    # (specs/negative-controls/README.md). The payload carries the expected
-    # denominator so an interrupted run cannot be read as a smaller green suite.
+    # (specs/negative-controls/README.md). `total` is the statically declared
+    # denominator, never the argv selection, so a subset run and a full run stay
+    # distinguishable in the evidence.
     counts = {state: sum(row['status'] == state for row in summary)
               for state in ('KILLED', 'SURVIVED', 'INVALID')}
-    payload = dict(total=len(mutations), counts=counts, results=summary)
+    payload = dict(total=len(declared), declared=declared,
+                   selected=[row['name'] for row in summary],
+                   counts=counts, results=summary)
     tmp = out / 'summary.json.tmp'
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
     os.replace(tmp, out / 'summary.json')
@@ -180,13 +193,14 @@ try:
                 status = 'KILLED' if killed else (
                     'SURVIVED' if code == 0 else 'INVALID')
                 summary.append(dict(name=name, test=full, status=status,
-                                    returncode=code, failure=failure,
+                                    returncode=code, reason=failure,
                                     sourceSha256=before))
-                print(f'{name}: {status} rc={code} {failure}', flush=True)
+                say(f'{name}: {status} rc={code} {failure}')
                 if status != 'KILLED':
                     failures.append(name)
             except Exception as error:
                 summary.append(dict(name=name, test=full, status='INVALID',
+                                    returncode=None,
                                     reason=f'{type(error).__name__}: {error}',
                                     sourceSha256=before))
                 failures.append(name)
@@ -195,15 +209,21 @@ try:
                 assert hashlib.sha256(path.read_bytes()).hexdigest() == before
 except BaseException as error:
     # Same contract as the sibling fixtures (_shared/negative_control.py,
-    # user-dialog-guard-order): a guard failure, Ctrl-C or timeout publishes a
-    # complete table with every row INVALID instead of the partial green rows.
+    # user-dialog-guard-order): a guard failure publishes a complete table with
+    # every row INVALID instead of the partial green rows. (SIGTERM / SIGKILL
+    # bypass this and leave no summary at all — absence is a fail-closed read.)
     reason = f'source guard: {type(error).__name__}: {error}'
     recorded = {row['name'] for row in summary}
     for row in summary:
-        row.update(status='INVALID', failure=reason)
+        row['status'] = 'INVALID'
+        row['reason'] = f'{row["reason"]}; {reason}' if row.get('reason') else reason
     for name, *_rest in mutations:
         if name not in recorded:
-            summary.append(dict(name=name, status='INVALID', failure=reason))
+            summary.append(dict(
+                name=name,
+                test=f'native_process::methods::tests::{target_test(name)}',
+                status='INVALID', returncode=None, reason=reason,
+                sourceSha256=None))
     publish_summary()
     raise
 counts = publish_summary()
