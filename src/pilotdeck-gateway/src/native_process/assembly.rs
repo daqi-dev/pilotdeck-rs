@@ -386,6 +386,14 @@ pub(super) async fn start_observed_with_upload_cleanup(
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .insert(session.clone(), Arc::downgrade(&binding.recorder));
+                        // #1864 (b): one source closure feeds both the session
+                        // tools and the live adapter — the same store and key
+                        // the prepare closure read back.
+                        let permission_source = {
+                            let session_overrides = session_overrides.clone();
+                            let session = session.clone();
+                            Arc::new(move || session_overrides.permission_mode(&session))
+                        };
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
@@ -400,11 +408,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                             interactions,
                             lsp,
                         )?
-                        .with_permission_mode_source(Arc::new({
-                            let session_overrides = session_overrides.clone();
-                            let session = session.clone();
-                            move || session_overrides.permission_mode(&session)
-                        }));
+                        .with_permission_mode_source(permission_source.clone());
                         Ok(TurnHostFactory::new_with_signal(
                             project,
                             deployment,
@@ -423,9 +427,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
                         // already-live session picks the change up without a
                         // close. The source reads the same store the selector
                         // method writes.
-                        .with_permission_mode_source(Arc::new(move || {
-                            session_overrides.permission_mode(&session)
-                        })))
+                        .with_permission_mode_source(permission_source))
                     }),
                 })
             })

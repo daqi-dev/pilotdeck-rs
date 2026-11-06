@@ -165,19 +165,21 @@ impl LiveSessionAdapter {
     /// mode the sidecar's next turn runs.
     pub fn permission_mode(&self) -> JsString {
         let config = self.agent_config.as_ref();
-        if let Some(mode) = config.and_then(crate::runtime::permission::managed_default_mode) {
-            return mode;
-        }
-        if let Some(source) = &self.permission_mode_source
-            && let Some(mode) = source()
-        {
-            return mode;
-        }
-        config
-            .and_then(|config| config.get("permissionMode"))
-            .and_then(pilotdeck_protocol::JsValue::as_string)
-            .cloned()
-            .unwrap_or_else(|| "default".into())
+        // The composed `permissionMode` rides in as the fallback leg of the
+        // stored selection; an absent agent config passes an empty object
+        // (its managed leg is None), so the shared priority stays intact.
+        let stored = self
+            .permission_mode_source
+            .as_ref()
+            .and_then(|source| source())
+            .or_else(|| {
+                config
+                    .and_then(|config| config.get("permissionMode"))
+                    .and_then(pilotdeck_protocol::JsValue::as_string)
+                    .cloned()
+            });
+        let absent = JsObject::new();
+        crate::runtime::permission::effective_permission_mode(config.unwrap_or(&absent), stored)
     }
 
     /// Use the same cleanup budget as the lazy HostClient's Limits.
