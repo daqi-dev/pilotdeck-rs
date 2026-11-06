@@ -167,6 +167,21 @@ mutations.append(('snapshot-list-filter-omitted', REQUESTS, '"snapshot_list" | "
 mutations.append(('snapshot-get-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "unwired_snapshot_get" | "snapshot_restore"', PRODUCTION, '#1231 production entry exact capability set'))
 mutations.append(('snapshot-restore-filter-omitted', REQUESTS, '"snapshot_list" | "snapshot_get" | "snapshot_restore"', '"snapshot_list" | "snapshot_get" | "unwired_snapshot_restore"', PRODUCTION, '#1231 production entry exact capability set'))
 mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 wired capabilities are TS subset'))
+# #1869 item 2: `assert_ts_capability_subset(.., include_disabled_states=true)`
+# also checks `contract.emptyStorage` / `contract.missingStorage`, but the only
+# ORACLE mutant touched the default `contract` array — deleting either disabled
+# branch kept every existing mutant killed. One mutant per disabled state,
+# anchored on that state's own header so the default contract stays intact.
+mutations.append(('empty-storage-capabilities-outside-ts', ORACLE,
+                  '    "emptyStorage": {\n      "config": null,\n      "capabilities": [\n        "upload_create",',
+                  '    "emptyStorage": {\n      "config": null,\n      "capabilities": [\n        "unwired_upload_create",',
+                  'native_process::management_tests::empty_storage_environment_disables_snapshots',
+                  '#1231 wired capabilities are TS subset (contract.emptyStorage)'))
+mutations.append(('missing-storage-capabilities-outside-ts', ORACLE,
+                  '    "missingStorage": {\n      "config": null,\n      "capabilities": [\n        "upload_create",',
+                  '    "missingStorage": {\n      "config": null,\n      "capabilities": [\n        "unwired_upload_create",',
+                  'native_process::management_tests::missing_storage_environment_disables_snapshots',
+                  '#1231 wired capabilities are TS subset (contract.missingStorage)'))
 
 # fix-r2 (#1322): memory IO must stay off the serial host.
 mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))

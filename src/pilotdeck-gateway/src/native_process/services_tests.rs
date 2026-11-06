@@ -2073,10 +2073,14 @@ async fn settings_store_anchors_at_pilot_home_env() {
             "#1320 non-vacuous: {side} must carry a non-empty sources array — a missing \
              field must fail explicitly, not pass vacuously as [] == []"
         );
+        // #1869: "is a string" is not enough — a projection that emptied the
+        // hash on all three sides would compare "" == "" and report a clean
+        // anchor. The empty check is the top-level twin of `text_of`'s
+        // per-source guard.
         negative_assert!(
-            matches!(value.get("contentHash"), Some(JsValue::String(_))),
-            "#1320 non-vacuous: {side} must carry a string contentHash — a missing field \
-             must fail explicitly, not pass vacuously as Undefined == Undefined"
+            matches!(value.get("contentHash"), Some(JsValue::String(text)) if !text.is_empty()),
+            "#1869 non-vacuous: {side} must carry a non-empty string contentHash — an empty \
+             string must fail explicitly, not pass vacuously as \"\" == \"\""
         );
         // #1762: env sources carry no `path` by design, so the per-source
         // requirement above cannot cover `path`; the file source must survive
