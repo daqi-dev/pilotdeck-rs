@@ -724,6 +724,25 @@
       "outcome": {
         "transcriptPath": "logs/s/subagents/kid.jsonl"
       }
+    },
+    {
+      "name": "join-relative-dotdot",
+      "outcome": {
+        "transcriptPath": "../logs/s/subagents/kid.jsonl"
+      }
+    },
+    {
+      "name": "join-relative-bare",
+      "outcome": {
+        "transcriptPath": "s/subagents/kid.jsonl"
+      }
+    },
+    {
+      "name": "join-relative-nested",
+      "outcome": {
+        "transcriptPath": "../logs/s/subagents/kid.jsonl",
+        "nestedTranscriptPath": "../logs/s/subagents/kid/subagents/grandchild.jsonl"
+      }
     }
   ]
 }

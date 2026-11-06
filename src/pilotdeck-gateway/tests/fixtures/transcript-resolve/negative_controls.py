@@ -34,10 +34,11 @@ def main():
          'let path = if base.is_absolute() {',
          'let cwd = std::env::current_dir().map_err(|error| AdapterError::Store(io::Error::new(error.kind(), "ENOENT: no such file or directory, uv_cwd").into()))?;\n    let path = if base.is_absolute() {\n        drop(cwd);',
          'absolute_base_deleted_cwd', 'transcript resolve matrix: absolute-deleted'),
-        ('join-loses-fallback', adapter_source,
-         'resolve(&path, &[]).unwrap_or_else(|_| normalize(&path, &[]))',
-         'resolve(&path, &[]).expect("mutant requires cwd for path.join")',
-         'relative_sidechain_deleted_cwd', 'mutant requires cwd for path.join'),
+        ('join-reads-cwd', adapter_source,
+         'join_path(&[&parent, stem, "subagents", &subagent])',
+         'let joined = PathBuf::from(format!("{}/{stem}/subagents/{subagent}", parent));\n'
+         '                resolve(&joined, &[]).unwrap_or_else(|_| normalize(&joined, &[]))',
+         'relative_sidechain_normal_cwd', 'transcript resolve matrix: join-relative-normal'),
         ('list-cwd-message', adapter_source,
          '.and_then(|storage| storage.read_transcript(None))',
          '.map_err(|_| AdapterError::Store(invalid("mutant list cwd failure")))\n                .and_then(|storage| storage.read_transcript(None))',
@@ -52,10 +53,18 @@ def main():
         ('absolute-normalization', adapter_source,
          'Ok(normalize(&path, parts))', 'let _ = parts; Ok(path)',
          'absolute_base_normal_cwd', 'transcript resolve matrix: absolute-normal'),
-        ('join-normal-changes-layout', adapter_source,
-         'resolve(&path, &[]).unwrap_or_else(|_| normalize(&path, &[]))',
-         'normalize(&path, &[])',
-         'relative_sidechain_normal_cwd', 'transcript resolve matrix: join-relative-normal'),
+        ('join-eats-leading-dotdot', adapter_source,
+         'Component::ParentDir => match output.components().next_back() {\n'
+         '                Some(Component::Normal(_)) => {\n'
+         '                    output.pop();\n'
+         '                }\n'
+         '                _ if joined.starts_with(\'/\') => {}\n'
+         '                _ => output.push(".."),\n'
+         '            },',
+         'Component::ParentDir => {\n'
+         '                output.pop();\n'
+         '            },',
+         'relative_sidechain_dotdot_cwd', 'transcript resolve matrix: join-relative-dotdot'),
     ]
     # The same rollback must also exercise the separate projectRoot call site.
     name, source, old, new, _, _ = mutations[0]

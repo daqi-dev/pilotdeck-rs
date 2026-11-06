@@ -40,7 +40,7 @@ impl TranscriptStore for UnusedStore {
 /// #1109: optional-baseline verification once per process, bounded. The
 /// children spawned by `matrix` replay the committed oracle without
 /// `PDRS_BASELINE`, so the 30 s child bound below is spent on the matrix,
-/// not on re-running the 650-source git probe table in each of the seven
+/// not on re-running the 650-source git probe table in each of the ten
 /// children (#978 scan: all seven were killed mid-verification at load
 /// 39-45).
 fn verify_baseline_once() {
@@ -97,19 +97,13 @@ fn matrix(name: &str, test: &str) {
     baseline::oracle(oracle_text);
     let oracle: Value =
         serde_json::from_str(oracle_text).expect("#1109 transcript-resolve oracle JSON");
-    let mut expected = oracle["cases"]
+    let expected = oracle["cases"]
         .as_array()
         .expect("#1109 transcript-resolve oracle cases")
         .iter()
         .find(|row| row["name"] == name)
         .unwrap_or_else(|| panic!("#1109 transcript-resolve oracle case {name}"))["outcome"]
         .clone();
-    if name == "join-relative-normal" {
-        // A6.2-TRANSCRIPT-SUBAGENT-RELATIVE-001 (unapproved, not accepted).
-        // Preserve Rust's existing absolute path.join result in this narrow
-        // fix; this adjusted expectation does not establish TS parity.
-        expected["transcriptPath"] = json!("<root>/cwd/logs/s/subagents/kid.jsonl");
-    }
     let original_cwd = std::env::current_dir().expect("#1109 matrix original cwd");
     let root =
         std::env::temp_dir().join(format!("pdrs-transcript-resolve-{}", uuid::Uuid::new_v4()));
@@ -140,17 +134,36 @@ fn matrix(name: &str, test: &str) {
         );
     }
     let outcome = if name.starts_with("join-") {
+        let parent_path = match name {
+            "join-relative-normal" | "join-relative-deleted" => "logs/../logs/s.jsonl",
+            "join-relative-dotdot" | "join-relative-nested" => "../logs/s.jsonl",
+            "join-relative-bare" => "s.jsonl",
+            _ => panic!("#1109 transcript-resolve join case {name}"),
+        };
         let recorder = pilotdeck_gateway::storage::recorder::Recorder::new(
             Arc::new(UnusedStore),
             TranscriptKey {
                 project_root: project_root.into(),
                 pilot_home: home.clone(),
                 session_id: "s".into(),
-                transcript_path: "logs/../logs/s.jsonl".into(),
+                transcript_path: parent_path.into(),
             },
         );
-        json!({"transcriptPath": recorder.writer().for_subagent(&"kid".into()).transcript_path
-            .to_string_lossy().replace(root.to_str().expect("#1109 matrix root is UTF-8"), "<root>")})
+        let root = root.to_str().expect("#1109 matrix root is UTF-8");
+        let kid = recorder.writer().for_subagent(&"kid".into());
+        if name == "join-relative-nested" {
+            json!({
+                "transcriptPath": kid.transcript_path.to_string_lossy().replace(root, "<root>"),
+                "nestedTranscriptPath": kid
+                    .writer
+                    .for_subagent(&"grandchild".into())
+                    .transcript_path
+                    .to_string_lossy()
+                    .replace(root, "<root>"),
+            })
+        } else {
+            json!({"transcriptPath": kid.transcript_path.to_string_lossy().replace(root, "<root>")})
+        }
     } else {
         match adapter.create_session_storage(SessionStorageInput {
             project_root: project_root.into(),
@@ -249,6 +262,18 @@ fn relative_sidechain_normal_cwd() {
 #[test]
 fn relative_sidechain_deleted_cwd() {
     matrix("join-relative-deleted", "relative_sidechain_deleted_cwd");
+}
+#[test]
+fn relative_sidechain_dotdot_cwd() {
+    matrix("join-relative-dotdot", "relative_sidechain_dotdot_cwd");
+}
+#[test]
+fn relative_sidechain_bare_cwd() {
+    matrix("join-relative-bare", "relative_sidechain_bare_cwd");
+}
+#[test]
+fn relative_sidechain_nested_cwd() {
+    matrix("join-relative-nested", "relative_sidechain_nested_cwd");
 }
 
 #[test]

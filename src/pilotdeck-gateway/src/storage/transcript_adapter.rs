@@ -1067,17 +1067,18 @@ impl TranscriptWriter {
                     }
                     _ => name.as_str(),
                 };
-                // path.join, not resolve: an absolute-looking id stays nested.
-                let parent = self.path.parent().unwrap_or(Path::new("/"));
-                let path = PathBuf::from(format!(
-                    "{}/{stem}/subagents/{}.jsonl",
-                    parent.display(),
-                    lossy(subagent_id)
-                ));
-                // TS defaultSubagentPath uses path.join, which does not read
-                // cwd. Preserve this branch's existing success/fallback paths;
-                // changing its relative-path layout is outside this resolve fix.
-                resolve(&path, &[]).unwrap_or_else(|_| normalize(&path, &[]))
+                // TS defaultSubagentPath: join(dirname(parentPath), stem,
+                // "subagents", `${id}.jsonl`). path.join is lexical — no cwd
+                // lookup — so an unresolvable leading `..` survives and a
+                // bare file name stays relative (its empty dirname must not
+                // become a root slash).
+                let parent = match self.path.parent() {
+                    Some(parent) => parent.to_string_lossy().into_owned(),
+                    None if self.path.is_absolute() => "/".to_owned(),
+                    None => ".".to_owned(),
+                };
+                let subagent = format!("{}.jsonl", lossy(subagent_id));
+                join_path(&[&parent, stem, "subagents", &subagent])
             }
         }
     }
@@ -1495,6 +1496,34 @@ fn resolve(base: &Path, parts: &[&str]) -> AdapterResult<PathBuf> {
             .join(base)
     };
     Ok(normalize(&path, parts))
+}
+/// Node path.join over the segments: purely lexical, never reads cwd. An
+/// unresolvable leading `..` survives (normalize would eat it), and a bare
+/// file name keeps the joined path relative instead of inventing a root
+/// slash.
+fn join_path(segments: &[&str]) -> PathBuf {
+    let mut joined = String::new();
+    for segment in segments.iter().filter(|segment| !segment.is_empty()) {
+        if !joined.is_empty() {
+            joined.push('/');
+        }
+        joined.push_str(segment);
+    }
+    let mut output = PathBuf::new();
+    for component in Path::new(&joined).components() {
+        match component {
+            Component::ParentDir => match output.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    output.pop();
+                }
+                _ if joined.starts_with('/') => {}
+                _ => output.push(".."),
+            },
+            Component::CurDir => {}
+            component => output.push(component.as_os_str()),
+        }
+    }
+    output
 }
 fn normalize(base: &Path, parts: &[&str]) -> PathBuf {
     let mut path = base.to_path_buf();
