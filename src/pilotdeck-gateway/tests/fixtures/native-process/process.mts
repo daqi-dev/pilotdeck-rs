@@ -102,13 +102,16 @@ async function client(address:string){
   return {ws,next};
 }
 try{
-  // #1988: the matcher accepts the two line endings the product can print and
-  // keeps rejecting everything the Rust `advertises` judge rejects -- trailing
-  // content, a missing address, a missing LF, a text prefix, a doubled space, a
-  // colon glued to the phrase, a bare CR used as a line start (the `m`-flag trap),
-  // and the empty string.
-  for(const line of ['native listening 127.0.0.1:4321\n','native listening [::1]:4321\r\n'])assert.ok(LISTENING_NATIVE.exec(line),'#1071 listening line is an advertisement: '+JSON.stringify(line));
-  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n','native listening: 127.0.0.1:4321\n','warn: x\rnative listening 127.0.0.1:4321\n',''])assert.strictEqual(LISTENING_NATIVE.exec(line),null,'#1071 not an advertisement: '+JSON.stringify(line));
+  // #1988: the matcher accepts the two line endings the product can print -- at
+  // the start of the buffer and after a preceding diagnostic line, because the
+  // real stderr carries `native run registry on`-style lines before the
+  // advertisement -- and keeps rejecting everything the Rust `advertises` judge
+  // rejects: trailing content, a missing address, a missing LF, a text prefix, a
+  // doubled space, a colon glued to the phrase, a bare CR used as a line start
+  // (the `m`-flag trap), and the empty string. The `\n` positives are the lock on
+  // the `(?:^|\n)` prefix: with a bare `^` they fail and the real path stalls.
+  for(const line of ['native listening 127.0.0.1:4321\n','native listening [::1]:4321\r\n','boot\nnative listening 127.0.0.1:4321\n'])assert.ok(LISTENING_NATIVE.exec(line),'#1071 listening line is an advertisement: '+JSON.stringify(line));
+  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n','native listening: 127.0.0.1:4321\n','warn: x\rnative listening 127.0.0.1:4321\n','x\nnative listening 127.0.0.1:4321 extra\n',''])assert.strictEqual(LISTENING_NATIVE.exec(line),null,'#1071 not an advertisement: '+JSON.stringify(line));
   await writeFile(join(out,'must-not-read.yaml'),'invalid: [',{flag:'wx'});
   for(const signal of ['SIGINT','SIGTERM'] as const){
     const process=await launch(signal);const {ws,next}=await client(process.address);
