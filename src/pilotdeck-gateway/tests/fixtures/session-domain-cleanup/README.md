@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 260 mutants:
+`JUDGES`, keyed by the same names. The current table has 264 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -440,7 +440,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-after-loop`, `calibrate-for-slice`,
 `calibrate-for-copy`, `calibrate-comp-result-receiver`,
 `calibrate-for-target-rebind-if`, `calibrate-for-target-after-match`,
-`calibrate-comp-dict-result`, `calibrate-comp-name-iter`.
+`calibrate-comp-dict-result`, `calibrate-comp-name-iter`,
+`calibrate-for-target-return`, `calibrate-for-target-alias`,
+`calibrate-starred-const-subscript-write`, `calibrate-comp-handle-relay`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1187,3 +1189,21 @@ name-bound literal iterable.
 | Fresh rebinding after the loop (false FAIL guard): `h = object(); h()` builds a new object, so the old handle is gone and `object()`/`list()`/`dict()`/... count as fresh; `getattr(md, name)` does not. | self-test `loop_rebind_fresh_probe` |
 | Conditional rebinding keeps the handle (self-test of the fix above). | self-test `loop_rebind_if_probe` |
 | Comprehension result only read (false FAIL guard): `_g = [h for h in (md,)]; print(len(_g))`. | self-test `comp_result_pure_probe` |
+
+### Closed by `fix-r1` round 7 (GLM boundary r3 / sibling r3)
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The loop target escapes through `return`**: the caller receives the write handle. | `calibrate-for-target-return` |
+| **The loop target escapes through an alias**: `f = h; f('common', <stub>)`; the scan follows second names and drops them again when they are rebound to a fresh value. | `calibrate-for-target-alias` |
+| **Starred element in a folded tuple**: `keys = ('__doc__', *more)` has no static length, so `keys[-2]` may be the attacker's `'__setattr__'`; the fold refuses instead of resolving to the wrong element. | `calibrate-starred-const-subscript-write` |
+| **Comprehension relaying a handle container**: `g = [h for h in hs]; g[0]('common', <stub>)` -- `hs` is not a literal, its roots come from the alias table. | `calibrate-comp-handle-relay` |
+| Statically false filter (false FAIL guard): `g = [h for h in (md,) if False]` yields nothing, so the result relays no receiver. | self-test `comp_filter_false_probe` |
+| Alias kept for a pure read (false FAIL guard): `f = h; print(f)`. | self-test `loop_alias_read_probe` |
+| Slice / copy iterated for a read only (false FAIL guards). | self-tests `slice_read_probe` / `copy_read_probe` |
+| Returned loop target, aliased call and starred fold (self-tests of the four mutants above). | self-tests `loop_return_probe`, `loop_alias_probe`, `starred_keys_probe`, `comp_handle_relay_probe` |
+
+The wrapper-name family (`iter`/`next`/`tuple`/`list`/`sorted`/`reversed`/
+`set`/`frozenset`) is one constant shared by the iteration decoder and the
+literal-element decoder; the subscript decoder also unwraps `hs[:]` and
+`hs.copy()` now, so `hs.copy()[0]('common', <stub>)` is caught.
