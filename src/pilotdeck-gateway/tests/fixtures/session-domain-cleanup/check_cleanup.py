@@ -1014,6 +1014,12 @@ def _is_status_target(target):
         return target.id == 'status'
     if isinstance(target, ast.Subscript):
         return isinstance(target.slice, ast.Constant) and target.slice.value in _STATUS_KEYS
+    if isinstance(target, ast.Attribute):
+        # The enumeration must see the attribute spelling for the same reason
+        # the slot layer does (MiniMax sibling r17 P1-1): otherwise the only
+        # evidence of a status write is invisible and the function is never
+        # even enumerated.
+        return target.attr in _STATUS_KEYS
     return False
 
 
@@ -1481,6 +1487,13 @@ def _writes_status_slot(target):
         return target.id == 'status'
     if isinstance(target, ast.Subscript):
         return isinstance(target.slice, ast.Constant) and target.slice.value in _STATUS_KEYS
+    if isinstance(target, ast.Attribute):
+        # ``self.report.status = 'PASS'`` is the attribute spelling of the very
+        # same write ``setattr(self.report, 'status', 'PASS')`` makes; modelling
+        # one and not the other gave the same intent two verdicts, and the
+        # attribute form is the ordinary one in class-based entry points
+        # (MiniMax sibling r17 P1-1).
+        return target.attr in _STATUS_KEYS
     if isinstance(target, (ast.Tuple, ast.List)):
         return any(_writes_status_slot(element) for element in target.elts)
     return False
@@ -1821,7 +1834,7 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
     hands_back = False
     raises_plain = False
     bindings = _name_bindings(target)
-    aliases = _binding_exit_aliases(bindings, aliases)
+    aliases = _binding_exit_aliases(bindings, aliases, target)
     for item in ast.walk(target):
         if isinstance(item, ast.Return):
             hands_back = True
@@ -2040,8 +2053,9 @@ def _exit_provenance(argument, bindings, function, module, point,
                 return True
             continue
         if (_container_holds_zero(arm, bindings)
-                or _nested_def_exits_zero(arm, function, aliases=aliases)
-                or _delegated_exit(arm, module, aliases=aliases)):
+                or _nested_def_exits_zero(arm, function, bindings, aliases)
+                or _delegated_exit(arm, module, bindings=bindings,
+                                   aliases=aliases)):
             return True
         if isinstance(arm, (ast.UnaryOp, ast.Compare)):
             return True
@@ -2168,36 +2182,86 @@ def _exit_target(node, aliases=None):
     return None
 
 
-def _module_exit_aliases(tree):
-    """Local names a module binds to an exit spelling (#892 r17).
+def _import_exit_aliases(nodes):
+    """Exit-module aliases bound by ``import`` statements in *nodes* (#892 r18).
 
-    Only the module header is read: ``import sys as s``, ``from sys import
-    exit as bail``, ``from builtins import SystemExit as SE``.  A rebinding
-    inside a function body is read from that function's own bindings by
-    ``_binding_exit_aliases``; a rebinding inside a *called* helper is listed
-    as a known boundary in the fixture README.
+    ``import sys as s`` binds *s* to the ``sys`` module (so ``s.exit`` is the
+    same exit), ``from sys import exit as bail`` binds *bail* to the function
+    itself, and ``from builtins import SystemExit as SE`` binds the class.  The
+    module header and a function body use the very same statements, so both
+    sources read them through this one helper: the earlier split (header only)
+    left ``def publish(...): import sys as s; s.exit(0)`` resolving *s* as an
+    unknown bare name and skipping every rule (GLM boundary r17 P0-1).
     """
     aliases = {}
-    if not isinstance(tree, ast.Module):
-        return aliases
-    for node in tree.body:
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in _EXIT_MODULES:
                     aliases[alias.asname or alias.name] = alias.name
         elif isinstance(node, ast.ImportFrom) and node.module in _EXIT_MODULES:
             for alias in node.names:
-                if alias.name in _EXIT_FUNCTION_NAMES + ('SystemExit',):
-                    name = 'SystemExit' if alias.name == 'SystemExit' else alias.name
-                    aliases[alias.asname or alias.name] = (
-                        'builtins.SystemExit' if alias.name == 'SystemExit'
-                        else f'{node.module}.{name}')
+                if alias.name in _EXIT_FUNCTION_NAMES:
+                    aliases[alias.asname or alias.name] = f'{node.module}.{alias.name}'
+                elif alias.name == 'SystemExit':
+                    aliases[alias.asname or alias.name] = 'builtins.SystemExit'
     return aliases
 
 
-def _binding_exit_aliases(bindings, aliases=None):
-    """Aliases the function body itself binds (``bail = sys.exit``)."""
+def _module_exit_aliases(tree):
+    """Local names a module binds to an exit spelling (#892 r17).
+
+    Two sources: the module header's ``import`` statements (``import sys as
+    s``, ``from sys import exit as bail``, ``from builtins import SystemExit
+    as SE``) and module-level assignments whose value resolves to an exit
+    spelling (``bail = sys.exit``).  The second was missing, so a module-level
+    ``bail = sys.exit; bail(0)`` walked through every rule the function-body
+    spelling was just taught to catch (GLM sibling r17 P1-1).  A rebinding
+    inside a function body is read from that function's own imports and
+    bindings by ``_binding_exit_aliases``; a rebinding inside a *called* helper
+    is listed as a known boundary in the fixture README.
+    """
+    aliases = {}
+    if not isinstance(tree, ast.Module):
+        return aliases
+    # Module scope includes the ``try:`` / ``if`` headers that guard an
+    # optional import (``_own_nodes`` skips nested defs, so a function-local
+    # alias never leaks up here).  Walking direct children only left
+    # ``try:\n import sys as s\nexcept ImportError:\n s = None`` unresolved
+    # (GLM boundary r17 P0-1, the ``_guard.py`` idiom).
+    for name, target in _import_exit_aliases(_own_nodes(tree)).items():
+        aliases[name] = target
+    # Two passes so ``bail = sys.exit`` followed by ``quit_now = bail`` sees
+    # the first alias before it is read (the chain is short and acyclic in
+    # practice; a cycle simply stops resolving).
+    for _pass in range(2):
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                pairs = [(target, node.value) for target in node.targets]
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                pairs = [(node.target, node.value)]
+            else:
+                continue
+            for target, value in pairs:
+                resolved = _exit_target(value, aliases)
+                if resolved is None:
+                    continue
+                for name in _target_names(target):
+                    aliases[name] = resolved
+    return aliases
+
+
+def _binding_exit_aliases(bindings, aliases=None, function=None):
+    """Aliases the function body itself binds (#892 r17/r18).
+
+    ``bail = sys.exit`` comes from the assignment bindings; ``import sys as
+    s`` / ``from sys import exit as bail`` come from the function's own
+    ``import`` statements, which are not values and therefore never reach
+    ``_name_bindings`` (GLM boundary r17 P0-1).
+    """
     merged = dict(aliases or {})
+    if function is not None:
+        merged.update(_import_exit_aliases(_own_nodes(function)))
     for name, items in (bindings or {}).items():
         for _lineno, value in items:
             target = _exit_target(value, merged)
@@ -2320,11 +2384,22 @@ def _call_written_values(call):
         return written
     if not isinstance(func, ast.Attribute):
         return written
-    if func.attr == '__setitem__':
-        if len(call.args) >= 2:
-            key = call.args[0]
-            if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
-                written.append(call.args[1])
+    if func.attr in ('__setitem__', '__setattr__', 'setitem', 'setattr'):
+        # Bound form: ``obj.__setitem__('status', value)``.  Unbound form:
+        # ``dict.__setitem__(obj, 'status', value)`` /
+        # ``object.__setattr__(obj, 'status', value)`` /
+        # ``operator.setitem(obj, 'status', value)`` /
+        # ``builtins.setattr(obj, 'status', value)``.  Only the bound form and
+        # the bare ``setattr`` were read, so the three-argument spellings wrote
+        # a status slot nobody saw (GLM sibling r17 P2-2).
+        if len(call.args) == 3:
+            key, value = call.args[1], call.args[2]
+        elif len(call.args) == 2:
+            key, value = call.args[0], call.args[1]
+        else:
+            return written
+        if isinstance(key, ast.Constant) and key.value in _STATUS_KEYS:
+            written.append(value)
         return written
     if func.attr == 'setdefault':
         if len(call.args) > 1:
@@ -2369,7 +2444,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
     violations = []
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
-    aliases = _binding_exit_aliases(bindings, aliases)
+    aliases = _binding_exit_aliases(bindings, aliases, function)
     for node in _own_nodes(function):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             # Incremental report writes (``report['status'] = overall``) never
@@ -2700,7 +2775,7 @@ def aggregation_markers(function, module=None, rel=None, aliases=None):
     # summary point, whatever the name is (DeepSeek P1-3).
     bound = _bound_summary_dicts(function)
     bindings = _name_bindings(function)
-    aliases = _binding_exit_aliases(bindings, aliases)
+    aliases = _binding_exit_aliases(bindings, aliases, function)
     dict_names = set(bound) | {name for name, items in bindings.items()
                                if any(isinstance(value, ast.Dict)
                                       for _lineno, value in items)}
@@ -3279,6 +3354,43 @@ def aggregation_audit():
         "def _setattr_non_status(rows):\n"
         "    report = {'cases': rows}\n"
         "    setattr(report, 'cases', rows)\n"
+        "    return report\n"
+        "import operator as _op\n"
+        "_module_alias = _s.exit\n"
+        "try:\n"
+        "    import sys as _try_s\n"
+        "except ImportError:\n"
+        "    _try_s = None\n"
+        "def _module_binding_alias(report):\n"
+        "    print(report)\n"
+        "    _module_alias(0)\n"
+        "def _local_import_alias(report):\n"
+        "    import sys as _local_s\n"
+        "    _local_s.exit(0)\n"
+        "def _local_from_import(report):\n"
+        "    from sys import exit as _leave\n"
+        "    _leave(0)\n"
+        "def _try_import_alias(report):\n"
+        "    _try_s.exit(0)\n"
+        "def _attr_status_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report.status = 'PASS'\n"
+        "    return report\n"
+        "def _dunder_setattr_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    report.__setattr__('status', 'PASS')\n"
+        "    return report\n"
+        "def _unbound_setitem_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    dict.__setitem__(report, 'status', 'PASS')\n"
+        "    return report\n"
+        "def _operator_setitem_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    _op.setitem(report, 'status', 'PASS')\n"
+        "    return report\n"
+        "def _builtins_setattr_slot(rows):\n"
+        "    report = {'cases': rows}\n"
+        "    _bi.setattr(report, 'status', 'PASS')\n"
         "    return report\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     direct = probe892_found.get(('<self-test-892>', '_direct_summary'))
@@ -3626,6 +3738,47 @@ def aggregation_audit():
     if non_status and 'write-status' in non_status[0]:
         failures.append('#892 aggregation-audit: detector self-test enumerated a setattr '
                         'of a non-status attribute')
+    # GLM boundary r17 P0-1 / P1-1 and MiniMax sibling r17 P1-1 / GLM sibling
+    # r17 P2-2: the alias sources a real tree actually uses -- a function-local
+    # ``import sys as s``, a module-level ``bail = sys.exit``, a ``try:``
+    # guarded import -- and the unbound write spellings
+    # ``dict.__setitem__`` / ``operator.setitem`` / ``builtins.setattr``.
+    # Each shape was invisible before r18 (the module walk read direct children
+    # only, and the binding map never collected ``import`` statements), so a
+    # registered point could exit 0 or stamp its own status and stay green.
+    module_aliases = _module_exit_aliases(probe892)
+    if module_aliases.get('_module_alias') != 'sys.exit':
+        failures.append('#892 aggregation-audit: detector self-test lost a module-level '
+                        'assignment alias (``bail = sys.exit``)')
+    if module_aliases.get('_try_s') != 'sys':
+        failures.append('#892 aggregation-audit: detector self-test lost an import alias '
+                        'bound inside a module-level ``try:`` block')
+    for probe_name, markers, message in (
+            ('_module_binding_alias', ('exit-call-status',),
+             'a module-level assignment alias (``bail = sys.exit; bail(0)``)'),
+            ('_local_import_alias', ('exit-call-status',),
+             'a function-local ``import sys as s; s.exit(0)``'),
+            ('_local_from_import', ('exit-call-status',),
+             'a function-local ``from sys import exit as bail; bail(0)``'),
+            ('_try_import_alias', ('exit-call-status',),
+             'an alias bound by a ``try:`` guarded import'),
+            ('_attr_status_slot', ('assign-status', 'write-status'),
+             'an attribute status write (``report.status = ...``)'),
+            ('_dunder_setattr_slot', ('write-status',),
+             'a status write spelled ``report.__setattr__(...)``'),
+            ('_unbound_setitem_slot', ('write-status',),
+             'a status write spelled ``dict.__setitem__(report, ...)``'),
+            ('_operator_setitem_slot', ('write-status',),
+             'a status write spelled ``operator.setitem(report, ...)``'),
+            ('_builtins_setattr_slot', ('write-status',),
+             'a status write spelled ``builtins.setattr(report, ...)``')):
+        probe = probe892_found.get(('<self-test-892>', probe_name))
+        if not probe or not set(markers) & set(probe[0]):
+            failures.append(f'#892 aggregation-audit: detector self-test did not enumerate '
+                            f'{message}')
+    if not _is_status_target(ast.parse("report.status = 'PASS'").body[0].targets[0]):
+        failures.append('#892 aggregation-audit: detector self-test rejected an attribute '
+                        'status target')
     # GLM boundary r15 P1-1: an attribute head may name any module member, so it
     # may never inherit the ``(rel, name)`` registration of the file it is
     # written in.  Both call sites are asserted against the one rel that
