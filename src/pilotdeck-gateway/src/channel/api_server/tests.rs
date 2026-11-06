@@ -212,6 +212,46 @@ fn options_refuses_an_unknown_key() {
     options(&json!({ "options": { "requestTimeout": 1000 } }), None);
 }
 
+// #1759 r3 simplify P2: the roster is a *one-way* pin — it panics when the
+// fixture records a key the reader does not know. The other direction (a key
+// added to `REPLAY_OPTION_KEYS` and to `generate.mts`, but never mapped into
+// `ApiServerOptions`) has no check, and that is exactly the hole the roster
+// exists to close: TS honours the setting, Rust silently ignores it, the cell
+// stays green. This test sets every roster key to a distinguishable value and
+// requires each one to reach the parsed options.
+#[test]
+fn every_replay_option_key_is_mapped_into_the_channel_options() {
+    let recorded = json!({
+        "options": {
+            "apiKey": "key-from-fixture",
+            "modelName": "model-from-fixture",
+            "corsOrigins": ["https://fixture.test"],
+        }
+    });
+    let mut recorded_keys: Vec<&str> = recorded["options"]
+        .as_object()
+        .expect("#1333 test fixture")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    recorded_keys.sort_unstable();
+    let mut roster = REPLAY_OPTION_KEYS.to_vec();
+    roster.sort_unstable();
+    assert_eq!(
+        recorded_keys, roster,
+        "#1759: this test must set every key in `REPLAY_OPTION_KEYS`"
+    );
+
+    let parsed = options(&recorded, None);
+    assert_eq!(parsed.api_key.as_deref(), Some("key-from-fixture"));
+    assert_eq!(parsed.model_name.as_deref(), Some("model-from-fixture"));
+    assert_eq!(
+        parsed.cors_origins,
+        Some(js_string_array(&[json!("https://fixture.test")])),
+        "#1759: `corsOrigins` must reach the channel options"
+    );
+}
+
 #[test]
 fn absent_containers_stay_legal() {
     // Absent means "the cell recorded no options / no gateway", which every
@@ -677,6 +717,39 @@ fn recorded_expectation_refuses_a_null_status() {
 #[should_panic(expected = "must carry a headers object")]
 fn recorded_expectation_refuses_a_missing_headers_object() {
     assert_recorded_error_shape("cell", 0, &json!({ "status": 200 }));
+}
+
+// #1759 r3 sibling P2: the other four panic points of the same reader. Without
+// these, loosening `bytes == 0` or `is_string()` back to "the key exists"
+// keeps all 15 cells green — the real oracle never records a bad shape, so
+// only a direct call can tell the two apart (the same argument r4/r5 used for
+// the request readers).
+#[test]
+#[should_panic(expected = "a recorded expectation must be an object")]
+fn recorded_expectation_refuses_a_non_object() {
+    assert_recorded_error_shape("cell", 0, &json!("ECONNRESET"));
+}
+
+#[test]
+#[should_panic(expected = "a recorded connection error must be a string")]
+fn recorded_expectation_refuses_a_non_string_error() {
+    assert_recorded_error_shape("cell", 0, &json!({ "error": 5, "bytes": 0 }));
+}
+
+#[test]
+#[should_panic(expected = "a recorded connection error must be a zero-byte close")]
+fn recorded_expectation_refuses_a_nonzero_byte_close() {
+    assert_recorded_error_shape("cell", 0, &json!({ "error": "ECONNRESET", "bytes": 1 }));
+}
+
+#[test]
+#[should_panic(expected = "a recorded connection error must not carry a status line")]
+fn recorded_expectation_refuses_a_status_on_an_error_close() {
+    assert_recorded_error_shape(
+        "cell",
+        0,
+        &json!({ "error": "ECONNRESET", "bytes": 0, "status": 200 }),
+    );
 }
 
 fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResponse) {
