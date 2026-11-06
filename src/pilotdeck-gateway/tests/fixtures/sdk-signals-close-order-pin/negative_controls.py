@@ -88,8 +88,10 @@ device ran and a control survived". The two must not share a code, or a
 coordinator reads "the device never ran" as "a control survived". This is
 this device's contract, not every sibling's: pre-run refusals (usage, an
 unknown or repeated selection, a missing `CARGO_TARGET_DIR`, a bad mutation
-table, an empty selection) still exit 1, as do the shared `negative_suite`
-runner's lock and selection refusals. The summary is published temp-file-
+table) still exit 1, as do the shared `negative_suite` runner's lock and
+selection refusals. Naming no control is not a refusal: it selects the whole
+table and exits by the verdict path like any other run. The summary is
+published temp-file-
 then-rename, so an interrupt during that write leaves no summary at all
 rather than a half-written one. Because mutating_sources proves the tree
 equals HEAD, this must run after the #1382 patch is committed; a pre-commit
@@ -500,84 +502,88 @@ except BaseException as error:
         _stderr(f"#1382 abort accounting failed: {type(nested).__name__}: {nested}")
         os._exit(2)
 
-# #1506 fix-r3: an empty run is a zero denominator, never a pass, and it must
-# not publish evidence that looks like a finished run. The table guard above
-# already refuses an empty registry and the argv check refuses an empty
-# selection, so this only fires if a future path records no row at all.
-if not results:
-    # #1508 fix-r3: a zero denominator is "no verdict", not "a control
-    # survived" — it shares the INVALID/abort code, not SURVIVED's 1.
-    _stderr("#1506 no control ran: an empty run is not a pass")
-    os._exit(2)
-counts = {
-    state: sum(row["status"] == state for row in results)
-    for state in ("KILLED", "SURVIVED", "INVALID")
-}
-# #1506: the guard verified the whole registry, but `results` only holds the
-# rows the command line selected. Record both, so a later reader can tell
-# "16 registered, 3 selected" from "the table shrank to 3". `registered` is the
-# name list itself, not just its length: a table swapped for the same number of
-# different names keeps the count and the uniqueness check green, and only the
-# names show it.
-summary = {
-    "registeredTotal": len(REGISTERED),
-    "registered": REGISTERED,
-    "selected": [row["mutation"] for row in results],
-    "counts": counts,
-    "results": results,
-}
-# #1508 fix-r1: publish atomically (sibling `cli-parity-lock-bounded` shape,
-# #166 r8). `exclusive_write` created summary.json empty and filled it in place,
-# so a second SIGINT/SIGKILL during the abort publish left an existing but
-# unparsable summary — the reader sees "device broken" instead of the INVALID
-# verdict. A temp file plus rename means an interrupt here leaves no summary at
-# all, and a missing summary is the fail-closed signal.
-summary_path = out / "summary.json"
-summary_tmp = out / "summary.json.tmp"
+# #1508 fix-r3: everything from here to the exit runs inside one guard. Two
+# separate windows used to be bare — the counts/summary construction and the
+# final stdout print — and a second SIGINT or a write error landing in either
+# escaped as the interpreter's own code (130 for a signal, 1 for most write
+# errors), which is neither of the two codes this contract defines. Every exit
+# below is `os._exit`, so nothing outside the guard can change it.
+#
+# The exit codes themselves (#1064 fix-r2 P1-1 shape): a run that recorded an
+# INVALID row, aborted, or could not publish its summary exits 2 — the device
+# produced no verdict. 1 is reserved for "the device ran and a control
+# survived" (SURVIVED). The two must not share a code, or a coordinator reads
+# "the device never ran" as "a control survived".
 try:
-    summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    summary_tmp.replace(summary_path)
-except BaseException as error:
-    # #1508 fix-r2: a second interrupt between the write and the rename, or any
-    # other publish failure, must not escape with an arbitrary exit code over a
-    # half-written file. Drop the temp file and fail closed: no summary means
-    # the device never produced a verdict, and rc 2 says so.
+    # #1506 fix-r3: an empty run is a zero denominator, never a pass, and it
+    # must not publish evidence that looks like a finished run. The table guard
+    # above already refuses an empty registry, and naming no control means
+    # "run them all" (see Usage), so this only fires if a future path records
+    # no row at all.
+    if not results:
+        # #1508 fix-r3: a zero denominator is "no verdict", not "a control
+        # survived" — it shares the INVALID/abort code, not SURVIVED's 1.
+        _stderr("#1506 no control ran: an empty run is not a pass")
+        os._exit(2)
+    counts = {
+        state: sum(row["status"] == state for row in results)
+        for state in ("KILLED", "SURVIVED", "INVALID")
+    }
+    # #1506: the guard verified the whole registry, but `results` only holds the
+    # rows the command line selected. Record both, so a later reader can tell
+    # "16 registered, 3 selected" from "the table shrank to 3". `registered` is
+    # the name list itself, not just its length: a table swapped for the same
+    # number of different names keeps the count and the uniqueness check green,
+    # and only the names show it.
+    summary = {
+        "registeredTotal": len(REGISTERED),
+        "registered": REGISTERED,
+        "selected": [row["mutation"] for row in results],
+        "counts": counts,
+        "results": results,
+    }
+    # #1508 fix-r1: publish atomically (sibling `cli-parity-lock-bounded` shape,
+    # #166 r8). `exclusive_write` created summary.json empty and filled it in
+    # place, so a second SIGINT/SIGKILL during the abort publish left an
+    # existing but unparsable summary — the reader sees "device broken" instead
+    # of the INVALID verdict. A temp file plus rename means an interrupt here
+    # leaves no summary at all, and a missing summary is the fail-closed signal.
+    summary_path = out / "summary.json"
+    summary_tmp = out / "summary.json.tmp"
     try:
-        summary_tmp.unlink()
-    except OSError:
-        pass
-    _stderr(f"#1382 summary not published: {type(error).__name__}: {error}")
-    os._exit(2)
-try:
-    print(
-        json.dumps(
-            {
-                "total": len(results),
-                "registeredTotal": len(REGISTERED),
-                "selectedTotal": len(results),
-                "counts": counts,
-            }
-        ),
-        flush=True,
-    )
-except BrokenPipeError:
-    # `... | head` closed stdout. The exit code routes the reader, not stdout,
-    # so swallow the pipe error rather than let it decide the status.
+        summary_tmp.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        summary_tmp.replace(summary_path)
+    except BaseException as error:
+        # #1508 fix-r2: a second interrupt between the write and the rename, or
+        # any other publish failure, must not escape with an arbitrary exit
+        # code over a half-written file. Drop the temp file and fail closed: no
+        # summary means the device never produced a verdict, and rc 2 says so.
+        try:
+            summary_tmp.unlink()
+        except BaseException:
+            pass
+        _stderr(f"#1382 summary not published: {type(error).__name__}: {error}")
+        os._exit(2)
     try:
-        sys.stdout.close()
-    except OSError:
-        pass
-# #1508 fix-r2: the contract above only held for the abort path. A normal run
-# that recorded an INVALID row fell through to here and exited 1 — the same
-# code as "the device ran and a control survived" — so a coordinator read a
-# broken apparatus as a live control that escaped (#1064 fix-r2 P1-1 shape).
-# INVALID means the device produced no verdict: rc 2. SURVIVED alone is rc 1.
-# #1508 fix-r3: the routing itself is guarded. A second SIGINT delivered
-# between the final print and the exit (the window the fix-r2 comments above
-# name as expected) used to escape as the interpreter's own code — 130 — which
-# is neither of the two codes the contract defines. `os._exit` after a
-# best-effort message keeps the routing fixed no matter what interrupts it.
-try:
+        print(
+            json.dumps(
+                {
+                    "total": len(results),
+                    "registeredTotal": len(REGISTERED),
+                    "selectedTotal": len(results),
+                    "counts": counts,
+                }
+            ),
+            flush=True,
+        )
+    except BrokenPipeError:
+        # `... | head` closed stdout. The exit code routes the reader, not
+        # stdout, so swallow the pipe error rather than let it decide the
+        # status.
+        try:
+            sys.stdout.close()
+        except BaseException:
+            pass
     if aborted is not None:
         # #1508 fix-r1: an aborted run is rc 2, not 1 — `cli-parity-lock-
         # bounded` reserves 1 for "a control ran and was not killed" (a red run
@@ -598,7 +604,10 @@ try:
     if survived:
         _stderr(f"#1382 SURVIVED controls: {survived}")
         os._exit(1)
+    # Explicit success: falling off the end would let interpreter shutdown
+    # decide the status (a failing final flush turns a green run into 120).
+    os._exit(0)
 except BaseException:
-    # Nothing in the routing may raise; if it somehow does, it is still "the
+    # Nothing in the tail may raise; if it somehow does, it is still "the
     # device never produced a verdict", never a silent green.
     os._exit(2)
