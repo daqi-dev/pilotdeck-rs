@@ -547,6 +547,16 @@ EXPECTED_NAMES = (
     'read-at-handle-check-dropped', 'read-at-check-before-open',
     'read-at-identity-dropped', 'read-at-approved-stat-follows-link',
     'lease-link-identity-dropped', 'lease-link-follows-symlink-source',
+    # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
+    # `registered()` rc 2，整族在宿主上被读成「从未开跑」。
+    'cleanup-bad-record-aborts', 'cleanup-orphan-reclaim-removed',
+    'cleanup-orphan-fresh-deleted', 'lease-write-in-place',
+    'cleanup-symlink-root-swept', 'cleanup-record-rm-aborts',
+    'cleanup-orphan-root-recanonicalized', 'cleanup-lease-symlink-root-swept',
+    'cleanup-record-rm-follows-swapped-root', 'cleanup-lease-entry-symlink-swept',
+    'cleanup-lease-root-recanonicalized', 'lease-release-symlink-root-swept',
+    'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',
+    'cleanup-schedule-stop-on-failure',
 )
 
 if '--check' in sys.argv[1:]:
