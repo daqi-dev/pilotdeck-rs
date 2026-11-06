@@ -3987,15 +3987,43 @@ def _container_relays(node, bindings, seen=None):
     return True
 
 
+class _NameBindings(dict):
+    """Local binding table of one function, with loop membership (#892 r35).
+
+    A ``for`` back edge reaches a binding written *after* the use, so filtering
+    the table by ``lineno <= use`` alone hides it and the call reads the
+    builtin: ``dict = builtins.dict`` / ``for i in (0, 1): ... dict.update(
+    {'status': 'PASS'}) ... dict = report`` stayed green (codex boundary r34
+    P0-1).  The table therefore records, for every node it walked, the loops
+    that enclose it; ``_bindings_at`` adds back the bindings that share a loop
+    with the use.
+    """
+
+    __slots__ = ('loops_of',)
+
+    def __init__(self):
+        super().__init__()
+        self.loops_of = {}
+
+    def loops_at(self, node):
+        if node is None:
+            return frozenset()
+        return frozenset(self.loops_of.get(node, ()))
+
+
 def _name_bindings(function):
     """Every value assigned to a local name inside *function* (#892 r1).
 
     Each entry keeps its line number: the exit-code rule needs the binding that
     can reach a given ``return`` (nearest preceding), not every binding ever
-    made (MiniMax boundary P0-2).
+    made (MiniMax boundary P0-2).  #892 r35: the walk also records the
+    enclosing loops of every node, because a loop back edge makes a
+    textually-later binding reachable.
     """
-    bindings = {}
-    for node in _own_nodes(function):
+    bindings = _NameBindings()
+
+    def visit(node, loops):
+        bindings.loops_of[node] = loops
         if isinstance(node, ast.AnnAssign):
             if node.value is not None:
                 _bind_values(node.target, node.value, bindings, node.lineno)
@@ -4012,6 +4040,15 @@ def _name_bindings(function):
             # same way an Assign does; without this the name looked unbound and
             # the computed code was invisible (GLM boundary r7 P1-1).
             _bind_values(node.target, node.value, bindings, node.lineno)
+        inner = loops + (node,) if isinstance(
+            node, (ast.For, ast.AsyncFor, ast.While)) else loops
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.Lambda, ast.ClassDef)):
+                continue
+            visit(child, inner)
+
+    visit(function, ())
     return bindings
 
 
@@ -5173,18 +5210,43 @@ def _unproven_expansion(call, bindings, module=None, rel=None):
 _WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
 
 
-def _bindings_at(bindings, name, line):
-    """The bindings of *name* a use on *line* can see (#892 r34).
+def _bindings_at(bindings, name, node=None):
+    """The bindings of *name* a use at *node* can see (#892 r34/r35).
 
     A name reads the binding that precedes the use, not the last one in the
     file: ``dict = report; dict.update({'status': 'PASS'}); dict =
     builtins.dict`` read the trailing rebinding as the builtin and dropped the
-    write (codex boundary r33 P0-1).
+    write (codex boundary r33 P0-1).  #892 r35: "precedes" is a *source
+    position*, not a line -- the r34 spelling put the call and the rebind on
+    one physical line and ``max`` broke the ``lineno`` tie on walk order -- and
+    a binding written after the use is still reachable through a loop back
+    edge when both sit in the same loop (codex boundary r34 P0-1 / GLM
+    concurrency P1-2).  An int *node* keeps the old line-only meaning.
     """
     values = (bindings or {}).get(name) or ()
-    if line is None:
+    if node is None:
         return list(values)
-    return [item for item in values if item[0] <= line]
+    if isinstance(node, ast.AST):
+        limit = (getattr(node, 'lineno', 0), getattr(node, 'col_offset', -1))
+        loops_at = getattr(bindings, 'loops_at', None)
+        use_loops = loops_at(node) if loops_at is not None else frozenset()
+    else:
+        limit = (node, None)
+        loops_at = None
+        use_loops = frozenset()
+    visible = []
+    for lineno, value in values:
+        if limit[1] is None:
+            if lineno <= limit[0]:
+                visible.append((lineno, value))
+            continue
+        position = (lineno, getattr(value, 'col_offset', -1))
+        if position <= limit:
+            visible.append((lineno, value))
+        elif use_loops and loops_at is not None \
+                and use_loops & loops_at(value):
+            visible.append((lineno, value))
+    return visible
 
 
 def _builtin_receiver(node, bindings, depth=0, seen=None):
@@ -5207,16 +5269,20 @@ def _builtin_receiver(node, bindings, depth=0, seen=None):
         # Reading ``dict`` as the builtin dropped the real target argument and
         # left ``dict = {...}; dict.update({'status': ...})`` invisible (GLM
         # boundary r31 P0-3).
-        values = _bindings_at(bindings, node.id, getattr(node, 'lineno', None))
+        values = _bindings_at(bindings, node.id, node)
         if values:
             # #892 r33: the name denotes the *last* binding at run time, not
             # any binding it ever had.  Asking whether a historical one was the
             # builtin left ``dict = builtins.dict; dict = report;
             # dict.update({'status': 'PASS'})`` invisible (codex boundary
             # r32 P0-4).  #892 r34: "last" means the last one *before* the
-            # use.
-            _line, last = max(values, key=lambda item: item[0])
-            return _builtin_receiver(last, bindings, depth + 1, seen)
+            # use.  #892 r35: when a loop back edge (or two arms) puts more
+            # than one binding in reach, "the last one" is not a static fact;
+            # the name is the builtin only when *every* candidate is, so an
+            # ambiguous read fails closed instead of excusing the write
+            # (codex boundary r34 P0-1).
+            return all(_builtin_receiver(value, bindings, depth + 1, set(seen))
+                       for _line, value in values)
         if node.id in ('dict', 'type', 'object', 'builtins', 'operator',
                        '__builtins__'):
             return True
