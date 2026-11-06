@@ -1594,9 +1594,16 @@ MUTATIONS = [
      "    report['cleanupSkipped'] = cleanup.get('skipped', [])\n"
      "    if cleanup['status'] == 'FAIL':\n"
      "        report['status'] = 'FAIL'"),
+    # The anchor is the whole pessimistic branch, because the mutant replaces
+    # it with a naive ``all(row.get('passed'))`` summary.  r20 changed the
+    # condition to ``is not True`` (MiniMax boundary r19 P2-3); the anchor moved
+    # with it, and ``anchor_selfcheck`` is what reports the drift when it does.
     ('fixture-summary-relaxed', CHECK,
      "    if (malformed or not executed\n"
-     "            or any(row.get('passed') is False for row in executed)):\n"
+     "            or any(row.get('passed') is not True for row in executed)):\n"
+     "        # ``is False`` let a malformed ``passed=0`` / ``passed='no'`` count as\n"
+     "        # a non-failing row and the run report PASS; only a literal ``True``\n"
+     "        # passes (MiniMax boundary r19 P2-3).\n"
      "        return md.common.aggregate_status('FAIL')[0], skipped\n"
      "    status, _ = md.common.aggregate_status(\n"
      "        'PASS', 'PASS_WITH_SKIPS' if skipped else None)\n"
