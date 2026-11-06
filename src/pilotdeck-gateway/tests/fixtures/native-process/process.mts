@@ -43,6 +43,11 @@ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));const port=(server.ad
 // aligned the A4 proxy with the native process), so every launch asks for
 // port 0 and reads the actual address back; no port is reserved and no
 // bind-collision retry exists anymore.
+// #1988: a ready line is the product's `eprintln!("native listening {address}")`
+// line and nothing else -- the phrase, exactly one space, the address, then the
+// line end. This mirrors the Rust judge `advertises` in tests/native_process.rs;
+// the old `[^\n]*` also accepted `native listening 127.0.0.1:4321 extra`.
+const LISTENING_NATIVE=/^native listening (\S+:\d+)\r?\n/m;
 async function launch(name:string,extra:string[]=[],native=true){
   const home=join(out,name,'home'),project=join(out,name,'project');await mkdir(home,{recursive:true});await mkdir(project,{recursive:true});
   await writeFile(join(home,'pilotdeck.yaml'),`schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:${port}/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n`,{flag:'wx'});
@@ -59,7 +64,7 @@ async function launch(name:string,extra:string[]=[],native=true){
     // waiting instead of resolving a port-less address whose later URL
     // would fall through to http port 80.
     const readiness=native
-      ?{stream:child.stderr,text:()=>stderr,pattern:/native listening (\S+:\d+)[^\n]*\n/}
+      ?{stream:child.stderr,text:()=>stderr,pattern:LISTENING_NATIVE}
       :{stream:child.stdout,text:()=>stdout,pattern:/PilotDeck server listening: http:\/\/(\S+:\d+)\n/};
     const ready=bounded(new Promise<string>((resolve,reject)=>{
       readiness.stream.on('data',()=>{const match=readiness.pattern.exec(readiness.text());if(match)resolve(match[1]);});
@@ -91,6 +96,11 @@ async function client(address:string){
   return {ws,next};
 }
 try{
+  // #1988: the matcher accepts the two line endings the product can print and
+  // keeps rejecting trailing content after the address (the shape the Rust
+  // `advertises` judge rejects).
+  for(const line of ['native listening 127.0.0.1:4321\n','native listening [::1]:4321\r\n'])assert.ok(LISTENING_NATIVE.exec(line),'#1071 listening line is an advertisement: '+JSON.stringify(line));
+  for(const line of ['native listening 127.0.0.1:4321 extra\n','native listening 127.0.0.1:4321 some-diagnostic\n','native listening\n','native listening \n','native listening 127.0.0.1:4321','warn: native listening 127.0.0.1:4321\n','native listening  127.0.0.1:4321\n'])assert.equal(LISTENING_NATIVE.exec(line),null,'#1071 trailing content is not an advertisement: '+JSON.stringify(line));
   await writeFile(join(out,'must-not-read.yaml'),'invalid: [',{flag:'wx'});
   for(const signal of ['SIGINT','SIGTERM'] as const){
     const process=await launch(signal);const {ws,next}=await client(process.address);
