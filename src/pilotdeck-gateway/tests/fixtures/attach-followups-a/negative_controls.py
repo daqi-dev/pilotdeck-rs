@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1469: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
 The shared-filter row (filter-info-inverted) and the two #1458/#1469 rows
-together pin the one composer filter behind both diagnostics.
+together pin the one composer filter behind both diagnostics. The three #1468
+rows pin the handle binding itself: the dropped containment check (the
+multi-step choreography reaches the read only through it), the fail-open
+error arm, and the (dev, inode) depth check it complements.
 """
 import argparse
 import hashlib
@@ -93,6 +96,26 @@ mutations = [
      '        DiagnosticSeverity::Info => registered,',
      'native_process::services_tests::registered_pdf_has_no_size_estimate_diagnostic',
      '#1458 a registered pdf must not carry the pdf_size_estimate diagnostic'),
+    ('handle-path-check-dropped', SERVICES,
+     '''        Ok(handle) => {
+            handle.starts_with(lease_root)
+                || upload_store.is_some_and(|store| handle.starts_with(store))
+        }''',
+     '        Ok(_) => true,',
+     'native_process::services_tests::multi_step_swap_across_all_windows_is_not_found',
+     '#1468 a handle outside the lease root must never be read'),
+    ('handle-path-fail-open-passes', SERVICES,
+     '''        // #1468: an unavailable handle path is never approved.
+        Err(_) => false,''',
+     '''        // #1468: an unavailable handle path is never approved.
+        Err(_) => true,''',
+     'native_process::services_tests::handle_path_unavailable_fails_closed',
+     '#1468 an unavailable handle path must fail closed'),
+    ('identity-depth-removed', SERVICES,
+     '        if !attachment_identity_matches(&path_stat, &metadata) {',
+     '        if false {',
+     'native_process::services_tests::leaf_swapped_after_revalidation_fails_identity',
+     '#1468 the (dev, inode) depth check must stay'),
 ]
 
 
