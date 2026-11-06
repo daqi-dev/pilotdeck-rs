@@ -76,7 +76,32 @@ MUTATIONS = [
      '  "cases": [\n',
      '  "cases": [],\n  "disabledCases": [\n',
      'channel_matches_real_ts', '#1336 oracle cases non-empty'),
+    # Dropping a connection's timers must not let a half-sent request pin
+    # `stop()`: hyper disables `header_read_timeout` without a timer, so the
+    # fixed half of the A/B has to catch the regression on its own.
+    ('header-timeout-timer-removed', source / 'http.rs',
+     '                            .timer(TokioTimer::new())\n'
+     '                            .header_read_timeout(timeouts.headers)\n',
+     '                            .half_close(true)\n',
+     'stop_drains_a_half_sent_header_once_the_header_timeout_fires',
+     '#1336 headersTimeout lets stop() retire a half-sent request'),
+    # Node answers a request whose body never arrives with 408, not 200.
+    ('request-timeout-status', source / 'http.rs',
+     'super::response(408, None, b\"\")',
+     'super::response(200, None, b\"\")',
+     'request_timeout_answers_408_and_releases_stop',
+     '#1336 requestTimeout answers 408'),
     # The recorded case count is 22; the replay holds the declaration to it.
+    # Dropping a case *and* lowering the declaration together leaves the
+    # non-empty and declaration checks green; only the generator's literal 22
+    # catches the coverage loss.
+    ('oracle-shrunk-list', tests,
+     '    let oracle = oracle();\n    let qyapi = Qyapi::new();\n',
+     '    let mut oracle = oracle();\n'
+     '    let _ = oracle["cases"].as_array_mut().expect("#1336 mutant cases").pop();\n'
+     '    oracle["expectedCaseCount"] = json!(21);\n'
+     '    let qyapi = Qyapi::new();\n',
+     'channel_matches_real_ts', "#1336 oracle holds the generator's 22 cases"),
     ('oracle-wrong-declaration', fixtures / 'wecom-callback/oracle.json',
      '"expectedCaseCount": 22,',
      '"expectedCaseCount": 21,',

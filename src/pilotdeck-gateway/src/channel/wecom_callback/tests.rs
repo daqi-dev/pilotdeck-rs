@@ -31,13 +31,11 @@ use tokio::{
 const ORACLE: &str = include_str!("../../../tests/fixtures/wecom-callback/oracle.json");
 const QYAPI_PORT: u16 = 18998;
 const QYAPI: &str = "http://127.0.0.1:18998/cgi-bin";
-const DEADLINE: Duration = Duration::from_secs(5);
-/// `tcp-open` settles briefly before the next step (a `stop-pending`) so the
-/// listener's accept loop has accepted the connection and the request is
-/// parked on its body. Node's event loop processes the server-side accept in
-/// the same iteration that fires the client's 'connect' event; a raw Rust
-/// executor has no such pairing, so the settle provides the equivalent point.
-const ACCEPT_SETTLE: Duration = Duration::from_millis(25);
+/// Every blocking step is bounded so a regression fails instead of hanging the
+/// suite. Loose enough that a loaded host (the whole lib suite runs ~4,200
+/// tests in parallel) does not turn scheduling delay into a false FAIL; the
+/// parity cells themselves are compared exactly, not by time.
+const DEADLINE: Duration = Duration::from_secs(20);
 
 fn oracle() -> Value {
     test_baseline::oracle(ORACLE);
@@ -53,6 +51,15 @@ fn cases(oracle: &Value) -> &Vec<Value> {
             .as_u64()
             .expect("#1336 expectedCaseCount"),
         "#1336 oracle case count matches its declaration"
+    );
+    // The declaration alone is not a ruler: dropping a case and lowering
+    // `expectedCaseCount` together would keep both assertions above green.
+    // The generator's fixed count is pinned separately (`EXPECTED_CASE_COUNT`
+    // in `generate.mts`), so coverage cannot shrink silently.
+    crate::negative_assert_eq!(
+        cases.len() as u64,
+        22,
+        "#1336 oracle holds the generator's 22 cases"
     );
     cases
 }
@@ -711,6 +718,11 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                     .push(json!({"stop": reason}));
             }
             "tcp-open" => {
+                // Wait for the accept, not for a fixed slice of wall clock: a
+                // `stop-pending` that flips the shutdown watch before the
+                // accept loop took the connection makes the oracle's drain
+                // cell fail for scheduling reasons only.
+                let before = http::accepted::count();
                 let mut stream = TcpStream::connect(("127.0.0.1", case_port()))
                     .await
                     .expect("#1336 slow socket connect");
@@ -722,7 +734,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
                             .as_bytes(),
                     )
                     .await;
-                tokio::time::sleep(ACCEPT_SETTLE).await;
+                until(&context, move || http::accepted::count() > before).await;
                 sockets.insert(
                     step["label"]
                         .as_str()
@@ -1026,4 +1038,169 @@ fn message_body_truncates_at_2048_utf16_units() {
     );
     crate::negative_assert_eq!(value["touser"], json!("chat1"), "#1336 touser echo");
     crate::negative_assert_eq!(value["msgtype"], json!("text"), "#1336 msgtype");
+
+    // The truncation point can fall *inside* a surrogate pair: JS
+    // `slice(0, 2048)` then keeps the lone high half, and `JSON.stringify`
+    // escapes it as `\ud83d` (ES2019 well-formed stringify). Counting code
+    // points, or `from_utf16_lossy`, would silently turn it into U+FFFD or
+    // keep 2049 units instead — neither shows up in the paired-pair case
+    // above, so pin the cut here.
+    let split = message_body("1000002", "chat1", &format!("{}😀", "q".repeat(2047)));
+    crate::negative_assert_eq!(
+        split.matches('q').count(),
+        2047,
+        "#1336 2047 BMP units before the cut are kept"
+    );
+    crate::negative_assert!(
+        split.contains(r"\ud83d"),
+        "#1336 a split surrogate keeps its high half as \\ud83d"
+    );
+    crate::negative_assert!(
+        !split.contains('\u{FFFD}'),
+        "#1336 truncation never substitutes U+FFFD"
+    );
+}
+
+/// #1336 r1 (concurrency, P1, DeepSeek): Node's `server.close()` finishes even
+/// when a client stalls mid-request, because `headersTimeout` / `requestTimeout`
+/// retire the connection. A/B on the header timer: with a short timeout
+/// `stop()` drains; with a long one the identical stall still pins it, so the
+/// timer — not something else in the loop — is what unblocks production.
+#[tokio::test]
+async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
+    const PORT: u16 = 18996;
+    crate::negative_assert!(
+        stop_after_stalled_request(
+            PORT,
+            http::Timeouts {
+                headers: Duration::from_millis(300),
+                request: Duration::from_secs(30),
+            },
+            b"POST /cb HTTP/1.1\r\nHost: x\r\n",
+            Duration::from_secs(5),
+        )
+        .await
+        .1,
+        "#1336 headersTimeout lets stop() retire a half-sent request"
+    );
+    crate::negative_assert!(
+        !stop_after_stalled_request(
+            PORT,
+            http::Timeouts {
+                headers: Duration::from_secs(30),
+                request: Duration::from_secs(30),
+            },
+            b"POST /cb HTTP/1.1\r\nHost: x\r\n",
+            Duration::from_secs(1),
+        )
+        .await
+        .1,
+        "#1336 without the header timeout a half-sent request still pins stop()"
+    );
+}
+
+/// Node's `requestTimeout`: a request whose body never arrives is answered
+/// `408` instead of holding the connection, and the timeout is what lets
+/// `stop()` drain a client that stalls after sending its headers.
+#[tokio::test]
+async fn request_timeout_answers_408_and_releases_stop() {
+    const PORT: u16 = 18995;
+    let head = b"POST /cb HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n";
+    let (response, drained) = stop_after_stalled_request(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_secs(30),
+            request: Duration::from_millis(300),
+        },
+        head,
+        Duration::from_secs(5),
+    )
+    .await;
+    crate::negative_assert!(
+        response
+            .as_deref()
+            .is_some_and(|raw| raw.starts_with(b"HTTP/1.1 408")),
+        "#1336 requestTimeout answers 408"
+    );
+    crate::negative_assert!(
+        drained,
+        "#1336 requestTimeout lets stop() retire a stalled body"
+    );
+    let (response, drained) = stop_after_stalled_request(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_secs(30),
+            request: Duration::from_secs(30),
+        },
+        head,
+        Duration::from_secs(1),
+    )
+    .await;
+    crate::negative_assert!(response.is_none(), "#1336 no answer before requestTimeout");
+    crate::negative_assert!(
+        !drained,
+        "#1336 without requestTimeout a stalled body still pins stop()"
+    );
+}
+
+/// A listener on `port` with the given timers and no interaction port; the
+/// dispatch path is never reached by the stalling helpers below.
+async fn stalled_server(port: u16, timeouts: http::Timeouts) -> Listener {
+    let mut options = JsObject::new();
+    for (key, value) in [
+        ("corpId", "corp-x"),
+        ("agentId", "agent-1"),
+        ("secret", "corp-secret"),
+        ("token", "callback-token"),
+        (
+            "encodingAesKey",
+            "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY",
+        ),
+    ] {
+        options.insert(key.into(), JsValue::String(JsString::from(value)));
+    }
+    options.insert("port".into(), JsValue::Number(f64::from(port)));
+    let channel = WeComCallbackChannel::new(
+        WeComCallbackOptions::from_object(&options, QYAPI),
+        Arc::new(NoInteraction),
+    );
+    http::listen_with(channel.runtime.clone(), u32::from(port), timeouts)
+        .await
+        .expect("#1336 stalled listen")
+}
+
+/// One client, one stalled request, one `stop()`: returns the first response
+/// read (if any within `budget`) and whether `stop()` returned within it.
+/// Always releases the client and waits for the port, so the two halves of an
+/// A/B can share one port. The listener polls each connection once before it
+/// honours `stop()`, so the bytes below are already in the socket buffer when
+/// the shutdown branch is first considered — no sleep-based settle.
+async fn stop_after_stalled_request(
+    port: u16,
+    timeouts: http::Timeouts,
+    request: &[u8],
+    budget: Duration,
+) -> (Option<Vec<u8>>, bool) {
+    let listener = stalled_server(port, timeouts).await;
+    let mut client = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1336 stalled connect");
+    client
+        .write_all(request)
+        .await
+        .expect("#1336 stalled write");
+    let mut buf = vec![0u8; 128];
+    // A stalled request answers nothing; only the `408` half reads a response.
+    let response = match timeout(Duration::from_secs(1), client.read(&mut buf)).await {
+        Ok(Ok(read)) if read > 0 => Some(buf[..read].to_vec()),
+        _ => None,
+    };
+    let drained = timeout(budget, listener.stop()).await.is_ok();
+    let _ = client.shutdown().await;
+    drop(client);
+    until("#1336 stalled listener teardown", || {
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    })
+    .await;
+    (response, drained)
 }
