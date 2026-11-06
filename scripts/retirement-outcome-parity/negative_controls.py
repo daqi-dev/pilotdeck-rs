@@ -67,6 +67,18 @@ PARSER_OPTIONS = (
 )
 HELP_OPTIONS = ('-h', '--help')
 
+# 字面扫描（分类不可用时的回退）要判断「下一个 token 会不会被 argparse 当成选项」，
+# 这一判断依赖**已注册的选项名**：精确同名是选项、``--output=x`` 的 ``=`` 之前是选项、
+# ``-h x`` 是短选项内联（都先于「含空格就是值」）。从同一张表推出来，不另抄一份
+# （Codex r15 P1：手抄漏掉「含空格」与「末尾换行」两类，文档的残余断言因此不成立）。
+_OPTION_FLAGS = frozenset(
+    [*HELP_OPTIONS]
+    + [flag for _key, flags, _help in PARSER_OPTIONS for flag in flags]
+)
+_SHORT_OPTION_FLAGS = tuple(
+    flag for flag in _OPTION_FLAGS if len(flag) == 2 and flag[1] != '-'
+)
+
 
 def tmp_owner_pid(name):
     """``summary.json.<pid>.tmp`` 里的 pid；不是这个形状返回 None。"""
@@ -185,7 +197,7 @@ def early_outputs(argv):
     ``ok=False`` 表示**分类不可用**（argparse 导入失败，或宽松孪生解析器在某种形状上
     抛 ``ArgumentError`` / ``SystemExit``）：调用方改走 ``literal_outputs`` 的保守
     字面扫描——只认 ``--output 值`` / ``--output=值``，且只在下一个 token **两版
-    argparse 都必然当值**时消费（非 ``-`` 开头 / ``-`` 本身 / 负数字面量），
+    argparse 都必然当值**时消费（非 ``-`` 开头 / ``-`` 本身 / 含空格 / 负数字面量），
     **只漏不多删**——然后按输入不可用 rc2 退出。扫不到的形状登记在差异条目「已知边界」⑤。
 
     空值（``--output=`` / ``--output ''``）不收集：``Path('')`` 就是当前工作目录，
@@ -221,16 +233,18 @@ def _decimal_digits(text):
 
 
 def looks_like_negative_number(token):
-    """argparse 的**负数字面量**判定（``_negative_number_matcher``）。
+    """argparse 的**负数字面量**判定（``_negative_number_matcher``），两版取交集。
 
     真实解析器没有「长得像负数」的选项（只有 ``-h`` 与三条 ``--`` 长选项），所以
     ``_has_negative_number_optionals`` 是空集，``-1`` / ``-1.5`` / ``-.5`` 在**值位置**
     被 argparse 当值（3.12 与 3.14 实测一致，见
     ``_tmp/20261106-issue-1477/verify-fix-r15/probe-312.txt`` 与 ``probe-314.txt``）。
-    正则原文 ``^-\\d+$|^-\\d*\\.\\d+$``，这里手写以免在「标准库都导入不了」的回退路径上
-    再依赖 ``re``；``\\d`` 取 Unicode 十进制数字（``str.isdecimal``），与 argparse 一致。
-    ``-1x`` / ``-0x1f`` 两版结论不同（3.12 选项、3.14 值），本函数一律判
-    **不是值**——只漏不多删（已知边界⑤）。
+    这里手写以免在「标准库都导入不了」的回退路径上再依赖 ``re``；``\\d`` 取 Unicode
+    十进制数字（``str.isdecimal``），与 argparse 一致。
+
+    只覆盖**两版都认**的形状：3.12 的 ``^-\\d+$|^-\\d*\\.\\d+$`` 是整串匹配，3.14 换成
+    只锚开头的 ``-\\.?\\d``，所以 ``-1x`` / ``-0x1f`` 这类 3.14 是值、3.12 是选项——
+    本函数一律判**不是值**，只漏不多删（已知边界⑤）。
     """
     if not token.startswith('-') or token.startswith('--'):
         return False
@@ -241,13 +255,37 @@ def looks_like_negative_number(token):
     return _decimal_digits(body)
 
 
-def _is_literal_value(token):
-    """该 token 在**值位置**是否必被 argparse 当成值（两版一致的那些形状）。"""
-    if not token.startswith('-'):
+def _negative_value(token):
+    """两版 argparse 都判成负数的 token（含 3.12 的 ``$`` 允许一个末尾换行）。"""
+    if looks_like_negative_number(token):
         return True
-    if token.startswith('--'):
-        return False          # 长选项 / 裸 `--`：argparse 报「expected one argument」
-    return token == '-' or looks_like_negative_number(token)
+    # 3.12 的正则用 ``$``，它在**末尾那一个换行之前**也匹配，于是 ``'-1\\n'`` /
+    # ``'-١\\n'`` 是值；3.14 的 ``-\\.?\\d`` 只锚开头，同样认。两版都当值（Codex r15 P1）。
+    # 两个换行不行（``$`` 只跨一个），``'\\r\\n'`` 也不行（``\\d`` 不吃 ``\\r``）——
+    # 交给 ``looks_like_negative_number`` 判定剥掉一个 ``\\n`` 之后的部分即可。
+    return (token.endswith('\n') and not token.endswith('\n\n')
+            and looks_like_negative_number(token[:-1]))
+
+
+def _is_literal_value(token):
+    """该 token 在**值位置**是否必被 argparse 当成值（两版一致的那些形状）。
+
+    逐条对着 argparse ``_parse_optional`` 返回 ``None`` 的条件写，**顺序也照抄**——
+    顺序会改变结论：``'-h x'`` 先命中短选项内联、``'--output=x y'`` 先命中 ``=`` 拆分，
+    两者都在「含空格就是值」之前；``'-1 x'`` 则是含空格的值（Codex r15 P1）。
+    """
+    if not token or token[0] != '-':
+        return True
+    if token in _OPTION_FLAGS:
+        return False                                   # 精确同名选项（含 -h / --help）
+    if len(token) == 1:
+        return True                                    # 单个 '-'
+    head, separator, _tail = token.partition('=')
+    if separator and head in _OPTION_FLAGS:
+        return False                                   # --output=... 的 '=' 之前是选项
+    if any(token.startswith(flag) for flag in _SHORT_OPTION_FLAGS):
+        return False                                   # '-h x' / '-h1'：短选项内联
+    return ' ' in token or _negative_value(token)
 
 
 def literal_outputs(argv):
@@ -259,16 +297,21 @@ def literal_outputs(argv):
 
     * 内联写法 ``--output=值`` 没有歧义——``=`` 之后整段都是值（哪怕是 ``-old``），
       所以**照收**；
-    * 分隔写法 ``--output 值`` 只在下一个 token **必为值**时才算值：不以 ``-`` 开头，
-      或 ``-`` 本身，或 argparse 的负数字面量（``-1`` / ``-1.5`` / ``-.5``）——
-      这些在两版 Python 里都是值（实测），而 ``-h`` / ``--data`` / 裸 ``--`` 在任何
-      一版里都是选项；
+    * 分隔写法 ``--output 值`` 只在下一个 token **必为值**时才算值：不以 ``-`` 开头、
+      ``-`` 本身、含 ASCII 空格的 token（argparse 的 ``if ' ' in arg_string: return
+      None``，两版同源；``--bogus x`` 也是值）、argparse 的负数字面量（``-1`` /
+      ``-1.5`` / ``-.5`` / ``-١``，含 3.12 ``$`` 允许的**一个末尾换行**：``'-1\\n'`` 两版
+      都是值）——而 ``-h`` / ``-h x``（短选项内联）/ ``--data`` / ``--output=x`` / 裸
+      ``--`` 在任何一版里都是选项（判定顺序见 ``_is_literal_value``）；
     * 下一个 token 是选项 / 裸 ``--`` / 另一个 ``--output=...`` 时**不消费**它，
       留到下一轮按选项再判——否则 ``--output --output=X`` 会漏收、``--output --
       --output=X`` 会越过终止符误删位置参数同名目录（Codex r13 P0×2）；
     * 遇到裸 ``--`` 立即停止（之后的 ``--output`` 只是位置参数，argparse 也不收）；
-    * 仍会漏的形状只剩**两版结论不一致**的那些（``-1x`` / ``-0x1f``：3.14 是值、3.12
-      是选项）——漏掉等价于「不删」，不会误删别人证据（已知边界⑤）。
+    * 仍会漏的形状只剩**两版负数正则不一致**的那些（3.14 的 ``-\\.?\\d`` 只锚开头、3.12
+      是整串 ``^-\\d+$|^-\\d*\\.\\d+$``，于是 ``-1x`` / ``-1e3`` / ``-1.`` / ``-٣.٤.٥``
+      在 3.14 是值、3.12 是选项；``'-1\\n\\n'`` 同理）——漏掉等价于「不删」，不会误删
+      别人证据（已知边界⑤）。除此之外的判定与 ``_parse_optional`` 逐条对齐，证据：
+      ``_tmp/20261106-issue-1477/verify-fix-r16/``。
     """
     values = []
     index = 0
