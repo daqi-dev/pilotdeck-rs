@@ -16,11 +16,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
+from negative_selection import refuse, registered, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
 network = root / 'src/pilotdeck-gateway/src/runtime/network.rs'
 web = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/network.rs'
 fetcher = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/web/fetcher.rs'
+# #1666: static denominator and roster; `len(cases)` hides a deleted row and an
+# emptied table would print `0/0` and exit 0.
+EXPECTED_NAMES = (
+    'io-as-microtask', 'io-parent-abort', 'io-parent-abort-background',
+    'parent-first', 'tie-parent-first', 'tie-parent-last',
+    'retry-tie', 'retry-message', 'retry-outer-parent-message',
+    'error-name-network', 'error-name-body', 'error-name-body-aborted',
+    'error-name-plain', 'error-name-invalid-url-redirect', 'error-name-invalid-url-upgrade',
+    'retry-count', 'body-content', 'body-parent-name-delivery',
+    'matrix-parent-abort', 'matrix-response', 'matrix-frame',
+    'matrix-timeout', 'background-stop-signal', 'background-stop-sync',
+    'background-pending', 'background-wait', 'background-done',
+    'background-ended', 'background-ended-stable', 'background-completed',
+    'background-error',
+)
 cases = [
     ('io-as-microtask', network,
      "            timer: None,\n            microtask: false,",
@@ -146,6 +162,18 @@ assertion_anchors = {
     'background-completed': 'registry did not settle after child completion',
     'background-done': 'background done notification deadline',
 }
+# Cases whose kill is bound by the generic `network timing cell:` left==right
+# line rather than a case-specific anchor. Enumerated rather than used as a
+# silent default, so a new or renamed case is refused until an anchor is added.
+GENERIC_CELL_ANCHOR_CASES = (
+    'io-as-microtask', 'io-parent-abort-background', 'parent-first',
+    'tie-parent-first', 'tie-parent-last', 'retry-tie', 'retry-message',
+    'retry-count', 'body-content', 'body-parent-name-delivery',
+    'background-stop-signal', 'background-stop-sync', 'background-ended',
+    'background-ended-stable', 'background-error',
+)
+# Cases whose kill is bound by the retry pair printed by the `web_tools` test.
+WEB_TOOLS_ANCHOR_CASES = ('retry-outer-parent-message',)
 # Full-suite controls still bind a concrete test and its exact oracle anchor;
 # an unrelated red test must never satisfy their negative result.
 required_failures = {
@@ -162,7 +190,11 @@ def assert_required_failure(name, log):
         pattern = (r"thread '" + re.escape(test) + r"'[^\n]*\n" +
                    re.escape('assertion `left == right` failed: network timing cell: ' + cell
                              + ' #994 network-timing assertion') + r'\n')
-        assert re.search(pattern, log), (name, 'bound test/anchor must fail', test, cell)
+        # #1666: this used to be a bare `assert`, which `python3 -O` strips --
+        # the full-suite branch then reported KILLED without binding the cell.
+        if re.search(pattern, log) is None:
+            raise ValueError(
+                f'{name}: bound test/anchor must fail ({test} / {cell})')
 
 # Case-specific assertion anchors: the mutation must be rejected by the
 # intended assertion, not by a compile error or an unrelated panic.
@@ -179,6 +211,22 @@ failure_anchors = {
 
 test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
 expected_passes = len(re.findall(r'^#\[(?:tokio::)?test(?:\([^\n]*\))?\]', test_source, re.M)) - len(re.findall(r'^#\[ignore(?: = [^\n]*)?\]', test_source, re.M))
+
+
+def _check_anchor_coverage(names):
+    """#1666: static roster and one-to-one anchor coverage, checked on import."""
+    registered([(name,) for name in names], EXPECTED_NAMES)
+    anchored = (set(failure_anchors) | set(assertion_anchors)
+                | set(GENERIC_CELL_ANCHOR_CASES) | set(WEB_TOOLS_ANCHOR_CASES)
+                | set(required_failures))
+    if set(names) != anchored:
+        raise ValueError(
+            'anchor coverage drifted from the case roster'
+            f' (uncovered={sorted(set(names) - anchored)}'
+            f' dead={sorted(anchored - set(names))})')
+
+
+_check_anchor_coverage([row[0] for row in cases])
 
 
 def selection(test):
@@ -221,21 +269,33 @@ def classify(name, result, test):
             # Keep #994's exact oracle-line binding as well: the cell must be
             # the `left == right` assertion, not just a message in the block.
             assert_required_failure(name, raw)
-        except AssertionError as error:
+        except ValueError as error:
             return 'INVALID', str(error)
         return 'KILLED', 'bound network timing assertion failed'
     evidence = panic_evidence(raw, bound)
     log = evidence
-    anchor_ok = all(needle in log for needle in failure_anchors.get(name, ()))
+    # #1666: every case must name its own anchor here. The old code fell back to
+    # `failure_anchors.get(name, ())` (whose `all(())` is trivially true) and to
+    # a generic assertion line, so an unregistered or renamed case inherited a
+    # verdict instead of being refused. `_check_anchor_coverage` above proves at
+    # import time that every case has exactly one anchor category.
     if name in failure_anchors:
+        anchor_ok = all(needle in log for needle in failure_anchors[name])
         failure_ok = 'assertion `left == right` failed' in log
-    else:
+    elif name in assertion_anchors:
+        anchor_ok = True
+        failure_ok = assertion_anchors[name] in log
+    elif name in WEB_TOOLS_ANCHOR_CASES:
+        anchor_ok = True
         failure_ok = (
             f'left: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "wrong outer retry message"))} }}' in log
             and f'right: Other {{ name: Some("NetworkFetchError"), message: {list(map(ord, "Network retry aborted."))} }}' in log
-            and 'assertion `left == right` failed' in log
-            if test.startswith('web_tools::')
-            else assertion_anchors.get(name, 'assertion `left == right` failed: network timing cell:') in log)
+            and 'assertion `left == right` failed' in log)
+    elif name in GENERIC_CELL_ANCHOR_CASES:
+        anchor_ok = True
+        failure_ok = 'assertion `left == right` failed: network timing cell:' in log
+    else:
+        return 'INVALID', f'no registered assertion anchor for {name}'
     raw = result.stdout + result.stderr
     runtime = (result.returncode == 101 and 'test result: FAILED.' in raw
                and named_test_failed(raw, bound)
@@ -243,7 +303,7 @@ def classify(name, result, test):
     if runtime and failure_ok and anchor_ok:
         try:
             assert_required_failure(name, raw)
-        except AssertionError as error:
+        except ValueError as error:
             return 'INVALID', str(error)
         return 'KILLED', 'bound network timing assertion failed'
     return 'INVALID', 'missing bound oracle/typed assertion failure'
@@ -268,7 +328,7 @@ def baseline_only(rows, output):
     the formal negative path below still requires HEAD through mutation_suite.
     """
     if not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     with tree_lock(root, timeout=BASELINE_LOCK_SECONDS):
@@ -306,9 +366,18 @@ def main():
     parser.add_argument('mutations', nargs='*')
     args = parser.parse_args()
     requested = args.mutations
-    selected = [row for row in cases if not requested or row[0] in requested]
-    if requested and (len(selected) != len(requested) or len(set(requested)) != len(requested)):
-        raise SystemExit('unknown/duplicate control')
+    try:
+        registered(cases, EXPECTED_NAMES)
+        selected = [row for row in cases if not requested or row[0] in requested]
+    except ValueError as error:
+        refuse(str(error))
+    if requested:
+        known = {row[0] for row in cases}
+        unknown = [name for name in requested if name not in known]
+        duplicated = sorted({name for name in requested if requested.count(name) > 1})
+        if unknown or duplicated:
+            refuse(f'unknown/duplicate control: unknown={unknown}'
+                   f' duplicate={duplicated}')
     if args.baseline_only:
         return baseline_only(selected, args.output)
     return mutation_suite('network-timing', selected, args.output, selection, passed, classify,

@@ -100,3 +100,34 @@
 - 迁移后 `anchor_selfcheck.py` 以 `switches` 表计数：`::mutants::on("<名>")` 在目标源文件
   中必须**恰好出现 1 次**；声明了 marker 的脚本若定义 `switches` 表，按 table 信号管住。
 - 旧机制因避让（在途分支改同一文件）暂时不能跑的，推迟批次，不换文件、不放宽断言。
+
+### 自管执行脚本的判决不变式（#1666 / #1734）
+
+`tests/fixtures/*/negative_controls.py` 这类自己管循环、自己判杀的 Python 入口，判决路径
+必须满足三条不变式。三条的共享实现都在 `tests/fixtures/negative_selection.py`，脚本不各写一遍。
+
+1. **分母是静态字面量，不是运行期表长度**。表后写 `EXPECTED_NAMES`，启动即
+   `registered(表, EXPECTED_NAMES)` 逐项（含顺序与重复）比对，漂移就拒跑。用 `len(表)`
+   当分母时，删掉一行只是把这一轮悄悄变短：summary 仍报 `N/N killed`；整表被清空则打印
+   `0/0 killed` 并退出 0——零分母的运行没有测过任何东西。
+2. **空结果永不返回 0**。收尾用 `verdict_exit(rows, key=…)`：至少一行且全部 KILLED 才 0；
+   空选择、SURVIVED、INVALID、SKIPPED 一律 1。这是 `0/0 killed` 假绿的正面堵口。
+3. **守卫写成 `raise` / `refuse()`，一个都不依赖 `assert`**。`python3 -O` 与
+   `PYTHONOPTIMIZE=1` 会把 `assert` 整条剥离：名册核对、锚点计数、恢复哈希、`assert killed`
+   在优化解释器下一起消失，负控于是静默放行。`tests/fixtures/test_negative_optimize_guards.py`
+   对每个脚本复算：同一个未知变异名，加不加 `-O` 都必须以 2 拒跑、在 stderr 点出该名字、
+   且 stdout 不得出现 `0/0`；它先自证本解释器确实在 `-O` 下剥离 `assert`，否则整组结论无意义。
+
+退出码四分（适用于上述自管脚本；共享执行器 `run_cases` / `mutation_suite` 的四分见
+`tests/fixtures/README.md`，两者不互相替代）：
+
+| rc | 含义 |
+|---|---|
+| 0 | 选中的变异全部 KILLED（`--compile-only` 时全部 COMPILED） |
+| 1 | 确实跑过但没拿到全绿结论：SURVIVED / INVALID / SKIPPED / 基线重放不通过 / 收尾恢复校验失败 |
+| 2 | 从未开跑，本轮没有判决可读：未知或重复的变异名、名册与静态清单不符、marker 越界或取自判杀条件自身的 token、输出目录已存在、缺 `CARGO_TARGET_DIR`、树脏或领锁超时、oracle 读不了 |
+| 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
+
+分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
+被信号直接杀死（SIGINT 130 / SIGTERM 143 / SIGKILL 137）不在表内，看证据是否完整。
+这套分界不依赖 `assert`，所以 `-O` 下不变。

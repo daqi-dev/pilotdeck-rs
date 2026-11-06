@@ -76,6 +76,24 @@ CARGO_TARGET_DIR=… python3 \
 `case <id>` 形式的标记另由脚本启动断言钉到真实金样行。脚本启动时对两张表做双向
 覆盖、标记唯一性与分母 / 名册校验，所以本文件不复制清单，也不按插入顺序指代变异
 （要指某一个变异就写它的名字）。
+
+两种标记形态的强度不同，别混用：
+
+- **单断言标记**（如 `#1318-r1 update-drop: …`、`#1318-r2 extensions-truthiness: …`）——
+  绑定到那一条断言。要求单行、非 `assertion` / `assertion \`left == right\`` 前缀、
+  非裸 `"<case>":`、非 `: step` 结尾、非 watchdog/timeout 前缀；判据实现只有一份
+  （`tests/fixtures/negative_scope.py`，`negative_panic` 与 `_negkit` 共用）。
+- **行级标记**（`case <id>`）—— 绑定到金样的一行（一个场景），不是该行里的某一条断言。
+  它比单断言弱，但 oracle 回放本身按行比对 response/events/post 三格，行级绑定是该测试
+  能给的最强形式；启动期还会核 `<id>` 真的在 `oracle.json` 里。要更强就把标记换成该行
+  实际触发的那条 panic 消息。
+
+标记还不能取自判杀条件自身的固定 token：判定同时要求 `'#1318' in evidence`，所以
+`#1318` / `#13` 这类是 `'#1318'` 子串的标记会让标记检查恒真，启动期直接拒绝。
+
+`assert` 在 `python3 -O` / `PYTHONOPTIMIZE=1` 下会被整条剥离，本脚本的启动守卫因此全部
+写成普通 `if … : refuse(…)` / `raise`，一个都不依赖 `assert`；`negative_controls.py` 自测
+（`settings-gateway/test_negative_controls.py`）在 `-O` 下逐个复算这些拒绝路径。
 编译错误、信号退出、锚点过期（出现次数 ≠ 1）都不算杀死，直接报错退出。
 每轮 finally 恢复原始源码并核 SHA-256；输出每条补丁、原始日志、失败摘要，
 结束后应重跑正常测试和 fmt/clippy。
@@ -86,9 +104,15 @@ CARGO_TARGET_DIR=… python3 \
 | 退出码 | 含义 |
 |---|---|
 | `0` | 本次选中的变异全部 KILLED（`summary.json` 此时 `complete: true`） |
-| `1` | 开跑过但没得到全杀结论。四种形态：① 基线重放不通过——`baseline.json` + `baseline-replay.log`，**没有** `summary.json`；② 有变异 SURVIVED / INVALID——`summary.json` 在，`complete: true`；③ 跑动中被打断或收尾恢复校验失败——`summary.json` 在，`complete: false`（残卷）；④ **基线重放期间**被打断——只有 `baseline-replay.log`（末尾写明 `interrupted before the baseline replay produced output`，或就是被打断那一刻的日志），`baseline.json` / `summary.json` 都不在。此外，任何在本脚本接管之前就抛出的异常（树不干净、领锁超时、`oracle.json` 读不了）也是 `1` 加一段 traceback，此时目录里可能什么都没有 |
-| `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、marker 不指向真实 oracle 行、某个 marker 值为空 / 不指向单一断言 / 与另一个变异共用（判定是 `marker in evidence`，`'' in evidence` 恒真）、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
+| `1` | 开跑过但没得到全杀结论。三种形态：① 基线重放不通过——`baseline.json` + `baseline-replay.log`，**没有** `summary.json`；② 有变异 SURVIVED / INVALID——`summary.json` 在，`complete: true`；③ 跑动中被打断或收尾恢复校验失败——`summary.json` 在，`complete: false`（残卷） |
+| `2` | 从未真正开跑，**本轮没有写过任何证据**：变异名非法、输出目录已存在、缺 `CARGO_TARGET_DIR`、基线无法解析、`oracle.json` 读不了或结构不对、树不干净 / 领锁超时（`mutating_sources` 进入失败，`.cargo-slots.sh` 等待超过 30 分钟同理）、marker 不指向真实 oracle 行、某个 marker 值为空 / 不指向单一断言 / 与另一个变异共用 / 取自判杀条件自身的固定 token（`#1318`）、表被清空 / 增删行（静态分母 `EXPECTED_TOTAL = 7` 与冻结名册 `EXPECTED_NAMES`）、`MARKERS` 与变异表不互相覆盖 |
 | `42` | 全杀但基线不是 HEAD，非宿主证据 |
+
+`2` 的判据是「第一次写盘之前就返回」：`mutating_sources` 的进入失败（树不干净、领锁超时）
+与 oracle 读取都在第一次变异之前，所以它们是`2`而不是`1`——`1` 表示**确实跑过**。唯一的例外是
+「输出目录已存在」：它可能紧挨着**别的运行**留下的文件（见下）。同理，基线重放**期间**被打断
+属于「跑过」，此时只有 `baseline-replay.log`（末尾写明 `interrupted before the baseline replay
+produced output`，或就是被打断那一刻的日志），`baseline.json` / `summary.json` 都不在。
 
 「输出目录已存在」是唯一会带着**别的运行**留下的文件的 `2`：`runId` 是「基线前缀 + 随机
 nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本轮的，别拿它当结论。那些文件
@@ -96,8 +120,8 @@ nonce」，本轮没有 nonce 可对，所以目录里任何文件都不是本�
 一次 `2` 拒绝会留下空目录，用同一路径重跑仍会撞「目录已存在」——那时目录里没有文件，
 换新目录即可。其余 `2` 都在第一次写盘之前返回，目录是空的。
 
-被信号直接杀死（SIGKILL，退出码 137）不在本表：`summary.json` 停在最后一次原子发布的
-状态，`complete` 是 `false` 就说明这一轮没跑完。
+被信号直接杀死（SIGINT 130 / SIGTERM 143）不在本表：`summary.json` 停在最后一次原子发布的
+状态，`complete` 是 `false` 就说明这一轮没跑完。`SIGKILL`（137）同理，连收尾都来不及做。
 
 `summary.json` 是对象：`runId`（与 `baseline.json` 同代）、`registeredTotal`、
 `selectedTotal`、`complete`、`counts`、`results`；跑动中每轮都会原子重写一次且

@@ -38,13 +38,15 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
+# #1734: caller-owned preconditions are checked before the evidence directory
+# exists, so "never started" (2) really leaves nothing behind.
+if not os.environ.get('CARGO_TARGET_DIR'):
+    refuse('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
-
-if not os.environ.get('CARGO_TARGET_DIR'):
-    sys.exit('CARGO_TARGET_DIR must come from the caller; refusing a private build directory')
 
 # Local rehearsals of an uncommitted fix point this at ``git stash create``,
 # the same pre-commit escape hatch used by the other fixtures' controls
@@ -157,10 +159,21 @@ mutations = [
      ['--test', 'html_markdown', 'large_shallow_pages_match_real_ts_bytes_and_stay_fast'],
      dict(all=('#978', 'halved recipe'))),
 ]
+# #1666: static denominator; a deleted row must not shrink the run silently and
+# an emptied table must never print `0/0 killed` and exit 0.
+EXPECTED_NAMES = (
+    'frame-stack-rescan', 'moved-subtree-rewalk', 'materializing-join',
+    'materializing-join-reparent', 'halving-unsound',
+)
 selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+# #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal so `anchor_selfcheck.py` can read it
+    # statically; the requested subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 
 
 def run_timing_test(target, extra_env, timeout):
@@ -210,14 +223,16 @@ def record(entry):
 
 
 summary = []
-with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ in mutations}),
+with mutating_sources(root, sorted({root / filename for _, filename, _, _, _, _ in run_rows}),
                       baseline=baseline) as snapshots:
-    for name, filename, old, new, target, expects in mutations:
+    for name, filename, old, new, target, expects in run_rows:
         path = root / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
-        assert content.count(old) == 1, (name, content.count(old))
+        occurrences = content.count(old)
+        if occurrences != 1:
+            raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
@@ -297,4 +312,5 @@ for entry in summary:
     reason = f" ({entry['reason']})" if entry['reason'] else ''
     print(f"{entry['name']}: {entry['outcome']}{reason}")
 print(f'{len(killed)}/{len(summary)} killed; every source restored byte-for-byte')
-sys.exit(0 if len(killed) == len(summary) else 1)
+# #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
+sys.exit(verdict_exit(summary, key='outcome'))

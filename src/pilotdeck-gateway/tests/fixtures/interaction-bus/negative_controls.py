@@ -15,7 +15,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
-from negative_selection import baseline_passed
+from negative_selection import (baseline_passed, refuse, registered, select,
+                               verdict_exit)
 from negative_process import mutating_sources, run_owned
 
 ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
@@ -94,13 +95,36 @@ mutations = [
     ('replay-nonfinite', 'reconnect.rs', 'Work::Visit(JsValue::Number(n)) if !n.is_finite() => values.push(JsValue::Null),', 'Work::Visit(JsValue::Number(n)) if !n.is_finite() => values.push(JsValue::Number(42.0)),'),
     ('replay-prototype', 'reconnect.rs', '!key.equals_str("__proto__") && !v.is_undefined()', '!v.is_undefined()'),
 ]
+# #1666: static denominator. `len(mutations)` is not a denominator: deleting a
+# row shortens the run silently, and an emptied table prints `0/0 killed`.
+EXPECTED_NAMES = (
+    'late-cross-thread-response', 'cross-thread-bulk', 'same-thread-rejected-consume',
+    'nested-reject-map', 'cancel-other-pending', 'close-last-binding',
+    'peer-duplicate-error', 'peer-duplicate-check', 'reject-window-final-delete-removed',
+    'reject-window-delete-before-loop', 'injected-port-ignored', 'injected-grants-ignored',
+    'injected-elicitation-ignored', 'bash-carriage-return', 'deny-dispose-detached',
+    'duplicate-error', 'empty-id', 'cancel-removes-pending',
+    'consume-session-isolation', 'unknown-id', 'stale-response',
+    'active-after-consume', 'reject-live-reentry', 'rejection-text',
+    'permission-close-deny', 'question-dispose-reject', 'default-disposal-text',
+    'preserve-pending-turn', 'elicitation-observer', 'permission-decision-extras',
+    'close-clears-rules', 'empty-grant', 'grant-alias',
+    'close-callback-order', 'reconnect-binds-pending', 'disconnect-releases-request-binding',
+    'reconnect-generation', 'binding-validation-text', 'replay-undefined-object',
+    'replay-undefined-array', 'replay-nonfinite', 'replay-prototype',
+)
 selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+# #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal so `anchor_selfcheck.py` can read it
+    # statically; the requested subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
-    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse('CARGO_TARGET_DIR must be supplied by the caller')
 summary = []
 failures = []
 
@@ -117,7 +141,7 @@ def target_test(name):
     }.get(name, 'interaction_real_ts_stepwise_oracle')
 
 
-with mutating_sources(root, sorted({source / filename for _, filename, _, _ in mutations})) as snapshots:
+with mutating_sources(root, sorted({source / filename for _, filename, _, _ in run_rows})) as snapshots:
     def run(full):
         result = run_owned(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
             full, '--', '--exact'], cwd=root, env=env, timeout=240)
@@ -125,15 +149,17 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
 
     # #819: an unmutated baseline for every named target must be green first.
     baseline_ok = set()
-    for test in dict.fromkeys(target_test(name) for name, *_ in mutations):
+    for test in dict.fromkeys(target_test(name) for name, *_ in run_rows):
         full = f'runtime::interaction::tests::{test}'
         slot_deadline = time.monotonic() + 1800
         while True:
             slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=300)
             if slots.returncode in (0, 69):
                 break
-            assert slots.returncode == 1, slots.stdout + slots.stderr
-            assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+            if slots.returncode != 1:
+                raise RuntimeError(slots.stdout + slots.stderr)
+            if time.monotonic() >= slot_deadline:
+                raise RuntimeError('cargo slots unavailable for 30 minutes')
             time.sleep(5)
         code, log = run(full)
         (out / f'baseline-{test}.log').write_text(log)
@@ -144,7 +170,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         else:
             failures.append('baseline-' + test)
 
-    for name, filename, old, new in mutations:
+    for name, filename, old, new in run_rows:
         path = source / filename
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
@@ -153,7 +179,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
         test = target_test(name)
         full = f'runtime::interaction::tests::{test}'
         try:
-            assert content.count(old) == expected, (name, content.count(old))
+            occurrences = content.count(old)
+            if occurrences != expected:
+                raise ValueError(
+                    f'{name}: anchor occurs {occurrences} times (expected {expected})')
             changed = new.join(content.rsplit(old, 1)) if name == 'deny-dispose-detached' else content.replace(old, new, 1)
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
             # Required resource check; do not interpret the output as a concurrency
@@ -164,8 +193,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
                 (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
                 if slots.returncode in (0, 69):
                     break
-                assert slots.returncode == 1, slots.stdout + slots.stderr
-                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
+                if slots.returncode != 1:
+                    raise RuntimeError(slots.stdout + slots.stderr)
+                if time.monotonic() >= slot_deadline:
+                    raise RuntimeError('cargo slots unavailable for 30 minutes')
                 time.sleep(5)
             path.write_text(changed)
             code, log = run(full)
@@ -196,12 +227,16 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in m
             failures.append(name)
         finally:
             path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            restored = hashlib.sha256(path.read_bytes()).hexdigest()
+            if restored != before:
+                raise RuntimeError(
+                    f'{name}: restore failed ({restored} != {before}); the tree is dirty')
             (out / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2)+'\n')
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-    sys.exit(1)
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)
+print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+# #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
+sys.exit(verdict_exit(summary, key='status'))

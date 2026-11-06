@@ -14,10 +14,15 @@ from pathlib import Path
 import re
 import signal
 
+# #1734: the marker-scope predicate is shared with the legacy `negative_panic`
+# helper. Both kits used to carry their own copy and had drifted apart; the
+# single implementation lives in `negative_scope` and the strictest historical
+# rule set is kept.
+from negative_scope import HANG_PREFIXES, marker_is_scoped
+
 
 # Reserved diagnostics emitted by the existing gateway watchdog/timeout probes.
 # Data values containing these words are not themselves timeout evidence.
-HANG_PREFIXES = ('#813 gateway watchdog:', '#813 timeout:')
 
 
 @dataclass(frozen=True)
@@ -181,14 +186,9 @@ def classify(result, case):
     return 'KILLED', 'named test failed at its assertion', [case.test]
 
 
-def marker_is_scoped(marker):
-    """One shared scope check for all migrated message bindings (#935)."""
-    return (isinstance(marker, str) and bool(marker.strip())
-            and len(marker.splitlines()) == 1
-            and marker != 'assertion' and not marker.startswith('assertion `left == right`')
-            and re.fullmatch(r'"[^"]+":\s*', marker) is None
-            and not marker.rstrip().endswith(': step')
-            and not marker.startswith(HANG_PREFIXES))
+# #1734: `marker_is_scoped` is imported from `negative_scope` at the top; the
+# legacy `negative_panic` helper imports the same function, so the two kits can
+# no longer disagree about one marker.
 
 
 def classify_legacy_panic(lines, headers, case):

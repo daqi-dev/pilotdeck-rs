@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse, registered, select, verdict_exit
 root = Path(__file__).resolve().parents[5]
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=False)
@@ -16,7 +17,7 @@ source = root / 'src/pilotdeck-gateway/src/runtime/memory/maintenance.rs'
 refresh = root / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
-    sys.exit('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse('CARGO_TARGET_DIR must be supplied by the caller')
 mutations = [
     ('cancel-reported-as-error', source, 'Err(_) => return, // Executor cancelled this invocation.', 'Err(_) => Err(MemoryProviderError::new("cancelled")),', 'cancelled_invocation_releases_flight_and_retries'),
     ('cancel-flight-leaked', source, 'Flight(Some(state.clone()))', 'Flight(None)', 'cancelled_invocation_releases_flight_and_retries'),
@@ -46,10 +47,27 @@ mutations = [
     ('wrong-reason', source, 'run_due_scheduled_maintenance("scheduled")', 'run_due_scheduled_maintenance("manual")', 'idle'),
     ('refresh-swallows', refresh, 'options.memory_maintenance.schedule(project_key)', 'let _ = options.memory_maintenance.schedule(project_key); Ok(())', 'resolver_error'),
 ]
+# #1666: static denominator. A runtime `len(mutations)` shrinks silently when a
+# row is deleted, and a table that lost every row prints `0/0 KILLED` and exits 0.
+EXPECTED_NAMES = (
+    'cancel-reported-as-error', 'cancel-flight-leaked', 'panic-swallowed',
+    'panic-no-telemetry', 'panic-no-diagnostic', 'panic-lost-request',
+    'panic-stuck-flight', 'panic-string-lost', 'panic-str-lost',
+    'panic-fallback-lost', 'repoll-completed', 'production-root',
+    'production-handle', 'late-first-poll', 'missing-is-error', 'wrong-success',
+    'no-unwind-guard', 'no-cancel-guard', 'no-coalescing', 'lost-request',
+    'no-finally-restart', 'cross-generation', 'failure-escapes',
+    'no-error-telemetry', 'no-diagnostic', 'wrong-reason', 'refresh-swallows',
+)
 selected = sys.argv[3:]
-if selected:
-    mutations = [m for m in mutations if m[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation'
+# #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal so `anchor_selfcheck.py` can read it
+    # statically; the requested subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 summary = []
 def run(name, test):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
@@ -60,17 +78,21 @@ def run(name, test):
     with (out / (name + '.log')).open('x') as f: f.write(log)
     return result, log
 with mutating_sources(root, [source, refresh, helper], baseline=baseline) as snapshots:
-    for name, path, old, new, test in mutations:
+    for name, path, old, new, test in run_rows:
         original = snapshots[path]
         text = original.decode()
-        assert text.count(old) == 1, (name, text.count(old))
+        occurrences = text.count(old)
+        if occurrences != 1:
+            raise ValueError(f'{name}: anchor occurs {occurrences} times (expected 1)')
         try:
             path.write_text(text.replace(old, new))
             result, log = run(name, test)
             killed = result.returncode == 101 and f'{test} ... FAILED' in log and 'test result: FAILED' in log
             summary.append({'name':name, 'killed':killed, 'sourceSha256':hashlib.sha256(original).hexdigest()})
             print(name, 'KILLED' if killed else 'NOT KILLED', flush=True)
-            assert killed, 'compile failure/signal/zero tests is not a negative control'
+            if not killed:
+                raise RuntimeError(
+                    f'{name}: compile failure/signal/zero tests is not a negative control')
         finally:
             path.write_bytes(original)
 # The context manager verifies restoration against the same Git tree.
@@ -78,9 +100,13 @@ with mutating_sources(root, [source, refresh, helper], baseline=baseline):
     slots = wait_for_slot(root / 'scripts/cargo-slots.sh')
     result = run_owned(['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib','runtime::memory::maintenance::tests'],cwd=root,env=env,timeout=240)
     with (out / 'restored.log').open('x') as f: f.write(result.stdout + result.stderr)
-    assert result.returncode == 0
-    if any(m[0] == 'production-handle' for m in mutations):
-        result, log = run('restored-production-handle', next(m[4] for m in mutations if m[0] == 'production-handle'))
-        assert result.returncode == 0 and '1 passed' in log
+    if result.returncode != 0:
+        raise RuntimeError(f'restored baseline is not green (rc={result.returncode})')
+    if any(m[0] == 'production-handle' for m in run_rows):
+        result, log = run('restored-production-handle', next(m[4] for m in run_rows if m[0] == 'production-handle'))
+        if result.returncode != 0 or '1 passed' not in log:
+            raise RuntimeError('restored production-handle baseline did not pass its named test')
 with (out / 'summary.json').open('x') as f: json.dump(summary,f,indent=2)
-print(f'{len(summary)}/{len(mutations)} KILLED; restored PASS',flush=True)
+print(f'{len(summary)}/{len(run_rows)} KILLED; restored PASS',flush=True)
+# #1666: `-O` cannot turn a zero-row or surviving run into a success.
+sys.exit(verdict_exit(summary, key='killed', killed=True))

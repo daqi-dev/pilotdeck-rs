@@ -13,6 +13,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import ReceiptRun, judge, passed
+from negative_selection import refuse, registered
 
 root = Path(__file__).resolve().parents[5]
 settings = root / 'src/pilotdeck-cli/src/sdk/settings.rs'
@@ -65,6 +66,27 @@ mutations = [
     ('settings-size-gate', settings, 'if !matches!(settings, JsValue::Object(_)) {', 'if !matches!(settings, JsValue::Object(_)) || raw.len() > 65_536 {', 'settings_set_accepts_extreme_nesting', '#1044 expected gateway lifecycle settings-extra--set-extreme-nesting'),
     ('settings-depth-wire', tests, '{deep}}}}}', '{{}}}}}}', 'settings_set_accepts_extreme_nesting', '#1029 hello and request wire settings-extra--set-extreme-nesting'),
 ]
+# #1666: static roster and denominator. `len(mutations)` is not a denominator:
+# deleting a row used to shorten the run silently. The last two rows are the
+# frozen D1 entries registered in
+# `specs/gateway-parity/diffs/D1-SDK-SETTINGS-NESTING-DEPTH-001.md:33-36`
+# (`settings-size-gate`, `settings-depth-wire`); dropping either without a new
+# diff entry must fail here first.
+EXPECTED_NAMES = (
+    'settings-hello-client-name', 'settings-hello-token', 'settings-hello-protocol',
+    'request-placeholder-collision', 'response-placeholder-collision', 'settings-hello-order',
+    'settings-request-order', 'settings-json-escaping', 'dispatch',
+    'default', 'get-method', 'set-method',
+    'json-precedence', 'positional-join', 'empty-json',
+    'syntax-message', 'null-validation', 'array-validation',
+    'scalar-validation', 'object-message', 'source',
+    'whole-object', 'json-rounding', 'empty-url-gate',
+    'full-result', 'undefined-output', 'pretty-output',
+    'fixed-ack', 'no-local-write', 'settings-client-version',
+    'rawvalue-surrogate', 'rawvalue-depth', 'selected-cell-coverage',
+    'coverage', 'oracle-drift', 'source-drift',
+    'settings-size-gate', 'settings-depth-wire',
+)
 
 def check(row):
     count = row[1].read_text().count(row[2])
@@ -75,6 +97,11 @@ def check(row):
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
+        # #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+        try:
+            registered(mutations, EXPECTED_NAMES)
+        except ValueError as error:
+            refuse(str(error))
         failures = []
         for row in mutations:
             try:
@@ -86,13 +113,24 @@ def main():
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg not in ('--compile-only',)]
     if not args:
-        raise SystemExit('usage: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
-    selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
-    if not selected or (args[1:] and len(selected) != len(args[1:])):
-        raise SystemExit('unknown/duplicate mutation selection')
+        refuse('usage: --check | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+    try:
+        registered(mutations, EXPECTED_NAMES)
+        selected = [row for row in mutations if not args[1:] or row[0] in args[1:]]
+    except ValueError as error:
+        refuse(str(error))
+    requested = args[1:]
+    known = {row[0] for row in mutations}
+    unknown = [name for name in requested if name not in known]
+    duplicated = sorted({name for name in requested if requested.count(name) > 1})
+    if unknown or duplicated:
+        refuse(f'unknown/duplicate mutation selection: unknown={unknown}'
+               f' duplicate={duplicated}')
+    if not selected:
+        refuse('empty mutation selection')
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
     out = Path(args[0]).resolve()
@@ -151,7 +189,9 @@ def main():
     counts = {status:sum(row['status']==status for row in results) for status in ['KILLED','SURVIVED','INVALID','COMPILED']}
     (out / 'summary.json').write_text(json.dumps(dict(controls=results,counts=counts),indent=2)+'\n')
     print(json.dumps(counts),flush=True)
-    return int(any(row['status'] != ('COMPILED' if compile_only else 'KILLED') for row in results))
+    # #1666: an empty run is never success (`0/0` used to return 0).
+    expected = 'COMPILED' if compile_only else 'KILLED'
+    return int(not results or any(row['status'] != expected for row in results))
 
 if __name__ == '__main__':
     sys.exit(main())

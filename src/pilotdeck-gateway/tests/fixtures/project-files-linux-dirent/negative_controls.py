@@ -18,7 +18,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import baseline_passed
+from negative_selection import (baseline_passed, refuse, registered, select,
+                               verdict_exit)
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -90,14 +91,25 @@ failure_markers = {
     'reverse-wire-sort': '#133 wire item order differs from Node',
     'listed-plain-dist': '#133 wire listed set differs from the valid-UTF-8 expectation',
 }
+# #1666: static denominator; `len(mutations)` hides a deleted row and lets an
+# emptied table print `0/0 killed` and exit 0.
+EXPECTED_NAMES = (
+    'strict-decode', 'reverse-dirent-order', 'flip-directory-type',
+    'reverse-wire-sort', 'listed-plain-dist',
+)
 selected = sys.argv[2:]
-if selected:
-    mutations = [mutation for mutation in mutations if mutation[0] in selected]
-    assert len(mutations) == len(selected), 'unknown mutation name'
+# #1666: ordinary raises, so `python3 -O` cannot strip these guards.
+try:
+    registered(mutations, EXPECTED_NAMES)
+    # `mutations` stays the frozen literal so `anchor_selfcheck.py` can read it
+    # statically; the requested subset is a separate name.
+    run_rows = select(mutations, selected, always=())
+except ValueError as error:
+    refuse(str(error))
 if 'CARGO_TARGET_DIR' not in os.environ:
-    sys.exit('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 if 'PDRS_BASELINE' not in os.environ:
-    sys.exit('set PDRS_BASELINE to the pinned PilotDeck TS checkout before running')
+    refuse('set PDRS_BASELINE to the pinned PilotDeck TS checkout before running')
 env = os.environ.copy()
 env['PDRS_LINUX_DIRENT_CHECK'] = '1'
 summary = []
@@ -137,16 +149,19 @@ with mutating_sources(root, [source, dirent_test]) as snapshots:
     if not baseline_ok:
         failures.append('baseline')
 
-    for name, path, old, new in mutations:
+    for name, path, old, new in run_rows:
         original = snapshots[path]
         before = hashlib.sha256(original).hexdigest()
         content = original.decode()
         # A stale anchor (source drifted, or a copy-paste duplicate) must abort
         # the run; recording it as SURVIVED would hide a broken control.
-        assert content.count(old) == ANCHOR_COUNTS.get(name, 1), (
-            f'{name}: anchor occurs {content.count(old)} times '
-            f'(expected {ANCHOR_COUNTS.get(name, 1)}); the anchor is stale '
-            'and must be updated')
+        occurrences = content.count(old)
+        expected_occurrences = ANCHOR_COUNTS.get(name, 1)
+        if occurrences != expected_occurrences:
+            raise ValueError(
+                f'{name}: anchor occurs {occurrences} times '
+                f'(expected {expected_occurrences}); the anchor is stale '
+                'and must be updated')
         changed = content.replace(old, new, 1)
         (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(
             content.splitlines(True), changed.splitlines(True),
@@ -173,7 +188,10 @@ with mutating_sources(root, [source, dirent_test]) as snapshots:
                 failures.append(name)
         finally:
             path.write_bytes(original)
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+            restored = hashlib.sha256(path.read_bytes()).hexdigest()
+            if restored != before:
+                raise RuntimeError(
+                    f'{name}: restore failed ({restored} != {before}); the tree is dirty')
             (out / 'summary.json').write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 counts = {state: sum(row['status'] == state for row in summary)
@@ -181,5 +199,6 @@ counts = {state: sum(row['status'] == state for row in summary)
 print('summary: ' + ', '.join(f'{state}={count}' for state, count in counts.items()), flush=True)
 if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
-    sys.exit(1)
-print(f'{len(summary)}/{len(mutations)} killed; every source restored byte-for-byte', flush=True)
+print(f'{len(summary)}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+# #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
+sys.exit(verdict_exit(summary, key='status'))

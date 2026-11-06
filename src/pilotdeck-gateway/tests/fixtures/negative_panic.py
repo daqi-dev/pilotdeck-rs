@@ -48,6 +48,12 @@ new analysis, not as a free widening.
 """
 import re
 
+# #813 fix-r8 / #1734: the marker-scope predicate lives in one shared module.
+# It used to exist twice (here and in `_negkit/contract.py`) with different
+# strictness, so the same marker could pass one kit and fail the other. Keep
+# importing it — do not re-add a local copy.
+from negative_scope import HANG_PREFIXES, marker_is_scoped
+
 # Lines that end a panic payload rather than belong to it. The backtrace note
 # and block come first; the rest are libtest's own result/report lines.
 _PANIC_TAIL = re.compile(
@@ -158,35 +164,8 @@ def panic_evidence(raw, used_test):
     return '\n'.join(block for block in blocks if block)
 
 
-# #813 fix-r8: a watchdog/timeout payload means the test hung; it is not an
-# assertion failure. The prefixes are fixed so the judge can reject the payload
-# without knowing which scenario stalled. Never begin such a message with a
-# scenario name: prefix markers would otherwise match it.
-HANG_PREFIXES = ('#813 gateway watchdog:', '#813 timeout:')
-
-# #813 fix-r8: markers that identify no assertion. `assertion` and the bare
-# assert_eq diagnostic accept any assertion in the same test; `"<case>": `
-# accepts any failure of that scenario, including a different step or a hang.
-_CASE_ONLY_MARKER = re.compile(r'^"[^"]+": $')
-
-
-def marker_is_scoped(marker):
-    """Whether ``marker`` names one assertion instead of a class of failures.
-
-    A bare scenario prefix is not evidence that the *target* assertion failed.
-    Callers that know the target also pass ``target=`` to
-    ``marker_kills_named_test``; this check is the fallback for every other
-    consumer (#813 fix-r8).
-    """
-    if not isinstance(marker, str) or not marker.strip():
-        return False
-    if marker == 'assertion' or marker.startswith('assertion `left == right`'):
-        return False
-    if _CASE_ONLY_MARKER.match(marker):
-        return False
-    if marker.startswith(HANG_PREFIXES):
-        return False
-    return True
+# #813 fix-r8 / #1734: `HANG_PREFIXES` and `marker_is_scoped` come from the
+# shared `negative_scope` module imported at the top; do not re-add a copy.
 
 
 def marker_kills_named_test(raw, used_test, marker, target=None):

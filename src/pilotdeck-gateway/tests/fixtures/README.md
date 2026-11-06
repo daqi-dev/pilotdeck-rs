@@ -30,6 +30,24 @@ file-history-cwd/negative_controls.py · processor-message-unscoped · #1234 · 
 
 契约范围仅上述两个共享执行器。`shared-runner-failclosed/negative_controls.py` 是手工顶层脚本，其 `main()` 对所有守卫失败一律返回 rc=2（含进入守卫前的拒跑）；本仓没有调用方解析它的退出码，且任何失败都发布全 INVALID（失败关闭），故不纳入三分契约。同一仓内自管执行脚本（`edgeclaw-*`、`anchor_selfcheck.py` 等）「锚点过期 → 2」的约定同样不在本契约范围。
 
+### 自管执行脚本（#1666 / #1734）
+
+自己管循环、自己判杀的 `*/negative_controls.py` 走另一套四分（0 全 KILLED / 1 跑过但没全绿 /
+2 从未开跑 / 42 全杀但基线非 HEAD），规约与不变式见
+[`specs/negative-controls/README.md`](../../../../specs/negative-controls/README.md)
+「自管执行脚本的判决不变式」。三条硬要求，改这类脚本时逐条核：
+
+- 分母是源码里的静态 `EXPECTED_NAMES`，启动用 `negative_selection.registered` 比对，
+  **不取 `len(表)`**；删行 / 改名 / 清空表都必须在第一次变异之前拒跑（rc=2）。
+- 收尾用 `negative_selection.verdict_exit`：零行永不返回 0。`0/0 killed` 从来不是通过。
+- 全部守卫写成 `raise` / `refuse()`，**一个都不依赖 `assert`**。`python3 -O` /
+  `PYTHONOPTIMIZE=1` 会整条剥离 `assert`，靠 `assert` 的负控在优化解释器下静默放行。
+
+`test_negative_optimize_guards.py` 对十个脚本逐一复算「未知变异名 → rc=2 且 stderr 点名」，
+加不加 `-O` 都要成立；它同时自证本解释器确实剥离 `assert`，否则结论无意义。
+`settings-gateway/test_negative_controls.py` 用「真实源码 + 一处注入编辑」复算启动守卫，
+不需要 cargo、不需要已提交的树。
+
 ## 自测与负控
 
 ```sh
