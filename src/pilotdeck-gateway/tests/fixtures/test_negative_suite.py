@@ -5,6 +5,7 @@ import errno
 import io
 import json
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -1528,6 +1529,43 @@ class AuditBindingTests(unittest.TestCase):
         # The macro form is only accepted when the caller names the macro.
         self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'))
         self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'))
+
+
+BASELINE_DEFAULT = re.compile(r"\.get\(\s*['\"][A-Z_]*BASELINE['\"]\s*,\s*['\"]HEAD['\"]\s*\)")
+
+
+def unpinned_baseline_reads(root):
+    """#1890: report every runner that reads a baseline with a literal default.
+
+    ``os.environ.get(NAME, 'HEAD')`` keeps an exported-but-empty variable
+    verbatim, and ``git show ':path'`` resolves the empty revspec to the index:
+    a staged-but-uncommitted tree then becomes the guard's baseline and the
+    mutation run reports PASS against its own bytes. ``get(NAME) or 'HEAD'``
+    is the rule; this scan is what keeps the copies from drifting apart again.
+    """
+    found = []
+    for path in sorted(Path(root).rglob('negative*.py')):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if BASELINE_DEFAULT.search(line):
+                found.append(f'{path.relative_to(root)}:{number}')
+    return found
+
+
+class BaselineDefaultTests(unittest.TestCase):
+    def test_fixtures_fall_back_to_head_on_an_empty_baseline(self):
+        self.assertEqual(
+            unpinned_baseline_reads(Path(__file__).resolve().parent),
+            [],
+            '#1890 an empty baseline must fall back to HEAD, not be read verbatim')
+
+    def test_scan_catches_a_literal_head_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            probe = Path(root) / 'edgeclaw-probe' / 'negative.py'
+            probe.parent.mkdir()
+            probe.write_text("baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')\n")
+            self.assertEqual(
+                unpinned_baseline_reads(Path(root)), ['edgeclaw-probe/negative.py:1'],
+                '#1890 the scan must see a literal HEAD default')
 
 
 if __name__ == '__main__':

@@ -34,7 +34,7 @@ helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/he
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-baseline = os.environ.get('NEGATIVE_BASELINE', 'HEAD')
+baseline = os.environ.get('NEGATIVE_BASELINE') or 'HEAD'
 out.mkdir(parents=True, exist_ok=True)
 cases = [
     # Han detection drives the 2/3-unit slicing; Latin instead of Han leaves

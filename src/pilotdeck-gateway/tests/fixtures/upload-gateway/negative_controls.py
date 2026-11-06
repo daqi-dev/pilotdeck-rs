@@ -587,7 +587,7 @@ if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
 refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 out = claim_dir(sys.argv[1])
 summary = []
-baseline = os.environ.get('PDRS_NEG_BASELINE', 'HEAD')
+baseline = os.environ.get('PDRS_NEG_BASELINE') or 'HEAD'
 with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
     for name, source, old, new, test, expected in run_rows:
         original = snapshots[source]
