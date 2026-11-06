@@ -48,7 +48,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import panic_evidence
 from negative_process import new_output_directory, run_owned, tree_lock, wait_for_slot
-from negative_source import test_body
+from negative_source import squeeze, test_body
 from negative_suite import classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -61,6 +61,9 @@ MARKERS = [
     '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
 ]
 MARKER_TEMPLATE = '#1261 native entry rejects inherited {key}'
+# The scrub test's one kill message; `--check` binds it together with the
+# assertion head and polarity, so neither the call nor its sense can drift.
+SCRUB_MARKER = '#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH'
 # The unmarked early-exit panics must stay distinct from every kill marker:
 # the shared judge kills only on a marker inside the named test's panic
 # payload, and the INVALID branch deliberately offers none.
@@ -72,10 +75,6 @@ SCRUB_EARLY_EXIT = ('#1261 native entry scrub child neither advertised listening
 # and the single call each test makes to observe the advertisement.
 GATE = 'if !stderr.contains(&rejection) {'
 OBSERVE = 'observe_child_stderr(stderr)'
-# The two marked assertions the runtime verdicts rest on, as they appear in
-# the test source: the advertisement kill and the scrub kill's polarity.
-ADVERTISED_ASSERT = 'negative_assert!(!advertised,'
-LEAKED_ASSERT = '!leaked_parse,'
 KEYS = ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT', 'PILOTDECK_MANAGED_CONFIG')
 # One row per stub shape *and* bound test: an environmental exit prints
 # nothing and can only be judged INVALID, while a child that advertised
@@ -113,8 +112,11 @@ def main():
             # P3).
             raise SystemExit(f'#1261 duplicate stub row names: {names}')
         test_source = TEST_FILE.read_text()
-        rejects = test_body(test_source, TEST)
-        scrub = test_body(test_source, SCRUB_TEST)
+        # Whitespace-normalized bodies: the needles below are whole
+        # `negative_assert!` calls, which rustfmt may spread over lines.
+        # Literals keep their inner whitespace (negative_source.squeeze).
+        rejects = squeeze(test_body(test_source, TEST))
+        scrub = squeeze(test_body(test_source, SCRUB_TEST))
         # Each row's proof must live in the test that row names, or the
         # runtime verdict for that row could never be reached.
         for name, test, _, _, payloads in ROWS:
@@ -135,21 +137,30 @@ def main():
         for key in KEYS:
             if f'"{key}"' not in rejects:
                 raise SystemExit(f'#1261 key missing from {TEST}: {key}')
-        # The template alone is not enough: the same message is repeated by
-        # the sibling assertions below it, so deleting the advertisement
-        # assertion (#1401 review P2, demonstrated by dropping the line and
-        # still exiting 0) has to be caught by the call itself. The scrub
-        # assertion's polarity is bound the same way: inverting it would leave
-        # its message in place while the inherited key no longer kills.
-        for needle, what in ((GATE, 'rejection gate'),
-                             (OBSERVE, 'listening advertisement observation'),
-                             (ADVERTISED_ASSERT,
-                              'listening advertisement assertion')):
+        # Each needle binds the whole assertion call -- `negative_assert!`,
+        # the condition with its polarity, and the message -- because the same
+        # template is repeated by the sibling assertions: a fragment needle
+        # still passes when the call is deleted or rewritten as
+        # `let _ = (!advertised, "…");`, and the mutant is then unkilled
+        # (#1401 review P2). The scrub's unjudgeable branch is bound the same
+        # way: an `if !advertised` guard without its panic is not the branch.
+        for needle, what in (
+                (GATE, 'rejection gate'),
+                (OBSERVE, 'listening advertisement observation'),
+                (f'negative_assert!(!advertised, "{MARKER_TEMPLATE}"',
+                 'listening advertisement assertion'),
+                (f'negative_assert!(!status.success(), "{MARKER_TEMPLATE}"',
+                 'child exit status assertion'),
+                (f'negative_assert!(leftover.is_empty(), "{MARKER_TEMPLATE}"',
+                 'home leftover assertion')):
             if needle not in rejects:
                 raise SystemExit(f'#1261 missing {what} from {TEST}')
-        for needle, what in ((OBSERVE, 'scrub listening advertisement observation'),
-                             (LEAKED_ASSERT, 'scrub inherited config assertion'),
-                             (SCRUB_EARLY_EXIT, 'scrub unjudgeable panic')):
+        for needle, what in (
+                (OBSERVE, 'scrub listening advertisement observation'),
+                (f'negative_assert!(!leaked_parse, "{SCRUB_MARKER}"',
+                 'scrub inherited config assertion'),
+                ('if !advertised { panic!(',
+                 'scrub unjudgeable branch')):
             if needle not in scrub:
                 raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
         for marker in MARKERS:
