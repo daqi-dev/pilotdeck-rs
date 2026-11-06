@@ -188,9 +188,12 @@ pub const SCALING_NOISE: f64 = 0.15;
 /// absolute allowance up to the cap described below.
 ///
 /// The absolute slack can only be allowed to eat a small part of the gap the
-/// band discriminates. On the wall-clock sites it is tiny (`0.15 s / 1.45 s` =
-/// 0.10x against a 1.17x gap at factor 2) and the cap does not bind, so their
-/// limits are unchanged. On the CPU-sampled sites it is not: cb8 release
+/// band discriminates. It is a fixed 150 ms while the band is a ratio, so how
+/// much of the gap it eats depends on the small sample's length, not on which
+/// clock produced it. On a 1.45 s small run (the deep frame's pre-migration
+/// wall clock, and the mutated tree's 4 MiB CPU time) it is `0.15 s / 1.45 s` =
+/// 0.10x against a 1.17x gap at factor 2: the cap does not bind and those
+/// limits stay at 2.93x. On today's CPU-sampled sites it is not: cb8 release
 /// measures 23 ms for the deep-frame small run and 107 ms for the
 /// `large_shallow` paragraphs one, where the same 150 ms becomes 6.5x / 1.4x —
 /// more than the whole gap — and a real quadratic would pass. Capping the
