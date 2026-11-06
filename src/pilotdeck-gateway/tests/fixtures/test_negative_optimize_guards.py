@@ -153,6 +153,14 @@ SCANNED_EXTRA = (
     # `background-output/`, `test_negative_adaptive.py`): its `run()` decides
     # KILLED vs PASS and `scratch()` checks the tree is untouched.
     '_shared/negative_control.py',
+    # #1922: the judgment layer has three more shared implementations with the
+    # same "no bare assert under -O" contract, all at zero assert statements
+    # today. Registering them makes a reintroduced `assert` a CI failure
+    # instead of untested drift (selection / verdict exits, process and source
+    # ownership, the precompiled-switch executor).
+    'negative_selection.py',
+    'negative_process.py',
+    '_shared/mutant_switch.py',
 )
 _CLEANUP = []
 

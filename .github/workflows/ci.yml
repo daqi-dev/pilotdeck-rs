@@ -60,6 +60,12 @@ jobs:
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
           python3 -B -m unittest -v settings-gateway/test_negative_controls.py
+          # #1922：判决层四条 raise 判杀守卫（_shared/negative_control.py 的 run()）与
+          # network-timing 两条 OSError→refuse() 分支（negative_controls.py 模块级源码重读、
+          # negative_private.py 的 catalog）此前只有静态「无裸 assert」机检、无 -O 行为用例。
+          # 两者都在 -O 子进程里跑真实源码（假 cargo / 一处注入编辑），不需要 cargo 名额。
+          python3 -B -m unittest -v test_negative_run_guards
+          python3 -B -m unittest -v network-timing/test_negative_controls.py
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
       # 宿主清单、neg-for-diff 都没拦住，靠最终评审读码才发现。glob 统一覆盖今后新增的
