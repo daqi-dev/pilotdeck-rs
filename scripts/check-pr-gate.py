@@ -112,7 +112,9 @@ def check_block(attrs: str, head: str, patch: str = "") -> list[str]:
     prefix = {"zai": "glm-", "anthropic": "claude-", "minimax": "MiniMax-",
               "deepseek": "deepseek-", "codex": "gpt-"}
     rn, md = one.get("runner"), one.get("model", "")
-    if rn is not None and (rn not in prefix or not md.startswith(prefix[rn])):
+    # 前缀后至少要有一个字符：`model=gpt-` 这种空后缀不算登记过的谱系（#1599 r4 评审 P3）。
+    if rn is not None and (rn not in prefix or len(md) <= len(prefix[rn])
+                           or not md.startswith(prefix[rn])):
         errs.append(f"结果块 runner={rn} model={md} 不是已知组合（zai→glm-*，anthropic→claude-*，minimax→MiniMax-*，deepseek→deepseek-*，codex→gpt-*）")
     # P1（boundary 审 #1）：head= 必须与当前 PR head 比对，防「推新提交后旧 PASS 块照样过闸」
     if head:

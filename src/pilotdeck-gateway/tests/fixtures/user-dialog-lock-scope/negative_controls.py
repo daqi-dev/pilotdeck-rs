@@ -90,6 +90,9 @@ SETTLE_EVENTS_TEST = ('native_process::methods::tests::'
                       'user_dialog_respond_settle_failure_still_delivers_the_expired_lease')
 SETTLE_EVENTS_ASSERTION = ('#1599 a failing settle hook still delivers the lease '
                            'expiry it did not roll back')
+REPLACED_POLL_TEST = ('user_dialog::channel_tests::'
+                     'a_replaced_dialog_keeps_its_own_cross_gateway_poll')
+REPLACED_POLL_ASSERTION = '#1599 a replaced dialog keeps its own cross-gateway poll'
 # Statically declared denominator: a literal tuple, deliberately not derived
 # from `mutations`, so a runtime table that lost rows cannot shrink it.
 DECLARED = (
@@ -108,6 +111,7 @@ DECLARED = (
     'restore-ignores-the-successor',
     'restore-drops-the-replaced-waiter',
     'settle-failure-drops-pre-consume-events',
+    'replaced-dialog-loses-its-poll',
 )
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
@@ -275,6 +279,12 @@ mutations = [
      '                                outbox.without_settled(&session_key, &request_id).deliver();',
      '',
      SETTLE_EVENTS_TEST, SETTLE_EVENTS_ASSERTION),
+    # channel.poll: the old request's stop deletes a same-id replacement's
+    # poll entry again (TS keeps one timer per request).
+    ('replaced-dialog-loses-its-poll', 'user_dialog/channel.rs',
+     '.is_some_and(|entry| entry.generation == generation)',
+     '.is_some_and(|entry| entry.generation >= generation)',
+     REPLACED_POLL_TEST, REPLACED_POLL_ASSERTION),
 ]
 declared = list(DECLARED)
 selected = sys.argv[3:]
@@ -382,15 +392,12 @@ try:
                 code, log = run(test)
                 (out / f'{name}.log').write_text(log)
                 evidence = panic_evidence(log, test)
-                # Kill evidence is the bound probe assertion (a callback's
-                # try_lock probe re-acquiring the guard, the probe sequence
-                # breaking, the bounded re-entrant call missing its deadline)
-                # or the #1600 fixture assertion. The marker list still admits
-                # the sequence/deadline anchors a panic may hit first.
-                marker_ok = any(marker in evidence for marker in (
-                    assertion,
-                    'every probe fires exactly once, in order',
-                    're-entrant bus call completed within the timeout'))
+                # Kill evidence is the mutation's own bound assertion: a
+                # mutant only counts as KILLED when the assertion the row
+                # binds is the one that fired. Generic suite-wide markers are
+                # deliberately not accepted, so a mutant cannot borrow a
+                # sibling probe's failure (#1599 r4 review).
+                marker_ok = assertion in evidence
                 killed = (test in baseline_ok and code == 101
                           and named_test_failed(log, test)
                           and marker_ok

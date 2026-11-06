@@ -488,6 +488,16 @@ def _run(gate, rrr, out_base: Path) -> int:
                 fails.append(f"闸门：{why} 应拒收")
         if gate_errs(ok_block + "\n" + ok_block):
             fails.append(f"闸门：分批的两个合法块应接受：{gate_errs(ok_block + chr(10) + ok_block)}")
+        # codex（官方 GPT 谱系）登记后要有正负控：合法组合放行、错配与空后缀拒收（#1599 r4 评审 P2）。
+        codex_block = ok_block.replace("runner=zai", "runner=codex").replace(
+            "model=glm-5.3-mb", "model=gpt-6.1-terra")
+        if gate_errs(codex_block):
+            fails.append(f"闸门：runner=codex model=gpt-* 应接受：{gate_errs(codex_block)}")
+        for bad, why in [(codex_block.replace("model=gpt-6.1-terra", "model=glm-5.3-mb"), "codex 配 glm"),
+                         (codex_block.replace("model=gpt-6.1-terra", "model=gpt-"), "codex 空后缀"),
+                         (ok_block.replace("model=glm-5.3-mb", "model=glm-"), "zai 空后缀")]:
+            if not gate_errs(bad):
+                fails.append(f"闸门：{why} 应拒收")
 
         # --serial：同一进程逐个跑四角色（并行全跑在本机会挂起），产出单个四角色块；进程起止不得重叠
         trace = tmp / "trace.txt"

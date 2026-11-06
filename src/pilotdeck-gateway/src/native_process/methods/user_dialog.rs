@@ -442,11 +442,13 @@ impl Requests {
                             .user_dialog_bus
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
-                        // Events that already happened before this consume
-                        // (a lease that expired inside `consume_for_response`)
-                        // must survive a settle failure; only this consume's
-                        // own "settled" broadcast is rolled back with the
-                        // entry (GatewayUserDialogBus.ts:219-226).
+                        // `pre` holds changes queued before this consume
+                        // (normally empty here); a lease that expires inside
+                        // `consume_for_response` lands in `outbox`. A settle
+                        // failure rolls back only the entry and its own
+                        // "settled" broadcast, so `outbox` is delivered
+                        // through `without_settled`
+                        // (GatewayUserDialogBus.ts:219-226).
                         let pre = bus.drain_events();
                         let consumed = bus.consume_for_response(
                             &session_key,

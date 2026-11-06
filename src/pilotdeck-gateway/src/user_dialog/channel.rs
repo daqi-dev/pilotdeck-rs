@@ -227,6 +227,10 @@ struct RequestState {
 struct PollEntry {
     due_ms: i64,
     polling: bool,
+    /// Registration this poll belongs to. A reentrant host callback may replace
+    /// the dialog under the same request id; the old request must then leave
+    /// the replacement's poll alone (#1599).
+    generation: u64,
 }
 #[derive(Default)]
 struct PollRegistry {
@@ -550,7 +554,11 @@ impl GatewayUserDialogChannel {
                 let channel = self.clone();
                 let state = state.clone();
                 Some(Box::new(move || {
-                    stop_polling(&channel.inner, &state.request_id);
+                    stop_polling(
+                        &channel.inner,
+                        &state.request_id,
+                        state.generation.load(Ordering::SeqCst),
+                    );
                     let _ = settle(&channel.inner, &state);
                     Ok(())
                 }))
@@ -601,6 +609,7 @@ impl GatewayUserDialogChannel {
                     PollEntry {
                         due_ms: due,
                         polling: false,
+                        generation: state.generation.load(Ordering::SeqCst),
                     },
                 );
             }
@@ -653,7 +662,11 @@ impl GatewayUserDialogChannel {
         // same id; the poll registry then belongs to it and must survive this
         // (superseded) request's completion (#1599).
         if !self.superseded(state) {
-            stop_polling(&self.inner, &state.request_id);
+            stop_polling(
+                &self.inner,
+                &state.request_id,
+                state.generation.load(Ordering::SeqCst),
+            );
         }
         if let Some(signal) = &state.abort {
             let token = state.abort_registration.swap(0, Ordering::SeqCst);
@@ -714,9 +727,11 @@ impl GatewayUserDialogChannel {
         // consumed entry instead of resolving.
         let (consumed, pre, outbox) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            // Events that predate this consume (an expired lease) are not
-            // rolled back when the settle hook fails; only this consume's
-            // "settled" broadcast is (GatewayUserDialogBus.ts:219-226).
+            // `pre` holds changes queued before this consume (normally
+            // empty here); a lease that expires inside `consume` lands in
+            // `outbox`. A settle failure rolls back only the entry and its
+            // own "settled" broadcast, so `outbox` is delivered through
+            // `without_settled` (GatewayUserDialogBus.ts:219-226).
             let pre = bus.drain_events();
             let consumed = bus.consume(&self.inner.options.session_key, request_id, "cancelled");
             let outbox = bus.drain_events();
@@ -806,11 +821,17 @@ impl GatewayUserDialogChannel {
         }
         let state = self.inner.requests.lock().unwrap().get(request_id).cloned();
         let Some(state) = state else {
-            stop_polling(&self.inner, request_id);
+            // No registration owns this id, so any poll entry left for it is
+            // an orphan.
+            forget_poll(&self.inner, request_id);
             return;
         };
+        // #1599: a reentrant host callback may replace the registration while
+        // this poll is in flight; every poll mutation below stays bound to the
+        // registration captured here.
+        let generation = state.generation.load(Ordering::SeqCst);
         if state.settled.load(Ordering::SeqCst) || !state.registered.load(Ordering::SeqCst) {
-            stop_polling(&self.inner, request_id);
+            stop_polling(&self.inner, request_id, generation);
             return;
         }
         if state.owner_claimed.load(Ordering::SeqCst)
@@ -820,7 +841,7 @@ impl GatewayUserDialogChannel {
                 Ok(true) => {}
                 // A failed renewal stops this poll; the next tick retries.
                 Ok(false) | Err(_) => {
-                    finish_poll(&self.inner, request_id);
+                    finish_poll(&self.inner, request_id, generation);
                     return;
                 }
             }
@@ -829,26 +850,25 @@ impl GatewayUserDialogChannel {
             Some(take) => match take(request_id) {
                 Ok(answer) => answer,
                 Err(_) => {
-                    finish_poll(&self.inner, request_id);
+                    finish_poll(&self.inner, request_id, generation);
                     return;
                 }
             },
             None => {
-                finish_poll(&self.inner, request_id);
+                finish_poll(&self.inner, request_id, generation);
                 return;
             }
         };
         let Some(answer) = answer else {
-            finish_poll(&self.inner, request_id);
+            finish_poll(&self.inner, request_id, generation);
             return;
         };
         if state.settled.load(Ordering::SeqCst) {
-            stop_polling(&self.inner, request_id);
+            stop_polling(&self.inner, request_id, generation);
             return;
         }
         // #1442: the settle hook and the completion callbacks are host code;
         // they run only after the bus guard drops.
-        let generation = state.generation.load(Ordering::SeqCst);
         let (consumed, pre, outbox, replaced) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             // #1599: this answer was taken for the registration `state` owns
@@ -880,7 +900,7 @@ impl GatewayUserDialogChannel {
                     // taken answer has nowhere to go: fail the original waiter
                     // explicitly instead of leaving it pending forever
                     // (#1599). The replacement keeps its own poll/answer.
-                    stop_polling(&self.inner, request_id);
+                    stop_polling(&self.inner, request_id, generation);
                     let _ = settle(&self.inner, &state);
                     self.complete(
                         &state,
@@ -890,7 +910,7 @@ impl GatewayUserDialogChannel {
                     );
                     return;
                 }
-                finish_poll(&self.inner, request_id);
+                finish_poll(&self.inner, request_id, generation);
                 return;
             }
         };
@@ -914,7 +934,7 @@ impl GatewayUserDialogChannel {
             if let Some(replaced) = replaced {
                 (replaced.reject)(replaced_message());
             }
-            finish_poll(&self.inner, request_id);
+            finish_poll(&self.inner, request_id, generation);
             return;
         }
         pre.deliver();
@@ -926,7 +946,7 @@ impl GatewayUserDialogChannel {
                         "Cross-Gateway {} dialog result does not match the pending dialog contract.",
                         state.dialog_kind.to_utf8().unwrap_or_default()
                     ));
-                    finish_poll(&self.inner, request_id);
+                    finish_poll(&self.inner, request_id, generation);
                     return;
                 }
                 (consumed.entry.resolve)(DialogAnswer::Answered(value.clone()));
@@ -938,7 +958,7 @@ impl GatewayUserDialogChannel {
                 (consumed.entry.resolve)(DialogAnswer::Cancelled(reason));
             }
         }
-        finish_poll(&self.inner, request_id);
+        finish_poll(&self.inner, request_id, generation);
     }
 }
 
@@ -948,13 +968,30 @@ fn replaced_message() -> String {
     "Gateway user-dialog was replaced while its settle hook failed.".into()
 }
 
-fn stop_polling(inner: &Inner, request_id: &JsString) {
+fn stop_polling(inner: &Inner, request_id: &JsString, generation: u64) {
+    let mut polls = inner.polls.lock().unwrap();
+    // TS keeps one timer per request (`GatewayUserDialogChannel.ts:130-133`),
+    // so a request may only stop the poll its own registration installed. A
+    // same-id replacement owns the entry now (#1599).
+    if !polls
+        .entries
+        .get(request_id)
+        .is_some_and(|entry| entry.generation == generation)
+    {
+        return;
+    }
+    polls.entries.remove(request_id);
+    polls.order.retain(|id| id != request_id);
+}
+fn forget_poll(inner: &Inner, request_id: &JsString) {
     let mut polls = inner.polls.lock().unwrap();
     polls.entries.remove(request_id);
     polls.order.retain(|id| id != request_id);
 }
-fn finish_poll(inner: &Inner, request_id: &JsString) {
-    if let Some(entry) = inner.polls.lock().unwrap().entries.get_mut(request_id) {
+fn finish_poll(inner: &Inner, request_id: &JsString, generation: u64) {
+    if let Some(entry) = inner.polls.lock().unwrap().entries.get_mut(request_id)
+        && entry.generation == generation
+    {
         entry.polling = false;
     }
 }
