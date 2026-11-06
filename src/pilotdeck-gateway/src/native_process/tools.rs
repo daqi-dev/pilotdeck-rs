@@ -40,6 +40,11 @@ pub struct SessionTools {
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
     lsp: Arc<super::families::DefaultLsp>,
+    /// #1864 (b): re-read on every turn, like InProcessGateway.ts:1443 —
+    /// the host-side permission context follows the stored selection so the
+    /// same turn never runs one mode for the sidecar and another for native
+    /// tool admission.
+    permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 impl SessionTools {
     pub fn new(
@@ -64,14 +69,46 @@ impl SessionTools {
             interactions,
             lsp,
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
+            permission_mode_source: None,
         })
     }
+
+    /// #1864 (b): the live permission-mode source, consulted on every turn
+    /// before the permission context is emitted. `None` keeps the context's
+    /// current mode.
+    pub fn with_permission_mode_source(
+        mut self,
+        source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
+    ) -> Self {
+        self.permission_mode_source = Some(source);
+        self
+    }
+
     pub fn turn(
         &self,
         identity: &ExecutionIdentity,
         recorder: Arc<Recorder>,
         signal: Cancellation,
     ) -> SessionPorts {
+        // #1864 (b): the effective mode — a non-empty
+        // `managedPermissions.defaultMode` wins, else the stored selection —
+        // is written back before the context is emitted, so `Permissions::
+        // decide` (which clones the current value per call) and the emitted
+        // `permissionContext` agree with the sidecar's payload this turn.
+        // A `None` source leaves the previous mode and the plan-round-trip
+        // stack below untouched.
+        if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
+            self.permission_mode_source
+                .as_ref()
+                .and_then(|source| source())
+        }) {
+            self.permission
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+                .mode = crate::config::permission::PermissionMode::from(mode);
+        }
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),

@@ -11,9 +11,11 @@ before its exact test runs. Every case is reported, then restoration and all
 statuses determine the exit code; never bypass HEAD.
 
 #1864 wires the three selectors to a store the next session reads. A
-stub-revert alone cannot see that, so the three write sites and both read
-sites (the session factory's compose step and the live adapter's per-turn
-permission-mode source) each carry their own mutant.
+stub-revert alone cannot see that, so each write site (permission, thinking,
+output style), each compose-step read (permission, thinking, style merge),
+the live adapter's per-turn permission-mode source, and the
+`output_styles_list` selected echo each carry their own function-internal
+mutant.
 """
 from pathlib import Path
 import os
@@ -204,9 +206,12 @@ mutations = [
      '        .filter(|s| s.to_utf8().is_ok())',
      DIR + 'resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
-    # ── #1864: the three selectors now have a reader. Each write and each of
-    # the two read paths gets a mutant, so a store that is written but never
-    # read (the -R4 defect) turns the bound positive red instead of passing.
+    # ── #1864: the three selectors now have a reader. Each write site
+    # (permission, thinking, output style), each compose-step read leg
+    # (permission, thinking, style merge), the live adapter's per-turn source
+    # and the `output_styles_list` selected echo get a function-internal
+    # mutant, so a store that is written but never read (the -R4 defect)
+    # turns the bound positive red instead of passing.
     ('permission-store-write-removed', CONFIG,
      '        self.session_overrides\n'
      '            .set_permission_mode(&session_key, mode);',
@@ -222,17 +227,35 @@ mutations = [
      '            }',
      CFG + 'set_session_thinking_applies_and_validates',
      '#1864 the mode object is stored'),
+    ('style-store-write-removed', CONFIG,
+     '            Some(name) => self\n'
+     '                .session_overrides\n'
+     '                .set_output_style(&session_key, name.clone()),',
+     '            Some(name) => {\n'
+     '                let _ = (&session_key, name);\n'
+     '            }',
+     CFG + 'set_output_style_validates_names_and_key',
+     '#1864 set_output_style applies the probe style'),
     ('compose-permission-readback-removed', ASSEMBLY,
-     '                let stored_permission_mode =\n'
-     '                    session_overrides.permission_mode(&context.session_key);',
-     '                let stored_permission_mode = None::<JsString>;',
+     '    let mode = effective_permission_mode(config, stored_permission_mode.cloned());',
+     '    let mode = effective_permission_mode(config, None);',
      CFG + 'selector_writes_reach_the_compose_step',
      '#1864 the stored permission mode reaches the agent config'),
+    ('compose-thinking-readback-removed', ASSEMBLY,
+     '    if let Some(thinking) = stored_thinking {',
+     '    if let Some(thinking) = None::<&JsValue> {',
+     CFG + 'selector_writes_reach_the_compose_step',
+     '#1864 the stored thinking reaches the agent config'),
     ('compose-style-merge-removed', ASSEMBLY,
      '    if let Some(content) = style_content {',
      '    if let Some(content) = None::<&str> {',
      CFG + 'apply_session_overrides_composes_the_selections',
      '#1864 the style content joins the existing prompt'),
+    ('styles-list-selected-removed', CONFIG,
+     '            && let Some(selected) = self.session_overrides.output_style(key)',
+     '            && let Some(selected) = None::<JsString>',
+     CFG + 'output_styles_list_reports_project_styles',
+     '#1864 the list echoes the stored selection for the session'),
     ('submit-permission-source-removed', LIVE,
      '            if let Some(source) = &self.permission_mode_source',
      '            if let Some(source) = &None::<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>',

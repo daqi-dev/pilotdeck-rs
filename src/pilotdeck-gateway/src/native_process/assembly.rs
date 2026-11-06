@@ -2,6 +2,7 @@ use super::{
     Options,
     families::{LspFamily, TitleFamily, TitleResource},
 };
+use crate::runtime::permission::effective_permission_mode;
 use crate::{
     ProxyError,
     config::{Env, permission::GatewaySessionPermissionRuleSetRegistry},
@@ -363,7 +364,12 @@ pub(super) async fn start_observed_with_upload_cleanup(
                             config.clone(),
                             interactions,
                             lsp,
-                        )?;
+                        )?
+                        .with_permission_mode_source(Arc::new({
+                            let session_overrides = session_overrides.clone();
+                            let session = session.clone();
+                            move || session_overrides.permission_mode(&session)
+                        }));
                         Ok(TurnHostFactory::new_with_signal(
                             project,
                             deployment,
@@ -800,7 +806,8 @@ pub fn transcript_path(options: &Options, session: &JsString) -> std::path::Path
 /// extracted from the prepare closure so the read-back tests exercise the
 /// same logic the next session runs. Mirrors
 /// SessionAgentConfigBundle.compose: `managedPermissions.defaultMode` (a
-/// non-empty string) wins over the stored permission mode, else "default";
+/// non-empty string) wins over the stored permission mode, else "default"
+/// (shared: `runtime::permission::effective_permission_mode`);
 /// a stored thinking value is written as-is (JS null included — presence is
 /// the override, TS deletes only on undefined); the output style's content
 /// merges into `appendSystemPrompt` as
@@ -813,17 +820,7 @@ pub(super) fn apply_session_overrides(
     stored_thinking: Option<&JsValue>,
     style_content: Option<&str>,
 ) {
-    let managed = config
-        .get("managedPermissions")
-        .and_then(|value| value.get("defaultMode"))
-        .and_then(JsValue::as_string)
-        .filter(|mode| {
-            !crate::metadata::js_trim(&String::from_utf16_lossy(mode.units())).is_empty()
-        });
-    let mode = managed
-        .cloned()
-        .or_else(|| stored_permission_mode.cloned())
-        .unwrap_or_else(|| JsString::from("default"));
+    let mode = effective_permission_mode(config, stored_permission_mode.cloned());
     config.insert("permissionMode".into(), JsValue::String(mode));
     if let Some(thinking) = stored_thinking {
         config.insert("thinking".into(), thinking.clone());

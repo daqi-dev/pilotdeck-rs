@@ -39,6 +39,29 @@ pub fn empty_permission_rule_set() -> PermissionRuleSet {
     PermissionRuleSet::default()
 }
 
+/// #1864 compose priority, managed leg: a non-empty
+/// `managedPermissions.defaultMode` (after JS trim) wins over any stored
+/// session selection — `SessionAgentConfigBundle.compose`'s
+/// `organizationPermissions ?? sdk.managedPermissions` leg.
+pub fn managed_default_mode(config: &JsObject) -> Option<JsString> {
+    config
+        .get("managedPermissions")
+        .and_then(|value| value.get("defaultMode"))
+        .and_then(JsValue::as_string)
+        .filter(|mode| {
+            !crate::metadata::js_trim(&String::from_utf16_lossy(mode.units())).is_empty()
+        })
+        .cloned()
+}
+
+/// #1864 compose priority: the managed default, else the stored session
+/// selection, else "default" (`SessionAgentConfigBundle.compose`).
+pub fn effective_permission_mode(config: &JsObject, stored: Option<JsString>) -> JsString {
+    managed_default_mode(config)
+        .or(stored)
+        .unwrap_or_else(|| JsString::from(DEFAULT_PERMISSION_MODE))
+}
+
 /// `PermissionContext`: `policyCanPrompt` only ever carries `false` in the
 /// baseline, so `Some(false)` is the restrictive case and `None` is omitted.
 #[derive(Clone, Debug, PartialEq, Eq)]
