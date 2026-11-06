@@ -3144,44 +3144,84 @@ def _loop_target_used_as_handle(body, name):
     return False
 
 
-def _statements_after(node, parents, scope_root):
-    """Statements that run after *node* in the same scope, nearest first.
+def _later_statements(scope_root, node, parents):
+    """Statements of the same scope that run after *node* (#1953 r5).
 
-    #1953 fix-r1 round 4 (GLM boundary r2 P0): a ``for`` target survives the
-    loop, so ``for h in hs: pass`` followed by ``h('common', <stub>)`` still
-    writes the receiver the loop handed over.  The body-only scan missed it.
+    #1953 fix-r1 round 5 (codex r3 P0): the first version climbed the parent
+    chain through ``body`` / ``orelse`` / ``finalbody`` only, so a loop inside
+    a ``match`` case, a ``try`` body or an ``except`` handler handed its target
+    to code that walked out of the block unseen.  Source order in the enclosing
+    scope covers all of them; nested definitions are a different scope (their
+    own parameter may reuse the name) and are skipped.
+
+    Each entry is ``(statement, sibling)``: a *sibling* shares the loop's own
+    block, so rebinding the name there really does end its life.  A rebinding
+    buried one level deeper (``if cond: h = None``) is conditional and stays
+    ``False`` -- ending the scan on it was the r5 miss codex reported.
     """
-    current = node
-    while True:
-        parent = parents.get(current)
-        if parent is None:
-            return
-        for field in ('body', 'orelse', 'finalbody'):
-            block = getattr(parent, field, None)
-            if not isinstance(block, list) or current not in block:
-                continue
-            index = block.index(current)
-            yield from block[index + 1:]
-            break
-        else:
-            return
-        if parent is scope_root:
-            return
-        current = parent
+    end = getattr(node, 'end_lineno', None) or node.lineno
+    owner = None if isinstance(scope_root, ast.Module) else scope_root
+    block = parents.get(node)
+    found = []
+    for scope, child in _walk_scoped(scope_root):
+        if scope is not owner or not isinstance(child, ast.stmt):
+            continue
+        if getattr(child, 'lineno', 0) <= end:
+            continue
+        found.append((child, parents.get(child) is block))
+    found.sort(key=lambda item: (item[0].lineno, item[0].col_offset))
+    return found
+
+
+_FRESH_CALLS = frozenset((
+    'object', 'list', 'dict', 'set', 'tuple', 'frozenset', 'str', 'bytes',
+    'bytearray', 'int', 'float', 'complex', 'bool', 'range', 'enumerate',
+))
+
+
+def _fresh_value(node):
+    """True when *node* provably holds no write handle (#1953 r5).
+
+    A literal, a comprehension result or a lambda is fresh.  A call to a
+    builtin constructor is fresh too: ``h = object(); h()`` is a new object,
+    not the handle the loop just handed over (codex r3 caught the first
+    version withdrawing it).  Anything else -- ``getattr(md, name)`` above
+    all -- may still be a handle, so the scan keeps going.
+    """
+    if isinstance(node, ast.Call):
+        return isinstance(node.func, ast.Name) and node.func.id in _FRESH_CALLS
+    return isinstance(node, (ast.Constant, ast.List, ast.Tuple, ast.Set,
+                             ast.Dict, ast.ListComp, ast.SetComp, ast.DictComp,
+                             ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
+
+
+def _rebinds_to_fresh(statement, name):
+    """True when *statement* unconditionally rebinds *name* to a literal."""
+    if isinstance(statement, ast.Assign):
+        targets = [target for target in statement.targets
+                   if isinstance(target, ast.Name) and target.id == name]
+        return bool(targets) and _fresh_value(statement.value)
+    if isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+        target = statement.target
+        return (isinstance(target, ast.Name) and target.id == name
+                and statement.value is not None
+                and _fresh_value(statement.value))
+    return False
 
 
 def _loop_target_used_after(statements, name):
     """True when *name* is still used as a handle after the loop.
 
-    Stops at a rebinding of the name in the same scope: the later uses are a
-    different object then.  (A rebinding inside a nested definition is not
-    distinguished; that direction is fail-closed.)
+    #1953 fix-r1 round 5 (codex r3 P0): the previous version stopped at any
+    rebinding, so ``h = h`` / ``if cond: h = None`` cleared the scan and the
+    call went through (``h = h('common', <stub>)`` never even got read).  Only
+    a *sibling* rebinding to a provably fresh value ends the scan now; uses
+    inside nested definitions do not count (their ``h`` is another object).
     """
-    for statement in statements:
-        for child in ast.walk(statement):
-            if (isinstance(child, ast.Name) and child.id == name
-                    and isinstance(child.ctx, (ast.Store, ast.Del))):
-                return False
+    for statement, sibling in statements:
+        for scope, child in _walk_scoped(statement):
+            if scope is not None:
+                continue
             if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
                     and child.func.id == name):
                 return True
@@ -3190,6 +3230,8 @@ def _loop_target_used_after(statements, name):
                     and child.value.id == name
                     and isinstance(getattr(child, 'ctx', None), ast.Store)):
                 return True
+        if sibling and _rebinds_to_fresh(statement, name):
+            return False
     return False
 
 
@@ -3317,22 +3359,38 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # comprehension over receivers holds them, so
         # ``_g = [h for h in (md,)]; _g[0].common = <stub>`` writes the
         # receiver.  The target is local to the comprehension, the container is
-        # not.
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+        # not.  Round 5 (codex r3 P1): a dict comprehension relays through its
+        # *value*, and the iterable may be a name bound to the literal
+        # (``items = (md,); _g = [h for h in items]``).
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                             ast.DictComp)):
+            element = node.value if isinstance(node, ast.DictComp) else node.elt
             found = set()
             for generator in node.generators:
                 names = set(_target_names(generator.target))
-                element = node.elt
                 if not (isinstance(element, ast.Name) and element.id in names):
                     continue
-                if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
-                    elements = generator.iter.elts
-                else:
-                    elements = _iter_literal_elements(generator.iter)
-                for item in elements:
+                for item in _literal_elements(generator.iter, scope):
                     found |= receiver_roots(item, scope)
             return found
         return set()
+
+    def _literal_elements(expr, scope, seen=None):
+        """Elements of a literal / name-bound literal iterable (#1953 r5)."""
+        if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+            return expr.elts
+        elements = _iter_literal_elements(expr)
+        if elements:
+            return elements
+        if isinstance(expr, ast.Name):
+            seen = set() if seen is None else seen
+            if expr.id in seen:
+                return []
+            seen.add(expr.id)
+            values = simple.get(expr.id) or ()
+            if len(values) == 1:
+                return _literal_elements(values[0], scope, seen)
+        return []
 
     def namespace_dict_roots(node, scope):
         """Receivers whose ``__dict__`` mapping *node* evaluates to (#892 r28).
@@ -3493,8 +3551,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
         body = list(node.body) + list(node.orelse)
         if not _loop_target_used_as_handle(body, target.id):
             if not _loop_target_used_after(
-                    _statements_after(node, parents, scope or tree),
-                    target.id):
+                    _later_statements(scope or tree, node, parents), target.id):
                 continue
         for level in _chain(scope):
             if (level, iter_name) in handle_containers:
@@ -7743,6 +7800,110 @@ def aggregation_audit():
                             frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test withdrew '
                         'on a negative constant subscript of a tuple')
+    loop_rebind_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    _h = _h\n"
+        "    _h('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(loop_rebind_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'loop target through a self-rebinding')
+    loop_finally_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    try:\n"
+        "        for _h in _hs:\n"
+        "            pass\n"
+        "    finally:\n"
+        "        _h('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(loop_finally_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'loop target used in a finally block')
+    nested_shadow_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    def inner(_h):\n"
+        "        _h('common', object())\n"
+        "    inner(object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(nested_shadow_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test carried a '
+                        'loop target into a nested definition')
+    comp_dict_probe = ast.parse(
+        "def main():\n"
+        "    _g = {0: _h for _h in (md,)}\n"
+        "    _g[0].common = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(comp_dict_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'dict-comprehension result container')
+    comp_alias_iter_probe = ast.parse(
+        "def main():\n"
+        "    _items = (md,)\n"
+        "    _g = [_h for _h in _items]\n"
+        "    _g[0].common = object()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(comp_alias_iter_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'comprehension result over a name-bound literal')
+    loop_rebind_if_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    if False:\n"
+        "        _h = None\n"
+        "    _h('common', object())\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if 'md' not in _withdrawn_receivers(loop_rebind_if_probe, _1953_rel,
+                                        frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test ended the '
+                        'loop-target scan on a conditional rebinding')
+    loop_rebind_fresh_probe = ast.parse(
+        "def main():\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    for _h in _hs:\n"
+        "        pass\n"
+        "    _h = object()\n"
+        "    _h()\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(loop_rebind_fresh_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'after a loop target was rebound to a fresh object')
+    comp_result_pure_probe = ast.parse(
+        "def main():\n"
+        "    _g = [_h for _h in (md,)]\n"
+        "    print(len(_g))\n"
+        "def reader(report):\n"
+        "    return md.common.aggregate_status(report)[1]\n")
+    if _withdrawn_receivers(comp_result_pure_probe, _1953_rel,
+                            frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a comprehension result that is only read')
     getattribute_name_probe = ast.parse(
         "def main():\n"
         "    _key = '__dict__'\n"
