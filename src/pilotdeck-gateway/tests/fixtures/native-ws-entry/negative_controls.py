@@ -132,6 +132,16 @@ def main():
                ROOT / 'src/pilotdeck-gateway/src/http_proxy.rs', ROOT / 'src/pilotdeck-gateway/src/frame.rs',
                ROOT / 'src/pilotdeck-gateway/src/acceptor.rs', ROOT / 'src/pilotdeck-gateway/src/lib.rs',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+               # #1351 review: the upgrade budget decision and the golden replay's
+               # inputs live outside this directory — the upgrade diversion calls
+               # native_http::over_header_budget / tracked_header_bytes, and
+               # upgrade_budget_boundary_matches_ts reads the budget fixture via
+               # include_str!, so a mid-run edit must be caught (native-http-basic
+               # lists its own fixture files the same way).
+               ROOT / 'src/pilotdeck-gateway/src/native_http.rs',
+               FIXTURE.parent / 'native-ws-upgrade-budget' / 'oracle.json',
+               FIXTURE.parent / 'native-ws-upgrade-budget' / 'generate.mts',
+               FIXTURE.parent / 'native-ws-upgrade-budget' / 'README.md',
                FIXTURE.parent / 'negative_process.py', FIXTURE.parent / 'negative_suite.py',
                FIXTURE.parent / '_shared/mutant_switch.py']
     guarded += [path for path in FIXTURE.iterdir() if path.is_file()]
