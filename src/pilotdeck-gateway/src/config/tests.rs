@@ -490,6 +490,94 @@ fn config_array_values_keep_control_units_in_diagnostics() {
     );
 }
 
+/// A YAML `!!set` is a real JS `Set` (`String(set)` is `[object Set]`, measured
+/// on the baseline `yaml@2.9.0`), and the config graph keeps that tag on the
+/// `JsValue` object. Inside an array the joined text must read the tag too:
+/// the r4 explicit-stack join hardcoded `[object Object]`, so a diagnostic
+/// carrying a set element printed the wrong object class (#1550 修 r6).
+#[test]
+fn array_stringification_keeps_the_yaml_collection_tag() {
+    let mut set = pilotdeck_protocol::JsObject::new();
+    set.set_native_tag("Set");
+    let value = JsValue::Array(vec![JsValue::Object(set), JsValue::Number(3.0)]);
+    assert_eq!(
+        DiagnosticText::from(js_string(&value)).0.units(),
+        "[object Set],3".encode_utf16().collect::<Vec<_>>()
+    );
+}
+
+/// The same tag through the real config entry.
+#[test]
+fn config_array_set_values_keep_the_collection_tag() {
+    let metadata = Metadata {
+        home: PathBuf::from("<PILOT_HOME>"),
+        cwd: PathBuf::from("/offline"),
+        files: FixtureFiles {
+            data: "schemaVersion: [!!set {a: }, 3]\n".as_bytes().to_vec(),
+            kind: None,
+        },
+    };
+    let error = match super::load(&metadata, &Env::new()) {
+        Ok(_) => panic!("fatal schemaVersion diagnostic must fail the load"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "CONFIG_SCHEMA_VERSION_UNSUPPORTED");
+    assert_eq!(
+        error.message.units(),
+        "Unsupported schemaVersion [object Set],3."
+            .encode_utf16()
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Both production call sites (`mod.rs` schemaVersion, `sections.rs`
+/// alwaysOn.language) must pass the class through. Testing `string_coercible`
+/// alone left them free to re-collapse the error into a `TypeError`; a YAML
+/// mapping with an own `toString: null` is the reachable thrower, and TS calls
+/// `String(value)` on it unguarded (#1550 修 r6, r6 评审 P2).
+#[test]
+fn coercion_error_class_survives_both_config_call_sites() {
+    for (site, data) in [
+        ("schemaVersion", "schemaVersion: {toString: }\n"),
+        (
+            "alwaysOn.language",
+            concat!(
+                "schemaVersion: 1\n",
+                "agent: {model: parity/deterministic}\n",
+                "model:\n",
+                "  providers:\n",
+                "    parity:\n",
+                "      protocol: openai\n",
+                "      url: http://127.0.0.1:28794/v1\n",
+                "      apiKey: mock-only\n",
+                "      models:\n",
+                "        deterministic: {}\n",
+                "alwaysOn:\n",
+                "  language: {toString: }\n",
+            ),
+        ),
+    ] {
+        let metadata = Metadata {
+            home: PathBuf::from("<PILOT_HOME>"),
+            cwd: PathBuf::from("/offline"),
+            files: FixtureFiles {
+                data: data.as_bytes().to_vec(),
+                kind: None,
+            },
+        };
+        let error = match super::load(&metadata, &Env::new()) {
+            Ok(_) => panic!("{site}: a throwing String(value) must fail the load"),
+            Err(error) => error,
+        };
+        assert_eq!(error.name, "TypeError", "{site}");
+        assert_eq!(
+            error.message.to_utf8().ok().as_deref(),
+            Some("Cannot convert object to primitive value"),
+            "{site}"
+        );
+    }
+}
+
 /// `schemaVersion` / `alwaysOn.language` reject a throwing `String(value)`
 /// before reading it, so the kind has to survive `string_coercible`: TS calls
 /// `String(value)` there and reports `RangeError` past the depth bound,
