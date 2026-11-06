@@ -189,6 +189,104 @@ mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(
 # calling thread (no spawn_blocking), which blocks the serial host.
 mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 
+# #1538/#1869 review: the table used to be its own denominator
+# the table used to be its own denominator — delete a row and the run still
+# reported "{n}/{n}" and read green. Pin the row count and the roster (order
+# and repeats included) as literals so a dropped, renamed or duplicated
+# mutation is refused before anything runs or compiles.
+EXPECTED_TOTAL = 82
+EXPECTED_NAMES = (
+    'omit-snapshot',
+    'omit-manager',
+    'omit-commands',
+    'omit-skills',
+    'dirty-not-updated',
+    'limit-fraction-truncated',
+    'missing-project-defaulted',
+    'host-boundary-leaked',
+    'surrogate-target-accepted',
+    'capability-added-skill_scan',
+    'capability-snapshot_list',
+    'capability-snapshot_get',
+    'capability-snapshot_restore',
+    'capability-manager_sessions',
+    'capability-commands_list',
+    'capability-skill_list',
+    'capability-skill_read',
+    'capability-skill_write',
+    'capability-skill_create',
+    'capability-skill_delete',
+    'capability-skill_import',
+    'capability-skill_validate',
+    'skills-restart-refused',
+    'snapshot-storage-omitted',
+    'oracle-corruption',
+    'cursor-array-refused',
+    'pending-io-blocks-host',
+    'commands-nested-blocking',
+    'skill-execution-enabled',
+    'management-nested-acquire',
+    'query-surrogate-lossy',
+    'notification-before-dirty',
+    'capability-mcp_server_status',
+    'capability-set_mcp_servers',
+    'capability-mcp_server_reconnect',
+    'capability-mcp_server_toggle',
+    'capability-set_mcp_permission_mode_override',
+    'snapshot-get-list-instead',
+    'snapshot-get-workspace-ignored',
+    'snapshot-restore-list-instead',
+    'snapshot-restore-wrong-target',
+    'skill-import-attachment-skipped',
+    'skill-import-conflict-overwritten',
+    'skill-import-force-refused',
+    'snapshot-restore-file-empty',
+    'capability-add-upload_create',
+    'capability-upload_create',
+    'capability-upload_get',
+    'capability-upload_part',
+    'capability-upload_complete',
+    'capability-upload_cancel',
+    'capability-duplicate-run_get',
+    'capability-user_dialog_list',
+    'capability-permission_list',
+    'capability-resolve_settings',
+    'submit-workspace-id-unwired',
+    'submit-snapshots-unwired',
+    'environment-keeps-snapshot-roots',
+    'environment-storage-not-injected',
+    'submit-workspace-id-legacy-slug',
+    'environment-storage-ambient-wins',
+    'environment-snapshot-root-dropped',
+    'submit-recorder-unwired',
+    'capability-add-reload_config',
+    'capability-add-reload_extensions',
+    'missing-storage-defaulted',
+    'empty-storage-defaulted',
+    'missing-storage-advertised',
+    'empty-storage-advertised',
+    'snapshot-state-disabled',
+    'snapshot-state-enabled',
+    'production-storage-authority-accepted',
+    'production-snapshot-authority-accepted',
+    'production-blank-authority-accepted',
+    'snapshot-list-filter-omitted',
+    'snapshot-get-filter-omitted',
+    'snapshot-restore-filter-omitted',
+    'wired-capabilities-outside-ts',
+    'empty-storage-capabilities-outside-ts',
+    'missing-storage-capabilities-outside-ts',
+    'memory-io-blocks-host',
+    'memory-inline-sync',
+)
+if len(mutations) != EXPECTED_TOTAL:
+    raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
+                     f'found {len(mutations)}')
+if tuple(row[0] for row in mutations) != EXPECTED_NAMES:
+    raise SystemExit('#1538 registered mutation roster must equal the frozen list: '
+                     f'expected={list(EXPECTED_NAMES)}, '
+                     f'found={[row[0] for row in mutations]}')
+
 
 def mutate(case, text):
     if text.count(case.old) != 1 or case.old == case.new:
