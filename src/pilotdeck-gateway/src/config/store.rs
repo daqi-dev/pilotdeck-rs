@@ -58,9 +58,13 @@
 //! end of the tick — at most one granularity wide (ns on APFS/ext4, 1 s on
 //! HFS+), independent of the sampling interval, and empty when the tick has
 //! already ended at sample time (the usual case on APFS/ext4) — the same
-//! caveat as (3) above. A rewrite meeting all of those conditions and landing
-//! in the window is *not* seen, where the pre-#1739 per-tick content
-//! comparison did see it. Measured on HFS+ (1 s ctime granularity) in
+//! caveat as (3) above. For the one entry the sample reads — the watched
+//! config file, and only when it is a regular file of at most
+//! [`CONTENT_SAMPLE_LIMIT`] bytes — a rewrite meeting all of those conditions
+//! and landing in the window is *not* seen, where the pre-#1739 per-tick
+//! content comparison did see it. Larger files and the other entries of a
+//! watched directory were metadata-only before #1739 too, so this cell adds
+//! nothing for them. Measured on HFS+ (1 s ctime granularity) in
 //! `_tmp/20261106-issue-1736/r2/evidence/`; ledger:
 //! specs/gateway-parity/diffs/A6.3-CONFIG-METADATA-SHORTCUT-001.md
 //! (unapproved). Only when
