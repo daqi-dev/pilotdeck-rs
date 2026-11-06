@@ -215,13 +215,24 @@ mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
                   '        let workspace_id = self.resolver.workspace_id(&source_project);\n        let snapshot_id = field(input, "snapshotId");',
                   '        let workspace_id = crate::metadata::project_id(std::path::Path::new(&source_project));\n        let snapshot_id = field(input, "snapshotId");',
                   SNAPSHOT_TEST, '#1231 snapshot restore success'))
+# #1431 review r2 (GLM sibling): the `--storage-root` rejection already had a
+# direct test (`storage_root_non_utf8_is_hard_parse_error`) but no paired
+# mutation, so deleting the check was only caught by an ordinary test — the same
+# "assertion without a mutation" gap this PR closed for `--project`. The mutant
+# makes `to_str()` fall back instead of failing, so `Options::parse` returns Ok
+# and the test dies on its own `expect_err` message.
+mutations.append(('storage-root-nonutf8-accepted', ENTRY,
+                  '                .map(|v| v.to_str().ok_or("storage root is not UTF-8"))',
+                  '                .map(|v| v.to_str().or(Some("lost")).ok_or("storage root is not UTF-8"))',
+                  'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
+                  '#1323 non-UTF-8 --storage-root must be rejected'))
 
 # #1538/#1869 review: the table used to be its own denominator
 # the table used to be its own denominator — delete a row and the run still
 # reported "{n}/{n}" and read green. Pin the row count and the roster (order
 # and repeats included) as literals so a dropped, renamed or duplicated
 # mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 86
+EXPECTED_TOTAL = 87
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -309,6 +320,7 @@ EXPECTED_NAMES = (
     'snapshot-list-resolver-bypassed',
     'snapshot-get-resolver-bypassed',
     'snapshot-restore-resolver-bypassed',
+    'storage-root-nonutf8-accepted',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
