@@ -261,15 +261,26 @@ mutations = [
      DIR + 'resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
     # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
-    # missing/blank/non-UTF-8 branch; this mutant rewords the domain message so
-    # that branch's test is the one that has to die.
+    # missing/blank branch; this mutant rewords the domain message so that
+    # branch's test is the one that has to die.
     ('session-dir-project-key-domain-message', SESSION_DIR,
      '            "projectKey is required.",\n'
      '        )?;',
      '            "projectKey is missing.",\n'
      '        )?;',
-     DIR + 'close_project_sessions_blank_or_surrogate_project_key_is_the_domain_error',
+     DIR + 'close_project_sessions_blank_project_key_is_the_domain_error',
      '#1604 the blank projectKey keeps the domain message'),
+    # #2083: a lone-surrogate `projectKey` passes the trim gate and reaches
+    # the configured-project check (TS runs it to completion; the baseline
+    # gate is only `?.trim()`). Re-adding the pre-#2083 UTF-8 rejection must
+    # turn the gate-order test red.
+    ('session-dir-surrogate-rejected', SESSION_DIR,
+     '        let project_key_str = String::from_utf16_lossy(project_key.units());',
+     '        let project_key_str = project_key\n'
+     '            .to_utf8()\n'
+     '            .map_err(|_| RequestError::new("projectKey is required."))?;',
+     DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
+     '#2083 the surrogate projectKey reaches the capability gate'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -397,6 +408,7 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
+    (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
