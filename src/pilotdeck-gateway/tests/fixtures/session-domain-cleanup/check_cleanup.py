@@ -3626,12 +3626,19 @@ def _assignment_effect(statement, tracked, scope_bound):
     for index, (name, _item) in enumerate(pairs):
         last_write[name] = index
     for index, (name, item) in enumerate(pairs):
+        if isinstance(item, ast.Name) and item.id in tracked:
+            # #1953 fix-r1 round 17 (boundary r16 P1-3): the *final* binding
+            # decides whether the name still aliases the handle, but a
+            # duplicated target's earlier element is still a pure copy on the
+            # right-hand side -- ``_f, _f = _h, None`` only reads ``_h``.  The
+            # last-write skip used to drop this registration with the alias,
+            # and the bare read was then judged a hand-over (false FAIL).
+            copies.add(id(item))
         if last_write[name] != index:
             continue
         if isinstance(item, ast.Name):
             if item.id in tracked:
                 aliases.add(name)
-                copies.add(id(item))
             continue
         if _fresh_value(item, scope_bound):
             fresh.add(name)
@@ -4057,6 +4064,85 @@ def _statement_blocks(statement):
     return []
 
 
+def _own_expression_nodes(statement):
+    """Like :func:`_local_expression_nodes`, but keeps the lambda nodes.
+
+    A ``lambda`` is skipped there (its body is another scope), yet the lambda
+    *node* is the value an assignment binds -- ``_h = lambda *a: None`` -- and
+    the block table needs its position to prove the binding ran (round 17).
+    """
+    stack = list(ast.iter_child_nodes(statement))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef, ast.stmt)):
+            continue
+        yield node
+        if isinstance(node, ast.Lambda):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _scope_block_slots(scope):
+    """``(slots, parents)`` for one scope body (#1953 fix-r1 round 17).
+
+    ``slots`` maps a statement, or one of its own expression nodes, to
+    ``(id(block), index, loops)``; ``parents`` maps a nested block to the
+    block that runs it.  The pair answers the question round 16 got wrong:
+    did this binding certainly run before that use?  A binding in the same
+    block at a smaller index did, and so did one in a block that encloses the
+    use; a binding in a *sibling* arm (the other ``if`` branch, a ``try``
+    body, an ``except`` handler) may simply not run, and a loop body runs
+    after every statement that precedes the loop.
+    """
+    if isinstance(scope, ast.Module):
+        body = list(scope.body)
+    elif isinstance(scope, ast.Lambda):
+        body = [scope.body]
+    else:
+        body = list(getattr(scope, 'body', ()))
+    slots = {}
+    parents = {}
+    stack = [(body, ())]
+    while stack:
+        block, loops = stack.pop()
+        for index, statement in enumerate(block):
+            slots.setdefault(id(statement), (id(block), index, loops))
+            inner = (loops + (id(statement),)
+                     if isinstance(statement,
+                                   (ast.For, ast.AsyncFor, ast.While))
+                     else loops)
+            for node in _own_expression_nodes(statement):
+                slots.setdefault(id(node), (id(block), index, loops))
+            for inner_block in _statement_blocks(statement):
+                parents.setdefault(id(inner_block), id(block))
+                stack.append((inner_block, inner))
+    return slots, parents
+
+
+def _certain_before(slots, parents, binding, use):
+    """True when *binding* certainly ran before *use* (#1953 fix-r1 round 17).
+
+    Same block and a smaller index, or a block that encloses the use's block.
+    Everything else is ambiguous -- the round-16 answer ("the latest binding
+    by position") dropped a live write handle whenever the overwrite sat in
+    an ``if`` arm or a ``try`` body and that path was not taken (boundary r16
+    P0-1 / codex r16 P0-1).
+    """
+    bound = slots.get(id(binding))
+    used = slots.get(id(use))
+    if bound is None or used is None:
+        return False
+    if bound[0] == used[0]:
+        return bound[1] < used[1]
+    block = used[0]
+    while block is not None:
+        block = parents.get(block)
+        if block == bound[0]:
+            return True
+    return False
+
+
 def _enclosing_bound_names(tree, owner):
     """Names bound in *owner* or in any scope that encloses it (#1953 r9).
 
@@ -4430,6 +4516,152 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not grown:
             break
 
+    # #1953 fix-r1 round 17: the local binding table and the freshness guard
+    # moved above the container scans.  A container relay (``_f = hs[0]``) is
+    # cleared by the same proof a direct call needs (sibling r16 P1-3), and the
+    # receiver of a *bound* handle is resolved in the scope that binds it
+    # instead of from the file-global kinds table (codex r16 P0-3 / P0-4,
+    # boundary r16 P0-2).
+    scoped_bindings = {tree: _name_bindings(tree)}
+    for scope, node in _walk_scoped(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scoped_bindings.setdefault(node, _name_bindings(node))
+    scope_slots = {}
+    scope_bound_names = {}
+
+    def _bound_names(scope):
+        if scope not in scope_bound_names:
+            scope_bound_names[scope] = _enclosing_bound_names(tree, scope)
+        return scope_bound_names[scope]
+
+    def _block_slots(scope):
+        if scope not in scope_slots:
+            scope_slots[scope] = _scope_block_slots(scope)
+        return scope_slots[scope]
+
+    def _freshly_rebound(name, scope, use, allow_container=True):
+        """True when the binding *name* holds at *use* is a provably fresh value.
+
+        #1953 fix-r1 round 16: the round-15 flat scan drops an alias once a
+        later assignment certainly replaces it (``_f = _h`` then ``_f =
+        lambda *a: None``); the call-site guard here still asked
+        ``_resolved_write_helper``, which fails closed on *every* reachable
+        binding and so kept the write.  With the bound-handle kinds carrying
+        their receiver (round 16) that turned ``_h = getattr(md, '__setattr__');
+        _h = lambda *a: None; _h('common', <stub>)`` red -- the round-15 codex
+        r14 P1 false FAIL, reintroduced.  Only a single, positionally latest
+        binding counts, and a back-edge binding keeps the answer ambiguous
+        (fail-closed).
+
+        #1953 fix-r1 round 17 (boundary r16 P0-1 / codex r16 P0-1 / sibling
+        r16 P1-1): "positionally latest" is not "certain".  ``if flag: _h =
+        lambda *a: None`` may simply not run, and then the call still writes
+        the receiver -- the round-16 version dropped that write and the ruler
+        passed a poisoned file.  The overwrite only counts when the binding
+        certainly ran before the use (:func:`_certain_before`), and the fresh
+        value is judged against the enclosing scope's shadowed spellings
+        (codex r16 P0-2), so ``object = lambda: _h; _h = object()`` keeps the
+        handle live.
+
+        ``allow_container=False`` is for the container/relay scans: a list or
+        comprehension *result* is a fresh object, but it may carry the very
+        handles the scan is following (``_hs = [getattr(md, _k) for _k in
+        (_n,)]``), so it never ends a relay.
+        """
+        bindings = scoped_bindings.get(scope)
+        if bindings is None:
+            return False
+        values = _bindings_at(bindings, name, use)
+        if not values:
+            return False
+        limit = (getattr(use, 'lineno', 0), getattr(use, 'col_offset', -1))
+        placed = [(line, getattr(value, 'col_offset', -1), value)
+                  for line, value in values]
+        if any((line, col) > limit for line, col, _value in placed):
+            # A loop back edge reaches a binding written after the use; "the
+            # last one" is not a static fact there.
+            return False
+        latest = max((line, col) for line, col, _value in placed)
+        last = [value for line, col, value in placed if (line, col) == latest]
+        if len(last) != 1:
+            return False
+        slots, parents = _block_slots(scope)
+        if not _certain_before(slots, parents, last[0], use):
+            return False
+        if not allow_container and isinstance(
+                last[0], (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp,
+                          ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return False
+        return _fresh_value(last[0], _bound_names(scope))
+
+    def _handle_receivers(name, scope, use):
+        """Receivers a bound write handle *name* denotes at *use*, or ``None``.
+
+        #1953 fix-r1 round 17 (codex r16 P0-3 / P0-4, boundary r16 P0-2): the
+        kinds table is file-global, so two functions binding one spelling to
+        handles of different receivers put *both* tags on the name and the
+        round-16 ``sorted()`` pick read the wrong one -- a real write vanished
+        in the file that called the second handle, and an uncalled function's
+        receiver was withdrawn in the file that called the first.  The
+        bindings in force win: the innermost scope that binds the spelling
+        decides.  Its latest binding counts alone only when it certainly ran
+        before the use; a conditional overwrite leaves both bindings in reach,
+        so every one of them is read and an ambiguous handle keeps the write.
+
+        ``None`` means "keep the file-global answer": the scope chain binds
+        nothing here, or the binding in force is a handle this ruler cannot
+        name (``partial``, ``attrgetter``, an unknown call result), where the
+        conservative answer is the one already in place.  A set -- possibly
+        empty -- is the answer the bindings give; empty means the name no
+        longer denotes any write handle there (``_h = print``), so the call
+        writes nothing.
+        """
+        for level in _chain(scope):
+            bindings = scoped_bindings.get(level)
+            if bindings is None:
+                continue
+            inner = level is scope
+            visible = _bindings_at(bindings, name, use if inner else None)
+            if not visible:
+                continue
+            latest = max((line, getattr(value, 'col_offset', -1))
+                         for line, value in visible)
+            group = [value for line, value in visible
+                     if (line, getattr(value, 'col_offset', -1)) == latest]
+            if not (inner and len(group) == 1
+                    and _certain_before(*_block_slots(level), group[0], use)):
+                # Two arms, a loop back edge, an outer scope: every visible
+                # binding may be the one in force at the call.
+                group = [value for _line, value in visible]
+            receivers = set()
+            for value in group:
+                kinds_of = _expr_kinds(value, kinds)
+                tagged = {kind.split(':', 2)[2] for kind in kinds_of
+                          if kind.startswith('fn:write-handle:')}
+                if tagged:
+                    receivers = receivers | tagged
+                    continue
+                if any(kind in ('fn:write-handle', 'fn:partial')
+                       or kind in {'fn:' + attr
+                                   for attr in _MANAGED_WRITE_ATTRS}
+                       for kind in kinds_of):
+                    # A handle whose receiver the kinds table cannot name:
+                    # fall back to the file-global decode, which fails closed.
+                    return None
+                if _fresh_value(value, _bound_names(level)):
+                    continue
+                if isinstance(value, ast.Name):
+                    # A name the kinds table says nothing about is not a
+                    # *tagged* handle (a tagged binding of that spelling
+                    # anywhere would be in the table); an untagged dynamic one
+                    # is what the dynamic-handle scan above is for.
+                    continue
+                if not kinds_of:
+                    return None
+                # A known, non-handle object (``_h = print``): no write.
+            return receivers
+        return None
+
     # #1953 fix-r1: a comprehension result carries the same handles a container
     # literal does, so the receiver is at risk once such a container is used as
     # a *caller* (``hs[0](...)`` / ``hs['__setattr__'](...)`` / ``next(hs)(...)``).
@@ -4498,6 +4730,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
             # ``f = hs[0]; f('common', <stub>)`` launders one handle into a
             # plain name first; the alias fixpoint above already recorded it.
             called = node.func.id
+        if (called is not None and isinstance(node.func, ast.Name)
+                and _freshly_rebound(called, scope, node, allow_container=False)):
+            # #1953 fix-r1 round 17 (sibling r16 P1-3): a later, certain
+            # fresh rebinding (``_f = lambda *a: None``) ends the relay -- the
+            # name no longer holds the handle the container handed over, and
+            # withdrawing the receiver anyway failed the clean file.
+            continue
         carried = None
         if called is not None:
             for level in _chain(scope):
@@ -4538,6 +4777,11 @@ def _receiver_attribute_writes(tree, receivers, shared):
         else:
             iter_name = _container_callee(node.iter)
         if iter_name is None:
+            continue
+        if _freshly_rebound(iter_name, scope, node, allow_container=False):
+            # Round 17 (sibling r16 P1-3): the container was certainly
+            # replaced by a fresh value before this loop, so it no longer
+            # hands the old handle over.
             continue
         # #1953 fix-r1 round 3 (codex r2 P1): iterating a container of dynamic
         # handles only *hands them over* to the loop target, so
@@ -4606,6 +4850,11 @@ def _receiver_attribute_writes(tree, receivers, shared):
             called = node.value.id
         if called is None:
             continue
+        if (isinstance(node.value, ast.Name)
+                and _freshly_rebound(called, scope, node, allow_container=False)):
+            # Round 17 (sibling r16 P1-3): the same certain-overwrite proof
+            # applies to the element-write spelling.
+            continue
         for level in _chain(scope):
             if (level, called) in handle_containers:
                 for root in handle_containers[(level, called)]:
@@ -4620,6 +4869,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
             continue
         target_expr = None
         if isinstance(node.func, ast.Name):
+            if _freshly_rebound(node.func.id, scope, node, allow_container=False):
+                # Round 17 (sibling r16 P1-3): a certain fresh rebinding ends
+                # the dynamic-handle relay too.
+                continue
             for level in _chain(scope):
                 if (level, node.func.id) in dynamic_handles:
                     target_expr = dynamic_handles[(level, node.func.id)]
@@ -4639,11 +4892,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
     # write, check what the name denotes *in that scope at that call*; a plain
     # dynamic ``getattr`` handle still withdraws its own receiver through the
     # dynamic-target scan above.
-    scoped_bindings = {tree: _name_bindings(tree)}
-    for scope, node in _walk_scoped(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            scoped_bindings.setdefault(node, _name_bindings(node))
-
+    # #1953 fix-r1 round 17: ``scoped_bindings`` and the freshness guard moved
+    # above the container scans, which need the same "is this name still the
+    # handle it was bound to" answer (sibling r16 P1-3).
     def _generic_handle(func):
         if not isinstance(func, ast.Name) or func.id in _WRITE_HELPERS:
             return False
@@ -4660,39 +4911,6 @@ def _receiver_attribute_writes(tree, receivers, shared):
     import_events = {}
     flow_marks = {}
     module_calls = []
-
-    def _freshly_rebound(name, scope, use):
-        """True when the binding *name* holds at *use* is a provably fresh value.
-
-        #1953 fix-r1 round 16: the round-15 flat scan drops an alias once a
-        later assignment certainly replaces it (``_f = _h`` then ``_f =
-        lambda *a: None``); the call-site guard here still asked
-        ``_resolved_write_helper``, which fails closed on *every* reachable
-        binding and so kept the write.  With the bound-handle kinds carrying
-        their receiver (round 16) that turned ``_h = getattr(md, '__setattr__');
-        _h = lambda *a: None; _h('common', <stub>)`` red -- the round-15 codex
-        r14 P1 false FAIL, reintroduced.  Only a single, positionally latest
-        binding counts, and a back-edge binding keeps the answer ambiguous
-        (fail-closed).
-        """
-        bindings = scoped_bindings.get(scope)
-        if bindings is None:
-            return False
-        values = _bindings_at(bindings, name, use)
-        if not values:
-            return False
-        limit = (getattr(use, 'lineno', 0), getattr(use, 'col_offset', -1))
-        placed = [(line, getattr(value, 'col_offset', -1), value)
-                  for line, value in values]
-        if any((line, col) > limit for line, col, _value in placed):
-            # A loop back edge (or two arms) reaches a binding written after
-            # the use; "the last one" is not a static fact there.
-            return False
-        latest = max((line, col) for line, col, _value in placed)
-        last = [value for line, col, value in placed if (line, col) == latest]
-        if len(last) != 1:
-            return False
-        return _fresh_value(last[0])
 
     def _module_calls():
         if not module_calls:
@@ -4825,10 +5043,23 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     def collect(node, scope, loops):
         written = _setattr_arguments(node, kinds)
-        if (written is not None and isinstance(node.func, ast.Name)
-                and _freshly_rebound(node.func.id, scope, node)):
-            written = None
-        if written is not None and _generic_handle(node.func):
+        writes = [] if written is None else [written]
+        if writes and isinstance(node.func, ast.Name) and len(node.args) == 2:
+            # #1953 fix-r1 round 17: the *bound* spelling (two arguments:
+            # key, value) writes the receiver the name holds.  The scope that
+            # binds it decides which receiver that is (codex r16 P0-3/P0-4);
+            # ``_freshly_rebound`` still comes first, because a certain fresh
+            # overwrite means the name holds no handle at all.
+            if _freshly_rebound(node.func.id, scope, node):
+                writes = []
+            else:
+                receivers = _handle_receivers(node.func.id, scope, node)
+                if receivers is not None:
+                    # An empty set is an answer too: the bindings in force say
+                    # the name no longer denotes a write handle.
+                    writes = [(ast.Name(id=name, ctx=ast.Load()), written[1])
+                              for name in sorted(receivers)]
+        if writes and _generic_handle(node.func):
             bindings = scoped_bindings.get(scope)
             if bindings is not None and _resolved_write_helper(
                     node.func, bindings) is None:
@@ -4841,9 +5072,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 if not (isinstance(node.func, ast.Name)
                         and not _bindings_at(bindings, node.func.id, node)
                         and _write_import_at(node.func.id, scope, node)):
-                    written = None
-        if written is not None:
-            calls.append((node, scope, loops, written))
+                    writes = []
+        for entry in writes:
+            calls.append((node, scope, loops, entry))
         for child in ast.iter_child_nodes(node):
             collect(child, child if isinstance(
                 child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
@@ -7787,6 +8018,43 @@ def _partial_unbound_target(node, bindings):
     return isinstance(first, ast.Attribute) and _builtin_receiver(first.value, bindings)
 
 
+def _bound_handle_value(value):
+    """True when *value* spells a write handle already bound to a receiver.
+
+    #1953 fix-r1 round 17 (GLM sibling r16 P1-2): ``_f = report.__setattr__``
+    and ``_f = getattr(report, '__setattr__')`` hold the *bound* method, so
+    ``_f('status', 'PASS')`` carries the key and the value as its only two
+    arguments exactly like the inline spelling.  The status ruler read a
+    by-name handle as the unbound builtin and dropped the two-argument write.
+    """
+    if isinstance(value, ast.Attribute):
+        return value.attr in _MANAGED_WRITE_ATTRS
+    if isinstance(value, ast.Call):
+        callee = value.func
+        name = (callee.id if isinstance(callee, ast.Name)
+                else getattr(callee, 'attr', None))
+        if name != 'getattr' or len(value.args) not in (2, 3):
+            return False
+        literal = value.args[1]
+        return (isinstance(literal, ast.Constant)
+                and literal.value in _MANAGED_WRITE_ATTRS)
+    return False
+
+
+def _bound_handle_name(node, bindings, call):
+    """True when the name *node* holds a receiver-bound write handle at *call*.
+
+    Any visible binding that is such a handle answers yes: the status ruler's
+    conservative direction is "the write happened", so an ambiguous binding
+    set is read as bound (a missed status write is the false PASS this ruler
+    exists to catch).
+    """
+    if not isinstance(node, ast.Name) or bindings is None:
+        return False
+    return any(_bound_handle_value(value)
+               for _line, value in _bindings_at(bindings, node.id, call))
+
+
 def _call_written_values(call, bindings=None):
     """Values a ``update(...)`` / ``setdefault(...)`` call writes into a slot.
 
@@ -7826,7 +8094,10 @@ def _call_written_values(call, bindings=None):
         elif isinstance(func, ast.Call) and prebound is None:
             bound = True
         else:
-            bound = len(arguments) == 2 and isinstance(func, ast.Attribute)
+            bound = len(arguments) == 2 and (
+                isinstance(func, ast.Attribute)
+                or (prebound is None
+                    and _bound_handle_name(func, bindings, call)))
         if len(arguments) == 3:
             key, value = arguments[1], arguments[2]
         elif bound and len(arguments) == 2:
@@ -10175,6 +10446,100 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 16)')
+    # Round 17 (boundary r16 P0-1/P0-2, codex r16 P0-1/P0-2/P0-3/P0-4, sibling
+    # r16 P1-1/P1-3): a certain overwrite is not a positional one, the fresh
+    # value is judged against the shadowed constructor, and a bound handle is
+    # resolved in the scope that binds it instead of from the file-global kinds
+    # table.
+    for _label, _source, _want in (
+            ("a bound handle overwritten only in an if arm",
+             "def _w31_use(flag):\n"
+             "    _w31 = getattr(md, '__setattr__')\n"
+             "    if flag:\n"
+             "        _w31 = lambda *a: None\n"
+             "    _w31('common', object())\n", True),
+            ("a bound handle overwritten in a try body",
+             "def _w32_use():\n"
+             "    _w32 = getattr(md, '__setattr__')\n"
+             "    try:\n"
+             "        _w32 = lambda *a: None\n"
+             "    except Exception:\n"
+             "        pass\n"
+             "    _w32('common', object())\n", True),
+            ("a bound handle recreated by a shadowed constructor",
+             "def _w33_use():\n"
+             "    _w33 = getattr(md, '__setattr__')\n"
+             "    object = lambda: _w33\n"
+             "    _w33 = object()\n"
+             "    _w33('common', object())\n", True),
+            ("a bound handle another function binds elsewhere",
+             "def _w34_a():\n"
+             "    _w34 = getattr(a, '__setattr__')\n"
+             "def _w34_use():\n"
+             "    _w34 = getattr(md, '__setattr__')\n"
+             "    _w34('common', object())\n", True),
+            ("a bound handle only another function binds to the receiver",
+             "def _w35_a():\n"
+             "    _w35 = getattr(md, '__setattr__')\n"
+             "def _w35_use():\n"
+             "    _w35 = getattr(z, '__setattr__')\n"
+             "    _w35('common', object())\n", False),
+            ("a bound handle rebound to a known non-handle",
+             "def _w36_use():\n"
+             "    _w36 = getattr(md, '__setattr__')\n"
+             "    _w36 = print\n"
+             "    _w36('common', object())\n", False)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                            frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 17)')
+    for _label, _body, _want in (
+            ("a duplicated unpack target that ends fresh",
+             "    def _g():\n"
+             "        _f, _f = _h, None\n"
+             "        print(_f)\n"
+             "    _g()\n", False),
+            ("a relayed handle that is certainly overwritten",
+             "    def _g():\n"
+             "        _hs2 = [getattr(md, '__setattr__')]\n"
+             "        _f = _hs2[0]\n"
+             "        _f = lambda *a: None\n"
+             "        _f('common', object())\n"
+             "    _g()\n", False)):
+        _tree = _r9_probe(_body)
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                            frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 17)')
+    for _label, _source, _want in (
+            ("a status write through a by-name bound handle",
+             "def main(report):\n"
+             "    _f = getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through an attribute bound handle",
+             "def main(report):\n"
+             "    _f = report.__setattr__\n"
+             "    _f('status', 'PASS')\n", True)):
+        _tree = ast.parse(_source)
+        _function = _tree.body[-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 17)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (
