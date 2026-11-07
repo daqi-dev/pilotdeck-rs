@@ -195,7 +195,8 @@ UNSUPPORTED_SIGNALS = {
 REGEX_SCRIPTS = {'background-panic/negative_controls.py'}
 IMPLICIT = {
     'hooks-output/negative.py': 'source',
-    'session-owner-hooks/negative.py': 'source',
+    # #996: session-owner-hooks/negative.py was deleted; its rows are the
+    # compile-time switches in schemata.py now.
     'edgeclaw-file-memory/negative.py': 'source',
     'edgeclaw-heartbeat/negative.py': 'helpers',
     'edgeclaw-entries/negative_round7.py': 'path',
@@ -212,7 +213,8 @@ SEQUENTIAL_ROWS = {
     # table stays empty until another control needs an ordered replacement.
 }
 ROW_EXCEPTIONS = {
-    ('session-abort-contract/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
+    # #996: session-abort-contract/negative.py was deleted with its text table
+    # (the rows are compile-time switches in schemata.py now).
     ('session-owner/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
     ('session-admission/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
     ('connection-context/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
@@ -1355,7 +1357,9 @@ def extract(script, root):
     # Match AST receiver + function scope, then read the existing argument; do
     # not duplicate the source fragment in this checker.
     extra = {
-        'session-owner-hooks/negative.py': ('changed', 'source', None),
+        # #996: session-owner-hooks/negative.py's supplemental replacement was
+        # deleted with its script (the early-snapshot/early-callback second
+        # passes are switch branches in owner.rs now).
         'turn-gateway/negative-fence.py': ('s', 'submit', None),
         'model-complete/negative-controls.py': ('text', 'COMPLETE', 'self_test_hold'),
     }.get(relative)

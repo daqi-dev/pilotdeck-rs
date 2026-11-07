@@ -34,7 +34,6 @@ TURN_GATEWAY = FIXTURES / 'turn-gateway/negative.py'
 TURN_FENCE = FIXTURES / 'turn-gateway/negative-fence.py'
 SKILLS_TREE = FIXTURES / 'skills-tree-files/negative.py'
 SPILL = FIXTURES / 'spill-isolation/negative_controls.py'
-SESSION_OWNER = FIXTURES / 'session-owner-hooks/negative.py'
 HOOKS_OUTPUT = FIXTURES / 'hooks-output/negative.py'
 TURN_SUBMIT = FIXTURES / 'turn-submit-admission/negative_controls.py'
 INTERACTION_VALUES = FIXTURES / 'interaction-values/negative_controls.py'
@@ -203,18 +202,8 @@ cases = [
      "env = target_environment(root)",
      "env = {key: value for key, value in target_environment(root).items() if key != 'CARGO_TARGET_DIR'}",
      'RunnerTargets.test_spill_isolation_target_admission', '#1166 spill-isolation runner shares the admissible target'),
-    ('session-owner-hooks-ad-hoc-source-target', SESSION_OWNER,
-     "env = target_environment(root)",
-     "env = {'CARGO_TARGET_DIR': str(root / 'src/target')}",
-     'RunnerTargets.test_session_owner_hooks_target_admission', '#1166 session-owner-hooks runner shares the admissible target'),
-    ('session-owner-hooks-equality-assert-reintroduced', SESSION_OWNER,
-     "env = target_environment(root)",
-     "env = target_environment(root)\nassert env['CARGO_TARGET_DIR'] == str(root / '_build/cargo-target'), '#1166 use this worktree _build/cargo-target only'",
-     'RunnerTargets.test_session_owner_hooks_target_admission', '#1166 session-owner-hooks runner shares the admissible target'),
-    ('session-owner-hooks-target-env-dropped', SESSION_OWNER,
-     "env = target_environment(root)",
-     "env = {key: value for key, value in target_environment(root).items() if key != 'CARGO_TARGET_DIR'}",
-     'RunnerTargets.test_session_owner_hooks_target_admission', '#1166 session-owner-hooks runner shares the admissible target'),
+    # #996: the three session-owner-hooks rows were deleted with their runner
+    # (its mutations are compile-time switches in schemata.py now).
     ('hooks-output-ad-hoc-source-target', HOOKS_OUTPUT,
      "env = target_environment(root)",
      "env = {'CARGO_TARGET_DIR': str(root / 'src/target')}",
@@ -649,7 +638,7 @@ def main():
     records = []
     guarded = [SOURCE, TESTS, YAML, ROUND6, ROUND7, TOOL_BUDGET, JUDGE, SCANNER, DISCOVERY, Path(__file__).resolve(),
                PLUGIN_PANIC, PLUGIN_NOTIFY, MODEL_FACTORY, TURN_GATEWAY, TURN_FENCE, SKILLS_TREE, SOURCE_IDENTITY,
-               SPILL, SESSION_OWNER, HOOKS_OUTPUT, TURN_SUBMIT, INTERACTION_VALUES, SKILLS,
+               SPILL, HOOKS_OUTPUT, TURN_SUBMIT, INTERACTION_VALUES, SKILLS,
                FIXTURES.parent / 'upgrade/source_identity.test.mjs',
                FIXTURES / 'negative_suite.py', FIXTURES / 'negative_panic.py',
                FIXTURES / 'pending_reanchor.py']
