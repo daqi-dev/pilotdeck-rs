@@ -297,6 +297,111 @@ class WorkspacePristine(unittest.TestCase):
                                msg='#1166 each ownership context rejects ambiguous modules'):
             api._workspace_literal_inputs(self.root, 'HEAD')
 
+    # #1180 rustc-verified arbitration (rustc 1.99.1): a `mod` declaration
+    # inside a file loaded by include! resolves in the INCLUDED file's own
+    # parent directory. The including side's context never participates, in
+    # any nesting shape. Both wrong contexts (the includer's parent, the
+    # included file's stem directory) fail closed on the missing module file.
+    def test_included_module_context_is_the_included_file_parent(self):
+        self.commit_source('include!("sub/inc.rs");', {
+            'src/pilotdeck-cli/src/sub/inc.rs': 'mod m;',
+            'src/pilotdeck-cli/src/sub/m.rs':
+                'const X: &str = include_str!("../../../../assets/included-parent");',
+            'assets/included-parent': 'data'})
+        failure = None
+        try:
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure, inputs = error, ()
+        self.assertTrue(failure is None
+                        and ':(top,literal)assets/included-parent' in inputs,
+                        '#1180 include! module context is the included file parent')
+        path = self.root / 'assets/included-parent'
+        with api.mutating_sources(self.root, [path]):
+            path.write_text('// residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1180 include! module context stays guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    # #1180: same rule for `#[path]`-loaded modules - children resolve in the
+    # loaded file's parent directory (rustc: also when the file name matches
+    # the module name or is a mod.rs target), never in a stem directory and
+    # never in the declaring side's context.
+    def test_path_attribute_module_context_is_the_loaded_file_parent(self):
+        self.commit_source('#[path = "sub/gen.rs"] mod g;', {
+            'src/pilotdeck-cli/src/sub/gen.rs': 'mod m;',
+            'src/pilotdeck-cli/src/sub/m.rs':
+                'const X: &str = include_str!("../../../../assets/path-parent");',
+            'assets/path-parent': 'data'})
+        failure = None
+        try:
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure, inputs = error, ()
+        self.assertTrue(failure is None
+                        and ':(top,literal)assets/path-parent' in inputs,
+                        '#1180 path attribute module context is the loaded file parent')
+        path = self.root / 'assets/path-parent'
+        with api.mutating_sources(self.root, [path]):
+            path.write_text('// residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1180 path attribute module context stays guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    # #1180: an inline `mod name { ... }` block moves the module context for
+    # nested `mod` declarations, but rustc keeps the include! path relative
+    # to the containing FILE's parent and the included file's own parent as
+    # its module context - the block name never rebases either side.
+    def test_inline_module_does_not_rebase_included_edges(self):
+        self.commit_source('mod outer { include!("sub/inc.rs"); }', {
+            'src/pilotdeck-cli/src/sub/inc.rs': 'mod m;',
+            'src/pilotdeck-cli/src/sub/m.rs':
+                'const X: &str = include_str!("../../../../assets/inline-parent");',
+            'assets/inline-parent': 'data'})
+        failure = None
+        try:
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure, inputs = error, ()
+        self.assertTrue(failure is None
+                        and ':(top,literal)assets/inline-parent' in inputs,
+                        '#1180 inline modules do not rebase include edges')
+        path = self.root / 'assets/inline-parent'
+        with api.mutating_sources(self.root, [path]):
+            path.write_text('// residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1180 inline include edges stay guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
+    # #1180 registered known limitation (see tests/fixtures/README.md): a
+    # seed may be a custom Cargo target root (`mod child;` then resolves in
+    # the parent directory - rustc accepts this shape) or an ordinary module
+    # (the file must live in the stem directory - rustc rejects this exact
+    # tree). Without Cargo target metadata the union cannot tell the worlds
+    # apart, so the parent-context file is substituted silently; this locks
+    # that the substituted file stays guarded (conservative superset, no
+    # false PASS).
+    def test_union_substitution_keeps_substituted_module_guarded(self):
+        self.commit_source('// fixture', {
+            'src/pilotdeck-cli/custom/entry.rs': 'mod child;',
+            'src/pilotdeck-cli/custom/child.rs':
+                'const X: &str = include_str!("../../../assets/union-substitute");',
+            'assets/union-substitute': 'data'})
+        failure = None
+        try:
+            inputs = api._workspace_literal_inputs(self.root, 'HEAD')
+        except Exception as error:
+            failure, inputs = error, ()
+        self.assertTrue(failure is None
+                        and ':(top,literal)assets/union-substitute' in inputs,
+                        '#1180 seed union keeps the substituted parent-context module')
+        path = self.root / 'assets/union-substitute'
+        with api.mutating_sources(self.root, [path]):
+            path.write_text('// residue')
+            with self.assertRaises(api.SourceBaselineError,
+                                   msg='#1180 substituted parent-context module stays guarded'):
+                api._assert_product_pristine(self.root, 'HEAD')
+
     def test_only_untracked_caches_are_excluded(self):
         for name in ('src/target/debug/cache', 'src/pilotdeck-cli/target/debug/cache',
                      'src/.DS_Store',
