@@ -28,10 +28,11 @@ PREFIX = 'channel::sms::tests::'
 # `dir/file` of every changed file (`git grep -F 'sms/mod.rs'`). Rows below
 # concatenate a bare file name onto `SMS`, so `sms/<file>` never appears on its
 # own and a change under `channel/sms/` would schedule no mutation at all.
-# The imported shared helpers (`_shared/mutant_switch.py`, the two
-# `negative_*` fixtures) and this directory's own oracle, generator and README
-# are listed for the same reason: the table reads them, and the discovery loop
-# keys on any changed file under `fixtures/**`.
+# The imported shared helpers (`_shared/mutant_switch.py` and every `fixtures/`
+# module its import chain reaches, directly or transitively) and this
+# directory's own oracle, generator and README are listed for the same reason:
+# the table reads them, and the discovery loop keys on any changed file under
+# `fixtures/**`.
 # Every bare-filename key this table mutates is declared here; the rows and
 # this tuple must agree (fixtures/test_negative_discovery_anchors.py).
 DISCOVERY_ANCHORS = (
