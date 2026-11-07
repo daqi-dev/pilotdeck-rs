@@ -6,7 +6,10 @@ use pilotdeck_protocol::{JsValue, parse_json};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 pub(crate) struct KernelProjection {
     recorder: Arc<Recorder>,
@@ -137,6 +140,116 @@ impl KernelProjection {
     }
 }
 
+/// Backfill only display identity for pre-annotation native histories. An
+/// assistant block must be observed under exactly one original root. A user
+/// row is paired only through those block anchors plus that root's exact input.
+/// Repeated equal prompts are never matched globally by text.
+pub(crate) fn reconcile_identity(history: &Value, journal: &Value, roots: &[Value]) -> Value {
+    let mut blocks: HashMap<String, Option<String>> = HashMap::new();
+    fn ids(value: &Value, out: &mut HashSet<String>) {
+        match value {
+            Value::Object(object) => {
+                if let Some(id) = object.get("blockId").and_then(Value::as_str) {
+                    out.insert(id.into());
+                }
+                for child in object.values() {
+                    ids(child, out);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    ids(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    for event in journal.as_array().into_iter().flatten() {
+        let Some(root) = roots.iter().find(|root| root["id"] == event["call_ref"]) else {
+            continue;
+        };
+        let Some(run) = root["invocation"]["correlation_id"].as_str() else {
+            continue;
+        };
+        let Some(agent) = event["payload"]["content"].get("agent_event") else {
+            continue;
+        };
+        let mut found = HashSet::new();
+        ids(agent, &mut found);
+        for id in found {
+            blocks
+                .entry(id)
+                .and_modify(|existing| {
+                    if existing.as_deref() != Some(run) {
+                        *existing = None;
+                    }
+                })
+                .or_insert_with(|| Some(run.into()));
+        }
+    }
+    let Some(original) = history.as_array() else {
+        return history.clone();
+    };
+    let mut messages = original.clone();
+    for message in &mut messages {
+        if message["metadata"]["turnId"].is_string() {
+            continue;
+        }
+        let mut found = HashSet::new();
+        ids(&message["content"], &mut found);
+        let runs = found
+            .iter()
+            .filter_map(|id| blocks.get(id).and_then(Option::as_ref))
+            .collect::<HashSet<_>>();
+        if runs.len() == 1 {
+            let run = (*runs.iter().next().unwrap()).clone();
+            if !message["metadata"].is_object() {
+                message["metadata"] = json!({});
+            }
+            message["metadata"]["turnId"] = json!(run);
+        }
+    }
+    let prompts = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| {
+            message["role"] == "user"
+                && message["content"].as_array().is_some_and(|content| {
+                    content.iter().any(|block| block["type"] == "text")
+                        && !content.iter().any(|block| block["type"] == "tool_result")
+                })
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    for (ordinal, start) in prompts.iter().copied().enumerate() {
+        if messages[start]["metadata"]["turnId"].is_string() {
+            continue;
+        }
+        let end = prompts.get(ordinal + 1).copied().unwrap_or(messages.len());
+        let runs = messages[start + 1..end]
+            .iter()
+            .filter_map(|message| message["metadata"]["turnId"].as_str())
+            .collect::<HashSet<_>>();
+        if runs.len() != 1 {
+            continue;
+        }
+        let run = *runs.iter().next().unwrap();
+        let text = content_text(&messages[start]["content"]);
+        if roots.iter().any(|root| {
+            root["invocation"]["correlation_id"] == run
+                && root["invocation"]["payload"]["type"] == "text"
+                && root["invocation"]["payload"]["text"] == text
+        }) {
+            let run = run.to_string();
+            if !messages[start]["metadata"].is_object() {
+                messages[start]["metadata"] = json!({});
+            }
+            messages[start]["metadata"]["turnId"] = json!(run);
+        }
+    }
+    json!(messages)
+}
+
 /// The retained UI consumes WebMessage rows, not canonical model messages.
 /// IDs are content-based and stable across cache deletion/reconstruction.
 pub(crate) fn web_messages(
@@ -150,7 +263,10 @@ pub(crate) fn web_messages(
         let message = normalize(message);
         let blocks = message["content"].as_array().cloned().unwrap_or_default();
         let role = message["role"].as_str().unwrap_or("system");
-        let id = format!("kernel-history:{index}:{}", &digest(&message)[..16]);
+        let id = message["metadata"]["kernelMessageId"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("kernel-history:{index}:{}", &digest(&message)[..16]));
         let created = message["createdAt"]
             .as_str()
             .or_else(|| message["metadata"]["createdAt"].as_str())
@@ -161,11 +277,19 @@ pub(crate) fn web_messages(
             if let Some(project) = project {
                 row["projectKey"] = json!(project);
             }
+            if let Some(run) = message["metadata"]["turnId"].as_str() {
+                row["turnId"] = json!(run);
+            }
+            if block["timeline"].is_object() {
+                row["timeline"] = block["timeline"].clone();
+            }
             if let Some(model) = message["metadata"]["model"].as_str() {
                 row["model"] = json!(model);
             }
-            if let Some(block_id) = block["id"]
-                .as_str()
+            if let Some(block_id) = block
+                .get("blockId")
+                .or_else(|| block.get("id"))
+                .and_then(Value::as_str)
                 .filter(|_| kind != "tool_call" && kind != "tool_use")
             {
                 row["blockId"] = json!(block_id);
@@ -261,6 +385,28 @@ fn content_text(content: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn kernel_history_live_identity_uses_root_and_block_not_equal_text() {
+        let history = json!([{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"a","timeline":{"id":"a","turnId":"internal-a"}}]},{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"b"}]}]);
+        let roots = vec![
+            json!({"id":"root-a","invocation":{"correlation_id":"ui-a","payload":{"type":"text","text":"same"}}}),
+            json!({"id":"root-b","invocation":{"correlation_id":"ui-b","payload":{"type":"text","text":"same"}}}),
+        ];
+        let journal = json!([{"call_ref":"root-a","payload":{"content":{"agent_event":{"event":{"blockId":"a"}}}}},{"call_ref":"root-b","payload":{"content":{"agent_event":{"event":{"blockId":"b"}}}}}]);
+        let display = reconcile_identity(&history, &journal, &roots);
+        let rows = web_messages(&display, "s", None, &json!({}));
+        assert_eq!(rows["messages"][0]["turnId"], "ui-a");
+        assert_eq!(rows["messages"][1]["turnId"], "ui-a");
+        assert_eq!(rows["messages"][1]["blockId"], "a");
+        assert_eq!(rows["messages"][1]["timeline"]["turnId"], "internal-a");
+        assert_eq!(rows["messages"][2]["turnId"], "ui-b");
+        assert_eq!(rows["messages"][3]["turnId"], "ui-b");
+        assert!(history[0]["metadata"].is_null());
+        let annotated = json!([{"role":"user","metadata":{"turnId":"original","kernelMessageId":"native:call:0","createdAt":"2026-11-08T01:39:00.000Z"},"content":[{"type":"text","text":"same"}]}]);
+        let rows = web_messages(&annotated, "s", None, &json!({}));
+        assert_eq!(rows["messages"][0]["id"], "native:call:0:0");
+        assert_eq!(rows["messages"][0]["createdAt"], "2026-11-08T01:39:00.000Z");
+    }
     #[test]
     fn kernel_ui_cache_is_atomic_idempotent_rebuildable_and_has_no_execution_outcomes() {
         use crate::storage::{JsonlTranscriptStore, TranscriptKey};

@@ -93,8 +93,14 @@ fn canonical_messages(messages: &Value) -> Result<Value, RequestError> {
             )
         };
         let mut next = json!({"role":message["role"],"content":content});
-        if let Some(model) = message["metadata"]["model"].as_str() {
-            next["metadata"] = json!({"model":model});
+        let mut display = serde_json::Map::new();
+        for key in ["model", "turnId", "createdAt", "kernelMessageId"] {
+            if let Some(value) = message["metadata"][key].as_str() {
+                display.insert(key.into(), json!(value));
+            }
+        }
+        if !display.is_empty() {
+            next["metadata"] = Value::Object(display);
         }
         result.push(next);
     }
@@ -156,10 +162,15 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
         }
         if let Some(metadata) = message.get("metadata") {
             if metadata.as_object().is_none_or(|o| {
-                o.keys().any(|k| k != "model") || !o.get("model").is_some_and(Value::is_string)
+                o.iter().any(|(key, value)| {
+                    !matches!(
+                        key.as_str(),
+                        "model" | "turnId" | "createdAt" | "kernelMessageId"
+                    ) || !value.is_string()
+                })
             }) {
                 return Err(err(
-                    "Only read-only model annotation is imported from message metadata.",
+                    "Only read-only display identity/model annotations are imported from message metadata.",
                 ));
             }
         }

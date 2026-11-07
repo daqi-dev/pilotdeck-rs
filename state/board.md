@@ -4576,3 +4576,7 @@ Kernel committed history/revision 现驱动原 JSONL 的产品缓存，保留原
 ### 2026-11-08 Kernel journal active replay 与标准 Unknown（lane C）
 
 Gateway 重启后没有 attached pump 时，active snapshot 现从原 root execution/journal 重建有界 Gateway frame 视图，经原 projector 得到文本/工具帧，原 wait 只显示一次，实际 response 才标 terminal；permission 显示/响应始终保留原 child call/wait。重连仅在本进程从未见过 binding 的 native owner 上接受旧浏览器恢复观察，新连接 identity 仍控制后续审批；已有 generation fence 不变。Unknown 公共错误改为产品标准 result_unknown，nativeCode=KERNEL_OUTCOME_UNKNOWN 及原 session/execution ID 保留；native failure frame 不再经 projector 丢 details。focused kernel 14/14 通过；真实重启/CLI SIGINT 仍由总集成公共 WS/CLI 实测，UI 历史/live 标识重复已定位并与 B 接续。
+
+### 2026-11-08 原 UI live/history 身份对齐（lane C）
+
+真实 UI duplicate 根因确认：canonical blockId/timeline 被 converter 丢弃，旧原生 user 无 root identity，canonical timeline 内部 turnId 又不是产品 root correlation。WebMessage 现保留 blockId/timeline，并使用 B 原生作者的 display metadata.turnId/createdAt/kernelMessageId。已有历史只在唯一 journal root block 锚点加该 root 精确原始输入共同证实时补展示身份；不会全局按相同文字合并、不会改 canonical execution history。导入只允许这三个字符串展示注释及原 model，active/runtime 状态仍拒绝。focused kernel 15/15 通过，含两次相同 prompt/answer 保持不同原 run 与 block 的负例；真实 UI 重试由总集成执行。

@@ -705,8 +705,38 @@ impl LiveSession for KernelSession {
                     if let Some(projection) = &projection {
                         projection.sync(&history)?;
                     }
+                    let mut display = history["history"].clone();
+                    if display.as_array().is_some_and(|messages| {
+                        messages
+                            .iter()
+                            .any(|message| !message["metadata"]["turnId"].is_string())
+                    }) {
+                        let mut rpc = rpc.lock().await;
+                        let journal = rpc
+                            .call(
+                                "execution.events",
+                                json!({"session_id":kernel_id,"after":0}),
+                            )
+                            .await?;
+                        let mut roots = Vec::new();
+                        for event in journal.as_array().into_iter().flatten().filter(|event| {
+                            event["kind"] == "call.accepted"
+                                && event["payload"]["cause_execution_ref"].is_null()
+                        }) {
+                            let root = rpc
+                                .call(
+                                    "execution.get",
+                                    json!({"session_id":kernel_id,"call_ref":event["call_ref"]}),
+                                )
+                                .await?;
+                            roots.push(root);
+                        }
+                        display = super::kernel_projection::reconcile_identity(
+                            &display, &journal, &roots,
+                        );
+                    }
                     let mut result = super::kernel_projection::web_messages(
-                        &history["history"],
+                        &display,
                         &text(&session)?,
                         params["projectKey"].as_str(),
                         &params,
