@@ -1,6 +1,7 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod chat_search;
 mod config;
+mod cron;
 pub(crate) mod paths;
 pub(crate) mod sdk;
 pub(crate) mod skills;
@@ -160,7 +161,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             stderr_line("Usage: pilotdeck gateway setup [feishu|weixin|wecom]");
             Ok(1)
         }
-        Some("cron") => Err(Failure::Todo("pilotdeck cron")),
+        Some("cron") => cron::run(&argv[1..], env, cwd),
         Some("update") => Err(Failure::Todo("pilotdeck update")),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => chat_search::run(&argv[1..], env, cwd),

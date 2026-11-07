@@ -1020,9 +1020,14 @@ dependencies = [
 name = "pilotdeck-cli"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "chrono",
  "fancy-regex",
  "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
  "icu_casemap",
  "icu_collator",
  "icu_locale_core",
@@ -1037,6 +1042,7 @@ dependencies = [
  "signal-hook",
  "tokio",
  "tokio-tungstenite",
+ "url",
  "uuid",
 ]
 

@@ -1,0 +1,193 @@
+{
+  "source": "PilotDeck cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85, Node 22.22.0; mock TS matrix; uuid and cwd substituted",
+  "cases": {
+    "list": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_list",
+          "params": {
+            "includeHistory": true,
+            "limit": 12
+          }
+        }
+      ]
+    },
+    "create": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_create",
+          "params": {
+            "message": "hi",
+            "sessionKey": "slack:abc",
+            "channelKey": "slack",
+            "projectKey": "<cwd>",
+            "schedule": {
+              "type": "once",
+              "runAt": "later"
+            },
+            "timezone": "UTC"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_delete",
+          "params": {
+            "taskId": "--task",
+            "stopRunning": true
+          }
+        }
+      ]
+    },
+    "stop": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_stop",
+          "params": {
+            "taskId": "--run",
+            "runId": "run-1"
+          }
+        }
+      ]
+    },
+    "usage": {
+      "stdout": "",
+      "stderr": "Usage: pilotdeck cron create --session <sessionKey> --message <text> (--once <iso> | --cron <expr>)\n",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        }
+      ]
+    },
+    "rpc-error": {
+      "stdout": "",
+      "stderr": "fixture denied\n",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_list",
+          "params": {
+            "includeHistory": false
+          }
+        }
+      ]
+    },
+    "http-503": {
+      "stdout": "",
+      "stderr": "pilotdeck cron requires a running pilotdeck server.\n",
+      "native_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "opened": false,
+      "closed_before_cleanup": false,
+      "wire": []
+    },
+    "hello-reject": {
+      "stdout": "",
+      "stderr": "pilotdeck cron requires a running pilotdeck server.\n",
+      "native_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "opened": true,
+      "closed_before_cleanup": true,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        }
+      ]
+    },
+    "no-token": {
+      "stdout": "",
+      "stderr": "pilotdeck cron requires a running pilotdeck server.\n",
+      "native_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "opened": false,
+      "closed_before_cleanup": false,
+      "wire": []
+    }
+  }
+}
