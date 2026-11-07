@@ -59,7 +59,6 @@ mock_gateway_scenarios = _common.mock_gateway_scenarios
 per_stream_scenarios = _common.per_stream_scenarios
 snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
-ROOT = _common.ROOT
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
 protected_trees = _load('policy', _here / 'policy.py').protected_trees
 ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
@@ -199,20 +198,39 @@ def load_round(path, rust_bin=None):
         require(isinstance(roots_raw, list) and all(isinstance(root, str) and Path(root).is_absolute() for root in roots_raw),
                 'round.ts-read-dirs')
         roots = tuple(roots_raw)
-        # #2231 r1 + r2: being absolute is not enough. The offline validator
-        # replays the recorder's protected-tree scope from the same single
-        # source (policy.protected_trees), so a tampered round whose tsReadDirs
-        # cover home, this checkout, the evidence tree, the baseline or the
-        # Rust candidate's directory fails closed instead of merely re-deriving
-        # a profile that contains it. A Rust round's candidate parent comes from
-        # that round's own provenance executable; a TS round does not record the
-        # candidate, so the operator-supplied --rust-bin (compare's expected_rust)
-        # fills the tree in — a compare without it cannot replay that one tree
-        # (recorded residual, same spelling as the recorder's own scope).
+        runtime = Path(run['runtime'])
+        # #2231 r1 + r2 + r3: being absolute is not enough. The offline
+        # validator replays the recorder's protected-tree scope from the same
+        # single source (policy.protected_trees), so a tampered round whose
+        # tsReadDirs cover home, this checkout, the evidence tree, the
+        # baseline or the Rust candidate's directory fails closed instead of
+        # merely re-deriving a profile that contains it. A Rust round's
+        # candidate parent comes from that round's own provenance executable;
+        # a TS round does not record the candidate, so the operator-supplied
+        # --rust-bin (compare's expected_rust) fills the tree in — a compare
+        # without it cannot replay that one tree (recorded residual, same
+        # spelling as the recorder's own scope).
+        # r3 P1 (three independent reviewer hits): the evidence tree is the
+        # whole batch output root, not the round directory — the recorder
+        # rejects a --ts-read-dir pointing at any sibling evidence subtree
+        # (<out>/controls, <out>/rust-stage, a sibling round), and the
+        # recorded provenance now carries the recorder's output/root/home so
+        # the replayed scope is the recorded one, not the validating host's.
+        # The output root is anchored to the recorded runtime (run_round lays
+        # rounds out as <output>/<side> with the runtime at <output>/runtime),
+        # so the field cannot be moved aside to dodge the trees it names;
+        # 'root'/'home' are recorded facts replayed as-is (residual registered
+        # in specs/cli-parity/scenarios.md: they are not bound into any
+        # profile digest, so rewriting them together with tsReadDirs is
+        # wholesale fabrication, out of the single-mutation guard's scope).
+        require(all(isinstance(provenance.get(key), str) and Path(provenance[key]).is_absolute()
+                    for key in ('output', 'root', 'home'))
+                and Path(provenance['output']) == runtime.parent, 'round.recorder-scope')
         candidate = provenance['executable']['path'] if run['side'] == 'rust' else rust_bin
-        require(all(ts_read_root_overlap(Path(root), protected_trees(ROOT, path, baseline['path'],
-                                                                    rust_bin=candidate),
-                                           home=Path.home()) is None for root in roots_raw),
+        require(all(ts_read_root_overlap(Path(root), protected_trees(Path(provenance['root']),
+                                                                     Path(provenance['output']),
+                                                                     baseline['path'], rust_bin=candidate),
+                                           home=Path(provenance['home'])) is None for root in roots_raw),
                 'round.ts-read-dirs-protected')
         if run['side'] == 'ts':
             require(provenance['sourceHead'] == HEAD and provenance['executable'] == node
@@ -222,7 +240,6 @@ def load_round(path, rust_bin=None):
                     and provenance['sourcePath'] != baseline['path']
                     and provenance['executable']['path'] != node['path']
                     and provenance['executable']['sha256'] != node['sha256'], 'round.rust-source')
-        runtime = Path(run['runtime'])
         require(runtime.is_absolute() and isolation['probe']['osHomedir'] == str(runtime / 'home'), 'round.os-home')
         executed = provenance['executable']
         if run['side'] == 'rust':
@@ -385,6 +402,10 @@ def compare(left, right, expected_rust=None):
             failures.append({'rule': 'round.node'})
         if a['provenance'].get('tsReadDirs') != b['provenance'].get('tsReadDirs'):
             failures.append({'rule': 'round.ts-read-dirs'})
+        # r3: the recorder's scope fields are pairwise evidence too — one side
+        # silently rewriting them cannot keep the pair PASS.
+        if any(a['provenance'].get(key) != b['provenance'].get(key) for key in ('output', 'root', 'home')):
+            failures.append({'rule': 'round.recorder-scope'})
         if b['side'] == 'rust':
             observed = {key: b['provenance'].get(key) for key in ('side', 'executable', 'sourcePath', 'sourceHead')}
             if expected_rust is None or observed != expected_rust:

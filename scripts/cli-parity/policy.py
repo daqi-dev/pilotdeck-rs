@@ -118,7 +118,12 @@ def protected_trees(root, output, baseline, rust_bin=None):
     overlap here, so the two scopes cannot drift apart again — the recorder
     protects the Rust candidate's parent directory, and the offline side
     replays that same tree from the recorded provenance. ``rust_bin`` is the
-    Rust candidate executable; its parent directory is the protected tree."""
+    Rust candidate executable; its parent directory is the protected tree.
+    r3 P1: the two ends must also pass synonymous values — the recorder passes
+    the whole batch output root (run_round's output_path layout), and the
+    offline side replays the recorded provenance['output'] (anchored to the
+    recorded runtime's parent), never the round directory or the validating
+    host's own checkout/home spellings."""
     trees = [Path(root).resolve(), Path(output).resolve(), Path(baseline).resolve()]
     if rust_bin:
         trees.append(Path(rust_bin).resolve().parent)
