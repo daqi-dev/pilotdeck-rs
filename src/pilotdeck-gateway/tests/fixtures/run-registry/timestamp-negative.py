@@ -126,7 +126,9 @@ def probe_slot(script, **_kwargs):
     of budget inside scratch's 1800 s deadline while holding the tree lock,
     for a gate this process can never contend. The gate itself is untouched;
     only this runner's view of it is a no-op, and run_cases still writes the
-    (empty) transcript into <label>.slots.log.
+    (empty) transcript into <label>.slots.log. The shared #1166 scanner's
+    cold build, if missing, still queues on negative_process's own slot gate
+    inside mutating_sources; this bypass covers only run_cases' per-run wait.
     """
     return subprocess.CompletedProcess([], 0, '', '')
 
@@ -212,13 +214,17 @@ def main():
     try:
         return _guarded_body(env, out, base_guarded)
     except SystemExit as error:
-        if error.code is None or isinstance(error.code, int):
-            raise
-        # A signal that lands outside run_cases' own #1076 handling (closure
-        # discovery, a guard's entry checks) still unwinds through every
-        # shielded restore, but the raw SystemExit carries scratch's string
-        # message and would exit 1. A cancellation is "never verified" and
-        # must exit 2 (#1076).
+        # Verdicts reach the caller only through `_guarded_body`'s return
+        # value; any SystemExit escaping the guarded window is a cancellation
+        # or a refuse, never a verdict. scratch's deadline raises SystemExit
+        # with a string code (which would exit 1) and mutating_sources'
+        # deferred signals raise SystemExit(128 + signum) (which would exit
+        # 143/130): both are "never verified" and must exit 2 (#1076),
+        # matching count-negative.py's handler. Print the carried code first
+        # so the signal diagnosis survives the normalization (#1147 r2).
+        if error.code != 2:
+            print(f'INVALID: unwound with SystemExit({error.code!r}); exiting 2',
+                  file=sys.stderr, flush=True)
         raise SystemExit(2) from error
 
 
