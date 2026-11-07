@@ -1620,3 +1620,39 @@ plus a write inside a function, which one `(old, new)` replacement cannot
 express. The end-to-end repro and the per-shape detector probes are in the
 PR body (#1953).
 
+### Closed by `fix-r1` round 26 (codex r25 two P0s and three P1s)
+
+Round 25 resolved an alias to its final module-end binding, treated
+`globals()`-style lookups as the only way a call escapes the name list, and
+counted a binding inside `if False:` as a live import.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The function is reached through an unpacked hand-off**: `a, b = main, print; import builtins as bi; a(...)`. | self-test `round 26: a builtins alias reached through an unpacked hand-off`; `_plain_alias_pairs` pairs the elements |
+| **The function is reached through a dynamic-lookup alias**: `lookup = globals; import builtins as bi; lookup()['main'](...)`. | self-test `round 26: a builtins alias reached through a dynamic-lookup alias`; `_module_open_aliases` closes over the heads |
+| **The function is reached through an attribute call**: `sys.modules['__main__'].main(...)`. | self-test `round 26: a builtins alias reached through an attribute call`; `_spelled_callee` records the site in `events.attr_calls` |
+| **The function is reached through a literal `getattr` call**: `getattr(X, 'main')(...)`. | self-test `round 26: a builtins alias reached through a literal getattr call`; same site list |
+| **A certain rebind before the call hands nothing off** (false FAIL guard): `a = main; a = lambda ...; import builtins as bi; a(...)`. | self-test `round 26: a module alias certainly rebound before the call`; `_module_alias_sources` keeps the last certain binding |
+| **An unrelated `getattr` before the import is not a call site** (false FAIL guard): `getattr(object(), 'x')` next to a later import. | self-test `round 26: an unrelated module-level getattr before a later import`; `getattr` left `_OPEN_CALL_HEADS` |
+| **An unrelated `getattr` after the import is not a call site** (false FAIL guard). | self-test `round 26: an unrelated getattr after the later import` |
+| **A `getattr` inside a function the module never calls is not a call site** (false FAIL guard). | self-test `round 26: a getattr inside a function the module never calls`; `_module_open_calls` walks module scope only |
+| **A builtins import inside a statically dead branch is not a binding** (false FAIL guard): `saved = main; if False: import builtins as bi; saved(...)`. | self-test `round 26: a builtins import inside a statically dead branch`; `_dead_line_ranges` / `_dead_shadowed` |
+
+### Closed by `fix-r1` round 27 (codex r26 four P0s)
+
+Round 26 dropped every binding when the resolving position was unknown,
+split one dead branch into one range per statement, treated a
+`globals()['main']` lookup position as the call position, and resolved an
+alias only against the bindings textually before the call.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A live import next to an unrelated dead branch stays live**: `import builtins as bi; ...; if False: x = 1`, no visible call of `main`. | self-test `round 27: a live import next to an unrelated dead branch`; `_dead_shadowed` only drops bindings that sit inside a dead range |
+| **An import and the call inside the same dead branch still pair up**: `if False: import builtins as bi; main(...)`. | self-test `round 27: a builtins import and the call in the same dead branch`; one range per branch |
+| **A dynamically looked-up function is a call site where it is called**: `held = globals()['main']; import builtins as bi; held(...)`. | self-test `round 27: a dynamically looked-up function called after a later import`; `_dynamic_result_names` adds the carrier name to `_module_open_calls` |
+| **A binding on the loop back edge is a candidate**: `for ...: a(...); import builtins as bi; a = main`. | self-test `round 27: an alias bound after the call on a loop back edge`; `_module_alias_sources` follows the shared loop context |
+
+Like rounds 24 and 25, these shapes need a module-scope trigger plus a
+write inside a function, which one `(old, new)` replacement cannot express;
+the end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
