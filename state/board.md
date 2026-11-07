@@ -1,7 +1,7 @@
 # PilotDeck-RS：把 PilotDeck 后端从 TypeScript 重写为 Rust · 状态板（给 AI · 跨会话唯一接续点）
 
 <!-- READY:BEGIN -->
-updated: 2026-11-07 11:39（12:01 交接轮；落盘现核 11:32–11:39，每处时间 `date` 实测）· by Claude Code 协调者（coord 交接 → e7 落盘）· **97 条（doing 79 / ready 2 / blocked 10 / human 6）** · 本段改动：删 0 行 · 新增 6 行（#2133 · #2127 · #2027 · #2141 · #2109 · #2143，e7 增项 r6 逐条落）· 改 20 行（本段合入落账：#1329 PR #2079 MERGED · #2037 PR #2084 MERGED（#1431 前置少一）· #1887 PR #1999 MERGED · #1922 PR #2066 MERGED · #1990 PR #2095 入队 pos6 · #1985 PR #2040 入队 pos1 · #1989 PR #2120 入队 pos5 · #1929 PR #2071 转正入队 pos3 · #589/#1500 PR #2105 入队 pos4（head `e466cea55`）· **#1992/#1995 PR #2062 r9 `ea6eb8afb` 已推、rebase 完成后 mergeable、两条 P1 转 #2109/#2143** · #1352 PR #2124 车道自己 rebase（head `73ed18b01`）后仍 CONFLICTING · **#1429 ready→doing：PR #2134 已开**（assembly.rs 冲突由收尾代理逐块真合并后强推 `e3101e3ce`，现核 MERGEABLE、pr-gate FAIL 待补块）· **#132 ready→doing：已派**（D159：前置 #1154 CLOSED / #1186 MERGED）· #1457 增 #1860 P0 重判已派 · #2036 #2091 rebase 车道已推（head `b2aa1e741`，冷 target 负控在跑）· #1819 第 7 条的 PR #1999 已合、可派）· 追加 12:01 交接段（依据 `_tmp/20261107-coord/HANDOFF-1143.md` 全文 §1–§7 + `board-e7-additions-r6.md` + `board-delta-0250.md` D154–D168（D164 为 #1429 车道、#2133 内容在 D168；D144 / D144 补 与 D169 事实已按「谁新听谁」并入））
+updated: 2026-11-07 11:46（12:01 交接轮；落盘现核 11:32–11:46，每处时间 `date` 实测）· by Claude Code 协调者（coord 交接 → e7 落盘）· **100 条（doing 82 / ready 2 / blocked 10 / human 6）** · 本段改动：删 0 行 · 新增 9 行（#2133 · #2127 · #2027 · #2141 · #2109 · #2143，e7 增项 r6 逐条落；coord 11:4x 增量再加 **#2073 · #2126 · #2137**）· 改 22 行（本段合入落账九笔：#1329 PR #2079 · #2037 PR #2084 · #1887 PR #1999 · #1922 PR #2066 · **#1985 PR #2040 MERGED 03:36:35Z** · #1990 PR #2095 入队 · #1989 PR #2120 入队 · #1929 PR #2071 转正入队 · #589/#1500 PR #2105 入队 · **#1992/#1995 PR #2062 r9 `ea6eb8afb` 已推、rebase 完成后 mergeable、两条 P1 转 #2109/#2143** · #1352 PR #2124 车道自己 rebase（head `73ed18b01`）后仍 CONFLICTING · **#1429 ready→doing：PR #2134 已开**（冲突已解、`e3101e3ce` MERGEABLE）· **#132 ready→doing：已派，PR #2137 已开（CI rust 真红一处回传修中）** · #1457 增 #1860 P0 重判已派 · #2036 #2091 rebase 已推（head `b2aa1e741`）· #1819 第 7 条可派 · **#2143 车道已开（与 Draft PR #2001 同批文件、#2001 停在人决策 #2017、禁碰 `_build/wt-1809`、不做 CI 接线）**）· 追加 12:01 交接段（依据 `_tmp/20261107-coord/HANDOFF-1143.md` 全文 §1–§7 + `board-e7-additions-r6.md` + `board-delta-0250.md` D154–D168（D164 为 #1429 车道、#2133 内容在 D168）+ coord 11:4x 增量）
 - #1157 | coord | doing | 待人决策总表（置顶）：**待人 = 8 张（03:1x–04:0x 逐张 `gh issue view` 实测；07:2x 增核 #2017 后由 7 张改 8）**——#1837（人已拍板 **A**，15:28:30Z；落地单 #1941 在跑，未合前不关）· #1864（#1457 capabilities 是否继续宣告三个未接线方法，AI 建议选项 2）· #1926（`frame_attrib.py` C5 是否豁免 requestEvidence）· #1976（HTTP/1.0 状态行）· #1977（webhook 1.0 残差族三份更正件）· #1986（21.8 GiB / load 47 负载归因：高峰期进程快照定位法，AI 建议 ③ 装闸 + ④ 写 memory；已贴实测评论 6693123684）· **#1997**（#1843 A 项「还原挂住时是否接受 fail-closed 不发 TIMEOUT summary」，AI 不代拍，正文带「场景 × TS × Rust × 用户感知」表）· **#2017（07:2x 新增，07:26 现核 OPEN、label question、零人答）**：#1809 retirement 接线守卫可被绕过（四种把闸门做废的 `ci.yml` 全 PASS）且 r5 评审块本身是假 PASS（块写 `scope=full` 763 行、PR 真实 19 文件 5514 行）——选项 A=改真 YAML 解析器重写 / B=先合入无守卫 / C=撤回；挡着 draft PR #2001；**issue 上 07:2x 的「补充证据」评论（6698113925）是 coord 自己贴的（带 `<!-- coord -->` 标记），不是人已答**；**#2059 前置于本决策落地之后**；**10:1x 增核（`gh issue list --label question` 现核 22 张 open，含本表自身）本段新增待记 4 张**：#2026（#1955 sms 头读 408 / 30 s 网格 + `stop()` 有界 drain，四列表 + A/B/C，AI 不代拍）· #2063（P2-跟进收敛判据：274 张存量、伞单结构上不可清零，建议 B）· #2083（#1604 孤立代理项 projectKey）· **#2094/#2110（#1987/#2089 两条冻结决策卡：P1-a 过渡拍比对超出冻结更正件 `A6.3-CONFIG-POLL-001-R1.md:25` 须人批、P1-b 注释方向更正；人 01:50:56Z 在 #2094 回复要求两卡一并拍、两个序号写在同一条评论，本班已回执样例「2094 ① / 2110 ①」；未拍板前 #2089 保持 Draft、`specs/gateway-parity/` 零改动）**；**#1980 / #1981 / #1982 / #1861 / #1875 均 CLOSED、不再列**（#1981 人原批 ① 后 03:3x 改撤、按实测 ④「无需改动」关单，决策轨迹留 issue 评论 6692952511，配置保持原样；#1982 人批 ⑤ 保持现状关单；#1980 按重复关闭；#1875 机器 03:14 ssh 实测在线——`up 11 days, 12:41`，「到现场看电源与网线」句作废）；各包冒烟「AI 已实测，待人签字」见 RESULT；**常驻复查触发条件（人 2026-11-06T10:21Z 认可口径）**：mbp2 出现 ≥2 h 无负控无 cargo 静默窗口时，用**已入仓副本 `scripts/parity-attrib/frame_attrib.py`**（PR #1966 合入，别再用 `_tmp` 未跟踪副本）重跑 `deadline` / `deadline_during_tool` 各 10 对，**`NOT_6` 或 `UNKNOWN(rc=8)`** 出现即停并报告
 - #1969 | impl | doing | P2-跟进批（P2×10 / P3×16）：parity-attrib 装置评审残留（与 #1968 同源，**#1968 已 CLOSED**：PR #2030 五条逐条 `file:line` 对得上，08:0x 现核）；**08:5x 收尾判定：本单不关**——自身 26 条全有处置，但 **#2031 仍 OPEN 且正文写「前置于 #1969 关单」**（P2×6，其中 1/2/4/6 会让按 rc 判停读出假 1/假 120/假 rc=3/假 rc=4，不清则 #1157 下次常驻复查结论不可信）→ **已派车道（PR #2075 已于 02:16:06Z MERGED、main 顶 `3c002daa9`），待收口复核**；域外残余转 #2074（前置于本单关单）；前置于 #1926 关单与 #1157 下一次常驻复查执行
 - #1242 | coord | doing | 次链总单：s1 #1368、s2 #1369（PR #1412 已合）、s3 #1370（PR #1561 已合入，issue 待收尾）；s4 #1371（PR #1951 已 MERGED）；**s5 #1372 已 CLOSED（09:48；先 comment 6700578459 再关）——车次 PR #2034 已承载合入（`git cherry` 14/14 等价；`delivery-orphan` 漏判车次 PR，判「已合入」只认 git cherry/patch-id）；`fix/1372-native-ws-projection` 分支曾判真死车道（14 提交无 PR 无进程），复活代理核出无需复活**；**#1408 前置于本单关单**；**#1648 已 CLOSED**（s3 前置已清）
@@ -16,7 +16,7 @@ updated: 2026-11-07 11:39（12:01 交接轮；落盘现核 11:32–11:39，每�
 - #1316 | impl | doing | A7.8-pr1 会话域整域装配：**PR #1558 已合入**；只剩收尾关单；P2 8 条归 **#1632**（前置于本单收口）；唯一 P1 在 diff 外 → #1624
 - #1325 | impl | doing | A8.3-pr2 CronManager 与 6 个 cron 管理方法：**PR #1700 已合入**（原「队列 pos1」已过时）；**#1509 仍 OPEN（写「前置于 #1325 接线」）→ 收尾未过**；**#1767 已 CLOSED（PR #1815 合入）**
 - #1382 | review | doing | PR #1493 已合入，#1252 已 CLOSED；#1508 已 CLOSED；**#1507 也已于 17:43Z 前后 CLOSED → 前置全清，只剩收尾关单**（#1821 的 main 侧 merge 实为 `8fd664c47`，board 旧写的 `3fe809982` 是入队前分支提交；`wt-1821` 树已不在）；**07:2x 收尾核查批已跑（coord 派车道，#1382 + 11 张「PR 已合 issue 未关」）：12 张一张都没关**——8 张被 OPEN 单点名「前置于本单」（#1334→#1976/#1947/#1931/#1914/#1913 等）、#978 自身十轮验收未达、#1525 另有 5 项、#1970 第 6 条 P2 未做且无承载单；证据 `_tmp/20261107-closeout/issue-<N>.md` 12 份；**ready-audit 的「PR 已合 · issue 未关」WARN 不能当关单依据**（#1458/#1650/#1970 都是部分完成，照 WARN 关会把未清 P2 一起关掉）；**10:01 轮口径（e7 r5）：这 11 张 WARN（#978/#1334/#1445/#1458/#1525/#1538/#1589/#1632/#1650/#1843/#1970）均按「主单未关、子单承接」处置、不开新单**，上一句 07:2x 核查批已逐张给出不关理由
-- #132 | review | doing | **方向更正（D148 审计）：旧「前置 = #1357」读反了**——#132 正文写「后续原生处理**前置于** A8 完全退役」，#1357 正文「依赖：…#132」逐字列出，即**本单是 #1357 的前置、挡它的收口**；PR #1235 已合入；**已派（D159，10:27）：前置其实早清了——`#1154` CLOSED、`#1186` MERGED**（任务书 `_tmp/20261107-issue-132/task.md`：先出 triage（原生排序选型 + 影响面）再动手，五条 #1235 遗留 P2 逐条清，冻结账本只许新增）；要求：选保 illformed UTF-16 排序的原生实现（不许 PUA/替换字符猜映射、不改输入域或冻结判据）+ 录 Node 原件逐字节对照（金样机 Node/ICU 逐项对上）+ 移除 `JS_HOST_REQUIRED` 精确边界；issue 的「核销」明写要在 A2 十方法 + A8 退役核对之后——开工不等于能关单，必然跨 A8 完成点
+- #132 | review | doing | **方向更正（D148 审计）：旧「前置 = #1357」读反了**——#132 正文写「后续原生处理**前置于** A8 完全退役」，#1357 正文「依赖：…#132」逐字列出，即**本单是 #1357 的前置、挡它的收口**；PR #1235 已合入；**已派（D159，10:27）：前置其实早清了——`#1154` CLOSED、`#1186` MERGED**（任务书 `_tmp/20261107-issue-132/task.md`：先出 triage（原生排序选型 + 影响面）再动手，五条 #1235 遗留 P2 逐条清，冻结账本只许新增）；**PR #2137 已开（11:06，`fix(collation) #132`：三处孤立代理宿主边界改原生比较 + 清 #1235 五条 P2，head `55bddc494`、非 Draft）——CI `rust` 真红一处已回传修（见 #2137 行）**；要求：选保 illformed UTF-16 排序的原生实现（不许 PUA/替换字符猜映射、不改输入域或冻结判据）+ 录 Node 原件逐字节对照（金样机 Node/ICU 逐项对上）+ 移除 `JS_HOST_REQUIRED` 精确边界；issue 的「核销」明写要在 A2 十方法 + A8 退役核对之后——开工不等于能关单，必然跨 A8 完成点
 - #1386 | impl | doing | A8.3 未迁 13 个 channel 登记差异：**PR #1579 已合入**；**收尾自查未过、不关单**——**#1763 已 CLOSED（PR #1818 合入），前置已清**；P2 全转 **#1694**
 - #1495 | impl | doing | 批次 B10 flaky 测试三项：**PR #1567 已合入**；**PR #1851 已 MERGED（14:40:00Z，`5b173276a`）**；**#978 仍 OPEN、不可关**——剩「每二进制十轮」全量扫描验收未做（`stress-bin.sh` 负载 30+），#1297 / #1400 已 CLOSED；证据 `_tmp/20261106-closeout/issue-1495.md`
 - #1363 | impl | doing | #1140 收口剩余 P2：**PR #1715 已合入**，负控 7/7 KILLED、两家四角色 PASS；残留 #1728 / #1714 / #1706；**不可关（03:0x 实测）**——前置 **#1727 仍 OPEN**，其评论项 11/12/13 未做（建议 3 的元负控已开 **#1991** 承接）
@@ -98,7 +98,10 @@ updated: 2026-11-07 11:39（12:01 交接轮；落盘现核 11:32–11:39，每�
 - #2027 | impl | doing | **P1（D169 开工，本轮新派）**：#1599 同 id 替代仍有三处「等待者永久 pending」窗口 + 两处泄漏，前置于 #1592 接线——正因不可达才必须在接线前清掉；原标签 `P2-跟进` 但标题写 P1-跟进，按 memory `followup-title-is-its-grade` 当 **P1** 办（「等待者永久 pending」属挂起类，若实测出确凿挂起证据再报 P0 重判）；文件面 `src/pilotdeck-gateway/src/user_dialog/**`，与 145 个在飞文件零重叠（18 个 OPEN PR diff 并集 grep `user_dialog` 为空）；任务书 `_tmp/20261107-issue-2027/task.md`：先写 triage 矩阵（五条窗口逐条判真伪、行号说话）、第 3 条不许把真挂起登记成设计边界、每条窗口一条可红负控（干净 `CARGO_TARGET_DIR`）
 - #2141 | impl | doing | **P1**：#2133 同类盲表清单（#2133 车道 r2 时开的同形余量）——全仓另有 **10 张表**盲、共 **30 条键**（`channel-core`3 / `channel-unmigrated`1 / `edgeclaw-entries/negative_round6`1 / `failure-guard`2 / `turn-gateway/negative-fence`4 / `turn-gateway/negative`1 / `turn-replay`2 / `turn-runner/forward_negative`4 / `wecom-callback`5 / `weixin-channel`7）；且 `turn-gates|turn-prompt-hooks|turn-runner-tail|turn-start-notices/schemata.py` 也盲但**文件名不匹配 `*negative*.py`**，发现循环的 glob 永远看不到——要改 glob 或改名，属另一个决定；逐表清单落 #2141，等 #2133（PR #2136）合入后跟进
 - #2109 | impl | doing | **P2-跟进（#2062 车道开）**：#1995 评审遗留三条——`gateway.method:always_on_*` 三行仍 `ts-forwarded`、`prepare_weixin_login` 仍 `ts-forwarded`、always-on 后台启动无差异登记；**前置于 #1995 关单**（该行翻牌由 PR #2062 承载，三条不在其 34 行内）
-- #2143 | impl | doing | **P2-跟进（#2062 车道开）· 冻结装置**：retirement outcome-parity 的 oracle 与 gated 集不含 `always_on_*` 三方法 → 任何 Rust retirement 轮会报 ≥6 条假 FAIL；**按冻结尺子变更规矩单独走：独立 issue + 两家评审 + 真实数据复算 + 重新登记（不适用 P2 折中）**——流程状态：单已开、评审与复算未起，前置于 #1995 关单
+- #2073 | impl | doing | **P0**：weixin ChannelStatePersistence 用 `timer.abort()` 表达 `clearTimeout`，可在认领 dirty 后丢写并永久卡死该 key——**PR #2123（`fix(gateway) #2073` weixin 防抖定时器改协作式作废，取消不再丢写卡死该 key）已入队第 8 位待合（11:40：`gh pr checks` 8/8 全绿 + MERGEABLE/CLEAN + 三参数闸门 PASS，GraphQL 回读确认在队）**；入队后零推送；余三条 P2 已开 #2126 承接
+- #2126 | impl | doing | **P2-跟进 #2073**：weixin 状态持久化三处窄口子——取消的 drain 留 `.tmp` / 归还的 dirty 不再重新武装 / 测试等待无界；**前置于 weixin 阶段收尾自查**（#2123 合入后跟进）
+- #2137 | impl | doing | **#132 车道交付 PR**：`fix(collation) #132`——三处孤立代理宿主边界改原生比较 + 清 #1235 五条 P2（PR 于 11:06 开、head `55bddc494`、非 Draft、`Refs #132`）；**CI `rust` 真红一处已回传修（11:4x 现核 rust/pr-gate 均 fail，车道在修、未入队）**；评审块未出（出块后补正文再入队）
+- #2143 | impl | doing | **冻结装置（#2062 车道开；issue 双标签 P2-跟进/P1，按协调者口径 P1 办）**：retirement outcome-parity 的 oracle 与 gated 集不含 `always_on_*` 三方法 → 任何 Rust retirement 轮会报 ≥6 条假 FAIL；**车道已开（coord 11:4x）**——与 Draft PR **#2001** 改同一批文件（#2001 停在人决策 **#2017**（A/B/C 未答 14 h）），任务书已禁止碰 `_build/wt-1809`，**本单不做 CI 接线**；按冻结尺子变更规矩单独走：独立 issue + 两家评审 + 真实数据复算 + 重新登记（不适用 P2 折中）；前置于 #1995 关单
 <!-- READY:END -->
 
 
@@ -4230,7 +4233,7 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 
 依据：`_tmp/20261107-coord/HANDOFF-1143.md`（11:43 落盘，正文读数均为真实现核时刻）全文 §1–§7 + `board-e7-additions-r6.md`（e7 侧动态）+ `board-delta-0250.md` **D154–D168**（注意：D164 是 #1429 车道先占的段号，#2133 的内容在 D168；D169 起为下一班段号）。所有时刻为本机（UTC+8）；**判 MERGED 只认 `gh pr view --json state`（队列里消失 ≠ 合入）；判绿一律用 `gh pr checks` 最新一行**（`statusCheckRollup` 会混同名 check 的历史 FAILURE）。
 
-#### 1. 本段合入（10:16 → 11:19，八笔，全部走合并队列；邮箱两列皆 `225912+zhengdaqi@users.noreply.github.com` 服务端 noreply，无泄露）
+#### 1. 本段合入（10:16 → 11:36，九笔，全部走合并队列；邮箱两列皆 `225912+zhengdaqi@users.noreply.github.com` 服务端 noreply，无泄露）
 
 | PR | 内容 | 合入时刻（Z / 本机） | 关键核验 |
 |---|---|---|---|
@@ -4240,24 +4243,26 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 | #2079 | `feat(gateway) #1329 A8.3-ch-feishu` 入站 + 回合出站 | `03:04:15Z` / 11:04 | 合并组 `42329059495` 全绿；**第二次组跑才过**（第一次被 #994 那条 10 s 硬等待踢出，与本 PR 零交集） |
 | #1999 | `fix(gateway) #1887/#1888/#1889` | `03:16:05Z` / 11:16 | 队列 9 深时放行 |
 | #2108 | `docs(state)` 决策卡：pr-gate 结果块白名单与第二家叙述 | `03:19:26Z` / 11:19 | 与 #2130 / #2066 同批三笔 |
+| #2040 | `fix(gateway) #1985` 第 1 块：restore/list 按 TS 读面拆门，turn 摘要与 metadata 投影对齐 | `03:36:35Z` / 11:36 | merge `d0efc696c`；邮箱两列皆账号主邮箱；coord 11:4x 增量落账（此笔使本段计 **9 笔**） |
 | #2130 | `chore(state)` board 10:01 两小时交接 + READY 93→91 条 | `03:19:26Z` / 11:19 | 同上；board 正本已到 10:30 口径 |
 | #2066 | `test(negctl) #1922` 判杀层三实现补登记 | `03:19:26Z` / 11:19 | 同上（之后 main 又进 #1922 评审 r1–r3 三笔，11:3x 顶 `4d5d7c8f0`） |
 
-#### 2. 队列（落盘时 11:3x 回读 `gh api mergeQueue`，较交接件 11:20 的 7 深又进 #2086 → 8 深）
+#### 2. 队列（落盘时 11:4x 回读 `gh api mergeQueue`，8 深；本段走位：#2040 11:36 合入出队 → #2123 11:40 入队补位）
 
 | 位 | PR | 状态 |
 |---|---|---|
-| 1 | #2040 | AWAITING_CHECKS |
-| 2 | #2072 | AWAITING_CHECKS |
-| 3 | #2071 | AWAITING_CHECKS |
-| 4 | #2105 | AWAITING_CHECKS |
-| 5 | #2120 | AWAITING_CHECKS |
-| 6 | #2095 | QUEUED |
-| 7 | #2125 | QUEUED |
-| 8 | #2086 | QUEUED |
+| 1 | #2072 | AWAITING_CHECKS |
+| 2 | #2071 | AWAITING_CHECKS |
+| 3 | #2105 | AWAITING_CHECKS |
+| 4 | #2120 | AWAITING_CHECKS |
+| 5 | #2095 | AWAITING_CHECKS |
+| 6 | #2125 | QUEUED |
+| 7 | #2086 | QUEUED |
+| 8 | #2123 | QUEUED |
 
 > 本段队列从 9 深降到 8 深，靠的是**只按 `gh pr checks` 最新一行判绿**再入队。队列里 `mergeable=UNKNOWN` 恒正常（服务端在建合并组），不要据此判冲突；判冲突用出队后的 `gh pr view --json mergeable` 或 `git merge-tree --write-tree`。
 > **队列「不前进」不是卡死**（本段最重要的运维判断）：合并组里 `negative-controls` 一条就要 **~31 min**（成功组 02:46:35Z→03:17:43Z 实测），`rust` 24 min；GitHub **同时**推进多个合并组 → 队列成批放行。看进度查 `gh api repos/.../actions/runs?per_page=60 -q '.workflow_runs[]|select(.event=="merge_group")'` 的 job 明细，别只看 `mergeQueue` 的 `AWAITING_CHECKS`。
+> **判组归属（coord 11:4x 补充口径）**：合并组的 `head_branch` 是 `pr-<N>-...`，N 就是该组**末位** PR 的号——11:39 现核：末位 **#2120** 的组约 11:50 放行 1–4 位四笔、末位 **#2095** 的组约 12:07；判某张 PR 何时落 main 先认组末位。
 
 #### 3. 在飞车道（交接件 11:30 现核 + 落盘时 11:3x 增核 PR 状态）
 
@@ -4271,8 +4276,9 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 | #2027（本轮新开） | 新树 | 只读分诊 + 矩阵 | user_dialog 五条「等待者永久 pending」窗口，零在飞重叠；**第 3 条不许把真挂起登记成边界** |
 | #2091 | `_build/wt-2036` / `fix/issue-2036-argv-utf8` | rebase 车道已推（交接件记 `7f035af55` 一族，11:3x 现核 head `b2aa1e741`、`mergeable=MERGEABLE`），冷 target 负控在跑 | 与 #2084 撞 `native-management/*`，**两表取并集** |
 | #1429 → PR #2134 | `_build/wt-1429` / `dev/1429-acquire-ask-sync` | 收尾代理逐块真合并 `assembly.rs` 单文件冲突后已强推（11:30 CONFLICTING → 11:3x 现核 head `e3101e3ce`、`mergeable=MERGEABLE`） | 18 个 OPEN PR 里只有它改 `assembly.rs`，不会撞；pr-gate FAIL 属旧 head 残块，补块 + 三参数闸门后入队 |
+| #2143（本轮新派） | 新车道 | **已开车道**：冻结判据把 `always_on_*` 三方法判成假 FAIL → 修 retirement outcome-parity 的 oracle / gated 集 | 与 Draft PR **#2001** 改同一批文件——#2001 停在人决策 **#2017**（A/B/C 未答 14 h）；任务书已禁止碰 `_build/wt-1809`；**本单不做 CI 接线** |
 | #1352 → PR #2124 | `_build/wt-1352` | 已发消息让其车道自己 rebase（11:30 `CONFLICTING`；11:3x 现核 head `73ed18b01`、仍 CONFLICTING） | 不要另开代理改同一树 |
-| #2073 → PR #2123 | `_build/wt-2073` | 两家评审在跑；`negative-controls` 在跑、其余全 pass | `pr-gate` 现 FAIL = 缺角色审计结果块，**属预期** |
+| #2073 → PR #2123 | `_build/wt-2073` | **已入队第 8 位待合**（11:40：`gh pr checks` 8/8 全绿 + MERGEABLE/CLEAN + 三参数闸门 PASS，GraphQL 回读确认在队）；余三条 P2 已开 **#2126**（前置于 weixin 阶段收尾自查） | P0 定时器丢写；入队后零推送 |
 | #1456 | `_build/wt-1456` | 等 zai 两角色 + Codex 四角色 + cb8 locale 复核 | memory `cb8-lang-locale-tests`：远端命令前缀必须 `LANG=en_US.UTF-8` |
 | #1903 | `_build/wt-1903` | r4 双谱系评审 | 行为正控改 hermetic，5.1 s → 0.04 s |
 | #2127 → PR #2144 | `_build/wt-2127` | r3 `7f035af55` 已提交（**交接件误记 PR #2132，现核实为 #2144**，11:31 本机开）；评审在出块 | 探针前先捂热扫描器；只改 `test_negative_adaptive_isolation.py`、冷 `CARGO_TARGET_DIR` 复现、等待有界不许删断言 |
@@ -4282,7 +4288,7 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 | #1953 fix-r1 | `_build/wt-1953` | 尺子 P0 修复 | 冻结装置，只许新增 `diffs/<ID>.md` |
 | #1570 | `_build/wt-1570` | 共享负控 `source_copy` | memory `shared-helper-copy-negctl` |
 | #1409 | `_build/wt-1409` | 返回边界扫描读失败静默跳过（尺子假 PASS） | |
-| #132 | `_build/wt-132` | 孤立 UTF-16 排序（本轮已派，先 triage 选型） | 金样机 Node/ICU 必须逐项对上 |
+| #132 | `_build/wt-132` | 孤立 UTF-16 排序：**PR #2137 已开（11:06，head `55bddc494`，非 Draft）**——`fix(collation) #132` 三处孤立代理宿主边界改原生比较 + 清 #1235 五条 P2；CI `rust` 真红一处已回传修（11:4x 现核 fail、车道在修） | 金样机 Node/ICU 必须逐项对上 |
 | #2047 → PR #2086 | 已交付 | **已入队第 8 位**（11:29，`gh pr checks` 8/8 pass、三参数闸门 PASS） | 残余边界 → #2129 / #2104 / #2096 |
 
 #### 4. 本段的新判断与口径
@@ -4300,6 +4306,8 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 
 - 待人决策（本段未变）：#1837（人已拍板 A，落地单 #1941 未合不关）· #1864 · #1926 · #1976 · #1977 · #1986 · #1997 · #2017 · #2026 · #2063 · #2083 · #2094/#2110（两张冻结卡要一并拍）· #1754/#1751（MCP 未批准差异）。
 - **READY 已加 6 行（e7 增项 r6，本轮落）**：#2133（PR #2136）· #2127（PR #2144；交接件误记 #2132）· #2027（本段新派）· #2141（#2133 同形余量）· #2109（前置于 #1995 关单）· #2143（冻结装置，按冻结尺子变更规矩单独走）。
+- **coord 11:4x 增量再加 3 行**：#2073（P0，PR #2123 已入队第 8 位待合）· #2126（P2-跟进 #2073：weixin 状态持久化三处窄口子，前置于 weixin 阶段收尾自查）· **#2137**（#132 车道交付 PR：CI `rust` 真红一处已回传修）。
+- **#2143 车道已开**（按 P1 办）：与 Draft PR **#2001** 改同一批文件，#2001 停在人决策 **#2017**（A/B/C 未答 14 h）；任务书已禁止碰 `_build/wt-1809`，本单不做 CI 接线。
 - 待人未答的决策单见 READY 顶部「待人决策总表」；本段新增两条 AI 代批待人复核：**#1860 P1→P0 重判** · **#1429 产品侧诊断 sink**（只往 stderr、成功路径零变化）。
 - **本 PR（board 12:01）未入队**：开完、CI 绿即报告。
 
@@ -4322,10 +4330,10 @@ P2×8 / P3×14，最要紧三条：always-on 信封差异账本无 `diffs/<ID>.m
 
 #### 落盘时现核（11:32–11:5x，`date` / `gh pr view --json state` / `gh api mergeQueue` / `gh issue view`；判 MERGED 只认 `gh pr view`）
 
-- 基线：`origin/main` = **`4d5d7c8f0`**（#2130 `edb1f4fd3` 之后的 #2066（#1922）评审 r1–r3 四笔顶；本 PR 分支自该基线）。
-- §1 八笔合入全部 `gh pr view --json state` 实读 MERGED（#2067 #2075 #2084 #2079 #1999 #2108 #2130 #2066）；队列 11:3x 回读 8 深：`1 #2040 · 2 #2072 · 3 #2071 · 4 #2105 · 5 #2120 · 6 #2095 · 7 #2125 · 8 #2086`。
+- 基线：`origin/main` = **`4d5d7c8f0`**（#2130 `edb1f4fd3` 之后的 #2066（#1922）评审 r1–r3 四笔顶；本 PR 分支自该基线；开 PR 时 main 已因 #2040 合入前进到 `d0efc696c`，PR 仍 MERGEABLE）。
+- §1 九笔合入全部 `gh pr view --json state` 实读 MERGED（#2067 #2075 #2084 #2079 #1999 #2108 #2130 #2066 + **#2040 03:36:35Z**）；队列 11:4x 回读 8 深：`1 #2072 · 2 #2071 · 3 #2105 · 4 #2120 · 5 #2095 · 6 #2125 · 7 #2086 · 8 #2123`。
 - 现核 PR（OPEN）：#2062 head `ea6eb8afb` MERGEABLE · #2136 head `707b0328f` MERGEABLE · #2139 Draft head `7f7f6d062` · #2134 head `e3101e3ce` MERGEABLE（冲突已解）· #2124 head `73ed18b01` 仍 CONFLICTING · #2132 head `7b469408f`（只差 negative-controls）· #2123 只差 negative-controls · #2091 head `b2aa1e741` MERGEABLE · **#2144（#2127 的 PR，11:31 开）head `7f035af55`**——交接件写「#2127 的 PR 是 #2132」有误，现核更正；#2132 实为 #2020/#2035 的 PR。
-- 现核 issue（`gh issue view --json state`，11:3x）：新增 6 行 #2133 · #2127 · #2027 · #2141 · #2109 · #2143 全 OPEN；#1860 · #1683 · #1260 · #1429 · #1352 · #1456 · #132 均 OPEN。
+- 现核 issue（`gh issue view --json state`，11:3x–11:4x）：新增 6 行 #2133 · #2127 · #2027 · #2141 · #2109 · #2143 全 OPEN；coord 增量 3 行 **#2073（P0）· #2126（P2-跟进）· #2137（#132 车道 PR，`Refs #132`）** 全 OPEN；#1860 · #1683 · #1260 · #1429 · #1352 · #1456 · #132 均 OPEN；#2143 双标签 `P2-跟进,P1`（按协调者口径 P1 办）。
 - 落盘时 `date` = 11:35:59 CST；`_build`+`_tmp` KiB 原值 `102301828 + 23546668`（119.9 GiB）；worktree 44；本机 `pgrep -x cargo` = 0。
 - 本 PR（board 12:01）**未入队**：开完、CI 绿即报告。
 - 下一个交接点：**14:01**（以届时 `date` 为准）。
