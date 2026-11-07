@@ -101,8 +101,12 @@ STORE_WRITE_ASSERTION = ('#1599 a registration replaced during its store write '
 CLAIM_PUBLISH_TEST = ('user_dialog::channel_tests::'
                       'a_registration_replaced_during_its_owner_claim_ends_without_'
                       'publishing_a_bus_entry')
+# #2027: `begin` now re-reads the sticky replaced flag under the bus guard
+# before publishing, so dropping the post-`store.put` re-check no longer lets
+# the original publish over the replacement. The waiter still ends, one stage
+# later and with the takeover error, and the bound test dies there.
 CLAIM_PUBLISH_ASSERTION = ('#1599 a registration replaced during its owner claim '
-                           'must not publish a bus entry')
+                           'must end with the replacement error')
 OBSERVER_REPLACE_TEST = ('user_dialog::channel_tests::'
                          'a_registration_replaced_by_the_change_observer_ends_'
                          'without_installing_a_poll')
@@ -166,6 +170,101 @@ DECLARED = (
     'supersession-flag-forgets-a-finished-replacement',
     'replacement-before-persist-overwrites-the-rows',
 )
+# #2027: `cancel_owned` now decides by two independent checks -- the sticky
+# superseded flag at the top and the generation binding inside the bus guard.
+# Either check alone leaves a same-id replacement's entry alone, so this
+# mutant drops both; with only one dropped the bound test stays green and
+# the row would stop proving the invariant.
+CANCEL_OWNED_HEAD = """\
+    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {
+        if self.superseded(state) {
+            return;
+        }
+        if state.settled.load(Ordering::SeqCst) {
+            return;
+        }
+        if !state.registered.load(Ordering::SeqCst) {
+            // The request is between the persist gate and `registered = true`.
+            // Only raise the flag: removing the state here would make the
+            // post-registration cancel a no-op and leak the bus entry, owner
+            // lease, journal record and store record. `begin` settles it once
+            // the entry is registered.
+            state
+                .cancelled_before_registration
+                .store(true, Ordering::SeqCst);
+            return;
+        }
+        let _in_flight = InFlight::enter(state.clone());
+        // #1442: the settle hook, the resolve callback and the change
+        // observer are host code; none of them run under the bus guard. TS
+        // `remove()` runs onSettled before its mutations, and a throw leaves
+        // the dialog pending and broadcast-free (fail-closed,
+        // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
+        // consumed entry instead of resolving.
+        let (consumed, pre, outbox, takeover) = {
+            let mut bus = self.inner.options.bus.lock().unwrap();
+            // `pre` holds changes queued before this consume (normally
+            // empty here); a lease that expires inside `consume` lands in
+            // `outbox`. A settle failure rolls back only the entry and its
+            // own "settled" broadcast, so `outbox` is delivered through
+            // `without_settled` (GatewayUserDialogBus.ts:219-226).
+            let pre = bus.drain_events();
+            // #2027: `bus.consume` is keyed by request id alone. A same-id
+            // registration published after this channel's ownership checks
+            // (another Gateway on this bus, or a replacement on another
+            // thread) owns the entry now; consuming it would delete that
+            // dialog and leave its waiter with nothing to answer through.
+            // Both calls share the guard, so no publication can land between
+            // them (window 3 sequence A).
+            let own = bus.pending_matches(
+                &self.inner.options.session_key,
+                &state.request_id,
+                state.generation.load(Ordering::SeqCst),
+            );
+"""
+CANCEL_OWNED_HEAD_UNBOUND = """\
+    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {
+        if false && self.superseded(state) {
+            return;
+        }
+        if state.settled.load(Ordering::SeqCst) {
+            return;
+        }
+        if !state.registered.load(Ordering::SeqCst) {
+            // The request is between the persist gate and `registered = true`.
+            // Only raise the flag: removing the state here would make the
+            // post-registration cancel a no-op and leak the bus entry, owner
+            // lease, journal record and store record. `begin` settles it once
+            // the entry is registered.
+            state
+                .cancelled_before_registration
+                .store(true, Ordering::SeqCst);
+            return;
+        }
+        let _in_flight = InFlight::enter(state.clone());
+        // #1442: the settle hook, the resolve callback and the change
+        // observer are host code; none of them run under the bus guard. TS
+        // `remove()` runs onSettled before its mutations, and a throw leaves
+        // the dialog pending and broadcast-free (fail-closed,
+        // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
+        // consumed entry instead of resolving.
+        let (consumed, pre, outbox, takeover) = {
+            let mut bus = self.inner.options.bus.lock().unwrap();
+            // `pre` holds changes queued before this consume (normally
+            // empty here); a lease that expires inside `consume` lands in
+            // `outbox`. A settle failure rolls back only the entry and its
+            // own "settled" broadcast, so `outbox` is delivered through
+            // `without_settled` (GatewayUserDialogBus.ts:219-226).
+            let pre = bus.drain_events();
+            // #2027: `bus.consume` is keyed by request id alone. A same-id
+            // registration published after this channel's ownership checks
+            // (another Gateway on this bus, or a replacement on another
+            // thread) owns the entry now; consuming it would delete that
+            // dialog and leave its waiter with nothing to answer through.
+            // Both calls share the guard, so no publication can land between
+            // them (window 3 sequence A).
+            let own = true;
+"""
 # Each independent mutant is applied to the original, never cumulatively.
 mutations = [
     # respond: the resolver runs while a fresh guard is alive again.
@@ -357,14 +456,7 @@ mutations = [
     # channel.cancel_owned: the abort callback cancels by request id again, so
     # one superseded registration consumes the replacement's bus entry.
     ('superseded-abort-cancels-the-replacement', 'user_dialog/channel.rs',
-     '    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {\n'
-     '        if self.superseded(state) {\n'
-     '            return;\n'
-     '        }',
-     '    fn cancel_owned(&self, state: &Arc<RequestState>, reason: &str) {\n'
-     '        if false && self.superseded(state) {\n'
-     '            return;\n'
-     '        }',
+     CANCEL_OWNED_HEAD, CANCEL_OWNED_HEAD_UNBOUND,
      ABORT_REPLACE_TEST, ABORT_REPLACE_ASSERTION),
     # settle: the re-check after `release` is dropped, so the superseded
     # request deletes the rows the replacement wrote under the same id.

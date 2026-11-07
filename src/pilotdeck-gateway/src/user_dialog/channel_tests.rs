@@ -3249,3 +3249,305 @@ fn a_registration_replaced_after_its_owner_claim_releases_its_lease() {
         );
     }
 }
+
+#[test]
+fn a_poll_whose_replacement_answered_first_ends_instead_of_hanging() {
+    use crate::negative_assert;
+
+    // #2027 boundary: two channels share one bus and one request id. The taker
+    // is answered (its bus entry is consumed and removed) before the first
+    // channel's next tick, so the victim's poll finds no entry at all. Absence
+    // is not "still mine": `register` replaces by request id
+    // (`GatewayUserDialogBus.ts:150-160`), so the victim must end instead of
+    // polling forever under an id its own registration no longer owns.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-taker-answered",
+    ))));
+    let now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let mut victim_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    victim_options.uuid = Arc::new(|| "shared-request".to_string());
+    victim_options.now_ms = now_ms.clone();
+    // The victim polls, but its stored-answer source is empty; only the bus
+    // take-over can end it.
+    victim_options.take_stored_answer = Some(Arc::new(|_request_id: &JsString| Ok(None)));
+    let victim_channel = GatewayUserDialogChannel::new(victim_options);
+    let mut taker_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    taker_options.uuid = Arc::new(|| "shared-request".to_string());
+    taker_options.now_ms = now_ms;
+    let taker_channel = GatewayUserDialogChannel::new(taker_options);
+
+    let mut victim = victim_channel.request_input(&InputRequest {
+        tool_call_id: "call-victim".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Victim of a cross-gateway take-over".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let mut taker = taker_channel.request_confirm(&ConfirmRequest {
+        tool_call_id: "call-taker".into(),
+        tool_name: "request_user_confirm".into(),
+        prompt: "Taker answered first".into(),
+        confirm_label: None,
+        cancel_label: None,
+        default_value: None,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+
+    // A renderer response consumes the shared entry and answers the taker
+    // before the victim's next tick ever runs.
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the taker must own the shared bus entry");
+    negative_assert!(
+        consumed.entry.tool_call_id == "call-taker".into(),
+        "#2027 the consumed entry must be the taker's dialog"
+    );
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match taker.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the taker's answer must land before the victim polls"
+        ),
+        other => {
+            panic!("#2027 the taker's answer must land before the victim polls, got {other:?}")
+        }
+    }
+    negative_assert!(
+        victim.try_result().is_none(),
+        "#2027 the victim must not be answered by the taker's response"
+    );
+
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    victim_channel.tick();
+    match victim.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("stored answer was taken"),
+            "#2027 a poll that finds the shared entry gone must end the waiter"
+        ),
+        other => panic!(
+            "#2027 a poll that finds the shared entry gone must end the waiter, got {other:?}"
+        ),
+    }
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#2027 an answered taker and an ended victim must leave no pending entry"
+    );
+}
+
+#[test]
+fn an_abort_after_the_owner_already_consumed_leaves_the_answer_to_land() {
+    use crate::negative_assert;
+
+    // #2027 boundary, opposite direction: a renderer response consumes this
+    // registration's own bus entry and is about to answer when an abort lands.
+    // The abort finds no entry; that absence is *this* registration's own
+    // completed consume, not a take-over, so the waiter must stay alive and
+    // let the in-flight answer land instead of ending with a replacement
+    // error that never happened.
+    //
+    // The guard has two layers (`cancel_owned`'s `takeover` and
+    // `end_replaced`'s "answer is in flight" check), so the negative control
+    // for this test disables both; either one alone already keeps the waiter
+    // alive and the mutant would be equivalent.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-own-consume-abort",
+    ))));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let channel = GatewayUserDialogChannel::new(options);
+    let signal = AbortSignal::new();
+    let mut request = channel.request_input(&InputRequest {
+        tool_call_id: "call-own".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Aborted while its own answer is in flight".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: Some(signal.clone()),
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the registration must own the shared bus entry");
+    signal.abort();
+    negative_assert!(
+        request.try_result().is_none(),
+        "#2027 an abort that finds its own consumed entry must not end the waiter"
+    );
+
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match request.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the in-flight answer must still land after the abort"
+        ),
+        other => {
+            panic!("#2027 the in-flight answer must still land after the abort, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn a_registration_whose_answer_is_in_flight_is_not_reaped_by_a_same_id_registration() {
+    use crate::negative_assert;
+
+    // #2027 boundary: a renderer response consumes this registration's bus
+    // entry and then answers outside the bus guard. The window between the
+    // consume and `resolve` is not covered by `InFlight`, so a same-id
+    // registration that lands there must not treat the waiter as idle: reaping
+    // it would win the `settled` swap and drop the answer that is already on
+    // its way (the respond path reports `delivered` regardless).
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-reap-answer-in-flight",
+    ))));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let channel = GatewayUserDialogChannel::new(options);
+    let mut first = channel.request_input(&InputRequest {
+        tool_call_id: "call-first".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Answered while a same-id registration lands".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+
+    // The renderer response consumes the entry but has not answered yet.
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the first registration must own the bus entry");
+    let mut second = channel.request_confirm(&ConfirmRequest {
+        tool_call_id: "call-second".into(),
+        tool_name: "request_user_confirm".into(),
+        prompt: "Same id registered while the answer is in flight".into(),
+        confirm_label: None,
+        cancel_label: None,
+        default_value: None,
+        abort: None,
+    });
+    negative_assert!(
+        first.try_result().is_none(),
+        "#2027 a registration whose own answer is in flight must not be reaped"
+    );
+    negative_assert!(
+        second.try_result().is_none(),
+        "#2027 the same-id registration must stay pending"
+    );
+
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match first.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the in-flight answer must still reach the first waiter"
+        ),
+        other => {
+            panic!("#2027 the in-flight answer must still reach the first waiter, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn a_poll_keeps_waiting_when_its_answer_is_in_flight_across_a_republish() {
+    use crate::negative_assert;
+
+    // #2027 boundary: the bus records which registration last consumed the
+    // entry. A same-id publication must not erase that record, or a poll of
+    // the older registration (which cannot see the other channel's table)
+    // reads "the id is not mine and I never consumed it" and ends a waiter
+    // whose answer is already on its way.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-republish-in-flight",
+    ))));
+    let now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let mut victim_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    victim_options.uuid = Arc::new(|| "shared-request".to_string());
+    victim_options.now_ms = now_ms.clone();
+    victim_options.take_stored_answer = Some(Arc::new(|_request_id: &JsString| Ok(None)));
+    let victim_channel = GatewayUserDialogChannel::new(victim_options);
+    let mut other_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    other_options.uuid = Arc::new(|| "shared-request".to_string());
+    other_options.now_ms = now_ms;
+    let other_channel = GatewayUserDialogChannel::new(other_options);
+
+    let mut victim = victim_channel.request_input(&InputRequest {
+        tool_call_id: "call-victim".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Polled while its answer is in flight".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+
+    // Its own renderer response takes the entry; the answer has not landed.
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the victim must own the bus entry");
+    // Another gateway publishes the same id before that answer is resolved.
+    let mut other = other_channel.request_confirm(&ConfirmRequest {
+        tool_call_id: "call-other".into(),
+        tool_name: "request_user_confirm".into(),
+        prompt: "Same id republished".into(),
+        confirm_label: None,
+        cancel_label: None,
+        default_value: None,
+        abort: None,
+    });
+    negative_assert!(
+        other.try_result().is_none(),
+        "#2027 the same-id registration must stay pending"
+    );
+
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    victim_channel.tick();
+    negative_assert!(
+        victim.try_result().is_none(),
+        "#2027 a poll must not end a waiter whose own answer is in flight"
+    );
+
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match victim.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the in-flight answer must still reach the victim"
+        ),
+        other => panic!("#2027 the in-flight answer must still reach the victim, got {other:?}"),
+    }
+}
