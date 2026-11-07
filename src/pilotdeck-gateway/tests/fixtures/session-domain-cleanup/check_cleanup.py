@@ -6466,6 +6466,9 @@ class _ModuleEvents(dict):
         super().__init__()
         self.calls = {}
         self.outer_def = {}
+        # #1953 fix-r1 round 24: names the module also reads as a value, so
+        # the recorded call sites are not the whole story for them.
+        self.value_uses = None
         # #1953 fix-r1 round 22 (codex r21 P0-1): ``name -> [event]`` for the
         # names this scope binds to the ``builtins`` module itself
         # (``import builtins as bi``).  The marker rides in the helper slot of
@@ -6473,7 +6476,7 @@ class _ModuleEvents(dict):
         self.builtins_modules = {}
 
 
-def _module_call_positions(tree):
+def _module_call_positions(tree, direct=None):
     """``name -> [((line, col), loops)]`` for calls at module scope (r15).
 
     A call inside an ``if`` still counts -- fail-closed.
@@ -6496,12 +6499,34 @@ def _module_call_positions(tree):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             found.setdefault(node.func.id, []).append(
                 ((node.lineno, node.col_offset), loops))
+            if direct is not None:
+                direct.add(id(node.func))
         inner = loops
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             inner = loops + (id(node),)
         for child in reversed(list(ast.iter_child_nodes(node))):
             stack.append((child, inner))
     return found
+
+
+def _module_value_uses(tree):
+    """Names the module reads somewhere other than as a direct call (round 24).
+
+    #1953 fix-r1 round 24 (self-check of codex r22 P1-2): the round-23
+    ``call_only`` answer is only sound when the module-scope call sites of the
+    function are the *only* way it can run.  A function that is also handed
+    out as a value -- ``_cbs.append(main)``, a decorator, a callback
+    registered before a later ``import builtins as bi`` -- runs at a time the
+    static call list does not describe, so the answer falls back to the
+    round-14 rule there (a real write keeps being a write).
+    """
+    direct = set()
+    _module_call_positions(tree, direct)
+    uses = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and id(node) not in direct:
+            uses.add(node.id)
+    return uses
 
 
 def _module_outer_def(tree):
@@ -6585,7 +6610,15 @@ def _import_alias_position(alias, node):
     line = getattr(alias, 'lineno', None)
     col = getattr(alias, 'col_offset', None)
     if line is None or col is None:
-        return (node.lineno, node.col_offset)
+        # #1953 fix-r1 round 24 (GLM boundary r23 P2-1): ``ast.alias`` carries
+        # its own position only from Python 3.10 on.  Older interpreters fall
+        # back to the statement position, which would put two aliases of one
+        # statement in a tie again, so the alias order is folded into the
+        # column to keep them apart in source order.
+        names = list(getattr(node, 'names', ()))
+        index = next((position for position, item in enumerate(names)
+                      if item is alias), 0)
+        return (node.lineno, node.col_offset + index)
     return (line, col)
 
 
@@ -6607,6 +6640,18 @@ def _resolve_builtins_module_copies(events, copies):
             continue
         source = events.builtins_modules.get(value.id)
         if not source:
+            continue
+        # #1953 fix-r1 round 24 (codex r23 P1 / GLM boundary r23 P1): the copy
+        # reads whatever the right-hand name holds *now*.  ``bi = Safe`` in
+        # between took the module reading away, and the mirror that records
+        # that shadow runs after this pass, so it cannot answer here.
+        module_positions = {(item[0], item[1]) for item in source}
+        prior = [item for item in events.get(value.id, ())
+                 if item[3] is False
+                 and (_event_position(item) < position
+                      or (loops and set(item[4]) & set(loops)))]
+        if prior and _event_position(
+                max(prior, key=_event_position)) not in module_positions:
             continue
         earlier = [item for item in source
                    if _event_position(item) < position
@@ -6716,6 +6761,7 @@ def _module_binding_events(tree):
     _mirror_builtins_shadows(events)
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
+    events.value_uses = _module_value_uses(tree)
     return events
 
 
@@ -6784,8 +6830,14 @@ def _imported_write_aliases(function, outer_imports=None):
     # saw the write helper.
     calls = getattr(outer_imports, 'calls', None) or {}
     outer_def = getattr(outer_imports, 'outer_def', None) or {}
-    positions = calls.get(
-        outer_def.get(id(function), getattr(function, 'name', None)), ())
+    func_name = outer_def.get(id(function), getattr(function, 'name', None))
+    positions = calls.get(func_name, ())
+    # #1953 fix-r1 round 24 (self-check of codex r22 P1-2): the call list only
+    # describes the module-scope calls; a name the module also reads as a value
+    # can run at a time the list does not cover, so ``call_only`` stays off.
+    value_uses = getattr(outer_imports, 'value_uses', None)
+    call_only = (bool(positions) and func_name is not None
+                 and value_uses is not None and func_name not in value_uses)
     for name, items in (outer_imports or {}).items():
         chosen = _binding_event_at(items, None, anywhere=True,
                                    positions=positions)
@@ -6801,7 +6853,7 @@ def _imported_write_aliases(function, outer_imports=None):
         # not the module inside this function (see ``_binding_event_at``).
         chosen = _binding_event_at(items, None, anywhere=True,
                                    positions=positions,
-                                   call_only=bool(positions))
+                                   call_only=call_only)
         if chosen is not None:
             events.builtins_modules.setdefault(name, []).append(
                 (-2, -2, chosen[2], False, (), True))
@@ -11381,6 +11433,62 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 23)')
+    # Round 24 (self-check of codex r22 P1-2): the round-23 "every call site is
+    # known" answer only holds while the module-scope calls are the only way the
+    # function runs.  A function also handed out as a value runs at a time the
+    # static call list does not describe, so the later ``import builtins`` is
+    # in force there and the write stays a write.
+    for _label, _source, _want in (
+            ("a builtins alias imported after a callback registration",
+             "import json as _bi34\n"
+             "_cbs = []\n"
+             "def main(report):\n"
+             "    _f = _bi34.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_cbs.append(main)\n"
+             "import builtins as _bi34\n", True),
+            ("a builtins alias imported before a nested-scope call",
+             "import json as _bi35\n"
+             "def main(report):\n"
+             "    _f = _bi35.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "def run():\n"
+             "    main(object())\n"
+             "main(object())\n"
+             "import builtins as _bi35\n"
+             "run()\n", True),
+            ("a builtins alias imported after direct calls only",
+             "import json as _bi36\n"
+             "def main(report):\n"
+             "    _f = _bi36.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi36\n", False),
+            ("a self-assigned builtins alias after a certain replacement",
+             "import builtins as _bi38\n"
+             "class Safe:\n"
+             "    @staticmethod\n"
+             "    def getattr(obj, name):\n"
+             "        return lambda *a, **k: None\n"
+             "_bi38 = Safe\n"
+             "_bi38 = _bi38\n"
+             "def main(report):\n"
+             "    _f = _bi38.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = next(_node for _node in _tree.body
+                         if isinstance(_node, (ast.FunctionDef,
+                                               ast.AsyncFunctionDef)))
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 24)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
