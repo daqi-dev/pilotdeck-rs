@@ -1451,16 +1451,18 @@ fn unmigrated_rejection_order_is_deterministic() {
 
 // #1853: the fail-closed key-set trichotomy over the channel tables. Every
 // `CHANNEL_LOADER_KEYS` entry must be exactly one of: an unmigrated rejection
-// key (`UNMIGRATED_CHANNEL_KEYS`), or a loader-subset key whose implementation
+// key (`UNMIGRATED_CHANNEL_KEYS`), a loader-subset key whose implementation
 // module has landed (#1333 apiServer, #1334 webhook, #1336 wecomCallback,
 // #1339 sms, #1343 bluebubbles) while the loader-family assembly wiring is
 // still pending (`load_enabled_channels` has no production call, #1763 §1;
-// #2301 is the terminal unit). A key in neither group is silently skipped by
-// the native assembly today — not rejected, not constructed, no TS fallback —
-// which is the transition difference `A8.3-CHANNEL-LOADER-SUBSET-001`
-// registers. The silent group is pinned as data on purpose: deriving it as the
-// set difference would absorb any future loader-table key into the skip and
-// keep this test green.
+// #2301 is the terminal unit), or a native loader-mount key (#1344 slack —
+// `loader_mount_builds_slack_channel` above; production assembly wiring is the
+// registered diff `A8.3-CH-SLACK-001`). A key in none of the groups is
+// silently skipped by the native assembly today — not rejected, not
+// constructed, no TS fallback — which is the transition difference
+// `A8.3-CHANNEL-LOADER-SUBSET-001` registers. The silent group is pinned as
+// data on purpose: deriving it as the set difference would absorb any future
+// loader-table key into the skip and keep this test green.
 #[test]
 fn loader_keys_partition_rejected_and_silent_subset() {
     // The silent-skip group as of this entry (decision A, 2026-11-08).
@@ -1471,6 +1473,9 @@ fn loader_keys_partition_rejected_and_silent_subset() {
         "webhook",
         "bluebubbles",
     ];
+    // The native loader-mount group after #1344: the only loader key whose
+    // mount is live (test-driven today, production wiring pending).
+    const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];
     let rejected: Vec<&str> = CHANNEL_LOADER_KEYS
         .iter()
         .copied()
@@ -1478,28 +1483,31 @@ fn loader_keys_partition_rejected_and_silent_subset() {
         .collect();
     crate::negative_assert_eq!(
         rejected.len(),
-        10,
-        "#1853 ten loader keys sit in the unmigrated rejection table"
+        9,
+        "#1853 nine loader keys sit in the unmigrated rejection table"
     );
-    // Covering: every loader key belongs to exactly one of the two groups.
+    // Covering: every loader key belongs to exactly one of the three groups.
     // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
-    // without joining either group lands here, not inside a silent set
+    // without joining a group lands here, not inside a silent set
     // difference that would absorb it.
     let mut unassigned = Vec::new();
     for key in CHANNEL_LOADER_KEYS {
-        if !UNMIGRATED_CHANNEL_KEYS.contains(&key) && !SILENT_SUBSET_KEYS.contains(&key) {
+        if !UNMIGRATED_CHANNEL_KEYS.contains(&key)
+            && !SILENT_SUBSET_KEYS.contains(&key)
+            && !NATIVE_MOUNT_KEYS.contains(&key)
+        {
             unassigned.push(key);
         }
     }
     crate::negative_assert!(
         unassigned.is_empty(),
-        "#1853 every loader key is rejected or silent-subset"
+        "#1853 every loader key is rejected, silent-subset, or native-mount"
     );
     // Reverse closure for the silent group (the cell above only constrains
     // loader-table keys): every silent entry must itself be a loader key, and
     // the group must be exactly `SUBSET_CHANNEL_KEYS` minus the two bundle
-    // keys — the module-level whitelist and this local pin cannot drift
-    // apart in either direction.
+    // keys minus the native mount — the module-level whitelist and this local
+    // pin cannot drift apart in either direction.
     for key in SILENT_SUBSET_KEYS {
         crate::negative_assert!(
             CHANNEL_LOADER_KEYS.contains(&key),
@@ -1512,8 +1520,10 @@ fn loader_keys_partition_rejected_and_silent_subset() {
     }
     for key in SUBSET_CHANNEL_KEYS {
         crate::negative_assert!(
-            SILENT_SUBSET_KEYS.contains(&key) || BUNDLE_CHANNEL_KEYS.contains(&key),
-            "#1853 every module subset key is silent-subset or bundle"
+            SILENT_SUBSET_KEYS.contains(&key)
+                || BUNDLE_CHANNEL_KEYS.contains(&key)
+                || NATIVE_MOUNT_KEYS.contains(&key),
+            "#1853 every module subset key is silent-subset, bundle, or native-mount"
         );
     }
     // Reverse closure: a rejection-table entry that is neither a loader key
@@ -1542,6 +1552,8 @@ fn loader_keys_partition_rejected_and_silent_subset() {
     //   `startup_refuses_every_unmigrated_channel`);
     // - silent-subset: not refused today — #1853 过渡差异，终态见 #2301（also
     //   `unmigrated_subset_channels_stay_loadable`）;
+    // - native-mount: the loader mount loads the key (`slack` in
+    //   `loader_mount_builds_slack_channel`);
     // - implemented: constructed at startup (`weixin` in
     //   `startup_gate_requires_strict_boolean_true`, `feishu` in
     //   `startup_builds_the_enabled_feishu_channel`).
@@ -1557,6 +1569,19 @@ fn loader_keys_partition_rejected_and_silent_subset() {
         crate::negative_assert!(
             !BUNDLE_CHANNEL_KEYS.contains(&key),
             "#1853 silent-subset key is not a bundle key"
+        );
+    }
+    // The native-mount cell: outside the rejection table, loadable through the
+    // loader mount, and outside the bundle table.
+    for key in NATIVE_MOUNT_KEYS {
+        let adapters = enabled_adapters(&[key]);
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            "#1853 native-mount key is not refused by the unmigrated gate"
+        );
+        crate::negative_assert!(
+            SUBSET_CHANNEL_KEYS.contains(&key),
+            "#1853 native-mount key is in the module subset whitelist"
         );
     }
 }
