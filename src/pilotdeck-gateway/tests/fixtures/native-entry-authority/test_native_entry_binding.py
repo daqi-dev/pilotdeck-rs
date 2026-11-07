@@ -80,6 +80,12 @@ BUDGET_CASE = (
     '    let (collected, advertised) =\n'
     '        read_advertisement(TalkativeLines::lines(3), budget, silence).await;'
 )
+READ_ERROR_EVIDENCE = (
+    '    assert!(\n'
+    '        collected.ends_with(b"127.0.0.1:4321"),\n'
+    '        "read error keeps the bytes read before it: {collected:?}"\n'
+    '    );'
+)
 DELEGATION = (
     '    read_advertisement(stderr, CHILD_SILENCE_LIMIT, CHILD_OBSERVATION_BUDGET).await'
 )
@@ -187,6 +193,12 @@ class BindingDrift(unittest.TestCase):
     def test_a_missing_budget_case_is_unbound(self):
         self.assertDrift(BUDGET_CASE, '', 'talkative child total budget')
 
+    def test_a_missing_read_error_evidence_is_unbound(self):
+        # The verdict (`!advertised`) is a different needle: without this one
+        # the error case would still pass with its evidence assertion deleted.
+        self.assertDrift(READ_ERROR_EVIDENCE, '',
+                         'read error keeps the bytes read before it')
+
     def test_a_swapped_delegation_is_unbound(self):
         self.assertDrift(DELEGATION, SWAPPED_DELEGATION, 'bounded delegation')
 
@@ -225,12 +237,19 @@ class SharedTables(unittest.TestCase):
         self.assertEqual(binding.binding_errors(TEST_FILE.read_text()), [])
 
     def test_neither_runner_keeps_a_private_copy(self):
+        # Every constant the shared table owns, not a hand-picked three: a
+        # re-forked copy of any of them would be invisible to the old list.
+        shared = sorted(name for name in vars(binding)
+                        if name.isupper() and not name.startswith('_'))
+        for required in ('KEYS', 'MARKERS', 'MARKER_TEMPLATE', 'SCRUB_MARKER',
+                         'SCRUB_EARLY_EXIT', 'TEST', 'SCRUB_TEST'):
+            self.assertIn(required, shared)
         for script in (NEGATIVE, EARLY_EXIT):
             text = script.read_text()
             self.assertIn('from native_entry_binding import', text, script.name)
-            for own in ('MARKERS = [', 'MARKER_TEMPLATE =', 'SCRUB_MARKER ='):
-                self.assertNotIn(own, text,
-                                 f'{script.name} keeps a private copy of {own}')
+            for name in shared:
+                self.assertNotRegex(text, rf'(?m)^{name}\s*=',
+                                    f'{script.name} keeps a private copy of {name}')
 
     def test_both_runners_check_passes_on_the_real_tree(self):
         for script in (NEGATIVE, EARLY_EXIT):
