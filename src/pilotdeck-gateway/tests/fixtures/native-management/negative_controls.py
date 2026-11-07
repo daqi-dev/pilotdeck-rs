@@ -412,7 +412,8 @@ mutations.append(('legacy-project-id-trim-omitted', METADATA,
 # #1432: the status route must read the shared config #1319 writes. Rolling
 # the routed body back to the #1311 constant empty list must fail the routed
 # set→status test; the capability-name rows above only pin the method being
-# wired, not that it returns stored state.
+# wired, not that it returns stored state. The assertion strings are the
+# bound tests' own panic payloads (`classify` only accepts those).
 mutations.append(('mcp-status-constant-empty', METHODS_TOOLS,
                   '        self.mcp\n'
                   '            .config()\n'
@@ -421,7 +422,8 @@ mutations.append(('mcp-status-constant-empty', METHODS_TOOLS,
                   '            .map_err(super::mcp::mcp_error)',
                   '        Ok(crate::metadata::object([("servers", JsValue::Array(vec![]))]))',
                   'native_process::mcp_status_tests::set_then_status_reports_the_session_servers',
-                  '#1432 status reads the shared config'))
+                  ['#1432 the same session must read its stored server back as configured',
+                   '#1432 a disabled server must read back as disabled']))
 
 # #2036: `--home` / `--sidecar` are canonicalised before the rejection, so their
 # only bound test has to create a raw-named entry on disk. APFS / HFS+ refuse
