@@ -125,5 +125,63 @@ class SqueezeKeepsLiteralsAndCallShapes(unittest.TestCase):
         self.assertIn(r'"a \"quoted\" word"', squeezed)
 
 
+class SqueezeIsLexicalNotQuoteCounting(unittest.TestCase):
+    """#1989 item 4: literal boundaries come from a lexical scan.
+
+    Counting ``"`` characters made every literal after an unbalanced quote read
+    as string *content*, so the two-space message in the #1401 review collision
+    was folded into a one-space one and satisfied a one-space needle. Each test
+    here is a construct that carries a quote inside a non-string literal or
+    inside a comment; the message that follows must keep its bytes.
+    """
+
+    DRIFTED = 'assert!(advertised, "#1261  native entry rejects inherited X");'
+
+    def assertMessageKeepsItsBytes(self, source):
+        squeezed = squeeze(source)
+        self.assertIn('"#1261  native entry rejects inherited X"', squeezed)
+        self.assertNotIn('"#1261 native entry rejects inherited X"', squeezed)
+
+    def test_a_character_literal_holding_a_quote(self):
+        # The collision from the issue body, end to end.
+        self.assertMessageKeepsItsBytes('let c = \'"\';\n' + self.DRIFTED)
+
+    def test_a_character_literal_escape(self):
+        self.assertMessageKeepsItsBytes("let c = '\\\"';\n" + self.DRIFTED)
+
+    def test_a_byte_character_literal(self):
+        self.assertMessageKeepsItsBytes("let c = b'\"';\n" + self.DRIFTED)
+
+    def test_a_lifetime_is_code_not_a_character_literal(self):
+        # `'a` has no closing quote; a scanner that assumes one would eat the
+        # following code up to the next apostrophe.
+        self.assertMessageKeepsItsBytes(
+            "fn f<'a>(x: &'a str) -> &'a str { x }\n" + self.DRIFTED)
+
+    def test_a_raw_string_holding_a_quote(self):
+        self.assertMessageKeepsItsBytes('let s = r#"a " b"#;\n' + self.DRIFTED)
+
+    def test_a_raw_identifier_is_not_a_raw_string(self):
+        squeezed = squeeze('let r#type = 1;\nlet x = "a  b";')
+        self.assertIn('r#type', squeezed)
+        self.assertIn('"a  b"', squeezed)
+
+    def test_a_quote_inside_a_line_comment(self):
+        self.assertMessageKeepsItsBytes('// an odd " quote\n' + self.DRIFTED)
+
+    def test_a_quote_inside_a_nested_block_comment(self):
+        self.assertMessageKeepsItsBytes(
+            '/* outer /* inner " */ still " comment */\n' + self.DRIFTED)
+
+    def test_comment_markers_inside_a_string_are_content(self):
+        squeezed = squeeze('let s = "// not a comment /* nor this */";\nlet x = 1;')
+        self.assertIn('"// not a comment /* nor this */"', squeezed)
+        self.assertIn('let x = 1;', squeezed)
+
+    def test_syntax_whitespace_still_collapses(self):
+        spread = 'assert!(\n        !x,\n        "msg"\n    );'
+        self.assertEqual('assert!(!x, "msg");', squeeze(spread))
+
+
 if __name__ == '__main__':
     unittest.main()

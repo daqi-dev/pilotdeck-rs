@@ -144,6 +144,16 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/anchor_selfcheck.py --anchors-only
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check-controls
+      # #1989：绑定自身的漂移自检。native 入口的 --check 只由宿主链执行，CI 此前一条
+      # 都不跑；这三组是纯 Python（不碰 cargo），逐条变异绑定的源码再要求对应 needle
+      # 报错——「把断言改成 assert!(true) / 删掉上限断言 / 改掉换行守卫的返回动作」
+      # 三种已实测的假绿都在这里变红。
+      - name: 绑定漂移自检（#1989）
+        run: |
+          python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_source.py
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-entry-authority/test_native_entry_binding.py
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-entry-authority/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/native-entry-authority/early_exit_invalid.py --check
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
       # 夹具为每条变异写了 .patch / .log / summary.json；job 红了才最需要它们，所以

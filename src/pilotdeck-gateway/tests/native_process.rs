@@ -248,11 +248,121 @@ async fn native_listening_observation_needs_a_finished_line() {
         collected.len()
     );
 
-    // Silence resolves at the silence bound, not at the total budget.
+    // Silence resolves at the silence bound, not at the total budget. The
+    // elapsed bound separates the 50 ms silence from the 5 s budget, so a
+    // swapped pair of bounds at the call site -- or `timeout(left, ...)`
+    // instead of `timeout(silence.min(left), ...)` -- fails here instead of
+    // silently turning a 60 s child limit into the whole budget (#1989 item 5).
+    let started = std::time::Instant::now();
     let (mut writer, reader) = tokio::io::duplex(64);
     let (collected, advertised) = read_advertisement(reader, silence, budget).await;
     assert!(!advertised, "silence: {collected:?}");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "silence bound, not the total budget: {elapsed:?}"
+    );
     let _ = writer.write_all(b"late").await;
+
+    // A read error is unjudgeable, never an advertisement: the bytes read
+    // before it stay as evidence and the verdict is false. Nothing else
+    // reaches the error arm, so a folded `Ok(Err(_))` could only show here
+    // (#1989 item 5).
+    let (collected, advertised) = read_advertisement(
+        ErrorAfter::new(b"native listening 127.0.0.1:4321"),
+        silence,
+        budget,
+    )
+    .await;
+    assert!(!advertised, "read error: {collected:?}");
+    assert!(
+        collected.ends_with(b"127.0.0.1:4321"),
+        "read error keeps the bytes read before it: {collected:?}"
+    );
+
+    // A child that prints complete, non-advertisement lines and then stops
+    // talking never advertises and never goes silent, so only the total budget
+    // can end the observation -- and `budget` / `silence` are swapped here on
+    // purpose (50 ms budget, 5 s silence). The elapsed bound is far below 5 s,
+    // so a read that lost the budget would sit out the whole silence bound
+    // (#1989 item 5). Three lines cannot reach the 64 KiB byte bound, so this
+    // case ends on the budget and not on the buffer limit.
+    let started = std::time::Instant::now();
+    let (collected, advertised) =
+        read_advertisement(TalkativeLines::lines(3), budget, silence).await;
+    assert!(!advertised, "budget: {} bytes", collected.len());
+    assert!(
+        collected.ends_with(b"noise from a child that never advertises\n"),
+        "the budget case read whole non-advertisement lines: {collected:?}"
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "the total budget ends a talkative child: {elapsed:?}"
+    );
+}
+
+// Test-only streams for the read-error and total-budget cases (#1989 item 5),
+// so both branches are reachable without a child process. `ErrorAfter` fails
+// once its bytes are consumed; `TalkativeLines` prints a few complete
+// non-advertisement lines and then stops producing (returning `Pending`, so
+// the read waits for its timeout instead of spinning). A run that lost the
+// total budget therefore pays one silence timeout and then fails its elapsed
+// bound, instead of hanging.
+struct ErrorAfter {
+    bytes: std::io::Cursor<&'static [u8]>,
+}
+
+impl ErrorAfter {
+    fn new(bytes: &'static [u8]) -> Self {
+        Self {
+            bytes: std::io::Cursor::new(bytes),
+        }
+    }
+}
+
+impl tokio::io::AsyncRead for ErrorAfter {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if this.bytes.position() as usize >= this.bytes.get_ref().len() {
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "#1989 injected read error",
+            )));
+        }
+        std::pin::Pin::new(&mut this.bytes).poll_read(cx, buf)
+    }
+}
+
+struct TalkativeLines {
+    remaining: usize,
+}
+
+impl TalkativeLines {
+    fn lines(lines: usize) -> Self {
+        Self { remaining: lines }
+    }
+}
+
+impl tokio::io::AsyncRead for TalkativeLines {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if this.remaining == 0 {
+            return std::task::Poll::Pending;
+        }
+        this.remaining -= 1;
+        let line = b"noise from a child that never advertises\n";
+        buf.put_slice(&line[..line.len().min(buf.remaining())]);
+        std::task::Poll::Ready(Ok(()))
+    }
 }
 
 // Reads stderr until the child advertises listening.
