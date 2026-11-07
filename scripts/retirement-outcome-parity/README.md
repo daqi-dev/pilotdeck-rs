@@ -272,6 +272,7 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 
 | 步骤 | 判据 |
 |---|---|
+| 安装钉死 PyYAML（#2017-A） | 装出 `pyyaml==6.0.3` venv 并前置 PATH，供下方 `python3 -I` 闸门使用 |
 | `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
 | `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
 | 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
@@ -286,14 +287,16 @@ python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
-超大夹具；CI 接线用**二十五种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+超大夹具；CI 接线用**二十六种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
 step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
 加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
 `run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
 `! ` 取反退出码 / `echo` 前缀 / 删掉一个闸门 step / 给 Require step 换掉 `if:` ·
 加 `continue-on-error` · 末尾追加 `&& false` · 把 `run: exit 1` 改成 `exit 0` / 把聚合 `check` job 的 `if:` 改成 `false` / 追加一份 `---` 之后的 YAML 文档 / r5 标量形态四种——`run` 行内续行、
 聚合 job `if` 续行 `&& false`、Require `if` 续行 `&& false`、块标量 `|`→`>`——加把两个 job
-整块挪到 `on:` 下冒充（行首正则会认这种假块））；输出目录锁用
+整块挪到 `on:` 下冒充（行首正则会认这种假块）与 **r6 根级** `defaults.run.shell:
+/bin/true {0}`（workflow 级 shell 模板让每个 run step 无条件 rc=0，只看 `jobs:` 的守卫逐字
+全等仍假 PASS；锚定样本的失败文案必须落在点名判定上，见 `SAMPLE_FAILURE_ANCHORS`)）；输出目录锁用
 三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即
 挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一
 正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」
@@ -306,7 +309,10 @@ step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **j
 
 接线守卫认的是 **PyYAML 解析后的完整标量**，不是源码行文本（#2017 r5py 重写）：守卫不再做任何
 行式 / 缩进式切块，也没有结构比对的兜底正则——`yaml.compose_all` 取唯一文档（多文档 / 解析失败
-即红），job 只在 `jobs:` 映射里找（挂在 `on:` 等别处的同名块不是 job）；两个 job 的直属键白名单
+即红），**根文档直属键白名单**（`name` / `on` / `jobs` / `permissions` / `concurrency` /
+`run-name`；根级 `defaults` / `env` 即红——workflow 级 `defaults.run.shell` 会替换每个 run
+step 的 shell，与 job 级 `defaults` 同一判法，r6 P0），job 只在 `jobs:` 映射里找（挂在
+`on:` 等别处的同名块不是 job）；两个 job 的直属键白名单
 （job 级 `continue-on-error` 即红，重复键也红——两个解析器可以对「哪个键活着」各执一词）；
 retirement job 的 `if:` 与聚合 `check` job 的 `if:` 归一化后逐字等于登记值（GitHub 把**被跳过的
 job 报成 success**，而 `check` 自己是必需检查，跳掉它就再没有东西挡合并）；retirement job 的
@@ -318,7 +324,13 @@ step 顺序与名字按登记比对；闸门 step 只许有 `name` + 一个**直
 同样意味着**等价写法会被误拒**（`run` 写成 plain / 引号标量、`if` 折叠续行、重排 `--round`
 参数），这是有意的
 fail-closed：本仓这段 YAML 只有一个写方，宁可误拒也不放过「文本活着但闸门失效」；改闸门脚本
-必须同步改 `GATE_SCRIPTS`。PyYAML 不可用时同样 fail-closed 判红，不降级回行式解析。
+必须同步改 `GATE_SCRIPTS`。PyYAML 不可用**或版本不符**时同样 fail-closed 判红，不降级回行式
+解析；解析器版本钉死 **`pyyaml==6.0.3`**（#2017-A，本机实测 `yaml.__version__` 6.0.3），
+CI 里由两个 job 的「安装钉死 PyYAML（#2017-A）」步骤装进 venv 并前置到 PATH
+（`python3 -I` 不读 user site，但 venv 的 site-packages 属解释器自身配置、`-I` 下仍可见），
+`self_check.py` 的 `PYYAML_PINNED_VERSION` 与 `src/pilotdeck-gateway/tests/
+test_metadata_io_driver.py` 的 `pinned_pyyaml_version`（兄弟守卫同一登记）各有一份
+fail-closed 断言；换版本必须三处同步改。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
