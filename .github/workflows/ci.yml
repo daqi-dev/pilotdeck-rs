@@ -55,10 +55,12 @@ jobs:
       # 本步逐表复算裸文件名拼接的键（含 .json/.mts 等夹具文件，发现循环对
       # `src/*.rs` 与 `fixtures/**` 都生成键），断言每张表声明的 DISCOVERY_ANCHORS 与之
       # 完全一致且每个键确实字面出现在该表文本中；解析不了的仓库路径、字符串 `+` /
-      # f-string 拼出的路径按失败处理，不静默跳过。判别力由负控自证：逐条删掉锚点、
-      # 注入一条新行、`TABLES` 为空、锚点重复赋值、新盲表未登记。纯静态，不需要 cargo。
+      # f-string 拼出的路径、不支持的调用形状按失败处理，不静默跳过；表 import 的
+      # 共享夹具助手（neg-for-diff.sh 会单独键它们）同样要求锚点。判别力由负控自证：
+      # 逐条删掉锚点、注入一条新行、`TABLES` 为空、锚点重复赋值、新盲表 / 新不可解表
+      # 未登记、登记条数过期。纯静态，不需要 cargo。
       # 当前登记 #2133 点名的 4 张表；其余同类盲表逐张记在测试的 KNOWN_BLIND 登记里
-      # （约定见 fixtures/README.md），新盲表出现即本步变红。
+      # （约定见 fixtures/README.md，逐表清单见 #2141），新盲表出现即本步变红。
       - name: 网关负控发现锚点自检（#2133）
         working-directory: src/pilotdeck-gateway/tests/fixtures
         run: python3 -B -m unittest -v test_negative_discovery_anchors
