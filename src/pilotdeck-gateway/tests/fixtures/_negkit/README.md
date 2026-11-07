@@ -100,14 +100,16 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 > **现状（#2106 实测）**：`negative_process` 共享 runner 入口（如 `config-store`、`turn-runner` 等）的
 > `PDRS_NEGATIVE_BASELINE` 候选基线逃生口按 scanner target 冷暖分两态（`_ensure_workspace_scanner`
 > 解析出的 `CARGO_TARGET_DIR`，默认 `<tree>/_build/cargo-target`；候选基线/身份的拒绝一律是
-> `SourceBaselineError`，rc 随入口契约——`config-store`/`turn-runner` 走 `run_cases` 归 rc=1，
-> `settings-gateway` 等自管入口拒跑为 rc=2；冷 target bootstrap 的槽位/构建失败抛
+> `SourceBaselineError`，rc 随入口契约各不相同：`config-store` 走 `run_cases` 归 rc=1；
+> `settings-gateway`（已迁移 `refuse()`/`entered` 契约）拒跑为 rc=2；`turn-runner` 等直连
+> `mutating_sources` 的自管入口未捕获异常退出归 rc=1；冷 target bootstrap 的槽位/构建失败抛
 > `CalledProcessError`/`TimeoutExpired`/`RuntimeError`，同样非零退出，fail-closed，不产生假 PASS）：
 >
 > - **冷 target（scanner 未预建）**：bootstrap 前按字面 `HEAD` 校验 `src`/`.cargo`/`rust-toolchain*`，
 >   候选 diff 只要有任何一处落在这些区域内即被拒（未跟踪缓存类文件按 `_assert_input_areas` 的排除表
 >   豁免；非 HEAD 候选即使已通过外层 `mutating_sources` 的基线区域断言也过不去这一关）；候选 diff
->   完全在区域外且不在 scanner 字面输入集（只改 `state/`、`specs/` 等时）不受影响。
+>   完全在区域外且不在 scanner 字面输入集（如只改 `state/`——字面输入集由扫描器从 include 边算出，
+>   `src` 外实测共 3 项，见下段）时不受影响。
 > - **暖 target（scanner 已预建且身份匹配）**：候选 diff 不触碰 scanner 身份 5 文件
 >   （`src/Cargo.toml`、`src/Cargo.lock`、`src/pilotdeck-gateway/Cargo.toml`、
 >   `src/pilotdeck-gateway/tests/common/source_inputs.rs`、
@@ -121,12 +123,13 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 > 另一项边界：候选改动落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——
 > `_assert_input_areas` 的 `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖
 > target 上都会被外层基线断言拒绝；区域外且非字面输入的候选不暂存也通过。**scanner 字面输入集**
-> （`include_str!`/`include_bytes!`/`#[path]` 连到的仓库内文件）会落在 `src` 外——实测清单含
-> `scripts/cli-parity/help.txt`、`scripts/cli-parity/scenarios.json`（`remote-verify-r4-probe/`，
-> 共 1331 项）——这些文件未暂存的改动同样被 `--cached` 腿报 `source baseline mismatch`，别当「区域外
-> 不受影响」。收货复核实测（均为暖 target、README 改动已 `git add`——本 README 在 `src/` 内：触碰
-> `src/Cargo.toml` 的候选被拒，仅改本 README 的候选 ENTER-OK；原始记录在
-> `_tmp/20261108-harvest-2106-r1/`）。
+> （`include_str!`/`include_bytes!`/`#[path]` 连到的仓库内文件）会落在 `src` 外——实测清单共 1331 项，
+> 其中 `src` 外 3 项：`scripts/cli-parity/help.txt`、`scripts/cli-parity/scenarios.json`、
+> `specs/gateway-coverage/coverage-manifest.json`（`remote-verify-r4-probe/`；清单由扫描器从 include
+> 边现算，不硬编码）——这些文件未暂存的改动同样被 `--cached` 腿报 `source baseline mismatch`，
+> `scripts/`、`specs/` 都不能当「区域外不受影响」。收货复核实测（均为暖 target、README 改动已
+> `git add`——本 README 在 `src/` 内：触碰 `src/Cargo.toml` 的候选被拒，仅改本 README 的候选
+> ENTER-OK；原始记录在 `_tmp/20261108-harvest-2106-r1/`）。
 > `_negkit/submit.py` 本身仍然禁用该变量（本目录政策不变）。终局口径未定（放宽 bootstrap
 > 校验，或把 `PDRS_NEGATIVE_BASELINE` 限定为暖 target 专用并文档化），登记在 #2106。
 
