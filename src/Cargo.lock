@@ -1036,6 +1036,7 @@ dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-transport",
  "proc-macro2",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",
