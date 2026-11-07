@@ -149,6 +149,94 @@ def _tracked(*paths):
     return [Path(os.fsdecode(entry)) for entry in listing.split(b'\0') if entry]
 
 
+def _untracked(*paths):
+    """Repository-relative files under `paths` that git does not track yet.
+
+    `--exclude-standard` leaves ignored build output out, so this is the set a
+    control would have carried before #1570 replaced the per-suite
+    `copytree(specs)` inventories: a pending repair that adds a data file does
+    not `git add` it first (#1570 r15 concurrency). Ignored data files are
+    deliberately not carried: they are build output by convention, and a
+    missing one fails the control loudly rather than passing it.
+    """
+    listing = subprocess.check_output(
+        ['git', 'ls-files', '-z', '--others', '--exclude-standard', '--', *paths], cwd=REPO)
+    return [Path(os.fsdecode(entry)) for entry in listing.split(b'\0') if entry]
+
+
+def _untracked_files(*paths):
+    """Untracked plain files under `paths`; a link or a directory is refused.
+
+    `git ls-files --others` lists a symlinked directory as a single entry and
+    never descends into it, and `copyfile` follows whatever a link points at --
+    a `.env.local`, a file under `~/.pilotdeck`. Neither may reach `/tmp`
+    (#1570 r16 codex P0). A directory entry would otherwise land in the copy
+    loop's "tracked member deleted" branch and be reported as something it is
+    not (#1570 r16 codex P1).
+    """
+    files = []
+    for path in _untracked(*paths):
+        source = REPO / path
+        if source.is_symlink() or not source.is_file():
+            raise RuntimeError(f'source_copy: {path} is an untracked symlink or directory '
+                               'in an input directory; the control copies plain files only, '
+                               'so add it to git (or remove it) before running')
+        _refuse_special(source, path, 'an input directory')
+        files.append(path)
+    return files
+
+
+def _refuse_special(source, path, kind):
+    """Refuse a file whose bytes are not a plain copy of the checkout's own.
+
+    Three shapes can hand `/tmp` something the checkout never meant to share:
+    a symbolic link (`copyfile` follows it), a hard link (same bytes under a
+    second name, so the name says nothing about what it is), and a dotenv file
+    (`source_copy` never copies `.env*`, tracked or not -- that is the promise
+    the controls' `environment()` relies on). All three are refused loudly
+    instead of copied, because a leak cannot be undone after the fact
+    (#1570 r16/r17/r18 codex P0).
+    """
+    if path.name.startswith('.env'):
+        raise RuntimeError(f'source_copy: {path} is a dotenv file in {kind}; the control '
+                           'never copies .env* (tracked or not), so move it out of the '
+                           'workspace inputs or remove it before running')
+    try:
+        links = source.stat().st_nlink
+    except OSError:
+        return
+    if links > 1:
+        raise RuntimeError(f'source_copy: {path} is a hard link in {kind} ({links} names); '
+                           'the control cannot tell what else it names, so replace it with '
+                           'a real file or remove it before running')
+
+
+def _escapes_repository(path, root=None):
+    """True when `path` resolves (through symlinks) outside the repository.
+
+    `shutil.copyfile` follows symlinks, so a link pointing at `~/.pilotdeck`
+    would be copied into the scratch workspace -- the copy is outside the
+    checkout and outlives the run in `/tmp` (#1570 r16 codex P0). The
+    comparison is by file identity, not spelling: macOS volumes are
+    case-insensitive, so a differently-cased alias of the same directory must
+    not read as "outside" (#1570 r17 codex P1).
+    """
+    root = REPO.resolve() if root is None else root
+    resolved = (REPO / path).resolve()
+    if resolved == root or root in resolved.parents:
+        return False
+    while True:
+        try:
+            if os.path.samefile(resolved, root):
+                return False
+        except OSError:
+            return True
+        parent = resolved.parent
+        if parent == resolved:
+            return True
+        resolved = parent
+
+
 def _tracked_but_deleted(relative):
     """True when `relative` is in the git index, even if the tree deleted it.
 
@@ -773,7 +861,12 @@ def source_copy(root):
     # read, and the copy is built from that same list. Listing the index twice
     # would let a file added in between be copied without ever being scanned,
     # so an `include!` it holds would never become an edge (#1570 r14 codex).
-    sources = _tracked('src')
+    # Untracked `src/` files belong in that list for the same reason: copying
+    # them without scanning them compiles a `mod new;` edge whose own
+    # `include_str!` never became an input, so the copy comes up short and the
+    # mutation reads INVALID (#1570 r18 codex P1).
+    tracked = _tracked('src')
+    sources = tracked + [path for path in _untracked_files('src') if path not in set(tracked)]
     # sha256 of every file the scan read, filled by the scan itself: comparing
     # the copy against these bytes is what proves the derivation and the copy
     # came from the same tree, including fragments outside `src/`.
@@ -781,7 +874,29 @@ def source_copy(root):
     directories, files = compile_inputs(sources=sources, read=read)
     paths = list(sources)
     seen = set(paths)
-    for path in _tracked(*directories):
+    # No derived directory is normal (nothing outside `src/` is read); asking
+    # git for nothing lists the *whole* repository, which would copy `state/`,
+    # `.github/` and tracked `.env*` into every scratch workspace (#1570 r15
+    # boundary).
+    for path in (_tracked(*directories) if directories else ()):
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    # The `copytree(specs)` inventories this replaced carried untracked files
+    # too, and a pending repair adds a data file without `git add`. Copying
+    # them cannot hide an input (they land in the copy) and refusing would stop
+    # every control in a tree with a new fixture, so carry the plain ones along
+    # (#1570 r15 concurrency). `src/` gets the same rule: a `mod new;` edge is
+    # not followed by the scan (#2119), so a pending `src/new.rs` that is not
+    # `git add`ed would otherwise reach the copy as a missing file and every
+    # mutation would read INVALID (#1570 r17 sibling).
+    # `src/` is already covered by `sources`; the derived directories get the
+    # same carry-along rule. Both are filtered by `_untracked_files`, which
+    # refuses links, directories and dotenv files.
+    untracked = []
+    if directories:
+        untracked += _untracked_files(*directories)
+    for path in untracked:
         if path not in seen:
             seen.add(path)
             paths.append(path)
@@ -800,7 +915,22 @@ def source_copy(root):
     # include graph: skipping a deleted member there leaves a copy that fails
     # at run time and reads as INVALID with nothing in the log (#1570 r14
     # concurrency). Refuse instead.
+    # Everything that actually reached the scratch tree, so the check at the end
+    # can compare each copy against the source *now*: `read` only covers what
+    # the scan looked at, and a data file that no include edge points at
+    # (`specs/gateway-coverage/ledger.json`, `LICENSE`) can move between the
+    # copy and the first test run (#1570 r15 concurrency).
+    written = []
+    repository = REPO.resolve()
     for path in paths:
+        if (REPO / path).is_symlink():
+            # `copyfile` follows the link, so a tracked path swapped for a link
+            # to `.env.local` (or to `~/.pilotdeck`) puts those bytes in `/tmp`
+            # and the digest check below still passes -- it compares the copy
+            # with the same followed bytes (#1570 r17 codex P0).
+            raise RuntimeError(f'source_copy: {path} is a symlink; the control copies the '
+                               'tracked file it names, never the bytes a link points at, so '
+                               'replace it with the real file or remove it before running')
         if not (REPO / path).is_file():
             if any(directory in path.parents for directory in directories):
                 raise RuntimeError(f'source_copy: {path} is a tracked member of an input '
@@ -810,9 +940,15 @@ def source_copy(root):
             print(f'source_copy: tracked file deleted in the working tree, not copied: {path}',
                   flush=True)
             continue
+        _refuse_special(REPO / path, path, 'the workspace inputs')
         destination = root / path
+        if _escapes_repository(path, repository):
+            raise RuntimeError(f'source_copy: {path} resolves outside the repository; the '
+                               'scratch copy must not carry anything from outside the '
+                               'checkout, so refusing to copy it')
         destination.parent.mkdir(parents=True, exist_ok=True)
         _copy_input(path, destination)
+        written.append(path)
     # `rustup` must keep the repository toolchain when Cargo runs in /tmp, and
     # `LICENSE` rides along for the same "workspace inputs" promise. Both can
     # be deleted by a pending repair like any other tracked file, so they get
@@ -823,7 +959,17 @@ def source_copy(root):
             print(f'source_copy: {name} is missing from the working tree, not copied',
                   flush=True)
             continue
+        if (REPO / name).is_symlink():
+            raise RuntimeError(f'source_copy: {name} is a symlink; the control copies the '
+                               'tracked file it names, never the bytes a link points at, so '
+                               'replace it with the real file or remove it before running')
+        if _escapes_repository(name, repository):
+            raise RuntimeError(f'source_copy: {name} resolves outside the repository; the '
+                               'scratch copy must not carry anything from outside the '
+                               'checkout, so refusing to copy it')
+        _refuse_special(REPO / name, Path(name), 'the workspace inputs')
         shutil.copyfile(REPO / name, root / name)
+        written.append(name)
     # #1570: prove the inputs landed instead of trusting the write loop.
     verify_copy(root, files)
     copied = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
@@ -832,12 +978,29 @@ def source_copy(root):
         raise RuntimeError('the scratch copy does not match the sources the scan read; '
                            'the tree changed while the copy was being made, so refusing '
                            'to run the control against a moving tree')
-    if set(_tracked('src')) != set(sources):
+    if set(_tracked('src')) | set(_untracked_files('src')) != set(sources):
         raise RuntimeError('src/ changed while the scratch copy was being made; refusing '
                            'to run the control against a moving tree')
     if compile_inputs(sources=sources) != (directories, files):
         raise RuntimeError('the workspace inputs changed while the scratch copy was being '
                            'made; refusing to run the control against a moving tree')
+    # Last line of defence: every file in the copy must still equal its source.
+    # The checks above prove the *include graph* did not move; this one also
+    # covers the data files the graph does not name, which are read at run time
+    # and would otherwise turn a real KILLED/SURVIVED into a confusing INVALID
+    # when someone edits the tree while a control is starting up (#1570 r15
+    # concurrency).
+    for path in written:
+        try:
+            source = hashlib.sha256((REPO / path).read_bytes()).hexdigest()
+            duplicate = hashlib.sha256((root / path).read_bytes()).hexdigest()
+        except OSError as error:
+            raise RuntimeError(f'source_copy: {path} changed while it was being copied '
+                               f'({error}); refusing to run the control against a moving tree')
+        if source != duplicate:
+            raise RuntimeError(f'the scratch copy of {path} does not match the working tree; '
+                               'the tree changed while the copy was being made, so refusing '
+                               'to run the control against a moving tree')
     return root / 'src'
 
 
