@@ -46,6 +46,14 @@ const TLS: &str = include_str!("fixtures/mcp-proxy/proxy-tls.json");
 /// Generous next to the milliseconds a healthy case needs, tight enough that a
 /// request the mock never records still fails the case instead of hanging it.
 const REQUEST_LOG_TIMEOUT: Duration = Duration::from_secs(5);
+/// #2047: how long the expected set has to hold still before it counts as the
+/// whole log. Reaching the expected set once is not the end of the log — the
+/// mock may still be appending (a request just behind the last one, or a line
+/// the reader caught mid-write) — so the poll only stops after this much
+/// quiet. A line that lands later than this window cannot be told apart from
+/// "no more requests" without a mock-side barrier; the window is what a
+/// polling reader can honestly promise.
+const REQUEST_LOG_SETTLE: Duration = Duration::from_millis(250);
 
 fn oracle() -> JsValue {
     baseline::oracle(ORACLE)
@@ -374,6 +382,27 @@ fn json_lines(path: &Path, replacements: &[(String, String)], dedupe: bool) -> V
     entries
 }
 
+/// [`json_lines`] for the #2047 poll: the mock may be appending while this
+/// reads, so a trailing line without its newline is a line still being
+/// written, not a record — drop it and let the next poll see the whole thing.
+/// Every newline-terminated line is parsed as strictly as `json_lines` does,
+/// so a mangled record still panics instead of disappearing.
+fn json_lines_polled(path: &Path, replacements: &[(String, String)]) -> Vec<String> {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut lines: Vec<&str> = content.lines().filter(|line| !line.is_empty()).collect();
+    if !content.is_empty() && !content.ends_with('\n') {
+        lines.pop();
+    }
+    let mut entries: Vec<String> = lines
+        .into_iter()
+        .map(|line| text(&scrub(&parse_json(line).unwrap(), replacements)))
+        .collect();
+    entries.sort();
+    entries
+}
+
 /// Child process: drive the client with the environment its parent installed.
 async fn run_child(index: usize) {
     let oracle = oracle();
@@ -549,25 +578,55 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         // #2047: the mock writes each request line from Node's event loop, so a
         // loaded runner can land the last line well after the replay child has
         // exited. A fixed sleep is not a timeout — it decides the answer by
-        // timing alone. Poll for the expected set instead, and fail on the
-        // bound with what is still missing (a request that never arrives keeps
-        // this red, so the wait cannot launder a dropped event into a pass).
+        // timing alone. Poll for the expected set instead, and require it to
+        // hold still for `REQUEST_LOG_SETTLE`: a request that arrives just
+        // behind the expected ones would otherwise be read as "the log is
+        // complete" the moment the shorter set matches. The bound still fails
+        // the case, with what is still missing, so a request that never
+        // arrives cannot be laundered into a pass.
         let expected: Vec<String> = array(field(case, "requests"), "requests")
             .iter()
             .map(text)
             .collect();
-        let waited = std::time::Instant::now();
-        let mut requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
-        while requests != expected && waited.elapsed() < REQUEST_LOG_TIMEOUT {
+        let started = std::time::Instant::now();
+        let deadline = started + REQUEST_LOG_TIMEOUT;
+        let mut matched_since: Option<std::time::Instant> = None;
+        loop {
+            let current = json_lines_polled(&dir.join("http.jsonl"), &replacements);
+            if current == expected {
+                let since = *matched_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() >= REQUEST_LOG_SETTLE {
+                    break;
+                }
+            } else {
+                matched_since = None;
+            }
+            if std::time::Instant::now() >= deadline {
+                assert_eq!(
+                    current,
+                    expected,
+                    "{id}: server request log did not settle within {:?} (bound {:?}); saw {} of {} recorded requests",
+                    started.elapsed(),
+                    REQUEST_LOG_TIMEOUT,
+                    current.len(),
+                    expected.len()
+                );
+                panic!(
+                    "{id}: server request log matched the expected set but kept changing up to \
+                     the {:?} bound ({REQUEST_LOG_SETTLE:?} of quiet are required)",
+                    started.elapsed()
+                );
+            }
             tokio::time::sleep(Duration::from_millis(25)).await;
-            requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
         }
+        // The strict read: by now the log has been quiet for the settle window,
+        // so every line is complete and a mangled or extra record fails here.
+        let requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
         assert_eq!(
             requests,
             expected,
-            "{id}: server request log after waiting {:?} (bound {:?}); saw {} of {} recorded requests",
-            waited.elapsed(),
-            REQUEST_LOG_TIMEOUT,
+            "{id}: server request log after settling for {:?}; saw {} of {} recorded requests",
+            started.elapsed(),
             requests.len(),
             expected.len()
         );

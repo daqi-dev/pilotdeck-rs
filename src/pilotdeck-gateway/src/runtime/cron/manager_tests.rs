@@ -397,6 +397,48 @@ fn methods_run_without_gateway_and_start_requires_bind() {
     );
 }
 
+// #2047: `runTaskNow` builds its one-time schedule from one clock read and
+// hands that same instant to `createTask`. TS reads the clock twice
+// (`new Date()` there, `Date.now()` inside `createTask`), so a tick between
+// the two reads makes the schedule it just built look stale and the run-now
+// answers "One-time Cron tasks must be scheduled in the future.". A clock that
+// advances on every read is exactly that tick, held still: the run-now must
+// still start.
+#[test]
+fn run_now_shares_one_clock_read_with_the_task_it_creates() {
+    let scratch = Scratch::new("cron-manager-2047");
+    let home = scratch.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let clock = reads.clone();
+    let manager = CronManager::new(CronManagerOptions {
+        config: CronManagerConfig::default(),
+        pilot_home: home.to_string_lossy().into_owned(),
+        session_overrides: None,
+        now: Some(Arc::new(move || {
+            PINNED_NOW_MS + clock.fetch_add(1, Ordering::SeqCst) as f64
+        })),
+        uuid: Some(Arc::new(move || JsString::from("task-run-now"))),
+        logger: Some(Arc::new(RecordingLogger::default())),
+    })
+    .unwrap();
+    let created = manager.create_task(&create_input("/proj")).unwrap();
+    let task_id = text(created.get("task").unwrap(), "taskId");
+
+    let run_now = manager
+        .run_task_now(&json(&format!(r#"{{"taskId": "{task_id}"}}"#)))
+        .expect("#2047 runTaskNow must not reject the schedule it just stamped");
+    assert_eq!(
+        run_now.get("started").and_then(JsValue::as_bool),
+        Some(true),
+        "#2047 a clock tick between runTaskNow's two TS reads must not expire its own schedule"
+    );
+    assert!(
+        reads.load(Ordering::SeqCst) >= 2,
+        "#2047 the test clock must have ticked, otherwise this case proves nothing"
+    );
+}
+
 // Matrix cell 11: a duplicate submit for an admitted session is rejected by
 // the same `SessionAdmission` fence — the second trigger never executes —
 // and a sequential submit after the first turn ends is admitted again.

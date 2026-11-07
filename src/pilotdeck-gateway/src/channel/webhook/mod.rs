@@ -132,6 +132,15 @@ pub struct WebhookChannelOptions {
     /// exposes no such option (it is Node's server default, not a channel
     /// option); the field is the Rust tests' injection point, like `now`.
     pub request_timeout: Option<Duration>,
+    /// Rust test seam (#2047): called once per connection the accept loop has
+    /// taken out of the kernel backlog, before the connection task starts.
+    /// `stop()` breaks the accept loop and drops the listener, and a socket
+    /// still in the backlog at that moment is reset by the kernel — so a test
+    /// that wants to observe the body-read deadline on its own connection has
+    /// to know the connection was accepted first. Production leaves this
+    /// `None`: no callback, no behavior change (the hook never touches the
+    /// accept/stop paths, it only reports that `accept()` returned).
+    pub accepted: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 /// The channel's mutable lifetime state, all behind one lock like the TS
@@ -164,6 +173,8 @@ struct Ctx {
     max_body_bytes: f64,
     request_timeout: Duration,
     now: Now,
+    /// #2047 test observation point, `None` in production.
+    accepted: Option<Arc<dyn Fn() + Send + Sync>>,
     mapper: Mutex<WebhookSessionMapper>,
     state: Mutex<State>,
 }
@@ -185,6 +196,7 @@ impl WebhookChannel {
                 max_body_bytes: options.max_body_bytes.unwrap_or(DEFAULT_MAX_BODY_BYTES),
                 request_timeout: options.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
                 now: options.now.unwrap_or_else(|| Arc::new(default_now)),
+                accepted: options.accepted,
                 mapper: Mutex::new(options.mapper.unwrap_or_else(|| {
                     WebhookSessionMapper::new(WebhookSessionMapper::random_uuid())
                 })),
@@ -209,6 +221,7 @@ impl WebhookChannel {
             mapper: None,
             now: None,
             request_timeout: None,
+            accepted: None,
         })
     }
 
@@ -424,6 +437,12 @@ async fn accept_loop(listener: TcpListener, ctx: Arc<Ctx>, mut stop: watch::Rece
         };
         let stop_signal = stop.clone();
         let connection_ctx = ctx.clone();
+        // #2047: the socket is out of the kernel backlog now, so this is the
+        // instant after which dropping the listener can no longer reset it.
+        // Production passes `None`.
+        if let Some(accepted) = &ctx.accepted {
+            accepted();
+        }
         // #1534 P0: duplicate the accepted socket so the literal-null branch
         // can read the client's FIN itself. hyper 1.7.0's
         // `mid_message_detect_eof` returns `Pending` whenever its `read_buf`
