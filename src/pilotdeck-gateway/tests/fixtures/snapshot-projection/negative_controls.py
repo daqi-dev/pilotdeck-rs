@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import baseline_passed, verdict_exit
+from negative_selection import baseline_passed, registered, verdict_exit
 from negative_process import (mutating_sources, node_version, run_owned,
                               wait_for_slot)  # noqa: E402
 
@@ -210,6 +210,32 @@ mutations = [
     ),
 ]
 
+# The full roster, in table order, ending with the two data mutations. A run
+# that loses a row (deleted or renamed) used to still print `n/n KILLED` and
+# exit 0: the denominator shrank silently (#1456 r4, both reviewer lineages).
+# `registered` refuses at import time and the run re-checks the recorded
+# verdicts against this list before reporting success.
+EXPECTED_NAMES = (
+    "mkdtemp-eexist-fabricated",
+    "requires-host-false",
+    "resolver-general-always",
+    "storage-id-ignores-marker",
+    "storage-id-stats-normalized-marker",
+    "restore-returns-target-not-mkdtemp",
+    "project-key-validation-skipped",
+    "session-validation-skipped",
+    "identifier-validation-skipped",
+    "target-validation-skipped",
+    "list-validation-skipped",
+    "limit-null-not-default",
+    "cursor-null-treated-as-omitted",
+    "workspace-filter-dropped",
+    "restore-target-fallback-undefined",
+    "provider-not-found-lossy",
+    "workspace-snapshot-oracle-truncated",
+    "generator-guard-bypassed",
+)
+
 # Data mutations that are not source anchors. (name, path, apply, target, test,
 # marker) is built below; `mutating_sources` still snapshots the bytes.
 ORACLE = FIXTURES / "workspace-snapshot/oracle.json"
@@ -252,19 +278,31 @@ def run_test(target, test, env):
 
 
 def main():
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
-    if not os.environ.get("CARGO_TARGET_DIR"):
-        print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
-        return 2
-    env = os.environ.copy()
     selected = set(sys.argv[2:])
     rows = [row for row in mutations if not selected or row[0] in selected]
     data_names = {"workspace-snapshot-oracle-truncated", "generator-guard-bypassed"}
+    # Refusals happen before the evidence directory is claimed: a drifted
+    # roster is a "never started" (2), which must not leave `out/` behind.
+    try:
+        registered(mutations, EXPECTED_NAMES[:-len(data_names)])
+        if tuple(EXPECTED_NAMES[-len(data_names):]) != (
+            "workspace-snapshot-oracle-truncated",
+            "generator-guard-bypassed",
+        ):
+            raise ValueError("static roster must end with the data mutations")
+    except ValueError as error:
+        print(f"mutation roster drifted: {error}", file=sys.stderr)
+        return 2
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
+    if not os.environ.get("CARGO_TARGET_DIR"):
+        print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
+        return 2
+    out = Path(sys.argv[1]).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    env = os.environ.copy()
     paths = sorted({row[1] for row in rows} | {ORACLE, GENERATOR})
     results = []
 
@@ -488,6 +526,16 @@ def main():
         f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}",
         flush=True,
     )
+    # A lost row must not read as a clean run: every selected name has to carry
+    # a verdict before success can be reported (#1456 r4).
+    expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
+    recorded = [row["name"] for row in results if row["name"] in set(EXPECTED_NAMES)]
+    if recorded != expected:
+        print(
+            f"verdict roster mismatch: recorded={recorded} expected={expected}",
+            file=sys.stderr,
+        )
+        return 1
     # Every row must KILLED and at least one row must exist: an empty run or a
     # zero-kill run is never success (#818 fix-r3 P0).
     return verdict_exit(results, key="status")
