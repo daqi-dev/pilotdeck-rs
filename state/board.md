@@ -4592,3 +4592,7 @@ Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接�
 ### 2026-11-08 导入展示 ID 验证接续（lane C）
 
 新增安全的展示注释后，导入现验证 kernelMessageId/turnId 非空且显式 message ID 全会话唯一；createdAt 可解析，timeline 版本/数值/标识形状完整，同声明 turn 的重复文字 block/timeline ID 拒绝，避免 UI 静默合并。工具 call/result 合法配对可共享 tool timeline，不当重复 prose 处理。无 turn 声明的 legacy 重用 block ID 在 WebMessage 中采用确定性新 session-local namespace，原 canonical 不变；这些展示字段始终不能寻址/恢复执行或审批。focused kernel 21/21 通过；追加真实 tool timeline 正例后 history_transfer 集单 4/4 通过。
+
+### 2026-11-08 Kernel admission 前取消 fence（lane C）
+
+已在 async preflight 前后及取得 RPC 锁后、写 execution.input 前检查本地取消；尚未由 Kernel 接受的新 ingress 在此结束，明确 kernelAccepted=false，不再先开新执行再补 cancel。已存在相同原 run 的 Kernel call 仍走原执行控制/观察，不冒充未执行。新增 preflight 期间取消、无 RPC/无 execution_started 正例；focused kernel 22/22 通过。limits/accepted_at_ms 正与 A 的通用公开 facade 对接，当前不提前宣称实际 deadline 验收。

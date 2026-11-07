@@ -1074,6 +1074,27 @@ struct KernelTurn {
     accepted: bool,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 }
+impl KernelTurn {
+    fn finish_unaccepted_cancellation(&mut self) -> Result<bool, RuntimeError> {
+        let reason = {
+            let mut state = self.state.lock().unwrap();
+            if state.call.is_some() && state.call_run.as_deref() == Some(self.run.as_str()) {
+                return Ok(false);
+            }
+            let Some(reason) = state.cancelled.clone() else {
+                return Ok(false);
+            };
+            state.run = None;
+            state.attached = false;
+            state.status = "idle".into();
+            reason
+        };
+        self.done = true;
+        self.queue.push_back(js(&json!({"type":"session_aborted","sessionId":self.session,"turnId":self.run,"reason":reason,"kernelAccepted":false}))?);
+        self.queue.push_back(js(&json!({"type":"turn_completed","sessionId":self.session,"turnId":self.run,"kernelAccepted":false,"result":{"type":"aborted","stopReason":"cancelled_before_kernel_admission","usage":{},"permissionDenials":[],"turns":0}}))?);
+        Ok(true)
+    }
+}
 impl LiveTurn for KernelTurn {
     fn next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
@@ -1085,7 +1106,13 @@ impl LiveTurn for KernelTurn {
                     return Ok(None);
                 }
                 if let Some(input) = self.input.take() {
+                    if self.finish_unaccepted_cancellation()? {
+                        continue;
+                    }
                     self.port_check.lock().await.check().await?;
+                    if self.finish_unaccepted_cancellation()? {
+                        continue;
+                    }
                     let original = recover(&mut *self.rpc.lock().await, &self.kernel_id).await?;
                     if original.run.as_deref().is_some_and(|run| run != self.run) {
                         let mut state = self.state.lock().unwrap();
@@ -1096,7 +1123,13 @@ impl LiveTurn for KernelTurn {
                             "Kernel has a different active execution; query or cancel that original execution before submitting a new turn.",
                         ));
                     }
-                    let accepted=self.rpc.lock().await.call("execution.input",json!({"session_id":self.kernel_id,"idempotency_key":self.run,"input":input})).await?;
+                    let rpc = self.rpc.clone();
+                    let mut rpc = rpc.lock().await;
+                    if self.finish_unaccepted_cancellation()? {
+                        continue;
+                    }
+                    let accepted=rpc.call("execution.input",json!({"session_id":self.kernel_id,"idempotency_key":self.run,"input":input})).await?;
+                    drop(rpc);
                     let call = accepted["call_ref"]
                         .as_str()
                         .ok_or_else(|| error("Kernel input omitted execution identity."))?
@@ -1895,6 +1928,42 @@ mod recovery_contract_tests {
         drop(session);
         task.await.unwrap();
         std::fs::remove_file(socket).unwrap();
+    }
+    #[tokio::test]
+    async fn kernel_abort_during_preflight_never_opens_rpc_or_admits_new_execution() {
+        let mut session = session(std::env::temp_dir().join("no-kernel-rpc.sock"));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let gate = release.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        session.port_check = Arc::new(tokio::sync::Mutex::new(NativePortCheck {
+            pending: Some(Box::pin(async move {
+                let _ = started.send(());
+                gate.notified().await;
+                Ok(())
+            })),
+            result: None,
+        }));
+        let mut turn = session
+            .submit(
+                js(&json!({"type":"text","text":"must not execute"})).unwrap(),
+                js(&json!({"turnId":"cancelled-ingress"})).unwrap(),
+            )
+            .unwrap();
+        let task = tokio::spawn(async move {
+            let first = json_value(&turn.next().await.unwrap().unwrap()).unwrap();
+            let final_event = json_value(&turn.next().await.unwrap().unwrap()).unwrap();
+            assert!(turn.next().await.unwrap().is_none());
+            (first, final_event)
+        });
+        ready.await.unwrap();
+        session.abort(&"cancelled before admission".into()).unwrap();
+        release.notify_one();
+        let (first, final_event) = task.await.unwrap();
+        assert_eq!(first["type"], "session_aborted");
+        assert_eq!(final_event["kernelAccepted"], false);
+        assert_eq!(final_event["result"]["type"], "aborted");
+        assert!(!session.started.load(Ordering::SeqCst));
+        assert!(session.rpc.lock().await.stream.is_none());
     }
     #[tokio::test]
     async fn kernel_configured_port_failure_remains_rejected_without_replay_or_blocking_reads() {
