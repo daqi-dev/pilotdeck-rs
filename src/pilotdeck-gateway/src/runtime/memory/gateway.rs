@@ -5,13 +5,14 @@
 //!
 //! The adapter is deliberately not registered in the native dispatch table:
 //! wiring `memory_*` into `requests.rs` belongs to the A8 entry lane, so the
-//! methods stay forwarded to the TS host until then. `dispatch` is the only
-//! wire-facing entry and mirrors [`crate::runtime::snapshot::SnapshotGateway`]:
-//! unknown methods return `None`, a `requires_host` boundary returns
-//! [`MemoryDispatch::Forward`] (the whole request goes to the Node host), a
-//! success is the wire-shaped result JSON, and a failure is
-//! [`MemoryDispatch::Error`] so the WS entry answers with `ok:false` exactly as
-//! the TS `throw` does.
+//! methods stay forwarded to the TS host until then. `dispatch` has no
+//! production consumer yet (it, too, waits for the A8 entry); it is the
+//! reference shape [`crate::runtime::snapshot::SnapshotGateway`]'s `dispatch`
+//! mirrors since #2194: unknown methods return `None`, a `requires_host`
+//! boundary returns [`MemoryDispatch::Forward`] (the whole request goes to
+//! the Node host), a success is the wire-shaped result JSON, and a failure is
+//! [`MemoryDispatch::Error`] so the WS entry answers with `ok:false` exactly
+//! as the TS `throw` does.
 //!
 //! Validation order is the TS wrapper's, measured by
 //! `tests/fixtures/memory-gateway`: projectKey first, then the optional
