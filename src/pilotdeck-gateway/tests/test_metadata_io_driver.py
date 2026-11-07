@@ -455,12 +455,17 @@ class EnvironmentControls(unittest.TestCase):
             step = {}
             for field, node in item.value:
                 step[field.value] = node
-            self.assertLessEqual(set(step), {'if', 'name', 'run', 'working-directory'},
+            self.assertLessEqual(set(step), {'if', 'name', 'run', 'shell', 'working-directory'},
                                  '#2017 aggregate Require step keys are exactly the registered set')
             run = step.get('run')
             self.assertIsInstance(run, yaml.ScalarNode,
                                  '#904 rejection steps exit one (parsed)')
             self.assertEqual(run.value, 'exit 1', '#904 rejection steps exit one (parsed)')
+            shell = step.get('shell')
+            self.assertIsInstance(shell, yaml.ScalarNode,
+                                  '#1809 aggregate Require steps pin their shell (parsed)')
+            self.assertEqual(shell.value, 'bash',
+                             '#1809 aggregate Require steps pin their shell (parsed)')
             if 'working-directory' in step:
                 self.assertEqual(step['working-directory'].value, '.',
                                  '#904 rejection steps run from the repository root (parsed)')
@@ -505,6 +510,80 @@ class EnvironmentControls(unittest.TestCase):
                    '#2017 the gateway-schema-baseline job-level keys are exactly the registered set')
         self.check_ci_mutations(cases, 'test_ci_job_level_gates_are_pinned_by_parsed_yaml', '#2017')
 
+    def test_ci_every_run_step_pins_bash_shell(self):
+        # #1809 r7（MM boundary P0）：`defaults.run.shell` 会替换每个不带自身 `shell:` 的
+        # run step 的 shell（`/bin/true {0}` 让必需检查无条件 rc=0），而全部检测点都住在
+        # 可被同一键废掉的 run step 里。执行层解是给**每个** run step 显式
+        # `shell: bash`（step 级 shell 优先于任何层级的 defaults，GitHub workflow syntax
+        # 明文）。这里是 gateway 侧的镜像守卫：与 retirement-outcome-parity 装置
+        # self_check.check_wiring 的全 workflow 巡走同口径——任何 job 的任何 run step
+        # 裸奔（缺 shell / 值不是 bash）都必须红，不限于退休装置那几个 step。
+        yaml, parsed = self.ci_parsed_jobs(issue='#1809')
+        checked = {}
+        for name, fields in parsed.items():
+            steps_node = fields.get('steps')
+            self.assertIsInstance(steps_node, yaml.SequenceNode,
+                                  f'#1809 the {name} job has a step sequence')
+            for item in steps_node.value:
+                self.assertIsInstance(item, yaml.MappingNode,
+                                      f'#1809 every {name} step is a mapping')
+                step = {}
+                for field, node in item.value:
+                    step[field.value] = node
+                if 'run' not in step:
+                    continue
+                shell = step.get('shell')
+                self.assertIsInstance(shell, yaml.ScalarNode,
+                                      f'#1809 the {name} run step pins `shell: bash` (parsed); '
+                                      'missing or non-scalar shell key')
+                self.assertEqual(shell.value, 'bash',
+                                 f'#1809 the {name} run step pins `shell: bash` (parsed); '
+                                 'a bare run step inherits any defaults.run.shell (e.g. '
+                                 '`/bin/true {0}`), which silently disables that step')
+                checked[name] = checked.get(name, 0) + 1
+        # 每个 job 都至少有一个 run step 被巡到：某 job 的 run step 被整体删空不能让
+        # 本守卫对着剩余 job 空转（job 清单另由 exact job inventory 钉死）。
+        self.assertEqual(sorted(checked), sorted(parsed),
+                         '#1809 every CI job has run steps under the shell guard')
+
+    def test_ci_rejects_run_step_shell_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#1809 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # 闸门 step 删掉 `shell: bash`：裸 run step 继承任何 defaults.run.shell。
+        change_job('retirement-gate-shell-removed', 'retirement-outcome-parity',
+                   '      - name: check 5 轮\n        shell: bash\n        run: |\n',
+                   '      - name: check 5 轮\n        run: |\n',
+                   '#1809 the retirement-outcome-parity run step pins `shell: bash` (parsed)')
+        # 必需检查的聚合 Require step 换 shell 值：`/bin/true {0}` 把 exit 1 变 rc=0。
+        change_job('require-scope-shell-swapped', 'check',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '        working-directory: .\n        shell: bash\n        run: exit 1\n',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '        working-directory: .\n        shell: /bin/true {0}\n        run: exit 1\n',
+                   '#1809 the check run step pins `shell: bash` (parsed)')
+        # 非闸门 job（rust 的 fmt 是必需检查 `rust` 的一环）删 shell：只有全 workflow
+        # 巡走能看见——这条样本专测巡走本身。
+        change_job('rust-fmt-shell-removed', 'rust',
+                   '      - name: 格式\n        shell: bash\n        run: cargo fmt --all --check\n',
+                   '      - name: 格式\n        run: cargo fmt --all --check\n',
+                   '#1809 the rust run step pins `shell: bash` (parsed)')
+        # metadata-observer 的守卫步（跑本文件的 unittest）同样必须显式钉 shell。
+        change_job('observer-driver-shell-removed', 'metadata-observer',
+                   '      - name: CI 聚合门控与各 job 的 Node 前置守卫\n'
+                   '        working-directory: src/pilotdeck-gateway/tests\n'
+                   '        shell: bash\n',
+                   '      - name: CI 聚合门控与各 job 的 Node 前置守卫\n'
+                   '        working-directory: src/pilotdeck-gateway/tests\n',
+                   '#1809 the metadata-observer run step pins `shell: bash` (parsed)')
+        self.check_ci_mutations(cases, 'test_ci_every_run_step_pins_bash_shell', '#1809')
+
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
@@ -533,9 +612,12 @@ class EnvironmentControls(unittest.TestCase):
                    + job + ".result == 'skipped') }}",
                    f'#904 {job} rejects every non-success beyond the docs-only skip')
         # #1199 规格 4：scope 失败时 check 仍通过 → 必须失败。
+        # #1809 r7：Require step 登记键含 `shell: bash`（step 级 shell 优先于任何
+        # defaults.run.shell，聚合 job 的 exit 1 靠它才废不掉）。
         scope_step = ('      - name: Require scope success\n'
                       "        if: ${{ always() && needs.scope.result != 'success' }}\n"
                       '        working-directory: .\n'
+                      '        shell: bash\n'
                       '        run: exit 1\n')
         change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
@@ -618,8 +700,9 @@ class EnvironmentControls(unittest.TestCase):
                '#1199 scope checkout keeps full history')
         change('checkout-filter', 'fetch-depth: 0', 'fetch-depth: 0\n          filter: blob:none',
                '#1199 scope checkout keeps full history')
-        # 自测步与分类步都不许跳过或忽略失败。
+        # 自测步与分类步都不许跳过或忽略失败（#1809 r7：run step 登记键含 shell）。
         selftest = ('      - name: 分类器自测（正负例与内存内变异负控）\n'
+                    '        shell: bash\n'
                     '        run: python3 -I scripts/test-ci-scope.py\n')
         change('selftest-removed', selftest, '', '#1199 scope runs the self-test then the classifier')
         change('selftest-conditional', selftest, selftest + '        if: false\n',
@@ -788,7 +871,7 @@ class EnvironmentControls(unittest.TestCase):
             cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1), message))
 
         change('fixture-step-removed',
-               run_step + '        run: ' + self.negative_controls_command
+               run_step + '        shell: bash\n        run: ' + self.negative_controls_command
                + ' "$RUNNER_TEMP/negctl-1316"\n', '',
                '#1632 the fixture itself runs in CI')
         change('fixture-step-conditional', run_step, run_step + '        if: false\n',
@@ -806,8 +889,8 @@ class EnvironmentControls(unittest.TestCase):
                'CARGO_TARGET_DIR: ${{ github.workspace }}/src/target',
                '#1632 the scanner builds into the in-tree _build target')
         change('target-cache-reintroduced',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n'
                '      - uses: Swatinem/rust-cache@v2.9.2\n'
                '        with:\n'
                '          workspaces: src -> ../_build/cargo-target\n',
@@ -823,8 +906,8 @@ class EnvironmentControls(unittest.TestCase):
                "          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}\n",
                '', '#1632 exactly one cache action feeds the job')
         change('cache-restore-action-added',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n'
                '      - uses: actions/cache/restore@v4\n        with:\n'
                '          path: _build/cargo-target\n          key: negctl-restore\n',
                '#1632 exactly one cache action feeds the job')
@@ -2189,10 +2272,15 @@ self_check_controls_run | return | return problems
             positions.append(index)
             fields = self.ci_step_fields(step)
             # #1525: only 测试 may carry a step-level env block, and only for the
-            # permission-faults switch (#1263). if/shell/timeout/env could all
-            # override execution or ignore failure.
-            self.assertEqual(set(fields), {'name', 'run'} | ({'env'} if title == '测试' else set()),
+            # permission-faults switch (#1263). if/timeout/env could all override
+            # execution or ignore failure; #1809 r7 adds `shell` as a REGISTERED key —
+            # the step-level shell outranks any defaults.run.shell, so its value is
+            # pinned to `bash` (fail-fast: GitHub runs it as `bash -e` semantics,
+            # a custom template like `bash {0}` silently drops fail-fast).
+            self.assertEqual(set(fields), {'name', 'run', 'shell'} | ({'env'} if title == '测试' else set()),
                              f'#922 {title} cannot override execution or ignore failure')
+            self.assertEqual(fields['shell'], ('bash', []),
+                             f'#922 {title} pins the fail-fast shell `bash`')
             if title == '测试':
                 value, block = fields['env']
                 self.assertEqual((value, [line for line in block if not line.startswith('#')]),
@@ -2840,12 +2928,17 @@ self_check_controls_run | return | return problems
             change(f'{title}-missing', raw, '', f'#922 {title} occurs once in rust')
             change(f'{title}-duplicate', raw, raw + raw, f'#922 {title} occurs once in rust')
             fields = ('if: false', "'if': false", '"continue-on-error": true',
-                      'shell: bash {0}', 'timeout-minutes: 1', 'working-directory: .')
+                      'timeout-minutes: 1', 'working-directory: .')
             if title != '测试':
                 fields += ('env: {NEXTEST_RETRIES: 2}',)
             for field in fields:
                 change(f'{title}-{field}', raw, raw + f'        {field}\n',
                        f'#922 {title} cannot override execution or ignore failure')
+            # #1809 r7：`shell` 已是登记键，注入重复键只会红在 #919——变异改成
+            # 「换值」：换成自定义模板 `bash {0}` 后失去 fail-fast，仍必须被拒。
+            change(f'{title}-shell-swapped', raw,
+                   raw.replace('        shell: bash\n', '        shell: bash {0}\n', 1),
+                   f'#922 {title} pins the fail-fast shell `bash`')
             change(f'{title}-extra-run', raw, raw + f'      - run: {command}\n',
                    '#922 workspace test invocations are unique and complete')
             if title != '测试':
@@ -3256,8 +3349,17 @@ self_check_controls_run | return | return problems
             self.assertNotRegex(step, r"""(?m)^(?:        |)['"]?(?:if|continue-on-error)['"]?:""",
                                 f'#918 {label} step cannot skip or ignore failure')
             prefix = jobs[owner].split('    steps:\n', 1)[0]
-            self.assertNotRegex(step + prefix, shell_key,
-                                f'#918 {label} preserves default fail-fast shell')
+            # #1809 r7：`shell: bash` 成为登记键（step 级 shell 优先于任何
+            # defaults.run.shell，值恰为 `bash` 时 GitHub 以 fail-fast 语义执行；
+            # 自定义模板如 `bash {0}` 会丢掉 fail-fast）。判定从「不许有 shell」改成
+            # 「恰一条、值恰为 bash」；job 级前缀（含 defaults）仍然一个 shell 模板
+            # 都不许有。
+            self.assertEqual(re.findall(r"""(?m)^        ['"]?shell['"]?\s*:\s*(.+?)\s*$""",
+                                        step), ['bash'],
+                             f'#918 {label} pins the fail-fast shell `bash`')
+            self.assertNotRegex(prefix, shell_key,
+                                f'#918 {label} job carries no shell template '
+                                '(defaults.run.shell)')
             # #1199：这两个 job 现在经由 scope 门控跳过，但 needs / if 仍是精确字符串，
             # 不许再加别的条件（原来的「无条件」断言放宽到这一对）。
             gating = re.findall(r"""(?m)^    ['"]?(if|needs|continue-on-error)['"]?\s*:\s*(.*)$""",
@@ -3389,9 +3491,11 @@ self_check_controls_run | return | return problems
                        checkout.replace('fetch-depth: 0', 'fetch-depth: 1', 1),
                        '#918 rust checkout preserves clean root defaults')
             for key in ('shell', "'shell'", '"shell"'):
+                # #1809 r7：shell 已是登记键，注入重复键只会红在 #919——变异改成
+                # 「换值 / 换键拼写」，让失败落在 shell 值钉死那条判定上。
                 change(f'{label}-step-{key}', owner, raw,
-                       raw.replace('        working-directory:', f'        {key}: bash {{0}}\n        working-directory:', 1),
-                       f'#918 {label} preserves default fail-fast shell')
+                       raw.replace('        shell: bash\n', f'        {key}: bash {{0}}\n', 1),
+                       f'#918 {label} pins the fail-fast shell `bash`')
                 if owner == 'rust':
                     old = '    defaults:\n      run:\n'
                     new = old + f'        {key}: bash {{0}}\n'
@@ -3399,7 +3503,7 @@ self_check_controls_run | return | return problems
                     old = '    steps:\n'
                     new = f'    defaults:\n      run:\n        {key}: bash {{0}}\n' + old
                 change(f'{label}-job-default-{key}', owner, old, new,
-                       f'#918 {label} preserves default fail-fast shell')
+                       f'#918 {label} job carries no shell template')
         for defaults in ('defaults:\n  run:\n    shell: bash {0}\n',
                          'defaults: {run: {shell: "bash {0}"}}\n',
                          "defaults:\n  run:\n    'shell': bash {0}\n"):
@@ -3469,7 +3573,8 @@ self_check_controls_run | return | return problems
     def test_ci_run_blocks_preserve_commands_and_require_prior_node(self):
         workflow = self.ci_workflow_fixture()
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#904 block control has one rust step anchor')
         for scalar in ('|', '>', '|-', '>-', '|+', '>+', '|2', '>2-', ' |', '| ', '>- # comment', '|2+ # comment'):
             for indent in (9, 10, 12):
@@ -3490,7 +3595,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_unrecognized_and_empty_run_values_fail_closed(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
         self.assertEqual(workflow.count(anchor), 1, '#904 invalid run control has one rust step anchor')
         for value in ('', '# comment', '|bad', '>-2', '[]', '{command: npm test}',
@@ -3511,7 +3617,8 @@ self_check_controls_run | return | return problems
     def test_ci_quoted_run_keys_and_sequence_spacing_cannot_hide_node(self):
         workflow = self.ci_workflow_fixture()
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#919 unique run key mutation anchor')
         cases = []
         for spaces in (1, 2, 4):
@@ -3536,7 +3643,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_unknown_step_key_shapes_fail_closed(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#919 unique unknown key mutation anchor')
         cases = []
         for body in ('"r\\u0075n": npm test', '? run\n        : npm test',
@@ -3563,7 +3671,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_node_command_family_requires_setup_for_every_invocation(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
         self.assertEqual(workflow.count(anchor), 1, '#904 Node control has one rust step anchor')
         for command in ('npm ci', 'npm install', 'npm i', 'npm run generate', 'npm test', 'npm exec tool',
