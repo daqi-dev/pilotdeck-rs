@@ -691,10 +691,12 @@ class Positive:
 
 
 def build_controls(base_rows, base_frames, round2_rows, round2_frames):
-    # #2143：延期（always-on 三方法）只容忍「金样 ok ↔ 被测回 CAPABILITY_UNAVAILABLE」
-    # 一格。凡靠「答 unavailable 必须被点名」归因的控件，探针都不能落在延期集里——
-    # P3/P4 会按 `deferred_match` 跳过、P5 的集合减法也会把它吞掉，控件就从 KILLED
-    # 退化成 SURVIVED（假 FAIL）。N18 相反，它**专门**用延期方法当探针。
+    # #2143：凡靠「答 unavailable 必须被点名」归因的控件，探针都不能落在 P5 会做减法
+    # 的那两个集合里——gated 集（REGISTERED）与延期集都会被 P5 扣掉，P3/P4 对延期方法
+    # 也会按 `deferred_match` 跳过，探针落在任一侧，注入就被吞掉、控件从 KILLED 退化成
+    # SURVIVED（假 FAIL）。例外是**故意**落在集合里的控件：N4（gated，靠 P5 的另一侧
+    # 点名）与 N18（延期，要求 P3+P4 双双点名），它们不由本过滤器选探针。
+    swallowed = CHECK.REGISTERED_UNAVAILABLE_METHODS | CHECK.DEFERRED_UNAVAILABLE_METHODS
     deferred_probes = [row['method'] for row in base_rows
                        if row['method'] in CHECK.DEFERRED_UNAVAILABLE_METHODS
                        and row['outcome'] == 'ok' and row['shape'] == 'request']
@@ -702,10 +704,10 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
                              'N18 needs one')
     ok_request = next(row['method'] for row in base_rows
                       if row['outcome'] == 'ok' and row['shape'] == 'request'
-                      and row['method'] not in CHECK.DEFERRED_UNAVAILABLE_METHODS)
-    assert ok_request not in CHECK.DEFERRED_UNAVAILABLE_METHODS, (
-        f'probe {ok_request} sits in the deferred set; N1/N3/N9 attribution '
-        'would be swallowed by the deferral exemption')
+                      and row['method'] not in swallowed)
+    assert ok_request not in swallowed, (
+        f'probe {ok_request} sits in the gated/deferred set; N1/N3/N9 attribution '
+        'would be swallowed by the P5 set subtraction')
     error_probe = next(row['method'] for row in base_rows
                        if row['outcome'] == 'error'
                        and row.get('errorCode') != CAPABILITY_UNAVAILABLE)
@@ -723,9 +725,7 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
     shape_probe = request_ok[2]
     # N10 的注入是「把 keep_ok 之外的行全改成 CAPABILITY_UNAVAILABLE」，归因靠 P5 点名
-    # 探针。P5 的两侧减法（gated 集、延期集）会把这两类方法从判定里扣掉：探针落在
-    # 任何一侧，注入对它都是空操作 → 无违规点名 → SURVIVED（假 FAIL）。两侧都排除。
-    swallowed = CHECK.REGISTERED_UNAVAILABLE_METHODS | CHECK.DEFERRED_UNAVAILABLE_METHODS
+    # 探针；探针必须同样避开 `swallowed`（见函数开头）。
     n10_probe = next(row['method'] for row in base_rows
                      if row['method'] not in keep_ok
                      and row['method'] not in swallowed)

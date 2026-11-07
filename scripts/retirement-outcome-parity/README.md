@@ -110,6 +110,8 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输�
 CAPABILITY_UNAVAILABLE`，要求 checker rc=0、逐轮 `deferred == 3` 且
 `deferredMethods` 点名三条、顶层 `deferred.methods` 是登记集——漏容忍或报告丢字段
 都是 BROKEN；PC2 用未变异参考轮要求 `deferred == 0` 且零违规，钉住「不是整体豁免」。
+rc 映射与负控同口径：checker rc=0 → 核断言（HELD / BROKEN），rc=1 → BROKEN（应 PASS
+却没 PASS），rc∉{0,1}（输入或环境不可用）→ INVALID，绝不记成「应 PASS 的性质不成立」。
 `summary.json` 里正控记在 `positives` / `positiveCounts`，与 `counts` 并列，任一条
 非 HELD 即整轮非零退出。
 
