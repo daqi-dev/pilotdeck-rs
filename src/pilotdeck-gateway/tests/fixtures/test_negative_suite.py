@@ -1551,6 +1551,14 @@ class AuditBindingTests(unittest.TestCase):
                          '#2064 a string literal must not satisfy the fn form')
         self.assertFalse(suite.declares_test('let s = r#"fn case_a() {"#;', 'case_a'),
                          '#2064 a raw string literal must not satisfy the fn form')
+        # r11: C-string prefixes. Without ``cr`` in the prefix set the inner
+        # quote closes a bogus plain string and the carried ``fn`` text
+        # returns to the code view, so the binding audits a carrier.
+        self.assertFalse(suite.declares_test('let s = c"fn case_a() {";', 'case_a'),
+                         '#2064 a C string literal must not satisfy the fn form')
+        self.assertFalse(
+            suite.declares_test('let s = cr#"x"fn case_a(){"#; let q = \'"\';', 'case_a'),
+            '#2064 a raw C string literal must not satisfy the fn form')
         self.assertFalse(suite.declares_test('// case_a => "row"', 'case_a'),
                          '#2064 a line comment must not satisfy the table form')
         self.assertFalse(suite.declares_test('let s = "case_a => 1";', 'case_a'),
@@ -1562,6 +1570,16 @@ class AuditBindingTests(unittest.TestCase):
             suite.declares_test("let q = '\"'; let s = \"fn case_a() {\"; let r = '\"';",
                                'case_a'),
             '#2064 a quote char literal must not open a string')
+
+    def test_rust_code_only_blanks_escape_char_literals(self):
+        # #2064 r11: ``'\u{…}'`` / ``'\xNN'`` are single-char literals; the
+        # old _CHAR_START could not close them, so their quotes leaked into
+        # the code view and could pair into bogus ``'x'`` matches that ate
+        # neighbouring code. Blanking must take the whole literal.
+        self.assertEqual(
+            suite._rust_code_only(r"let c = '\u{1F600}'; let d = '\x41';"),
+            'let c =  ; let d =  ;',
+            '#2064 an escaped char literal must be blanked whole')
 
     def test_declares_test_unterminated_literal_is_refused(self):
         # #449 / #1166: a scanner that cannot close a literal must fail closed

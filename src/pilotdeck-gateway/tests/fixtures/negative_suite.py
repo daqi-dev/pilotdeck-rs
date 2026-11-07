@@ -66,8 +66,15 @@ _FN_QUALIFIERS = ('async', 'const', 'unsafe', 'extern', 'pub', 'default')
 # qualifier-looking suffix does not start at a word boundary of its own.
 _FN_LEFT = r'(?<!\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'
 
-_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)"')
-_CHAR_START = re.compile(r"b?'(?:\\.|[^\\'])'")
+# #2064 r11: ``c``/``cr`` are legal Rust C-string prefixes; leaving them out
+# let a raw C string's inner quote close a bogus plain string and return the
+# carried text to the code view (an audit hole, not a crash). ``cr`` must be
+# tried before ``c`` or the ``r`` is left behind as code.
+_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)"')
+# #2064 r11: ``'\u{…}'`` / ``'\xNN'`` are single-char literals whose escape
+# bodies the old pattern could not close, so their quotes leaked into the code
+# view and could pair into bogus ``'x'`` matches eating neighbouring code.
+_CHAR_START = re.compile(r"b?'(?:\\u\{[0-9A-Fa-f_]+\}|\\x[0-9A-Fa-f]{2}|\\.|[^\\'])'")
 _WORD = re.compile(r'\w')
 
 
@@ -109,7 +116,7 @@ def _rust_code_only(source):
             code.append(' ')
             continue
         start = None
-        if source[i] == '"' or (source[i] in 'rb' and _token_start(source, i)):
+        if source[i] == '"' or (source[i] in 'rbc' and _token_start(source, i)):
             start = _STRING_START.match(source, i)
         if start is not None:
             hashes = start.group(1) or ''
