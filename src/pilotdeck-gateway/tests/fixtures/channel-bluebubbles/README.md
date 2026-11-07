@@ -83,8 +83,8 @@ submitTurn 报错（"Error: boom" 日志 + 兜底文案）、sendReply 500（mes
 ## 已登记差异与本金样的关系
 
 差异编号见 `specs/gateway-parity/`（002 无生产 InteractionPort · 003 stop 不
-drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸进程；
-001-R2 摘除拒绝表条目）：
+drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸进程 ·
+006 无信号轮询 GET 的 300 s 总界；001-R2 摘除拒绝表条目）：
 
 - **002**：生产装载挂载装 `no_interaction()`，elicitation/permission 应答链在
   生产不可达；金样回放装真实 helper 支撑的 `HelperInteraction` + 脚本
@@ -97,6 +97,12 @@ drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸�
 - **005**：`serverUrl` 非空但非法时 TS 是未处理拒绝（Node 默认崩进程），
   Rust 记 `error` 日志继续轮询——金样不覆盖该路径（假服务地址恒合法），
   组件钉子只钉 URL 构造的 `Invalid URL` 错误串。
+- **006**：无 `AbortSignal.timeout` 的轮询 GET 仍以 undici 默认
+  `headersTimeout`（实测 301,257 ms）为总界收口，错误串保持 TS 同形的
+  `TypeError: fetch failed`；组件钉子
+  `http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default`
+  用暂停时钟（keeper + receipt 防空转）钉 300 s 定界与错误串，负控
+  `unbounded-timeout-dropped` 删界必被杀。
 
 ## 重生成
 
@@ -139,5 +145,5 @@ v22.22.0 实测字面量。
 `OUT [mutation …]` 在落盘后的 HEAD 树上执行（`mutating_sources` 拒绝未提交的
 产品文件）。变异锚点覆盖 seen 去重删除、fromMe 闸反转、时间戳推进删除、
 `/new` 回复删除、sendReply running 闸删除、MESSAGE_LIMIT 改值、拒绝表回插
-bluebubbles，以及 oracle 三重校验各一条；先 `--compile-only` 全过再交协调
-者跑 OUT。
+bluebubbles、无信号轮询 GET 的 300 s 总界删除，以及 oracle 三重校验各一
+条；先 `--compile-only` 全过再交协调者跑 OUT。
