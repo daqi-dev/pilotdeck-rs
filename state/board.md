@@ -4635,3 +4635,9 @@ target revision>0 时只尝试完全相同的原 import key/body：Core pristine
 ### 2026-11-08 接入组合：原输入消费与新候选冻结准备
 
 总集成已采纳 lane B 的 1403595be：仅 native factory 保留原 kernelSteerItems 身份；纯 Context SummaryModelPort 的新 decorator 默认不改变 legacy 输出，native 只携带来自真实摘要输入的 receipt/item ID。独立厂商协议库和 C 的常驻 Kernel 重连共同纳入下一固定构建。新消费装置在旧候选 4 上正确失败：两个同文不同 ID 均仅 claimed，未误把模型处理当 consumed。lane B 43 项 native 测试、factory 23 项及原摘要接口测试通过；Anthropic 独立链路 kernel-model-tool-07 使用干净 d559ff0/1403595 通过真实两次模型、一次工具、原 ID/结果配对。总协调者负责新组合真实 product steer/status/archive/journal 三方验证。原冻结证据、默认 legacy、上游产品缺口与真人门槛不变。
+
+### 2026-11-08 接入转为测试优先，桌面暂缓扩大（总集成）
+
+依据用户新指示，先验证公共契约、错误/取消/资源生命周期和真实接入，桌面保留已完成代码、安装草稿与失败证据，暂不扩大。总集成独立 core46+host27、外部SDK消费者/源同步/严格契约检查通过，发现并修正分发SDK遗漏；新Kernel实际晚模型释放后显式同会话下一输入通过，原Unknown不变、模型共2次，旧候选负控正确失败。跨组独立真实Kernel握手/跨会话/旧generation/未声明能力10项在本机及macmini均通过，装置反向控制确实能识别错误接受。两项真实工具部分批次故障（取消/provider退出）已通过：原B Completed不变、原A晚结果保留、原执行Unknown、不重派整批；不假称物理tool release。
+
+已采纳e4965df24的纯指令发现Storage接口与原gateway复用，以及integration可选SDK服务适配。原4纯测试、gateway冻结prepare及真实managed-env/逗号文件名/UTF16/符号链接用例通过；宿主文件端口尚未实现，preset未启用，不宣称native指令发现已可用。原行为oracle和旧报告不变。模型错误保真/恢复的实际组合验收另批进行，默认legacy、完整产品覆盖与真人门槛保留。
