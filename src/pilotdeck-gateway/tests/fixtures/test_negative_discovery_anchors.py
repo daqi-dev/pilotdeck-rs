@@ -625,19 +625,115 @@ def _constants(tree):
                 values.setdefault(name, []).append(ast.dump(value))
                 assignments.append((name, value))
     rebound = _rebound_elsewhere(tree)
+    unpairable = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            _, bad = _assignment_pairs(node)
+            unpairable.update(name for name, _ in bad)
+    bound_anywhere = set(values) | unpairable | rebound
     for name, value in assignments:
         if name in constants or name in rebound:
             continue
-        # A name assigned several times is still a constant when every
-        # assignment gives the same expression: whichever ran, the value is the
-        # same. Assignments that disagree are left out and reported at their
-        # uses by ``_ambiguous_local_names`` — leaving them out *and* silent was
-        # the hole (two functions, two directories, no key, no report).
-        if len(set(values[name])) == 1:
+        if len(values[name]) == 1:
+            constants[name] = value
+    # A name assigned several times is still a constant when every assignment
+    # gives the same expression — but only when that expression means the same
+    # thing at every site. ``def a(): base = ROOT / 'x'; src = base`` and
+    # ``def b(): base = ROOT / 'y'; src = base`` give ``src`` two directories
+    # although the expression ``base`` is byte-identical: merging on the AST
+    # alone resolved ``src`` to a name the scanner could not follow and reported
+    # nothing at all. Expressions that read a name some other binding also owns
+    # are therefore left out and reported at their uses, like any other
+    # disagreement. Assignments that disagree are reported by
+    # ``_ambiguous_local_names`` — leaving them out *and* silent was the hole
+    # (two functions, two directories, no key, no report).
+    for name, value in assignments:
+        if name in constants or name in rebound:
+            continue
+        if len(set(values[name])) == 1 and _scope_free(value, constants, bound_anywhere):
             constants[name] = value
     for name in (set(_shadowed_names(tree)) | _duplicated_module_names(tree)) & module_level:
         constants.pop(name, None)
     return constants
+
+
+def _builds_from_root(value, constants, seen=()):
+    """Whether ``value`` is a path whose directory spine starts at the repo root.
+
+    ``_is_repo_rooted`` answers "does this expression mention a repository path
+    anywhere", which is the right question for a join that must be reported —
+    but too loose to decide whether a *name* holds a repository directory:
+    ``command = ['node', f'{baseline}/loader.mjs', ...]`` mentions one inside a
+    container that is really an output directory, and every join on ``command``
+    then looked like a repository path.
+    """
+    if isinstance(value, ast.Name):
+        if value.id in ROOT_NAMES or value.id == '__file__':
+            return True
+        if value.id in seen or value.id not in constants:
+            return False
+        return _builds_from_root(constants[value.id], constants, seen + (value.id,))
+    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+        return _builds_from_root(value.left, constants, seen)
+    if isinstance(value, ast.Attribute) and value.attr in ('parent', 'resolve'):
+        return _builds_from_root(value.value, constants, seen)
+    if isinstance(value, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue)
+                   and _builds_from_root(part.value, constants, seen)
+                   for part in value.values)
+    if isinstance(value, ast.Call):
+        func = value.func
+        if isinstance(func, ast.Name) and func.id in ('str', 'Path'):
+            return bool(value.args) and _builds_from_root(value.args[0], constants, seen)
+        if isinstance(func, ast.Attribute) and func.attr in ('resolve', 'joinpath',
+                                                             'with_name'):
+            return _builds_from_root(func.value, constants, seen)
+    return False
+
+
+def _carries_name_as_path(value, names):
+    """Whether ``value`` builds a path *from* one of ``names``.
+
+    Used to follow a repository directory through a local alias
+    (``base = ROOT / 'x'`` then ``src = base``) without treating every
+    expression that merely *mentions* such a name as a path. ``command =
+    ['node', f'{baseline}/loader.mjs']`` holds a repository path in a container
+    that is later used as an output directory; the name is not a path, and
+    reporting its joins would be crying wolf on evidence paths.
+    """
+    if isinstance(value, ast.Name):
+        return value.id in names
+    if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+        return _carries_name_as_path(value.left, names)
+    if isinstance(value, ast.Attribute) and value.attr in ('parent', 'resolve'):
+        return _carries_name_as_path(value.value, names)
+    if isinstance(value, ast.Call):
+        func = value.func
+        if isinstance(func, ast.Name) and func.id in ('str', 'Path'):
+            return bool(value.args) and _carries_name_as_path(value.args[0], names)
+        if isinstance(func, ast.Attribute) and func.attr in ('resolve', 'joinpath',
+                                                             'with_name'):
+            return _carries_name_as_path(func.value, names)
+    return False
+
+
+def _scope_free(value, constants, bound_anywhere):
+    """Whether an expression means the same thing at every site that uses it.
+
+    A literal, ``ROOT``, ``__file__`` or a module constant resolves identically
+    wherever it appears, and so does a name nothing in the file binds (an import
+    or a builtin). A name that *is* bound somewhere in the file — a parameter, a
+    loop target, a local alias — can carry a different value per scope, so two
+    byte-identical ``src = base`` lines are not proof of one directory.
+    """
+    for node in ast.walk(value):
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            continue
+        if node.id in ROOT_NAMES or node.id == '__file__' or node.id in constants:
+            continue
+        if node.id in bound_anywhere:
+            return False
+    return True
 
 
 def _duplicated_module_names(tree):
@@ -689,30 +785,76 @@ def _unfollowable_module_names(tree, constants):
 
 
 def _ambiguous_local_names(tree, constants):
-    """Non-constant names whose assignments disagree, at least one a repo path.
+    """Non-constant names bound in more than one way, at least one a repo path.
 
     ``def a(): src = ROOT / 'x'`` and ``def b(): src = ROOT / 'y'`` give one name
     two directories. It is not a constant (substituting either value would key a
     directory the other site never builds) and it is not module level either, so
     the module-level report net never saw it: both joins produced no key and no
     problem, and the table looked clean while the discovery loop never scheduled
-    it. Names bound by another form (parameter, loop target, ...) are left to the
-    parameter/return taint checks instead of being reported twice.
+    it.
+
+    Every binding form counts, not only a second assignment. A name assigned a
+    repository path in one function and used as a ``for`` target anywhere in the
+    file — in the same function or in a third one — is just as ambiguous, and so
+    is a name whose assignments pair up badly (``src, *rest = ROOT / 'a', ...``).
+    Both used to be dropped silently: the whole-file rebinding set excluded the
+    name from every net, and the pairing helper only reported at module level.
     """
     values = {}
+    unpairable = {}
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            pairs, _ = _assignment_pairs(node)
+            pairs, bad = _assignment_pairs(node)
             for name, value in pairs:
                 values.setdefault(name, []).append(value)
+            for name, value in bad:
+                unpairable.setdefault(name, []).append(value)
     rebound = _rebound_elsewhere(tree)
+    bound_anywhere = set(values) | set(unpairable) | rebound
+    # Which names can carry a repository path, directly or through another
+    # name: ``def a(): base = ROOT / 'x'; src = base`` makes ``src`` a repo path
+    # even though the expression that binds it is a bare name. Without the
+    # transitive step the ambiguity of ``base`` never reached ``src``, and the
+    # join on ``src`` stayed silent.
+    repo_bound = {name for name, bound in values.items()
+                  if any(_builds_from_root(value, constants) for value in bound)}
+    # An unpairable binding carries the whole right-hand side (``src, *rest =
+    # (ROOT / 'a', ROOT / 'b')``), so the container itself has to be inspected:
+    # any repository path inside it is enough to make the join unanswerable.
+    repo_bound |= {name for name, bad in unpairable.items()
+                   if any(_is_repo_rooted(value, constants) for value in bad)}
+    grew = True
+    while grew:
+        grew = False
+        for name in set(values) | set(unpairable):
+            if name in repo_bound:
+                continue
+            for value in values.get(name, []) + unpairable.get(name, []):
+                if _carries_name_as_path(value, repo_bound):
+                    repo_bound.add(name)
+                    grew = True
+                    break
     names = set()
-    for name, bound in values.items():
-        if name in constants or name in rebound:
+    module_level = set()
+    for statement in tree.body:
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            pairs, _ = _assignment_pairs(statement)
+            module_level.update(name for name, _ in pairs)
+    for name in set(values) | set(unpairable):
+        if name in module_level:
+            # Module-level names have their own net (``_shadowed_names``);
+            # reporting them here too would only relabel the same finding.
             continue
-        if len({ast.dump(value) for value in bound}) < 2:
+        bound = values.get(name, [])
+        bad = unpairable.get(name, [])
+        if name not in repo_bound:
             continue
-        if any(_is_repo_rooted(value, constants) for value in bound):
+        if bad or name in rebound or len({ast.dump(value) for value in bound}) > 1:
+            names.add(name)
+            continue
+        if len(bound) > 1 and not all(_scope_free(value, constants, bound_anywhere)
+                                     for value in bound):
             names.add(name)
     return names
 
@@ -1593,6 +1735,28 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in ('joinpath', 'with_name'):
             base = func.value
+        elif (isinstance(func, ast.Attribute) and func.attr == 'join'
+                and _string_value(func.value, constants) is None):
+            # ``os.path.join(SMS, name)`` / ``os.sep.join((str(SMS), name))``:
+            # the dotted stdlib spellings. They are neither a string receiver
+            # (``'/'.join(...)``, reported by ``_is_path_join_call``) nor one of
+            # the ``pathlib`` methods above, and ``_is_path_shape`` only looks at
+            # ``join`` calls ending in a bare literal — so a runtime file name
+            # here produced no key and no report at all, while every sibling
+            # spelling of ``SMS / name`` was caught.
+            elements = _joined_elements(node)
+            if len(elements) < 2:
+                return
+            base, tail = elements[0], elements[-1]
+            if (_is_repo_rooted(base, constants, shadowed=shadowed)
+                    or _carries_repository_path(base, tainted, repository_returns)):
+                if _segments(tail, constants, self_path) is None:
+                    ambiguous = ambiguous_names(node)
+                    if ambiguous:
+                        report_ambiguous(ambiguous[0], ast.unparse(node))
+                    else:
+                        report_unresolvable(ast.unparse(node))
+            return
         elif (isinstance(func, ast.Name) and func.id == 'Path'
                 and len(node.args) >= 2 and not node.keywords):
             base = node.args[0]
@@ -2413,6 +2577,148 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "    label = 'a'\n"
             "    label = 'b'\n"
             "    return label + ': ' + rows\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_dotted_stdlib_join_with_a_runtime_file_name_fails_closed(self):
+        """``os.path.join(SMS, name)`` is ``SMS / name`` in another spelling.
+
+        The dotted stdlib form has neither a string receiver (``'/'.join(...)``,
+        which ``_is_path_join_call`` catches) nor a bare literal tail (which
+        ``_is_path_shape`` catches), so a runtime file name here produced no key
+        and no report while every sibling spelling was reported. ``os.sep.join``
+        reaches the same function through a tuple argument.
+        """
+        for spelling in ("os.path.join(SMS, name)",
+                         "os.sep.join((str(SMS), name))"):
+            synthetic = (
+                "import os\n"
+                "ROOT = Path(__file__).resolve().parents[5]\n"
+                "SMS = ROOT / 'src/example/x'\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "def row(name):\n"
+                f"    return {spelling}\n"
+            )
+            problems = violations(synthetic, 'example/negative_controls.py')
+            self.assertTrue(any('unresolvable repository path' in p for p in problems),
+                            (spelling, problems))
+
+    def test_a_local_rebound_by_a_loop_target_fails_closed(self):
+        """Assign-then-``for`` is the same ambiguity as assign-then-assign.
+
+        ``src = ROOT / 'x'`` followed by ``for src in sources`` means the join
+        below may name either value. The whole-file rebinding set used to drop
+        the name from every net, so the join was neither keyed nor reported.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def rows(sources):\n"
+            "    src = ROOT / 'src/example/x'\n"
+            "    for src in sources:\n"
+            "        print(src / 'mod.rs')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous name assigned different values' in p for p in problems),
+                        problems)
+
+    def test_a_local_rebound_in_another_function_fails_closed(self):
+        """A ``for`` target in a third function must not launder the ambiguity.
+
+        The two assignments already disagree on their own; the unrelated loop is
+        no reason to stop reporting them.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    src = ROOT / 'src/example/x'\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    src = ROOT / 'src/example/y'\n"
+            "    return src / 'mod.rs'\n"
+            "def c():\n"
+            "    for src in []:\n"
+            "        pass\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous name assigned different values' in p for p in problems),
+                        problems)
+
+    def test_identical_alias_expressions_over_different_locals_fail_closed(self):
+        """``src = base`` twice is only one value when ``base`` is one value.
+
+        The expression is byte-identical in both functions, but each ``base`` is
+        a different directory. Merging on the AST alone made ``src`` a constant
+        pointing at an unresolvable name, so the joins were silent.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    base = ROOT / 'src/example/x'\n"
+            "    src = base\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    base = ROOT / 'src/example/y'\n"
+            "    src = base\n"
+            "    return src / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous name assigned different values' in p for p in problems),
+                        problems)
+
+    def test_an_identical_alias_over_a_module_constant_still_carries_its_key(self):
+        """The reverse control: a module constant meaning is scope-free."""
+        same = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example/x'\n"
+            "DISCOVERY_ANCHORS = ('x/mod.rs', 'x/other.rs')\n"
+            "def a():\n"
+            "    src = BASE\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    src = BASE\n"
+            "    return src / 'other.rs'\n"
+        )
+        self.assertEqual(violations(same, 'example/negative_controls.py'), [])
+
+    def test_a_local_unpacking_that_cannot_be_paired_fails_closed(self):
+        """``src, *rest = ROOT / 'a', ROOT / 'b'`` inside a function is a hole too.
+
+        The unpairable-binding net only looked at module level, so the local
+        spelling of the r13 shape dropped the name entirely.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    src, *rest = (ROOT / 'src/example/x', ROOT / 'src/example/y')\n"
+            "    return src / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous name assigned different values' in p for p in problems),
+                        problems)
+
+    def test_a_local_holding_a_container_of_paths_stays_silent(self):
+        """The reverse control for the transitive alias net.
+
+        ``command = ['node', f'{baseline}/loader.mjs']`` mentions a repository
+        path inside a list that is later an output directory. Following "any
+        expression that mentions a repository path" made every join on
+        ``command`` look like a repository join — two real tables gained a
+        spurious finding. Only a name built *as a path* from a repository
+        directory carries the taint.
+        """
+        synthetic = (
+            "import sys\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def execute(name, command):\n"
+            "    return Path(command[-1]) / 'oracle.json'\n"
+            "def run(baseline):\n"
+            "    command = ['node', f'{baseline}/loader.mjs', str(ROOT / 'x')]\n"
+            "    return execute('x', command)\n"
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
