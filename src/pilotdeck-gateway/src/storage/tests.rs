@@ -1293,10 +1293,8 @@ fn ledger_open_skips_domain_validation_like_the_ts_constructor() {
     );
     // The ported domain validator rejects the same log with the TS message;
     // the wiring that runs it on ledger open is the follow-up PR's scope.
-    let log = read.entries.iter().try_fold(
-        super::session_domain::DomainState::default(),
-        |state, entry| state.next(entry),
-    );
+    let mut domain = super::session_domain::DomainState::default();
+    let log = read.entries.iter().try_for_each(|entry| domain.next(entry));
     match log {
         Ok(_) => panic!("#201 the domain-invalid log must fail domain validation"),
         Err(error) => assert_eq!(
