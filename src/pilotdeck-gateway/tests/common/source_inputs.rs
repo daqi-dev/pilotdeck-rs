@@ -869,7 +869,13 @@ mod tests {
     // edge's parent (tests/common/), its stem directory and the walk's module
     // contexts, so an asserted `module_dir` distinguishes every wrong context.
     fn scan_from(source: &str, file: &str) -> Vec<SourceEdge> {
-        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        // #1180: canonicalize the manifest dir so the scanner root matches the
+        // canonicalized `module_dir` values even under a symlinked build tree
+        // (same convention as `string_path_attributes_remain_file_edges`).
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("#1180 manifest dir canonicalizes")
+            .join("tests");
         let file = directory.join(file);
         let tokens = lex_source(source).expect("#1180 context fixture must lex");
         let mut scanner = EdgeScanner {
@@ -889,7 +895,10 @@ mod tests {
 
     #[test]
     fn include_edge_owns_the_loaded_file_parent() {
-        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common");
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("#1180 manifest dir canonicalizes")
+            .join("tests/common");
         let targets = scan_from(
             "include!(\"common/source_inputs.rs\");",
             "unsafe_boundary.rs",
@@ -905,7 +914,10 @@ mod tests {
 
     #[test]
     fn path_attribute_edge_owns_the_loaded_file_parent() {
-        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common");
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("#1180 manifest dir canonicalizes")
+            .join("tests/common");
         let targets = scan_from(
             "#[path = \"common/source_inputs.rs\"] mod renamed;",
             "unsafe_boundary.rs",
@@ -928,7 +940,10 @@ mod tests {
 
     #[test]
     fn default_module_edge_owns_the_stem_directory() {
-        let stem = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/unsafe_boundary");
+        let stem = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("#1180 manifest dir canonicalizes")
+            .join("tests/unsafe_boundary");
         let targets = scan_from("mod unsafe_boundary;", "unsafe_boundary.rs");
         assert_eq!(
             targets.len(),
@@ -952,7 +967,10 @@ mod tests {
         // ANY context provides exactly one candidate - the registered
         // known-limitation direction, because crate-root seeds whose stem
         // directory has no module file are legitimate rustc shapes.
-        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .expect("#1180 manifest dir canonicalizes")
+            .join("tests");
         let tokens = lex_source("mod unsafe_boundary;").expect("#1180 union fixture must lex");
         let file = directory.join("unsafe_boundary.rs");
         let mut scanner = EdgeScanner {
