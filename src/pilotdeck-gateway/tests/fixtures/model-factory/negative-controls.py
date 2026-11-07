@@ -151,10 +151,11 @@ with mutating_sources(root, [registry, family, memory_mod]) as snapshots:
                 raise RuntimeError(f'{name}: mutation anchor count {original.count(before)}')
             # #1908: the shared wait replaces the inline 300 s-sample /
             # 1800 s-deadline loop. The sample bounding is unchanged
-            # (one cold-bootstrap exemption), but the per-sample wait
-            # deadline narrows 1800 s -> the shared 600 s constant, which
-            # stays above the single-sample cap; exceeding it fails closed
-            # instead of retrying for 30 minutes.
+            # (one cold-bootstrap exemption); the total wait budget for
+            # the slot acquisition now comes from negative_process.py's
+            # single shared constant (see its docstring) instead of the
+            # old 1800 s; exceeding it fails closed instead of retrying
+            # for 30 minutes.
             wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             path.write_text(original.replace(before, after))
             try:

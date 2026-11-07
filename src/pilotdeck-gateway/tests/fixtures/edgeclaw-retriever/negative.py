@@ -35,6 +35,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse
 
 root = Path(__file__).resolve().parents[5]
 retriever = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/retriever.rs'
@@ -195,7 +196,8 @@ EXPECTED = {
 }
 
 names = [case[0] for case in cases]
-assert len(names) == len(set(names)), 'duplicate control name'
+if len(names) != len(set(names)):
+    refuse('duplicate control name')
 all_cases = list(cases)
 # #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
 # equality let extra arguments after a flag fall through to the main path,
@@ -245,16 +247,16 @@ if mode.startswith('-'):
 selected = arguments
 unknown = set(selected) - set(names)
 if unknown:
-    raise SystemExit(f'unknown controls: {sorted(unknown)}')
+    refuse(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
 if not cases:
-    raise SystemExit('no controls selected')
+    refuse('no controls selected')
 
 out = Path(mode).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 if not target:
-    raise SystemExit('negative.py requires CARGO_TARGET_DIR from the caller')
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 out.mkdir(parents=True, exist_ok=True)
 paths = sorted({case[1] for case in cases})
 
@@ -367,7 +369,8 @@ with mutating_sources(root, paths) as originals:
     finally:
         for path, data in originals.items():
             path.write_bytes(data)
-            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+            if path.read_bytes() != data:
+                raise RuntimeError('restoration failed: ' + str(path))
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']
 survived = [row['name'] for row in results if row['outcome'] == 'SURVIVED']

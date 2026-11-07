@@ -42,6 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse
 
 root = Path(__file__).resolve().parents[5]
 protocol = root / 'src/pilotdeck-protocol/src/js_math.rs'
@@ -296,7 +297,8 @@ def self_test():
     ]
     for log, returncode, expected in samples:
         actual = classify(log, returncode)
-        assert actual == expected, (log, returncode, expected, actual)
+        if actual != expected:
+            raise RuntimeError((log, returncode, expected, actual))
     print('classify self-test: PASS')
 
 
@@ -344,18 +346,18 @@ if mode.startswith('-'):
 # must not silently run zero mutants and exit 0.
 target = os.environ.get('CARGO_TARGET_DIR')
 if not target:
-    raise SystemExit('negative.py requires CARGO_TARGET_DIR from the caller')
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 names = [case[0] for case in cases]
 if len(names) != len(set(names)):
-    raise SystemExit('duplicate control name')
+    refuse('duplicate control name')
 selected = arguments
 unknown = set(selected) - set(names)
 if unknown:
-    raise SystemExit(f'unknown controls: {sorted(unknown)}')
+    refuse(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
 if not cases:
-    raise SystemExit('no controls selected')
+    refuse('no controls selected')
 
 out = Path(mode).resolve()
 out.mkdir(parents=True, exist_ok=False)
