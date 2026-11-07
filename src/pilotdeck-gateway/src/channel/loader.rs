@@ -33,8 +33,8 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
     "webhook",
 ];
 
-/// The 12 channel config keys not migrated to Rust (#1302 B, #1386): enabling
-/// any of them must abort native startup. The set is ten
+/// The 11 channel config keys not migrated to Rust (#1302 B, #1386): enabling
+/// any of them must abort native startup. The set is the nine
 /// `CHANNEL_LOADER_KEYS` members plus `qq` and `wecom`, which TS builds
 /// through `ChannelAdapterBundle` instead of the loader table. The order is
 /// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
@@ -51,7 +51,6 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
     "signal",
     "mattermost",
     "matrix",
-    "slack",
     "discord",
     "telegram",
     "qq",
@@ -62,13 +61,14 @@ pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
 /// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with
 /// `if (settings?.enabled !== true) return undefined` — a config of
 /// `{"enabled": 1}` or `{"enabled": "true"}` builds nothing and the TS
-/// gateway starts normally. The other ten keys are consumed by
+/// gateway starts normally. The other nine keys are consumed by
 /// `loadEnabledChannels`'s `if (!cfg?.enabled) continue`, i.e. JS truthiness.
 /// Measured on the frozen baseline `cc7c4e65` over `true` / `1` / `"true"` /
 /// `"1"` / `[]` / `{}` / falsy / absent: `specs/gateway-parity/diffs/
 /// A8.3-CHANNEL-QQ-001.md` records the probe for the two keys above
-/// (`createStartupAdapters`) and its sibling run for the ten loader keys
-/// (`loadEnabledChannels`). The seam sees whatever object the assembly unit
+/// (`createStartupAdapters`) and its sibling run for the then-eleven loader
+/// keys (`loadEnabledChannels`; slack left the set in #1344 and bluebubbles
+/// in #1343). The seam sees whatever object the assembly unit
 /// feeds, and both sides coerce `enabled` to a strict bool before their
 /// gates (`config/snapshot.rs` here, `parseGatewayConfig`'s `booleanField` in
 /// TS), so on a real config file the two gates cannot be told apart — the

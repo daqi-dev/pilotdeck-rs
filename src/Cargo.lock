@@ -1026,6 +1026,7 @@ dependencies = [
  "base64",
  "bytes",
  "cbc",
+ "futures-util",
  "html5ever",
  "http-body",
  "http-body-util",

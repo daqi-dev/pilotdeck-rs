@@ -11,6 +11,7 @@ pub mod loader;
 pub mod protocol;
 pub mod runtime_status;
 pub mod server;
+pub mod slack;
 pub mod sms;
 #[cfg(test)]
 mod tests;
