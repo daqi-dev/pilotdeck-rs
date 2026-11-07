@@ -33,8 +33,10 @@ case 对拍全部事件与终态坐标；`live_stream_tests.rs` 的
 `live-abort-finish-messages` 六枚绑回放测试，`timeline-forwarding-unwired` /
 `timeline-terminal-unwired` 两枚绑 submit 测试，`timeline-cancel-stops-pump` /
 `timeline-cancel-parks-pump` 两枚绑 cancel-window 会话测试（后者为 fix-r3 的循环顶部等价
-变异，锚点为两段超时锚的备选集；`_shared/mutant_switch.py`：不改源，可提交前本地跑；
-`--check` 为只读预检）。
+变异；两枚共用同一份 8 条备选锚集：2 条超时锚是当前 parking 形态的稳定死点，must-not-fail
+/ must-not-end / drained-and-positioned 各 2 条是为假想的 break 形态预留的防御性备选，见
+`schemata.py` 的 `CANCEL_WINDOW_ANCHORS`；`_shared/mutant_switch.py`：不改源，可提交前本地
+跑；`--check` 为只读预检）。
 
 已登记微差与对拍适配（A7.2-INTERACTION-CONSUME-001-R6，不在本切片对齐范围）：① TS
 `recordKnownTerminal` 在协议 final 帧内、排空 pending 宿主事件之前定位终态块（金样在
