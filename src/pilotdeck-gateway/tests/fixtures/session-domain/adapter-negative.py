@@ -58,7 +58,10 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
         for path, text in originals.items():
             path.write_text(text.replace('ProjectionUnavailable', 'NodeHostRequired'))
         text = ADAPTER.read_text()
-        anchor = '        domain.next(entry).map_err(AdapterError::from)'
+        # #297 r1 refactor moved the fold to the in-place advance form; the
+        # #1985-era `domain.next(entry)` anchor no longer exists (re-anchored
+        # per the #297 plan's shared-anchor section, r3).
+        anchor = '        domain.advance(entry, undo).map_err(AdapterError::from)'
         assert text.count(anchor) == 1
         ADAPTER.write_text(text.replace(anchor, '''        if field(entry, "type").as_string().is_some_and(|t| t.equals_str("turn_started")) {
                 return Err(AdapterError::NodeHostRequired("Session domain validation for turn_started entries requires the Node host.".into()));
@@ -129,8 +132,20 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
             ));
         }''', '        Some(_) => false,'),
           ('list-null-result-refusal', '    let result = field(entry, "result");\n    if nullish(result) {\n        return Err(cannot_read(result, "usage"));\n    }', '    let result = field(entry, "result");\n    if nullish(result) {\n        return Err(AdapterError::ProjectionUnavailable("result missing".into()));\n    }'),
-          ('adapter-skips-domain-validation', anchor, '        Ok(domain.clone())'),
-          ('domain-published-before-store', '        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)', '        inner.recorder_domain = domain.clone();\n        self.base\n            .store\n            .append(&self.base.key(&self.path), &entry)'),
+          # #297 r1 refactor: adapter_domain now returns Result<()> over the
+          # in-place advance, so skipping validation is an early Ok(()) tail —
+          # the old `Ok(domain.clone())` no longer compiles against the new
+          # signature (plan §共享锚点更新).
+          ('adapter-skips-domain-validation', anchor, '        Ok(())'),
+          # #297 r1 refactor: the pre-append `domain.clone()` publish moved into
+          # the undo journal — the equivalent observable is now "roll the domain
+          # back after a successful append" (the disarm `drop(undo)` replaced by
+          # an undoing rollback), leaving the writer behind the state the log
+          # already holds (anthropic r2 P1#3 suggestion). The append-failure
+          # rollback deletion is the issue-297-domain-fold fixture's
+          # plan-pinned mutant, so this row keeps the distinct post-commit half.
+          ('domain-published-before-store', '        drop(undo);',
+           '        inner.recorder_domain.rollback(&mut undo);'),
         ]
         for name, old, new in changes:
             assert before.count(old) == 1, (name, before.count(old))
