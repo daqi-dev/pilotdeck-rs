@@ -189,13 +189,13 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
     // Same Node/ICU locale selection already measured for gateway project_files.
     // D2's independent C-locale probe is scripts/cli-parity/skills_probe.mjs.
     //
-    // Known divergence from `gateway/src/node_locale.rs` (#132 P2, registered
-    // as a follow-up): this CLI parser is deliberately simpler. It drops the
-    // whole POSIX suffix at the first `.` or `@` (so `fr_CA@collation=eor`
-    // becomes `fr-CA`), and a malformed tag falls back to `en-US` wholesale
-    // instead of keeping ICU's valid prefix. Both only matter for exotic LANG
-    // values; the collations compared here (skill directory basenames) come
-    // from the same process locale either way.
+    // Known divergence from `gateway/src/node_locale.rs` (#132 P2, follow-up
+    // #2140): this CLI parser is deliberately simpler. It drops the whole
+    // POSIX suffix at the first `.` or `@` (so `fr_CA@collation=eor` becomes
+    // `fr-CA`), and a malformed tag falls back to `en-US` wholesale instead of
+    // keeping ICU's valid prefix. Both only matter for exotic LANG values; the
+    // collations compared here (skill directory basenames) come from the same
+    // process locale either way.
     let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|key| env.string(key))
@@ -218,15 +218,16 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
             // Same measured Node/ICU 78.2 gap as gateway `node_collator`: the
             // baked metadata omits fr-CA's backward-secondary bit. This path
             // mirrors Node's *default* locale, i.e. `localeCompare` with no
-            // locale argument, which is what `migrateSkills.ts` uses. Measured
-            // on v22.22.0 / ICU 78.2: under `LANG=fr_Latn_CA.UTF-8` the default
-            // collator reports `resolvedOptions().locale == "fr-Latn-CA"` yet
-            // orders like `fr-CA` (`coté > côte`), while an explicit
-            // `new Intl.Collator("fr-Latn-CA")` orders like generic `fr`. So the
-            // script tag on CA does not opt out here; a non-Latin script tag is
-            // untested and left alone, and an explicit collation keeps its own
-            // metadata. The probe row `fr_Latn_CA.UTF-8` pins this on both
-            // sides.
+            // locale argument, which is what `migrateSkills.ts` uses — the same
+            // spelling gateway `node_collator` models, so the two agree on
+            // `fr-Latn-CA` (gateway `node_explicit_collator` is the one that
+            // opts out). Measured on v22.22.0 / ICU 78.2: under
+            // `LANG=fr_Latn_CA.UTF-8` the default collator reports
+            // `resolvedOptions().locale == "fr-Latn-CA"` yet orders like `fr-CA`
+            // (`coté > côte`), while an explicit `new Intl.Collator("fr-Latn-CA")`
+            // orders like generic `fr`. So the script tag on CA does not opt out
+            // here; a non-Latin script tag is untested and left alone, and an
+            // explicit collation keeps its own metadata.
             if locale.id.language.as_str() == "fr"
                 && locale
                     .id

@@ -17,7 +17,7 @@ const PINNED_NODE = 'v22.22.0';
 const PINNED_ICU = '78.2';
 const LOCALES = [
   'fr_CA.UTF-8',              // bare fr-CA: backward-secondary repair applies
-  'fr_Latn_CA.UTF-8',         // script-tagged fr-CA: CLI guard must not fire
+  'fr_Latn_CA.UTF-8',         // script-tagged fr-CA: the default collator still orders fr-CA
   'fr_CA@collation=eor',      // POSIX modifier: Node drops it and stays fr-CA
   'fr_FR.UTF-8',              // fr without CA: repair must not fire
   'en_US.UTF-8',              // non-fr control
