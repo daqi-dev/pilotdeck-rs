@@ -2081,6 +2081,50 @@ fn regress_oracle_generator_reproduces_the_committed_oracle_twice() {
     }
 }
 
+/// #1265: the regress generator writes with `{flag: 'wx'}`, so a second run
+/// into the same output directory must refuse to clobber the existing oracle
+/// (EEXIST) instead of silently replacing it — the reproducibility test
+/// above proves matching bytes, not that a stale file was never overwritten.
+#[test]
+#[ignore = "requires fixed TS baseline and Node; run with PDRS_BASELINE"]
+fn regress_oracle_generator_refuses_to_clobber_the_existing_oracle() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
+    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/output-schema/generate-regress.mts");
+    // One scratch for both runs: the first creates the oracle, the second
+    // must refuse it. `.output()` captures stderr for the EEXIST check.
+    let scratch = Scratch::new("regress-oracle-clobber");
+    let first = baseline::node_command()
+        .env("PDRS_BASELINE", &baseline)
+        .arg(&generator)
+        .arg(scratch.path())
+        .status()
+        .expect("run node");
+    assert!(first.success(), "the first run must create the oracle");
+    let second = baseline::node_command()
+        .env("PDRS_BASELINE", &baseline)
+        .arg(&generator)
+        .arg(scratch.path())
+        .output()
+        .expect("run node");
+    assert!(
+        !second.status.success(),
+        "the second run must refuse to overwrite the existing oracle"
+    );
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("EEXIST"),
+        "expected an EEXIST refusal, got: {stderr}"
+    );
+    // And the refusal left the first run's bytes in place.
+    let committed = include_str!("fixtures/output-schema/regress-oracle.json");
+    let oracle = std::fs::read_to_string(scratch.path().join("regress-oracle.json")).unwrap();
+    assert_eq!(
+        oracle, committed,
+        "the refused run must leave the original oracle untouched"
+    );
+}
+
 // #394: Tokio accepts spawn on a shut-down Handle and cancels the task.
 // A dropped lease may arrive on a plain thread after its original executor dies.
 #[test]

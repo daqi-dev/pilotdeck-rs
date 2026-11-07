@@ -89,9 +89,12 @@ fn budget_states_are_independently_distinguishable() {
 }
 
 #[test]
-fn zero_budget_interrupts_on_the_first_poll() {
-    // `new(0)` stores 0, so the handler's first poll reads `previous <= 0`
-    // and interrupts: a zero budget must never run untracked.
+fn zero_budget_refuses_to_start() {
+    // `exec` refuses a zero allowance at its entry, before any JS: the
+    // handler-side check only fires on a poll (~every 10 000 steps), so a
+    // subject small enough to never poll would otherwise run to a verdict
+    // untracked. Both subjects pin that — the poll-triggering catastrophic
+    // one *and* a sub-granularity trivial one.
     let engine = engine();
     let pattern = catastrophic(&engine);
     let doom = units(&format!("{}!", "a".repeat(18)));
@@ -99,7 +102,15 @@ fn zero_budget_interrupts_on_the_first_poll() {
     assert_eq!(
         engine.exec(&pattern, &doom, &mut zero),
         Err(MatchError::Interrupted),
-        "#1265 a zero budget must interrupt on its first poll"
+        "#1265 a zero budget must not run the catastrophic subject"
+    );
+    let plain = engine
+        .compile(&units("^a+$"), "")
+        .expect("#1265 compile trivial probe");
+    assert_eq!(
+        engine.exec(&plain, &units("aaa"), &mut zero),
+        Err(MatchError::Interrupted),
+        "#1265 a zero budget must not run even a sub-granularity subject"
     );
     assert_eq!(
         zero.remaining_polls(),
@@ -136,9 +147,14 @@ fn budget_spans_every_exec_of_one_request() {
     let granted = budget.remaining_polls();
     // Measured: the engine polls its interrupt handler only about every
     // 10 000 steps, so a fast subject below that granularity charges zero
-    // polls ("a"*12 -> after_first == granted); "a"*14 crosses it, charges
-    // a few polls and still completes (harvest-r1/exp-n12.sh evidence).
-    let fast = units(&format!("{}!", "a".repeat(14)));
+    // polls ("a"*12 -> after_first == granted). This constant is the
+    // smallest measured crossing (3 polls, still completes in ~40 ms) —
+    // an empirical quickjs-ng 0.16.2 step-accounting fact, not an engine
+    // contract (harvest-r1/exp-n12.sh evidence). A libregexp accounting
+    // change that pushes it back under the granularity turns this test
+    // red (fail-closed), never green-by-accident.
+    const FAST_SUBJECT_A_REPS: usize = 14;
+    let fast = units(&format!("{}!", "a".repeat(FAST_SUBJECT_A_REPS)));
     assert_eq!(
         engine.exec(&pattern, &fast, &mut budget),
         Ok(ExecOutcome::NoMatch),
