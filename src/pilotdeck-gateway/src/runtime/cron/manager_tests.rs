@@ -288,6 +288,41 @@ fn unstarted_manager_creates_without_recovery() {
     );
 }
 
+// #2181: two creates in the same zone resolve one TZif parse — every
+// runtime the manager loads shares its zone cache, and
+// `compute_next_run_at`'s call point takes it; a different zone bumps the
+// count back apart, so the pin is reuse, not "never parse".
+#[test]
+fn create_task_reuses_the_zone_resolver_cache() {
+    let harness = harness(false);
+
+    let create = |timezone: &str| {
+        harness
+            .manager
+            .create_task(&json(&format!(
+                r#"{{
+                    "projectKey": "/proj",
+                    "message": "m1",
+                    "schedule": {{"type": "cron", "expression": "5 * * * *", "timezone": "{timezone}"}}
+                }}"#
+            )))
+            .unwrap();
+    };
+    create("Asia/Tokyo");
+    create("Asia/Tokyo");
+    assert_eq!(
+        harness.manager.zone_resolver_cache().parse_count(),
+        1,
+        "#2181 zone reuse: a second create in the same zone must not re-parse the TZif file"
+    );
+    create("Europe/Berlin");
+    assert_eq!(
+        harness.manager.zone_resolver_cache().parse_count(),
+        2,
+        "#2181 zone reuse: a new zone resolves exactly once more"
+    );
+}
+
 // Matrix cell 17: after `stop`, a create through the same manager loads a
 // runtime that is not started again.
 #[test]
