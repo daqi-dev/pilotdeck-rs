@@ -54,7 +54,17 @@ struct Shared {
 #[derive(Default)]
 struct TestHooks {
     wake_gate: Mutex<Option<Arc<TestWakeGate>>>,
+    drain_gate: Mutex<Option<Arc<DrainGate>>>,
     timer_exits: std::sync::atomic::AtomicUsize,
+}
+
+/// Parks the first drain right after it claimed the dirty state, so a test can
+/// cancel it mid-write and observe how the in-flight entry and the claimed
+/// state are recovered.
+#[cfg(test)]
+pub(crate) struct DrainGate {
+    pub(crate) entered: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
 }
 
 #[cfg(test)]
@@ -120,6 +130,16 @@ impl Shared {
         if let Some(gate) = gate {
             gate.park();
         }
+    }
+
+    /// Takes the drain gate, so only the first drain after `park_next_drain`
+    /// is parked; the retry a waiter starts runs straight through.
+    fn take_drain_gate(&self) -> Option<Arc<DrainGate>> {
+        self.hooks
+            .drain_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 }
 
@@ -189,6 +209,34 @@ impl ChannelStatePersistence {
             .hooks
             .timer_exits
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Arms the next drain to park after it claimed the dirty state.
+    #[cfg(test)]
+    pub(crate) fn park_next_drain(&self) -> Arc<DrainGate> {
+        let gate = Arc::new(DrainGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        *self
+            .shared
+            .hooks
+            .drain_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(gate.clone());
+        gate
+    }
+
+    /// How many tasks are waiting on the key's in-flight entry.
+    #[cfg(test)]
+    pub(crate) fn in_flight_waiters(&self, channel_key: &JsString) -> usize {
+        self.shared
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .in_flight
+            .get(channel_key)
+            .map_or(0, watch::Sender::receiver_count)
     }
 
     /// `load` — missing file or invalid JSON yields `None`.
@@ -305,11 +353,15 @@ impl ChannelStatePersistence {
             }
             return Ok(());
         }
-        let _guard = InFlightGuard {
+        let mut guard = InFlightGuard {
             shared: self.shared.as_ref(),
             channel_key,
+            completed: false,
         };
-        self.drain_writes(channel_key).await
+        let result = self.drain_writes(channel_key).await;
+        guard.completed = true;
+        drop(guard);
+        result
     }
 
     /// `drainWrites` — keeps writing while the key keeps being marked dirty.
@@ -331,6 +383,11 @@ impl ChannelStatePersistence {
                 channel_key,
                 state: Some(state),
             };
+            #[cfg(test)]
+            if let Some(gate) = self.shared.take_drain_gate() {
+                gate.entered.notify_one();
+                gate.release.notified().await;
+            }
             let result = self
                 .write_to_disk(
                     channel_key,
@@ -375,12 +432,15 @@ impl ChannelStatePersistence {
 }
 
 /// Clears the key's in-flight entry however the drain ends — the TS
-/// `.finally(() => inFlight.delete(key))`. A drainer whose task is dropped
-/// (the caller's future was cancelled) must not leave an entry nobody will
-/// ever complete; waiters see the sender close and start a fresh drain.
+/// `.finally(() => inFlight.delete(key))`. A drainer that returns (even with a
+/// write error) marks its waiters done; one whose task is dropped mid-write
+/// marks nothing, so the senders close and the waiters can start a fresh drain
+/// instead of reporting a success that never reached the disk.
 struct InFlightGuard<'a> {
     shared: &'a Shared,
     channel_key: &'a JsString,
+    /// Set once `drainWrites` returned; a dropped future leaves it false.
+    completed: bool,
 }
 
 impl Drop for InFlightGuard<'_> {
@@ -392,7 +452,9 @@ impl Drop for InFlightGuard<'_> {
             .unwrap_or_else(|e| e.into_inner())
             .in_flight
             .remove(self.channel_key);
-        if let Some(sender) = sender {
+        if let Some(sender) = sender
+            && self.completed
+        {
             let _ = sender.send_replace(true);
         }
     }
