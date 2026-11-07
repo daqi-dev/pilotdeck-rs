@@ -127,8 +127,12 @@ def invalidate_completed(results, reason):
             row['compiled'] = False
 
 
-def publish_summary(out, results):
+def publish_summary(out, results, states=('KILLED', 'SURVIVED', 'INVALID')):
     """Publish the one final summary, atomically, after restore verification.
+
+    ``states`` widens the machine-readable ``counts`` block for a caller that
+    records its own platform-absent rows (native-management's ``SKIPPED``);
+    the default keeps every existing caller's payload byte-identical.
 
     ``record`` keeps every row in memory while the guarded window is open. An
     earlier KILLED row must never be readable from disk before
@@ -138,7 +142,7 @@ def publish_summary(out, results):
     reader from observing a half-written JSON document (#166 r8).
     """
     _publish_json(Path(out) / 'summary.json',
-                  {'controls': results, 'counts': pending.counts(results)},
+                  {'controls': results, 'counts': pending.counts(results, states)},
                   overwrite=True)
 
 

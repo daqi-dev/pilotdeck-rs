@@ -520,7 +520,7 @@ def main():
               for state in ('KILLED', 'SURVIVED', 'INVALID', 'SKIPPED')}
     print('summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()),
           flush=True)
-    publish_summary(out, results)
+    publish_summary(out, results, states=('KILLED', 'SURVIVED', 'INVALID', 'SKIPPED'))
     # SKIPPED (platform-absent, recorded above) is not a failure, but a run
     # that killed nothing proved nothing: with zero KILLED rows the exit stays
     # nonzero so a caller cannot read an all-SKIPPED selection as verified.
