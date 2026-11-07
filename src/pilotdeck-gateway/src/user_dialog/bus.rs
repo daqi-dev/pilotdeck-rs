@@ -415,15 +415,7 @@ impl GatewayUserDialogBus {
         // rolls back this registration's "answer in flight" record (#2027).
         // Only its own generation: a same-id registration consumed while the
         // hook ran still has an answer on the way and must stay visible.
-        let key = (session.clone(), request_id.clone());
-        if let Some(taken) = self.taken.get_mut(&key) {
-            if let Some(index) = taken.iter().position(|value| *value == generation) {
-                taken.remove(index);
-            }
-            if taken.is_empty() {
-                self.taken.remove(&key);
-            }
-        }
+        self.forget_taken(session, &request_id, generation);
         if let Some(lease) = lease {
             self.leases.insert((session.clone(), request_id), lease);
         }
@@ -482,6 +474,17 @@ impl GatewayUserDialogBus {
                 self.taken.remove(&key);
             }
         }
+    }
+
+    /// How many registrations under `request` still have an answer recorded
+    /// as in flight (#2027). Test-only observation point: the map is private,
+    /// but "settling a waiter drops its record" has to be assertable or the
+    /// leak guard is unfalsifiable.
+    #[cfg(test)]
+    pub fn taken_count(&self, session: &JsString, request: &JsString) -> usize {
+        self.taken
+            .get(&(session.clone(), request.clone()))
+            .map_or(0, Vec::len)
     }
 
     /// As in TS this does not validate values: callers must call `accepts`
