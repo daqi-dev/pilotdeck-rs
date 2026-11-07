@@ -1076,3 +1076,18 @@ fn native_display_origin_is_explicit_and_original_metadata_whitelist_is_unchange
             .is_none()
     );
 }
+
+#[test]
+fn native_steer_receipt_ids_survive_refactory_without_entering_legacy_metadata() {
+    let request = pilotdeck_protocol::parse_json(r#"{"payload":{"messages":[{"role":"user","content":[{"type":"text","text":"same repeated text"}],"metadata":{"kernelSteerItems":[{"receipt":"original-drain-key","itemId":"actual-call:steer:7"}]}}]}}"#).unwrap();
+    let legacy = factory_payload::decode(&request, &"/explicit".into()).unwrap();
+    assert!(legacy.input.messages[0].value().get("metadata").is_none());
+    let native =
+        factory_payload::decode_with_native_origins(&request, &"/explicit".into()).unwrap();
+    let metadata = native.input.messages[0].value().get("metadata").unwrap();
+    let expected = pilotdeck_protocol::parse_json(
+        r#"[{"receipt":"original-drain-key","itemId":"actual-call:steer:7"}]"#,
+    )
+    .unwrap();
+    assert_eq!(metadata.get("kernelSteerItems"), Some(&expected));
+}

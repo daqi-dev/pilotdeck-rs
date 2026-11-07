@@ -696,7 +696,7 @@ fn message_metadata(value: Option<&JsValue>, native_origins: bool) -> Option<JsV
         out.insert("forkCarryover".into(), JsValue::Object(carry));
     }
     if native_origins {
-        for key in ["kernelMessageId", "turnId", "createdAt"] {
+        for key in ["kernelMessageId", "turnId", "createdAt", "kernelSteerItems"] {
             if let Some(value) = o.get(key) {
                 out.insert(key.into(), value.clone());
             }

@@ -21,6 +21,11 @@ type HostError = SummaryError;
 type ModuleError = SummaryError;
 pub trait SummaryModelPort: Send + Sync {
     fn summarize(&self, request: JsValue) -> Result<(JsValue, Option<JsValue>), SummaryError>;
+    /// An explicitly composed host may carry verified opaque provenance through
+    /// summary text wrapping. The default preserves the original output exactly.
+    fn decorate_wrapped_summary(&self, _original: &JsValue, wrapped: JsValue) -> JsValue {
+        wrapped
+    }
 }
 pub mod port {
     pub struct CheckpointTruncation {
@@ -306,7 +311,12 @@ impl CompactionEngine {
             } else {
                 match self.summarize(summary_input, &input, anchors, &previous) {
                     Ok((message, summary_usage)) => {
-                        summary = Some(prompt::wrap_summary(message, stable_anchors));
+                        let wrapped = prompt::wrap_summary(message.clone(), stable_anchors);
+                        summary = Some(
+                            self.options
+                                .model
+                                .decorate_wrapped_summary(&message, wrapped),
+                        );
                         usage = summary_usage;
                         *self.cooldown.lock().unwrap() = None;
                     }
