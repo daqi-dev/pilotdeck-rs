@@ -211,6 +211,83 @@ async fn persistence_flush_drains_dirty_keys() {
     assert!(raw.contains("\"k\": 1"), "#1328 flushed content: {raw}");
 }
 
+fn state_with_value(value: f64) -> JsValue {
+    let mut state = JsObject::new();
+    state.insert("v".into(), JsValue::Number(value));
+    JsValue::Object(state)
+}
+
+/// #2073 P0: a debounce timer that has already woken up must not be able to
+/// claim (and lose) the newest dirty state when a newer `save` supersedes it.
+///
+/// Reachable only on a multi-threaded runtime: `save` aborts the old
+/// `JoinHandle`, tokio records the cancellation, but the task is parked
+/// between `sleep` and the state lock — so it still walks the synchronous
+/// section (deletes the *new* timer handle, registers `in_flight`, claims the
+/// newest state in `drain_writes`) and is only cancelled at the first await
+/// inside `write_to_disk`, after the state has left `dirty`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 40);
+    let key = js("weixin");
+    let file = root.path().join("weixin.state.json");
+
+    // Arm the rendezvous, then start a timer that parks as soon as it wakes.
+    let entered = persistence.park_next_timer();
+    persistence.save(&key, state_with_value(1));
+    tokio::task::spawn_blocking(move || {
+        entered
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("#2073 the debounce timer must reach the park point")
+    })
+    .await
+    .expect("#2073 park waiter");
+
+    // Supersede the parked timer: `save` aborts it while it is mid-poll.
+    let exits = persistence.timer_exits();
+    persistence.save(&key, state_with_value(2));
+    persistence.release_parked_timer();
+    for _ in 0..2_000 {
+        if persistence.timer_exits() > exits {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    assert!(
+        persistence.timer_exits() > exits,
+        "#2073 the superseded timer must settle"
+    );
+
+    // The newest state must land; pre-fix it was claimed and then dropped, and
+    // `flush` waits forever on the orphaned in-flight entry.
+    let flushed =
+        tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush()).await;
+    assert_eq!(
+        std::fs::read_to_string(&file).ok().as_deref(),
+        Some("{\n  \"v\": 2\n}"),
+        "#2073 the newest state must reach disk"
+    );
+    assert!(
+        flushed.is_ok(),
+        "#2073 flush must not wait on an orphaned in-flight entry"
+    );
+
+    // And the key must not be wedged: a later save still persists.
+    persistence.save(&key, state_with_value(3));
+    let flushed =
+        tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush()).await;
+    assert!(
+        flushed.is_ok(),
+        "#2073 flush must not hang after a superseded timer"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).ok().as_deref(),
+        Some("{\n  \"v\": 3\n}"),
+        "#2073 the key must keep persisting after a superseded timer"
+    );
+}
+
 #[test]
 fn recoverable_poll_error_matches_ts_substrings() {
     for detail in [
