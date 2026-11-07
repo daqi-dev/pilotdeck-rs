@@ -170,6 +170,39 @@ def hold_ready_seconds(runner):
     return LOCK_READY_SECONDS + bootstrap + parameter.default + post_lock
 
 
+def set_pipe_blocking(child, blocking):
+    """Switch the child's pipes between blocking and non-blocking reads."""
+    for stream in (child.stdout, child.stderr):
+        if stream is None:
+            continue
+        try:
+            os.set_blocking(stream.fileno(), blocking)
+        except (OSError, ValueError):
+            pass
+
+
+def drain_child_output(child, buffers):
+    """Move whatever the child has already written into `buffers`.
+
+    The parent reads the child only once it gives up (read_child_output), so a
+    child that fills a pipe before publishing `ready` would block inside
+    write() and burn the whole readiness budget instead of reporting its own
+    failure -- and that budget is deliberately large (#2127 codex concurrency
+    r9 P1). Keeping the pipes empty costs one non-blocking read per poll.
+    Bytes are buffered, never dropped: read_child_output() prepends them, so a
+    later failure still shows what the child said before it stopped.
+    """
+    for name, stream in (('stdout', child.stdout), ('stderr', child.stderr)):
+        if stream is None:
+            continue
+        try:
+            chunk = os.read(stream.fileno(), 65536)
+        except (BlockingIOError, InterruptedError, OSError, ValueError):
+            continue
+        if chunk:
+            buffers[name].append(chunk)
+
+
 def read_child_output(child):
     """Read a child's piped output once, bounded like negative_process._collect().
 
@@ -192,6 +225,11 @@ def read_child_output(child):
     cached = getattr(child, '_verified_output', None)
     if cached is not None:
         return cached
+    buffers = getattr(child, '_verified_drained', None)
+    if buffers is not None:
+        # wait_for_ready() made these non-blocking to poll them; communicate()
+        # below expects blocking reads.
+        set_pipe_blocking(child, True)
     seconds = pipe_close_seconds()
     try:
         cached = child.communicate(timeout=seconds)
@@ -205,6 +243,10 @@ def read_child_output(child):
                 stream.close()
         api = shared_process()
         cached = (api._as_text(child, error.output), api._as_text(child, error.stderr))
+    if buffers is not None:
+        api = shared_process()
+        cached = (api._as_text(child, b''.join(buffers['stdout'])) + (cached[0] or ''),
+                  api._as_text(child, b''.join(buffers['stderr'])) + (cached[1] or ''))
     child._verified_output = cached
     return cached
 
@@ -236,11 +278,17 @@ def wait_for_ready(child, ready, seconds):
     """Wait for `ready`, then describe the outcome for the assertion message.
 
     Stops as soon as the child exits (a crash must never wait for the whole
-    budget) and otherwise at the bounded deadline.
+    budget) and otherwise at the bounded deadline. The pipes are polled while
+    waiting instead of only being read afterwards, so a child that writes more
+    than a pipe buffer before `ready` cannot block itself.
     """
     started = time.monotonic()
     deadline = started + seconds
+    buffers = {'stdout': [], 'stderr': []}
+    child._verified_drained = buffers
+    set_pipe_blocking(child, False)
     while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+        drain_child_output(child, buffers)
         time.sleep(.05)
     if ready.exists():
         return ''
