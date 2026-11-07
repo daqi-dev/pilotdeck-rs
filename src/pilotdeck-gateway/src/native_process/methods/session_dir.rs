@@ -873,6 +873,10 @@ mod tests {
     async fn blank_key_gate_order(method: &str) {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2090 fixture");
+        // A path no `createLocalGateway` registry can resolve, so the two
+        // mechanisms that reject it (TS registry vs this process's admission)
+        // are both forced to answer.
+        const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2090";
         // (1) No `projectKey`: the fallback is the configured project, so the
         // family's own sessionKey gate answers — for an absent key and for a
         // blank one alike.
@@ -891,7 +895,7 @@ mod tests {
                 "#2090 the sessionKey gate answers a missing or blank key under the configured project"
             );
             negative_assert_eq!(
-                String::from_utf16_lossy(error.message.units()),
+                key_message(&error),
                 BLANK_KEY_MESSAGE,
                 "#2090 the gate message matches the TS provider gate"
             );
@@ -900,7 +904,7 @@ mod tests {
         // (2) Project outside the configured one: request admission answers
         // before the method dispatch, so the first code is the admission one.
         // The valid-key control answering identically is what proves admission
-        // — not the key — decides here; the `null` cell is the registered
+        // — not the key — decides here; the `null` cells are the registered
         // shape where Rust and TS part ways (`projectKey: null` is nullish for
         // TS, "not served" for this admission).
         for (label, params) in [
@@ -908,19 +912,26 @@ mod tests {
                 "blank key + unserved project",
                 object([
                     ("sessionKey", "   ".into()),
-                    ("projectKey", "/nonexistent/pdrs-2090".into()),
+                    ("projectKey", UNSERVED_PROJECT.into()),
                 ]),
             ),
             (
                 "valid key + unserved project",
                 object([
                     ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", "/nonexistent/pdrs-2090".into()),
+                    ("projectKey", UNSERVED_PROJECT.into()),
                 ]),
             ),
             (
                 "blank key + null project",
                 object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
+            ),
+            (
+                "valid key + null project",
+                object([
+                    ("sessionKey", "pdrs-2090-control".into()),
+                    ("projectKey", JsValue::Null),
+                ]),
             ),
         ] {
             let expected = format!("#2090 admission refuses {label}");
@@ -934,7 +945,7 @@ mod tests {
                 "#2090 admission answers an unserved project before the sessionKey gate"
             );
             negative_assert_eq!(
-                String::from_utf16_lossy(error.message.units()),
+                key_message(&error),
                 ISOLATED_PROJECT_MESSAGE,
                 "#2090 the admission message is the isolated-project one"
             );

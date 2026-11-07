@@ -74,9 +74,9 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 - TS 真实链路，场景 B（`pilotHome != projectRoot`，回退项目未注册）：`delete/rename/tag` × 三种输入，「空白 `sessionKey` + 显式 `projectKey:"/nonexistent/pdrs-2090"`」，以及 `delete/rename/tag` × `projectKey: null` ×（空白键 / 合法键）。`resume_session` / `close_session` 不解析项目（`InProcessGateway.ts:2026-2028` / `:2049-2054`），启动形状对它们不适用，场景 B 下只实测了 `projectKey: null` 两格并确认与场景 A 同结果。
 - Rust 请求级（`rust-probe/probe.out`）：一个隔离进程 fixture（配置项目可服务）× 五个方法 × 三种输入；外加 `delete/rename/tag` 的「空白键 + 显式不可解析 `projectKey`」三格。`projectKey: null` 的十格见 `rust-probe/null-probe.out`。**「同项目 + 合法键」这一格不在 `probe.out` 里**——它由入库用例钉住（`gate-order-tests.out` 的绿跑与 `mutant-run-r2.out` 的红跑都是这份用例的证据）；「准入关掉后 null 走回退」的十格见 `rust-negctl/null-fallback-under-mutated-admission.out`。Rust 侧没有「回退项目解析不了」这一形状可测——它的回退恒为配置项目（差异第 4 条）。
 - 「非 nullish 非字符串」以一个代表值（数字 `42`）覆盖，不是全类型枚举。
-- 入库用例（`session_dir.rs`）钉五步：缺键 / 空白（无 `projectKey`）→ `INVALID_SESSION_KEY`；显式不受服务 `projectKey` + 空白键、同项目 + 合法键、`projectKey: null` + 空白键 → 同一条准入错误。
+- 入库用例（`session_dir.rs`）每个方法钉六格：缺键 / 空白（无 `projectKey`）→ `INVALID_SESSION_KEY`；显式不受服务 `projectKey` + 空白键、显式不受服务 `projectKey` + 合法键（对照）、`projectKey: null` + 空白键、`projectKey: null` + 合法键 → 同一条准入错误。
 
-不覆盖（仍在其他条目）：`params` 整体为 `null`（R7 已登记）、`projectKey` 孤立代理项（#2083）、U+0085 空白集合（#2097）、`projectKey` 非字符串的 Node `ERR_INVALID_ARG_TYPE`（R7 已登记）、`deleteEphemeralSession` 钩子命中路径（R7 已标未测，本探针的空白键未命中该钩子，原始输出里走的是 provider 门）。`list_sessions` / `close_project_sessions` 不调用 `require_session_key`（四处调用点只覆盖另外五个方法），不属于本族 `sessionKey` 门的比较范围，本轮不加用例。
+不覆盖（仍在其他条目）：`params` 整体为 `null`（R7 已登记）、`projectKey` 孤立代理项（#2083）、U+0085 空白集合（#2097）、`projectKey` 非字符串的 Node `ERR_INVALID_ARG_TYPE`（R7 已登记）、`deleteEphemeralSession` 钩子命中路径（R7 已标未测，本探针的空白键未命中该钩子，原始输出里走的是 provider 门）。`list_sessions` / `close_project_sessions` 不调用 `require_session_key`（`session_dir.rs` 的四处调用点只覆盖另外五个方法），不属于本族 `sessionKey` 门的比较范围，本轮不加用例。**`config.rs` 族明示不覆盖**：它有自己的 `require_session_key`（`config.rs:75`，7 个方法里 5 个共享）与自己的 `resolve_project`（`config.rs:143-152`，在门之前），同样过 `requests.rs:305-314` 准入，本条登记的差异 3 / 5 对它同样成立；但本轮没有为它补请求级门序用例，已开 `P2-跟进` `#2199`（前置于 `#2090`）跟踪，不在本 PR 扩大范围。
 
 本轮不做「对齐 TS」：放开 `resume/close` 的 `sessionKey` 门、或把准入改成把 `null` 当 nullish，都属判分/安全语义变更，`#2090` 跟踪人批；本 PR 只补请求级用例与登记，不改 `session_dir.rs` / `requests.rs` 的任何产品逻辑。
 
