@@ -20,6 +20,7 @@ output = root / 'src/pilotdeck-cli/src/sdk/output.rs'
 transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 tests = root / 'src/pilotdeck-cli/tests/sdk_format_exit.rs'
 resume_tests = root / 'src/pilotdeck-cli/tests/sdk_resume_exit.rs'
+common = root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
 fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-format'
 oracle = fixture / 'oracle.json'
@@ -125,11 +126,11 @@ mutations = [
     ('oracle-empty', oracle, '  "cases": [', '  "cases": [],\n  "discardedCases": [', 'format_matches_ts_matrix', '#1097 registered 90 cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'format_oracle_regenerates_identically', '#1097 identical TS fixture sdk-format'),
     ('format-late-connection', turn, '            control.close().await;\n            result', '            control.close().await;\n            tokio::time::sleep(std::time::Duration::from_millis(100)).await;\n            let _ = tokio::net::TcpStream::connect("127.0.0.1:28999").await;\n            result', 'format_no_late_connection', '#1097 no third connection'),
-    ('format-stdin-synchronous', tests, '        let handle = std::thread::spawn(move || {', '        write_fixture_stdin(&mut stdin, &data);\n        let handle = std::thread::spawn(move || {', 'fixture_stdin_writer_yields_before_child_reads', '#1136 stdin writer yields before child reads'),
-    ('format-stdin-cancel', tests, '.drain(..) {', '.drain(0..0) {', 'fixture_stdin_cancel_reaps_writer', '#1097 cancellation joins stdin writer'),
+    ('format-stdin-synchronous', common, '        let handle = std::thread::spawn(move || {', '        write_fixture_stdin(&mut stdin, &data);\n        let handle = std::thread::spawn(move || {', 'fixture_stdin_writer_yields_before_child_reads', '#1136 stdin writer yields before child reads'),
+    ('format-stdin-cancel', common, '.drain(..) {', '.drain(0..0) {', 'fixture_stdin_cancel_reaps_writer', '#1136 cancellation joins stdin writer'),
     ('resume-late-connection', turn, '            control.close().await;\n            result', '            control.close().await;\n            tokio::time::sleep(std::time::Duration::from_millis(100)).await;\n            let _ = tokio::net::TcpStream::connect("127.0.0.1:28999").await;\n            result', 'resume_no_late_connection', '#1086 no third connection'),
-    ('resume-stdin-synchronous', resume_tests, '        let handle = std::thread::spawn(move || {', '        write_fixture_stdin(&mut stdin, &data);\n        let handle = std::thread::spawn(move || {', 'fixture_stdin_writer_yields_before_child_reads', '#1136 stdin writer yields before child reads'),
-    ('resume-stdin-cancel', resume_tests, '.drain(..) {', '.drain(0..0) {', 'fixture_stdin_cancel_reaps_writer', '#1097 cancellation joins stdin writer'),
+    ('resume-stdin-synchronous', common, '        let handle = std::thread::spawn(move || {', '        write_fixture_stdin(&mut stdin, &data);\n        let handle = std::thread::spawn(move || {', 'fixture_stdin_writer_yields_before_child_reads', '#1136 stdin writer yields before child reads'),
+    ('resume-stdin-cancel', common, '.drain(..) {', '.drain(0..0) {', 'fixture_stdin_cancel_reaps_writer', '#1136 cancellation joins stdin writer'),
     ('resume-preflight-connect', sdk, '    if session.is_empty() {', '    if session.is_empty() {\n        let _ = std::net::TcpStream::connect("127.0.0.1:28999");', 'resume_preflight_no_late_connection', '#1086 preflight never connects'),
     ('format-preflight-connect', sdk, '            stdout_line(HELP);', '            let _ = std::net::TcpStream::connect("127.0.0.1:28999");\n            stdout_line(HELP);', 'format_preflight_no_late_connection', '#1097 preflight never connects'),
 ]
@@ -198,6 +199,7 @@ def main():
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                tests, resume_tests, *sorted(fixture.glob('*.*')),
+               common,
                root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']

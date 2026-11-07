@@ -19,6 +19,7 @@ turn = root / 'src/pilotdeck-cli/src/sdk/turn.rs'
 output = root / 'src/pilotdeck-cli/src/sdk/output.rs'
 transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 tests = root / 'src/pilotdeck-cli/tests/sdk_resume_exit.rs'
+common = root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
 fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-terminal'
 oracle = fixture / 'oracle.json'
@@ -50,9 +51,9 @@ mutations = [
     ('resume-placeholder', sdk, 'turn::run(argv, &connection, Some(session))', 'Err(Failure::Todo("resume regression"))', 'resume_token_reaches_gateway', '#1086 output bytes and exit'),
     ('oracle-empty', oracle, '  "cases": [', '  "cases": [],\n  "discardedCases": [', 'resume_matches_ts_matrix', '#1086 registered 143 cells'),
     ('oracle-drift', oracle, '"nodeVersion": "v22.22.0"', '"nodeVersion": "v0.0.0"', 'terminal_oracle_regenerates_identically', '#1086 identical TS fixture sdk-terminal'),
-    ('fixture-stdin-skip', tests, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1086 complete stdin write'),
-    ('fixture-stdin-other-error', tests, 'Err(error) => panic!("#1086 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1086 other stdin errors must fail'),
-    ('fixture-stdin-broken-pipe', tests, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1086 broken pipe must not panic'),
+    ('fixture-stdin-skip', common, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('fixture-stdin-other-error', common, 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('fixture-stdin-broken-pipe', common, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
 ]
 
 def check(row):
@@ -101,6 +102,7 @@ def main():
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                tests, *sorted(fixture.glob('*.*')),
+               common,
                root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']
