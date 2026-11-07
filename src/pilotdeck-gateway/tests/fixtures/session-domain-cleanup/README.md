@@ -1794,9 +1794,39 @@ were recorded as survivors.
 |---|---|
 | **A module-scope `match` capture keeps its binding** (crash guard): `match operator.setitem: case h: h(...)`. | self-test message `... crashed on a match capture with no position (round 33)`; `_match_case_position` falls back to the pattern, then to the first body statement |
 | **A function-local `match` capture keeps its binding** (crash guard): the same shape inside a `def`. | self-test message `... lost a match capture (round 33)`; the function-side branch passes the same position instead of the case node |
-| **A wildcard case binds nothing** (negative): `case _:` with no body capture. | `_match_capture_names` already skips it; the position fallback reaches the body statement |
+| **A wildcard case binds nothing** (negative): `case _:` with no body capture. | self-test message `... bound a wildcard case (round 34)`; `_match_capture_names` returns no name for a bare `MatchAs()` |
 
 Like rounds 24 to 32, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
+
+### Closed by `fix-r1` round 34 (codex r33 P0-1 / P0-2, GLM r33 sibling P1-1 / P2-2 / P2-3, boundary P1-1 / P1-2)
+
+Round 32 narrowed the audit in two places and both cuts went one step too far.
+`_module_value_uses` dropped *every* load inside a dead span, so a dead
+`register(main)` stopped counting as a hand-off and `call_only` came back on --
+a false PASS in the direction that matters, since the dead code is analysed on
+purpose here (the negative controls inject their mutants inside `if False:`).
+Only the hand-off the alias table already resolves through its own dead filter
+may be dropped: the source of a plain-name binding.  The walrus reading added
+in round 32 reached `_module_open_calls` and nothing else, so
+`(_g := sd.main)(report)` and `(_g := getattr(sd, 'main'))(report)` never
+entered the attribute call table -- the same false PASS, one table over.  Round
+33 fixed two of the three `match_case` walks; the third one sits on the
+receiver path and still read `node.lineno` off a case node.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A dead escape is still a value use** (false PASS guard): `import builtins as bi` then `if False: register(main)`. | self-test message `... dropped a dead escape as a value use (round 34)`; `_module_value_uses` only drops the source of a plain-name binding inside a dead span |
+| **A dead alias is still not a value use** (round-32 guard kept): `if False: saved = main`, then a live `saved(object())`. | self-test message `... kept a dead alias as a value use (round 32)`, still green |
+| **A walrus attribute call reaches the table** (false PASS guard): `(_g := sd.main)(report)` and `(_g := getattr(sd, 'main'))(report)`. | self-test messages `... lost the walrus attribute call (round 34)` / `... lost the walrus getattr call (round 34)`; `_callee_expr` unwraps the `NamedExpr` for every caller, nested walrus included |
+| **A walrus plain call reaches the alias table** (false PASS guard): `saved = main; (_g := saved)(report)`. | self-test message `... lost the walrus plain call (round 34)`; `_module_call_positions` records the unwrapped callee |
+| **A walrus callee is still a carrier site** (round-32 guard, now counted): `held = globals()['main']; (_g := held)(object())`. | self-test message `... lost the walrus callee site (round 32)` now asserts the site count (a plain non-empty check was a tautology: `globals()` is itself a site) |
+| **A match capture does not crash the receiver walk** (crash guard): `from builtins import setattr as _sa`, a `match` capture, then `_sa(md, 'common', object())`. | self-test messages `... crashed on a match capture in the receiver walk (round 34)` / `... lost a receiver withdrawn through a match (round 34)`; `_scope_import_events` passes the case position instead of the case node |
+| **A wildcard case binds nothing** (negative): `case _:` with no body capture. | self-test message `... bound a wildcard case (round 34)` |
+
+Like rounds 24 to 33, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
