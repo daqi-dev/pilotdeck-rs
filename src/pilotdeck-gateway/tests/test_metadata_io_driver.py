@@ -978,6 +978,16 @@ class EnvironmentControls(unittest.TestCase):
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
              "    tmp, _sign = path.parent / f'.negctl-{path.name}.tmp', None"),
+            # r8（zai sibling P2 + DeepSeek sibling P2）：按 r3 的「三处各一条」惯例，
+            # native-config 也要有极性负控 —— 两种形态与 native-stimulus-plan 成对。
+            ('published-temp-mentions-the-root-without-deriving',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = path.parent / PUBLISH_DIR.name / f'.negctl-{path.name}.tmp'"),
+            # pathlib 的除法语义：右侧是绝对路径时**左侧整条被丢弃**，
+            # 临时文件就是被变异源本身 → 原地截断。
+            ('temp-base-overridden-by-an-absolute-target',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / path.parent / f'.negctl-{path.name}.tmp'"),
         ),
         'model-complete/negative-controls.py': (
             ('scratch-rebound-after-the-correct-derivation',
@@ -992,10 +1002,15 @@ class EnvironmentControls(unittest.TestCase):
              'suffix=".tmp")\n'
              "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
             # r7（DeepSeek boundary P1）：只判「表达式里出现过 PUBLISH_DIR」不判极性 ——
-            # 两支对调后判据照绿，而仓外目标反而把临时文件写进被扫的 `src/`。
+            # 两支对调后判据照绿，而仓内目标反而把临时文件写进被扫的 `src/`
+            # （`is_relative_to(ROOT)` 为真 ⇔ 目标在仓内）。
             ('scratch-branches-swapped',
              '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
              '    scratch = path.parent if path.is_relative_to(ROOT) else PUBLISH_DIR'),
+            # r8（DeepSeek boundary P2）：判据读到的仓根名字不许被重绑。
+            ('root-constant-rebound-to-another-tree',
+             'ROOT = Path(__file__).resolve().parents[5]',
+             "ROOT = Path(__file__).resolve().parents[5]\nROOT = Path('/tmp')"),
         ),
         'native-stimulus-plan/negative_controls.py': (
             ('temp-rebound-after-the-correct-derivation',
@@ -1023,6 +1038,16 @@ class EnvironmentControls(unittest.TestCase):
             ('published-temp-mentions-the-root-without-deriving',
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = path.parent / PUBLISH_DIR.name / f'.negctl-{path.name}.tmp'"),
+            # r8（DeepSeek boundary P1）：基还是 PUBLISH_DIR，但右侧用 `..` 把基抵消掉，
+            # 落盘回到被扫的 `src/`。
+            ('temp-escapes-the-scratch-dir',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / '..' / 'src' / f'.negctl-{path.name}.tmp'"),
+            # r8（DeepSeek sibling P2）：镜像形状 —— 右侧是绝对路径，pathlib 会丢弃左侧整条，
+            # 临时文件就是被变异源本身。
+            ('temp-base-overridden-by-an-absolute-target',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / path.parent / f'.negctl-{path.name}.tmp'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1080,19 +1105,31 @@ class EnvironmentControls(unittest.TestCase):
         return names
 
     @staticmethod
-    def mkstemp_scratch_names(body):
+    def mkstemp_dir_node(node):
+        """`tempfile.mkstemp(dir=str(<scratch>))` → `<scratch>` 的 Name 节点，否则 None。
+
+        r8（DeepSeek simplify P2）：`mkstemp_scratch_names` 与 `roots_at` 曾各写一份同样的
+        提取逻辑 —— 两份判据拼写一旦不同步，一边空转、一边假 FAIL。收敛到这一处。
+        """
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'mkstemp'):
+            return None
+        for keyword in node.keywords:
+            value = keyword.value
+            if (keyword.arg == 'dir' and isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name) and value.func.id == 'str'
+                    and value.args and isinstance(value.args[0], ast.Name)):
+                return value.args[0]
+        return None
+
+    @classmethod
+    def mkstemp_scratch_names(cls, body):
         """`tempfile.mkstemp(dir=str(<scratch>))` 里 `<scratch>` 的变量名（AST）。"""
         names = []
         for node in ast.walk(ast.parse(textwrap.dedent(body))):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == 'mkstemp'):
-                continue
-            for keyword in node.keywords:
-                value = keyword.value
-                if (keyword.arg == 'dir' and isinstance(value, ast.Call)
-                        and isinstance(value.func, ast.Name) and value.func.id == 'str'
-                        and value.args and isinstance(value.args[0], ast.Name)):
-                    names.append(value.args[0].id)
+            target = cls.mkstemp_dir_node(node)
+            if target is not None:
+                names.append(target.id)
         return names
 
     @staticmethod
@@ -1154,6 +1191,21 @@ class EnvironmentControls(unittest.TestCase):
                 return ast.unparse(value.left), value.right.value
         return None, None
 
+    def plain_relative_component(self, node):
+        """`<基> / <右侧>` 的右侧只能是单个相对名：不许 `..`、不许绝对路径、不许再套除法。
+
+        r8（DeepSeek boundary P1）：只判左侧是 `PUBLISH_DIR` 时，右侧能用 `'..'` 把基
+        抵消掉 —— `PUBLISH_DIR / '..' / 'src' / f'…'` 判绿，而落盘正好是被扫的 `src/`。
+        """
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            value = node.value
+            return bool(value) and not value.startswith('/') and '..' not in value.split('/')
+        if isinstance(node, ast.JoinedStr):
+            return all(self.plain_relative_component(part)
+                       if isinstance(part, ast.Constant) else True
+                       for part in node.values)
+        return False
+
     def roots_at(self, body, node, root_constant, seen=None):
         """表达式是否**以** `root_constant` 为基底派生（不是「里面提到过」）。
 
@@ -1164,8 +1216,12 @@ class EnvironmentControls(unittest.TestCase):
         对调也照样绿（常量仍在树里）。判据必须看**极性**：
 
         - `PUBLISH_DIR`（名字）        → 是；否则沿它的唯一绑定回溯
-        - `<X> / …`                    → 只看左侧（除法的基），右侧随便
-        - `Path(root) / PUBLISH_DIR`   → 是（共享实现的仓根派生写法）
+        - `<X> / <右侧>`               → 只看左侧（除法的基），右侧必须是单个相对名
+          （r8 DeepSeek boundary P1：`PUBLISH_DIR / '..' / 'src' / …` 用 `..` 抵消掉基，
+          落盘回到被扫的 `src/`，只判左侧时会假 PASS）
+        - `Path(root) / PUBLISH_DIR`   → 是，且 `root` 在函数体里不许再绑
+          （r8 zai boundary P1：体里补一句 `root = path.parent` 就让特例整体短路，
+          publish 实际落到目标旁边）
         - `mkstemp(dir=str(X))`        → 看 X 的绑定
         - `<A> if path.is_relative_to(ROOT) else path.parent` → 仓内支看 A，仓外支必须
           正是 `path.parent`（跨卷 EXDEV 例外，r3 两家评审）
@@ -1184,17 +1240,13 @@ class EnvironmentControls(unittest.TestCase):
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             if (ast.unparse(node.left) == 'Path(root)' and isinstance(node.right, ast.Name)
                     and node.right.id == root_constant):
-                return True
+                return self.body_binding_count(body, 'root') == 1
+            if not self.plain_relative_component(node.right):
+                return False
             return self.roots_at(body, node.left, root_constant, seen)
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == 'mkstemp'):
-            for keyword in node.keywords:
-                value = keyword.value
-                if (keyword.arg == 'dir' and isinstance(value, ast.Call)
-                        and isinstance(value.func, ast.Name) and value.func.id == 'str'
-                        and value.args and isinstance(value.args[0], ast.Name)):
-                    return self.roots_at(body, value.args[0], root_constant, seen)
-            return False
+        if (isinstance(node, ast.Call)
+                and self.mkstemp_dir_node(node) is not None):
+            return self.roots_at(body, self.mkstemp_dir_node(node), root_constant, seen)
         if isinstance(node, ast.IfExp):
             return (ast.unparse(node.test) == 'path.is_relative_to(ROOT)'
                     and ast.unparse(node.orelse) == 'path.parent'
@@ -1228,6 +1280,11 @@ class EnvironmentControls(unittest.TestCase):
                       f'got: {base} / {value!r}')
         self.assertEqual(value, '.negctl-publish',
                          '#1692 §9 r2 the scratch dir is the ignored root namespace')
+        # r8（DeepSeek boundary P2）：判据读到的仓根名字也要计数 —— 末尾补一句
+        # `ROOT = Path('/tmp')` 后 `path.is_relative_to(ROOT)` 文本不变，但仓内目标全被
+        # 判成仓外，临时文件落回被变异源旁边。
+        self.assertEqual(self.body_binding_count(source, base), 1,
+                         f'#1692 §9 r2 the repository-root constant {base} is bound exactly once')
         # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
         # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
         # r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的派生判据还是
@@ -2173,6 +2230,12 @@ self_check_controls_run | return | return problems
                  "PUBLISH_DIR = '.negctl-publish'",
                  "# PUBLISH_DIR = '.negctl-publish'\n"
                  "PUBLISH_DIR = 'src/.negctl-publish'"),
+                # r8（zai boundary P1）：`Path(root) / PUBLISH_DIR` 这个特例只匹配文本时，
+                # 体里补一句 `root = path.parent` 就让派生判据整体短路 —— 字面钉、绑定计数
+                # 全照绿，而 publish 实际落在目标旁边。
+                ('atomic-publish-root-rebound-before-the-derivation',
+                 '    publish = Path(root) / PUBLISH_DIR',
+                 '    root = path.parent\n    publish = Path(root) / PUBLISH_DIR'),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
@@ -2270,6 +2333,36 @@ self_check_controls_run | return | return problems
                              [],
                              '#1903 the shared restore must not truncate the source in place')
         print('#1903 shared-restore guard mutant truncating-shared-restore: KILLED', flush=True)
+
+    def test_polarity_rule_alone_catches_the_branch_swap(self):
+        """r8（DeepSeek boundary P3）：极性判据要能**单独**杀掉分支对调。
+
+        `scratch-branches-swapped` 那条变异即使 `roots_at` 的 IfExp 支退回 r6 的「提及」
+        语义也照样 KILLED —— 因为 `binding_source` 的精确正则会先把它拦下。判据被别的
+        钉子代劳，等于这一支没有对杀覆盖。这里直接喂一个只有极性问题的函数体：没有
+        `mkstemp(dir=str(...))` 可查、没有字面钉可命中，唯一能判红的就是 `roots_at`。
+        """
+        body = textwrap.dedent('''
+            def write_atomic(path, data):
+                ROOT = Path(__file__).resolve().parents[5]
+                PUBLISH_DIR = ROOT / '.negctl-publish'
+                scratch = path.parent if path.is_relative_to(ROOT) else PUBLISH_DIR
+                with open(scratch, 'wb') as stream:
+                    stream.write(data)
+                os.replace(scratch, path)
+            ''')
+        self.assertEqual(self.mkstemp_scratch_names(body), [],
+                         'the probe body must not give the mkstemp pin anything to chew on')
+        self.assertNotEqual(self.temp_derivation_problems(body), [],
+                            '#1692 §9 r8 the IfExp polarity must be judged by the '
+                            'derivation rule alone')
+        healthy = body.replace(
+            'scratch = path.parent if path.is_relative_to(ROOT) else PUBLISH_DIR',
+            'scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent', 1)
+        self.assertEqual(self.temp_derivation_problems(healthy), [],
+                         '#1692 §9 r8 the healthy polarity must stay green')
+        print('#1692 §9 r8 IfExp polarity is pinned by the derivation rule alone: KILLED',
+              flush=True)
 
     def negative_process_module(self):
         """进程内唯一的 `negative_process` 模块（夹具与 #166 探针用的就是这一个）。"""
