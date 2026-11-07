@@ -11,11 +11,11 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_process import mutating_sources, run_owned, target_environment
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, target_environment, wait_for_slot)
 from negative_selection import select
 from negative_source import assertion_message_present
 
@@ -141,13 +141,11 @@ with mutating_sources(repo, [gateway, submit, tests, submit_tests, session]) as 
     try:
         for control in selected:
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
-            # 180 s：本机首次碰统一闸要等冷 du（实测 31.8–42.2 s），之后走名额缓存。
-            slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
-            slot_deadline = time.monotonic() + 1800
-            while slots.returncode == 1:
-                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-                time.sleep(20)
-                slots = subprocess.run(['bash', str(repo / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
+            # #1908: the shared wait replaces the inline 300 s-sample /
+            # 1800 s-deadline loop. Same contract (bounded samples with one
+            # cold-bootstrap exemption), one shared budget above the
+            # single-sample cap instead of an equal-values dead end.
+            slots = wait_for_slot(repo / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             # 69 = no unified gate on this machine (CI has none): no shared quota.
             assert slots.returncode in (0, 69)
             modified = dict(original)

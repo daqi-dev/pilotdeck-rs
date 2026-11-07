@@ -15,7 +15,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 
 root = Path(__file__).resolve().parents[5]
@@ -178,7 +179,11 @@ with mutating_sources(root, [source, shared]) as snapshots:
             fromfile='config/settings.rs', tofile='config/settings.rs')))
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
-            path.write_text(changed)
+            # #1908: one rename, never a truncating in-place write. The shared
+            # publish helper (#1903) keeps a SIGKILL from leaving an empty or
+            # half-written source that the next preflight would read as "differs
+            # from HEAD" and refuse the whole tree.
+            write_source_atomic(root, path, changed.encode())
             test = tests[name]
             result = run_owned(['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
                                '-p', 'pilotdeck-gateway', '--test', 'settings',
@@ -199,7 +204,9 @@ with mutating_sources(root, [source, shared]) as snapshots:
                 raise RuntimeError(
                     f'{name}: compile/signal failure or surviving mutant is not evidence')
         finally:
-            path.write_bytes(original)
+            # #1908: same rule on the way back; the shared publish helper
+            # replaces a truncating write_bytes restore.
+            write_source_atomic(root, path, original)
             restored = hashlib.sha256(path.read_bytes()).hexdigest()
             if restored != before:
                 raise RuntimeError(

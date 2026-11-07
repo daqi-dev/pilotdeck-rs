@@ -197,7 +197,21 @@ EXPECTED = {
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
 all_cases = list(cases)
-if sys.argv[1:] == ['--list']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let extra arguments after a flag fall through to the main path,
+# which treated the flag as an output directory; an unknown `--flag` did the
+# same and ran the whole table green. Only a real OUT_DIR reaches the main
+# path now. The `--check-anchors` preflight below keeps its exact historical
+# shape on purpose: `anchor_selfcheck.py` recognizes the exiting preflight by
+# AST equality (SNAPSHOT_PREFLIGHT) and exempts its `originals` binding from
+# the one-declaration rule, so the branch body and its whole-argv test stay
+# verbatim. A `--check-anchors extra` call still cannot fall through: the mode
+# guard below rejects any `-*` first argument that reached it.
+USAGE = 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | --check-anchors'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--list':
+    if arguments:
+        raise SystemExit(f'--list takes no arguments: {arguments!r}\n{USAGE}')
     print('\n'.join(names))
     raise SystemExit(0)
 if sys.argv[1:] == ['--check-anchors']:
@@ -215,15 +229,24 @@ if sys.argv[1:] == ['--check-anchors']:
     print(f'{len(all_cases)} anchors: ok')
     raise SystemExit(0)
 
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | --check-anchors'
-selected = sys.argv[2:]
+# Explicit exits, not asserts: `python3 -O` strips asserts and a bare
+# IndexError traceback is not a usage diagnostic. Zero arguments and an
+# unknown `-*` first argument are both usage errors (non-zero exit); a known
+# mode that reached this point only did so with extra arguments.
+if mode is None:
+    raise SystemExit(USAGE)
+if mode == '--check-anchors':
+    raise SystemExit(f'--check-anchors takes no arguments: {arguments!r}\n{USAGE}')
+if mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+selected = arguments
 unknown = set(selected) - set(names)
 assert not unknown, f'unknown controls: {sorted(unknown)}'
 if selected:
     cases = [case for case in cases if case[0] in selected]
 assert cases, 'no controls selected'
 
-out = Path(sys.argv[1]).resolve()
+out = Path(mode).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 out.mkdir(parents=True, exist_ok=True)

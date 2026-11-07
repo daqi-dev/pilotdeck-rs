@@ -315,26 +315,42 @@ def check_anchors(texts):
     print(f'{len(cases)} anchors: ok')
 
 
-if sys.argv[1:] == ['--check']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let `--self-test extra` fall through to the main path, which
+# treated `--self-test` as an output directory; an unknown `--flag` did the
+# same and ran the whole table green. Every mode now takes an exact argument
+# list, and only a real OUT_DIR reaches the main path.
+USAGE = 'usage: negative.py OUT_DIR [NAME ...] | negative.py --check | negative.py --self-test'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--check':
+    if arguments:
+        raise SystemExit(f'--check takes no arguments: {arguments!r}\n{USAGE}')
     check_anchors({path: path.read_text() for _name, path, _b, _a, _t in cases})
     raise SystemExit(0)
-if sys.argv[1:] == ['--self-test']:
+if mode == '--self-test':
+    if arguments:
+        raise SystemExit(f'--self-test takes no arguments: {arguments!r}\n{USAGE}')
     self_test()
     raise SystemExit(0)
-
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --check | negative.py --self-test'
+# Explicit exits, not asserts: `python3 -O` strips asserts and a bare
+# IndexError traceback is not a usage diagnostic. Zero arguments and an
+# unknown `-*` first argument are both usage errors (non-zero exit).
+if mode is None:
+    raise SystemExit(USAGE)
+if mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
 names = [case[0] for case in cases]
 assert len(names) == len(set(names)), 'duplicate control name'
-selected = sys.argv[2:]
+selected = arguments
 unknown = set(selected) - set(names)
 assert not unknown, f'unknown controls: {sorted(unknown)}'
 if selected:
     cases = [case for case in cases if case[0] in selected]
 assert cases, 'no controls selected'
 
-out = Path(sys.argv[1]).resolve()
+out = Path(mode).resolve()
 out.mkdir(parents=True, exist_ok=False)
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target

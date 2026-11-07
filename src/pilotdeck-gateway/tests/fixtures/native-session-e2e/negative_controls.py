@@ -16,7 +16,8 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
+from negative_process import (mutating_sources, run_owned, wait_for_slot, tree_lock,
+                               write_source_atomic)
 from negative_process import target_environment
 
 session = root / 'scripts/gateway-parity/session_domain.py'
@@ -68,7 +69,7 @@ cases = [
     ('drop-unwitnessed-candidate', session, "            cell['cases'] = native['verdicts']", "            cell['cases'] = [] if all(row['status'] == 'NOT_RUN' for row in native['verdicts']) else native['verdicts']", 'test_unwitnessed_stimuli_are_not_executed'),
     ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
     ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
-    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    path.write_text(changed)", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    path.write_text(changed)", 'test_negative_lease_released_and_loud_on_cancellation'),
+    ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
@@ -280,8 +281,13 @@ def main():
                 # held only while the mutant is on disk (no-run preflight,
                 # bound test, restore). The restored control runs after the
                 # release, so other trees can use every between-case gap.
+                # #1908: one rename, never a truncating in-place write; the
+                # shared publish helper (#1903) keeps a SIGKILL mid-write from
+                # leaving a source the next preflight would refuse as "differs
+                # from HEAD". The table row `lease-enter-without-release`
+                # anchors the two lines below verbatim: keep them adjacent.
                 with mutating_sources(root, paths, baseline=baseline) as originals:
-                    path.write_text(changed)
+                    write_source_atomic(root, path, changed.encode())
                     try:
                         build = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                                            '-p', 'pilotdeck-gateway', '--test', 'native_session_e2e', '--no-run'],
@@ -294,7 +300,10 @@ def main():
                         reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                                   'INVALID': 'exit/test identity/assertion marker did not match'}[status]
                     finally:
-                        path.write_bytes(originals[path])
+                        # #1908: same rule on the way back; a truncating
+                        # write_bytes restore has the same SIGKILL window as
+                        # the mutation write above.
+                        write_source_atomic(root, path, originals[path])
             else:
                 status = classify(run(name + '-negative', test, name), test, messages[name])
                 reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',

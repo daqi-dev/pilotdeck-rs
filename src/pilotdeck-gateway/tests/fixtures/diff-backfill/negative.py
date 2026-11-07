@@ -3,11 +3,11 @@
 import argparse
 import hashlib
 from pathlib import Path
-import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 SRC = ROOT / 'src/pilotdeck-gateway/src'
@@ -60,10 +60,12 @@ def main():
             saved = snapshots[path]
             text = saved.decode()
             assert text.count(before) == 1, (label, 'mutation anchor')
-            slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], cwd=ROOT, capture_output=True, text=True, timeout=300)
-            # Exit 1 means no slot. Do not mutate or launch cargo while full.
+            # #1908: the shared wait replaces the single 300 s sample. Same
+            # contract (bounded samples with one cold-bootstrap exemption),
+            # one shared budget above the single-sample cap.
             # Exit 69 (EX_UNAVAILABLE) means there is no unified gate on this
             # machine (CI has none), so there is no shared quota to respect.
+            slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             assert slots.returncode in (0, 69), slots.stdout + slots.stderr
             try:
                 path.write_text(text.replace(before, after))

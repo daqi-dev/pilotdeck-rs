@@ -13,7 +13,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pending_reanchor as pending
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 from negative_suite import Case, classify, passed, invalidate_completed, publish_summary
 
 script = Path(__file__).resolve()
@@ -86,7 +87,8 @@ def main():
     results = []
 
     def run(label, full, compile_only=False):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=300)
+        # #1908: the wait budget must exceed the single-sample cap
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
         (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
         tail = ['--no-run', full] if compile_only else [full, '--', '--exact', '--include-ignored']
         result = run_owned(command + tail, cwd=root, env=env, timeout=900)
