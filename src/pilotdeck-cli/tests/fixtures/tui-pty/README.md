@@ -7,3 +7,5 @@
 `grapheme` 验证长文本末尾、组合字符和 emoji，交互中改变终端尺寸并上滚；布局单测另覆盖4096旧分块边界、逐delta的ZWJ/区域指示符、拆分代理对及分批推进。`budget` 分别等待真实abort请求和三秒内的可见提示；网络动作与终端重绘独立，不能用看到请求的瞬间断言提示已绘制，也不能假设Ratatui不会在单词间插入光标控制序列。
 
 2026-11-08 r12：18库测试通过（一个辅助子进程由父测试调用），组合130旧bin/6control单测通过，fmt/严格clippy通过；当前bin的16个真实PTY场景全部通过。`pilotdeck` SHA256 为 `653af4164ca4cb1eb763d0f485ecbf0e464b536f64d20069d07dfcb332a5a769`，1031个Rust/manifest/lock输入与本地零差异。r11保留为旧bin的证据，因rsync保留的源码mtime早于前一轮构建完成时间，实际bin未更新；r12刷新已同步输入mtime后重编并重跑，不覆盖旧失败。该标记只对应当轮候选，后续修改须重新绑定来源。
+
+工具交互增量：`tools-capture.py` / `tools-server.mjs`采真实TS原件；`tools-smoke.py` / `tools-server-rust.mjs`验证当前Rust bin。mbp2 tools-r3的22库测试与strict clippy通过；tools-r5实际PTY覆盖Tab/ShiftTab/展开/Esc、短输出、viewer首尾/长行/resize、1MiB+1普通文件拒绝及FIFO预览回退，正常退出0并恢复termios、关闭socket。当前bin SHA256 `5389b8887801e78b2319fbf6437b26e0b9f42afad4be9bd75eda7a7e671ddbce`；另7项预算/吞吐/Unicode/权限取消/切会话/背压/迟到abort回归通过。r4边界失败是观察器误要求包含空格的连续ANSI原字节，原始画面已有明确超限提示；r5只修观察器为本次新增输出的多个关键词，FIFO另要求出现次数增加，原失败保留。证据主仓 `_tmp/20261108-cli-tui/tools-r3-evidence/`、`tools-r5-evidence/`；来源指纹按后者核，不作为后续修改的自动验收。

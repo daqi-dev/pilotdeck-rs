@@ -148,8 +148,17 @@ impl ChatLayout {
                 .get("role")
                 .and_then(JsValue::as_string)
                 .map_or_else(String::new, |s| String::from_utf16_lossy(s.units()));
-            let units = message
-                .get("text")
+            let selected = if role == "tool"
+                && message.get("expanded").and_then(JsValue::as_bool) == Some(true)
+            {
+                match message.get("fullText") {
+                    Some(JsValue::Null | JsValue::Undefined) | None => message.get("text"),
+                    value => value,
+                }
+            } else {
+                message.get("text")
+            };
+            let units = selected
                 .and_then(JsValue::as_string)
                 .map_or(&[][..], JsString::units);
             if index < self.entries.len()
@@ -170,7 +179,11 @@ impl ChatLayout {
                 );
                 self.entries.push(Entry {
                     role: role.clone(),
-                    text: format!("{role}: "),
+                    text: if role.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{role}: ")
+                    },
                     units: 0,
                     last_unit: None,
                     starts: Vec::new(),
@@ -218,14 +231,32 @@ impl ChatLayout {
         while !self.sync_step(messages, width, budget)? {}
         Ok(())
     }
+    pub fn total_rows(&self) -> usize {
+        self.entries.iter().map(|entry| entry.starts.len()).sum()
+    }
+    pub fn scroll_for_message(&self, index: usize, height: usize) -> usize {
+        let before: usize = self
+            .entries
+            .iter()
+            .take(index)
+            .map(|entry| entry.starts.len())
+            .sum();
+        self.total_rows()
+            .saturating_sub(height)
+            .saturating_sub(before)
+    }
     pub fn render(&self, frame: &mut Frame<'_>, area: Rect, scroll: usize) {
+        let top = self
+            .total_rows()
+            .saturating_sub(area.height as usize)
+            .saturating_sub(scroll);
+        self.render_top(frame, area, top);
+    }
+    pub fn render_top(&self, frame: &mut Frame<'_>, area: Rect, top: usize) {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let total: usize = self.entries.iter().map(|entry| entry.starts.len()).sum();
-        let skip = total
-            .saturating_sub(area.height as usize)
-            .saturating_sub(scroll);
+        let skip = top.min(self.total_rows().saturating_sub(area.height as usize));
         let mut lines = Vec::with_capacity(area.height as usize);
         let mut ordinal = 0usize;
         for entry in &self.entries {

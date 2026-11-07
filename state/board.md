@@ -4765,3 +4765,7 @@ Weixin/wechat与菜单2已原生接通，all按Feishu→Weixin→WeCom顺序执�
 ### 2026-11-08 · 原生远端 TUI 基础交互（Codex/Terra，仅本机）
 
 Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限文件；修复迟到abort误伤下一轮、final-only挂起、终端背压及大文本排版饥饿，显示按字素连续硬换行且分批缓存计入8MiB。mbp2 r12刷新同步源码mtime后重新编译，1031个Rust/manifest/lock哈希与本地零差异；fmt/严格clippy、18库/130旧bin/6control单测通过，辅助子测试按父调用，两个既有ignored仍未代填；实际新bin16PTY全通过。r11因增量缓存仍执行旧bin的结果已作废为当前源码证据，原件与新哈希均保留主仓 `_tmp/20261108-cli-tui/`；serve当前bin实际EFBIG及TERM/INT原生流回归通过。Weixin与serve已本地整合；继续工具焦点/完整帮助/会话导航，Sol独立接只读binding与有界配置facade。所有新差异待人复核；本地fallback、native权限/history、完整D4/CLI与真实使用均未标完成，无GitHub写入、无本机Rust构建。
+
+### 2026-11-08 · TUI工具交互与上游整合（Codex，仅本机）
+
+工具焦点/展开、短输出和有界长行viewer已实现；独审修复异步读取串会话与Esc未清焦点，mbp2严格clippy、22库测试及实际工具PTY通过，另7项关键回归通过。1MiB+1文件明确拒绝、FIFO及时回退、resize与退出恢复已实测；原始失败和最终源码/bin绑定保留主仓 `_tmp/20261108-cli-tui/tools-r5-evidence/`。此前基础TUI还通过真实native Gateway/真实Rust sidecar/fake provider完整流与transcript、退出清理；分支已接origin/main=7605b17d5并通过受影响宿主/control回归，刚fetch的6c18d6fa8尚待整合。继续帮助设置页、绑定候选与SDK资源边界；本轮仍仅本机提交、Rust全mbp2，native权限/history/local fallback、完整CLI及真人实效均未标完成。

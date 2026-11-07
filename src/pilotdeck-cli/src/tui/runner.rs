@@ -18,7 +18,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     text::Line,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 use std::{
     io::{self, IsTerminal, Write},
@@ -210,6 +210,11 @@ enum Update {
     Failed(u64, String),
     AbortResult(Result<(), String>),
     Done(u64),
+    ToolOutput {
+        context: ToolReadContext,
+        result: Result<String, ()>,
+        name: String,
+    },
     NewSession(Result<String, String>),
     PermissionResult {
         generation: u64,
@@ -301,8 +306,12 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
     let mut sessions: Vec<JsValue> = Vec::new();
     let mut sidebar = false;
     let mut sidebar_index = 0usize;
-    let mut viewer: Option<String> = None;
+    let mut viewer: Option<JsValue> = None;
+    let mut viewer_layout = ChatLayout::default();
     let mut viewer_scroll = 0usize;
+    let mut focused_index: Option<usize> = None;
+    let mut focus_scroll_pending = false;
+    let mut tool_read_pending = false;
     let mut chat_scroll = 0usize;
     let mut chat_layout = ChatLayout::default();
     let mut generation = 0u64;
@@ -341,6 +350,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                     } else {
                         consumed_bytes += size;
                         chat_scroll = 0;
+                        if text(event.get("type")) == "tool_result_detail_available" {chat_layout.clear();}
                         state::apply(&mut state, &event).map_err(|e| e.to_string())?;
                     }
                 }
@@ -373,11 +383,21 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                         let closing=client.clone();tokio::spawn(async move {let _=closing.close().await;});
                     }
                 }
+                Update::ToolOutput { context, result, name } => {
+                    tool_read_pending=false;
+                    if !context.matches(&session, generation) { continue; }
+                    match result {
+                        Err(())=>state.messages.push(message("error","Tool output exceeds the 1 MiB viewing limit.")),
+                        Ok(_) if state.is_running || !state.pending_permissions.is_empty() => state.messages.push(message("error","Tool output is unavailable while a turn or permission is active.")),
+                        Ok(content)=>if let Some(value)=open_tool_output(&mut terminal,&content,&name)? {viewer=Some(value);viewer_layout.clear();chat_layout.clear();viewer_scroll=0;},
+                    }
+                }
                 Update::NewSession(result) => {
                     new_pending = false;
                     match result {
                         Ok(value) if !value.is_empty() => {
                             session = value.clone();
+                            focused_index = None;
                             state.messages =
                                 vec![message("system", &format!("New session: {value}"))];
                             consumed_bytes = 0; chat_layout.clear();
@@ -426,6 +446,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                     new_pending = false;
                     sidebar = false;
                     session = key;
+                    focused_index=None;
                     state.messages = messages;
                     consumed_bytes = 0; chat_layout.clear();
                 }
@@ -458,7 +479,10 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             }
         }
         // Count all retained application data, including command output and RPC history.
-        if retained_bytes(&state, &sessions, viewer.as_deref(), &input).saturating_add(chat_layout.bytes()) > 8 * 1024 * 1024
+        if viewer.is_some() && retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()) > 8 * 1024 * 1024 {
+            viewer=None;viewer_layout.clear();state.messages.push(message("error","Tool output exceeds the TUI state limit."));dirty=true;
+        }
+        if retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()) > 8 * 1024 * 1024
             || state.messages.len() > 4096
         {
             if state.is_running || !state.pending_permissions.is_empty() {
@@ -480,7 +504,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             chat_layout.clear();
             sessions.clear();
             sidebar = false;
-            viewer = None;
+            viewer = None;viewer_layout.clear();focused_index=None;
             while !state.messages.is_empty()
                 && (retained_bytes(&state, &sessions, None, &input) > 8 * 1024 * 1024 - 1024
                     || state.messages.len() >= 4096)
@@ -490,9 +514,17 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             state.messages.push(message("error","TUI state limit reached; newest content was removed and any active turn interrupted."));
             consumed_bytes = retained_bytes(&state, &sessions, None, &input);
         }
+        if focused_index.is_some_and(|index| index >= state.messages.len()) { focused_index = None; }
         if dirty {
             let mut layout_ready=true;
-            if viewer.is_none() && !sidebar && !help {
+            if let Some(content)=viewer.as_ref() {
+                let width=terminal.size().map_err(|e|e.to_string())?.width;
+                let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,viewer.as_ref(),&input)).saturating_sub(chat_layout.bytes());
+                match viewer_layout.sync_step(std::slice::from_ref(content),width,budget) {
+                    Ok(ready)=>layout_ready=ready,
+                    Err(_)=>{viewer=None;viewer_layout.clear();state.messages.push(message("error","Tool output exceeds the TUI state limit."));layout_ready=false;dirty=true;}
+                }
+            } else if !sidebar && !help {
                 let width=terminal.size().map_err(|e|e.to_string())?.width;
                 let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,None,&input));
                 let result=chat_layout.sync_step(&state.messages,width,budget);
@@ -510,6 +542,11 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                     consumed_bytes=retained_bytes(&state,&sessions,None,&input);chat_scroll=0;dirty=true;
                 }
                 layout_ready=result.unwrap_or(false);
+                if layout_ready && focus_scroll_pending {
+                    let height=terminal.size().map_err(|e|e.to_string())?.height.min(18).saturating_sub(9) as usize;
+                    if let Some(index)=focused_index {chat_scroll=chat_layout.scroll_for_message(index,height);}
+                    focus_scroll_pending=false;
+                }
             }
             if layout_ready {
             terminal.backend_mut().writer_mut().begin_frame();
@@ -517,16 +554,17 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             let drawn=terminal.draw(|frame| {
             let areas = Layout::vertical([Constraint::Length(3),Constraint::Min(2),Constraint::Length(if state.pending_permissions.is_empty(){3}else{5}),Constraint::Length(3)]).split(frame.area());
             frame.render_widget(Paragraph::new(format!("PilotDeck ↗  v0.1.0\nPilotDeck · {} · {} · server {}",text(Some(&state.mode)), project,url)).block(Block::default().borders(Borders::BOTTOM)),areas[0]);
-            if viewer.is_none() && !sidebar && !help { chat_layout.render(frame, areas[1], chat_scroll); }
+            if viewer.is_some() { viewer_layout.render_top(frame, areas[1], viewer_scroll); }
+            else if !sidebar && !help { chat_layout.render(frame, areas[1], chat_scroll); }
             else {
-                let mut lines: Vec<Line> = if let Some(content) = &viewer { content.lines().skip(viewer_scroll).map(|line| Line::raw(line.to_owned())).collect() } else if sidebar {
+                let mut lines: Vec<Line> = if sidebar {
                     sessions.iter().enumerate().map(|(i,s)| Line::raw(format!("{} {}  {}", if i==sidebar_index {">"} else {" "},session_key(s),text(s.get("summary"))))).collect()
                 } else { Vec::new() };
                 if help { lines.push(Line::raw("/new /mode /permissions /help /exit  |  Ctrl-C exits, Esc aborts")); }
                 let visible = areas[1].height as usize; if lines.len() > visible {lines.truncate(visible);}
                 frame.render_widget(Paragraph::new(lines).wrap(Wrap {trim:false}),areas[1]);
             }
-            let status = if let Some(p) = state.pending_permissions.first() { let detail=permission_preview(p); let suffix=if detail.is_empty(){String::new()}else{format!(" — {detail}")}; let pending=if state.pending_permissions.len()>1{format!(" ({} pending)",state.pending_permissions.len())}else{String::new()};format!("Permission required{pending}: {}{suffix}\n[y] Allow once  [a] Allow + remember  [n] Deny  [Esc] Abort",text(p.get("toolName"))) } else if connection_uncertain { "Abort outcome unknown; reconnect required.".into() } else if abort_inflight { "Waiting for abort confirmation…".into() } else if state.is_running { "thinking…".into() } else { String::new() };
+            let status = if let Some(p) = state.pending_permissions.first() { let detail=permission_preview(p); let suffix=if detail.is_empty(){String::new()}else{format!(" — {detail}")}; let pending=if state.pending_permissions.len()>1{format!(" ({} pending)",state.pending_permissions.len())}else{String::new()};format!("Permission required{pending}: {}{suffix}\n[y] Allow once  [a] Allow + remember  [n] Deny  [Esc] Abort",text(p.get("toolName"))) } else if connection_uncertain { "Abort outcome unknown; reconnect required.".into() } else if abort_inflight { "Waiting for abort confirmation…".into() } else if state.is_running { "thinking…".into() } else if let Some(index)=focused_index {format!("Focused tool {}: {}  (Enter expands)",index+1,text(state.messages.get(index).and_then(|m|m.get("toolName"))))} else { String::new() };
             frame.render_widget(Paragraph::new(status).block(Block::default().borders(Borders::TOP)),areas[2]);
             frame.render_widget(Paragraph::new(if input.is_empty(){"Ask PilotDeck..."}else{&input}).block(Block::default().borders(Borders::TOP)),areas[3]);
             let cursor = if areas[3].width>0 && areas[3].height>1 {
@@ -549,13 +587,17 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     dirty = true;
                     if viewer.is_some() {
+                        let page=terminal.size().map_err(|e|e.to_string())?.height.min(18).saturating_sub(9).max(1) as usize;
+                        let last=viewer_layout.total_rows().saturating_sub(page);
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('q') => viewer = None,
-                            KeyCode::Up => viewer_scroll = viewer_scroll.saturating_sub(1),
-                            KeyCode::Down => viewer_scroll = viewer_scroll.saturating_add(1),
-                            KeyCode::PageUp => viewer_scroll = viewer_scroll.saturating_sub(10),
-                            KeyCode::PageDown => viewer_scroll = viewer_scroll.saturating_add(10),
-                            _ => {}
+                            KeyCode::Esc | KeyCode::Char('q') => {viewer=None;viewer_layout.clear();chat_layout.clear();},
+                            KeyCode::Up | KeyCode::Char('k') => viewer_scroll=viewer_scroll.saturating_sub(1),
+                            KeyCode::Down | KeyCode::Char('j') => viewer_scroll=viewer_scroll.saturating_add(1).min(last),
+                            KeyCode::PageUp => viewer_scroll=viewer_scroll.saturating_sub(page),
+                            KeyCode::PageDown => viewer_scroll=viewer_scroll.saturating_add(page).min(last),
+                            KeyCode::Char('g')=>viewer_scroll=0,
+                            KeyCode::Char('G')=>viewer_scroll=last,
+                            _ => {},
                         }
                         continue;
                     }
@@ -582,7 +624,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                 if input.is_empty()
                                     && !sessions.is_empty()
                                     && !state.is_running
-                                    && !new_pending && !abort_inflight && !connection_uncertain =>
+                                    && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending =>
                             {
                                 let target = &sessions[sidebar_index];
                                 let target_key = session_key(target);
@@ -722,6 +764,17 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                             KeyCode::PageUp => chat_scroll = chat_scroll.saturating_add(10),
                             KeyCode::PageDown => chat_scroll = chat_scroll.saturating_sub(10),
                             KeyCode::Esc if help => help = false,
+                            KeyCode::Esc => { focused_index = None; focus_scroll_pending = false; chat_scroll = 0; },
+                            KeyCode::Tab | KeyCode::BackTab if input.is_empty() => {
+                                let indices:Vec<usize>=state.messages.iter().enumerate().filter_map(|(i,m)|(text(m.get("role"))=="tool").then_some(i)).collect();
+                                if !indices.is_empty() {
+                                    let backwards=key.code==KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+                                    focused_index=Some(match focused_index.and_then(|current|indices.iter().position(|i|*i==current)) {
+                                        None=>if backwards {*indices.last().unwrap()} else {indices[0]},
+                                        Some(pos)=>if backwards {indices[(pos+indices.len()-1)%indices.len()]} else {indices[(pos+1)%indices.len()]},
+                                    });focus_scroll_pending=true;
+                                }
+                            }
                             KeyCode::Char('?') if input.is_empty() => help = !help,
                             KeyCode::Char(c)
                                 if !key
@@ -730,7 +783,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                             {
                                 if input.len() + c.len_utf8() <= 65536 {
                                     input.insert(input_cursor, c);
-                                    input_cursor += c.len_utf8();
+                                    input_cursor += c.len_utf8();focused_index=None;
                                 } else {
                                     input_overflow = true;
                                     if !state.messages.last().is_some_and(|m| text(m.get("text")) == "Input limit reached.") {
@@ -744,7 +797,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                     .next_back()
                                     .map_or(0, |(i, _)| i);
                                 input.replace_range(previous..input_cursor, "");
-                                input_cursor = previous;
+                                input_cursor = previous;focused_index=None;
                             }
                             KeyCode::Left if input_cursor > 0 => {
                                 input_cursor = input[..input_cursor]
@@ -761,7 +814,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                 input_cursor = 0;
                                 input_overflow = false;
                             }
-                            KeyCode::Enter if !state.is_running && !new_pending && !abort_inflight && !connection_uncertain => {
+                            KeyCode::Enter if !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending => {
                                 if input_overflow {
                                     input.clear();
                                     input_cursor = 0;
@@ -776,6 +829,14 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                 input.clear();
                                 input_cursor = 0;
                                 if prompt.is_empty() {
+                                    if let Some(index)=focused_index {
+                                        if let Some(JsValue::Object(tool))=state.messages.get_mut(index) {
+                                            let expanded=tool.get("expanded").and_then(JsValue::as_bool).unwrap_or(false);
+                                            tool.insert("expanded".into(),JsValue::Bool(!expanded));chat_layout.clear();focus_scroll_pending=true;
+                                        }
+                                    } else if let Some(tool)=state.messages.iter().rev().find(|m| text(m.get("role"))=="tool" && (m.get("lineCount").and_then(JsValue::as_number).is_some_and(|n|n>4.0) || !text(m.get("resultPath")).is_empty())) {
+                                        tool_read_pending=true;spawn_tool_read(tool,updates.clone(), ToolReadContext::new(&session, generation));
+                                    }
                                     continue;
                                 }
                                 if let Some(command) = commands::parse(&prompt) {
@@ -797,7 +858,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                         Command::Exit => exit = true,
                                         Command::Help => help = !help,
                                         Command::Clear => {
-                                            state.messages.clear();
+                                            state.messages.clear();focused_index=None;
                                             consumed_bytes = 0; chat_layout.clear();
                                         }
                                         Command::Mode(mode) => {
@@ -904,8 +965,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                                     .and_then(|n| tools.get(n))
                                                     .copied()
                                                     .unwrap_or(tools[tools.len() - 1]);
-                                                viewer_scroll = 0;
-                                                viewer = Some(tool_output(target));
+                                                tool_read_pending=true;spawn_tool_read(target,updates.clone(), ToolReadContext::new(&session, generation));
                                             }
                                         }
                                         Command::Permissions(action) => {
@@ -1307,48 +1367,132 @@ fn switch_session(
         let _ = updates.send(Update::Switched { key, messages }).await;
     });
 }
-fn tool_output(value: &JsValue) -> String {
-    use std::{io::Read, os::unix::fs::OpenOptionsExt};
-    let fallback = {
-        let full = text(value.get("fullText"));
-        if full.is_empty() {
-            text(value.get("text"))
-        } else {
-            full
+#[derive(Debug)]
+struct ToolReadContext {
+    session: String,
+    generation: u64,
+}
+impl ToolReadContext {
+    fn new(session: &str, generation: u64) -> Self {
+        Self {
+            session: session.to_owned(),
+            generation,
         }
+    }
+    fn matches(&self, session: &str, generation: u64) -> bool {
+        self.session == session && self.generation == generation
+    }
+}
+
+struct ToolRead {
+    name: String,
+    path: String,
+    fallback: Option<String>,
+}
+
+fn tool_read_input(value: &JsValue) -> ToolRead {
+    let bounded = |value: Option<&JsValue>, limit| match value {
+        Some(JsValue::String(s)) if s.units().len() <= limit => {
+            let value = String::from_utf16_lossy(s.units());
+            (value.len() <= limit).then_some(value)
+        }
+        _ => None,
     };
-    let path = text(value.get("resultPath"));
-    if path.is_empty() {
-        return fallback;
+    let fallback = match value.get("fullText") {
+        Some(JsValue::String(_)) => bounded(value.get("fullText"), 1024 * 1024),
+        _ => bounded(value.get("text"), 1024 * 1024)
+            .or_else(|| (!matches!(value.get("text"), Some(JsValue::String(_)))).then(String::new)),
+    };
+    ToolRead {
+        name: bounded(value.get("toolName"), 4096).unwrap_or_default(),
+        path: bounded(value.get("resultPath"), 4096).unwrap_or_default(),
+        fallback,
     }
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path);
-    if let Ok(file) = file
-        && file.metadata().is_ok_and(|m| m.is_file())
-    {
-        let mut bytes = Vec::new();
-        if file.take(1024 * 1024 + 1).read_to_end(&mut bytes).is_ok() && bytes.len() <= 1024 * 1024
+}
+
+fn tool_output(input: &ToolRead) -> Result<String, ()> {
+    use std::{io::Read, os::unix::fs::OpenOptionsExt};
+    if !input.path.is_empty() {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&input.path);
+        if let Ok(file) = file
+            && file.metadata().is_ok_and(|m| m.is_file())
         {
-            return String::from_utf8_lossy(&bytes).into_owned();
+            let mut bytes = Vec::new();
+            if file.take(1024 * 1024 + 1).read_to_end(&mut bytes).is_ok() {
+                if bytes.len() > 1024 * 1024 {
+                    return Err(());
+                }
+                let content = String::from_utf8_lossy(&bytes).into_owned();
+                return if content.len() <= 1024 * 1024 {
+                    Ok(content)
+                } else {
+                    Err(())
+                };
+            }
         }
     }
-    fallback
+    input.fallback.clone().ok_or(())
+}
+fn spawn_tool_read(tool: &JsValue, updates: mpsc::Sender<Update>, context: ToolReadContext) {
+    let input = tool_read_input(tool);
+    std::thread::spawn(move || {
+        let result = tool_output(&input);
+        let _ = updates.blocking_send(Update::ToolOutput {
+            context,
+            result,
+            name: input.name,
+        });
+    });
+}
+fn open_tool_output(
+    terminal: &mut Terminal<CrosstermBackend<DeadlineWriter>>,
+    content: &str,
+    name: &str,
+) -> Result<Option<JsValue>, String> {
+    let lines = content.split('\n').count();
+    let name = if name.is_empty() { "tool" } else { name };
+    let formatted = format!("\n--- {name} output ---\n{content}\n---\n");
+    if lines < 50 && content.len() <= 65536 {
+        let width = terminal.size().map_err(|e| e.to_string())?.width;
+        let height = Paragraph::new(formatted.as_str())
+            .wrap(Wrap { trim: false })
+            .line_count(width);
+        if height <= 256 && height.saturating_mul(width as usize) <= 200_000 {
+            terminal.backend_mut().writer_mut().begin_frame();
+            terminal
+                .insert_before(height as u16, |buffer| {
+                    Paragraph::new(formatted.as_str())
+                        .wrap(Wrap { trim: false })
+                        .render(buffer.area, buffer)
+                })
+                .map_err(|e| e.to_string())?;
+            return Ok(None);
+        }
+    }
+    Ok(Some(message("", content)))
 }
 
 fn js_space(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')
 }
 
-fn retained_bytes(state: &State, sessions: &[JsValue], viewer: Option<&str>, input: &str) -> usize {
-    let mut total = input.len().saturating_add(viewer.map_or(0, str::len));
+fn retained_bytes(
+    state: &State,
+    sessions: &[JsValue],
+    viewer: Option<&JsValue>,
+    input: &str,
+) -> usize {
+    let mut total = input.len();
     let mut stack: Vec<&JsValue> = state
         .messages
         .iter()
         .chain(&state.activity)
         .chain(&state.pending_permissions)
         .chain(sessions)
+        .chain(viewer)
         .collect();
     while let Some(value) = stack.pop() {
         total = total.saturating_add(32);
@@ -1462,6 +1606,87 @@ mod tests {
             ("payload", object(vec![("command", "git status".into())])),
         ]);
         assert_eq!(permission_preview(&p), "git status");
+    }
+    #[tokio::test]
+    async fn delayed_tool_output_is_rejected_after_switch() {
+        let (gate, wait) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = mpsc::channel(1);
+        let worker = tokio::spawn(async move {
+            wait.await.unwrap();
+            tx.send(Update::ToolOutput {
+                context: ToolReadContext::new("old-session", 7),
+                result: Ok("old contents".into()),
+                name: "tool".into(),
+            })
+            .await
+            .unwrap();
+        });
+        // The response is held until after the selected session changes.
+        let current_session = "new-session";
+        gate.send(()).unwrap();
+        let Update::ToolOutput { context, .. } = rx.recv().await.unwrap() else {
+            panic!("unexpected update")
+        };
+        assert!(!context.matches(current_session, 7));
+        worker.await.unwrap();
+    }
+    #[test]
+    fn stale_tool_output_is_rejected_after_session_or_turn_change() {
+        let context = ToolReadContext::new("first", 7);
+        assert!(context.matches("first", 7));
+        assert!(!context.matches("second", 7));
+        assert!(!context.matches("first", 8));
+    }
+    #[test]
+    fn tool_output_is_bounded_and_preserves_empty_full_text() {
+        let value = object(vec![("text", "preview".into()), ("fullText", "".into())]);
+        assert_eq!(tool_output(&tool_read_input(&value)).unwrap(), "");
+        let large_text = "x".repeat(1024 * 1024 + 1);
+        let large = object(vec![("fullText", large_text.as_str().into())]);
+        assert!(tool_output(&tool_read_input(&large)).is_err());
+        let fallback = object(vec![
+            ("resultPath", "/no/such/tool-output".into()),
+            ("text", "preview".into()),
+        ]);
+        assert_eq!(tool_output(&tool_read_input(&fallback)).unwrap(), "preview");
+    }
+    #[test]
+    fn expanded_tool_changes_rendered_text_and_viewer_wraps_long_lines() {
+        use ratatui::backend::TestBackend;
+        let tool = object(vec![
+            ("role", "tool".into()),
+            ("text", "preview".into()),
+            ("fullText", "expanded".into()),
+            ("expanded", JsValue::Bool(true)),
+        ]);
+        let mut layout = ChatLayout::default();
+        layout.sync(&[tool], 12, 8 * 1024 * 1024).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(12, 3)).unwrap();
+        terminal
+            .draw(|f| layout.render_top(f, f.area(), 0))
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(screen.contains("expanded"), "{screen}");
+        let viewer = message("", &format!("{}END", "x".repeat(30)));
+        layout.clear();
+        layout.sync(&[viewer], 12, 8 * 1024 * 1024).unwrap();
+        terminal
+            .draw(|f| layout.render_top(f, f.area(), 0))
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(screen.contains("END"), "{screen}");
     }
     #[test]
     fn empty_session_key_does_not_fall_back() {
