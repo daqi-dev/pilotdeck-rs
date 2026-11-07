@@ -4897,6 +4897,97 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 14 (codex r10 P0-1..P0-4): which binding a use reads
+    # is a flow question -- a branch, a loop back edge, a column on the same
+    # line, and a class-body block each decide it.
+    ('calibrate-for-target-conditional-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _cw\n"
+      "    if _flag:\n"
+      "        from builtins import print as _cw\n"
+      "    _cw(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-loop-back-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _lw\n"
+      "    for _x in ():\n"
+      "        _lw(md, 'common', object())\n"
+      "        from builtins import setattr as _lw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-same-line-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _sw;"
+      " _sw(md, 'common', object());"
+      " from builtins import print as _sw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-nested-copy-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    def _g():\n"
+      "        if True:\n"
+      "            _f = _h\n"
+      "        _f('common', object())\n"
+      "    _g()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-block-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        if True:\n"
+      "            _f = _h\n"
+      "        _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -5962,6 +6053,46 @@ def calibrate_for_target_nested_class_method(rows):
         'passed=False')
 
 
+def calibrate_for_target_conditional_rebind(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-conditional-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-conditional-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_loop_back_edge(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-loop-back-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-loop-back-edge flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_same_line_rebind(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-same-line-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-same-line-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_block_alias(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-class-block-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-block-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_nested_copy_alias(rows):
+    """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-copy-alias flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -6756,6 +6887,16 @@ JUDGES = {
         'aggregation-audit', calibrate_for_target_class_body_copy_alias, False, ()),
     'calibrate-for-target-nested-class-method': (
         'aggregation-audit', calibrate_for_target_nested_class_method, False, ()),
+    'calibrate-for-target-conditional-rebind': (
+        'aggregation-audit', calibrate_for_target_conditional_rebind, False, ()),
+    'calibrate-for-target-loop-back-edge': (
+        'aggregation-audit', calibrate_for_target_loop_back_edge, False, ()),
+    'calibrate-for-target-same-line-rebind': (
+        'aggregation-audit', calibrate_for_target_same_line_rebind, False, ()),
+    'calibrate-for-target-class-block-alias': (
+        'aggregation-audit', calibrate_for_target_class_block_alias, False, ()),
+    'calibrate-for-target-nested-copy-alias': (
+        'aggregation-audit', calibrate_for_target_nested_copy_alias, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
