@@ -139,3 +139,12 @@ mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` �
 `#293` 中投影相关的 `createdAt` 缺失排序、`objectKey` 不校验（实测 TS 同样不校验
 `../` 与绝对路径）、Node/locale 记录、删除归属与零场景断言在此覆盖；并发 capture、
 重复 JSON/quoted 实现、`scripts/parity/round.py` 的 env 隔离（冻结件）不在本 PR。
+
+## 负控表自身的地基（#1456 r4 补）
+
+`negative_controls.py` 的表共 18 条裁决（16 条源码变异 + 2 条数据变异）。此前删掉
+一行、或把某个数据变异的分支整段删掉，其余行全 KILLED 时仍会 `n/n KILLED` 退 0
+（分母静默缩水）。现补两条：① `EXPECTED_NAMES` 与 `mutations` 逐项同序，导入期用
+共享 `negative_selection.registered` 核对，名册漂移 → exit 2 且**不留证据目录**
+（拒跑全部前移到 `out.mkdir` 之前）；② 跑完按选中范围核对
+「实际裁决名册 == 期望名册」，缺一行即 exit 1，不再可能把缩水的分母报成功。
