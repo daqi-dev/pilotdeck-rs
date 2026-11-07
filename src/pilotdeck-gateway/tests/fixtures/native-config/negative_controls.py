@@ -94,7 +94,9 @@ mutations = [
      'if !mode_ok && false {',
      CFG + 'set_permission_mode_applies_and_validates',
      # #2065: the panic rides a literal `expect_err`, so the payload keeps the
-     # source's own `{label}` -- only the text before it is matchable.
+     # source's `{label}` verbatim. The prefix stops before it on purpose: it
+     # matches both today's un-interpolated payload and the interpolated text
+     # #1864 would produce, so the anchor survives either decision there.
      '#1457 set_permission_mode rejects '),
     ('mode-whitelist-narrowed', CONFIG,
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| m.equals_str(allowed))',
@@ -284,14 +286,55 @@ mutations = [
 # that rides one can only be matched by text the source holds verbatim -- the
 # `{label}` stays literal in the payload. The `format!`-backed
 # `negative_assert!` / `negative_assert_eq!` macros are the opposite: their
-# anchors legitimately expand `{...}` and do not appear in the source at all.
-# Each entry pairs the mutated source with an anchor that MUST be a verbatim
-# substring of it, and must still prefix some row's assertion (so renaming the
-# row cannot leave a stale guard behind). `classify` stays untouched: this only
-# refuses a run whose literal anchor could never match.
+# anchors legitimately expand `{...}` and appear in the source only as the
+# template. `classify` stays untouched; this refuses a run whose literal anchor
+# could never match.
+#
+# The table pins every anchor that is verbatim source text today (33 of the 40
+# rows; the other seven ride a `{...}` template). Pinning is the point: when a
+# message is reworded, `--check` fails here instead of surfacing as a false
+# INVALID hours into a host run. `check_literal_anchors` also refuses a row whose
+# anchor is verbatim source text but was left unpinned, so a new row cannot skip
+# registration. Anchors that must stay *prefixes* of a longer source literal are
+# stored as that prefix -- see the `permission-mode-gate-removed` row. A pin is
+# bound only to a row asserting it **exactly**, so reverting that row to a
+# longer, invented suffix (the #2065 shape) fails as `unbound to any row`
+# instead of passing on a substring.
 LITERAL_ANCHORS = [
+    (CONFIG, '#1457 session_model_set accepts the fixture selection'),
+    (CONFIG, '#1457 session_model_clear succeeds'),
+    (CONFIG, '#1864 set_permission_mode applies the fixture mode'),
+    (CONFIG, '#1864 set_session_thinking stores the mode object'),
+    (CONFIG, '#1457 output_styles_list without a plugin'),
+    (CONFIG, '#1864 set_output_style applies the probe style'),
+    (CONFIG, '#1457 seed_read_state with the exact mtime'),
     (CONFIG, '#1457 set_permission_mode rejects '),
+    (CONFIG, '#1457 seed_read_state returns the stale outcome'),
+    (CONFIG, '#1457 clear entry nulls the model selection'),
+    (CONFIG, '#1457 transcript sequences strictly increase'),
+    (CONFIG, '#1457 the transcript still loads'),
+    (CONFIG, '#1457 exact mtime applies'),
+    (CONFIG, '#1457 busy message'),
+    (CONFIG, '#1457 clear busy message'),
+    (CONFIG, '#1457 pm busy message'),
+    (CONFIG, '#1457 th busy message'),
+    (CONFIG, '#1457 style busy message'),
+    (CONFIG, '#1457 seed busy message'),
+    (CONFIG, '#1864 the plan selection is stored for the next run to read'),
+    (CONFIG, '#1864 the mode object is stored'),
+    (CONFIG, '#1864 the stored permission mode reaches the agent config'),
+    (CONFIG, '#1864 the stored thinking reaches the agent config'),
+    (CONFIG, '#1864 the style content joins the existing prompt'),
+    (CONFIG, '#1864 the list echoes the stored selection for the session'),
+    (SESSION_DIR, '#1457 the transcript still loads'),
+    (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
+    (SESSION_DIR, '#1455 resume_session rejects the blank key'),
+    (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
 ]
+
+# Where an assertion can live: the mutated sources plus the read-side files the
+# #1864 rows assert on, so a cross-file anchor is recognised as literal too.
+SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS)
 
 
 def _assertions(case):
@@ -299,13 +342,23 @@ def _assertions(case):
 
 
 def check_literal_anchors(cases):
+    texts = {path: path.read_text() for path in SOURCE_TEXTS}
     for path, anchor in LITERAL_ANCHORS:
-        if anchor not in path.read_text():
+        text = texts.get(path) or path.read_text()
+        if anchor not in text:
             raise SystemExit(f'#2065 literal anchor not in {path.name}: {anchor!r}')
-        if not any(anchor in assertion
-                   for case in cases if case.path == path
-                   for assertion in _assertions(case)):
+        if not any(anchor == assertion
+                   for case in cases for assertion in _assertions(case)):
             raise SystemExit(f'#2065 literal anchor unbound to any row: {anchor!r}')
+    pinned = {anchor for _, anchor in LITERAL_ANCHORS}
+    for case in cases:
+        for assertion in _assertions(case):
+            if assertion in pinned:
+                continue
+            where = [path.name for path, text in texts.items() if assertion in text]
+            if where:
+                raise SystemExit('#2065 unpinned literal anchor '
+                                 f'(verbatim in {where[0]}): {assertion!r}')
 
 
 def mutate(case, original):
