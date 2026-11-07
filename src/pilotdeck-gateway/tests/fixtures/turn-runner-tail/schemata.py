@@ -21,6 +21,11 @@ ARTIFACTS = SRC / 'runner_artifacts.rs'
 RUNNER = SRC / 'runner.rs'
 LIVE = SRC / 'live.rs'
 PROMPT = SRC / 'runner_prompt.rs'
+# #2228 DS r2 P1: tail-empty-blocks binds a test in runner_prompt_tests.rs,
+# which runner.rs assembles through runner_tests.rs (`#[path]` chain); the
+# binding inherits via `use super::*` from both parents.
+RUNNER_TESTS = SRC / 'runner_tests.rs'
+PROMPT_TESTS = SRC / 'runner_prompt_tests.rs'
 # The regeneration switch lives at the library-test call site: the shared
 # baseline module is compiled into integration-test crates as well, where the
 # library's switches do not exist.
@@ -113,6 +118,8 @@ GUARDED = [
     RUNNER,
     LIVE,
     PROMPT,
+    RUNNER_TESTS,
+    PROMPT_TESTS,
     TAIL_TESTS,
     BASELINE,
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
