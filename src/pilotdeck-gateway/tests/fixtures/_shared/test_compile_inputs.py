@@ -132,11 +132,18 @@ class Manifest(unittest.TestCase):
             with self.subTest(source=source):
                 self.refused(source, link=('specs/' + name, '/etc/hosts'))
 
-    def test_untracked_src_target_is_refused(self):
+    def test_untracked_src_target_is_carried(self):
+        # `src/` gets the same carry-along rule as the derived directories
+        # (#1570 r18), so a target the copy would carry is not refused here.
+        # Refusing was the old contract, back when only `git ls-files src` was
+        # copied; keeping it would stop every control in a tree with a pending
+        # data file the copy already carries (#1570 r19 codex P1).
         root = self.workspace('const X: &str = include_str!("data.json");')
         (root / 'src/data.json').write_text('{}', encoding='utf-8')
-        with self.assertRaises(RuntimeError):
-            control.compile_inputs()
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-src-target-'))
+        self.roots.append(destination)
+        control.source_copy(destination)
+        self.assertEqual((destination / 'src/data.json').read_text(encoding='utf-8'), '{}')
 
     def test_include_edge_carries_a_fragment_and_its_includes(self):
         self.assertEqual(
@@ -257,17 +264,27 @@ class Manifest(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(self.derived(source), ((), ()))
 
-    def test_untracked_include_and_path_targets_are_refused(self):
-        # A target outside the manifest cannot be copied: `git ls-files src`
-        # is what the copy follows, so an untracked `.inc` would compile here
-        # and be missing there.
+    def test_untracked_include_and_path_targets_are_carried(self):
+        # An untracked plain file under `src/` is part of the manifest now
+        # (the copy carries untracked `src/` files), so derivation follows it
+        # instead of refusing. It is a fragment, not data: whatever it holds
+        # becomes an input too.
         for source, extra in (('include!("gen/data.inc");', 'src/gen/data.inc'),
                               ('#[path = "gen/data.inc"]\nmod m;', 'src/gen/data.inc')):
             with self.subTest(source=source):
-                root = self.workspace(source, {extra: 'pub const Z: u8 = 1;\n'})
+                root = self.workspace(
+                    source, {extra: 'pub const Z: &str = include_str!("../../specs/x.json");\n'})
                 subprocess.check_call(['git', 'rm', '-q', '--cached', extra], cwd=root)
-                with self.assertRaises(RuntimeError):
-                    control.compile_inputs()
+                self.assertEqual(
+                    (tuple(map(str, control.compile_inputs()[0])),
+                     tuple(map(str, control.compile_inputs()[1]))), EXTERNAL)
+                destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-inc-'))
+                self.roots.append(destination)
+                control.source_copy(destination)
+                self.assertEqual((destination / extra).read_text(encoding='utf-8'),
+                                 'pub const Z: &str = include_str!("../../specs/x.json");\n')
+                self.assertEqual(
+                    (destination / 'specs/x.json').read_text(encoding='utf-8'), '{}')
 
     def test_root_level_input_is_a_file_not_a_directory(self):
         self.assertEqual(
@@ -383,16 +400,21 @@ class Manifest(unittest.TestCase):
         finally:
             control._copy_input = original
 
-    def test_an_untracked_external_input_is_refused_where_it_is_derived(self):
-        # `git ls-files` is the manifest the copy is built from, so a pending,
-        # never-`git add`ed file under an external directory is dropped between
-        # derivation and copy. Left alone it surfaced only as a misleading
-        # "missing from the copy" inside `verify_copy` (#1570 r11 sibling /
-        # concurrency). Refuse at the point that knows why.
+    def test_an_untracked_external_input_is_carried_by_name(self):
+        # An external input that is a plain untracked file is carried (`files`
+        # is copied by name, and the derived directory adds the rest), so
+        # derivation must not refuse it. What it must refuse is an input the
+        # copy would *not* carry: see the symlink and dotenv cases below
+        # (#1570 r19 codex P1 / sibling P2).
         root = self.workspace('const A: &str = include_str!("../specs/y.json");')
         (root / 'specs/y.json').write_text('{}', encoding='utf-8')
-        with self.assertRaisesRegex(RuntimeError, 'not tracked'):
-            control.compile_inputs()
+        directories, files = control.compile_inputs()
+        self.assertEqual((tuple(map(str, directories)), tuple(map(str, files))),
+                         (('specs',), ('specs/y.json',)))
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-external-'))
+        self.roots.append(destination)
+        control.source_copy(destination)
+        self.assertEqual((destination / 'specs/y.json').read_text(encoding='utf-8'), '{}')
 
     def test_a_glob_character_in_a_missing_name_is_not_a_sibling(self):
         # `git ls-files --error-unmatch -- specs/*.json` matches the tracked
@@ -753,6 +775,107 @@ class Manifest(unittest.TestCase):
         self.roots.append(destination)
         control.source_copy(destination)
         self.assertEqual((destination / 'specs/extra.json').read_text(encoding='utf-8'), '{}\n')
+
+    def test_a_case_variant_dotenv_file_is_refused(self):
+        # macOS volumes are case-insensitive: `.ENV.production` is the same
+        # file as `.env.production`, so a case-sensitive prefix test is not a
+        # guard at all (#1570 r19 codex P0).
+        root = self.workspace('mod new;\n')
+        (root / 'src' / 'new.rs').write_text('pub const N: u8 = 1;\n', encoding='utf-8')
+        (root / 'src' / '.ENV.production').write_text('TOKEN=1\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-case-dotenv-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'dotenv'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'src/.ENV.production').exists())
+
+    def test_a_dotenv_directory_component_is_refused(self):
+        # `.env*` is matched per path component: `specs/.env.production/` is a
+        # directory whose children are dotenv content, and a name test on
+        # `credentials` alone sees none of it (#1570 r19 codex P0).
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        (root / 'specs' / '.env.production').mkdir()
+        (root / 'specs' / '.env.production' / 'credentials').write_text(
+            'TOKEN=1\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-dotenv-dir-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'dotenv'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'specs/.env.production/credentials').exists())
+
+    def test_a_tracked_dotenv_input_is_refused(self):
+        # The untracked path is not the only one: `git add`ing the file makes
+        # it tracked, and the main loop is what refuses it then (#1570 r19
+        # sibling P2: the guard was in place with no case proving it).
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        (root / 'specs' / '.env.production').write_text('TOKEN=1\n', encoding='utf-8')
+        subprocess.check_call(['git', 'add', '-A'], cwd=root)
+        subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                               'commit', '-qm', 'dotenv'], cwd=root)
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-tracked-dotenv-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'dotenv'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'specs/.env.production').exists())
+
+    def test_a_tracked_hard_link_input_is_refused(self):
+        # Same shape as the untracked case, on the tracked path the main loop
+        # owns (#1570 r19 sibling P2).
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        (root / '.env.local').write_text('TOKEN=1\n', encoding='utf-8')
+        os.link(root / '.env.local', root / 'specs' / 'private.json')
+        subprocess.check_call(['git', 'add', 'specs/private.json'], cwd=root)
+        subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                               'commit', '-qm', 'hardlink'], cwd=root)
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-tracked-hardlink-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'hard link'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'specs/private.json').exists())
+
+    def test_a_license_symlink_is_refused(self):
+        # `LICENSE` / `rust-toolchain.toml` ride along by name, so they need
+        # the same link guard as the main loop -- and the link test has to come
+        # before "is it a file", or a link to a *directory* (`/etc`) is skipped
+        # as "missing" and the two loops answer the same shape differently
+        # (#1570 r19 sibling P2 / concurrency P3).
+        root = self.workspace('pub const A: u8 = 1;\n')
+        (root / 'LICENSE').unlink()
+        os.symlink('/etc', root / 'LICENSE')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-license-link-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'is a symlink'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'LICENSE').exists())
+
+    def test_a_parent_directory_symlink_is_refused(self):
+        # The entry itself can be a plain file while the *directory* is the
+        # link: `specs -> /tmp/elsewhere` keeps `specs/x.json` out of the
+        # repository even though the index still lists it, and no per-file
+        # check sees it. Only the escape test does (#1570 r19 boundary P2).
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-1570-parent-outside-'))
+        self.roots.append(outside)
+        (outside / 'x.json').write_text('{}\n', encoding='utf-8')
+        shutil.rmtree(root / 'specs')
+        os.symlink(outside, root / 'specs')
+        with self.assertRaisesRegex(RuntimeError, 'outside the repository'):
+            control.compile_inputs()
+
+    def test_an_untracked_source_may_read_another_untracked_file(self):
+        # Both halves of r19's P1 in one case: the untracked source is scanned
+        # *and* the untracked target it names is carried, with no
+        # "not tracked" refusal left in between.
+        root = self.workspace('mod new;\n')
+        (root / 'src' / 'new.rs').write_text(
+            'pub const N: &str = include_str!("data.txt");\n', encoding='utf-8')
+        (root / 'src' / 'data.txt').write_text('hello\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-both-'))
+        self.roots.append(destination)
+        control.source_copy(destination)
+        self.assertEqual((destination / 'src/data.txt').read_text(encoding='utf-8'), 'hello\n')
+        self.assertEqual((destination / 'src/new.rs').read_text(encoding='utf-8'),
+                         'pub const N: &str = include_str!("data.txt");\n')
 
     def test_no_control_brings_its_own_workspace_copy(self):
         # The recurrence mode of #1570 is a new control carrying its own
