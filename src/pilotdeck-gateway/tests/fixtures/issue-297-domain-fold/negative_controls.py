@@ -23,14 +23,23 @@ controls hold the four properties the plan registered for
   restore path (`DomainState::default()` instead of `fold_domain(entries)`),
   breaking the two-path agreement the #297 P2#3 differential test pins.
 
-Plan-scope exemption (r4, DS r3 sibling P2): the shared fold and the undo
-boundary each have a second site this table deliberately does not mutate —
-the recorder half of the restore (`Self::fold_domain(&entries)`,
-transcript_adapter.rs:698) and the validate-failure rollback (:1173). The
-differential positive `restore_paths_agree_on_the_shared_domain_fold`
-covers both halves end-to-end (it runs the same fold on both paths), and the
-plan pins exactly these four rows for this fixture; the unmutated twins are
-the adjacent `session-domain/adapter-negative.py` rows' scope. Test names
+Plan-scope exemption (r4, DS r3 sibling P2; corrected r5 after kill
+testing): the shared fold and the undo boundary each have a second site
+this table deliberately does not mutate — the recorder half of the restore
+(`Self::fold_domain(&entries)`, transcript_adapter.rs:698) and the
+validate-failure rollback (:1173). The r4 text claimed the differential
+positive `restore_paths_agree_on_the_shared_domain_fold` covers both
+halves; kill testing split that claim in two. Replacing the :698 fold with
+`DomainState::default()` fails the differential (KILLED — the recorder half
+is pinned), while deleting the :1173 rollback leaves it green (SURVIVED —
+a failed validate leaves no state divergence the current test surface
+observes, so no registerable row can pin it: a row that survives would
+break the all-KILLED contract this suite reports). Both raw outputs are in
+`_tmp/20261108-issue-297-r5-staging/kill-{698,1173}-evidence/` (PR #2230
+body); the validate-rollback coverage gap needs a test that observes
+post-failure state, which the plan's four rows do not include. The plan
+pins exactly these four rows for this fixture; the unmutated twins are the
+adjacent `session-domain/adapter-negative.py` rows' scope. Test names
 and #743 assertion anchors mirror `session-domain/schemata.py:21-23`; keep
 the two in sync when that fixture re-anchors.
 
