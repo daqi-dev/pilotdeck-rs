@@ -5235,6 +5235,36 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 20 (codex r19 P0-1): the handle is copied into another
+    # name *before* the source name is overwritten; resolving the hop at the
+    # final call read the later ``print`` and the status write vanished.
+    ('calibrate-status-alias-copied-before-overwrite', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _g = report.__setitem__\n"
+     "                    _f = _g\n"
+     "                    _g = print\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 20 (codex r19 P0-2): a container rebound to a fresh
+    # empty list and then filled in place still carries the handle to the copy.
+    ('calibrate-for-target-container-filled-after-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc = []\n"
+      "        _nc.append(getattr(md, '__setattr__'))\n"
+      "        _nc2 = list(_nc)\n"
+      "        for _h in _nc2:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6451,6 +6481,23 @@ def calibrate_for_target_nested_container_copy(rows):
         'flagged, passed=False')
 
 
+def calibrate_status_alias_copied_before_overwrite(rows):
+    """#1953 fix-r1 round 20 (codex r19 P0-1): the handle was copied into
+    another name before the source name was overwritten; the copy still
+    writes the status slot."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_container_filled_after_rebind(rows):
+    """#1953 fix-r1 round 20 (codex r19 P0-2): a container rebound to a fresh
+    empty list and then filled in place still hands the handle to the copy."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-container-filled-after-rebind '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7307,6 +7354,12 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-nested-container-copy': (
         'aggregation-audit', calibrate_for_target_nested_container_copy,
+        False, ()),
+    'calibrate-status-alias-copied-before-overwrite': (
+        'aggregation-audit', calibrate_status_alias_copied_before_overwrite,
+        False, ()),
+    'calibrate-for-target-container-filled-after-rebind': (
+        'aggregation-audit', calibrate_for_target_container_filled_after_rebind,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
