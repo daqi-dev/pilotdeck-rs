@@ -359,7 +359,7 @@ impl TurnGateway {
         Self::start_with_clock_and_cleanup(
             options,
             None,
-            teardown_budget.saturating_add(INITIALIZATION_TEARDOWN_SLACK),
+            declared_cleanup_budget(teardown_budget),
             build,
             Some(Box::pin(cleanup)),
         )
@@ -730,6 +730,15 @@ const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(5);
 /// Tests observe the derived bound with values short enough to time.
 #[cfg(test)]
 const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
+
+/// The deadline a host actually gets out of an embedding-declared teardown
+/// budget: the budget plus [`INITIALIZATION_TEARDOWN_SLACK`].
+/// [`TurnGateway::start_with_cleanup_budget`] calls it on the way in and the
+/// bound test calls it too, so the slack is pinned by the one function both
+/// read instead of being copied into the test by hand (#1960).
+fn declared_cleanup_budget(teardown_budget: Duration) -> Duration {
+    teardown_budget.saturating_add(INITIALIZATION_TEARDOWN_SLACK)
+}
 
 #[cfg(test)]
 #[path = "gateway_tests.rs"]
