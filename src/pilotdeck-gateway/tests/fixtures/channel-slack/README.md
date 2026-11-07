@@ -27,7 +27,8 @@ api-server-channel 18100-18182 之外见各 README。重放前若端口被占，
 
 35 个场景覆盖 29 行状态机矩阵（含两个矩阵外补充格）：start 全配置、缺
 botToken / 缺 appToken（mock 全程静默作证）、connections.open `ok:false`、
-auth.test `ok:false`（socket 已开，失败句柄 stop 关它）、普通消息回合、thread
+auth.test `ok:false`（socket 已开，失败句柄 stop 为 no-op，连接不关闭——TS 同形，
+`expected.ws` 只记 `open`）、普通消息回合、thread
 内消息、thread 根键、bot_id 过滤、bot_message subtype 过滤、
 message_changed/deleted 过滤、自发消息过滤、纯 @提及（静默）、@提及剥离、
 active 去重跳过、turn 结束后的重投递、`/new`、`/new <正文>`（不发确认）、
