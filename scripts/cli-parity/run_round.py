@@ -56,6 +56,7 @@ CleanupBlocked = _common.CleanupBlocked
 HEAD = _common.HEAD
 MOCK_PORT = _common.MOCK_PORT
 OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+PINNED_NODE = _common.PINNED_NODE
 ROOT = _common.ROOT
 SCRIPT = _common.SCRIPT
 SCENARIOS = _common.SCENARIOS
@@ -75,6 +76,8 @@ snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
 compare = _load('compare', _here / 'compare.py').compare
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
+protected_trees = _load('policy', _here / 'policy.py').protected_trees
+ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -94,6 +97,53 @@ def executable(path):
     if not path.is_file() or not os.access(path, os.X_OK):
         raise Blocked(f'not executable: {path}')
     return {'path': str(path), 'sha256': digest(path)}
+
+
+def node_identity(path):
+    """Print and assert the pinned interpreter build (2026-10-31 decision
+    card): version/ICU/libuv must match exactly, otherwise the round is
+    BLOCKED — never a silent fallback to another Node on this host."""
+    script = ('process.stdout.write(JSON.stringify({node: process.version,'
+              ' icu: process.versions.icu, uv: process.versions.uv}))')
+    result = subprocess.run([path, '-e', script], env={'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'},
+                            capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise Blocked('cannot identify Node runtime: ' + result.stderr.strip()[:300])
+    try:
+        identity = json.loads(result.stdout)
+    except ValueError:
+        raise Blocked('Node runtime identity is not JSON: ' + result.stdout[:300]) from None
+    if not isinstance(identity, dict) or {key: identity.get(key) for key in PINNED_NODE} != PINNED_NODE:
+        raise Blocked(f'Node runtime must be exactly {PINNED_NODE}, got: {identity}')
+    return dict(PINNED_NODE)
+
+
+def ts_read_roots(raw, output, baseline, rust_bin=None):
+    """Canonicalize operator-declared Node dependency roots and fail closed on
+    any root that overlaps the user's home, this checkout, the evidence tree,
+    the baseline or the Rust candidate: the TS sandbox only ever gains the
+    interpreter's own dependency trees (#122)."""
+    roots = []
+    for item in raw:
+        root = Path(item).resolve()
+        if not root.is_dir():
+            raise Blocked(f'--ts-read-dir is not a directory: {root}')
+        roots.append(root)
+    if len(set(roots)) != len(roots):
+        raise Blocked('duplicate --ts-read-dir after canonicalization')
+    # Root inside a protected tree leaks it; a root containing one swallows
+    # it. Home only rejects being covered or equaled: a narrow dependency dir
+    # like ~/opt/libuv-1.52.1/lib inside it is the legitimate use. The overlap
+    # test itself lives in policy.ts_read_root_overlap and compares by
+    # (st_dev, st_ino) identity, not by spelling: macOS case variants and the
+    # /System/Volumes/Data firmlink alias must not bypass the guard (#2231 r1).
+    # The scope is built by the shared policy.protected_trees — the offline
+    # validator replays it from the same single source (r2 P1).
+    protected = protected_trees(ROOT, output, baseline, rust_bin)
+    for root in roots:
+        if ts_read_root_overlap(root, protected, home=Path.home()) is not None:
+            raise Blocked(f'--ts-read-dir overlaps a protected tree: {root}')
+    return roots
 
 
 def directory_identity(folder, baseline):
@@ -629,6 +679,10 @@ def main():
     ap.add_argument('--rust-bin', type=Path, help='optional Rust CLI; no candidate is run by default')
     ap.add_argument('--rust-source', type=Path, help='required with --rust-bin: checkout used to build the binary')
     ap.add_argument('--node', default=shutil.which('node'), help='installed Node executable; no download')
+    ap.add_argument('--ts-read-dir', action='append', default=[], type=Path, metavar='DIR',
+                    help='repeatable read-only root for the installed Node\'s own dependencies '
+                         '(e.g. the libuv the pinned build links outside Homebrew); recorded in '
+                         'provenance and re-derived by compare, never granted to the Rust side')
     ap.add_argument('--output', type=Path, default=ROOT / '_tmp/20261017-d0/calibration')
     ap.add_argument('--timeout', type=float, default=15, help='per scenario seconds, (0, 60]')
     args = ap.parse_args()
@@ -650,9 +704,20 @@ def main():
         if not args.node:
             raise Blocked('Node executable not found')
         node = executable(args.node)
+        node_ident = node_identity(node['path'])
         identity = baseline_identity(baseline)
+        roots = ts_read_roots(args.ts_read_dir, output, baseline, args.rust_bin)
+        recorded_roots = [str(root) for root in roots]
+        # r3 P1/P2: the recorder's whole protected-tree scope is evidence —
+        # batch output root, checkout root and home — so the offline validator
+        # replays the recorder's decision from the record instead of the
+        # validating process's own environment. The output root is the
+        # recorded runtime's parent by this module's layout; compare.py
+        # anchors the two before replaying the scope.
+        recorder_scope = {'output': str(output), 'root': str(ROOT), 'home': str(Path.home())}
         provenance = {'side': 'ts', 'executable': node, 'sourceHead': HEAD, 'sourcePath': str(baseline),
-                      'baseline': identity, 'node': node, 'opensslConfig': OPENSSL_CONFIG}
+                      'baseline': identity, 'node': node, 'nodeIdentity': node_ident,
+                      'tsReadDirs': recorded_roots, 'opensslConfig': OPENSSL_CONFIG, **recorder_scope}
         runtime = output / 'runtime'
         expected_rust = rust_identity(args.rust_bin, args.rust_source) if args.rust_bin else None
         if expected_rust and (expected_rust['executable']['path'] == node['path']
@@ -660,11 +725,12 @@ def main():
                               or expected_rust['sourcePath'] == str(baseline)):
             raise Blocked('Rust candidate must not be the TS runtime or source')
         profile = output / 'ts.sb'
-        profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts'))
+        profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts', ts_read_dirs=roots))
         ts_mock_profile = None
         if mock_ids:
             ts_mock_profile = output / 'ts-mock.sb'
-            ts_mock_profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts', mock_gateway=True))
+            ts_mock_profile.write_text(sandbox_profile(runtime, baseline, node['path'], 'ts',
+                                                       ts_read_dirs=roots, mock_gateway=True))
         with parity_lock() as owner:
             # Stop before other runners may consider the lease expired. The
             # handler raises through capture's finally so owned groups are reaped.
@@ -712,7 +778,8 @@ def main():
                             rust_mock = rust_mock_isolation(output, runtime, rust_mock_profile, node['path'], mock_isolation)
                             runtime.rename(output / 'rust-mock-preflight-tree')
                         rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'stagedSkills': staged_skills, 'baseline': identity,
-                                           'node': node, 'opensslConfig': OPENSSL_CONFIG}
+                                           'node': node, 'nodeIdentity': node_ident, 'tsReadDirs': recorded_roots,
+                                           'opensslConfig': OPENSSL_CONFIG, **recorder_scope}
                         candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout,
                                               mock_profile=rust_mock_profile, mock_isolation=rust_mock)
                         summary['rustComparison'] = compare(first, candidate, expected_rust)

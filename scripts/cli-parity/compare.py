@@ -45,6 +45,7 @@ Blocked = _common.Blocked
 HEAD = _common.HEAD
 MOCK_PORT = _common.MOCK_PORT
 OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+PINNED_NODE = _common.PINNED_NODE
 SCRIPT = _common.SCRIPT
 SCENARIOS = _common.SCENARIOS
 TOKEN = _common.TOKEN
@@ -59,6 +60,8 @@ per_stream_scenarios = _common.per_stream_scenarios
 snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
+protected_trees = _load('policy', _here / 'policy.py').protected_trees
+ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
 
 RECORDING_ORIGIN = 'live-os-sandbox'
 PENDING = 'PENDING-TS-CALIBRATION'
@@ -144,7 +147,7 @@ def coalesce(events):
     return out
 
 
-def load_round(path):
+def load_round(path, rust_bin=None):
     errors, cases = [], {}
     def require(condition, rule):
         if not condition:
@@ -187,6 +190,48 @@ def load_round(path):
         require(provenance['opensslConfig'] == OPENSSL_CONFIG, 'round.openssl-config')
         node = provenance['node']
         require(valid_sha(node['sha256']) and Path(node['path']).is_absolute(), 'round.node')
+        # #122: the interpreter pin (2026-10-31 decision card) and the declared
+        # Node dependency roots are evidence, not operator claims: the profile
+        # text below is re-derived from them and must match byte for byte.
+        require(provenance.get('nodeIdentity') == PINNED_NODE, 'round.node-identity')
+        roots_raw = provenance.get('tsReadDirs')
+        require(isinstance(roots_raw, list) and all(isinstance(root, str) and Path(root).is_absolute() for root in roots_raw),
+                'round.ts-read-dirs')
+        roots = tuple(roots_raw)
+        runtime = Path(run['runtime'])
+        # #2231 r1 + r2 + r3: being absolute is not enough. The offline
+        # validator replays the recorder's protected-tree scope from the same
+        # single source (policy.protected_trees), so a tampered round whose
+        # tsReadDirs cover home, this checkout, the evidence tree, the
+        # baseline or the Rust candidate's directory fails closed instead of
+        # merely re-deriving a profile that contains it. A Rust round's
+        # candidate parent comes from that round's own provenance executable;
+        # a TS round does not record the candidate, so the operator-supplied
+        # --rust-bin (compare's expected_rust) fills the tree in — a compare
+        # without it cannot replay that one tree (recorded residual, same
+        # spelling as the recorder's own scope).
+        # r3 P1 (three independent reviewer hits): the evidence tree is the
+        # whole batch output root, not the round directory — the recorder
+        # rejects a --ts-read-dir pointing at any sibling evidence subtree
+        # (<out>/controls, <out>/rust-stage, a sibling round), and the
+        # recorded provenance now carries the recorder's output/root/home so
+        # the replayed scope is the recorded one, not the validating host's.
+        # The output root is anchored to the recorded runtime (run_round lays
+        # rounds out as <output>/<side> with the runtime at <output>/runtime),
+        # so the field cannot be moved aside to dodge the trees it names;
+        # 'root'/'home' are recorded facts replayed as-is (residual registered
+        # in specs/cli-parity/scenarios.md: they are not bound into any
+        # profile digest, so rewriting them together with tsReadDirs is
+        # wholesale fabrication, out of the single-mutation guard's scope).
+        require(all(isinstance(provenance.get(key), str) and Path(provenance[key]).is_absolute()
+                    for key in ('output', 'root', 'home'))
+                and Path(provenance['output']) == runtime.parent, 'round.recorder-scope')
+        candidate = provenance['executable']['path'] if run['side'] == 'rust' else rust_bin
+        require(all(ts_read_root_overlap(Path(root), protected_trees(Path(provenance['root']),
+                                                                     Path(provenance['output']),
+                                                                     baseline['path'], rust_bin=candidate),
+                                           home=Path(provenance['home'])) is None for root in roots_raw),
+                'round.ts-read-dirs-protected')
         if run['side'] == 'ts':
             require(provenance['sourceHead'] == HEAD and provenance['executable'] == node
                     and provenance['sourcePath'] == baseline['path'], 'round.ts-source')
@@ -195,7 +240,6 @@ def load_round(path):
                     and provenance['sourcePath'] != baseline['path']
                     and provenance['executable']['path'] != node['path']
                     and provenance['executable']['sha256'] != node['sha256'], 'round.rust-source')
-        runtime = Path(run['runtime'])
         require(runtime.is_absolute() and isolation['probe']['osHomedir'] == str(runtime / 'home'), 'round.os-home')
         executed = provenance['executable']
         if run['side'] == 'rust':
@@ -220,10 +264,11 @@ def load_round(path):
             except (OSError, ValueError):
                 on_disk_skills = None
             require(on_disk_skills is not None and on_disk_skills == skills, 'round.rust-stage-skills-bytes')
-        policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'])
+        policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'],
+                                 ts_read_dirs=roots if run['side'] == 'ts' else ())
         require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
                 'round.profile-binding')
-        probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts')
+        probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', ts_read_dirs=roots)
         require(isolation['probeProfileSha256'] == hashlib.sha256(probe_policy.encode()).hexdigest(), 'round.probe-profile')
         # #933 mock-gateway evidence: present exactly when the registry marks scenarios.
         mock = run.get('mockIsolation')
@@ -231,10 +276,12 @@ def load_round(path):
         if mock is not None:
             require(isinstance(mock, dict) and mock['status'] == 'PASS' and mock['errors'] == []
                     and mock['exitCode'] == 0, 'round.mock-isolation')
-            mock_policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'], mock_gateway=True)
+            mock_policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'], mock_gateway=True,
+                                           ts_read_dirs=roots if run['side'] == 'ts' else ())
             require(mock['profileText'] == mock_policy
                     and mock['profileSha256'] == hashlib.sha256(mock_policy.encode()).hexdigest(), 'round.mock-profile-binding')
-            mock_probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', mock_gateway=True)
+            mock_probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', mock_gateway=True,
+                                                 ts_read_dirs=roots)
             require(mock['probeProfileSha256'] == hashlib.sha256(mock_probe_policy.encode()).hexdigest(), 'round.mock-probe-profile')
             probe = mock['gatewayProbe']
             require(probe.get('connectAllowed') is True
@@ -336,8 +383,12 @@ def compare(left, right, expected_rust=None):
     except Blocked as error:
         return {'status': 'BLOCKED', 'failures': [{'rule': 'apparatus.mock-gateway', 'error': str(error)}],
                 'scenarios': 0, 'scope': 'D0-pr1 calibration only'}
-    a, ac, ae = load_round(Path(left))
-    b, bc, be = load_round(Path(right))
+    # r2 P1: thread the CLI's --rust-bin identity into both load_round calls
+    # so a TS round's replay also protects the candidate directory; a Rust
+    # round derives it from its own provenance inside load_round.
+    candidate = (expected_rust or {}).get('executable', {}).get('path')
+    a, ac, ae = load_round(Path(left), rust_bin=candidate)
+    b, bc, be = load_round(Path(right), rust_bin=candidate)
     failures = [{'side': side, 'rule': rule} for side, errors in (('left', ae), ('right', be)) for rule in errors]
     if a and b:
         if a['side'] != 'ts':
@@ -349,6 +400,12 @@ def compare(left, right, expected_rust=None):
             failures.append({'rule': 'round.baseline'})
         if a['provenance']['node'] != b['provenance']['node']:
             failures.append({'rule': 'round.node'})
+        if a['provenance'].get('tsReadDirs') != b['provenance'].get('tsReadDirs'):
+            failures.append({'rule': 'round.ts-read-dirs'})
+        # r3: the recorder's scope fields are pairwise evidence too — one side
+        # silently rewriting them cannot keep the pair PASS.
+        if any(a['provenance'].get(key) != b['provenance'].get(key) for key in ('output', 'root', 'home')):
+            failures.append({'rule': 'round.recorder-scope'})
         if b['side'] == 'rust':
             observed = {key: b['provenance'].get(key) for key in ('side', 'executable', 'sourcePath', 'sourceHead')}
             if expected_rust is None or observed != expected_rust:

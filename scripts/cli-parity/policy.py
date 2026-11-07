@@ -47,12 +47,109 @@ SCRIPT = _common.SCRIPT
 MOCK_GATEWAY_ALLOW = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))'
 
 
-def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
+def _alias_identity(path):
+    """(st_dev, st_ino) of the directory a spelling names, following symlinks
+    and firmlinks; None when it does not currently exist."""
+    try:
+        info = os.stat(os.fspath(path))
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def alias_at_or_below(inner, outer):
+    """True when the tree ``inner`` spells is at or below the tree ``outer``
+    spells on the real filesystem.
+
+    #2231 r1 (P1): the #122 scope guard must compare by identity, not by
+    spelling. Default macOS APFS is case-insensitive and /Users is a firmlink,
+    so ``/USERS/DA`` and ``/System/Volumes/Data/Users/da`` name the same tree
+    as ``/Users/da`` while realpath/resolve keep the alias spelling (real-host
+    probe: _tmp/20261107-coord/2231-r1-probe/). The climb stats each spelling
+    level — stat follows symlinks and the kernel resolves firmlink and case
+    aliases — so every real ancestor is compared by (st_dev, st_ino). Callers
+    pass resolve()-d roots; the climb still catches the aliases that lexical
+    canonicalization misses. When either endpoint does not exist (offline
+    validation on another host), fall back to realpath-normalized lexical
+    containment, which cannot see case/firmlink aliases (recorded limitation).
+    Bounded: nothing is created, symlink loops surface as a non-match plus the
+    lexical fallback, never a hang.
+    """
+    inner_s, outer_s = os.fspath(inner), os.fspath(outer)
+    outer_id = _alias_identity(outer_s)
+    if outer_id is not None:
+        current = inner_s
+        while True:
+            if _alias_identity(current) == outer_id:
+                return True
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    inner_n, outer_n = os.path.realpath(inner_s), os.path.realpath(outer_s)
+    # r2: containment must compare Path to Path — the previous
+    # ``outer_n in Path(inner_n).parents`` compared a str against PosixPath
+    # elements and was always False, so the lexical fallback could only ever
+    # prove equality, never containment (the offline replay of protected trees
+    # that do not exist on the validating host silently never fired).
+    return Path(inner_n).is_relative_to(outer_n)
+
+
+def ts_read_root_overlap(root, protected, home=None):
+    """Shared #122 fail-closed scope check for operator-declared TS read
+    roots, called by the recorder (run_round.ts_read_roots) and the offline
+    validator (compare.load_round): one implementation, no second drift-prone
+    copy. Returns the offending protected tree when ``root`` overlaps one,
+    else None. Protected trees reject equality, containment and coverage;
+    ``home`` only rejects being equaled or covered — a narrow dependency
+    directory inside it is the legitimate use."""
+    for base in protected:
+        if alias_at_or_below(root, base) or alias_at_or_below(base, root):
+            return base
+    if home is not None and alias_at_or_below(home, root):
+        return home
+    return None
+
+
+def protected_trees(root, output, baseline, rust_bin=None):
+    """Single source of the #122 alias-safe protected-tree scope (r2 P1): the
+    recorder (run_round.ts_read_roots) and the offline validator
+    (compare.load_round) both build the trees a declared TS read root must not
+    overlap here, so the two scopes cannot drift apart again — the recorder
+    protects the Rust candidate's parent directory, and the offline side
+    replays that same tree from the recorded provenance. ``rust_bin`` is the
+    Rust candidate executable; its parent directory is the protected tree.
+    r3 P1: the two ends must also pass synonymous values — the recorder passes
+    the whole batch output root (run_round's output_path layout), and the
+    offline side replays the recorded provenance['output'] (anchored to the
+    recorded runtime's parent), never the round directory or the validating
+    host's own checkout/home spellings."""
+    trees = [Path(root).resolve(), Path(output).resolve(), Path(baseline).resolve()]
+    if rust_bin:
+        trees.append(Path(rust_bin).resolve().parent)
+    return trees
+
+
+def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False, ts_read_dirs=()):
     if side not in ('ts', 'rust'):
         raise ValueError('unknown sandbox side')
     if not isinstance(mock_gateway, bool):
         raise ValueError('mock_gateway must be a boolean')
+    # #122: operator-declared, read-only roots for the installed Node's own
+    # dependencies — the pinned build links its libuv outside Homebrew on
+    # hosts where Homebrew drifted past the baseline. Pure string inputs:
+    # archived policy text is re-derived without touching the filesystem, so
+    # the caller canonicalizes and records them; the Rust side never gets them.
+    if not isinstance(ts_read_dirs, (list, tuple)):
+        raise ValueError('ts_read_dirs must be a sequence of canonical paths')
+    roots = [Path(root) for root in ts_read_dirs]
+    if side == 'rust' and roots:
+        raise ValueError('Rust side must not receive TS read roots')
+    if any(not root.is_absolute() or '..' in root.parts for root in roots) or len(set(roots)) != len(roots):
+        raise ValueError('ts read roots must be canonical absolute paths')
     runtime, baseline, binary = Path(runtime), Path(baseline), Path(binary)
+    if any(root == runtime or root in runtime.parents or runtime in root.parents for root in roots):
+        raise ValueError('ts read roots must be disjoint from the runtime')
     # Rust has no Homebrew or baseline access. System libraries are required by
     # native macOS executables; an unsupported external dylib fails closed.
     read_dirs = [runtime, Path('/System'), Path('/usr/lib'), Path('/Library/Apple')]
@@ -67,6 +164,7 @@ def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
     if side == 'ts':
         read_dirs += [baseline / name for name in ('dist', 'node_modules', 'packages', 'skills')]
         read_dirs += [Path('/opt/homebrew/Cellar'), Path('/opt/homebrew/opt')]
+        read_dirs += roots
         read_files += [baseline / 'package.json', SCRIPT / 'isolation_probe.mjs']
     # Metadata is limited to readable objects and their ancestor directory
     # objects, not ancestor subtrees. No global stat/exists or directory service.

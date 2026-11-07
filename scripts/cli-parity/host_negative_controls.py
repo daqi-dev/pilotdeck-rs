@@ -68,6 +68,12 @@ def main():
     parser.add_argument('--baseline', required=True, type=Path)
     parser.add_argument('--node', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    # #2231 r1: without this the host negative control is unrunnable on a
+    # machine whose pinned Node links its libuv outside Homebrew — the TS
+    # rounds it must pass before the Rust round would go BLOCKED on dyld.
+    parser.add_argument('--ts-read-dir', action='append', default=[], type=Path, metavar='DIR',
+                        help="repeatable read-only root for the installed Node's own "
+                             'dependencies; forwarded to run_round.py (same scope rules)')
     args = parser.parse_args()
     output = output_path(args.output)
     output.mkdir(parents=True, mode=0o700)
@@ -85,6 +91,7 @@ def main():
     argv = [sys.executable, '-I', str(SCRIPT / 'run_round.py'), '--baseline', str(baseline),
             '--node', str(node), '--rust-bin', str(binary), '--rust-source', str(ROOT),
             '--output', str(output / 'recording')]
+    argv += [part for root in args.ts_read_dir for part in ('--ts-read-dir', str(root))]
     with (output / 'runner.stdout.log').open('wb') as stdout, (output / 'runner.stderr.log').open('wb') as stderr:
         result = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=2380)
     # Evidence leaves are read like compare.py: plain single-link files only.
