@@ -4763,6 +4763,85 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 12 (codex r8 P0-1..P0-4): the round-11 class-body and
+    # enclosing-scope rules each answered one shape and missed the next.
+    ('calibrate-for-target-enclosing-call-between-rebinds', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _items = (md,)\n"
+      "    def _early():\n"
+      "        for _x in _items:\n"
+      "            _x.common = object()\n"
+      "    _early()\n"
+      "    _items = ()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-compound', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        if _flag:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-method-closure', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = lambda *a: None\n"
+      "        def _method(self):\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-shadowed-constructor', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        object = lambda: _hs[0]\n"
+      "        _h = object()\n"
+      "        _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -5770,6 +5849,40 @@ def calibrate_for_target_assert_msg(rows):
         'passed=False')
 
 
+def calibrate_for_target_enclosing_call_between_rebinds(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-enclosing-call-between-rebinds."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-enclosing-call-between-rebinds flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_compound(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-body-compound."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-compound flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_method_closure(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-method-closure."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-method-closure flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_shadowed_constructor(rows):
+    """#1953 fix-r1 round 12: calibrate-for-target-class-body-shadowed-constructor."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-class-body-shadowed-constructor flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -6546,6 +6659,18 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-assert-msg': (
         'aggregation-audit', calibrate_for_target_assert_msg, False, ()),
+    'calibrate-for-target-enclosing-call-between-rebinds': (
+        'aggregation-audit',
+        calibrate_for_target_enclosing_call_between_rebinds, False, ()),
+    'calibrate-for-target-class-body-compound': (
+        'aggregation-audit', calibrate_for_target_class_body_compound,
+        False, ()),
+    'calibrate-for-target-class-method-closure': (
+        'aggregation-audit', calibrate_for_target_class_method_closure,
+        False, ()),
+    'calibrate-for-target-class-body-shadowed-constructor': (
+        'aggregation-audit',
+        calibrate_for_target_class_body_shadowed_constructor, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
