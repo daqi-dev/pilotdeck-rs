@@ -12,7 +12,8 @@
 1. session-lease 守卫集移除 `capture.py`，capture 案例改 `--memory-run` 注入（见
    `session-lease/`，其自带 26 项案例含两个 #1662 变异）。
 2. `sdk_signal_exit.rs` 的读盘测试统一持共享读租约；#1885 起该租约实现下沉到
-   `src/pilotdeck-cli/tests/common/read_lease.rs`（本负控的对象，`TEST_SOURCE`）。
+   `src/pilotdeck-cli/tests/common/read_lease.rs`（本负控的对象，`test_source`；gateway 侧
+   `src/pilotdeck-gateway/tests/common/read_lease.rs` 是另一份镜像，不在本控制射程内）。
 
 ## 三段式判杀（GREEN / RED / writer-exit-contract）
 
