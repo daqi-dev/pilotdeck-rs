@@ -298,6 +298,16 @@ mutations = [
 ]
 
 
+class FrozenLedgerDrift(RuntimeError):
+    """#1885 r7: a frozen ledger stopped matching HEAD under the tree lock.
+
+    A distinct type so the rc contract in ``main`` can route *any* ledger
+    proof failure to 2 ("no verdict") without inspecting reason strings:
+    `invalidate_completed` appends its reason to rows that were already
+    recorded, so a prefix test only matched the restore phase.
+    """
+
+
 def assert_close_order_ledger_matches_head():
     """#1885: this ledger is read but never mutated.
 
@@ -316,8 +326,27 @@ def assert_close_order_ledger_matches_head():
     relative = close_order_ledger.relative_to(root).as_posix()
     data = close_order_ledger.read_bytes()
     if _head_bytes(root, relative, "HEAD") != data:
-        raise RuntimeError(
+        raise FrozenLedgerDrift(
             "#1885 read-only #1382 baseline must equal HEAD: " + relative)
+    return data
+
+
+def assert_frozen_ledgers_match_head():
+    """#1885 r7: prove every read-only ledger, at both boundaries.
+
+    ``d1_ledger`` leaves the restore set on a subset run that does not select
+    the control rewriting it, so ``mutating_sources`` no longer re-reads it on
+    exit -- while the replay children still parse it
+    (``rejection_difference_ledger``). An edit landing mid-run would stand
+    unnoticed, exactly the threat the close-order proof answers. Proving it
+    unconditionally also covers the runs where it *is* selected: every case
+    restores its own target before this runs.
+    """
+    data = assert_close_order_ledger_matches_head()
+    relative = d1_ledger.relative_to(root).as_posix()
+    if _head_bytes(root, relative, "HEAD") != d1_ledger.read_bytes():
+        raise FrozenLedgerDrift(
+            "#1885 read-only D1 rejection ledger must equal HEAD: " + relative)
     return data
 
 
@@ -599,10 +628,10 @@ def main():
     # No leftover detection is lost: `mutating_sources` proves the whole `src/`
     # tree against HEAD on entry, and the one `specs/` target is proved below.
     guarded = sorted({row[1] for row in selected}, key=str)
-    unselected_ledger = d1_ledger not in set(guarded)
     results = []
     phase = "enter"
     interrupted = False
+    guard_failure = False
 
     def record(name, test, assertion, status, reason, compiled):
         results.append(
@@ -626,17 +655,14 @@ def main():
             # holds it), and an edit landing in that gap would be the very
             # bytes the replay then parses. Same shape as
             # `sdk-signals-close-order-pin` (GLM sibling + DeepSeek sibling r4).
-            assert_close_order_ledger_matches_head()
-            if unselected_ledger:
-                # #1885 r5: the D1 rejection ledger is only in the restore set
-                # when a control that rewrites it is selected. Prove it anyway
-                # -- read-only, no write-back -- so a killed run's leftover
-                # mutant is still refused under the lock.
-                relative = d1_ledger.relative_to(root).as_posix()
-                if _head_bytes(root, relative, "HEAD") != d1_ledger.read_bytes():
-                    raise RuntimeError(
-                        "#1885 unmutated ledger must equal HEAD: " + relative
-                    )
+            #
+            # #1885 r7: both read-only ledgers, not just the close-order one.
+            # `d1_ledger` leaves the restore set on a subset run that does not
+            # select the control rewriting it, so `mutating_sources` no longer
+            # re-reads it on exit; the replay children still parse it, so it
+            # needs the same entry/exit proof (GLM boundary + DeepSeek
+            # sibling/boundary r6).
+            assert_frozen_ledgers_match_head()
             for name, path, old, new, test, assertion in selected:
                 case = Case(name, path, old, new, test, assertion)
                 status, reason, compiled = "INVALID", "not run", False
@@ -708,16 +734,25 @@ def main():
             # re-read it on exit; the frozen bytes are no longer written back,
             # so the exit-side verification has to be explicit or an edit made
             # during the run would stand unnoticed.
-            #
-            # Enter the exit phase first: a proof failure here is a guard
-            # failure, and the rc contract below routes guard failures to 2
-            # ("no verdict") rather than 1 ("a control survived").
             phase = "exit"
-            assert_close_order_ledger_matches_head()
+            assert_frozen_ledgers_match_head()
 
     except BaseException as error:
         interrupted = not isinstance(error, Exception)
         reason = f"source guard or interruption: {type(error).__name__}: {error}"
+        # #1885 r7: route the failure to 2 ("no verdict") by *where* it
+        # happened and *what* it was, not by the shape of the reason strings.
+        # `invalidate_completed` appends its reason to rows that were already
+        # recorded, so the old `startswith` test only ever matched the restore
+        # phase (it appends to rows that do not exist yet); an exit-phase
+        # proof, or the entry-phase proof added in r3/r5, left every reason
+        # prefixed by the original verdict and fell through to 1 -- reporting
+        # a guard fault as "a control survived" (GLM + DeepSeek boundary r6).
+        guard_failure = (
+            interrupted
+            or isinstance(error, FrozenLedgerDrift)
+            or phase in ("restore", "exit")
+        )
         # Completed kills become invalid if the guarded run cannot verify its
         # final state. Every unrun selected case is also explicitly accounted.
         invalidate_completed(results, reason)
@@ -746,11 +781,7 @@ def main():
         ),
         flush=True,
     )
-    if interrupted or phase in ("restore", "exit") and any(
-        row["status"] == "INVALID"
-        and row["reason"].startswith("source guard or interruption:")
-        for row in results
-    ):
+    if guard_failure:
         return 2
     return int(any(row["status"] != "KILLED" for row in results))
 
