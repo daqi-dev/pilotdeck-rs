@@ -139,3 +139,7 @@ python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/toy_runner.py /tmp/ne
 `toy_runner.py` 只修改自己的临时文本文件，使用有 5 秒上限的子进程观察变异，打印恢复时 summary 尚不存在的事实；没有 TS 或产品源码变异。自测将 toy 的全部模式跑在 10 秒子进程上限内，并比较两次正常 summary 为 EQUIVALENT。
 
 `negative_contract.py` 只将本模块变异编译为内存模块（每个先 `compile()`），逐个跑命名 unittest 的正控→变异→恢复正控；结构化 AssertionError 的完整测试名和最后一段专属消息必须同时匹配。所有变异跑完才汇总，过期锚点、编译失败、无关错误一律 INVALID/非零，不把编译失败冒充判杀；无需提交新文件后绕 HEAD 运行。无参数模式在临时目录运行，供 `negative_anchor_selfcheck.rs` 与 comparator 自测一起进入 CI。每个显式 UNSUPPORTED 登记同时受到现有 anchor checker 的逐项移除、额外信号和过期登记负控覆盖。
+
+## #2116 `.generation-owner` 手工负控登记
+
+按 #2116 两条 issue 评论的结论，`session-factory/append-delta`、`turn-prompt-hooks`、`turn-runner` 三个生成器的 `.generation-owner` marker 断言（专用 `#[ignore]` 用例 `append_delta_generator_writes_owned_marker` / `prompt_hooks_generator_writes_owned_marker` / `turn_runner_generator_writes_owned_marker`）不为它们登记自动化变异体：判据强度由交付证据中的手工负控（`{flag:'wx'}`→`{flag:'w'}`、marker 写入 no-op、身份串换邻居夹具，各 KILLED）加各夹具 README 留档的复跑命令保证。细节见 `session-factory/append-delta/README.md`、`turn-prompt-hooks/README.md`、`turn-runner/README.md` 的 `#2116` 节。本目录 runner 不为这些断言改造；`negative_suite.py` 的后续变更由在途 #2064 承载。

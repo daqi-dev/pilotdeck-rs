@@ -476,6 +476,90 @@ fn append_delta_regenerates_identically() {
     crate::test_baseline::regenerates_identically("session-factory/append-delta");
 }
 
+/// #2116: this generator reached the test side only through the shared
+/// `regenerates_identically` helper, which compares `oracle.json` and
+/// companion files. The fixture has no committed `.generation-owner`, so the
+/// marker never entered that comparison surface: a no-op marker write, a
+/// sibling fixture's identity, and (see #2116 item 2) a `wx` → `w` regression
+/// all stayed green. Follow the dedicated-generator caliber instead
+/// (`factory_generators_clean_only_owned_work` and kin): drive `generate.mts`
+/// directly, pin existence and the owner identity, and give the exclusive
+/// `wx` open its own foreign-marker cell — no fixture anywhere pre-seeded a
+/// foreign `.generation-owner` and expected EEXIST. This generator allocates
+/// no `run-*` work roots, so the marker carries no cleanup ownership here;
+/// it carries the output directory's cross-generator exclusivity (the marker
+/// is the first `wx` write, before `try`).
+#[test]
+#[ignore = "requires fixed Node v22.22.0 / ICU 78.2 and real TS baseline"]
+fn append_delta_generator_writes_owned_marker() {
+    use std::fs;
+    for collision in [false, true] {
+        let root =
+            std::env::temp_dir().join(format!("pdrs-2116-append-delta-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("#2116 create append-delta marker scratch");
+        if collision {
+            // A realistic foreign owner: the parent factory generator's marker.
+            fs::write(root.join(".generation-owner"), "session-factory\n")
+                .expect("#2116 seed foreign owner marker");
+        }
+        let base = PathBuf::from(
+            std::env::var_os("PDRS_BASELINE").expect("#2116 append-delta TS baseline configured"),
+        );
+        let mut command = crate::test_baseline::node_command();
+        command
+            .arg("--disable-warning=ExperimentalWarning")
+            .arg("--import")
+            .arg(base.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/session-factory/append-delta/generate.mts"),
+            )
+            .arg(&root);
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+            &mut command,
+            "session-factory/append-delta",
+            Duration::from_secs(180),
+        )
+        .expect("#2116 bounded append-delta marker generator");
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert!(
+            status.success() != collision,
+            "#2116 append-delta generator succeeds only without a foreign owner marker: {output}"
+        );
+        if collision {
+            // A nonzero exit alone also matches an earlier crash or a deadline
+            // kill; pin the failure to the marker's exclusive open (#1281
+            // caliber: path and code both have to show up).
+            assert!(
+                output.contains("EEXIST") && output.contains(".generation-owner"),
+                "#2116 append-delta generator fails on the exclusive owner marker open: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .expect("#2116 read foreign owner marker"),
+                "session-factory\n",
+                "#2116 failed append-delta generation preserves the foreign owner bytes"
+            );
+        } else {
+            assert!(
+                !output.contains("EEXIST"),
+                "#2116 append-delta generator success cell reports no collision: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .expect("#2116 append-delta ownership marker"),
+                "session-factory/append-delta\n",
+                "#2116 append-delta generator writes its ownership marker"
+            );
+        }
+        fs::remove_dir_all(&root).expect("#2116 remove append-delta marker scratch");
+    }
+}
+
 #[test]
 #[ignore = "requires fixed Node and real TS baseline"]
 fn tail_generator_cleans_only_owned_work() {
