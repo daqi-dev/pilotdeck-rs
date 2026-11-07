@@ -93,6 +93,22 @@ class GateTests(unittest.TestCase):
         self.assertTrue('cannot resolve PDRS_NEGATIVE_BASELINE' in stderr.getvalue(),
                         '#1540 the refusal names the variable')
 
+    def test_resolver_crash_refuses(self):
+        def crash(command, **_kwargs):
+            raise subprocess.TimeoutExpired(command, 60)
+        with patch.object(non_head.subprocess, 'run', side_effect=crash):
+            with redirect_stderr(io.StringIO()) as stderr:
+                try:
+                    non_head.gate(self.root, {'PDRS_NEGATIVE_BASELINE': 'stash-ref'})
+                except SystemExit as raised:
+                    code = raised.code
+                else:
+                    code = None
+        self.assertTrue(code == 2,
+                        '#1540 a resolver crash is a refusal, never a traceback exit 1')
+        self.assertTrue('cannot resolve PDRS_NEGATIVE_BASELINE' in stderr.getvalue(),
+                        '#1540 the crash refusal names the variable too')
+
 
 class VerdictTests(unittest.TestCase):
     longMessage = True
@@ -163,6 +179,28 @@ class VerdictTests(unittest.TestCase):
                         '#1540 the ignored marker says the run cannot certify the request')
         self.assertTrue((self.out / 'baseline.json').exists(),
                         '#1540 the ignored flavor still records provenance')
+
+    def test_abnormal_verdict_normalizes_to_one(self):
+        for code in (None, 256, True):
+            with redirect_stdout(io.StringIO()) as stdout:
+                result = non_head.non_head_exit('PDRS_NEGATIVE_BASELINE', self.sha,
+                                                code=code)
+            self.assertTrue(result == 1,
+                            '#1540 an unusable verdict must not become a green exit')
+            self.assertTrue(stdout.getvalue() == '',
+                            '#1540 an unusable verdict gets no non-host marker')
+
+    def test_ignored_record_is_honest_about_head(self):
+        with redirect_stdout(io.StringIO()) as stdout:
+            result = non_head.non_head_exit('PDRS_NEGATIVE_BASELINE', self.sha,
+                                            evidence=self.out, ignored=True)
+        self.assertTrue(result == 42, '#1540 the ignored flavor still exits 42')
+        record = json.loads((self.out / 'baseline.json').read_text(encoding='utf-8'))
+        self.assertTrue(record['baseline'] == 'HEAD'
+                        and record['requestedBaseline'] == self.sha
+                        and record['overrideIgnored'] is True
+                        and record['hostEvidence'] is False,
+                        '#1540 the ignored record says HEAD was tested, not the request')
 
     def test_without_evidence_directory_nothing_is_written(self):
         with redirect_stdout(io.StringIO()) as stdout:

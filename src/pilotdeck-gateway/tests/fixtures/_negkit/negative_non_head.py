@@ -96,6 +96,16 @@ VARIANTS = (
      '#1540 an empty override is unset, not a revision'),
 )
 
+# r1 boundary#5: frozen roster — deleting or renaming a variant must refuse
+# instead of silently shrinking the control (a count is not a registry, #1538).
+EXPECTED_VARIANTS = (
+    'exit-constant', 'head-passthrough', 'failure-passthrough', 'marker-print',
+    'marker-exit-code', 'provenance-gate', 'provenance-rename',
+    'provenance-direct-write', 'provenance-fields', 'ignored-detail',
+    'gate-verify', 'gate-announce', 'gate-ignored-announce', 'gate-refusal',
+    'empty-override',
+)
+
 
 class BoundResult(unittest.TextTestResult):
     def __init__(self, *args, **kwargs):
@@ -124,12 +134,18 @@ def run_bound(class_name, method, module, output, label):
 
 
 def controls(output, selected=None):
-    output.mkdir(parents=True, exist_ok=False)
     source = Path(non_head.__file__).read_text(encoding='utf-8')
     chosen = [item for item in VARIANTS if selected is None or item[0] in selected]
     if not chosen or (selected is not None and set(selected) - {item[0] for item in chosen}):
         refuse('empty/unknown variant selection: '
                + ', '.join(item[0] for item in VARIANTS))
+    # r1 boundary#5 / P3#7: validate before touching the filesystem, and pin
+    # the roster so a deleted variant refuses rather than shrinks coverage.
+    names = tuple(item[0] for item in VARIANTS)
+    if names != EXPECTED_VARIANTS:
+        refuse('variant roster drifted: expected '
+               + ', '.join(EXPECTED_VARIANTS) + '; got ' + ', '.join(names))
+    output.mkdir(parents=True, exist_ok=False)
     rows = []
     for name, before, after, class_name, method, marker in chosen:
         identity = f'test_non_head.{class_name}.{method}'
