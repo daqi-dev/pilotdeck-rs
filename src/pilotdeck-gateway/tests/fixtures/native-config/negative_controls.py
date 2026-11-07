@@ -360,6 +360,10 @@ def _assertions(case):
 
 def check_literal_anchors(cases):
     texts = {path: path.read_text() for path in SOURCE_TEXTS}
+    for case in cases:
+        if case.path not in texts:
+            raise SystemExit('#2065 row mutates a file outside SOURCE_TEXTS: '
+                             f'{case.mutation} -> {case.path.name}')
     for path, anchor in LITERAL_ANCHORS:
         if path not in texts:
             raise SystemExit(
