@@ -43,6 +43,10 @@ pub mod runtime;
 mod session_model;
 pub mod skills;
 pub mod storage;
+// #1353 A8.5-pr2: the switch state machine over the matrix §二 order.
+pub mod switch;
+#[cfg(test)]
+mod switch_tests;
 #[cfg(test)]
 #[path = "../tests/common/baseline.rs"]
 mod test_baseline;

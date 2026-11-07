@@ -467,7 +467,14 @@ async fn finish_stop(
         Err(error) => {
             {
                 let mut state = inner.state.lock().expect("channel state");
-                if !state.running.iter().any(|item| item.key == key) {
+                // #1353 A8.5-pr2 (A10): a stop that fails while the server is
+                // closing no longer restores the handle. During a switch the
+                // closing gate has already rejected every later start, so a
+                // restored handle would re-enter `running` with nothing able
+                // to stop it again — the flush that follows must not observe
+                // a live entry. Outside a close (a standalone stop), the TS
+                // restore behavior is kept.
+                if !state.closing && !state.running.iter().any(|item| item.key == key) {
                     state.running.push(entry);
                 }
                 inner.queue_report(
@@ -591,5 +598,18 @@ impl ChannelServer {
     }
     pub(super) fn state_available(&self) -> bool {
         self.0.state.try_lock().is_ok()
+    }
+    /// #1353 A8.5-pr2 (A10): the keys currently in `running` — the only
+    /// observable of the no-restore rule for a stop that fails while the
+    /// server is closing (every public lifecycle entry is gated by then).
+    pub(super) fn running_keys(&self) -> Vec<String> {
+        self.0
+            .state
+            .lock()
+            .expect("channel state")
+            .running
+            .iter()
+            .map(|entry| entry.key.to_string())
+            .collect()
     }
 }
