@@ -66,7 +66,12 @@ SCRIPTS = (
     # two #297 entries complete the shared refusal contract (unknown or
     # repeated name, roster drift, unusable target, existing output
     # directory -> 2, never an uncaught traceback), so their startup
-    # matrix is machine-checked like the other migrated entries.
+    # matrix is machine-checked like the other migrated entries. r7 (DS r6
+    # sibling P2#3): this matrix exercises unknown-name / target modes /
+    # existing-dir only; the repeated-name and roster-drift refusals come
+    # from the shared select()/registered() helpers (their own unit tests
+    # in test_negative_selection.py), and guard_failed/signal exits stay
+    # code-review-verified -- #1657 tracks the entry-level test gap.
     ('issue-297/negative_controls.py', (), ()),
     ('issue-297-domain-fold/negative_controls.py', (), ()),
     # #1433 fix-r1: same entry shape after the migration to negative_selection

@@ -145,7 +145,9 @@
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
-被信号直接杀死（SIGINT 130 / SIGTERM 143 / SIGKILL 137）不在表内，看证据是否完整。
+被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；安装了取消处理器的已迁移脚本，
+守卫回写窗口外的取消退 2，落在共享守卫回写窗口内的取消先完成还原与复核再退
+128+signum（`negative_process.mutating_sources` 延迟信号契约，两处阶段不同码是刻意的）。
 这套分界不依赖 `assert`，所以 `-O` 下不变。已知的唯一例外是 `regex-proto-budget`（#1265）：
 它在 `claim_dir` 之后、第一个变异之前自己跑一遍 crate 的 compile_fail doctest 基线（CI 跑不了
 特性门测试），红了也以 2 拒跑、`OUT/doctests.log` 留档——这一次 2 带证据目录，是刻意的。
@@ -163,7 +165,8 @@ target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
 `cli-parity-mock-gateway` 不编译 Cargo，**四档全豁免**，由登记表守卫断言它没有任何
 target 读取；
-**树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
+**树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）与
+两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
