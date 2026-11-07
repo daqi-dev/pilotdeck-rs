@@ -6563,13 +6563,24 @@ def _module_value_uses(tree):
     object.  ``main = None`` stores over the name and never hands the function
     out, so counting every ``ast.Name`` turned a clean module into a reported
     write.
+
+    #1953 fix-r1 round 32 (GLM r30 sibling P1-1 / boundary P1-1): a load
+    inside a statically dead branch never runs either.  ``if False: _saved =
+    main`` kept ``main`` in this set, ``call_only`` fell back to the
+    anywhere-rule and a clean module was still reported as a write -- the same
+    false FAIL the alias table just lost on the other half of the chain.
     """
     direct = set()
     _module_call_positions(tree, direct)
+    dead = _dead_line_ranges(tree)
     uses = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
                 and id(node) not in direct):
+            if dead:
+                position = (node.lineno, node.col_offset)
+                if any(span[0] <= position <= span[1] for span in dead):
+                    continue
             uses.add(node.id)
     return uses
 
@@ -6645,7 +6656,7 @@ def _alias_pairs(node):
     return []
 
 
-def _contains_dynamic_lookup(value, heads, bindings=None):
+def _contains_dynamic_lookup(value, heads, bindings=None, dead=()):
     """True when *value* reaches a name without spelling it (round 27).
 
     #1953 fix-r1 round 29 (GLM sibling r27 P1-2): the head table covers the
@@ -6666,7 +6677,8 @@ def _contains_dynamic_lookup(value, heads, bindings=None):
                 return True
             if bindings is not None and (
                     _module_alias_sources(
-                        bindings, func.id, (node.lineno, node.col_offset))
+                        bindings, func.id, (node.lineno, node.col_offset),
+                        dead=dead)
                     & _OPEN_CALL_HEADS):
                 return True
         elif isinstance(func, ast.Attribute) and func.attr in heads:
@@ -6795,8 +6807,9 @@ def _module_alias_bindings(tree, dynamic_heads=None):
     # conditional binding inside an ``if`` could carry the mark meant for one
     # written after the call (false PASS).  Keep the entry object and find it
     # again by identity after the sort.
+    dead = _dead_line_ranges(tree)
     for items, entry, value in late:
-        if _contains_dynamic_lookup(value, heads, bindings):
+        if _contains_dynamic_lookup(value, heads, bindings, dead):
             index = next(index for index, item in enumerate(items)
                          if item is entry)
             items[index] = entry[:4] + (True,)
@@ -6804,7 +6817,7 @@ def _module_alias_bindings(tree, dynamic_heads=None):
 
 
 def _module_alias_sources(bindings, name, position, loops=(), seen=(),
-                          strict=False):
+                          strict=False, dead=()):
     """Names *name* may denote at *position* (round 26).
 
     The last certain binding decides; a conditional binding after it may also
@@ -6821,14 +6834,21 @@ def _module_alias_sources(bindings, name, position, loops=(), seen=(),
     disappeared.  A binding whose source is its own name is resolved strictly
     *before* itself, and the guard keys on (name, position) so a self-copy
     cannot loop while the earlier binding is still followed.
+
+    #1953 fix-r1 round 32 (GLM sibling r30 P1-1 / boundary r30 P1-1): the
+    dead-branch rule landed in the carrier twin first;
+    ``if False: saved = main`` still handed ``main`` to a live ``saved(x)``
+    and reported a write (false FAIL).  The alias resolver drops the same
+    unreachable bindings now.
     """
     key = (name, position, strict)
     if key in seen:
         return {name}
     all_items = bindings.get(name, ())
     entries = [item for item in all_items
-               if (item[0] < position if strict else item[0] <= position)
-               or (loops and item[3] and set(item[3]) & set(loops))]
+               if ((item[0] < position if strict else item[0] <= position)
+                   or (loops and item[3] and set(item[3]) & set(loops)))
+               and not (dead and _dead_shadowed(item[0], position, dead))]
     if not entries:
         return {name}
     chosen_index = -1
@@ -6844,13 +6864,15 @@ def _module_alias_sources(bindings, name, position, loops=(), seen=(),
         if item[2] is None:
             continue
         found |= _module_alias_sources(bindings, item[2], item[0], loops,
-                                       seen + (key,), item[2] == name)
+                                       seen + (key,), item[2] == name,
+                                       dead)
     return found or {name}
 
 
 def _module_alias_calls(tree, calls):
     """``func -> [call sites]`` for module-level ``alias = func`` hand-offs."""
     bindings = _module_alias_bindings(tree)
+    dead = _dead_line_ranges(tree)
     found = {}
     for name, entries in calls.items():
         for entry in entries:
@@ -6859,7 +6881,7 @@ def _module_alias_calls(tree, calls):
             else:
                 position, loops = entry, ()
             for source in _module_alias_sources(bindings, name, position,
-                                                loops):
+                                                loops, dead=dead):
                 if source != name:
                     found.setdefault(source, []).append(entry)
     return found
@@ -6985,8 +7007,15 @@ def _module_open_calls(tree):
             continue
         if isinstance(node, ast.Call):
             position = (node.lineno, node.col_offset)
-            if isinstance(node.func, ast.Name):
-                name = node.func.id
+            # #1953 fix-r1 round 32 (GLM boundary r30 P1-2): a walrus callee
+            # -- ``(_g := held)(report)`` -- is neither a Name nor an
+            # Attribute, so every branch below missed it and the call never
+            # became a site (false PASS for a carrier fetched before a later
+            # import).  The assigned value is what runs.
+            func = (node.func.value if isinstance(node.func, ast.NamedExpr)
+                    else node.func)
+            if isinstance(func, ast.Name):
+                name = func.id
                 if name in _OPEN_CALL_HEADS:
                     sites.append((position, loops))
                 elif name in carriers and _dynamic_result_in_force(
@@ -6999,11 +7028,11 @@ def _module_open_calls(tree):
                     # the flat closure used to keep the site forever (false
                     # FAIL once a later import moves the reading).
                     sources = _module_alias_sources(bindings, name, position,
-                                                    loops)
+                                                    loops, dead=dead)
                     if sources & _OPEN_CALL_HEADS:
                         sites.append((position, loops))
-            elif (isinstance(node.func, ast.Attribute)
-                    and node.func.attr in _OPEN_CALL_HEADS):
+            elif (isinstance(func, ast.Attribute)
+                    and func.attr in _OPEN_CALL_HEADS):
                 # #1953 fix-r1 round 28 (GLM boundary r26 P1-3): one table for
                 # every head spelling, so ``builtins.exec(...)`` and
                 # ``bi.eval(...)`` count too.  Only a *called* attribute is a
@@ -12559,6 +12588,60 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (self-test)')
+    # #1953 fix-r1 round 32 (GLM r30 sibling P1-1 / boundary P1-1 / P1-2):
+    # the shapes the module path owns -- a dead alias, a dead open alias, a
+    # walrus callee and a live self-copy inside a loop -- are asserted on the
+    # module detectors themselves.  The block above reads the *function* side
+    # only (``ast.walk`` of the first ``def``), so a module-scope call never
+    # reaches it; these four probes stay on the path the audit actually runs.
+    _m32_base = ("import json as _bi\n"
+                 "def main(report):\n"
+                 "    _f = _bi.getattr(report, '__setattr__')\n"
+                 "    _f('status', 'PASS')\n"
+                 "main(object())\n")
+    _m32_dead_alias = ast.parse(
+        _m32_base + "if False:\n"
+        "    _saved = main\n"
+        "import builtins as _bi\n"
+        "_saved(object())\n")
+    if _module_binding_events(_m32_dead_alias).alias_calls.get('main'):
+        failures.append('#1953 aggregation-audit: detector self-test let a dead '
+                        'alias hand the function over (round 32)')
+    if 'main' in _module_value_uses(_m32_dead_alias):
+        failures.append('#1953 aggregation-audit: detector self-test kept a dead '
+                        'alias as a value use (round 32)')
+    _m32_live_alias = ast.parse(
+        _m32_base + "_saved = main\n"
+        "import builtins as _bi\n"
+        "_saved(object())\n")
+    if ('main' not in _module_value_uses(_m32_live_alias)
+            or not _module_binding_events(_m32_live_alias).alias_calls.get('main')):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'live alias hand-off (round 32)')
+    _m32_dead_open = ast.parse(
+        _m32_base + "if False:\n"
+        "    _lk = globals\n"
+        "import builtins as _bi\n"
+        "_lk(object())\n")
+    if _module_open_calls(_m32_dead_open)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test kept a '
+                        'dead open alias as a site (round 32)')
+    _m32_walrus = ast.parse(
+        _m32_base + "_held = globals()['main']\n"
+        "import builtins as _bi\n"
+        "(_g := _held)(object())\n")
+    if not _module_open_calls(_m32_walrus)[0]:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'walrus callee site (round 32)')
+    _m32_loop = ast.parse(
+        _m32_base + "_held = globals()['main']\n"
+        "import builtins as _bi\n"
+        "for _i in (0,):\n"
+        "    _held = _held\n"
+        "    _held(object())\n")
+    if len(_module_open_calls(_m32_loop)[0]) < 2:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'live self-copy inside a loop (round 32)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
