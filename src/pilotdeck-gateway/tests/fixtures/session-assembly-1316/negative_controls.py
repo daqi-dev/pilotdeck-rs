@@ -87,7 +87,7 @@ mutations = [
      '#1316 user-dialog store entry is a 503'),
     # #1632 P2-1 / #1476 / #1313 r1: the wire-up mutation points are the three
     # interaction registry entries, three always-on per-method messages, the
-    # abort arm's sessionKey read, two describe capabilities, the always-on
+    # abort arm's sessionKey read, three describe capabilities, the always-on
     # family registration, the explicit HTTP store entry, the always-on
     # envelope code and one advertised always-on capability. Four were covered
     # above, so the ten below cover the rest. Each row names the assertion

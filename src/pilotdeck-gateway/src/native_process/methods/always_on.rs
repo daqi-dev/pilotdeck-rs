@@ -148,6 +148,15 @@ mod tests {
                 "{\"aborted\":false,\"sessionKey\":null,\"error\":{\"code\":\"not_configured\",\
                  \"message\":\"Always-On abort is not configured on this gateway.\"}}",
             ),
+            // The empty string rides the same echo: it is a present value, not
+            // a falsy one to drop (MM fix1 boundary P2a — the predicate is
+            // `!== undefined`, never a truthiness check).
+            (
+                "always_on_abort",
+                full(&[("sessionKey", "".into())]),
+                "{\"aborted\":false,\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\
+                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
+            ),
             (
                 "always_on_rerun_plan",
                 full(&[("planId", "pl1".into())]),
