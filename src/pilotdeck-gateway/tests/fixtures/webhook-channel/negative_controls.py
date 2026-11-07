@@ -75,8 +75,9 @@ switches = [
     # `Object.prototype` own property name (`constructor`, `__proto__`, ...)
     # resolves to a truthy value with no `secret`/`deliver`: TS authenticates
     # it against the global secret and accepts it. The pre-fix own-key-only
-    # lookup answers 404 for every such name, which turns all four steps of
-    # the cell red.
+    # lookup answers 404 for every such name, which turns three of the cell's
+    # four steps red (`nope-signed` is neither an own key nor a prototype name,
+    # so it answers 404 both before and after the fix).
     ('webhook-prototype-routes-off', SOURCE_WEBHOOK, 'object_prototype_route_names',
      '#1334 webhook oracle case object-prototype-route-names'),
     # An `s_` 36-hex session suffix is a cron chat id; without the suffix a

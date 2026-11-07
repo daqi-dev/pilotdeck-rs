@@ -1946,15 +1946,19 @@ replay_tests! {
 /// records zero-byte closes, so the socket close is asserted directly too.
 const PINNED_CASE_NAMES: &[&str] = &["http10"];
 
-/// #1682: the fallback table is the *measured* V8 set, not a guess. Pinned
-/// here so dropping a name (which would silently restore a 404 divergence) or
-/// inventing one (which would 200 a genuinely unknown route) fails a test
-/// instead of only a review. The reference list is
-/// `Object.getOwnPropertyNames(Object.prototype)` printed by
-/// `_tmp/20261107-issue-1682/probe/probe.out` on the pinned baseline.
+/// #1682: the routing fallback has no name table of its own — it asks the
+/// shared `config::builtin_property` predicate. This pins that predicate to
+/// the *measured* V8 set, so dropping a name (which would silently restore a
+/// 404 divergence) or inventing one (which would 200 a genuinely unknown
+/// route) fails a test instead of only a review.
+///
+/// The reference list is `Object.getOwnPropertyNames(Object.prototype)` under
+/// Node v22.22.0, the baseline the webhook oracle is generated on (see
+/// `tests/fixtures/webhook-channel/generate.mts`, case
+/// `object-prototype-route-names`).
 #[test]
 fn object_prototype_names_match_the_measured_v8_set() {
-    let mut measured = [
+    let measured = [
         "constructor",
         "__defineGetter__",
         "__defineSetter__",
@@ -1968,13 +1972,15 @@ fn object_prototype_names_match_the_measured_v8_set() {
         "__proto__",
         "toLocaleString",
     ];
-    measured.sort_unstable();
-    let mut table = super::OBJECT_PROTOTYPE_NAMES;
-    table.sort_unstable();
-    negative_assert_eq!(
-        table,
-        measured,
-        "#1682 Object.prototype own property names under Node v22.22.0"
+    for name in measured {
+        negative_assert!(
+            crate::config::builtin_property(&JsString::from(name)),
+            "#1682 Object.prototype own property name missing from builtin_property"
+        );
+    }
+    negative_assert!(
+        !crate::config::builtin_property(&JsString::from("nope")),
+        "#1682 an ordinary name must not answer as an Object.prototype property"
     );
 }
 
