@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 export async function observations(base:string) {
- const {projectAgentTranscriptEntries}=await import(`${base}/src/session/projection/AgentTranscriptProjections.ts`);
+ const {projectAgentTranscriptEntries,projectSubagentReferences}=await import(`${base}/src/session/projection/AgentTranscriptProjections.ts`);
  const {AgentLoop}=await import(`${base}/src/agent/loop/AgentLoop.ts`);
  const message=(text:string,role='user',metadata?:any)=>({role,content:[{type:'text',text}],...(metadata?{metadata}:{})});
  const result=(turnId:string,usage:any={},permissionDenials:any=[],errors?:any)=>({type:'turn_result',turnId,result:{type:'success',sessionId:'session-745',turnId,usage,permissionDenials,...(errors===undefined?{}:{errors})}});
@@ -25,6 +25,32 @@ export async function observations(base:string) {
    const r=projectAgentTranscriptEntries(entries);
    return {name,entries,state:{messages:r.messages,usage:r.usage,permissionDenials:r.permissionDenials,metadata:r.metadata}};
   } catch(error:any) { return {name,entries,error:{name:error.name,message:error.message}}; }
+ });
+ // #2042: the subagent-references cell (AgentTranscriptProjections.ts:380-456).
+ // The two indexes are JS Maps, so each row records the key's `typeof` plus the
+ // key itself (omitted for `undefined`, which JSON cannot carry).
+ const subagentEntry=(i:number,extra:any)=>({version:1,entryId:`subagent-${i}`,parentEntryId:null,sequence:i,sessionId:'session-745',turnId:'A',createdAt:'2026-10-28T00:00:00.000Z',...extra});
+ const index=(map:Map<any,any>)=>[...map].map(([key,value]:any)=>({keyType:typeof key,...(key===undefined?{}:{key}),entry:value}));
+ const subagentCells:any[]=[
+  ['normal',[subagentEntry(1,{type:'subagent_started',subagentId:'sub/a',subagentType:'explore',transcriptRelativePath:'subagents/sub-a.jsonl'}),subagentEntry(2,{type:'subagent_completed',subagentId:'sub/a',status:'ok'})]],
+  ['dangling',[subagentEntry(1,{type:'subagent_started',subagentId:'sub/x'})]],
+  ['duplicate-started',[subagentEntry(1,{type:'subagent_started',subagentId:'sub/a',subagentType:'first'}),subagentEntry(2,{type:'subagent_started',subagentId:'sub/a',subagentType:'second'})]],
+  ['duplicate-completed',[subagentEntry(1,{type:'subagent_started',subagentId:'sub/a'}),subagentEntry(2,{type:'subagent_completed',subagentId:'sub/a',status:'first'}),subagentEntry(3,{type:'subagent_completed',subagentId:'sub/a',status:'second'})]],
+  ['missing-subagent-id',[subagentEntry(1,{type:'subagent_started',subagentType:'first'}),subagentEntry(2,{type:'subagent_started',subagentType:'second'}),subagentEntry(3,{type:'subagent_completed'})]],
+  ['null-subagent-id',[subagentEntry(1,{type:'subagent_started',subagentId:null}),subagentEntry(2,{type:'subagent_completed',subagentId:null})]],
+  ['mixed-key-types',[subagentEntry(1,{type:'subagent_started',subagentId:1}),subagentEntry(2,{type:'subagent_started',subagentId:'1'})]],
+  ['object-key',[subagentEntry(1,{type:'subagent_started',subagentId:{id:'a'}}),subagentEntry(2,{type:'subagent_started',subagentId:{id:'a'}})]],
+  ['errored',[subagentEntry(1,{type:'subagent_started',subagentId:'sub/a',errored:true}),subagentEntry(2,{type:'subagent_completed',subagentId:'sub/a',errored:'yes'})]],
+  ['other-entries',[subagentEntry(1,{type:'accepted_input',messages:[]}),subagentEntry(2,{type:'subagent_started',subagentId:'sub/a'}),subagentEntry(3,{type:'turn_result',turnId:'A',result:{type:'success',sessionId:'session-745',turnId:'A',usage:{},permissionDenials:[]}})]],
+  ['primitive-entries',[42,'text',[1,2],true,subagentEntry(5,{type:'subagent_started',subagentId:'sub/a'})]],
+  ['near-miss-type',[subagentEntry(1,{type:'Subagent_Started',subagentId:'sub/a'}),subagentEntry(2,{type:'subagent_started ',subagentId:'sub/x'})]],
+  ['empty',[]],
+  ['null-entry',[null]],
+ ];
+ const subagentReferences=subagentCells.map(([name,entries])=>{
+  try{const r=projectSubagentReferences(entries);
+   return {name,entries,started:r.started,completed:r.completed,startedById:index(r.startedById),completedById:index(r.completedById)};
+  }catch(error:any){return {name,entries,error:{name:error.name,message:error.message}};}
  });
  const {SessionRuntime}=await import(`${base}/src/session/events/SessionRuntime.ts`);
  const {createDefaultSessionProjectionRegistry}=await import(`${base}/src/session/projection/BuiltinSessionProjections.ts`);
@@ -80,5 +106,5 @@ export async function observations(base:string) {
   } catch(error:any) { return {name,entries,error:{name:error.name,message:error.message}}; }
   finally { driver.dispose(); }
  });
- return {projections,storageErrors,hydrated,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
+ return {projections,subagentReferences,storageErrors,hydrated,fileState:{allowedReadFiles:file.allowedReadFiles,readFileState:Object.fromEntries(file.readFileState),writeSnapshots:Object.fromEntries(file.writeSnapshots)}};
 }

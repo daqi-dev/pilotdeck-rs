@@ -1999,6 +1999,123 @@ fn project_session_info(
     Ok(Some(JsValue::Object(info)))
 }
 
+/// TS `SubagentReferenceProjectionResult` (AgentTranscriptProjections.ts:72-77):
+/// the `agent-transcript.subagent-references` cell. `started`/`completed` keep
+/// every matching entry in log order; the two `*_by_id` indexes are the JS
+/// `Map`s, materialised in insertion order because a `Map` is not a JSON value.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SubagentReferences {
+    /// `subagent_started` entries in log order, duplicates included.
+    pub started: Vec<JsValue>,
+    /// `subagent_completed` entries in log order, duplicates included.
+    pub completed: Vec<JsValue>,
+    /// `startedById`: the **first** entry per `subagentId`, keys in first-seen
+    /// order (`AgentTranscriptProjections.ts:392-395`).
+    pub started_by_id: Vec<(JsValue, JsValue)>,
+    /// `completedById`: the **last** entry per `subagentId`, keys in first-seen
+    /// order (`AgentTranscriptProjections.ts:400-403`; `Map.set` on an existing
+    /// key updates the value and keeps the original position).
+    pub completed_by_id: Vec<(JsValue, JsValue)>,
+}
+impl SubagentReferences {
+    /// `startedById.get(subagentId)` — the sidechain lookup `readSessionMessages`
+    /// uses (readSessionMessages.ts:290).
+    pub fn started_entry(&self, subagent_id: &JsValue) -> Option<&JsValue> {
+        self.started_by_id
+            .iter()
+            .find(|(key, _)| same_value_zero(key, subagent_id))
+            .map(|(_, entry)| entry)
+    }
+    /// `completedById.get(subagentId)`.
+    pub fn completed_entry(&self, subagent_id: &JsValue) -> Option<&JsValue> {
+        self.completed_by_id
+            .iter()
+            .find(|(key, _)| same_value_zero(key, subagent_id))
+            .map(|(_, entry)| entry)
+    }
+}
+/// ECMAScript `SameValueZero`, restricted to what a JSON-parsed transcript can
+/// express. Numbers compare by value (so `NaN` is one key), strings/booleans/
+/// `null`/`undefined` compare by value, and a container key never equals
+/// another container: the TS `Map` compares object keys by *reference*, and two
+/// entries of a JSON-parsed log can never share one. Container keys are also
+/// unreachable from the typed log (`subagentId: string`).
+fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
+    match (left, right) {
+        (JsValue::Number(left), JsValue::Number(right)) => {
+            left == right || (left.is_nan() && right.is_nan())
+        }
+        (JsValue::Object(_) | JsValue::Array(_), _)
+        | (_, JsValue::Object(_) | JsValue::Array(_)) => false,
+        (left, right) => left == right,
+    }
+}
+/// TS `projectSubagentReferences` (AgentTranscriptProjections.ts:449-456) over
+/// the `agent-transcript.subagent-references` reducer (:380-408).
+///
+/// The reducer reads only `entry.type` and `entry.subagentId` and validates
+/// nothing else: missing/`null` ids, non-string ids and truthy `errored` fields
+/// all project as-is. Shapes it ignores (`subagent_started ` with a trailing
+/// space, primitives, any other entry type) are skipped, not rejected — so the
+/// restore/list gate in `projection_supported` stays `_ => true` for these two
+/// types. The one throw is the V8 property read every reducer shares: a
+/// `null`/`undefined` log element. `validate_event_log` rejects that entry
+/// before any projection runs, so it is unreachable through restore/list and is
+/// modelled here only so a direct caller cannot silently differ from TS.
+pub fn project_subagent_references(entries: &[JsValue]) -> AdapterResult<SubagentReferences> {
+    let mut references = SubagentReferences::default();
+    for entry in entries {
+        if matches!(entry, JsValue::Null | JsValue::Undefined) {
+            return Err(cannot_read(entry, "type"));
+        }
+        let kind = field(entry, "type");
+        let started = is_str(kind, "subagent_started");
+        if !started && !is_str(kind, "subagent_completed") {
+            continue;
+        }
+        let subagent_id = field(entry, "subagentId").clone();
+        if started {
+            let first = !references
+                .started_by_id
+                .iter()
+                .any(|(key, _)| same_value_zero(key, &subagent_id));
+            if first {
+                references.started_by_id.push((subagent_id, entry.clone()));
+            }
+            if crate::mutants::on("subagent-drop-started") {
+                // #2042 negative control: the row list loses every entry.
+            } else if crate::mutants::on("subagent-started-first-only") && !first {
+                // #2042 negative control: only the first row per id survives.
+            } else {
+                references.started.push(entry.clone());
+            }
+        } else {
+            let repeat = references
+                .completed_by_id
+                .iter()
+                .any(|(key, _)| same_value_zero(key, &subagent_id));
+            if repeat {
+                // `Map.set` updates in place: the key keeps its first position.
+                if let Some(slot) = references
+                    .completed_by_id
+                    .iter_mut()
+                    .find(|(key, _)| same_value_zero(key, &subagent_id))
+                {
+                    slot.1 = entry.clone();
+                }
+            } else {
+                references
+                    .completed_by_id
+                    .push((subagent_id, entry.clone()));
+            }
+            if !(crate::mutants::on("subagent-completed-deduped") && repeat) {
+                references.completed.push(entry.clone());
+            }
+        }
+    }
+    Ok(references)
+}
+
 /// ProjectSessionStorage.ts:239-245 on POSIX: runs of `/` or `\` become `-`,
 /// leading/trailing `-` are trimmed, empty becomes "session".
 pub fn sanitize_session_id(session_id: &JsString) -> String {

@@ -1,6 +1,6 @@
 # #745 SessionFactory 生命周期金样与负控
 
-`oracle.json` 记录固定 TS commit / 源码闭包 SHA / Node v22.22.0、20 格生命周期矩阵、13 个完整投影探针、16 行 hydrate 投影输出（#1985 第 1 块）和 3 个默认 storage hydrate 错误。原始 20 格探针来自协调者 `_tmp/20261028-issue-745-matrix/`；`probe.mts` 保留其操作和确定性门闩，基线/输出路径为参数；fix-r1 增加两个 writer 交错、仅内存状态覆盖探针。`normalize.mts` 只归一登记的临时路径、运行目录和耗时，`check.py` 先验证物理证据再归一。
+`oracle.json` 记录固定 TS commit / 源码闭包 SHA / Node v22.22.0、20 格生命周期矩阵、13 个完整投影探针、16 行 hydrate 投影输出（#1985 第 1 块）、14 格 `subagentReferences` 投影（#2042）和 3 个默认 storage hydrate 错误。原始 20 格探针来自协调者 `_tmp/20261028-issue-745-matrix/`；`probe.mts` 保留其操作和确定性门闩，基线/输出路径为参数；fix-r1 增加两个 writer 交错、仅内存状态覆盖探针。`normalize.mts` 只归一登记的临时路径、运行目录和耗时，`check.py` 先验证物理证据再归一。
 
 `projections.mts` 调真实 AgentTranscriptProjections、AgentLoop.snapshotFileState、SessionRuntime / 默认 SessionProjectionDriver。`projections` 行走 `projectAgentTranscriptEntries`（reduce+finalize，conversation finalize 的 `cloneTurnResult` 会先 `.map` denials）；`hydrated` 行走 `SessionRuntime.restore` + `SessionProjectionDriver.hydrate` 再 `stateOf` 读原始 cell state（只跑 reduce），对应 Rust `factory.rs::project()` 的 usage/permissionDenials/metadata 落地输出：字符串 denials 按 code point 展开、`errors` 不读、metadata 合并。原矩阵的 readFiles/writtenFiles 是测试注入的非生产形状；现已改成无 seed 时返回 `{}` 的 stdio 语义。`file-state.mts` 用真实 TS stdio、工具 checkpoint 与用户可见终态实测 initial/running/terminal/after，非空 SeedState 的字段与保留另由 Rust 用例对照。
 
@@ -93,3 +93,14 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 #1210：`recreate-disposed` 是**两道 disposed 守卫的联合变异**（`SessionProjection::snapshot` 的 TS assertActive 移植 + `SessionState::reload_source` 的 adapter 守卫），只能证明「两道全关会失败」。「第二道守卫单独有效」由 `recreate-disposed-adapter-guard`（只关 adapter 守卫）与 `disposed-guard-removed`（`projection-cache/negative_controls.py`，只关 projection 守卫）两条单变异分别覆盖。同一文件的多条 change 逐条累积应用（后写不再覆盖前写）；开关组按名运行时同样过 `mutating_sources` 的 pristine 校验；开关组自身守卫失败只作废本组行，不回滚已验证还原的源码组判杀计数。这些执行器行为由 `negative-restore/test_restore.py` 的绑定测试与反向负控守护。
 
 #1055：`1055-takeover-removed` 绑定「超时 + 迟到清理 Err」交给紧随 caller（①）；`1055-sweep-busy-arm-removed`、`1055-sweep-none-arm-removed` 绑定 BUSY/无 pending 两臂的 idle 回收（②）；`1055-close-pending-error-dropped` 绑定 close/shutdown 对未消费不可重试错误的交付（②）。策略更正见 `A7.2-SESSION-DRAIN-FILE-STATE-001-R6.md`。
+
+#2042（#1985 第 2 块）：`projections.mts` 另采集 `subagentReferences`——真实 TS `projectSubagentReferences` 的 14 格输出（正常、悬挂、重复 started/completed、缺/`null` subagentId、数字与字符串键、对象键、errored、混合条目、原始值条目、近似 type、空数组、`null` 条目）。两个索引是 JS `Map`，每行记键的 `typeof` 加键本身（`undefined` 键 JSON 载不动，只留 `typeof`）。Rust 侧 `storage::transcript_adapter::project_subagent_references` 按 `SameValueZero` 建模：`startedById` 首条胜出、`completedById` 末次值胜出、位置首现；对象/数组键视为永不相等（JSON 反序列化不可能共享引用）。金样逐字段比较 `started` / `completed` / `startedById` / `completedById`，`null` 条目格断言与 TS 同名同文案的 `TypeError`。
+
+三只编译期开关负控（`subagent_schemata.py`，绑新增具名测试；源码全部提交后在宿主运行，调用方给本树 `CARGO_TARGET_DIR`）：
+
+```sh
+python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.py --check
+python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.py "$OUT_SUBAGENT"
+```
+
+`subagent-drop-started` 丢光行表、绑 `subagent_started_rows_match_ts`；`subagent-started-first-only` 只留每 id 首行、绑 `subagent_duplicate_started_rows_kept`；`subagent-completed-deduped` 错误去重 completed 行、绑 `subagent_duplicate_completed_rows_kept`。消费者（web `readSessionMessages` 的 sidechain 依赖 `startedById.get`）在 #2044 接线，本单只交付函数与金样。

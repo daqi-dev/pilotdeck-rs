@@ -22856,6 +22856,991 @@
       }
     }
   ],
+  "subagentReferences": [
+    {
+      "name": "normal",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "explore",
+          "transcriptRelativePath": "subagents/sub-a.jsonl"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "ok"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "explore",
+          "transcriptRelativePath": "subagents/sub-a.jsonl"
+        }
+      ],
+      "completed": [
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "ok"
+        }
+      ],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a",
+            "subagentType": "explore",
+            "transcriptRelativePath": "subagents/sub-a.jsonl"
+          }
+        }
+      ],
+      "completedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_completed",
+            "subagentId": "sub/a",
+            "status": "ok"
+          }
+        }
+      ]
+    },
+    {
+      "name": "dangling",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/x"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/x"
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/x",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/x"
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "duplicate-started",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "second"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "subagentType": "second"
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a",
+            "subagentType": "first"
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "duplicate-completed",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-3",
+          "parentEntryId": null,
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "second"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        }
+      ],
+      "completed": [
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-3",
+          "parentEntryId": null,
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "status": "second"
+        }
+      ],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a"
+          }
+        }
+      ],
+      "completedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-3",
+            "parentEntryId": null,
+            "sequence": 3,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_completed",
+            "subagentId": "sub/a",
+            "status": "second"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-subagent-id",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentType": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentType": "second"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-3",
+          "parentEntryId": null,
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentType": "first"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentType": "second"
+        }
+      ],
+      "completed": [
+        {
+          "version": 1,
+          "entryId": "subagent-3",
+          "parentEntryId": null,
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed"
+        }
+      ],
+      "startedById": [
+        {
+          "keyType": "undefined",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentType": "first"
+          }
+        }
+      ],
+      "completedById": [
+        {
+          "keyType": "undefined",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-3",
+            "parentEntryId": null,
+            "sequence": 3,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_completed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "null-subagent-id",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": null
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": null
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": null
+        }
+      ],
+      "completed": [
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": null
+        }
+      ],
+      "startedById": [
+        {
+          "keyType": "object",
+          "key": null,
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": null
+          }
+        }
+      ],
+      "completedById": [
+        {
+          "keyType": "object",
+          "key": null,
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_completed",
+            "subagentId": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "mixed-key-types",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": 1
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "1"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": 1
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "1"
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "number",
+          "key": 1,
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": 1
+          }
+        },
+        {
+          "keyType": "string",
+          "key": "1",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "1"
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "object-key",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": {
+            "id": "a"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": {
+            "id": "a"
+          }
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": {
+            "id": "a"
+          }
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": {
+            "id": "a"
+          }
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "object",
+          "key": {
+            "id": "a"
+          },
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": {
+              "id": "a"
+            }
+          }
+        },
+        {
+          "keyType": "object",
+          "key": {
+            "id": "a"
+          },
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": {
+              "id": "a"
+            }
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "errored",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "errored": true
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "errored": "yes"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a",
+          "errored": true
+        }
+      ],
+      "completed": [
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_completed",
+          "subagentId": "sub/a",
+          "errored": "yes"
+        }
+      ],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-1",
+            "parentEntryId": null,
+            "sequence": 1,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a",
+            "errored": true
+          }
+        }
+      ],
+      "completedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_completed",
+            "subagentId": "sub/a",
+            "errored": "yes"
+          }
+        }
+      ]
+    },
+    {
+      "name": "other-entries",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "accepted_input",
+          "messages": []
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-3",
+          "parentEntryId": null,
+          "sequence": 3,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "turn_result",
+          "result": {
+            "type": "success",
+            "sessionId": "session-745",
+            "turnId": "A",
+            "usage": {},
+            "permissionDenials": []
+          }
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-2",
+            "parentEntryId": null,
+            "sequence": 2,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a"
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "primitive-entries",
+      "entries": [
+        42,
+        "text",
+        [
+          1,
+          2
+        ],
+        true,
+        {
+          "version": 1,
+          "entryId": "subagent-5",
+          "parentEntryId": null,
+          "sequence": 5,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        }
+      ],
+      "started": [
+        {
+          "version": 1,
+          "entryId": "subagent-5",
+          "parentEntryId": null,
+          "sequence": 5,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started",
+          "subagentId": "sub/a"
+        }
+      ],
+      "completed": [],
+      "startedById": [
+        {
+          "keyType": "string",
+          "key": "sub/a",
+          "entry": {
+            "version": 1,
+            "entryId": "subagent-5",
+            "parentEntryId": null,
+            "sequence": 5,
+            "sessionId": "session-745",
+            "turnId": "A",
+            "createdAt": "2026-10-28T00:00:00.000Z",
+            "type": "subagent_started",
+            "subagentId": "sub/a"
+          }
+        }
+      ],
+      "completedById": []
+    },
+    {
+      "name": "near-miss-type",
+      "entries": [
+        {
+          "version": 1,
+          "entryId": "subagent-1",
+          "parentEntryId": null,
+          "sequence": 1,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "Subagent_Started",
+          "subagentId": "sub/a"
+        },
+        {
+          "version": 1,
+          "entryId": "subagent-2",
+          "parentEntryId": null,
+          "sequence": 2,
+          "sessionId": "session-745",
+          "turnId": "A",
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "type": "subagent_started ",
+          "subagentId": "sub/x"
+        }
+      ],
+      "started": [],
+      "completed": [],
+      "startedById": [],
+      "completedById": []
+    },
+    {
+      "name": "empty",
+      "entries": [],
+      "started": [],
+      "completed": [],
+      "startedById": [],
+      "completedById": []
+    },
+    {
+      "name": "null-entry",
+      "entries": [
+        null
+      ],
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'type')"
+      }
+    }
+  ],
   "storageErrors": [
     {
       "entries": [
