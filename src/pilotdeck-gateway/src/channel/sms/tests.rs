@@ -2110,6 +2110,27 @@ fn signed_recording_requires_a_request_step() {
 }
 
 #[test]
+fn signed_recording_checks_every_request_step() {
+    // The guard claims to cover *every* request step of a signed case, so a
+    // second request step that lost the signature header must not slip past a
+    // guard that only looked at the first one.
+    crate::negative_assert!(
+        signed_request_headers_checked(&json!({
+            "name": "valid-signature",
+            "sign": true,
+            "steps": [
+                {"op": "request", "headers": {"X-Twilio-Signature": "abc"}},
+                {"op": "request", "headers": {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }},
+            ],
+        }))
+        .is_err(),
+        "#1339 #1957 signed case must record a non-empty X-Twilio-Signature header"
+    );
+}
+
+#[test]
 fn signed_recording_accepts_lowercase_signature_header() {
     assert!(
         signed_request_headers_checked(&json!({
