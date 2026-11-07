@@ -1495,6 +1495,27 @@ fn loader_keys_partition_rejected_and_silent_subset() {
         unassigned.is_empty(),
         "#1853 every loader key is rejected or silent-subset"
     );
+    // Reverse closure for the silent group (the cell above only constrains
+    // loader-table keys): every silent entry must itself be a loader key, and
+    // the group must be exactly `SUBSET_CHANNEL_KEYS` minus the two bundle
+    // keys — the module-level whitelist and this local pin cannot drift
+    // apart in either direction.
+    for key in SILENT_SUBSET_KEYS {
+        crate::negative_assert!(
+            CHANNEL_LOADER_KEYS.contains(&key),
+            "#1853 every silent-subset key is a loader-table key"
+        );
+        crate::negative_assert!(
+            SUBSET_CHANNEL_KEYS.contains(&key),
+            "#1853 every silent-subset key is in the module subset whitelist"
+        );
+    }
+    for key in SUBSET_CHANNEL_KEYS {
+        crate::negative_assert!(
+            SILENT_SUBSET_KEYS.contains(&key) || BUNDLE_CHANNEL_KEYS.contains(&key),
+            "#1853 every module subset key is silent-subset or bundle"
+        );
+    }
     // Reverse closure: a rejection-table entry that is neither a loader key
     // nor one of the two bundle-built strict keys refuses configs TS accepts.
     for key in UNMIGRATED_CHANNEL_KEYS {

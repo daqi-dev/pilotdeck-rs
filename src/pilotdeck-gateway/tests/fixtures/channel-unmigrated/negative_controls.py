@@ -14,11 +14,16 @@ from negative_suite import matrix_main
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/channel'
 MUTATIONS = [
-    # M1: the reject table loses `telegram`; the telegram case must survive.
+    # M1: the reject table loses `telegram`; the telegram case must survive,
+    # and the #1853 partition pin counts the rejection group at nine loader
+    # keys after #1344 moved slack out (#1853 r2 review: the partition test's
+    # cell is registered here).
     ('telegram-dropped', source / 'loader.rs',
      '    "telegram",\n    "qq",',
      '    "qq",',
-     'rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
+     [('rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
+      ('loader_keys_partition_rejected_and_silent_subset',
+       '#1853 nine loader keys sit in the unmigrated rejection table')]),
     # M2: the rejection is silenced into a skip; any one of the 11 cases kills
     # (#1343: bluebubbles and #1344: slack left the table, so their rejection
     # cases are gone).
@@ -111,6 +116,16 @@ MUTATIONS = [
      'for key in CHANNEL_LOADER_KEYS {',
      [('rejects_unmigrated_qq', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_wecom', '#1386 unmigrated channel must reject startup')]),
+    # M12 (#1853 r2 review): the loader table gains a key in neither the
+    # rejection group nor the silent group; the partition covering cell must
+    # kill it — without this row nothing pinned the fail-closed cell of
+    # `loader_keys_partition_rejected_and_silent_subset` (M1 only covers the
+    # ten-key count).
+    ('loader-table-gains-ungrouped-key', source / 'loader.rs',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 16] = [\n    "probe1853",\n    "telegram",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every loader key is rejected or silent-subset'),
 ]
 
 
