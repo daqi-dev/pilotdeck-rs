@@ -325,16 +325,22 @@ if mode is None:
     raise SystemExit(USAGE)
 if mode.startswith('-'):
     raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+# Judgment checks are explicit exits, not asserts: python3 -O strips asserts
+# (same hardening as the mode dispatch above), so a misspelled control name
+# must not silently run zero mutants and exit 0.
 selected = arguments
 unknown = set(selected) - set(names)
-assert not unknown, f'unknown controls: {sorted(unknown)}'
+if unknown:
+    raise SystemExit(f'unknown controls: {sorted(unknown)}')
 if selected:
     cases = [case for case in cases if case[0] in selected]
-assert cases, 'no controls selected'
+if not cases:
+    raise SystemExit('no controls selected')
 
 out = Path(mode).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+if not target:
+    raise SystemExit('negative.py requires CARGO_TARGET_DIR from the caller')
 out.mkdir(parents=True, exist_ok=True)
 
 env = dict(os.environ)
