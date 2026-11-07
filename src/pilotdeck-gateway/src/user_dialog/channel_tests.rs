@@ -3665,6 +3665,10 @@ fn a_poll_keeps_waiting_when_a_later_same_id_answer_is_in_flight_too() {
         bus.lock().unwrap().pending_count(&session) == 0,
         "#2027 answered registrations must leave no pending entry"
     );
+    negative_assert!(
+        bus.lock().unwrap().taken_count(&session, &id) == 0,
+        "#2027 a settled waiter must not leave its in-flight record behind"
+    );
 }
 
 #[test]
@@ -3741,5 +3745,80 @@ fn a_restore_only_forgets_its_own_answer_in_flight() {
             .unwrap()
             .consumed_own(&session, &id, second_generation),
         "#2027 a rollback must keep a later same-id answer in flight"
+    );
+    negative_assert!(
+        bus.lock().unwrap().taken_count(&session, &id) == 1,
+        "#2027 a rollback must drop only its own in-flight record"
+    );
+}
+
+#[test]
+fn a_session_rejection_keeps_an_earlier_same_id_answer_in_flight() {
+    use crate::negative_assert;
+
+    // #2027 boundary: `reject_session` takes every pending entry of a session
+    // and records whose registrations they were. A same-id registration whose
+    // answer is already in flight must keep its record: overwriting the key
+    // would make that answer look like a take-over to its own poll.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-reject-two-in-flight",
+    ))));
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    let pending = |call: &str| PendingDialog {
+        request_id: id.clone(),
+        dialog_kind: "input".into(),
+        tool_call_id: call.into(),
+        tool_name: "request_user_input".into(),
+        event: crate::metadata::object([("requestId", JsValue::String(id.clone()))]),
+        accepts: Arc::new(|_value: &JsValue| true),
+        resolve: Box::new(|_answer| {}),
+        reject: Box::new(|_error| {}),
+        on_settled: None,
+    };
+
+    let first_generation = bus
+        .lock()
+        .unwrap()
+        .register(&session, pending("call-first"));
+    let _first = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "first_answer")
+        .expect("#2027 the first registration must own the entry");
+    let second_generation = bus
+        .lock()
+        .unwrap()
+        .register(&session, pending("call-second"));
+
+    let rejected = bus
+        .lock()
+        .unwrap()
+        .reject_session(&session, "session_closed");
+    negative_assert!(
+        rejected.len() == 1,
+        "#2027 the rejection must take the pending registration"
+    );
+    negative_assert!(
+        rejected[0].entry.tool_call_id == "call-second".into(),
+        "#2027 the rejection must take the later registration"
+    );
+    negative_assert!(
+        bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, first_generation),
+        "#2027 a session rejection must keep an earlier same-id answer in flight"
+    );
+    negative_assert!(
+        bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, second_generation),
+        "#2027 the rejected registration's own rejection is on its way"
+    );
+    negative_assert!(
+        bus.lock().unwrap().taken_count(&session, &id) == 2,
+        "#2027 both registrations' records must stay under the id"
     );
 }
