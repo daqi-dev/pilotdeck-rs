@@ -136,6 +136,31 @@ fn engines_do_not_share_budget_or_interrupt_state() {
     );
 }
 
+/// Pattern ids are per-engine (the bootstrap's `next` counter restarts in
+/// every context), so a pattern from another engine must be rejected instead
+/// of silently running this engine's same-id pattern: `left`'s id 0 must not
+/// resolve to `right`'s id 0 and return `right`'s verdict for `left`'s
+/// pattern.
+#[test]
+fn exec_rejects_a_pattern_compiled_by_another_engine() {
+    let left = engine();
+    let right = engine();
+    let pattern = compile(&left, "^a+$", "u");
+    let error = right
+        .exec(&pattern, &units("aaa"), &mut MatchBudget::new(u64::MAX))
+        .expect_err("#1265 a cross-engine exec must be rejected");
+    assert!(
+        matches!(error, MatchError::Engine(ref message) if message.contains("another engine")),
+        "#1265 unexpected cross-engine error: {error:?}"
+    );
+    // Both engines keep serving their own patterns afterwards.
+    let mut budget = MatchBudget::new(u64::MAX);
+    let outcome = left
+        .exec(&pattern, &units("aaa"), &mut budget)
+        .expect("#1265 the owning engine must still serve");
+    assert_eq!(outcome, full_match(3));
+}
+
 /// Patterns hold their engine alive: dropping the last engine handle while a
 /// pattern is still alive must not abort when the pattern itself drops —
 /// `Arc<EngineInner>` keeps the QuickJS runtime alive through the pattern's

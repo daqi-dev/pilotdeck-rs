@@ -101,8 +101,11 @@ fn a_bridge_that_exhausts_the_heap_is_a_resource_error() {
     let error = engine
         .compile(&big, "")
         .expect_err("#1265 the heap must reject the oversized class");
+    // QuickJS spells allocation failure "out of memory" at the C entry but
+    // "out of memory in regexp execution" from inside libregexp; both are
+    // Resource here, so match the common prefix, not one exact spelling.
     assert!(
-        matches!(error, CompileError::Resource(ref message) if message == "out of memory"),
+        matches!(error, CompileError::Resource(ref message) if message.contains("out of memory")),
         "#1265 heap exhaustion must be a resource error: {error:?}"
     );
     // The engine itself is still usable for ordinary patterns afterwards.

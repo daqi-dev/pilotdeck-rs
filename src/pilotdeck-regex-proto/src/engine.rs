@@ -18,9 +18,13 @@
 //! Budget: one interrupt callback ("poll") is charged per poll; QuickJS calls
 //! the handler from inside regexp execution roughly every 10 000 steps and
 //! from the bytecode interpreter loop, so a [`MatchBudget`] is the shared
-//! *total* for one request — including the subject bridge work, which only
-//! makes it more conservative. Exhaustion is always the explicit
-//! [`MatchError::Interrupted`], never a silent no-match.
+//! *total* for one request. The JS half of the subject bridge (`fromCodes`)
+//! runs inside JS and is charged like any other JS work; the Rust half —
+//! the per-code-unit `Array::set` loop that builds the bridge array — runs
+//! before any JS and is *not* charged, so it is bounded by the JS heap
+//! alone (a subject length limit is left to the production-integration
+//! change). Exhaustion is always the explicit [`MatchError::Interrupted`],
+//! never a silent no-match.
 
 use std::fmt;
 use std::sync::Arc;
@@ -239,12 +243,31 @@ struct EngineInner {
 
 /// A bounded JS RegExp engine. Clone shares one QuickJS runtime; the runtime
 /// is not used concurrently — QuickJS is single-threaded per runtime, so one
-/// engine handle belongs to one thread at a time (documented, not enforced).
+/// engine handle belongs to one thread at a time.
 ///
-/// The handle is `Send` (an engine may move between threads) but not `Sync`
-/// (it must not be *shared*): rquickjs without the `parallel` feature marks
-/// `Runtime` `Send` but not `Sync`, so `Arc<EngineInner>` is `!Sync` on
-/// purpose — that is the desired protection, not an oversight.
+/// The handle is **neither `Send` nor `Sync`** (pinned by the `compile_fail`
+/// doctests below): this crate does not enable rquickjs's `parallel`
+/// feature, so `Runtime` and `Context` are `Rc`/`RefCell`-backed
+/// (`rquickjs-core` gates its `unsafe impl Send/Sync` behind that feature),
+/// `EngineInner` is neither `Send` nor `Sync`, and `Arc<EngineInner>`
+/// transmits neither marker. That is the desired protection, not an
+/// oversight: the compiler — not a comment — keeps one engine on one
+/// thread. If a workspace member ever enables rquickjs's `parallel`
+/// feature (Cargo feature unification would turn every `Arc<EngineInner>`
+/// into a shareable handle without touching this crate), these doctests
+/// stop failing to compile and surface the change.
+///
+/// ```compile_fail
+/// use pilotdeck_regex_proto::RegexEngine;
+/// fn is_send<T: Send>() {}
+/// is_send::<RegexEngine>();
+/// ```
+///
+/// ```compile_fail
+/// use pilotdeck_regex_proto::RegexEngine;
+/// fn is_sync<T: Sync>() {}
+/// is_sync::<RegexEngine>();
+/// ```
 #[derive(Clone)]
 pub struct RegexEngine {
     inner: Arc<EngineInner>,
@@ -272,8 +295,10 @@ impl RegexEngine {
             })));
         }
         let context = Context::full(&runtime)?;
-        // `Arc` over a `!Sync` inner is deliberate: it makes the handle `Send`
-        // (movable) while staying non-shareable, which is the QuickJS contract.
+        // `Arc` here is for shared ownership by clones and compiled patterns,
+        // not for threading: without rquickjs's `parallel` feature the inner
+        // is neither `Send` nor `Sync`, so the handle stays single-threaded
+        // (see the `RegexEngine` doctests).
         #[allow(clippy::arc_with_non_send_sync)]
         let engine = Self {
             inner: Arc::new(EngineInner {
@@ -365,6 +390,15 @@ impl RegexEngine {
         subject: &[u16],
         budget: &mut MatchBudget,
     ) -> Result<ExecOutcome, MatchError> {
+        // Pattern ids are per-engine (the bootstrap's `next` counter restarts
+        // in every context): a pattern compiled by another engine would hit
+        // *this* engine's cache under the same id and silently run the wrong
+        // pattern, so the mismatch is an error instead of a verdict.
+        if !Arc::ptr_eq(&pattern.engine, &self.inner) {
+            return Err(MatchError::Engine(
+                "pattern belongs to another engine".to_owned(),
+            ));
+        }
         self.inner.interrupted.store(false, Ordering::SeqCst);
         self.inner
             .remaining_polls
@@ -394,6 +428,13 @@ impl RegexEngine {
         if self.inner.interrupted.load(Ordering::SeqCst) {
             return Err(MatchError::Interrupted);
         }
+        // Disarm on the completed path: an allowance spent down to exactly
+        // zero must not stay armed against later JS entries that run outside
+        // any request budget (pattern drops, cache probes) — their next poll
+        // would see `previous <= 0` and interrupt them. An interrupted return
+        // keeps the next request's entry stores above as its reset, which
+        // `fresh_budget_does_not_inherit_previous_exhaustion` pins.
+        self.inner.remaining_polls.store(i64::MAX, Ordering::SeqCst);
         outcome
     }
 }
@@ -611,6 +652,7 @@ mod tests {
         assert_eq!(error, MatchError::Interrupted, "#1265 expected interrupt");
         // The same match with a large budget completes with no match.
         let mut big = MatchBudget::new(u64::MAX);
+        let granted = big.remaining_polls();
         let outcome = engine
             .exec(
                 &pattern,
@@ -619,8 +661,11 @@ mod tests {
             )
             .expect("#1265 big budget must complete");
         assert_eq!(outcome, ExecOutcome::NoMatch);
+        // Compare against the granted allowance, not `u64::MAX`: `new`
+        // saturates to `i64::MAX`, so `< u64::MAX` holds even when nothing
+        // was charged and would never catch a handler that stops counting.
         assert!(
-            big.remaining_polls() < u64::MAX,
+            big.remaining_polls() < granted,
             "#1265 polls must be charged"
         );
     }

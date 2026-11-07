@@ -74,14 +74,37 @@ fn budget_states_are_independently_distinguishable() {
     );
     // The very same request with a large budget completes (with no match).
     let mut plenty = MatchBudget::new(u64::MAX);
+    let granted = plenty.remaining_polls();
     assert_eq!(
         engine.exec(&pattern, &doom, &mut plenty),
         Ok(ExecOutcome::NoMatch),
         "#1265 a large budget must complete the same request"
     );
+    // Compare against the granted allowance, not `u64::MAX`: `new` saturates
+    // to `i64::MAX`, so `< u64::MAX` holds even when nothing was charged.
     assert!(
-        plenty.remaining_polls() < u64::MAX,
+        plenty.remaining_polls() < granted,
         "#1265 polls must be charged to the completing request"
+    );
+}
+
+#[test]
+fn zero_budget_interrupts_on_the_first_poll() {
+    // `new(0)` stores 0, so the handler's first poll reads `previous <= 0`
+    // and interrupts: a zero budget must never run untracked.
+    let engine = engine();
+    let pattern = catastrophic(&engine);
+    let doom = units(&format!("{}!", "a".repeat(18)));
+    let mut zero = MatchBudget::new(0);
+    assert_eq!(
+        engine.exec(&pattern, &doom, &mut zero),
+        Err(MatchError::Interrupted),
+        "#1265 a zero budget must interrupt on its first poll"
+    );
+    assert_eq!(
+        zero.remaining_polls(),
+        0,
+        "#1265 a zero budget reports nothing remaining"
     );
 }
 
@@ -110,6 +133,7 @@ fn budget_spans_every_exec_of_one_request() {
     // One budget shared by consecutive execs: the second starts from the
     // first's remainder, so the total is what the caller granted the request.
     let mut budget = MatchBudget::new(u64::MAX);
+    let granted = budget.remaining_polls();
     let fast = units(&format!("{}!", "a".repeat(4)));
     assert_eq!(
         engine.exec(&pattern, &fast, &mut budget),
@@ -117,8 +141,9 @@ fn budget_spans_every_exec_of_one_request() {
         "#1265 first fast exec must complete"
     );
     let after_first = budget.remaining_polls();
+    // Against the granted allowance (not `u64::MAX`, which saturates away).
     assert!(
-        after_first < u64::MAX,
+        after_first < granted,
         "#1265 the first exec must charge polls"
     );
     let slow = units(&format!("{}!", "a".repeat(18)));
