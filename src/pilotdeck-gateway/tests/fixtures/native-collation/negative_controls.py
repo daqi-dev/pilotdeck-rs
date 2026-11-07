@@ -98,6 +98,13 @@ mutations = [
      'script.is_none_or(|_| false)',
      'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
      '#132 fr_Latn_CA default keeps fr-CA\'s backward secondary'),
+    # Paired mutation for the explicit spelling: dropping its script condition
+    # makes `new Intl.Collator("fr-Latn-CA")` take the fr-CA repair, which the
+    # oracle records as generic `fr` (sign -1 for `coté` vs `côte`).
+    ('french-explicit-script-repaired', PROJECT,
+     '|| !process_default && locale.id.script.is_none()',
+     '|| !process_default',
+     PAIRS, '#132 comparator raw weights'),
     # Paired mutations for the three boundaries this task retires plus the
     # ownership handoff: each one reinstates the pre-#132 behaviour and must
     # turn its bound test red.

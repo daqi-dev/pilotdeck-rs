@@ -687,10 +687,12 @@ fn node_dirent_name(name: &std::ffi::CStr) -> String {
 //   `fr` (`coté < côte`), the value recorded in
 //   `tests/fixtures/native-collation/oracle.json`.
 //
-// `node_collator` follows the default spelling: every product call site gets
-// its locale from `node_locale` (or a config default), which is the situation
-// `localeCompare` with no argument models. `node_explicit_collator` keeps the
-// oracle's spelling for harnesses that feed literal locale tags.
+// `node_collator` follows the default spelling: the call sites that resolve a
+// locale at runtime take it from `node_locale` (or a config default), which is
+// the situation `localeCompare` with no argument models. Literal-locale call
+// sites (`runner_artifacts.rs` pins `en-US`) are unaffected — the two
+// spellings only differ for a script-tagged fr-CA. `node_explicit_collator`
+// keeps the oracle's spelling for harnesses that feed literal locale tags.
 pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
     build_node_collator(locale, true)
 }

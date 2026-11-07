@@ -40,7 +40,7 @@ v22.22.0（`~/opt/node-v22.22.0-icu78-linux-arm64`，ICU 78.2、uv 1.52.1，同
   - **掩码范围**：只对 `dynamicIds` 对应分区的 `manifest.json` / `_FAILED.json` 顶层 `createdAt` 掩成 `<ts>`，marker 的 `error` 值内嵌的场景目录掩成 `<dir>`；`failureReason`、`entries.path`、`linkTarget`、手工 manifest 的固定时间、restore 出的用户 `.json` 一律原始比较。size 与 sha256 同取投影后字节（原始 size 含 scratch 路径长度，跨运行不可比）。生成器自检断言 `mask-scope` 的三处日期仍在投影结果里、用户 `.json` 的 sha256 等于原始字节，`provider-quirks` 的固定 `createdAt` 不被投影。
   - capture 默认用**最新** recorder（`recorder` 步骤让后续 capture 换新实例；completed 缓存连失败结果一起缓存，旧实例读不到磁盘上的 marker 变化）。
 - `cross`：normal 场景 TS 写出的快照树（文件 b64 + 目录表）与 list/get/restore 的 TS 结果，供 Rust 正向交叉（Rust 读 TS 写的快照）。
-- `hostBoundaryCases.unpairedSurrogateCollation`：手工 manifest 的 `createdAt` 依次为 `\ud800`、`\ufffd`、`\ue000`、`\u{10000}`，记录真实 TS `list()` 的排序。Node 让孤立代理项保留独立权重，ICU4X 把它们折成 U+FFFD，因此 Rust `list()` 在键含孤立代理项且实际需要比较时返回宿主边界错误（R19），不返回另一种顺序。
+- `hostBoundaryCases.unpairedSurrogateCollation`：手工 manifest 的 `createdAt` 依次为 `\ud800`、`\ufffd`、`\ue000`、`\u{10000}`，记录真实 TS `list()` 的排序。Node 让孤立代理项保留独立权重；#132 已退役原先的宿主边界（R19），Rust `list()` 改走 `compare_utf16_preserving_surrogates`，给出与 TS 相同的顺序，不再返回宿主错误。
 
 Rust 测试 `tests/workspace_snapshot.rs` 逐场景回放：结果按 stringify 深比较，树逐行比较（树根的 `.staging` 是 Rust 私有暂存父目录，TS 无对应物，回放时跳过、其空置由无残留检查另行断言），另验无 `.tmp-` 残留且 `.staging` 内无残留轮次目录；oracle.json 缺失时测试明确失败（提示先生成）。读入 oracle 时走 #280 的共享校验助手 `tests/common/baseline.rs` 的 `baseline::oracle`：始终断言 `sourceCommit==cc7c4e6` 且 `sourceSha256` 非空、路径与哈希形状合法；设了 `PDRS_BASELINE` 时再用 Git 重算闭包文件的 blob、对照工作树，并断言基线已跟踪文件干净。
 
@@ -85,4 +85,4 @@ PDRS_BASELINE=/absolute/path/to/PilotDeck cargo test -p pilotdeck-gateway \
 | nul-file-output-surrogate | file 的 `path="a\ud800\0b.txt"`：readFile 成功后 writeFile 的引文保留孤立代理项 |
 | nul-capture-root | snapshotRoot 含 NUL：capture 在失败分区 `mkdir` 处 reject（TypeError），不落 marker；20 字符根目录使引文完整保留 64 位 digest |
 
-范围：只证明 WorkspaceSnapshot 存储契约（布局、字节、marker 语义与 TS 一致）；WS 入口与投影是 A6.6-pr4，本 PR 不接 host/gateway 方法。已知差异见 `src/storage/workspace_snapshot.rs` 文件头（未实测 errno 回落 Rust Display、同步 recorder）；磁盘回读的字符串保留原始 `JsString`，`createdAt` 含孤立代理项时的 `localeCompare` 按 R19 返回宿主边界错误（合法 Unicode 与 U+FFFD 仍原生排序）。并发共享：生成器用两条同键的并发 promise 自检真实 TS 的拒绝共享与事后重试；Rust 侧由 `hard_failure_is_shared_with_waiters_and_not_cached` 单元测试确定性覆盖等待者拿到同一 `Err` 且新调用重试，`panicking_leader_publishes_failure_to_waiters` 覆盖 leader panic 时 in-flight 条目仍会发布失败。
+范围：只证明 WorkspaceSnapshot 存储契约（布局、字节、marker 语义与 TS 一致）；WS 入口与投影是 A6.6-pr4，本 PR 不接 host/gateway 方法。已知差异见 `src/storage/workspace_snapshot.rs` 文件头（未实测 errno 回落 Rust Display、同步 recorder）；磁盘回读的字符串保留原始 `JsString`，`createdAt` 含孤立代理项时的 `localeCompare` 由 #132 改为原生比较、顺序与 TS 一致（合法 Unicode 与 U+FFFD 同样原生排序）。并发共享：生成器用两条同键的并发 promise 自检真实 TS 的拒绝共享与事后重试；Rust 侧由 `hard_failure_is_shared_with_waiters_and_not_cached` 单元测试确定性覆盖等待者拿到同一 `Err` 且新调用重试，`panicking_leader_publishes_failure_to_waiters` 覆盖 leader panic 时 in-flight 条目仍会发布失败。
