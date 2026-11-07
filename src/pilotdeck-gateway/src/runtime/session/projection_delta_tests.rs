@@ -1122,6 +1122,16 @@ fn factory_generators_clean_only_owned_work() {
                 "#1253 cleanup preserves colliding output"
             );
         } else if script == "generate.mts" {
+            // #1500 P2-2: the tail side asserts the ownership marker inside its
+            // full `names` inventory (see `tail_generator_cleans_only_owned_work`);
+            // this side only filtered `run-*`/`snapshot-contract-*`, so turning
+            // generate.mts's `.generation-owner` write into a no-op left the cell
+            // green. Pin the marker here so the ownership claim is checked on the
+            // factory path too.
+            assert!(
+                root.join(".generation-owner").is_file(),
+                "#1500 factory generator writes its ownership marker"
+            );
             assert!(
                 root.join("raw/index.json").is_file(),
                 "#1253 cleanup preserves raw audit"
