@@ -1164,9 +1164,9 @@ mod tests {
     #[test]
     fn object_siblings_stop_after_the_first_truncation() {
         // A multi-key object: the elided subtree is followed by a sibling key.
-        // Dropping the object branch's `break` writes that sibling's *key*
-        // (the value is still elided by the budget guard), which is invisible
-        // in the single-key objects the other cases use.
+        // Dropping the object branch's `break` writes that sibling's *key*: the
+        // key-side `if *truncated` check then stops the loop, so the value is
+        // never reached. Neither the key nor the value may appear.
         let mut payload = JsObject::new();
         payload.insert(JsString::from("deep"), nested_array(MAX_STRINGIFY_DEPTH));
         payload.insert(
@@ -1266,8 +1266,9 @@ mod tests {
         );
 
         // The cut backs off to a UTF-8 char boundary: a 3-byte character must
-        // never be split, and the marker must still fit inside the bound.
-        let multibyte = "中".repeat(MAX_STRINGIFY_BYTES / 3 + 8);
+        // never be split, and the marker must still fit inside the bound. The
+        // leading ASCII keeps the budget from landing on a boundary by luck.
+        let multibyte = format!("a{}", "中".repeat(MAX_STRINGIFY_BYTES / 3 + 8));
         let wide = stringify_indented(&JsValue::String(JsString::from(multibyte.as_str())))
             .expect("#1929 an oversized multibyte string must still stringify");
         assert!(
