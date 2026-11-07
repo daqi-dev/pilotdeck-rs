@@ -775,8 +775,10 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
 // #2138: both audits prove a *negative* — "this window spawned no child" and
 // "no other process holds the data dir open" — so a `/proc` read the audit
 // could not perform is an unknown, never evidence of absence. Three rules,
-// mirroring #1409's return-boundary scan (`tests/scratch_publication.rs`:
-// `blind_source` / `holds_nothing` / `a_write_end_this_process_holds_is_visible`):
+// mirroring the design settled for #1409's return-boundary scan (issue #1409,
+// whose implementation lands with PR #2166 in `tests/scratch_publication.rs`;
+// that scan proves a descriptor was released, this module proves that no child
+// and no holder exists):
 //
 //   1. a failed read is classified by source ([`BlindSource`]) before it may
 //      be skipped; a source that could be what the audit hunts fails it closed;
@@ -787,8 +789,12 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
 //      evidence of "nothing there".
 //
 // The integration-test crate cannot share crate-private code with this module,
-// so the classification is a deliberate copy of #1409's — change the two
-// together.
+// and the two audits hunt different objects, so #1409's rules are mirrored by
+// concept rather than by symbol. A pipe can only be inherited, so another
+// user's process can never hold it; a data dir can be opened by anyone with
+// the permissions, which is why the holder audit narrows the skip set further
+// ([`BlindSources::of_holder`]). Move the two issues together when the rule
+// itself changes.
 // ---------------------------------------------------------------------------
 
 /// #2138: the state and parent fields of `/proc/<pid>/stat`. Everything is
@@ -893,9 +899,13 @@ enum BlindSource {
 
 #[cfg(target_os = "linux")]
 impl BlindSource {
-    /// #2138: whether a source can be what the audit hunts at all. This is the
-    /// one place the skip set is written, so a new variant or a narrowed set
-    /// cannot silently apply on one side only.
+    /// #2138: whether a source can be what the *child* audit hunts at all. A
+    /// child is a descendant by definition, so a source that is gone, already
+    /// dead, or provably unrelated cannot be the child a sweep failed to see;
+    /// this is the one place that skip set is written, so a new variant or a
+    /// narrowed set cannot silently apply on one side only. The holder audit
+    /// hunts non-descendants and therefore cannot reuse the set unchanged —
+    /// see [`BlindSources::of_holder`].
     fn holds_nothing(self) -> bool {
         matches!(self, Self::Vanished | Self::Terminal | Self::Unrelated)
     }
@@ -923,6 +933,41 @@ impl BlindSources {
             .entry(pid.to_owned())
             .or_insert_with(|| blind_source(pid))
     }
+
+    /// #2138: the holder audit's classification. That audit hunts processes
+    /// that are *not* descendants by definition, so "unrelated" is no reason
+    /// to skip one: a process of this very user, leaked out of an earlier run
+    /// and reparented to init, is unrelated and can still hold the data dir —
+    /// exactly the regression the audit exists to catch. Only a source whose
+    /// descriptor directory provably belongs to someone else stays skippable:
+    /// the kernel gives `/proc/<pid>/fd` to the target's uid, so an unreadable
+    /// directory is what another user's process always looks like — and, for
+    /// the same reason, what a *non-dumpable* process of this user looks like
+    /// (the user's own `sd-pam` and `systemd --user` have a root-owned fd
+    /// directory, measured on cb8). Neither can be read on a healthy host.
+    /// Anything else — including an ownership the sweep cannot read — remains
+    /// an unknown and fails the audit closed.
+    fn of_holder(&mut self, pid: &str) -> BlindSource {
+        let source = self.of(pid);
+        if source == BlindSource::Unrelated && !descriptors_belong_to_another_user(pid) {
+            return BlindSource::Related;
+        }
+        source
+    }
+}
+
+/// #2138: whether `/proc/<pid>/fd` is owned by a user other than this
+/// process's. That directory — not `/proc/<pid>` — is what the audit has to
+/// list, and the kernel hands it to `root` when the target is non-dumpable,
+/// just as it hands another user's to that user. `false` when either
+/// ownership cannot be read: that is not proof of someone else, so the caller
+/// keeps treating the source as related (fail-closed).
+#[cfg(target_os = "linux")]
+fn descriptors_belong_to_another_user(pid: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let theirs = std::fs::metadata(format!("/proc/{pid}/fd")).map(|metadata| metadata.uid());
+    let ours = std::fs::metadata("/proc/self").map(|metadata| metadata.uid());
+    matches!((theirs, ours), (Ok(theirs), Ok(ours)) if theirs != ours)
 }
 
 /// #2138: classify a source whose `/proc` reads failed, for the sweep's
@@ -1195,12 +1240,14 @@ fn foreign_data_dir_holders_in(
                 readable += 1;
                 descriptors
             }
-            // #2138: a failed read is never silently skipped. A source that
-            // holds nothing may be passed over; anything else is an unknown
-            // the audit fails closed on, because a hidden descriptor of a live
-            // process is exactly where a foreign holder would hide.
+            // #2138: a failed read is never silently skipped. Only a source
+            // that provably holds nothing may be passed over; anything else
+            // is an unknown the audit fails closed on, because a hidden
+            // descriptor of a live process is exactly where a foreign holder
+            // would hide — and a process of this user is not exempt from
+            // being that holder just because it is not a descendant.
             Err(error) => {
-                if sources.of(&name).holds_nothing() {
+                if sources.of_holder(&name).holds_nothing() {
                     skipped += 1;
                     continue;
                 }
@@ -1218,10 +1265,22 @@ fn foreign_data_dir_holders_in(
             let target = match std::fs::read_link(descriptor.path()) {
                 Ok(target) => target,
                 // #2138: only a link that vanished between the enumeration and
-                // the read is a release. Any other errno (EACCES behind an LSM
-                // or after a setuid exec, EIO) leaves a descriptor the audit
-                // cannot see — the source decides, and a live holder fails the
-                // audit closed.
+                // the read is a release. Any other errno (EACCES, EIO) leaves
+                // a descriptor the audit cannot see, so the source decides.
+                //
+                // This arm keeps the wider skip set on purpose, unlike the
+                // directory arm above: a non-dumpable process of this very
+                // user lists its descriptor directory and then answers EACCES
+                // for every link in it — the user's own `systemd --user` does
+                // exactly that (measured on cb8: 143 entries listed, `fd/0`
+                // EACCES, same uid). The kernel refuses those links by ptrace
+                // policy on every healthy systemd host, so failing closed here
+                // would turn the audit red everywhere without ever finding a
+                // holder. What a *directory* the sweep cannot list hides is
+                // still narrowed by [`BlindSources::of_holder`]; a same-user
+                // holder that opens the data dir stays visible, because a
+                // process that is dumpable enough to open files there is
+                // dumpable enough to have its links resolved.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
                     if sources.of(&name).holds_nothing() {
@@ -1525,12 +1584,28 @@ impl TransientAudit {
 
 /// A panic before `finish` must not leave a spinning sampler in the test
 /// process; stopping it here also keeps the owned rerun process bounded.
+///
+/// #2138: [`TransientAudit::finish`] is the reporting path for a sweep that
+/// could not read `/proc`. `Drop` cannot report it the same way — panicking
+/// while the test is already unwinding aborts the process — but it must not
+/// swallow the reason either: a test that fails in the window would otherwise
+/// blame its own assertion and hide that the audit itself went blind. The
+/// reason is written to stderr, without panicking, so it survives in the
+/// captured test output.
 #[cfg(target_os = "linux")]
 impl Drop for TransientAudit {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
+        }
+        let failure = self
+            .failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(reason) = failure.as_deref() {
+            use std::io::Write as _;
+            let _ = writeln!(io::stderr(), "{reason}");
         }
     }
 }
@@ -1661,5 +1736,98 @@ fn a_missing_self_descriptor_dir_fails_the_holder_audit() {
     assert!(
         text.contains("#2138") && text.contains("prove nothing"),
         "#2138 the failure must name the blind self-read: {text}"
+    );
+}
+
+/// #2138: the holder audit's skip set is narrower than the child audit's.
+/// "Not a descendant" is what the holder audit is *looking for*, so it only
+/// licenses a skip when the descriptor directory proves someone else owns it;
+/// a source of this user stays an unknown.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_holder_audit_narrows_the_skip_set_to_another_users_source() {
+    let mine = std::process::id().to_string();
+    let mut sources = BlindSources::default();
+    assert_eq!(
+        sources.of_holder(&mine),
+        BlindSource::Related,
+        "#2138 this process can hold its own data dir"
+    );
+    assert!(
+        !descriptors_belong_to_another_user(&mine),
+        "#2138 this process owns its own descriptor directory"
+    );
+    // The child audit would skip this classification; the holder audit may
+    // only do so when ownership proves someone else. An entry whose ownership
+    // cannot be read is no proof, so it stays an unknown.
+    sources
+        .seen
+        .insert("4000000".to_owned(), BlindSource::Unrelated);
+    assert_eq!(
+        sources.of_holder("4000000"),
+        BlindSource::Related,
+        "#2138 unreadable ownership is not proof of someone else"
+    );
+    if std::path::Path::new("/proc/1/fd").exists() {
+        use std::os::unix::fs::MetadataExt;
+        let ours = std::fs::metadata("/proc/self")
+            .expect("#2138 own proc entry")
+            .uid();
+        let theirs = std::fs::metadata("/proc/1/fd")
+            .expect("#2138 init descriptor directory")
+            .uid();
+        sources.seen.insert("1".to_owned(), BlindSource::Unrelated);
+        assert_eq!(
+            sources.of_holder("1"),
+            if theirs != ours {
+                BlindSource::Unrelated
+            } else {
+                BlindSource::Related
+            },
+            "#2138 a source is skippable exactly when its descriptor directory belongs to someone else"
+        );
+    }
+}
+
+/// #2138 negative control: an unreadable descriptor directory of a *same-user*
+/// process must fail the holder audit. The injected proc root gives the parent
+/// process — alive, this user, never a descendant of this binary — an `fd`
+/// entry that cannot be listed, and adds one readable source so the sweep does
+/// see something. Skipping the unreadable same-user source (what the child
+/// audit's set would do) would hand back a clean holder list.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unreadable_holder_of_this_user_fails_the_data_dir_audit() {
+    let mine = std::process::id().to_string();
+    let parent = std::os::unix::process::parent_id().to_string();
+    let scratch = crate::test_scratch::Scratch::new("2138-same-user-holder");
+    let proc_root = scratch.path().join("proc");
+    // The audit's own eyes must pass through the injected root: this process
+    // needs an fd directory holding a descriptor that resolves to a pipe. The
+    // self-check creates its own pipe, so the fixture cannot know which number
+    // it will get — every plausible number resolves to the same pipe target.
+    let self_fd = proc_root.join(&mine).join("fd");
+    std::fs::create_dir_all(&self_fd).expect("#2138 create the self fd fixture");
+    for fd in 3..256 {
+        std::os::unix::fs::symlink("pipe:[1]", self_fd.join(fd.to_string()))
+            .expect("#2138 link the self pipe fixture");
+    }
+    // The source that must fail the audit: alive, this user, not a descendant,
+    // descriptor directory unlistable.
+    std::fs::create_dir(proc_root.join(&parent)).expect("#2138 create the blind holder");
+    std::fs::write(proc_root.join(&parent).join("fd"), b"not a directory")
+        .expect("#2138 make the blind holder's fd unlistable");
+    // One readable source, so the sweep has something it could see and the
+    // failure can only come from the blind same-user holder.
+    let readable = proc_root.join("1000000").join("fd");
+    std::fs::create_dir_all(&readable).expect("#2138 create the readable source");
+    std::os::unix::fs::symlink("/dev/null", readable.join("0"))
+        .expect("#2138 link the readable source's descriptor");
+    let error = foreign_data_dir_holders_in(&proc_root, scratch.path())
+        .expect_err("#2138 an unreadable same-user source must fail the audit");
+    let text = error.to_string();
+    assert!(
+        text.contains(&parent) && text.contains("reading the descriptors"),
+        "#2138 the failure must name the unreadable same-user holder: {text}"
     );
 }
