@@ -1334,6 +1334,31 @@ def _walrus_names(scope):
             and isinstance(node.target, ast.Name)}
 
 
+def _match_case_position(node):
+    """``(line, col)`` for an ``ast.match_case``, which carries no position.
+
+    #1953 fix-r1 round 33 (self-check of the 331-mutant table): the capture
+    branch fed the ``match_case`` node into the same ``(node.lineno,
+    node.col_offset)`` every statement uses and the audit died with
+    ``AttributeError`` -- at module scope in a ``match`` and inside a function
+    alike, so three ``calibrate-match-capture-*`` mutants came back SURVIVED
+    for the wrong reason.  A case has no position of its own; its pattern
+    does, and the first body statement does when the pattern is a bare ``_``.
+    """
+    line = getattr(node, 'lineno', None)
+    if line is not None:
+        return (line, getattr(node, 'col_offset', 0))
+    pattern = getattr(node, 'pattern', None)
+    line = getattr(pattern, 'lineno', None)
+    if line is not None:
+        return (line, getattr(pattern, 'col_offset', 0))
+    for statement in getattr(node, 'body', ()) or ():
+        line = getattr(statement, 'lineno', None)
+        if line is not None:
+            return (line, getattr(statement, 'col_offset', 0))
+    return (-1, -1)
+
+
 def _match_capture_names(scope):
     """Names a ``match`` statement captures inside *scope* (#892 r26).
 
@@ -7372,7 +7397,8 @@ def _module_binding_events(tree):
                      items[-1][4], source))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
-                add(name, node, None, False)
+                items = add(name, node, None, False,
+                            position=_match_case_position(node))
                 items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
     dead_ranges = tuple(_dead_line_ranges(tree))
     _resolve_assignment_helpers(events, pending)
@@ -7554,7 +7580,7 @@ def _imported_write_aliases(function, outer_imports=None):
                      loops, source))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
-                add(name, (node.lineno, node.col_offset), None,
+                add(name, _match_case_position(node), None,
                     conditional, loops, certain=False)
     # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
     # spelling a write helper.
@@ -12642,6 +12668,31 @@ def aggregation_audit():
     if len(_module_open_calls(_m32_loop)[0]) < 2:
         failures.append('#1953 aggregation-audit: detector self-test lost the '
                         'live self-copy inside a loop (round 32)')
+    # #1953 fix-r1 round 33 (self-check of the 331-mutant table): an
+    # ``ast.match_case`` has no position of its own, and both binding walks
+    # read ``node.lineno`` off it.  A ``match`` at module scope and one inside
+    # a function each killed the audit with ``AttributeError`` -- the three
+    # ``calibrate-match-capture-*`` mutants came back SURVIVED for that reason
+    # instead of being caught.
+    _m33_match = ast.parse(
+        "import operator\n"
+        "match operator.setitem:\n"
+        "    case _cap:\n"
+        "        _cap(object(), 'status', 'PASS')\n"
+        "def _m33(report):\n"
+        "    match operator.setitem:\n"
+        "        case _cap2:\n"
+        "            _cap2(report, 'status', 'PASS')\n")
+    try:
+        _m33_events = _module_binding_events(_m33_match)
+        _m33_bindings = _name_bindings(_m33_match.body[-1], _m33_events)
+    except AttributeError:
+        failures.append('#1953 aggregation-audit: detector self-test crashed on '
+                        'a match capture with no position (round 33)')
+    else:
+        if '_cap' not in _m33_events or '_cap2' not in _m33_bindings:
+            failures.append('#1953 aggregation-audit: detector self-test lost a '
+                            'match capture (round 33)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
