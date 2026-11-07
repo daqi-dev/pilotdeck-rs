@@ -781,6 +781,12 @@ fn closes_match(id: &str, expected: &Value, actual: &Value) -> bool {
 }
 
 async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
+    // #1885 r3: the child runs with `current_dir` set to its own project
+    // directory, so every path handed to it -- observer, HOME/XDG/TMPDIR, the
+    // wrapper snapshot -- must be absolute, or a relative `PDRS_SIGNAL_RESULTS`
+    // sends all of them to the wrong place. Normalise once at the boundary
+    // instead of patching each call site.
+    let directory = require(std::path::absolute(&directory), id, "replay evidence root");
     let runtime = directory.join("runtime");
     private_directory(&runtime, id);
     for name in [
@@ -841,15 +847,7 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
             .unwrap_or_else(|| super::fixture_directory().join("sigint_default.py"));
         let _lease = super::read_lease::fixture_read_lease();
         let bytes = require(fs::read(&source), id, "SIGINT default wrapper bytes");
-        // #1885 r2: the child runs with `current_dir` set to its own project
-        // directory, so a relative caller-supplied results directory would
-        // hand it a script path it cannot open. Absolute here keeps the
-        // snapshot valid for any output directory spelling.
-        let snapshot = require(
-            std::path::absolute(directory.join("sigint_default.py")),
-            id,
-            "SIGINT wrapper snapshot path",
-        );
+        let snapshot = directory.join("sigint_default.py");
         private_file(&snapshot, &bytes, id);
         snapshot
     };

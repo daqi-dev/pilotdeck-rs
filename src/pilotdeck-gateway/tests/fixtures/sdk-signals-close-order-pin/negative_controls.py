@@ -435,10 +435,15 @@ def record(name, status, reason, compiled):
 # written before the run exits nonzero.
 aborted = None
 try:
-    assert_frozen_ledgers_match_head()
     with mutating_sources(
         root, list(RESTORE_SET), lock_timeout=LOCK_TIMEOUT_SECONDS
     ) as snapshots:
+        # #1885 r3: prove inside the tree lock, exactly where the restore set
+        # used to prove the ledgers on entry. Proving before `mutating_sources`
+        # left a TOCTOU window (the lock probe alone may wait
+        # LOCK_TIMEOUT_SECONDS) during which an uncommitted edit would land in
+        # the very bytes the preflight then compares against.
+        assert_frozen_ledgers_match_head()
         positive = run_check("positive-before")
         if not preflight_passed(positive):
             raise SystemExit(
@@ -523,6 +528,12 @@ try:
                 status = "INVALID"
                 reason += f"; restored: {type(error).__name__}: {error}"
             record(name, status, reason, compiled)
+        # #1885 r3: re-prove on the way out, still under the tree lock. While
+        # the ledgers were in the restore set, `__exit__` rewrote them and the
+        # restore verification re-read them, so a ledger edited by anyone else
+        # during the run surfaced as a failed restore. Proving only on entry
+        # would let a concurrent edit stand unnoticed for the whole run.
+        assert_frozen_ledgers_match_head()
 except BaseException as error:
     aborted = f"{type(error).__name__}: {error}"
     if isinstance(error, TimeoutError) and "source lock busy" in str(error):
