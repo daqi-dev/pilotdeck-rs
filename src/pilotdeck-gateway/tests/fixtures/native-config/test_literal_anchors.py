@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported unit tests of the fixture's own literal-anchor guard; no product source mutation table
 """#2065: red-side tests for the fixture's own literal-anchor guard.
 
 `--check` refuses a run whose literal anchor could never match, but a guard with
@@ -30,13 +31,7 @@ BAD_ROW = 'permission-mode-gate-removed'
 
 def check(cases=None, pins=None):
     """Run the guard with optional mutated rows / pinned table."""
-    saved = nc.LITERAL_ANCHORS
-    if pins is not None:
-        nc.LITERAL_ANCHORS = pins
-    try:
-        nc.check_literal_anchors(ROWS if cases is None else cases)
-    finally:
-        nc.LITERAL_ANCHORS = saved
+    nc.check_literal_anchors(ROWS if cases is None else cases, pins)
 
 
 def replace_row(field, value, mutation=BAD_ROW):
@@ -83,6 +78,16 @@ class LiteralAnchorGuard(unittest.TestCase):
     def test_rejects_unpinned_anchor_in_a_test_file(self):
         pins = [pin for pin in nc.LITERAL_ANCHORS if pin[0] is not nc.LIVE_TESTS]
         self.assertRefused('unpinned literal anchor', pins=pins)
+
+    def test_rejects_dropped_second_registration(self):
+        # `the transcript still loads` is verbatim in two scanned files; a pin
+        # for one copy must not vouch for the other.
+        pins = [pin for pin in nc.LITERAL_ANCHORS
+                if pin != (nc.SESSION_DIR, '#1457 the transcript still loads')]
+        with self.assertRaises(SystemExit) as caught:
+            check(pins=pins)
+        self.assertIn('unpinned literal anchor', str(caught.exception))
+        self.assertIn('session_dir.rs', str(caught.exception))
 
     def test_rejects_row_outside_the_scanned_set(self):
         self.assertRefused('outside SOURCE_TEXTS',

@@ -293,8 +293,10 @@ mutations = [
 # `negative_assert_eq!` interpolate through `format!`, but only the templates
 # that actually contain `{...}` differ from the payload; a macro assertion with
 # no placeholder is verbatim source text like any other (#1457 busy message).
-# `classify` stays untouched; this refuses a run whose literal anchor could
-# never match.
+# `classify` stays untouched; this refuses a run whose literal anchor is
+# verbatim source text yet unregistered, and a pin no row asserts. An invented
+# string that matches no scanned file cannot be told apart from a `{...}`
+# template, so it is not refused here -- the run finds it as an INVALID.
 #
 # The table pins every anchor that is verbatim in the scanned files: 35 of the
 # 40 rows (30 distinct strings, 31 entries -- `the transcript still loads` is
@@ -304,7 +306,9 @@ mutations = [
 # point: when a message is reworded, `--check` fails here instead of surfacing as
 # a false INVALID hours into a host run. `check_literal_anchors` also refuses a
 # row whose anchor is verbatim source text but was left unpinned, so a new row
-# cannot skip registration. Anchors that must stay *prefixes* of a longer source
+# cannot skip registration; registration is per (file, string) pair, so dropping
+# one of two registrations of the same string still fails. Anchors that must stay
+# *prefixes* of a longer source
 # literal are stored as that prefix -- see the `permission-mode-gate-removed` row.
 # A pin is bound only to a row asserting it **exactly**, so reverting that row to
 # a longer, invented suffix (the #2065 shape) fails as `unbound to any row`
@@ -358,13 +362,19 @@ def _assertions(case):
     return case.assertion if isinstance(case.assertion, list) else [case.assertion]
 
 
-def check_literal_anchors(cases):
-    texts = {path: path.read_text() for path in SOURCE_TEXTS}
+def check_literal_anchors(cases, pins=None):
+    pins = LITERAL_ANCHORS if pins is None else pins
+    texts = {}
+    for path in SOURCE_TEXTS:
+        try:
+            texts[path] = path.read_text()
+        except OSError as error:
+            raise SystemExit(f'#2065 scanned source unreadable: {path.name}: {error}')
     for case in cases:
         if case.path not in texts:
             raise SystemExit('#2065 row mutates a file outside SOURCE_TEXTS: '
                              f'{case.mutation} -> {case.path.name}')
-    for path, anchor in LITERAL_ANCHORS:
+    for path, anchor in pins:
         if path not in texts:
             raise SystemExit(
                 f'#2065 literal anchor declared outside SOURCE_TEXTS: {path.name}')
@@ -373,16 +383,16 @@ def check_literal_anchors(cases):
         if not any(anchor == assertion
                    for case in cases for assertion in _assertions(case)):
             raise SystemExit(f'#2065 literal anchor unbound to any row: {anchor!r}')
-    pinned = {anchor for _, anchor in LITERAL_ANCHORS}
+    pinned = set(pins)
     for case in cases:
         for assertion in _assertions(case):
-            if assertion in pinned:
-                continue
-            where = next((path.name for path, text in texts.items()
-                          if assertion in text), None)
-            if where:
+            # Every scanned file that holds the assertion verbatim needs its own
+            # registration: one pin does not cover a copy in another file.
+            unregistered = [path.name for path, text in texts.items()
+                            if assertion in text and (path, assertion) not in pinned]
+            if unregistered:
                 raise SystemExit('#2065 unpinned literal anchor '
-                                 f'(verbatim in {where}): {assertion!r}')
+                                 f'(verbatim in {", ".join(unregistered)}): {assertion!r}')
 
 
 def mutate(case, original):
@@ -449,6 +459,10 @@ def main():
         raise SystemExit('#1457 unknown/duplicate mutation name')
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
+    # Runs the guard on the rows about to execute, so a stale anchor fails in
+    # seconds instead of surfacing as an INVALID after the compile + timeout
+    # budget of every selected row.
+    check_literal_anchors(selected_rows)
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
