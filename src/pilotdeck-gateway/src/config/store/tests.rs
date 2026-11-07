@@ -1865,9 +1865,14 @@ fn read_dir_iteration_failure_obscures_the_sample() {
 /// missing config file keeps watching that parent (the `existsSync` ->
 /// `dirname` fallback's target) instead of dropping the path — the mode stays
 /// unknown until a probe succeeds. While the probe keeps failing nothing is
-/// observable: a registered deviation (the TS baseline's `existsSync` returns
-/// false on a stat error, so it would watch the grandparent and reload on its
-/// changes) — aligning to TS turns the mid-test assert red.
+/// observable — a fixture-level deviation, not yet in the diff ledger: the TS
+/// baseline falls back a single level
+/// (`existsSync(path) ? path : dirname(path)`, with no grandparent hop) and
+/// then `watch(dirname)` throws EACCES on the unreadable parent, which the
+/// bare `catch {}` swallows, so that path has **no watcher at all** (only a
+/// manual reload remains; measured on Node v22.22.0). Rust keeps the parent
+/// registered and reports the missed change once the probe recovers —
+/// aligning to TS turns the recovery assert red, not the mid-test one.
 #[test]
 fn startup_parent_probe_failure_watches_the_parent_dir() {
     let root = Root::new();
@@ -1891,9 +1896,11 @@ fn startup_parent_probe_failure_watches_the_parent_dir() {
         Some(std::ffi::OsStr::new("pilotdeck.yaml")),
         "#1987 A3 the config file stays the target"
     );
-    // Registered gap: a sibling change during the probe failure is not
-    // reported. Aligning to the TS baseline (watching the grandparent) must
-    // turn this assert red.
+    // Registered gap (fixture-level, not yet in the diff ledger): a sibling
+    // change during the probe failure is not reported. TS has no watcher on
+    // this path at all (`watch(dirname)` throws EACCES and the bare `catch`
+    // swallows it), so aligning to the baseline turns the recovery assert
+    // below red, not this one.
     std::fs::write(dir.join("sibling.yaml"), "x").expect("#1987 A3 sibling entry");
     assert!(
         !watched.changed(),
