@@ -29,6 +29,87 @@ struct Shared {
     state_dir: PathBuf,
     debounce: Duration,
     inner: Mutex<Inner>,
+    #[cfg(test)]
+    hooks: TestHooks,
+}
+
+/// Test-only rendezvous points. The `#2073` window cannot be hit reliably by
+/// sleeping, so tests pin it: the next debounce task parks after `sleep`
+/// returns and before it takes `inner` — the stretch where `JoinHandle::abort`
+/// is recorded but cannot land yet — and every task counts its exit so the
+/// test knows when the superseded task has settled. Production builds do not
+/// contain any of this.
+#[cfg(test)]
+#[derive(Default)]
+struct TestHooks {
+    wake_gate: Mutex<Option<Arc<TestWakeGate>>>,
+    timer_exits: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(test)]
+pub(crate) struct TestWakeGate {
+    claimed: std::sync::atomic::AtomicBool,
+    entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    released: Mutex<bool>,
+    resume: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl TestWakeGate {
+    /// Parks the first debounce task that wakes after the gate was armed.
+    fn park(&self) {
+        if self
+            .claimed
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let sender = self
+            .entered
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(sender) = sender {
+            let _ = sender.send(());
+        }
+        let mut released = self.released.lock().unwrap_or_else(|e| e.into_inner());
+        while !*released {
+            released = self.resume.wait(released).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.resume.notify_all();
+    }
+}
+
+#[cfg(test)]
+struct TestExitGuard(Arc<Shared>);
+
+#[cfg(test)]
+impl Drop for TestExitGuard {
+    fn drop(&mut self) {
+        self.0
+            .hooks
+            .timer_exits
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+impl Shared {
+    fn park_timer_if_armed(&self) {
+        let gate = self
+            .hooks
+            .wake_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(gate) = gate {
+            gate.park();
+        }
+    }
 }
 
 /// Handle is cheap to clone; all state lives behind one lock, like the TS
@@ -50,8 +131,53 @@ impl ChannelStatePersistence {
                 state_dir,
                 debounce: Duration::from_millis(debounce_ms),
                 inner: Mutex::new(Inner::default()),
+                #[cfg(test)]
+                hooks: TestHooks::default(),
             }),
         }
+    }
+
+    /// Arms the next debounce task to park after it wakes up and before it
+    /// takes the state lock; the receiver fires once it is parked.
+    #[cfg(test)]
+    pub(crate) fn park_next_timer(&self) -> std::sync::mpsc::Receiver<()> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        *self
+            .shared
+            .hooks
+            .wake_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(TestWakeGate {
+            claimed: std::sync::atomic::AtomicBool::new(false),
+            entered: Mutex::new(Some(sender)),
+            released: Mutex::new(false),
+            resume: std::sync::Condvar::new(),
+        }));
+        receiver
+    }
+
+    /// Releases the parked debounce task.
+    #[cfg(test)]
+    pub(crate) fn release_parked_timer(&self) {
+        let gate = self
+            .shared
+            .hooks
+            .wake_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(gate) = gate {
+            gate.release();
+        }
+    }
+
+    /// How many debounce tasks have settled (finished or been dropped).
+    #[cfg(test)]
+    pub(crate) fn timer_exits(&self) -> usize {
+        self.shared
+            .hooks
+            .timer_exits
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// `load` — missing file or invalid JSON yields `None`.
@@ -72,7 +198,11 @@ impl ChannelStatePersistence {
         let shared = self.clone();
         let key = channel_key.clone();
         let handle = tokio::spawn(async move {
+            #[cfg(test)]
+            let _exit = TestExitGuard(shared.shared.clone());
             tokio::time::sleep(shared.shared.debounce).await;
+            #[cfg(test)]
+            shared.shared.park_timer_if_armed();
             shared
                 .shared
                 .inner
