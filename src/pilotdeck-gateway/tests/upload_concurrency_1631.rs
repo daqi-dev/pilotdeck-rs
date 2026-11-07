@@ -4,6 +4,9 @@
 //! gate. A barrier-aligned pair racing on the same store instance can
 //! therefore no longer both report success, and the cancel path can no
 //! longer delete the files behind a completion that was already reported.
+#[path = "common/scratch.rs"]
+mod scratch;
+
 use pilotdeck_gateway::upload::{UploadError, UploadStore, UploadStoreOptions};
 use pilotdeck_protocol::{JsString, JsValue, parse_json};
 use std::{
@@ -19,26 +22,6 @@ use std::{
 
 const ROUNDS: usize = 64;
 const WALL_CAP: Duration = Duration::from_secs(120);
-
-struct Scratch(PathBuf);
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-impl Scratch {
-    fn new(tag: &str) -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let dir = Path::new("/tmp").join(format!(
-            "pdrs-1631-{}-{}-{}",
-            tag,
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&dir).expect("scratch dir");
-        Self(fs::canonicalize(&dir).unwrap())
-    }
-}
 
 struct Fixture {
     store: Arc<UploadStore>,
@@ -151,13 +134,13 @@ fn assert_exactly_one_ok(
 
 #[test]
 fn interleaved_complete_and_cancel_cannot_both_win() {
-    let scratch = Scratch::new("cc");
+    let scratch = scratch::Scratch::new("1631-cc");
     let start = Instant::now();
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
         }
-        let project = scratch.0.join(format!("r{round:03}"));
+        let project = scratch.path().join(format!("r{round:03}"));
         fs::create_dir_all(&project).unwrap();
         let f = setup(&project);
         let (complete_res, cancel_res) = race_pair(&f.store, &f.id, Op::Complete, Op::Cancel);
@@ -202,13 +185,13 @@ fn interleaved_complete_and_cancel_cannot_both_win() {
 
 #[test]
 fn interleaved_complete_and_complete_has_one_winner() {
-    let scratch = Scratch::new("cm");
+    let scratch = scratch::Scratch::new("1631-cm");
     let start = Instant::now();
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
         }
-        let project = scratch.0.join(format!("r{round:03}"));
+        let project = scratch.path().join(format!("r{round:03}"));
         fs::create_dir_all(&project).unwrap();
         let f = setup(&project);
         let (first, second) = race_pair(&f.store, &f.id, Op::Complete, Op::Complete);
