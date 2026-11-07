@@ -3,9 +3,10 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 71; `#1984`
-added the last one, `sms-oracle-boundary-unregistered` — the `switches` table
-is the truth source). `#1879` only rewrites existing reads (`recorded_present`
+cell or dedicated test that pins that behavior's TS bytes (26 → 72; `#1984`
+added `sms-oracle-boundary-unregistered`, `#1957` added
+`sms-oracle-signed-signature-header` — the `switches` table is the truth
+source). `#1879` only rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
 session; the coordinator runs the complete list after the patch is committed.
@@ -295,6 +296,21 @@ switches = [
       'cancelled_initial_prompt_delivery_does_not_lock_the_chat'],
      ['#1790 initial_prompt_pending must not survive the prompt-send panic',
       '#1790 initial_prompt_pending must not survive the initial-prompt-send cancellation']),
+    # #1957: the `sign: true` reverse constraint only required an object
+    # `headers`, so `{}`, a map without the signature key, and an empty value
+    # all replayed unsigned (`mod.rs` skips the gate on an empty signature)
+    # and still matched the recorded 200 — a parity false pass. The switch
+    # restores that weaker guard; each cell is judged by its own assertion
+    # because one mutation stops the test at its first assertion.
+    ('sms-oracle-signed-signature-header', SMS / 'tests.rs',
+     ['signed_recording_rejects_empty_headers',
+      'signed_recording_rejects_missing_signature_key',
+      'signed_recording_rejects_blank_signature_header',
+      'signed_recording_rejects_non_boolean_sign'],
+     ['#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
+      '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
+      '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
+      '#1339 #1957 case sign must be a boolean']),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

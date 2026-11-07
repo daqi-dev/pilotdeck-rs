@@ -88,9 +88,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the channel's 71 `#996` compile-time switches
-(`crate::mutants::on("sms-…")`; 26 → 71, `#1984` added the last one — the
-`switches` table is the truth source) through the shared
+`negative_controls.py` runs the channel's 72 `#996` compile-time switches
+(`crate::mutants::on("sms-…")`; 26 → 72, `#1984` and `#1957` added the last
+two — the `switches` table is the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files
@@ -103,7 +103,7 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
 
-#1729：`negative_controls.py` 现有 **71** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+#1729：`negative_controls.py` 现有 **72** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`，`#1957` 加 `sms-oracle-signed-signature-header`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
 
@@ -111,3 +111,5 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
 
 同一行的 `body` / `method` / `path` 在 TS 侧没有 `??` 默认（`REQUEST` 直接把它们拼进模板串，`body` 为 `null` 会直接抛），只有 `truncate`（形参默认 `= 0`）与 `halfClose`（`=== true`）需要按「null = 缺席」处理；`body` / `method` / `path` 保持 fail-closed。步对象上的 `headers` 是另一处同签名读法：`effectiveHeaders` 写 `{ ...(step.headers ?? {}) }`（`generate.mts:376`），与 `env: definition.env ?? {}` 完全同形，所以也按「null = 缺席」处理（录制端在 `generate.mts:391` 把 `headers` 换成 `effectiveHeaders` 的结果再写进 step，`REQUEST` 在 `:941` 直接消费这个归一化后的对象、自己不再做 `??`；所以手改成 `null` 的 step 与缺席同义，与 `?? {}` 的归一化结论一致）；`stop` 步的 `reason` 同理（`stop(null)` 录成 `{reason: null}`，处理器读 `reason ?? "no reason"`）。
 签名场景另说：`sign: true` 的 request 步由 `effectiveHeaders`（`generate.mts:377`）把 `X-Twilio-Signature` 烘进录制后的 headers，Rust 侧重放录制字节、不重新签名。所以「录制产物里的 `headers: null`」只能来自手改，而它会连签名一起丢掉、`mod.rs` 的验签分支又在签名头为空时跳过验签（`!signature.is_empty()`），这种手改就查不出来了。因此 `validate_mock_recording` 加了一条反向约束：**`sign: true` 的用例，其 request 步的 `headers` 必须录成对象，为 `null` 直接报错**（`signed_recording_rejects_null_headers` 钉住）。未签名用例的 `headers: null` 仍然等同缺席——那里两端本来就等价。现有 56 例（`#1901` 之后）的 `headers` 无一处 `null`，读值不受影响。
+
+#1957：上面那条只挡 `headers: null`，`{}`、删掉 `X-Twilio-Signature` 键、签名为 `""` 三种手改都会通过对象检查，而重放同样不带签名、`mod.rs` 的 `!signature.is_empty()` 同样为假 → 该 cell 照样按录制的 200 判过，签名覆盖被静默丢掉（对拍假 PASS）。约束收紧为：**`sign: true` 用例的每个 request 步，`headers` 里必须有一枚非空字符串的 `X-Twilio-Signature`（header 名大小写不敏感，`signed_recording_accepts_lowercase_signature_header` 钉正例）**，四条负例各配一条断言（`signed_recording_rejects_empty_headers` / `_missing_signature_key` / `_blank_signature_header` / `_non_boolean_sign`），全部由开关 `sms-oracle-signed-signature-header` 恢复旧读取后逐条击杀。约束不按 body 类型设例外：`effectiveHeaders` 只在 body 是字符串时烘签名，但 `"abc"` → `{repeat: "abc", count: 1}` 这种改写让重放字节逐字节相同、签名却没了，留 body 例外等于把同一个洞重新打开。`sign` 字段由 `generate.mts:1099` 写成 `definition.sign ?? false`、恒为 bool，非 bool 只可能来自手改，故按 fail-closed 报错而不是整段跳过守卫。配对正控 `unsigned_recording_allows_null_headers` 钉住「未签名用例的 `headers: null` 仍然通过」，防止约束泄漏到未签名用例。现有 56 例的 4 个 `sign: true` cell 全部带非空签名头，金样与场景计数不变。
