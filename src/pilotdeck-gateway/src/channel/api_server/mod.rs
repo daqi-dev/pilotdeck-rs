@@ -54,6 +54,15 @@ pub struct ApiServerOptions {
     /// (it is the server default), so this exists only for tests, like the
     /// webhook lane's `request_timeout`.
     pub body_read_timeout: Option<Duration>,
+    /// Rust test seam (#2047): called once per connection the accept loop has
+    /// taken out of the kernel backlog, before the handler task starts.
+    /// `stop()` breaks the accept loop and drops the listener, and a socket
+    /// still in the backlog at that moment is reset by the kernel — so a test
+    /// that wants to observe the *body-read deadline* on its own connection
+    /// has to know the connection was accepted first. Production leaves this
+    /// `None`: no callback, no behavior change (the hook never touches the
+    /// accept/stop paths, it only reports that `accept()` returned).
+    pub accepted: Option<Arc<dyn Fn() + Send + Sync>>,
     pub uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
@@ -320,6 +329,7 @@ impl ChannelAdapter for ApiServerChannel {
                 active: inner.active.clone(),
                 timeout: inner.timeout,
                 body_read_timeout: inner.body_read_timeout,
+                accepted: inner.options.accepted.clone(),
                 log: deps.log.clone(),
             });
             let task = tokio::spawn(server::accept_loop(listener, shared, stop_rx));

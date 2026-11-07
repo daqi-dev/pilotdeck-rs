@@ -1172,11 +1172,13 @@ fn replay_gold_cell(cell: &JsValue) {
     }
 }
 
-// The run-now success step stays byte-exact only because its result carries
-// no timestamp: the once task it creates is stamped by runTaskNow's real
-// `new Date()` (CronRuntime.ts:396), which the port's real clock cannot pin
-// (the registered runTaskNow real-clock quirk). No gold step reads that task
-// back, so nothing else observes the un-pinnable bytes.
+// The run-now success step stays byte-exact because its result carries no
+// timestamp: the once task it creates is stamped by runTaskNow's `new Date()`
+// (CronRuntime.ts:396) — the injected `self.now`, hence the pinned test clock
+// — and no gold step reads that task back. The port reads that clock once per
+// run-now (#2047) rather than twice, so a millisecond tick can no longer flip
+// a valid run-now into the "One-time Cron tasks must be scheduled in the
+// future." rejection.
 
 /// #280: the committed oracle must be what the TS generator produces.
 #[test]

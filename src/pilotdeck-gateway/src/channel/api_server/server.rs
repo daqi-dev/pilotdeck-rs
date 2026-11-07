@@ -59,6 +59,10 @@ pub(crate) struct ServerShared {
     /// only deadline, mirroring `channel::webhook` (#1620). Distinct from
     /// [`Self::timeout`] even though both default to 300 s.
     pub body_read_timeout: Duration,
+    /// #2047 test-only observation: fired after `accept()` returns and before
+    /// the connection task starts. `None` in production — no branch beyond the
+    /// `Option` check, and neither the accept nor the stop path reads it.
+    pub accepted: Option<Arc<dyn Fn() + Send + Sync>>,
     pub log: Option<super::super::protocol::ChannelLog>,
 }
 
@@ -94,6 +98,12 @@ pub(crate) async fn accept_loop(
             joined = tasks.join_next(), if !tasks.is_empty() => { let _ = joined; }
             accepted = listener.accept() => match accepted {
                 Ok((socket, _peer)) => {
+                    // #2047: the socket is out of the kernel backlog now, so
+                    // this is the instant after which dropping the listener can
+                    // no longer reset it. Production passes `None`.
+                    if let Some(accepted) = &shared.accepted {
+                        accepted();
+                    }
                     let shared = shared.clone();
                     let stop = stop.clone();
                     tasks.spawn(async move {

@@ -1187,6 +1187,7 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
         mapper: None,
         request_timeout: timeout,
         body_read_timeout: None,
+        accepted: None,
         uuid: Some(Arc::new(|| FIXED_UUID.to_owned())),
     }
 }
@@ -2032,12 +2033,24 @@ async fn partial_body_is_answered_at_the_body_read_deadline() {
     const DEADLINE: Duration = Duration::from_secs(5);
     let mut case_options = options(&json!({"options":{}}), None);
     case_options.body_read_timeout = Some(Duration::from_millis(200));
+    // #2047: `stop()` breaks the accept loop and drops the listener, so a
+    // connection still sitting in the kernel backlog is reset instead of
+    // answered — under a loaded runner the accept loop can be a few
+    // milliseconds behind, and the RST then eats the 408 this test is about.
+    // Wait until the loop reports it took *this* connection out of the
+    // backlog before asking for a stop.
+    let accepted = Arc::new(Notify::new());
+    let notify = accepted.clone();
+    case_options.accepted = Some(Arc::new(move || notify.notify_one()));
     let started = start(case_options, None).await;
     let port = started.addr.port();
     let handle = started.handle.clone();
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("#1333 connect to the stalled-body listener");
+    tokio::time::timeout(DEADLINE, accepted.notified())
+        .await
+        .expect("#1333 the accept loop takes the stalled-body connection before stop()");
     stream
         .write_all(
             b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n\
