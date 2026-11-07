@@ -5273,6 +5273,28 @@ MUTATIONS = [
      "                    from builtins import getattr as _ga\n"
      "                    _f = _ga(report, '__setattr__')\n"
      "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 22 (codex r21 P0-1 / P0-2, GLM boundary r21 P0-1 /
+    # P0-2): the builtins module itself reaches the call under an import
+    # alias, and one assignment of another value must not hide the factory
+    # spelling the import table records.
+    ('calibrate-status-builtins-module-alias', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    import builtins as _bi\n"
+     "                    _f = _bi.getattr(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-factory-import-after-assignment', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _ga = print\n"
+     "                    from builtins import getattr as _ga\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-factory-import-conditional-overwrite', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    from builtins import getattr as _ga\n"
+     "                    if overall:\n"
+     "                        _ga = dict\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
     # #1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): the copy
     # of a container that still carries handles stays a handle container when
     # it reaches the loop under a third name.
@@ -6543,6 +6565,27 @@ def calibrate_for_target_alias_of_container_copy(rows):
         'flagged, passed=False')
 
 
+def calibrate_status_builtins_module_alias(rows):
+    """#1953 fix-r1 round 22 (codex r21 P0-1 / GLM boundary r21 P0-2): the
+    builtins module imported under another spelling is still the factory."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_factory_import_after_assignment(rows):
+    """#1953 fix-r1 round 22 (codex r21 P0-2): an assignment of another value
+    before the factory import must not hide the import event."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_factory_import_conditional_overwrite(rows):
+    """#1953 fix-r1 round 22 (GLM boundary r21 P0-1): a conditional overwrite
+    does not erase the factory spelling the import put in force."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7411,6 +7454,16 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-alias-of-container-copy': (
         'aggregation-audit', calibrate_for_target_alias_of_container_copy,
+        False, ()),
+    'calibrate-status-builtins-module-alias': (
+        'aggregation-audit', calibrate_status_builtins_module_alias,
+        False, ()),
+    'calibrate-status-factory-import-after-assignment': (
+        'aggregation-audit', calibrate_status_factory_import_after_assignment,
+        False, ()),
+    'calibrate-status-factory-import-conditional-overwrite': (
+        'aggregation-audit',
+        calibrate_status_factory_import_conditional_overwrite,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:

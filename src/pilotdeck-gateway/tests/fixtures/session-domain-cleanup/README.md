@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 326 mutants:
+`JUDGES`, keyed by the same names. The current table has 329 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -494,7 +494,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-status-alias-copied-before-overwrite`,
 `calibrate-for-target-container-filled-after-rebind`,
 `calibrate-status-imported-getattr-factory`,
-`calibrate-for-target-alias-of-container-copy`.
+`calibrate-for-target-alias-of-container-copy`,
+`calibrate-status-builtins-module-alias`,
+`calibrate-status-factory-import-after-assignment`,
+`calibrate-status-factory-import-conditional-overwrite`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1558,3 +1561,17 @@ module-level alias.
 | **An imported factory that is not `getattr` writes nothing** (false FAIL guard): `from builtins import dict as ga`. | self-test `round 21: a status write through an imported factory that is not getattr` |
 | **A copy of a replaced container is fresh, and stays fresh through a name alias**: `hs = [...]; hs = [lambda *a: None]; c = list(hs); x = c; for h in x: h('common', ...)`. | self-tests `round 21: a handle container copied then aliased by a fresh name`, `... replaced and copied twice` |
 | **Aliasing a copy that still carries keeps the handles** (false PASS guard). | `calibrate-for-target-alias-of-container-copy`; self-test `round 21: a handle container still carrying when aliased` |
+
+### Closed by `fix-r1` round 22 (codex r21 three P0s / GLM r21 two P0s and two P1s)
+
+Round 21 taught the status ruler the import alias of the factory but read the
+import table only when the assignment table was empty, and `_builtins_module`
+never learned the module's own import alias.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The builtins module itself is imported under another name**: `import builtins as bi; f = bi.getattr(report, '__setattr__'); f('status', 'PASS')`. | `calibrate-status-builtins-module-alias`; self-tests `round 22: a status write through an imported builtins module alias`, `... module-level builtins module alias` |
+| **An assignment of another value precedes the factory import**: `ga = print; from builtins import getattr as ga; f = ga(...)`. | `calibrate-status-factory-import-after-assignment`; self-test `round 22: a status write through an assignment before the factory import` |
+| **A conditional overwrite does not erase the factory import**: `from builtins import getattr as ga; if flag: ga = dict`. | `calibrate-status-factory-import-conditional-overwrite`; self-test `round 22: a status write through a conditionally overwritten factory import` |
+| **A certain overwrite still ends the spelling** (false FAIL guard): `from builtins import getattr as ga; ga = print`, and `import builtins as bi; bi = other`. | self-tests `round 22: a status write through a certainly overwritten factory import`, `... certainly replaced builtins module alias` |
+| **A certain overwrite ends the `builtins[...]` table reading** (false FAIL guard, GLM sibling r21 P1-1). | `_name_resolves_to_builtins` now reads `_values_in_force`; measured in the round-22 probe |
