@@ -36,10 +36,11 @@ negctl 子命令用真实 trace 的变异副本证明这些判据不是空话；
 C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_6 反证。
 
 退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定 ·
-9 输出写失败（ENOSPC / EIO，日志被截断，不算完整证据）。
+9 输出写失败（ENOSPC / EIO，日志被截断，不算完整证据）· 64 **用法错误**（缺参数 / 场景不在
+`SCENARIOS`：不在册场景会被 C1 判成 NOT_6，用法错误不得冒充「判据被证伪」）。
 退出码（`--negctl-out`）：0 全部按期望命中 · 1 证据目录不可用（已存在不覆盖 / 无法创建，
-不覆盖证据）· 2 **用法错误**（场景不在 `SCENARIOS`：负控期望表以在册场景为前提，未登记场景会让
-A/L/N/O 全落成 C1-NOT_6 → 假 `MISMATCH`/rc=4；与 `run` 的 `2`=反证命中是**两张表**）· 3 基线不可用
+不覆盖证据）· 64 **用法错误**（场景不在 `SCENARIOS`：负控期望表以在册场景为前提，未登记场景会让
+A/L/N/O 全落成 C1-NOT_6 → 假 `MISMATCH`/rc=4）· 3 基线不可用
 （无有效轮次 / 轮次目录名不合规 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
 4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的退出码）· 9 装置自身崩溃（已删半成品
 证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
@@ -91,6 +92,10 @@ def _repo_root():
 REPO = _repo_root()
 G03 = f'{REPO}/scripts/parity/g03_compare.py'
 SCENARIOS = ('deadline', 'deadline_during_tool')
+# 命令行**用法错误**（缺参数 / 场景不在册）的统一退出码。不能沿用 2：`run` 的 2 是
+# 「反证命中（已证伪）」，用法错误落 2 会被按 rc 判停的复查读成「判据被证伪」
+# （#2031 r2 boundary P2）。64 = sysexits 的 EX_USAGE，不进任何结论表。
+EXIT_USAGE = 64
 FAIL_CLOSED = 'result_unknown_fail_closed'
 GSF_TEXT = ('AgentLoop terminal outcome is result_unknown and host reconciliation '
             'found no final result.')
@@ -517,6 +522,14 @@ def verdict_exit(npass, n6, not6, invalid_rounds, unjudged=0):
 
 
 def run(root, scenario):
+    # 与 negctl 同一把用法闸（#2031 r2 boundary P2）：不在册场景会让 C1 把每条 pair 判成
+    # NOT_6 → rc=2「已证伪」，用法错误被报成最强的否定结论。`judge()` 的 C1 语义**不动**
+    # （负控 F-scenario-out-of-scope 靠 C1 判 NOT_6 证明豁免边界），只在命令行入口拒绝。
+    if scenario not in SCENARIOS:
+        print(f'run 用法错误：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}。'
+              f'不在册场景会被 C1 判成 NOT_6，不能当作判据被证伪（rc={EXIT_USAGE}：用法错误，不下判据结论）。',
+              file=sys.stderr)
+        return EXIT_USAGE
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
     ts_all, ts_bad = collect_rounds(root, 'ts', trace)
     ru_all, ru_bad = collect_rounds(root, 'rust', trace)
@@ -905,8 +918,8 @@ def negctl(root, scenario, outdir):
     if scenario not in SCENARIOS:
         print(f'negctl 用法错误：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}。'
               '负控期望表只对在册场景成立（未登记场景会让 A/L/N/O 全落成 C1-NOT_6 → 假 MISMATCH）。'
-              '（rc=2：用法错误，不进负控、不创建证据目录）', file=sys.stderr)
-        return 2
+              f'（rc={EXIT_USAGE}：用法错误，不进负控、不创建证据目录）', file=sys.stderr)
+        return EXIT_USAGE
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
     # 基线必须过**轮次有效性闸门**（与 run() 同一把）：拿被 BLOCKED / 只跑半截的轮次当基线，
     # A-baseline 会实得 NOT_6 → 记 MISMATCH → rc=4「判据被证伪」，而同一批数据 run() 明明
@@ -1037,6 +1050,20 @@ def _note(msg):
         pass
 
 
+class _UsageParser(argparse.ArgumentParser):
+    """命令行用法错误统一退 `EXIT_USAGE`。
+
+    默认 argparse 退 2，与 `run` 的 2「反证命中（已证伪）」撞码：`frame_attrib.py <rounds>`
+    少给 scenario 时 stderr 只有 usage，按 rc 判停的复查会把用法错误读成「判据被证伪」
+    （#2031 r2 boundary P2）。
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f'{self.prog}: 用法错误：{message}（rc={EXIT_USAGE}）', file=sys.stderr)
+        raise SystemExit(EXIT_USAGE)
+
+
 def main():
     # 输出接 `| head` 之类的短读者时，退出码必须是真实 rc：不加这层，缓冲/无缓冲两条路径分别
     # 退 120 / 1（实测见 README），按 rc 判停的复查会读错结论。run() 与 negctl() 都由它兜住。
@@ -1046,15 +1073,16 @@ def main():
         sys.stdout = _PipeSafe(sys.stdout)
     if not isinstance(sys.stderr, _PipeSafe):
         sys.stderr = _PipeSafe(sys.stderr, _silence_stderr)
-    ap = argparse.ArgumentParser()
+    ap = _UsageParser()
     ap.add_argument('root')
     ap.add_argument('scenario')
     ap.add_argument('--negctl-out', default=None)
-    args = ap.parse_args()
     # `is not None` 而不是真值判断：`--negctl-out ''`（未加引号的空 shell 变量）若落进 run()，
     # 调用方会按 negctl 的 rc 表解读 run 的 rc（rc=0「归因成功」被读成「负控全命中」）。
-    # 空串交给下面的 makedirs 显式报错。
+    # 空串交给下面的 makedirs 显式报错。解析也在 try 里：用法提示本身写不进去时（stderr 满）
+    # 同样折 rc=9，不让 OutputFailure 逃成 traceback（rc=1）。
     try:
+        args = ap.parse_args()
         if args.negctl_out is not None:
             rc = negctl(args.root, args.scenario, args.negctl_out)
         else:
