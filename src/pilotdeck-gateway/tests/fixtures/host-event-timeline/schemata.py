@@ -91,6 +91,21 @@ GUARDED = [
     LIVE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_timeline_tests.rs',
+    # #2228 DS r7 sibling P2 (same class as the turn-gates entry): the
+    # live_stream_tests.rs assembly above also compiles gates_tests.rs
+    # (:4156), host_pump_tests.rs (:4159) and forward_tests.rs (:4319)
+    # through `#[path]`, whose bodies bake turn-gates/oracle.json
+    # (gates_tests.rs GATES_ORACLE), host-event-pump/oracle.json
+    # (host_pump_tests.rs:4) and turn-runner/oracle.json (forward_tests.rs)
+    # into the same --lib binary, so concurrent edits to the carriers or
+    # their baked inputs must be caught by the source guard. peer.py files
+    # stay out: they run as subprocesses, not compiled bytes.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gates_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_pump_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/forward_tests.rs',
+    FIXTURES / 'turn-gates/oracle.json',
+    FIXTURES / 'host-event-pump/oracle.json',
+    FIXTURES / 'turn-runner/oracle.json',
     # #2228 zai r4 P2 (fixed in-round, same class as the turn-gates P1): the
     # bound replay test executes the shared baseline module —
     # host_timeline_tests.rs:14-15 golden() is crate::test_baseline::oracle
