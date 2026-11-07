@@ -363,12 +363,13 @@ def run_controls(root, results):
     for name, mutation, actual in GENERATOR_MUTATIONS:
         label, test, assertion = generator_identity(name, actual)
         # cargo would compile unmutated Rust here, so generator mutants
-        # carry no cargo receipt: their receipt is the node run of the
-        # mutated generator itself, and compiled stays an explicit False
-        # so the row schema matches the Rust rows (#1139, synced here).
+        # carry no cargo receipt: the node run of the mutated generator
+        # itself is folded into reason, and compiled stays an explicit
+        # False so the row schema matches the Rust rows (#1139, synced
+        # here). No `receipt` key: the comparator rejects unknown row
+        # fields, and the whole table would be unreadable.
         row = dict(mutation=label, test=test, assertion=assertion,
-                   status='INVALID', reason='not run', compiled=False,
-                   receipt='not run')
+                   status='INVALID', reason='not run', compiled=False)
         try:
             # Mirroring from the repository root also keeps ../../ imports
             # and the provenance guard's import.meta.url inside scratch.
@@ -380,8 +381,8 @@ def run_controls(root, results):
             command = ['node', '--import', f'{baseline}/node_modules/tsx/dist/loader.mjs',
                        str(generator_path), str(output)]
             result = execute(label, command, env)
-            row['receipt'] = f'generator mutant run: node exit={result.returncode}'
             row['status'], row['reason'] = generator_status(result, actual)
+            row['reason'] += f'; generator mutant run: node exit={result.returncode}'
             if row['status'] == 'KILLED':
                 assert not (output / 'oracle.json').exists(), '#1129 failed generator published an oracle'
             generator_path.write_text(source)
