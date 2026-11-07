@@ -220,4 +220,55 @@ mod tests {
         drop(file);
         let _ = child.wait();
     }
+
+    // #1990: the two tests below are macOS-only on purpose. `mod macos` is
+    // compiled out everywhere else, so these are the only assertions that can
+    // pin which step of `macos::opened_path` produced a rejection: the
+    // `is_err()` shape above cannot tell the kernel `F_GETPATH` error apart
+    // from the UTF-8 rejection, and no CI job compiles this module at all.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn handle_path_non_filesystem_error_comes_from_getpath() {
+        // A pipe's rejection must carry the kernel's own errno: the raw
+        // F_GETPATH failure is an OS error, while the helper's only
+        // manufactured error (the UTF-8 InvalidData) has none behind it.
+        let mut child = std::process::Command::new("/bin/cat")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .expect("#1990 spawn the pipe fixture for the getpath error step");
+        let stdin = child
+            .stdin
+            .take()
+            .expect("#1990 take the pipe write end for the getpath error step");
+        let file = fs::File::from(std::os::fd::OwnedFd::from(stdin));
+        let resolved = opened_path(&file);
+        negative_assert!(
+            matches!(&resolved, Err(error) if error.raw_os_error().is_some()),
+            "#1990 macOS must surface the kernel F_GETPATH error itself, not a later-stage failure"
+        );
+        drop(file);
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn handle_path_rejects_a_non_utf8_name() {
+        // APFS preserves the raw bytes of a non-UTF-8 leaf name, so the
+        // resolved handle path can be non-UTF-8; passing a lossy spelling
+        // on to a containment check would approve a path that was never
+        // opened (U+FFFD replacements are not the object's name).
+        use std::os::unix::ffi::OsStrExt;
+        let scratch = Scratch::new("non-utf8");
+        let file_path = scratch
+            .0
+            .join(std::ffi::OsStr::from_bytes(b"bad\xff\xfe.bin"));
+        fs::write(&file_path, b"non-utf8-bytes")
+            .expect("#1990 write the non-UTF-8 named scratch file");
+        let file = fs::File::open(&file_path).expect("#1990 open the non-UTF-8 named scratch file");
+        let resolved = opened_path(&file);
+        negative_assert!(
+            matches!(&resolved, Err(error) if error.kind() == std::io::ErrorKind::InvalidData),
+            "#1990 macOS must reject a non-UTF-8 handle path as invalid data"
+        );
+    }
 }
