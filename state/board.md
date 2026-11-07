@@ -4745,3 +4745,7 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · gateway setup WeCom 切片（Codex，本地提交）
 
 WeCom手动配置、旧凭据复用、全部平台别名/菜单3、QR生成/查询/重试/超时/回退已原生实现并复用公共HTTP及原子保存；真实TS新增10格普通+2格UTF16/深层循环groups金样，逐格对齐完整输出、请求、配置原文及mock时钟。mbp2最终39通过，2辅助子测试由父实际调用，fmt/严格clippy通过；证据主仓 `_tmp/20261108-issue-124-setup/wecom-worker/`。独立审查P1非法scode与P2失败保存/复杂groups已闭合，仅本机提交、不推GitHub；下一步Weixin与all菜单顺序，仍不标setup/D2完成，真实平台与真人体验待验。
+
+### 2026-11-08 · 共享原子文件发布（Codex，仅本机）
+
+将setup已验证的原子发布原样提炼到CLI共享库atomic_file，保留setup错误文案/errno/operation/path映射；独立审查核主体机械一致，并加Unix导出条件避免扩大其他平台编译面。mbp2组合39项setup测试（含WeCom12格TS对照和真实失败写入）通过、2helper由父调用，fmt/all-targets clippy通过；不声称已跨平台编译。证据主仓 `_tmp/20261108-cli-tui/shared-atomic-*`。接着由Terra用共享JS codec及这层安全发布实现权限文件，再接实际TUI；未注册草稿保留、不算交付。
