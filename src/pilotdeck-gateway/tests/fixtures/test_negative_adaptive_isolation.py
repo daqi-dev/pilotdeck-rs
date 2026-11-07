@@ -2,6 +2,7 @@
 """#994: real HEAD-guarded Python probes; no synthetic Git or Cargo workspace."""
 import contextlib
 import importlib.util
+import inspect
 import fcntl
 import io
 import json
@@ -31,40 +32,67 @@ sys.path.insert(0, str(HERE))
 #
 # The compile is removed from the child's path instead of budgeted for: the
 # test warms the scanner through the same HEAD guard first (see the warm-up in
-# test_term_and_kill...). What is left between spawn and `ready` is then
-# bounded by the waits the child is *allowed* to spend:
+# test_term_and_kill...). What is left between spawn and `ready` is bounded by
+# the waits the child is *allowed* to spend:
 #   * mutating_sources(root, [], baseline=...) waits for the shared tree lock
-#     with lock_timeout=900 (negative_process.py:872) -- a sibling runner that
-#     took the lock between our warm-up and the spawn can legally hold it for
-#     that long, so the budget must cover it or contention turns into a false
-#     FAIL;
+#     with lock_timeout=900 (negative_process.py:872, read from the signature
+#     by hold_ready_seconds() below). The child cannot wait longer than that:
+#     at 900 s it raises its own TimeoutError and exits, which the assertion
+#     reports as rc + stderr rather than as an expired budget;
 #   * everything after the lock is the warm path measured at 6.7-6.8 s under a
 #     load-17 host (git re-reads + copies, no compile); 300 s is ~44x that and
 #     ~2x again for a slower CI runner.
-# 900 + 300 = 1200 s. The bound stays finite, and a child that exits on its own
-# is reported immediately rather than at the deadline.
-HOLD_READY_SECONDS = 1200
+#
+# The budget therefore never fires before the child's own bound does, and a
+# child that exits on its own is reported immediately. Residual (not closable
+# from here, and not introduced by this test): a sibling runner that holds the
+# tree lock for the full 900 s still makes this probe fail, because the child
+# gives up on the lock by design. That is a property of the shared lock; the
+# diagnostic names it instead of leaving a bare `rc=None`.
 # The "--hold-lock" child never builds: it imports negative_process and takes
 # the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
 # is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
-# Reading a child's pipes after a signal is bounded, and deliberately at the
-# same value as negative_process.KILL_TIMEOUT (:31) that negative_process
-# ._collect() uses for the identical step: the child hands cargo its own PIPE
-# in a fresh session (negative_process.py:166-168), so this bound only ever
-# waits for a descendant that called setsid() (#528).
-PIPE_CLOSE_SECONDS = 10
+# Allowance on top of the child's lock wait for the warm post-lock path.
+WARM_PATH_ALLOWANCE = 300
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
 
 
-def _as_text(child, value):
-    """TimeoutExpired carries bytes even from a text-mode communicate()."""
-    if value is None:
-        return ''
-    if isinstance(value, bytes):
-        return value.decode(getattr(child.stdout, 'encoding', None) or 'utf-8', 'replace')
-    return value
+def shared_process():
+    """Load negative_process's helpers at call time, never at import.
+
+    This file is also executed as the `--hold` / `--hold-lock` child, so a
+    module-level import would run the on-disk shared helper before the HEAD
+    guard has verified it (see test_bootstrap_rejects_dirty_code...). The
+    parent-only helpers below import it lazily, the way the child's
+    hold_source_lock() already imports tree_lock.
+    """
+    import negative_process
+    return negative_process
+
+
+def pipe_close_seconds():
+    """Bound for reading pipes after a signal: negative_process.KILL_TIMEOUT.
+
+    Imported rather than copied: negative_process.py:31 is the single source of
+    truth for this bound, and negative_process.py:36-37 records the same lesson
+    about numbers copied into every fixture. The child hands cargo its own PIPE
+    in a fresh session (negative_process.py:166-168), so this bound only ever
+    waits for a descendant that called setsid() (#528).
+    """
+    return shared_process().KILL_TIMEOUT
+
+
+def hold_ready_seconds():
+    """Ready budget = the child's own lock wait + the warm-path allowance.
+
+    The lock wait is read from mutating_sources' signature rather than copied:
+    negative_process.py belongs to the #1099 (M6) lane, so this change cannot
+    lift that default to a named constant there.
+    """
+    signature = inspect.signature(shared_process().mutating_sources)
+    return signature.parameters['lock_timeout'].default + WARM_PATH_ALLOWANCE
 
 
 def read_child_output(child):
@@ -79,9 +107,9 @@ def read_child_output(child):
 
     A timeout therefore means "the leader is still alive, or an escaped
     descendant holds a pipe". The leader is reaped before the pipes are closed,
-    so closing them cannot turn the expected signal into SIGPIPE (-13) and hide
-    the real cause; callers assert child.poll() is not None to tell a hang from
-    the tolerated #528 case.
+    so as long as that inner wait() succeeds, closing them cannot turn the
+    expected signal into SIGPIPE (-13) and hide the real cause; callers assert
+    child.poll() is not None to tell a hang from the tolerated #528 case.
 
     Returns (stdout, stderr). Cached on the Popen object because a second
     communicate() would read already-closed pipe objects.
@@ -89,17 +117,19 @@ def read_child_output(child):
     cached = getattr(child, '_verified_output', None)
     if cached is not None:
         return cached
+    seconds = pipe_close_seconds()
     try:
-        cached = child.communicate(timeout=PIPE_CLOSE_SECONDS)
+        cached = child.communicate(timeout=seconds)
     except subprocess.TimeoutExpired as error:
         try:
-            child.wait(timeout=PIPE_CLOSE_SECONDS)
+            child.wait(timeout=seconds)
         except subprocess.TimeoutExpired:
             pass
         for stream in (child.stdout, child.stderr):
             if stream is not None:
                 stream.close()
-        cached = (_as_text(child, error.output), _as_text(child, error.stderr))
+        api = shared_process()
+        cached = (api._as_text(child, error.output), api._as_text(child, error.stderr))
     child._verified_output = cached
     return cached
 
@@ -107,28 +137,22 @@ def read_child_output(child):
 def reap_child(child):
     """Kill the probe's process group if it is alive, then always reap it.
 
-    killpg mirrors negative_process._kill_group (:80-92): macOS can report
-    EPERM for a group whose leader has exited but has not been reaped yet, so a
-    PermissionError means "reap once, then retry" -- never "give up and leave a
-    zombie". The lead is waited for explicitly because read_child_output()
-    answers from its cache on a second call.
+    The group signal reuses negative_process._kill_group (:80-92) instead of
+    re-implementing it, so the macOS EPERM-on-unreaped-leader retry stays in
+    one place. It is called for its side effect only: unlike the canonical
+    caller this is a finally-block cleanup, so a persistent EPERM must not mask
+    the assertion that got us here. The lead is waited for explicitly because
+    read_child_output() answers from its cache on a second call.
     """
     if child.poll() is None:
-        for _ in range(2):
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-                break
-            except ProcessLookupError:
-                break
-            except PermissionError:
-                try:
-                    child.wait(timeout=PIPE_CLOSE_SECONDS)
-                except subprocess.TimeoutExpired:
-                    pass
+        try:
+            shared_process()._kill_group(child)
+        except PermissionError:
+            pass
     read_child_output(child)
     if child.poll() is None:
         try:
-            child.wait(timeout=PIPE_CLOSE_SECONDS)
+            child.wait(timeout=pipe_close_seconds())
         except subprocess.TimeoutExpired:
             pass
 
@@ -459,9 +483,10 @@ class IsolationTests(unittest.TestCase):
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                          start_new_session=True)
                 try:
-                    diagnostic = wait_for_ready(child, ready, HOLD_READY_SECONDS)
+                    budget = hold_ready_seconds()
+                    diagnostic = wait_for_ready(child, ready, budget)
                     self.assertTrue(ready.exists(), '#994 child must publish mutant readiness '
-                                    f'within {HOLD_READY_SECONDS}s ({diagnostic})')
+                                    f'within {budget}s ({diagnostic})')
                     copied = Path(ready.read_text())
                     self.assertNotEqual(copied.resolve(), self.runner.shared.resolve(),
                                         '#994 signal probe must mutate only its copy')
