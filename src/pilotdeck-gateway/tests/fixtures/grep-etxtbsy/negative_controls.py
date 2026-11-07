@@ -36,7 +36,15 @@ the group reaping (`stranger-reap-removed`), and the pid-mode guard's
 kill (`stranger-pid-kill-removed`, #1155 fix-r2b review boundary P3 —
 the pid-mode test itself is Linux-only, and bound by its module-qualified
 `pid_mode::…` name since fix-r3 review P1-2: `--exact` matches nothing
-without the prefix). The other sixteen must kill on
+without the prefix), plus #1409's scan and grace mutants (the scan's
+`read_dir` / `read_link` levels, which only exist under
+`#[cfg(target_os = "linux")]`, and the grace unit test). The contract is
+data, not prose (#1409 items 4 and 5): `SURVIVES_OFF_LINUX` and
+`INVALID_OFF_LINUX` below name every Linux-contract mutant, a row whose
+bound test is cfg'd out reads INVALID elsewhere rather than SURVIVED,
+and `--check-anchors` derives every count and both lists from `cases`
+and reconciles them with the README markers. Every mutant not in that
+contract must kill on
 every unix host — `stranger-retention-reverted` included: bash (the macOS `/bin/sh`)
 keeps the pipe behind an explicit `<&0`, so `started` still appears, but
 the reverted helper writes no `saw` marker and the #1155 r4 saw assertion
@@ -118,6 +126,7 @@ because under the lease there is no init fallback).
 import argparse
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 import sys
@@ -146,6 +155,9 @@ barrier_timeout = 'a_barrier_timeout_without_a_resume_fails_the_helper'
 # the whole row INVALID).
 pid_stranger = 'pid_mode::a_stranger_on_the_read_end_still_hits_the_write_deadline'
 fdinfo_unit = 'an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd'
+# #1409 item 3: the grace's release case, a Linux-only unit test of the
+# re-check itself (an off-Linux host runs nothing under that name).
+grace_unit = 'a_candidate_that_no_longer_resolves_is_evicted_by_the_grace'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -656,7 +668,136 @@ cases = [
      '''        let _ = stranger;''',
      publication_target, pid_stranger,
      "#1155 the stranger must be killed and reaped by the test's guard, not PID 1's"),
+    # #1409 item 2: the pid-mode collection. The group mode has had its own
+    # reap mutant since #1155 r3 (`stranger-reap-removed`), but the pid-mode
+    # `waitpid` had none: a guard that only killed left an unreaped zombie
+    # that nothing observed. The pid-mode test now proves the collection
+    # from `/proc`: an unreaped zombie still has an entry, so the entry's
+    # disappearance is the reap's own evidence.
+    ('stranger-pid-reap-removed', publication,
+     '''        guard.confirm_reparented()?;
+        guard.reap_process(stranger)''',
+     '''        guard.confirm_reparented()?;
+        Ok(())''',
+     publication_target, pid_stranger,
+     '#1409 the pid-mode guard must reap the stranger'),
+    # #1409 item 1 (P1): the scan used to skip every failed `read_dir` and
+    # `read_link` under `/proc`, so a host that hides them (hidepid, gVisor,
+    # a restricted container) could show the scan zero pipes and still PASS.
+    # The mutant renames the descriptor directory, so every process's fd
+    # enumeration fails with ENOENT on the healthy path: pre-fix the scan
+    # saw nothing and the bound test passed; post-fix the scan's own
+    # self-check cannot see its own descriptors and fails, and that error
+    # displaces the `TimedOut` the bound test expects.
+    ('scan-descriptor-dir-unreadable', publication,
+     '''format!("/proc/{pid}/fd")''',
+     '''format!("/proc/{pid}/fd-gone")''',
+     publication_target, dead_stranger,
+     '#1409 reading the descriptors of'),
+    # #1409 item 1: the second read level. The mutant points every fd link
+    # at a name nothing holds, so `read_link` fails with ENOENT everywhere
+    # and the scan resolves no fd of any pipe — including the self-check's
+    # canary, which is exactly the read that separates "released" from
+    # "invisible" and is the only thing that can still fail here.
+    ('scan-fd-link-unreadable', publication,
+     '''fs::read_link(descriptor.path())''',
+     '''fs::read_link(descriptor.path().with_extension("gone"))''',
+     publication_target, dead_stranger,
+     '#1409 the return-boundary scan cannot see'),
+    # #1409 item 3: the transient grace itself. Deleting the re-check leaves
+    # every candidate a survivor, so a write end released between the scan
+    # and the verdict would be reported as a leak — the false FAIL the grace
+    # exists to prevent. Bound to the unit test that owns the release case.
+    ('boundary-grace-removed', publication,
+     '''    let deadline = Instant::now() + grace;
+    while !candidates.is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+        candidates
+            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));
+    }''',
+     '''    let _ = (candidates, wanted, grace);''',
+     publication_target, grace_unit,
+     '#1409 the grace must evict'),
+    # #1409 item 3: the other half — a re-check that runs but never evicts
+    # keeps a released candidate for the whole grace and then reports it,
+    # the same false FAIL by a slower route.
+    ('boundary-grace-never-evicts', publication,
+     '''            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));''',
+     '''            .retain(|_| true);''',
+     publication_target, grace_unit,
+     '#1409 the grace must evict'),
 ]
+
+
+# #1409 item 5: the platform contract is data, not prose. A case not named
+# here kills on every unix host; these two sets are the Linux contracts.
+# SURVIVES_OFF_LINUX rows mutate a code path the other kernels compile out
+# but still bind a test that exists there, so the row survives. INVALID_OFF_LINUX
+# rows bind a test that only exists on Linux — the executor finds no such
+# test, and the row is INVALID, not SURVIVED (#1409 item 4 corrected the
+# prose that claimed otherwise). Every count and the whole contract list in
+# the README are derived from `cases` and these sets by --check-anchors.
+SURVIVES_OFF_LINUX = (
+    'script-direct-write',
+    'helper-in-process-write',
+    'boundary-write-end-filter-removed',
+    'boundary-fdinfo-read-error',
+    'boundary-fdinfo-parse-error',
+    'stranger-subreaper-removed',
+    'stranger-reap-removed',
+    'scan-descriptor-dir-unreadable',
+    'scan-fd-link-unreadable',
+)
+INVALID_OFF_LINUX = (
+    'boundary-fdinfo-unknown-passed',
+    'stranger-pid-kill-removed',
+    'boundary-grace-removed',
+    'boundary-grace-never-evicts',
+    'stranger-pid-reap-removed',
+)
+
+
+def platform_of(name):
+    """'unix', or the off-Linux expectation of a Linux-contract mutant."""
+    if name in INVALID_OFF_LINUX:
+        return 'linux-invalid'
+    if name in SURVIVES_OFF_LINUX:
+        return 'linux-survives'
+    return 'unix'
+
+
+def derived_contract():
+    """The mutant counts and the Linux-contract list, derived from `cases`.
+
+    Fails closed on a contract entry that names no case, a name declared in
+    both sets, or a repeated name: the README is checked against this, so a
+    silent default to 'unix' would otherwise hide a Linux-only mutant.
+    """
+    names = [row[0] for row in cases]
+    if len(set(names)) != len(names):
+        raise SystemExit('cases repeats a mutant name')
+    for label, group in (('SURVIVES_OFF_LINUX', SURVIVES_OFF_LINUX),
+                         ('INVALID_OFF_LINUX', INVALID_OFF_LINUX)):
+        if len(set(group)) != len(group):
+            raise SystemExit(f'{label} repeats a mutant')
+        unknown = set(group) - set(names)
+        if unknown:
+            raise SystemExit(f'{label} names unknown mutants: {sorted(unknown)}')
+    overlap = set(SURVIVES_OFF_LINUX) & set(INVALID_OFF_LINUX)
+    if overlap:
+        raise SystemExit(f'two platform contracts for: {sorted(overlap)}')
+    platform = {name: platform_of(name) for name in names}
+    lib = sum('--lib' in row[4] for row in cases)
+    counts = {
+        'total': len(cases),
+        'lib': lib,
+        'test': len(cases) - lib,
+        'unix': sum(value == 'unix' for value in platform.values()),
+        'linux-survives': sum(value == 'linux-survives' for value in platform.values()),
+        'linux-invalid': sum(value == 'linux-invalid' for value in platform.values()),
+    }
+    linux = [name for name in names if platform[name] != 'unix']
+    return counts, linux
 
 
 def main():
@@ -695,7 +836,8 @@ def main():
             raise
 
     def record(name, test, assertion, status, reason):
-        results.append(dict(mutation=name, test=test, assertion=assertion, status=status, reason=reason))
+        results.append(dict(mutation=name, test=test, platform=platform_of(name),
+                            assertion=assertion, status=status, reason=reason))
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
@@ -750,6 +892,26 @@ if __name__ == '__main__':
                 stale.append((name, count))
         if stale:
             raise SystemExit(f'STALE ANCHORS: {stale}')
+        # #1409 item 5: the counts and the platform contract are derived from
+        # `cases`, and the README has to agree with them — the numbers used to
+        # be hand-written in three places and had already drifted (#1409
+        # item 4: two rows were documented as SURVIVED off Linux while their
+        # bound test does not exist there, which reads as INVALID).
+        counts, linux = derived_contract()
+        readme = Path(__file__).with_name('README.md').read_text(encoding='utf-8')
+        marker = re.search(r'<!-- mutants: ([^>]*?) -->', readme)
+        contract = re.search(r'<!-- linux-contract: ([^>]*?) -->', readme)
+        if marker is None or contract is None:
+            raise SystemExit('README is missing the mutants / linux-contract markers')
+        declared = dict(pair.split('=', 1) for pair in marker.group(1).split())
+        expected = {key: str(value) for key, value in counts.items()}
+        if declared != expected:
+            raise SystemExit(f'README mutants marker {declared} != derived {expected}')
+        if contract.group(1).split() != linux:
+            raise SystemExit(
+                f'README linux-contract list {contract.group(1).split()} != derived {linux}')
         print(f'{len(cases)} anchors: ok')
+        print('mutants: ' + ' '.join(f'{key}={value}' for key, value in counts.items()))
+        print('linux-contract: ' + ' '.join(linux))
         raise SystemExit(0)
     raise SystemExit(main())

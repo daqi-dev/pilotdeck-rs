@@ -94,7 +94,10 @@ panic 用例
 修的那种「固定延迟贴着上限」形状；8s 延迟本身不能缩短——它要明显越过
 硬回的 5s cap，见变异行）。
 
-变异体（25 个；绑定测试如无说明均在 `--test scratch_publication`）：
+变异体（条数与平台契约见文件末尾的 `mutants` / `linux-contract` 标记：两者
+由 `--check-anchors` 从 `cases` 与 `SURVIVES_OFF_LINUX` / `INVALID_OFF_LINUX`
+派生并逐项比对，手写数字不再进正文；绑定测试如无说明均在
+`--test scratch_publication`）：
 
 - `script-direct-write`（`--lib`）：`Scratch::script` 退回修前 `fs::write` +
   chmod（进程内直写被 exec 的路径）——须在 Linux 压测下以 `#1125 etxtbsy`
@@ -220,6 +223,30 @@ panic 用例
   `passed()` 拒绝、整行 INVALID）。kill 错误传播（fix-r1 P2-1 收紧的另一半）为
   无变异体的防御层：租约下僵尸钉住 pid，真实 kill 不会 ESRCH，本二进制
   可达路径上无失败可绑定（边界记录于 cases 内联注释与 fix-r2b RESULT）。
+- `stranger-pid-reap-removed`（#1409 第 2 条，Linux，绑定名同带模块前缀）：
+  pid 模式只留下 kill、删掉 `reap_process` 的 `waitpid` 收割——僵尸仍是本
+  进程的子进程，`/proc/<pid>` 条目继续存在，pid 模式用例新增的
+  `#1409 the pid-mode guard must reap the stranger` 判杀。组模式早有
+  `stranger-reap-removed`，pid 模式此前只有 kill 一个变异体；僵尸有没有被
+  收走，唯一的证据就是从 `/proc` 里消失，所以判据直接看条目。
+- `scan-descriptor-dir-unreadable`（#1409 第 1 条，P1，Linux 契约）：把
+  `read_dir` 的 `/proc/<pid>/fd` 改成不存在的名字——修前前两级读失败一律
+  `continue`，扫描一条管道都看不见仍返回 Ok，绑定用例照常 PASS；修后自检
+  连自己的描述符都看不见，`#1409 reading the descriptors of` 进 dead-helper
+  用例的 panic 载荷、挤掉它期待的 `TimedOut`。
+- `scan-fd-link-unreadable`（#1409 第 1 条，Linux 契约）：第二级读，把
+  `read_link` 的目标改成没人持有的名字——ENOENT 按「fd 已释放」跳过，所以
+  这一变异体只能由正向自检判杀：自检的 canary 写端同样看不见，
+  `#1409 the return-boundary scan cannot see` 判杀。它与上一条合起来钉住
+  「扫描看不见管道就不许 PASS」。
+- `boundary-grace-removed`（#1409 第 3 条，Linux，绑定单元测试）：整段宽限
+  重检删掉——候选一经发现即算存活写端，扫描与判定之间释放的 fd 会被报成
+  泄漏（宽限存在的理由正是这个假 FAIL）；绑定新增单元测试
+  `a_candidate_that_no_longer_resolves_is_evicted_by_the_grace` 的
+  `#1409 the grace must evict`。
+- `boundary-grace-never-evicts`（#1409 第 3 条，Linux，同一单元测试）：
+  重检照跑但 `retain(|_| true)` 永不剔除——同一个假 FAIL 换慢路径，同一
+  锚点判杀。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -238,22 +265,36 @@ etxtbsy` 标记，其他 exec 错误（如 EAGAIN）发 `#1125 exec-error`，在
 
 ```sh
 CARGO_TARGET_DIR=<绝对路径> python3 -I negative_controls.py NEW_OUT_DIR
-# 锚点新鲜度预检（须打印 `25 anchors: ok` 后退出 0）
+# 锚点新鲜度预检（须打印 `<cases 条数> anchors: ok`，并打印派生的 `mutants:` /
+# `linux-contract:` 两行；README 末尾两个标记与派生值逐项一致才退出 0）
 python3 -I negative_controls.py --check-anchors
 ```
 
-每个变异体自带 cargo target：两个 ETXTBSY 竞态变异体跑 `--lib`（绑定
-grep 压测），其余 21 个跑 `--test scratch_publication`。
+每个变异体自带 cargo target：ETXTBSY 竞态变异体跑 `--lib`（绑定 grep
+压测），其余跑 `--test scratch_publication`；两类的条数见 `mutants` 标记的
+`lib` / `test` 两项。
 
 平台契约：macOS 的 std::process 走 posix_spawn，观察不到继承描述符窗口，
 `script-direct-write` / `helper-in-process-write` 在该平台预期 SURVIVED
 （或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
-Linux 宿主（cb8 / CI）上成立；`boundary-write-end-filter-removed` /
-`boundary-fdinfo-read-error` / `boundary-fdinfo-parse-error` /
-`boundary-fdinfo-unknown-passed` / `stranger-subreaper-removed` /
-`stranger-reap-removed` / `stranger-pid-kill-removed` 依赖 `/proc` 与
-`PR_SET_CHILD_SUBREAPER`（后两个中前者绑定 cfg linux 的单元测试、后者绑定
-pid_mode 专属件），同为 **Linux 契约**（非 Linux 内核上扫描与收割
-被 cfg 掉，宿主预期 SURVIVED）；其余 16 个变异体在任意 unix 宿主上确定性
-判杀（unix 平台无关，非 unix 无该测试模块）。
+Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**非 Linux 上
+的预期结果不同**（#1409 第 4 条更正：此前一段把它们一律写成 SURVIVED）：
+① `boundary-write-end-filter-removed` / `boundary-fdinfo-read-error` /
+`boundary-fdinfo-parse-error` / `stranger-subreaper-removed` /
+`stranger-reap-removed`，以及 #1409 新增的
+`scan-descriptor-dir-unreadable` / `scan-fd-link-unreadable`——被 cfg 掉的
+是扫描或收割的代码路径，绑定用例在非 Linux 上仍然存在且照常通过，宿主观
+测到 **SURVIVED**；② `boundary-fdinfo-unknown-passed` /
+`stranger-pid-kill-removed` / `boundary-grace-removed` /
+`boundary-grace-never-evicts` / `stranger-pid-reap-removed`——绑定的是
+`#[cfg(target_os = "linux")]` 的单元测试或 `pid_mode` 专属用例，非 Linux
+上跑 `--exact` 匹配 0 个测试，正控就被 `passed()` 拒，宿主观测到
+**INVALID**（不是 SURVIVED）。两类名单与其余变异体的条数都由
+`cases` + `SURVIVES_OFF_LINUX` / `INVALID_OFF_LINUX` 派生，`--check-anchors`
+把它与下面两个标记逐项比对，正文不再手写数字。不在契约里的变异体在任意
+unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
+
+<!-- mutants: total=30 lib=2 test=28 unix=16 linux-survives=9 linux-invalid=5 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts -->
+

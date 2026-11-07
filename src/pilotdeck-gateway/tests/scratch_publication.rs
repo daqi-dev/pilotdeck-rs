@@ -48,6 +48,9 @@ use rustix::process::{Pid, Signal};
 use std::os::unix::process::CommandExt;
 
 #[cfg(target_os = "linux")]
+use std::os::fd::AsFd;
+
+#[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
 use scratch::{OWNER_FILE, Scratch, write_executable, write_executable_bounded};
@@ -103,6 +106,17 @@ const STRANGER_PID_REAP_TIMEOUT: Duration = Duration::from_secs(5);
 /// inside the cap, so the cap carries the headroom ([`STRANGER_STARTED_TIMEOUT`]);
 /// what the release signal decides is only whether `started` appears at all.
 const STRANGER_STARTED_DELAY: Duration = Duration::from_secs(8);
+
+/// #1409 item 6: the two constants' relation was prose only — the delay has
+/// to outrun the 5 s a re-hardcoded helper cap would use (that is what the
+/// within-cap scenario exposes), and the test-side wait has to keep the
+/// headroom the #1297 review asked for (at least four seconds above the
+/// delay). `Duration::as_secs` is const, so the invariant is checked at
+/// compile time instead of drifting with the comments.
+const _: () = assert!(
+    STRANGER_STARTED_DELAY.as_secs() > 5
+        && STRANGER_STARTED_DELAY.as_secs() + 4 <= STRANGER_STARTED_TIMEOUT.as_secs()
+);
 
 /// #1297 review (concurrency P1 + sibling P1): how long the dead-helper
 /// test's stranger holds its `started` back after confirming it holds the
@@ -1288,6 +1302,7 @@ mod pid_mode {
         let signals = Scratch::new("helper-stall-stranger-signals");
         let pid_file = signals.path().join(STRANGER_PID);
         let mut stranger = StrangerGuard::new();
+        let mut watched = None;
         let (kill_sent, kill_reported) = mpsc::channel();
         let body = "\n".repeat(256 * 1024);
         let error = write_executable_bounded(
@@ -1300,7 +1315,9 @@ mod pid_mode {
             // helper's death — whenever it comes — leaves the stranger on this
             // process, and the guard can collect it.
             |_| {
-                stranger.follow(wait_for_stranger_pid(&pid_file));
+                let stranger_pid = wait_for_stranger_pid(&pid_file);
+                watched = Some(stranger_pid);
+                stranger.follow(stranger_pid);
             },
             |status| {
                 let _ = kill_sent.send(status);
@@ -1315,6 +1332,14 @@ mod pid_mode {
         assert_killed_and_reaped(&kill_reported);
         stranger.end().expect(
             "#1155 the stranger must be killed and reaped by the test's guard, not PID 1's",
+        );
+        // #1409 item 2: the pid-mode collection has to be *observed*. A
+        // zombie still has a `/proc` entry, so the entry's disappearance is
+        // what separates "reaped by this process" from "killed and left for
+        // someone else" — the pid-mode counterpart of the group mode's
+        // group-empty poll.
+        assert_reaped_by_this_process(
+            watched.expect("#1409 the spawned hook must record the stranger's pid"),
         );
         assert_only_the_owner_token_remains(&scratch);
     }
@@ -1350,6 +1375,25 @@ mod pid_mode {
             .arg("stalled-helper")
             .stdin(process::Stdio::piped());
         helper
+    }
+
+    /// #1409 item 2: the pid-mode collection's own evidence. An unreaped
+    /// zombie still has a `/proc` entry, so the entry's disappearance is what
+    /// separates "reaped by this process" from "killed and left for someone
+    /// else to collect" — the pid-mode counterpart of the group mode's
+    /// group-empty poll in [`StrangerGuard::reap_group`].
+    fn assert_reaped_by_this_process(stranger: Pid) {
+        let path = PathBuf::from(format!("/proc/{stranger}"));
+        let deadline = Instant::now() + STRANGER_PID_REAP_TIMEOUT;
+        while path.exists() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            !path.exists(),
+            "#1409 the pid-mode guard must reap the stranger: {} still exists, so the stranger \
+             was only killed",
+            path.display()
+        );
     }
 
     /// The pid the sleep-5 helper publishes for its stranger (#1155 r3
@@ -1568,10 +1612,16 @@ fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Er
 /// exec'd yet holds an inherited CLOEXEC copy for its fork-to-exec window
 /// (the same window #1125 was about) and is on its way out, not a leak, so
 /// a candidate must persist through [`TRANSIENT_WRITE_END_GRACE`] before
-/// it is declared a survivor. Directories
-/// that cannot be read belong to a process that is dying — it holds
-/// nothing — or to another user, which can never hold this pipe, so
-/// unreadable entries are skipped. An fd of the pipe whose fdinfo cannot
+/// it is declared a survivor (the re-check itself is
+/// [`retain_through_grace`], #1409 item 3). #1409: a directory that cannot
+/// be read is classified *before* it is skipped ([`blind_source`]) — gone,
+/// already dead, or unrelated to this process, none of which can hold a
+/// copy of this pipe, versus this process or one of its descendants, whose
+/// unreadable descriptors are an unknown the scan fails closed on. And
+/// before any of that, [`a_write_end_this_process_holds_is_visible`] proves
+/// the scan can see a write end this process holds through the very same
+/// primitives, so a `/proc` that hides pipes makes the scan fail instead
+/// of passing on nothing. An fd of the pipe whose fdinfo cannot
 /// be read, or whose flags line cannot be parsed, is an unknown rather
 /// than a read end: the release is proven only by the fd itself being gone
 /// — re-read after a failed fdinfo read, whatever errno the dying task
@@ -1587,8 +1637,18 @@ fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Er
 fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
+        // #1409: the positive self-check comes first. A scan that cannot see
+        // a write end this process holds itself — on hidepid, gVisor, or a
+        // container that hides pipes from /proc — must fail, never pass on
+        // an empty result that proves nothing.
+        a_write_end_this_process_holds_is_visible()?;
         let wanted = format!("pipe:[{pipe}]");
         let mut candidates: Vec<String> = Vec::new();
+        // #1409: the sources are counted rather than silently skipped, and
+        // the scan refuses to report a clean result when it could not read a
+        // single process: "saw nothing" is not evidence of "nothing there".
+        let mut readable = 0usize;
+        let mut skipped = 0usize;
         let processes = fs::read_dir("/proc").map_err(|error| {
             io::Error::other(format!(
                 "#1155 reading /proc for the return-boundary scan: {error}"
@@ -1601,65 +1661,43 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
             if !pid.bytes().all(|byte| byte.is_ascii_digit()) {
                 continue;
             }
-            let descriptors = match fs::read_dir(format!("/proc/{pid}/fd")) {
-                Ok(descriptors) => descriptors,
-                Err(_) => continue,
-            };
-            for descriptor in descriptors {
-                let Ok(descriptor) = descriptor else {
-                    continue;
-                };
-                let Ok(target) = fs::read_link(descriptor.path()) else {
-                    continue;
-                };
-                if target.to_string_lossy() != wanted {
-                    continue;
-                }
-                let number = descriptor.file_name().to_string_lossy().into_owned();
-                let fdinfo = match fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", number)) {
-                    Ok(fdinfo) => fdinfo,
-                    // #1155 fix-r2b review (boundary P2 / concurrency P3):
-                    // the release is proven by the fd itself being gone,
-                    // re-read here — see [`fdinfo_unreadable`].
-                    Err(error) => {
-                        if let Some(failure) = fdinfo_unreadable(error, &descriptor.path(), &wanted)
-                        {
-                            return Err(failure);
+            match fds_of(&pid, &wanted) {
+                Ok(held) => {
+                    readable += 1;
+                    for (fd, access) in held {
+                        if access & 0o3 == 0 {
+                            // A read end — the stranger holds exactly that.
+                            continue;
                         }
-                        continue;
+                        candidates.push(fd);
                     }
-                };
-                let access = match fdinfo
-                    .lines()
-                    .find_map(|line| line.strip_prefix("flags:"))
-                    .and_then(|flags| u32::from_str_radix(flags.trim(), 8).ok())
-                {
-                    Some(access) => access,
-                    None => {
-                        return Err(io::Error::other(format!(
-                            "#1155 the fdinfo of /proc/{pid}/fd/{number} has no parsable flags line"
-                        )));
-                    }
-                };
-                if access & 0o3 == 0 {
-                    // A read end — the stranger holds exactly that.
-                    continue;
                 }
-                candidates.push(format!("/proc/{pid}/fd/{number}"));
+                // #1409: a failed read is never silently skipped. A source
+                // that cannot hold this pipe — gone, already dead, or not a
+                // descendant of this process — may be passed over; anything
+                // else is an unknown the scan fails closed on, because a
+                // hidden descriptor of a descendant is exactly where a
+                // leaked write end would be.
+                Err(error) => match blind_source(&pid) {
+                    BlindSource::Related => return Err(error),
+                    BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated => {
+                        skipped += 1;
+                    }
+                },
             }
+        }
+        if readable == 0 {
+            return Err(io::Error::other(format!(
+                "#1409 the return-boundary scan could not read the descriptors of any process \
+                 ({skipped} skipped): a clean result would prove nothing"
+            )));
         }
         // A candidate counts as a surviving write end only if it persists
         // through the transient grace: the writer thread is finished, so
         // nothing new can acquire the descriptor, while a pre-exec fork of
         // this process loses its inherited copy at the exec already
         // underway.
-        let deadline = Instant::now() + TRANSIENT_WRITE_END_GRACE;
-        while !candidates.is_empty() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(25));
-            candidates.retain(|fd| {
-                fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted)
-            });
-        }
+        retain_through_grace(&mut candidates, &wanted, TRANSIENT_WRITE_END_GRACE);
         if let Some(fd) = candidates.first() {
             return Err(io::Error::other(format!(
                 "#1155 a write end of the publication pipe ({fd}) survived the return"
@@ -1669,6 +1707,190 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
     #[cfg(not(target_os = "linux"))]
     let _ = pipe;
     Ok(())
+}
+
+/// #1409: whether the process behind a failed `/proc` read could hold a
+/// descriptor of this pipe at all. A descriptor of this pipe reaches another
+/// process only by inheritance — down this process's descendants — so a
+/// process that is gone, already dead, or unrelated can hold nothing the scan
+/// must find. Everything else is an unknown: on a host that hides `/proc`,
+/// treating an unreadable related process as "nothing there" is exactly how
+/// the scan would report a leaked write end as clean.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BlindSource {
+    /// Gone between the `/proc` listing and the read: it holds nothing.
+    Vanished,
+    /// A zombie or a dead task: the kernel already closed its descriptors.
+    Terminal,
+    /// Not this process and not one of its descendants.
+    Unrelated,
+    /// This process, a descendant, or a task whose relation cannot be read.
+    Related,
+}
+
+/// #1409: the state and parent fields of `/proc/<pid>/stat`. Everything is
+/// read after the *last* `)` because the comm field between the parentheses
+/// may contain spaces and parentheses of its own.
+#[cfg(target_os = "linux")]
+fn stat_fields(stat: &str) -> Option<(char, &str)> {
+    let (_, tail) = stat.rsplit_once(')')?;
+    let mut fields = tail.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let parent = fields.next()?;
+    Some((state, parent))
+}
+
+/// #1409: whether `pid` is this process or one of its descendants — the only
+/// processes that can hold a copy of a descriptor this process owns. An
+/// unreadable chain is an unknown and counts as related, so it fails the scan
+/// closed rather than passing it.
+#[cfg(target_os = "linux")]
+fn descended_from_this_process(pid: &str) -> bool {
+    let mine = process::id().to_string();
+    let mut current = pid.to_owned();
+    for _ in 0..64 {
+        if current == mine {
+            return true;
+        }
+        let Ok(stat) = fs::read_to_string(format!("/proc/{current}/stat")) else {
+            return true;
+        };
+        let Some((_, parent)) = stat_fields(&stat) else {
+            return true;
+        };
+        if parent == "0" {
+            return false;
+        }
+        current = parent.to_owned();
+    }
+    true
+}
+
+/// #1409: classify a source whose `/proc` reads failed, for the scan's
+/// "may this be skipped" decision.
+#[cfg(target_os = "linux")]
+fn blind_source(pid: &str) -> BlindSource {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        // No stat at all: the task is gone between the listing and the read.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return BlindSource::Vanished,
+        // Any other failure leaves the relation unknown: never skipped.
+        Err(_) => return BlindSource::Related,
+    };
+    let Some((state, _)) = stat_fields(&stat) else {
+        return BlindSource::Related;
+    };
+    if state == 'Z' || state == 'X' {
+        return BlindSource::Terminal;
+    }
+    if descended_from_this_process(pid) {
+        BlindSource::Related
+    } else {
+        BlindSource::Unrelated
+    }
+}
+
+/// #1409: the descriptors of `pid` that resolve to `wanted`, with their
+/// fdinfo access mode. Every failed read is reported — the caller decides
+/// whether its *source* can be passed over — except an fd whose link
+/// vanished between the enumeration and the read, which is a release and
+/// holds nothing.
+#[cfg(target_os = "linux")]
+fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
+    let mut held = Vec::new();
+    let descriptors = fs::read_dir(format!("/proc/{pid}/fd")).map_err(|error| {
+        io::Error::other(format!("#1409 reading the descriptors of {pid}: {error}"))
+    })?;
+    for descriptor in descriptors {
+        let descriptor = descriptor.map_err(|error| {
+            io::Error::other(format!(
+                "#1409 enumerating the descriptors of {pid}: {error}"
+            ))
+        })?;
+        let Ok(target) = fs::read_link(descriptor.path()) else {
+            continue;
+        };
+        if target.to_string_lossy() != wanted {
+            continue;
+        }
+        let number = descriptor.file_name().to_string_lossy().into_owned();
+        let fdinfo = match fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", number)) {
+            Ok(fdinfo) => fdinfo,
+            // #1155 fix-r2b review (boundary P2 / concurrency P3): the
+            // release is proven by the fd itself being gone, re-read here —
+            // see [`fdinfo_unreadable`].
+            Err(error) => {
+                if let Some(failure) = fdinfo_unreadable(error, &descriptor.path(), wanted) {
+                    return Err(failure);
+                }
+                continue;
+            }
+        };
+        let access = match fdinfo
+            .lines()
+            .find_map(|line| line.strip_prefix("flags:"))
+            .and_then(|flags| u32::from_str_radix(flags.trim(), 8).ok())
+        {
+            Some(access) => access,
+            None => {
+                return Err(io::Error::other(format!(
+                    "#1155 the fdinfo of /proc/{pid}/fd/{number} has no parsable flags line"
+                )));
+            }
+        };
+        held.push((format!("/proc/{pid}/fd/{number}"), access));
+    }
+    Ok(held)
+}
+
+/// #1409: the scan's own eyes. Before a clean scan result is trusted, the
+/// scan must see a write end this process provably holds through the very
+/// same primitives it uses on everyone else — `/proc/<pid>/fd`, `read_link`,
+/// and the fdinfo access mode. A host that hides pipes or the descriptors of
+/// processes from `/proc` (hidepid, gVisor, a restricted container) then
+/// makes the scan fail instead of passing on nothing. The canary is a fresh
+/// pipe of this process's own: the publication pipe may legitimately have no
+/// fd left at the return boundary (the helper is reaped and the writer
+/// thread dropped its end), so the self-check must not depend on it.
+#[cfg(target_os = "linux")]
+fn a_write_end_this_process_holds_is_visible() -> io::Result<()> {
+    let (_reader, writer) = io::pipe().map_err(|error| {
+        io::Error::other(format!(
+            "#1409 creating the return-boundary scan's self-check pipe: {error}"
+        ))
+    })?;
+    let inode = rustix::fs::fstat(writer.as_fd())
+        .map_err(|error| io::Error::other(format!("#1409 fstat of the self-check pipe: {error}")))?
+        .st_ino;
+    let wanted = format!("pipe:[{inode}]");
+    let mine = process::id().to_string();
+    if fds_of(&mine, &wanted)?
+        .iter()
+        .any(|(_, access)| access & 0o3 != 0)
+    {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "#1409 the return-boundary scan cannot see the write end of a pipe it holds itself \
+         ({wanted}): this host's /proc hides it, so a clean scan would prove nothing"
+    )))
+}
+
+/// #1409 item 3: the transient-write-end grace. A candidate counts as a
+/// surviving write end only if it persists through the grace — a release
+/// makes an fd disappear for good, while a pre-exec fork of this process
+/// loses its inherited copy at the exec already underway — so the re-check
+/// evicts every candidate whose fd no longer resolves to the pipe, and keeps
+/// every one that does, until the grace runs out.
+#[cfg(target_os = "linux")]
+fn retain_through_grace(candidates: &mut Vec<String>, wanted: &str, grace: Duration) {
+    let deadline = Instant::now() + grace;
+    while !candidates.is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+        candidates
+            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));
+    }
 }
 
 /// #1155 fix-r2b review (boundary P2 / concurrency P3): the two outcomes of
@@ -1699,6 +1921,90 @@ fn an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd() {
     assert!(
         fdinfo_unreadable(esrch(), gone, &wanted).is_none(),
         "#1155 an fd that is gone must prove the release of its unreadable fdinfo"
+    );
+}
+
+/// #1409: the stat parse must survive a comm field with spaces and
+/// parentheses — every field is read after the *last* `)`, because comm may
+/// contain both.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_stat_fields_are_read_after_the_last_parenthesis() {
+    let (state, parent) = stat_fields("42 (a ) b (c) Z 7 42 42 0 -1 4194304")
+        .expect("#1409 the stat fields of a comm with parentheses must parse");
+    assert_eq!(
+        (state, parent),
+        ('Z', "7"),
+        "#1409 the state and parent follow the last ')'"
+    );
+    assert!(
+        stat_fields("no parentheses here").is_none(),
+        "#1409 a stat without its comm parentheses must not be guessed at"
+    );
+}
+
+/// #1409: the classification that decides whether a failed `/proc` read may
+/// be passed over. This process is always related — its own descriptors are
+/// what the scan reads first — init cannot descend from this test process,
+/// and a reaped child is gone.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
+    let mine = process::id().to_string();
+    assert_eq!(
+        blind_source(&mine),
+        BlindSource::Related,
+        "#1409 this process is the scan's own source and must never be skipped"
+    );
+    assert_eq!(
+        blind_source("1"),
+        BlindSource::Unrelated,
+        "#1409 init cannot descend from this process, so it can never hold this pipe"
+    );
+    let mut child = process::Command::new("/bin/true")
+        .spawn()
+        .expect("#1409 spawn the vanished-source probe");
+    let pid = child.id().to_string();
+    let _ = child.wait().expect("#1409 reap the vanished-source probe");
+    assert_eq!(
+        blind_source(&pid),
+        BlindSource::Vanished,
+        "#1409 a reaped process is gone and holds nothing"
+    );
+}
+
+/// #1409: the positive self-check must hold on a healthy Linux host — the
+/// scan sees a write end this process holds, through the same primitives it
+/// uses on every other process.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_scan_sees_a_write_end_this_process_holds() {
+    a_write_end_this_process_holds_is_visible().expect(
+        "#1409 the scan must see its own write end; this host's /proc hides it, so a clean \
+         scan would prove nothing",
+    );
+}
+
+/// #1409 item 3: the grace re-check evicts a candidate whose fd no longer
+/// resolves to the pipe — the release a scan would otherwise report as a
+/// surviving write end — and keeps the one that still does.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_candidate_that_no_longer_resolves_is_evicted_by_the_grace() {
+    use std::os::fd::AsRawFd;
+    let (_reader, writer) = io::pipe().expect("#1409 create the grace probe pipe");
+    let inode = rustix::fs::fstat(writer.as_fd())
+        .expect("#1409 fstat the grace probe pipe")
+        .st_ino;
+    let wanted = format!("pipe:[{inode}]");
+    let live = format!("/proc/self/fd/{}", writer.as_raw_fd());
+    let gone = "/proc/self/fd/1048576".to_owned();
+    let mut candidates = vec![live.clone(), gone];
+    retain_through_grace(&mut candidates, &wanted, Duration::from_millis(200));
+    assert_eq!(
+        candidates,
+        vec![live],
+        "#1409 the grace must evict a candidate that no longer resolves and keep the fd that does"
     );
 }
 
