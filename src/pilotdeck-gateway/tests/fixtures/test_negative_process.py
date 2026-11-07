@@ -1215,25 +1215,33 @@ class ParityMutationLock(unittest.TestCase):
             with self.subTest(holder=holder), self.fixture() as (root, source, target, snapshot, common):
                 context = (common.parity_lock(timeout=0.1) if holder == "lease"
                            else common.guard(common.LOCK))
-                with context, patch.object(Path, "write_bytes") as write:
+                # #1903：还原改走 `write_source_atomic`（临时文件 + os.replace），
+                # 只钉 `Path.write_bytes` 会漏掉这条写入路径。
+                with context, patch.object(Path, "write_bytes") as write, \
+                        patch.object(negative_process, "write_source_atomic",
+                                     side_effect=AssertionError(
+                                         "#166 refused lock must not publish source bytes")) as publish:
                     with self.assertRaises(TimeoutError, msg="#166 busy parity lock must time out"):
                         with mutating_sources(root, [source, target], lock_timeout=0.05):
                             self.fail("#166 busy parity lock must refuse before mutation")
                     self.assertEqual(write.call_count, 0, "#166 refused lock must not write source bytes")
+                    self.assertEqual(publish.call_count, 0, "#166 refused lock must not publish source bytes")
                 self.assertEqual(target.read_bytes(), snapshot[target], "#166 busy lock preserves original bytes")
 
     def test_failed_restore_retains_cleanup_pending_lease(self):
         with self.fixture() as (root, source, target, snapshot, common):
-            raw_write = Path.write_bytes
+            raw_replace = os.replace
 
-            def fail_restore(path, data):
-                if path == target and data == snapshot[target]:
+            # #1903：还原的落盘是 `write_source_atomic` 的 `os.replace`，旧的
+            # `Path.write_bytes` 注入已经不再经过还原路径。
+            def fail_restore(actual, destination, *args, **kwargs):
+                if Path(destination) == target:
                     raise OSError("#166 injected restore failure")
-                return raw_write(path, data)
+                return raw_replace(actual, destination, *args, **kwargs)
 
             try:
                 with self.assertRaisesRegex(OSError, "#166 injected restore failure"), \
-                        patch.object(Path, "write_bytes", fail_restore):
+                        patch.object(negative_process.os, "replace", fail_restore):
                     with mutating_sources(root, [source, target], lock_timeout=0.1):
                         target.write_bytes(b"# mutant\n")
                 self.assertEqual(self.contender(root, source), "REFUSED",
