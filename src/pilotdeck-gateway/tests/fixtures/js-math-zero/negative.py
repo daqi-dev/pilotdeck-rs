@@ -352,17 +352,17 @@ names = [case[0] for case in cases]
 if len(names) != len(set(names)):
     refuse('duplicate control name')
 try:
-    cases = select(cases, arguments, always=())
+    run_rows = select(cases, arguments, always=())
 except ValueError as error:
     refuse(str(error))
-if not cases:
+if not run_rows:
     refuse('no controls selected')
 
 refuse_unusable_target()
 out = claim_dir(mode)
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
-paths = list(dict.fromkeys(case[1] for case in cases))
+paths = list(dict.fromkeys(case[1] for case in run_rows))
 results = []
 
 
@@ -390,7 +390,7 @@ with mutating_sources(root, paths) as originals:
     # Positive baseline for every affected target, once each.
     baseline_ok = True
     for package, (extra, filter) in BASELINE.items():
-        if not any(package_for(case[1]) == package for case in cases):
+        if not any(package_for(case[1]) == package for case in run_rows):
             continue
         result, log = run('baseline-' + package, [*extra, filter])
         ok = (result is not None and 'test result: ok.' in log
@@ -403,7 +403,7 @@ with mutating_sources(root, paths) as originals:
     if not baseline_ok:
         raise RuntimeError('unmutated baseline did not pass; mutants not run')
 
-    for name, path, before, after, test in cases:
+    for name, path, before, after, test in run_rows:
         package = package_for(path)
         extra, _filter = BASELINE[package]
         original = originals[path].decode()

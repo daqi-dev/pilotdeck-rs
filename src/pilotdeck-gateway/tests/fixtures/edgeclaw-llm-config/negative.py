@@ -334,10 +334,10 @@ if mode.startswith('-'):
 # must not silently run zero mutants and exit 0. select() also refuses a
 # repeated name (`a a` for `a b`) instead of folding it into a green run.
 try:
-    cases = select(all_cases, arguments, always=())
+    run_rows = select(all_cases, arguments, always=())
 except ValueError as error:
     refuse(str(error))
-if not cases:
+if not run_rows:
     refuse('no controls selected')
 
 target = os.environ.get('CARGO_TARGET_DIR')
@@ -401,7 +401,7 @@ with mutating_sources(root, [config]) as originals:
             print('baseline failed; mutants not run', flush=True)
             raise SystemExit(1)
 
-        for name, path, before, after, test in cases:
+        for name, path, before, after, test in run_rows:
             slots_text = ''
             log = ''
             returncode = None
