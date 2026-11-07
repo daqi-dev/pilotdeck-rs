@@ -3,7 +3,7 @@
 
 --check remains a compatibility alias for --check-anchors.
 
-The catalog has exactly 75 controls. Each selected control runs its named
+The catalog has exactly 76 controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -46,7 +46,7 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 75
+EXPECTED_TOTAL = 76
 # #1382: per-ID unordered-close controls are pinned to the registered
 # close-order ledger IDs. These three whole-scope boundary controls are not
 # one-per-ID rows, so they are excluded from that pin; a future boundary
@@ -162,6 +162,25 @@ mutations = [
         "                query.close().await;",
         "signal_cases::run_complete_cleanup",
         "#1145 run--complete-cleanup four surfaces, abort count, listeners and connections match TS",
+    ),
+    (
+        # #1260: 16 measured STABLE-DIFF cells observe the query (2) close
+        # before control (1) because TS drops the query at process exit before
+        # its `finally { client.close() }`. Restoring the old control-first
+        # order makes the named matrix cell report a "connection closures"
+        # difference, so this binds the product order, not just the comparator.
+        "initialization-query-close-before-control",
+        turn,
+        "            if let Some(mut query) = query.take() {\n"
+        "                query.flush_pending().await;\n"
+        "            }\n"
+        "            control.close().await;",
+        "            control.close().await;\n"
+        "            if let Some(query) = &mut query {\n"
+        "                query.flush_pending().await;\n"
+        "            }",
+        "signal_cases::run_query_hello_hold_sigint",
+        "#1145 run--query-hello-hold-sigint four surfaces, abort count, listeners and connections match TS",
     ),
     ('abort-stale-run-id', output, 'self.run_id = run_id.clone();', 'self.run_id = "requested-run".into();', 'product::sdk::turn::tests::abort_uses_consumed_run_id_without_utf16_loss', '#1145 abort uses latest lossless runId'),
     ('consumer-error-retains-query', output, 'return Err(EventError::Consumer(Failure::Error(\n                "event.type.includes is not a function".into(),', 'return Err(EventError::Iterator(Failure::Error(\n                "event.type.includes is not a function".into(),', 'product::sdk::turn::tests::output_failure_preserves_iterator_vs_consumer_lifetime', '#1145 event error matches TS iterator or consumer lifetime'),

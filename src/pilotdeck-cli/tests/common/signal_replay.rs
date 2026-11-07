@@ -2116,6 +2116,93 @@ mod comparison_tests {
         );
     }
 
+    /// #1260: the 16 measured STABLE-DIFF cells all have the same causal
+    /// shape -- the query connection (2) is released before control (1), with
+    /// 1006 when the socket is still open and the server's 4003 when hello was
+    /// rejected. They are not order-exempt, so pin each cell's concrete pair
+    /// and prove the comparator rejects the inverted pair for that exact ID.
+    #[test]
+    fn stable_query_before_control_cells_keep_concrete_order() {
+        let source: Value =
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1260 stable order original JSON");
+        let registered = registered_unordered_close_ids();
+        let cells: [(&str, u64); 16] = [
+            ("run--query-hello-hold-sigint", 1006),
+            ("run--query-hello-hold-sigterm", 1006),
+            ("run--query-hello-reject-sigint", 4003),
+            ("run--query-hello-reject-sigterm", 4003),
+            ("run--query-model-reject-sigint", 1006),
+            ("run--query-model-reject-sigterm", 1006),
+            ("run--query-resume-reject-sigint", 1006),
+            ("run--query-resume-reject-sigterm", 1006),
+            ("resume--query-hello-hold-sigint", 1006),
+            ("resume--query-hello-hold-sigterm", 1006),
+            ("resume--query-hello-reject-sigint", 4003),
+            ("resume--query-hello-reject-sigterm", 4003),
+            ("resume--query-model-reject-sigint", 1006),
+            ("resume--query-model-reject-sigterm", 1006),
+            ("resume--query-resume-reject-sigint", 1006),
+            ("resume--query-resume-reject-sigterm", 1006),
+        ];
+        let unique: BTreeSet<_> = cells.iter().map(|(id, _)| *id).collect();
+        assert_eq!(unique.len(), cells.len(), "#1260 unique stable-diff IDs");
+        for (id, query_code) in cells {
+            assert!(
+                !registered.iter().any(|entry| entry == id),
+                "#1260 stable-diff cell must stay order-strict: {id}"
+            );
+            let matches: Vec<&Value> = source["captures"]
+                .as_array()
+                .expect("#1260 stable order captures")
+                .iter()
+                .filter(|row| row["input"]["id"] == id)
+                .collect();
+            assert_eq!(matches.len(), 1, "#1260 unique stable-diff cell: {id}");
+            let closes = matches[0]["closes"]
+                .as_array()
+                .expect("#1260 stable close observations");
+            assert_eq!(closes.len(), 2, "#1260 stable close pair: {id}");
+            assert_eq!(
+                (closes[0]["connection"].as_u64(), closes[0]["code"].as_u64()),
+                (Some(2), Some(query_code)),
+                "#1260 query closes first: {id}"
+            );
+            assert_eq!(
+                (closes[1]["connection"].as_u64(), closes[1]["code"].as_u64()),
+                (Some(1), Some(1005)),
+                "#1260 control closes second: {id}"
+            );
+            assert!(
+                closes[0]["seq"].as_u64().expect("#1260 stable first seq")
+                    < closes[1]["seq"].as_u64().expect("#1260 stable second seq"),
+                "#1260 original trace order: {id}"
+            );
+            let actual = json!(
+                closes
+                    .iter()
+                    .map(|row| json!({
+                        "connection": row["connection"], "code": row["code"],
+                        "reason": row["reason"], "cleanup": row["cleanup"]
+                    }))
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                closes_match(id, matches[0], &actual),
+                "#1260 stable order positive: {id}"
+            );
+            let mut inverted = actual;
+            inverted
+                .as_array_mut()
+                .expect("#1260 stable reverse array")
+                .swap(0, 1);
+            assert!(
+                !closes_match(id, matches[0], &inverted),
+                "#1260 control-before-query must fail: {id}"
+            );
+        }
+    }
+
     #[test]
     fn close_order_is_strict_including_reason_exception() {
         let source: Value =
