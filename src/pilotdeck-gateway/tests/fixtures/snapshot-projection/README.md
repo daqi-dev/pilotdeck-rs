@@ -148,7 +148,10 @@ mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` �
 共享 `negative_selection.registered` 核对，名册漂移 → exit 2 且**不留证据目录**
 （拒跑全部前移到领目录之前）；② 跑完按选中范围核对
 「实际裁决名册 == 期望名册」，**核对在写 `summary.json` 与打印计数之前**，
-缺一行即 exit 1，不再可能把缩水的分母报成功、也不再留下全绿证据物。
+缺一行即 exit 1；失配时**不写 `summary.json`**，只写名字即说明问题的
+`roster-mismatch.json`（含期望 / 实际名册与逐行裁决），只读证据物的消费者
+也不会把缩水的分母读成成功。重复选同一个变异名（`a a`）是打字错误，
+按「从未开跑」exit 2 拒跑，不折成更小的选择集。
 
 领目录与目标目录门一律走共享件（`claim_dir` / `missing_target` /
 `refuse_unusable_target`）：目录已存在、目标目录缺失 / 空 / 纯空白 / dot / 根 / `src` 内

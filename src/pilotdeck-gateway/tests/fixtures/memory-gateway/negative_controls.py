@@ -299,7 +299,15 @@ def main():
     refuse_unusable_target()
     # Refusals happen before the evidence directory is claimed: a drifted
     # roster is a "never started" (2), which must not leave `out/` behind.
-    selected = set(sys.argv[2:])
+    requested = sys.argv[2:]
+    # A repeated name is a caller-side typo (`a a` for `a b`), not a subset;
+    # folding it into a set turns a mistyped selection into a green run over a
+    # smaller scope, the same class of false green as an unknown name (#1734).
+    repeated = sorted({n for n in requested if requested.count(n) > 1})
+    if repeated:
+        print(f"repeated mutation names: {repeated}", file=sys.stderr)
+        return 2
+    selected = set(requested)
     data_names = {"memory-gateway-oracle-truncated"}
     # #1456: a row deleted from this table must not silently shrink the run.
     # Reuse the shared roster check (`negative_selection.registered`, the same
@@ -319,10 +327,16 @@ def main():
     out = claim_dir(sys.argv[1])
     rows = [row for row in mutations if not selected or row[0] in selected]
     paths = sorted({row[1] for row in rows} | {ORACLE})
+    # Verdicts and baseline diagnostics are kept apart by an explicit flag, not
+    # by a name prefix: a verdict recorded under any name -- including one that
+    # happens to start with "baseline-" -- must show up in the roster check
+    # (r6 boundary P2).
     results = []
+    diagnostics = []
 
-    def record(name, status, reason=""):
-        results.append({"name": name, "status": status, "reason": reason})
+    def record(name, status, reason="", diagnostic=False):
+        row = {"name": name, "status": status, "reason": reason}
+        (diagnostics if diagnostic else results).append(row)
         print(f"{name}: {status} {reason}", flush=True)
 
     # #819: every unmutated bound test must be green before any verdict counts.
@@ -336,7 +350,12 @@ def main():
         (out / f"baseline-{test}.log").write_text(log)
         baselines[test] = baseline.returncode == 0 and baseline_passed(log, test)
         if not baselines[test]:
-            record(f"baseline-{test}", "INVALID", "unmutated bound test did not pass")
+            record(
+                f"baseline-{test}",
+                "INVALID",
+                "unmutated bound test did not pass",
+                diagnostic=True,
+            )
 
     with mutating_sources(ROOT, paths) as snapshots:
         for name, path, before, after, marker, test in rows:
@@ -442,21 +461,30 @@ def main():
     # #1456 (codex sibling P1, second round): the roster literal alone only
     # proves the *source* table is intact. The data mutation runs in its own
     # branch, so deleting that branch shrank the run while the roster still
-    # matched. Require one verdict per name in the selected scope -- and check
-    # it *before* publishing anything that reads as success: a shrunken run used
-    # to leave an all-green summary.json and a green count line behind, so a
+    # matched. Require exactly one verdict per selected name, and run the check
+    # *before* publishing anything that reads as success: a shrunken run used to
+    # leave an all-green summary.json and a green count line behind, so a
     # consumer that only reads the artifact never saw the mismatch (r5
-    # concurrency P1). Every non-diagnostic verdict counts, so an extra row
-    # recorded under an unregistered name is a mismatch too (r5 boundary P2).
+    # concurrency P1). A mismatch publishes no summary.json at all -- only a
+    # file whose name says what happened (r6 concurrency/boundary P1).
     expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
-    recorded = [r["name"] for r in results if not r["name"].startswith("baseline-")]
+    recorded = [row["name"] for row in results]
     if recorded != expected:
-        print(
-            f"verdict roster mismatch: recorded={recorded} expected={expected}",
-            file=sys.stderr,
-        )
-        (out / "summary.json").write_text(
-            json.dumps(results, ensure_ascii=False, indent=2) + "\n",
+        message = f"verdict roster mismatch: recorded={recorded} expected={expected}"
+        print(message, file=sys.stderr)
+        (out / "roster-mismatch.json").write_text(
+            json.dumps(
+                {
+                    "verdict": "ROSTER_MISMATCH",
+                    "expected": expected,
+                    "recorded": recorded,
+                    "rows": results,
+                    "baseline": diagnostics,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
         return 1
