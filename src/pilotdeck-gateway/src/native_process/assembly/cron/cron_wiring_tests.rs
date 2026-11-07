@@ -311,31 +311,41 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
         .stop_face()
         .await
         .expect("#1353 the S1 face stops the manager");
-    connection
-        .receive(
-            json!({"type":"request","id":"after","method":"cron_list","params":{"projectKey": project}}).to_string(),
-        )
-        .await
-        .expect("#1353 route after frame");
-    let after = text
-        .0
-        .lock()
-        .expect("#1353 frames lock")
-        .iter()
-        .find(|frame| frame["id"] == "after")
-        .expect("#1353 after response frame")
-        .clone();
-    negative_assert_eq!(after["ok"], false, "#1353 the stopped manager rejects");
-    negative_assert_eq!(
-        after["error"]["code"],
-        "SWITCH_IN_PROGRESS",
-        "#1353 A6: the rejection names the switch"
-    );
-    negative_assert_eq!(
-        after["error"]["message"],
-        "switch in progress: cron management is closed",
-        "#1353 A6: the rejection message crosses verbatim"
-    );
+    // Every management method, like the sibling advertisement tests: the
+    // gate sits at the `cron_request` entry and is method-independent, so
+    // this pins that no method can bypass it after the stop.
+    for method in crate::runtime::cron::CRON_METHODS {
+        connection
+            .receive(
+                json!({"type":"request","id":format!("after-{method}"),"method":method,"params":{"projectKey": project}}).to_string(),
+            )
+            .await
+            .expect("#1353 route after frame");
+    }
+    let frames = text.0.lock().expect("#1353 frames lock");
+    for method in crate::runtime::cron::CRON_METHODS {
+        let after = frames
+            .iter()
+            .find(|frame| frame["id"] == format!("after-{method}"))
+            .expect("#1353 after response frame")
+            .clone();
+        negative_assert_eq!(
+            after["ok"],
+            false,
+            "#1353 the stopped manager rejects {method}"
+        );
+        negative_assert_eq!(
+            after["error"]["code"],
+            "SWITCH_IN_PROGRESS",
+            "#1353 A6: the rejection names the switch for {method}"
+        );
+        negative_assert_eq!(
+            after["error"]["message"],
+            "switch in progress: cron management is closed",
+            "#1353 A6: the rejection message crosses verbatim"
+        );
+    }
+    drop(frames);
     host.shutdown(options.drain_budget)
         .await
         .expect("#1353 host shutdown observes the earlier stop");

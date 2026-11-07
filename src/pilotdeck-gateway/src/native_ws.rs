@@ -164,15 +164,18 @@ impl NativeWsServer {
     /// The budget also covers incomplete HTTP handshakes and peers that never
     /// finish. A timeout is never reported as successful quiescence.
     ///
-    /// Exactly [`Self::run_phased`]'s two halves in sequence — every existing
-    /// `run()` caller keeps its behavior; only the deadline case now also
-    /// sends the survivors an explicit close frame (#1353 A5).
+    /// Exactly [`Self::run_phased`]'s two halves in sequence, minus the
+    /// switch-only A5 close frame — every existing `run()` caller keeps the
+    /// pre-#1353 behavior: survivors are aborted, not closed. The A5 close
+    /// frames are a registered switch-path difference
+    /// (specs/gateway-parity/diffs/), so they fire only through
+    /// [`Self::run_phased`].
     pub fn run(
         self,
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> impl Future<Output = Result<(), ProxyError>> {
-        let phased = self.run_phased(stop, drain_budget);
+        let phased = self.phased_run(stop, drain_budget, false);
         async move {
             phased.drained().await;
             phased.finish().await
@@ -196,6 +199,18 @@ impl NativeWsServer {
         self,
         stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
+    ) -> PhasedRun {
+        self.phased_run(stop, drain_budget, true)
+    }
+
+    /// The shared construction behind [`Self::run`] and [`Self::run_phased`]:
+    /// `switch_close` picks whether the S4 half owes the survivors their
+    /// A5 close frames — only the switch path does.
+    fn phased_run(
+        self,
+        stop: impl Future<Output = ()> + Send + 'static,
+        drain_budget: Duration,
+        switch_close: bool,
     ) -> PhasedRun {
         let cleanup = StopHost(
             self.host.clone(),
@@ -224,6 +239,7 @@ impl NativeWsServer {
             stop_http: None,
             close_notice,
             close_notice_rx,
+            switch_close,
             drain_budget,
             accept_error: None,
             drained: None,
@@ -250,6 +266,7 @@ impl NativeWsServer {
             inner,
             done,
             runner: runner.abort_handle(),
+            drain_budget,
         }
     }
 }
@@ -271,6 +288,10 @@ struct PhasedInner {
     stop_http: Option<watch::Sender<bool>>,
     close_notice: watch::Sender<bool>,
     close_notice_rx: watch::Receiver<bool>,
+    /// Whether the S4 half owes the survivors their A5 close frames — the
+    /// switch path (`run_phased`) yes, a plain `run()` no (the registered
+    /// difference is switch-scoped).
+    switch_close: bool,
     drain_budget: Duration,
     accept_error: Option<std::io::Error>,
     /// `None` until the accept loop and drain ran; `Some(false)` is the
@@ -378,13 +399,17 @@ impl PhasedInner {
         }
         // A5: the drain boundary notice — every surviving WS connection gets
         // an explicit close(1001, "server switching") and stops dispatching
-        // new requests, before the strong abort takes them.
-        let _ = self.close_notice.send(true);
-        if !self.connections.is_empty() {
-            let _ = tokio::time::timeout(CLOSE_FRAME_WINDOW, async {
-                while self.connections.join_next().await.is_some() {}
-            })
-            .await;
+        // new requests, before the strong abort takes them. Switch path
+        // only: a plain `run()` keeps the pre-#1353 abort behavior (the
+        // registered difference is scoped to the switch).
+        if self.switch_close {
+            let _ = self.close_notice.send(true);
+            if !self.connections.is_empty() {
+                let _ = tokio::time::timeout(CLOSE_FRAME_WINDOW, async {
+                    while self.connections.join_next().await.is_some() {}
+                })
+                .await;
+            }
         }
         // Aborting transport waiters never cancels business jobs on the serial
         // host. Its shutdown cancels owned turns and waits for finally fences.
@@ -436,6 +461,10 @@ pub struct PhasedRun {
     /// Aborted when this handle drops, so an abandoned phased run stops
     /// accepting exactly like an unawaited `run()` future did.
     runner: tokio::task::AbortHandle,
+    /// The drain budget this run was constructed with — immutable after
+    /// construction, so readable without the inner lock. The post-halt walk
+    /// bounds its own close join with it (`switch_wiring.rs`).
+    drain_budget: Duration,
 }
 
 impl Drop for PhasedRun {
@@ -462,6 +491,12 @@ impl PhasedRun {
                 return self.inner.lock().await.drained.unwrap_or(false);
             }
         }
+    }
+
+    /// The drain budget this run was constructed with: the entries-scale
+    /// bound the post-halt walk reuses for its own close join.
+    pub fn drain_budget(&self) -> Duration {
+        self.drain_budget
     }
 
     /// S4's WS half: close notice, abort, host shutdown, error reporting.

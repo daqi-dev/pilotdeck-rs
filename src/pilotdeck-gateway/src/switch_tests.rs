@@ -16,8 +16,8 @@ use crate::runtime::cron::{
     CronActiveRun, CronAgentGateway, CronError, CronManager, CronManagerConfig, CronManagerOptions,
 };
 use crate::switch::{
-    BoundedTimeout, Phase, StepFailure, SwitchError, SwitchFaces, SwitchMachine, SwitchTimeouts,
-    TIMEOUT_CAP_MS,
+    BACKSTOP_SLACK_MS, BoundedTimeout, Phase, StepFailure, SwitchError, SwitchFaces, SwitchMachine,
+    SwitchTimeouts, TIMEOUT_CAP_MS,
 };
 use crate::test_scratch::Scratch;
 use crate::{negative_assert, negative_assert_eq};
@@ -393,20 +393,27 @@ fn bounded_timeout_predicate_rejects_unbounded_values() {
     assert!(BoundedTimeout::from_millis(u64::MAX).is_err());
 }
 
-/// #1353 DC-1: the production bounds stay inside the shared cap even with
-/// the internal-budget slack, and the slack makes the machine bound a
-/// backstop rather than a racing copy of the face's own deadline.
+/// #1353 DC-1: the operator-facing production bounds stay at the shared
+/// cap, and the slack makes the machine bound a backstop rather than a
+/// racing copy of the face's own deadline — the backstops are derived
+/// (budget capped, then slack added), so at the maximum `--drain-ms` they
+/// still sit strictly above the face's own internal deadline.
 #[test]
 fn production_timeouts_keep_the_shared_cap() {
     let timeouts = SwitchTimeouts::production(Duration::from_millis(TIMEOUT_CAP_MS));
-    for bound in [
-        timeouts.automation,
-        timeouts.entries,
-        timeouts.flush,
-        timeouts.owner,
-        timeouts.handshake,
-    ] {
-        assert!(bound.duration() <= Duration::from_millis(TIMEOUT_CAP_MS));
+    for bound in [timeouts.automation, timeouts.flush, timeouts.handshake] {
+        assert_eq!(
+            bound.duration(),
+            Duration::from_millis(TIMEOUT_CAP_MS),
+            "#1353 the operator-facing bounds stay at the shared cap"
+        );
+    }
+    for bound in [timeouts.entries, timeouts.owner] {
+        assert_eq!(
+            bound.duration(),
+            Duration::from_millis(TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS),
+            "#1353 the backstop keeps its slack at the cap"
+        );
     }
     let timeouts = SwitchTimeouts::production(Duration::from_millis(5_000));
     assert_eq!(

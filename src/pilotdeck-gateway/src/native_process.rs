@@ -91,12 +91,6 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
             return Err(error.into());
         }
     };
-    eprintln!("native listening {address}");
-    #[cfg(unix)]
-    tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
-    eprintln!("native stopping");
     // #1353 A8.5-pr2: the signal starts the switch machine instead of the
     // raw WS drain — the matrix §二 sequence (stop automation → stop
     // accepting + drain → flush → stop owner → recovery) owns the order,
@@ -104,6 +98,11 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     // (A2/A3). The machine's entry and owner bounds are the `--drain-ms`
     // budget plus slack (a backstop for a hung face, not a second copy of
     // the faces' own internal deadlines).
+    //
+    // The phased run, the faces, and the machine are constructed *before*
+    // the signal wait: the accept loop runs from the run's construction, so
+    // steady state is served exactly like the awaited `run()` future was —
+    // the signal only triggers the switch (`native_ws.rs::run_phased`).
     let (trigger, trigger_rx) = tokio::sync::watch::channel(false);
     let phased = Arc::new(server.run_phased(
         switch_wiring::trigger_stop(trigger_rx),
@@ -118,16 +117,24 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
         faces.clone(),
         crate::switch::SwitchTimeouts::production(options.drain_budget),
     );
+    eprintln!("native listening {address}");
+    #[cfg(unix)]
+    tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
+    eprintln!("native stopping");
     match machine.run().await {
         Ok(()) => Ok(()),
         Err(error) => {
-            // The machine's halt is the reported failure; the death march
-            // below still terminates the process (a registered difference —
-            // the matrix's surviving-owner semantics cannot outlive SIGTERM).
+            // The machine's halt is the reported failure and the exit status:
+            // the death march below still terminates the process (a
+            // registered difference — the matrix's surviving-owner semantics
+            // cannot outlive SIGTERM), but a halt never exits 0 (D1).
             eprintln!("native switch halted: {error}");
             faces.finish_after_halt().await.map_err(|teardown| {
-                crate::ProxyError::from(format!("switch halted: {error}; teardown: {teardown}"))
-            })
+                crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
+            })?;
+            Err(crate::ProxyError::from(error.to_string()))
         }
     }
 }
