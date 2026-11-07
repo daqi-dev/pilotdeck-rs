@@ -42,18 +42,24 @@ use tokio::io::AsyncBufReadExt;
 static UNDEFINED: JsValue = JsValue::Undefined;
 const ORACLE: &str = include_str!("fixtures/mcp-proxy/oracle.json");
 const TLS: &str = include_str!("fixtures/mcp-proxy/proxy-tls.json");
-/// #2047: upper bound on waiting for `http.jsonl` to reach the expected set.
-/// Generous next to the milliseconds a healthy case needs, tight enough that a
-/// request the mock never records still fails the case instead of hanging it.
+/// #2047: upper bound on reaping a fixture once the case ends it. Generous
+/// next to the milliseconds a healthy exit needs, tight enough that a fixture
+/// which never exits still fails the case instead of hanging it.
 const REQUEST_LOG_TIMEOUT: Duration = Duration::from_secs(5);
-/// #2047: how long the expected set has to hold still before it counts as the
-/// whole log. Reaching the expected set once is not the end of the log — the
-/// mock may still be appending (a request just behind the last one, or a line
-/// the reader caught mid-write) — so the poll only stops after this much
-/// quiet. A line that lands later than this window cannot be told apart from
-/// "no more requests" without a mock-side barrier; the window is what a
-/// polling reader can honestly promise.
-const REQUEST_LOG_SETTLE: Duration = Duration::from_millis(250);
+/// #2047: how long the fixtures get to record what the replay child already
+/// sent, counted from that child's exit.
+///
+/// The child is gone, so every request the fixtures will ever see has already
+/// been sent — its sockets are closed. What is not guaranteed is that a fixture
+/// has *written* the record: `mock_server.mjs` appends from Node's event loop,
+/// and on a loaded runner the last line (the SSE `GET /mcp`, in the CI run that
+/// opened this issue) can still be queued when the child exits. This window is
+/// a **bounded allowance, not proof of completeness**: it is how long a
+/// recorder may lag. It is followed by ending the writer and only then reading,
+/// so the read itself cannot race a later append; a record a fixture has not
+/// written within the window is lost, and a lost *expected* record fails the
+/// case instead of passing it.
+const REQUEST_LOG_WINDOW: Duration = Duration::from_millis(1000);
 
 fn oracle() -> JsValue {
     baseline::oracle(ORACLE)
@@ -205,6 +211,43 @@ impl Child {
             &envs,
         )
         .await
+    }
+    /// #2047: end the mock and wait for it, so its log is final before the
+    /// caller reads it. `mock_server.mjs:126-127` exits on stdin end, which is
+    /// the same completion signal the TS recorder in `generate.mts` relies on;
+    /// every record is appended with `appendFileSync`, so nothing can still be
+    /// sitting in a buffer when this returns.
+    async fn finish(mut self, label: &str) {
+        drop(self.child.stdin.take());
+        let status = tokio::time::timeout(REQUEST_LOG_TIMEOUT, self.child.wait())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "{label}: still alive {:?} after stdin end; its log cannot be trusted",
+                    REQUEST_LOG_TIMEOUT
+                )
+            })
+            .unwrap_or_else(|error| panic!("{label}: reaping the mock: {error}"));
+        assert!(status.success(), "{label}: mock exited with {status}");
+    }
+    /// #2047: end the CONNECT proxy and wait for it. Unlike the mock it never
+    /// resumes stdin — `connect_proxy.mjs` registers `process.stdin.on('end')`
+    /// without `process.stdin.resume()`, so that handler cannot fire and stdin
+    /// end would just wait out the timeout. A signal is how the case already
+    /// ends it (`kill_on_drop`); the point of doing it explicitly is the
+    /// *reap*: once the process is gone, `proxy.jsonl` cannot gain a line
+    /// while the caller reads it.
+    async fn kill(mut self, label: &str) {
+        let _ = self.child.start_kill();
+        tokio::time::timeout(REQUEST_LOG_TIMEOUT, self.child.wait())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "{label}: still alive {:?} after the kill; its log cannot be trusted",
+                    REQUEST_LOG_TIMEOUT
+                )
+            })
+            .unwrap_or_else(|error| panic!("{label}: reaping the proxy: {error}"));
     }
 }
 impl Drop for Child {
@@ -382,80 +425,6 @@ fn json_lines(path: &Path, replacements: &[(String, String)], dedupe: bool) -> V
     entries
 }
 
-/// [`json_lines`] for the #2047 poll: the mock may be appending while this
-/// reads, so a trailing line without its newline is a line still being
-/// written, not a record — drop it and let the next poll see the whole thing.
-/// Every newline-terminated line is parsed as strictly as `json_lines` does,
-/// so a mangled record still panics instead of disappearing.
-fn json_lines_polled(path: &Path, replacements: &[(String, String)], dedupe: bool) -> Vec<String> {
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let mut lines: Vec<&str> = content.lines().filter(|line| !line.is_empty()).collect();
-    if !content.is_empty() && !content.ends_with('\n') {
-        lines.pop();
-    }
-    let mut entries: Vec<String> = lines
-        .into_iter()
-        .map(|line| text(&scrub(&parse_json(line).unwrap(), replacements)))
-        .collect();
-    entries.sort();
-    if dedupe {
-        entries.dedup();
-    }
-    entries
-}
-
-/// #2047: wait for a mock-written request log to reach `expected` **and** stay
-/// there for [`REQUEST_LOG_SETTLE`], then hand back one strict read.
-///
-/// Reaching the set once is not the end of the log: a request that arrives
-/// just behind the expected ones would otherwise be read as "the log is
-/// complete". Any change resets the quiet timer, the [`REQUEST_LOG_TIMEOUT`]
-/// bound still fails (a request that never arrives cannot be laundered into a
-/// pass), and the read used by the caller is [`json_lines`] — so a record that
-/// changes or arrives between the settle and that read still fails.
-async fn settled_json_lines(
-    path: &Path,
-    replacements: &[(String, String)],
-    dedupe: bool,
-    expected: &[String],
-    label: &str,
-) -> Vec<String> {
-    let started = std::time::Instant::now();
-    let deadline = started + REQUEST_LOG_TIMEOUT;
-    let mut matched_since: Option<std::time::Instant> = None;
-    loop {
-        let current = json_lines_polled(path, replacements, dedupe);
-        if current == expected {
-            let since = *matched_since.get_or_insert_with(std::time::Instant::now);
-            if since.elapsed() >= REQUEST_LOG_SETTLE {
-                break;
-            }
-        } else {
-            matched_since = None;
-        }
-        if std::time::Instant::now() >= deadline {
-            assert_eq!(
-                current,
-                expected,
-                "{label}: did not settle within {:?} (bound {:?}); saw {} of {} recorded entries",
-                started.elapsed(),
-                REQUEST_LOG_TIMEOUT,
-                current.len(),
-                expected.len()
-            );
-            panic!(
-                "{label}: matched the expected set too late in the {:?} window to observe \
-                 {REQUEST_LOG_SETTLE:?} of quiet",
-                started.elapsed()
-            );
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    json_lines(path, replacements, dedupe)
-}
-
 /// Child process: drive the client with the environment its parent installed.
 async fn run_child(index: usize) {
     let oracle = oracle();
@@ -628,27 +597,18 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
             );
             steps_seen += 1;
         }
-        // #2047: the mock writes each request line from Node's event loop, so a
-        // loaded runner can land the last line well after the replay child has
-        // exited. A fixed sleep is not a timeout — it decides the answer by
-        // timing alone. Poll for the expected set instead and require it to
-        // hold still for `REQUEST_LOG_SETTLE`; see `settled_json_lines`.
+        // #2047: the replay child is gone, so every request the fixtures will
+        // ever see has already been sent. Let them finish recording it, then
+        // end both writers and read: after the reap nothing can append, so the
+        // strict reads below cannot race a line that arrives "a bit later".
+        tokio::time::sleep(REQUEST_LOG_WINDOW).await;
+        mock.finish(&format!("{id}: http mock")).await;
         let expected: Vec<String> = array(field(case, "requests"), "requests")
             .iter()
             .map(text)
             .collect();
-        let requests = settled_json_lines(
-            &dir.join("http.jsonl"),
-            &replacements,
-            false,
-            &expected,
-            &format!("{id}: server request log"),
-        )
-        .await;
-        assert_eq!(
-            requests, expected,
-            "{id}: server request log changed between the settle and the final read"
-        );
+        let requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
+        assert_eq!(requests, expected, "{id}: server request log");
         // The target-side proof for the P0 fix: a caller-supplied
         // `Proxy-Authorization` is either refused before dispatch (the two
         // proxied cases, whose request log is empty) or, on the direct
@@ -681,26 +641,18 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         }
         requests_seen += requests.len();
         // Same shape as `http.jsonl`: `proxy.jsonl` is written per CONNECT from
-        // the mock's event loop, so the last line can trail the replay child.
+        // the proxy's event loop, so the window above covers it too; end that
+        // writer as well before the strict read.
+        if let Some(proxy) = proxy {
+            proxy.kill(&format!("{id}: connect proxy")).await;
+        }
         let expected: Vec<String> = array(field(case, "connects"), "connects")
             .iter()
             .map(text)
             .collect();
-        let connects = settled_json_lines(
-            &dir.join("proxy.jsonl"),
-            &replacements,
-            true,
-            &expected,
-            &format!("{id}: proxy CONNECT log"),
-        )
-        .await;
-        assert_eq!(
-            connects, expected,
-            "{id}: proxy CONNECT log changed between the settle and the final read"
-        );
+        let connects = json_lines(&dir.join("proxy.jsonl"), &replacements, true);
+        assert_eq!(connects, expected, "{id}: proxy CONNECT log");
         connects_seen += connects.len();
-        drop(proxy);
-        drop(mock);
     }
     assert_eq!(steps_seen, 133);
     assert_eq!(requests_seen, 140);
