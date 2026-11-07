@@ -25,6 +25,7 @@ OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
 SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/runtime/snapshot.rs'
 STORAGE = ROOT / 'src/pilotdeck-gateway/src/storage/workspace_snapshot.rs'
 IMPORT = ROOT / 'src/pilotdeck-gateway/src/skills/import.rs'
+METADATA = ROOT / 'src/pilotdeck-gateway/src/metadata.rs'
 ORACLE = Path(__file__).resolve().parent / 'oracle.json'
 TEST = 'native_process::management_tests::route_refresh_reread_matches_ts'
 ADMISSION = 'native_process::management_tests::admission_and_unwired_families_stay_closed'
@@ -227,12 +228,39 @@ mutations.append(('storage-root-nonutf8-accepted', ENTRY,
                   'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
                   '#1323 non-UTF-8 --storage-root must be rejected'))
 
-# #1538/#1869 review: the table used to be its own denominator
-# the table used to be its own denominator — delete a row and the run still
-# reported "{n}/{n}" and read green. Pin the row count and the roster (order
-# and repeats included) as literals so a dropped, renamed or duplicated
-# mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 87
+# #2037: `Metadata::project_storage_id` (the turn/management snapshot workspace
+# id, `resolveProjectStorageId`) is the resolver behind `SnapshotProjects`: the
+# registered `.cwd` marker wins, the legacy path slug is only the fallback.
+# `snapshot_workspace_id_prefers_registered_marker` asserted both halves but no
+# mutation targeted `metadata.rs`, so deleting the marker branch was caught only
+# by an ordinary test (and by the oracle replay) — the same "assertion without a
+# mutation" gap #1431 closed for the three management routes. Two halves, one
+# mutant each, plus the trim rule `project_id` applies to the fallback. All
+# three anchors occur exactly once in `metadata.rs`, and every marker below is
+# the literal in the bound test's panic payload.
+mutations.append(('project-storage-id-marker-bypassed', METADATA,
+                  '            if marker_path == target\n                && self',
+                  '            if false && marker_path == target\n                && self',
+                  'native_process::management_tests::snapshot_workspace_id_prefers_registered_marker',
+                  '#1323 registered marker wins'))
+mutations.append(('project-storage-id-legacy-slug-omitted', METADATA,
+                  '\n        project_id(&target)\n',
+                  '\n        target.to_string_lossy().into_owned()\n',
+                  'native_process::management_tests::snapshot_workspace_id_prefers_registered_marker',
+                  '#1323 unregistered project uses the legacy slug'))
+# `project_id` is that fallback (and the storage dir of every unregistered
+# project); its trim rule had a direct test but no mutation of its own.
+mutations.append(('legacy-project-id-trim-omitted', METADATA,
+                  "    let result = result.trim_matches('-');",
+                  '    let result = result;',
+                  'native_process::management_tests::legacy_project_id_trims_leading_dashes',
+                  '#1323 legacy slug of'))
+
+# #1538/#1869 review: the table used to be its own denominator — delete a row
+# and the run still reported "{n}/{n}" and read green. Pin the row count and the
+# roster (order and repeats included) as literals so a dropped, renamed or
+# duplicated mutation is refused before anything runs or compiles.
+EXPECTED_TOTAL = 90
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -321,6 +349,9 @@ EXPECTED_NAMES = (
     'snapshot-get-resolver-bypassed',
     'snapshot-restore-resolver-bypassed',
     'storage-root-nonutf8-accepted',
+    'project-storage-id-marker-bypassed',
+    'project-storage-id-legacy-slug-omitted',
+    'legacy-project-id-trim-omitted',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
@@ -392,6 +423,7 @@ def main():
             # Protect the executable fixture and judge, as well as product bytes.
             with mutating_sources(ROOT, [case.path, Path(__file__).resolve(), ORACLE,
                     ORACLE.with_name('generate.mts'), ORACLE.with_name('session.jsonl'),
+                    METADATA,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()
