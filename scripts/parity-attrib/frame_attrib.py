@@ -73,9 +73,59 @@ from collections import Counter
 # （#2031 r2 sibling/boundary P2）。64 = sysexits 的 EX_USAGE，不进任何结论表。
 EXIT_USAGE = 64
 
-if not sys.flags.isolated:
-    print(f'用法错误：本装置必须用 `python3 -I` 运行（隔离模式；rc={EXIT_USAGE}）', file=sys.stderr)
+
+def _silence_stream(stream):
+    """把 stream 的 fd 接到 /dev/null。**先取 fd、再开 /dev/null**：`fileno()` 抛
+    `io.UnsupportedOperation`（`redirect_stdout(StringIO())` 形状，OSError 子类）时不会
+    先开出一个没人关的 fd；无论后面哪步失败，`os.close(devnull)` 都在 `finally` 里
+    （`#2031` 第 5 条：旧实现先 open 再 fileno，异常时漏 fd）。
+
+    定义在文件顶部：module 级守卫（`-I` / `_repo_root()`）在 `_PipeSafe` 之前就要用它
+    兜住断管道（`#2031` r4）。
+    """
+    try:
+        fd = stream.fileno()
+    except (OSError, ValueError):
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        return
+    try:
+        os.dup2(devnull, fd)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(devnull)
+        except OSError:
+            pass
+
+
+def _usage_exit(msg=None, emit=None):
+    """用法 / 环境错误的**唯一**出口：只退 `EXIT_USAGE`，消息写不出去也照退。
+
+    module 级守卫（非 `-I`、`_repo_root()` 找不到根）跑在 `main()` 装配 `_PipeSafe`
+    **之前**，裸 `print` 撞断管道就是另一条假码：默认缓冲下 120（解释器退出 flush 失败）、
+    `-u` 下 1（`BrokenPipeError` 逃出 → traceback，在 negctl 表里等于「证据目录不可用」）。
+    实测（读端预先关闭）改前 120 / 1，改后 64（`#2031` r4 concurrency + boundary 同点 P2）。
+    所以**只包发送这一段**：发送失败一律吞掉——一句诊断丢了不改变「这是用法错误」，
+    换个退出码才会；吞掉之前先把该流接到 `/dev/null`，否则解释器退出时的最后一次 flush
+    会再把 64 改写成 120。`UnicodeEncodeError`（`PYTHONIOENCODING=ascii`）同理。
+    """
+    try:
+        if emit is not None:
+            emit()
+        if msg is not None:
+            print(msg, file=sys.stderr)
+        sys.stderr.flush()
+    except Exception:  # 仅覆盖发送；SystemExit 是 BaseException，不受影响
+        _silence_stream(sys.stderr)
     raise SystemExit(EXIT_USAGE)
+
+
+if not sys.flags.isolated:
+    _usage_exit(f'用法错误：本装置必须用 `python3 -I` 运行（隔离模式；rc={EXIT_USAGE}）')
 
 
 def _repo_root():
@@ -92,10 +142,10 @@ def _repo_root():
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            # 环境/用法错误，不是「证据目录不可用」：必须与 negctl 的 rc=1 分开（#2031 r2）。
-            print(f'用法错误：repo root not found（从 {here} 向上没有 scripts/parity/g03_compare.py；'
-                  f'rc={EXIT_USAGE}）', file=sys.stderr)
-            raise SystemExit(EXIT_USAGE)
+            # 环境/用法错误，不是「证据目录不可用」：必须与 negctl 的 rc=1 分开（#2031 r2），
+            # 且这一次 print 发生在 `_PipeSafe` 装配之前，必须走不受断管道影响的出口（r4）。
+            _usage_exit(f'用法错误：repo root not found（从 {here} 向上没有 scripts/parity/g03_compare.py；'
+                        f'rc={EXIT_USAGE}）')
         cur = parent
 
 
@@ -823,31 +873,6 @@ class OutputFailure(Exception):
     """
 
 
-def _silence_stream(stream):
-    """把 stream 的 fd 接到 /dev/null。**先取 fd、再开 /dev/null**：`fileno()` 抛
-    `io.UnsupportedOperation`（`redirect_stdout(StringIO())` 形状，OSError 子类）时不会
-    先开出一个没人关的 fd；无论后面哪步失败，`os.close(devnull)` 都在 `finally` 里
-    （#2031 第 5 条：旧实现先 open 再 fileno，异常时漏 fd）。
-    """
-    try:
-        fd = stream.fileno()
-    except (OSError, ValueError):
-        return
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-    except OSError:
-        return
-    try:
-        os.dup2(devnull, fd)
-    except OSError:
-        pass
-    finally:
-        try:
-            os.close(devnull)
-        except OSError:
-            pass
-
-
 def _silence_stdout():
     _silence_stream(sys.stdout)
 
@@ -1065,9 +1090,13 @@ class _UsageParser(argparse.ArgumentParser):
     """
 
     def error(self, message):
-        self.print_usage(sys.stderr)
-        print(f'{self.prog}: 用法错误：{message}（rc={EXIT_USAGE}）', file=sys.stderr)
-        raise SystemExit(EXIT_USAGE)
+        def emit():
+            self.print_usage(sys.stderr)
+            print(f'{self.prog}: 用法错误：{message}（rc={EXIT_USAGE}）', file=sys.stderr)
+
+        # 与 module 级守卫同一个出口：这里虽然已装配 `_PipeSafe`，但用法提示写不出去
+        # （断管道 / stderr 满）不该把「用法错误」改写成 9 或 1（#2031 r4）。
+        _usage_exit(emit=emit)
 
 
 def main():
