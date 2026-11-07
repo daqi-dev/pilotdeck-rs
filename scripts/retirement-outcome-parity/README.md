@@ -10,8 +10,8 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
 | `negative_controls.py` | N1–N18 负控 + PC1–PC2 正控汇总式执行器（见下）。 |
-| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，`du -sk` 1548 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
-| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / CI 接线），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
+| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，`du -sk` 1568 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
+| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / 敌意写目标 / CI 接线），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
 
 ## 金样来源
 
@@ -19,11 +19,12 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
   `--suite retirement` TS 参考轮 **k=5**。
 - 原始数据（仓外，未跟踪）：`_tmp/20261106-issue-1477/r1/data/round-01..05/driver/{methods.json,frames.jsonl}`。
 - **入库夹具（判据与 CI 的实际输入）**：`fixtures/round-01..05/driver/{methods.json,frames.jsonl}`
-  ——干净检出即可跑。切片规则（`methods.json` 只留判据消费的 5 个字段、`frames.jsonl` 逐字节
-  照搬）与「原始 ↔ 切片 sha256」对照见 `fixtures/PROVENANCE.md`。逐文件 sha256 记在
-  `ts-oracle.json` 的 `rounds.files` 里——金样来源可核，不是手搓。**切片后 5 轮的
-  `methodsSha256` 相同**（去掉容差字段后内容本就一致），逐轮可区分性由 `framesSha256` 保留
-  （5 个互不相同），审计时别拿 `methodsSha256` 判「是不是同一轮」。
+  ——干净检出即可跑。`frames.jsonl` 逐字节照搬原始件；`methods.json` 同样**逐字节照搬**
+  （r7 前曾把判据不消费的容差字段去掉、导致 5 轮 `methodsSha256` 相同——P7 跨轮稳定性在
+  入库夹具上退化成空判，评审 r7 P1 已改回照搬）。「原始 ↔ 入库 sha256」对照见
+  `fixtures/PROVENANCE.md`。逐文件 sha256 记在
+  `ts-oracle.json` 的 `rounds.files` 里——金样来源可核，不是手搓。5 轮的
+  `methodsSha256` 与 `framesSha256` **各自互不相同**（5 份独立采集）。
 - 分布（对本数据独立复算）：101 方法 / 轮 = 77 ok + 24 error（15 种错误码）；
   `submit_turn` 唯一 `stream`；6 个 `CAPABILITY_UNAVAILABLE`（`manager_browsers`、
   `memory_list`、`memory_wipe`、`snapshot_get`、`snapshot_list`、`snapshot_restore`）；
@@ -268,7 +269,7 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 
 `.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
 queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，本机实测
-六项全跑 3.1 s、变异自检 0.4 s）：
+七项全跑 ~3 s、变异自检 ~1 s）：
 
 | 步骤 | 判据 |
 |---|---|
@@ -276,18 +277,23 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
 | `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
 | 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
-| `self_check.py`（六项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · CI 接线，六条守卫本身都还在 |
+| `self_check.py`（七项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · 敌意写目标 · CI 接线，七条守卫本身都还在 |
 | `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
+
+外层 `timeout-minutes: 45` 必须**大于**装置内部预算之和（emit 300 s + check 300 s + 负控
+1800 s + 锁探针 ~180 s + 余量），否则内部超时永远打不着、失败退化为平台硬杀（cancelled，
+summary 不发布）。
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
 
 ```sh
-python3 -I scripts/retirement-outcome-parity/self_check.py            # 六项全跑
+python3 -I scripts/retirement-outcome-parity/self_check.py            # 七项全跑
 python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
-超大夹具；CI 接线用**二十六种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+超大夹具**两种**（单文件超 1 MiB、若干个不超单文件上限的文件合计超 5 MiB 总量）；CI 接线用
+**三十一种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
 step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
 加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
 `run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
@@ -296,11 +302,20 @@ step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **j
 聚合 job `if` 续行 `&& false`、Require `if` 续行 `&& false`、块标量 `|`→`>`——加把两个 job
 整块挪到 `on:` 下冒充（行首正则会认这种假块）与 **r6 根级** `defaults.run.shell:
 /bin/true {0}`（workflow 级 shell 模板让每个 run step 无条件 rc=0，只看 `jobs:` 的守卫逐字
-全等仍假 PASS；锚定样本的失败文案必须落在点名判定上，见 `SAMPLE_FAILURE_ANCHORS`)）；输出目录锁用
-三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即
-挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一
-正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」
-的机器证据。
+全等仍假 PASS）与 **r7 执行层五条**——闸门 step 删掉 `shell: bash` 行、闸门 step 把
+`shell: bash` 换成 `/bin/true {0}`、聚合 Require step 换 shell 值、**非闸门 job**（rust 的
+`cargo fmt`）删 `shell: bash` 行（专测全 workflow 巡走）、checkout 加 `with: {ref: …}` 让
+闸门跑另一棵树的脚本。每条样本的失败文案必须落在**点名判定**上（锚串全量登记在
+`SAMPLE_FAILURE_ANCHORS`，`control_wiring` 另断言样本集合与登记簿逐名全等——漏一条 /
+多一条 / 红错地方都算控件失败）；输出目录锁用三种**预置敌意锁文件**（同名 FIFO / 目录 /
+符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即挂起或假持锁）加**时间戳序互斥**（两个持锁
+子进程各打 `ACQUIRED`/`RELEASED`（`time.monotonic()`），第二个的 ACQUIRED 不得早于第一个的
+RELEASED——吞掉 `BlockingIOError` 的弱化照样能打出「等锁」字符串，骗不过时戳序）；负控的
+`write_at` 用四种**预置敌意写目标**（无读者端的 FIFO / **带读者端的 FIFO** / 目录 / 符号
+链接——前者需要 `O_NONBLOCK` 才不挂死，次者只有 `fstat` 后的 `S_ISREG` 能拒，去掉任一
+判定都有各自的违反路径）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，
+控件即同一正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 →
+相应用例变红」的机器证据。
 
 **每条变异样本都实测过「真的造成假绿」**：从变异后的 workflow 里取出该 step 真正会执行的
 脚本，用 `bash -e` + 一个必失败的 `python3` 替身跑——命令没执行 / 失败被吞的样本必须 rc=0，
@@ -316,11 +331,19 @@ step 的 shell，与 job 级 `defaults` 同一判法，r6 P0），job 只在 `jo
 （job 级 `continue-on-error` 即红，重复键也红——两个解析器可以对「哪个键活着」各执一词）；
 retirement job 的 `if:` 与聚合 `check` job 的 `if:` 归一化后逐字等于登记值（GitHub 把**被跳过的
 job 报成 success**，而 `check` 自己是必需检查，跳掉它就再没有东西挡合并）；retirement job 的
-step 顺序与名字按登记比对；闸门 step 只许有 `name` + 一个**直属** `run`（`env` / `with` /
-`if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门 step 的 `run` 必须是
+step 顺序与名字按登记比对；闸门 step 只许有 `name` + `run` + `shell` 且 `shell` 值恰为
+`bash`（`env` / `with` / `if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门
+step 的 `run` 必须是
 **literal 块标量（`|`）**且完整标量值与 `GATE_SCRIPTS` **逐字相等**——续行拼接（plain 多行
 标量，换行折叠成空格）、`>` 折叠块、引号标量**显式判红并写明是哪一种形态**；聚合 Require
-只许 `name` / `if` / `run`，`run` 恰为 `exit 1`，`if:` 归一化空白后逐字等于登记值。逐字相等
+只许 `name` / `if` / `run` / `shell`，`run` 恰为 `exit 1`，`if:` 归一化空白后逐字等于登记值；
+**全 workflow 每个 run step 都必须显式 `shell: bash`**（r7 P0 执行层解：step 级 `shell:` 优先于
+任何 workflow / job 级 `defaults.run.shell`，GitHub workflow syntax 明文「You can override
+the default shell settings … using the `shell` keyword」——就算 `defaults.run.shell:
+/bin/true {0}` 出现在任何层级，钉了 shell 的检测步照样执行；根键 / job 键白名单挡
+`defaults` 的出现，这条挡某个 run step 裸奔继承 defaults）；uses step 的 `with` 键集合按
+action 逐键钉死（给 checkout 加 `with: {ref: …}` 会让闸门跑另一棵树的脚本而登记的 `run`
+标量逐字不变，r7 P1）。逐字相等
 同样意味着**等价写法会被误拒**（`run` 写成 plain / 引号标量、`if` 折叠续行、重排 `--round`
 参数），这是有意的
 fail-closed：本仓这段 YAML 只有一个写方，宁可误拒也不放过「文本活着但闸门失效」；改闸门脚本
@@ -330,7 +353,7 @@ CI 里由两个 job 的「安装钉死 PyYAML（#2017-A）」步骤装进 venv �
 （`python3 -I` 不读 user site，但 venv 的 site-packages 属解释器自身配置、`-I` 下仍可见），
 `self_check.py` 的 `PYYAML_PINNED_VERSION` 与 `src/pilotdeck-gateway/tests/
 test_metadata_io_driver.py` 的 `pinned_pyyaml_version`（兄弟守卫同一登记）各有一份
-fail-closed 断言；换版本必须三处同步改。
+fail-closed 断言；换版本必须四处同步改（两个 job 的安装步骤各一处 + 两个常量各一处）。
 
 ## 为什么不在 `scripts/gateway-parity/`
 

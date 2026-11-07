@@ -29,6 +29,7 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -67,10 +68,26 @@ FIXTURES = HERE / 'fixtures'
 ORACLE = HERE / 'ts-oracle.json'
 WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'ci.yml'
 
+
+def _load_checker():
+    """按 spec 再加载一份 check_outcome_parity（pycache_prefix 已在模块头设好）。
+
+    只为读 `EXPECTED_CONTROLS`：条数的单一登记点在 check_outcome_parity.py，
+    negative_controls 的执行器与这里的 check_negctl 同源读，不各抄一份
+    （评审 r7 P1——控件集被删到 0 条时执行器空真判 PASS）。
+    """
+    spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+CHECK = _load_checker()
+EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
+
 # 铁律 8 的入库上限：单文件超 10 MB 要先想清楚。这里收得更紧，给未来重采留余量。
 FIXTURE_FILE_LIMIT_BYTES = 1 << 20          # 1 MiB
 FIXTURE_TOTAL_LIMIT_BYTES = 5 << 20         # 5 MiB
-EXPECTED_CONTROLS = 17
 EXPECTED_ROUNDS = 5
 # 持锁方**等释放信号**（不是睡固定秒数），因此这里只是「父进程失联」时的兜底上限，
 # 不参与任何判定；判定用的事件是第二个进程打出「等锁」提示。
@@ -84,8 +101,11 @@ LOCK_HOSTILE_TIMEOUT_SECONDS = 20.0
 LOCK_BASENAME_LITERAL = '.retirement-outcome-parity.lock'
 
 # 子进程里持有输出目录锁的最小驱动（与 negative_controls 用**同一个** output_lock）。
+# 取到锁后打 `ACQUIRED <monotonic>`、放锁前取时戳、放锁后打 `RELEASED <时戳>`：
+# 父进程用**两个进程的时间戳序**证明互斥真的成立（评审 r7 P2——「等锁」那行字符串
+# 只是「在等」的自述，吞掉 BlockingIOError 继续跑的弱化同样能打出它）。
 LOCK_HOLDER = r'''
-import importlib.util, os, select, sys, tempfile
+import importlib.util, os, select, sys, tempfile, time
 # 同族口径：加载 checker **之前**先把字节码缓存关掉。`-I` 不等于 `-B`，
 # `spec_from_file_location` 在 exec 前会读本目录的 __pycache__/*.pyc——
 # 预置的 unchecked-hash pyc 可以只打印 LOCKED 而不真持锁，锁守卫就假 PASS 了。
@@ -101,13 +121,20 @@ spec.loader.exec_module(module)
 try:
     with module.output_lock(sys.argv[2]):
         print('LOCKED', flush=True)
+        print(f'ACQUIRED {time.monotonic():.9f}', flush=True)
         # 持到父进程写一行（或 stdin 关闭返回 EOF）为止；argv[3] 只是兜底上限。
         readable, _, _ = select.select([sys.stdin], [], [], float(sys.argv[3]))
         if readable:
             sys.stdin.readline()
+        # RELEASED 的时戳必须**在退出 with 块（真正放锁）之前**取：时戳取晚了的
+        # 话，第二个进程的 ACQUIRED 可能先于我们打印（解锁→对方取锁→对方打印
+        # 都发生在我们取时戳之前），把真互斥误判成假红。取早了只是把 RELEASED
+        # 往前挪，断言方向（第二个 ACQUIRED >= 第一个 RELEASED）仍然成立。
+        released_at = time.monotonic()
 except module.InputError as error:
     print('INPUT_ERROR', error, file=sys.stderr)
     raise SystemExit(2)
+print(f'RELEASED {released_at:.9f}', flush=True)
 '''
 
 
@@ -243,6 +270,18 @@ def _read_until(stream, marker, timeout, label):
     return data
 
 
+def _monotonic_stamp(data, label):
+    """从持锁子进程的输出里取 `ACQUIRED`/`RELEASED` 后面的 `time.monotonic()` 值。
+
+    `time.monotonic()` 在同一台主机上跨进程可比（单调钟是系统范围的），所以
+    「第二个的 ACQUIRED ≥ 第一个的 RELEASED」是互斥的时间戳序证明。
+    """
+    match = re.search(rb'(?:ACQUIRED|RELEASED) (\d+\.\d+)', data)
+    if match is None:
+        raise CheckFailure(f'{label}: no monotonic timestamp found in {data[-200:]!r}')
+    return float(match.group(1))
+
+
 def _assert_lock_path_rejected(root, label):
     """预置敌意锁文件时，持锁方必须**快速**非零退出，绝不能挂起或假装持锁。
 
@@ -277,6 +316,10 @@ def check_lock():
     时序**事件驱动**，不靠固定秒数：第一个取锁后停在那里等释放信号，第二个启动后
     必须打出「等锁」提示——那行只有在第一个真的抱着锁时才可能出现——父进程看到它
     才放开第一个。因此慢机、冷启动、runner 抖动都不会把这个守卫推成假红。
+    **互斥状态可观测（评审 r7 P2）**：两个持锁进程分别打 `ACQUIRED` / `RELEASED`
+    （各带 `time.monotonic()`），父进程断言第二个的 ACQUIRED 时刻**不早于**第一个的
+    RELEASED 时刻——「吞掉 BlockingIOError 继续跑」这类弱化会把自己的 ACQUIRED 提前
+    到第一个释放之前，时间戳序当场红，而不是只靠「打没打过某行字符串」。
     之后再验一遍**敌意锁文件**路径：预置 FIFO / 目录 / 符号链接时必须快速失败。
     """
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-lock-') as tmp:
@@ -287,7 +330,7 @@ def check_lock():
             _read_until(first.stdout, b'LOCKED', LOCK_PROBE_WAIT_TIMEOUT_SECONDS,
                         'first lock holder')
             started = time.monotonic()
-            second = _spawn_lock_holder(root, 0.0, subprocess.DEVNULL)
+            second = _spawn_lock_holder(root, 0.0, subprocess.PIPE)
             seen = _read_until(second.stderr, b'waiting for output lock',
                                LOCK_PROBE_WAIT_TIMEOUT_SECONDS, 'second lock holder')
             waited = time.monotonic() - started
@@ -299,6 +342,12 @@ def check_lock():
             first.stdin.write(b'\n')
             first.stdin.flush()
             first.stdin.close()
+            first_released = _read_until(first.stdout, b'RELEASED',
+                                         LOCK_PROBE_WAIT_TIMEOUT_SECONDS,
+                                         'first lock holder release')
+            second_acquired = _read_until(second.stdout, b'ACQUIRED',
+                                          LOCK_PROBE_WAIT_TIMEOUT_SECONDS,
+                                          'second lock holder acquisition')
             first_rc = first.wait(timeout=LOCK_PROBE_WAIT_TIMEOUT_SECONDS)
             second_rc = second.wait(timeout=LOCK_PROBE_WAIT_TIMEOUT_SECONDS)
         finally:
@@ -312,6 +361,14 @@ def check_lock():
         if second_rc != 0:
             raise CheckFailure(f'second lock holder rc={second_rc}: '
                                f'{second.stderr.read()[:400]!r}')
+        released_at = _monotonic_stamp(first_released, 'first holder RELEASED')
+        acquired_at = _monotonic_stamp(second_acquired, 'second holder ACQUIRED')
+        if acquired_at < released_at:
+            raise CheckFailure(
+                f'second holder ACQUIRED at {acquired_at:.9f} but the first only '
+                f'RELEASED at {released_at:.9f}: the output lock is not actually '
+                'mutually exclusive (a weakened flock would let the second proceed '
+                'while the first still holds the lock)')
 
         # 敌意预置：锁路径上放 FIFO / 目录 / 指向别处的符号链接，都必须被拒。
         if LOCK_BASENAME_LITERAL not in CHECKER.read_text(encoding='utf-8'):
@@ -326,8 +383,88 @@ def check_lock():
             hostile = Path(tempfile.mkdtemp(prefix='pdrs-retirement-lock-bad-', dir=tmp))
             plant(hostile / LOCK_BASENAME_LITERAL)
             hostile_rcs.append(_assert_lock_path_rejected(hostile, label))
-    return (f'second waited {waited:.2f}s for the output lock; '
+    return (f'second waited {waited:.2f}s for the output lock '
+            f'(ACQUIRED {acquired_at:.6f} >= first RELEASED {released_at:.6f}); '
             f'non-regular lock paths rejected with rc={hostile_rcs}')
+
+
+# —— r7（评审 MM sibling#1，b 类）：`write_at` 的敌意写目标。——
+# 预置敌意锁文件时，预置 FIFO 会让 `output_lock` 永久阻塞；同一招打在**写目标**
+# 上（`N1/round-01/driver/methods.json` 是 FIFO）同样让 `write_at` 的
+# `O_WRONLY` open 挂死。写目标还多一个变体：**带读者端的 FIFO**——`O_NONBLOCK`
+# 挡不住它（open 立即成功），只有 `fstat` 后的 `S_ISREG` 判定能拒。
+WRITE_HOSTILE_TIMEOUT_SECONDS = 20.0
+# 子进程里直接调 negative_controls.write_at 的最小驱动（与 LOCK_HOLDER 同族口径：
+# 先设 pycache_prefix 再加载模块——预置的 unchecked-hash pyc 不能替我们说 REJECTED）。
+WRITE_PROBE = r'''
+import importlib.util, os, sys, tempfile
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    print('write probe: cannot reserve a fresh pycache prefix', file=sys.stderr)
+    raise SystemExit(2)
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('negative_controls', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+fd = os.open(sys.argv[2], os.O_RDONLY)
+try:
+    module.write_at(fd, 'methods.json', 'probe')
+except module.OutputError as error:
+    print(f'REJECTED {error}', flush=True)
+    raise SystemExit(0)
+finally:
+    os.close(fd)
+print('ACCEPTED a hostile write target', flush=True)
+raise SystemExit(1)
+'''
+
+
+def _assert_write_target_rejected(plant, label, keep_reader_open=None):
+    """预置敌意写目标时，`write_at` 必须快速拒绝，绝不能挂起或照写。"""
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-write-bad-') as tmp:
+        target = Path(tmp) / 'methods.json'
+        plant(target)
+        reader_fd = keep_reader_open(target) if keep_reader_open is not None else None
+        process = subprocess.Popen(
+            [sys.executable, '-I', '-c', WRITE_PROBE, str(CONTROLS), str(tmp)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            out, err = process.communicate(timeout=WRITE_HOSTILE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=30)
+            raise CheckFailure(
+                f'{label}: `write_at` hung on a planted non-regular write target '
+                f'(no exit within {WRITE_HOSTILE_TIMEOUT_SECONDS:.0f}s)')
+        finally:
+            if reader_fd is not None:
+                os.close(reader_fd)
+        if b'REJECTED' not in out or process.returncode != 0:
+            raise CheckFailure(
+                f'{label}: `write_at` accepted a planted hostile write target '
+                f'(rc={process.returncode}, out={out[-200:]!r}, err={err[-200:]!r})')
+    return process.returncode
+
+
+def check_writes():
+    """负控写盘族的敌意目标：`write_at` 对非常规文件必须快速拒绝。
+
+    敌意样本本身就在本检查里（与 `check_lock` 的敌意锁文件段同构）：FIFO / 目录 /
+    符号链接，外加**带读者端的 FIFO**——把 `O_NONBLOCK` 拿掉只挡得住无读者端的
+    FIFO，带读者端的只有 `S_ISREG` 判定能拒；反过来删掉 `S_ISREG` 而 `O_NONBLOCK`
+    还在，无读者端样本照红。因此这组样本对「删掉其中任一守卫」都有各自的违反路径。
+    """
+    hostile_rcs = []
+    for label, plant, reader in (
+            ('planted FIFO (no reader)', os.mkfifo, None),
+            ('planted FIFO (reader held open)', os.mkfifo,
+             lambda path: os.open(path, os.O_RDONLY | os.O_NONBLOCK)),
+            ('planted directory', os.mkdir, None),
+            ('planted symlink', lambda path: os.symlink('/etc/hosts', path), None)):
+        hostile_rcs.append(
+            _assert_write_target_rejected(plant, label, keep_reader_open=reader))
+    return f'non-regular write targets rejected with rc={hostile_rcs}'
 
 
 # —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
@@ -383,7 +520,7 @@ GATE_SCRIPTS = {
     '负控 N1–N17 全 KILLED':
         'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\\n'
         '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"\n',
-    '装置守卫自检（六项）':
+    '装置守卫自检（七项）':
         'python3 -I scripts/retirement-outcome-parity/self_check.py\n',
     '接线守卫变异自检':
         'python3 -I scripts/retirement-outcome-parity/self_check.py '
@@ -397,12 +534,28 @@ RETIREMENT_STEP_ORDER = (
     ('gate', 'emit 复算与金样逐字节比对'),
     ('gate', 'check 5 轮'),
     ('gate', '负控 N1–N17 全 KILLED'),
-    ('gate', '装置守卫自检（六项）'),
+    ('gate', '装置守卫自检（七项）'),
     ('gate', '接线守卫变异自检'),
     ('uses', '上传负控证据'),
 )
 # 非闸门 step 必须是 action：action step 不执行 shell，吞不掉闸门结果。
+# `with` 只允许出现在登记过的 uses step 上，且内容逐键钉死（USE_STEP_WITH_KEYS）：
+# 给 `actions/checkout@v4` 加 `with: {ref: …}` 会让闸门执行**另一棵树**的脚本，
+# 而登记的 `run` 标量逐字不变（评审 r7 P1）。
 USE_STEP_KEYS = frozenset({'name', 'uses', 'if', 'with'})
+# uses step 的 `with` 白名单（键集合必须**恰为**登记值）：retirement job 只有两个
+# action step——checkout 不带任何 `with`，upload-artifact 只带 name / path /
+# if-no-files-found。
+USE_STEP_WITH_KEYS = {
+    'actions/checkout@v4': frozenset(),
+    'actions/upload-artifact@v4': frozenset({'name', 'path', 'if-no-files-found'}),
+}
+# 每个 run step 都必须显式 `shell: bash`（评审 r7 P0）：step 级 `shell:` 优先于
+# workflow / job 级 `defaults.run.shell`（GitHub workflow syntax："You can override
+# the default shell settings … using the `shell` keyword"），因此这一行是
+# `defaults.run.shell: /bin/true {0}` 假绿攻击在**执行层**的解——根键白名单挡
+# 「defaults 出现」，这一条挡「就算 defaults 已经在（或守卫被绕过），检测步照样跑」。
+PINNED_STEP_SHELL = 'bash'
 # PyYAML 版本钉死（#2017-A，评审 r6 P1）：接线守卫按「PyYAML 解析后的完整标量」判，
 # 不同版本可能解析出不同形状（假 PASS / 假 FAIL）。CI 里由「安装钉死 PyYAML（#2017-A）」
 # 步骤装进 venv 并前置到 PATH（`python3 -I` 不读 user site，但 venv 的 site-packages 属
@@ -577,17 +730,20 @@ def check_wiring(workflow=None):
     - 只在 `jobs:` 映射里找两个 job（挂在 `on:` 等别处的同名块不是 job）；
     - 两个 job 的直属键必须在白名单内（job 级 `continue-on-error` 会让全红的 job 仍
       success）；重复键即红——两个解析器可以对「哪个键活着」各执一词；
-    - retirement job 的 step 顺序、闸门 step 的名字、直属键集合（只有 `name` + 一个
-      `run`）必须与登记一致——`env: {run: …}` / `env.UNUSED: |` / `if:` /
+    - retirement job 的 step 顺序、闸门 step 的名字、直属键集合（只有 `name` + `run` +
+      `shell`）必须与登记一致——`env: {run: …}` / `env.UNUSED: |` / `if:` /
       `continue-on-error` 一律判红；
     - 每个闸门 step 的 `run` 必须是 literal 块标量（`|`）且**完整标量值**与
       `GATE_SCRIPTS` 逐字相等——续行拼接（plain 多行标量）、`>` 折叠块、引号标量
       **显式判红并写明形态**；`echo` 前缀、`|| true` 后缀、外层 `if false; then … fi`、
       多一行 `set +e` 全部逐字不等即红；
+    - 每个 run step（闸门 / Require / **全 workflow 任何 job**）都必须显式
+      `shell: bash`——step 级 shell 优先于任何 `defaults.run.shell`，这一行是
+      r7 P0 的执行层解；uses step 的 `with` 内容按 action 逐键钉死；
     - 聚合 `check` job 依赖 retirement job，`if` 归一化后恰为 `always()`（GitHub 把
       被跳过的 job 报成 success，而 `check` 自己是必需检查）；Require step 只有
-      `name` / `if` / `run` 三个键，`run` 恰为 `exit 1`，`if` 归一化后逐字等于登记的
-      恒执行条件。
+      `name` / `if` / `run` / `shell` 四个键，`run` 恰为 `exit 1`，`if` 归一化后逐字
+      等于登记的恒执行条件。
 
     任一条不满足，闸门要么不执行、要么失败了不报，job 结果仍是 success，聚合闸门就放
     行了。PyYAML 不可用时 fail-closed 判红，不降级回行式解析。
@@ -639,11 +795,17 @@ def check_wiring(workflow=None):
                 f'found `{label}`')
         if kind in ('gate', 'setup'):
             registry = GATE_SCRIPTS if kind == 'gate' else SETUP_SCRIPTS
-            if set(step) != {'name', 'run'}:
+            if set(step) != {'name', 'run', 'shell'}:
                 raise CheckFailure(
-                    f'{path}: {kind} step `{label}` may only carry `name` and one '
-                    f'top-level `run`, found {sorted(step)}; `env` / `with` / `if` / '
+                    f'{path}: {kind} step `{label}` may only carry `name`, `run` and '
+                    f'`shell`, found {sorted(step)}; `env` / `with` / `if` / '
                     '`continue-on-error` can disable the step or replace what it executes')
+            if _scalar_text(yaml, path, step['shell'],
+                            f'`{label}` `shell`') != PINNED_STEP_SHELL:
+                raise CheckFailure(
+                    f'{path}: {kind} step `{label}` must pin `shell: '
+                    f'{PINNED_STEP_SHELL}`; any other value (e.g. `/bin/true {{0}}`) '
+                    'replaces what actually executes')
             script = _gate_run_text(yaml, path, step['run'], label)
             if script != registry[label]:
                 raise CheckFailure(
@@ -658,6 +820,28 @@ def check_wiring(workflow=None):
                 raise CheckFailure(
                     f'{path}: step `{label}` must stay an action (`uses:`), '
                     f'found {sorted(step)}')
+            uses = _scalar_text(yaml, path, step['uses'], f'`{label}` `uses`')
+            expected_with = USE_STEP_WITH_KEYS.get(uses)
+            if expected_with is None:
+                raise CheckFailure(
+                    f'{path}: action step `{label}` uses unregistered action '
+                    f'`{uses}`; `with` content is only pinned for registered actions')
+            with_node = step.get('with')
+            if with_node is None:
+                with_keys = frozenset()
+            elif isinstance(with_node, yaml.MappingNode):
+                with_keys = frozenset(key for key, _ in _pairs(
+                    yaml, path, with_node, f'`{label}` `with`'))
+            else:
+                raise CheckFailure(f'{path}: action step `{label}` has a non-mapping '
+                                    '`with`')
+            if with_keys != expected_with:
+                raise CheckFailure(
+                    f'{path}: action step `{label}` (`{uses}`) must carry exactly the '
+                    f'registered `with` keys {sorted(expected_with)}, found '
+                    f'{sorted(with_keys)}; an added `with: ref/repository` on the '
+                    'checkout makes the gates run scripts from a different tree while '
+                    'every pinned `run` scalar stays verbatim-identical')
 
     # 聚合闸门那一侧同样要守：Require step 被 `if: false` 挡掉、条件被改弱、或
     # `run: exit 0` 时，retirement job 照跑照过，job 结果仍是 success。
@@ -684,10 +868,16 @@ def check_wiring(workflow=None):
             break
     if require is None:
         raise CheckFailure(f'{path}: `{AGGREGATE_JOB}` has no retirement Require step')
-    if set(require) != {'name', 'if', 'run'}:
+    if set(require) != {'name', 'if', 'run', 'shell'}:
         raise CheckFailure(
-            f'{path}: the aggregate Require step may only carry `name`, `if` and `run`, '
-            f'found {sorted(require)}; an extra key can swallow the failure')
+            f'{path}: the aggregate Require step may only carry `name`, `if`, `run` '
+            f'and `shell`, found {sorted(require)}; an extra key can swallow the failure')
+    if _scalar_text(yaml, path, require['shell'],
+                    'the aggregate Require step `shell`') != PINNED_STEP_SHELL:
+        raise CheckFailure(
+            f'{path}: the aggregate Require step must pin `shell: {PINNED_STEP_SHELL}`; '
+            'any other value (e.g. `/bin/true {0}`) would make the required check '
+            '`check` falsely green')
     if _scalar_text(yaml, path, require['run'],
                     'the aggregate Require step `run`') != REQUIRE_RUN:
         raise CheckFailure(
@@ -700,6 +890,28 @@ def check_wiring(workflow=None):
             f'{path}: the aggregate Require step condition is `{expression}` but must '
             f'be exactly `{REQUIRE_CONDITION}`; a weakened condition (e.g. a trailing '
             '`&& false`) silently disables the gate')
+
+    # r7 P0（评审 MM boundary#1）：全 workflow **每个** run step 都必须显式
+    # `shell: bash`。step 级 `shell:` 优先于任何层级的 `defaults.run.shell`（GitHub
+    # workflow syntax 明文），因此这一行保证「就算 defaults 已经出现在任何层级（或
+    # 根键白名单被绕过），检测步照样执行」。根键 / job 键白名单挡 `defaults` 的
+    # **出现**，这里挡的是某个 run step **裸奔**（裸奔步才会继承 defaults）。
+    for job_name, job_node in jobs.items():
+        job_map = dict(_pairs(yaml, path, job_node, f'`{job_name}`'))
+        steps_node = job_map.get('steps')
+        if steps_node is None:
+            raise CheckFailure(f'{path}: job `{job_name}` has no step list')
+        for step in _step_list(yaml, path, steps_node, job_name):
+            if 'run' not in step:
+                continue
+            shell = step.get('shell')
+            if shell is None or _scalar_text(
+                    yaml, path, shell, f'`{job_name}` step `shell`') != PINNED_STEP_SHELL:
+                raise CheckFailure(
+                    f'{path}: job `{job_name}` has a run step without the pinned '
+                    f'`shell: {PINNED_STEP_SHELL}`; a bare run step inherits any '
+                    'workflow/job-level `defaults.run.shell` (e.g. `/bin/true {0}`), '
+                    'which would silently disable that detection point')
     return (f'{len(RETIREMENT_STEP_ORDER)} registered steps + aggregate Require step '
             f'live in {path.name} (PyYAML scalar-exact)')
 
@@ -710,9 +922,10 @@ CHECKS = {
     'check': check_check,
     'negctl': check_negctl,
     'lock': check_lock,
+    'writes': check_writes,
     'wiring': check_wiring,
 }
-ORDER = ('budget', 'emit', 'check', 'negctl', 'lock', 'wiring')
+ORDER = ('budget', 'emit', 'check', 'negctl', 'lock', 'writes', 'wiring')
 
 
 def run_checks(names):
@@ -734,7 +947,7 @@ def run_checks(names):
 # —— 变异自检：证明守卫被拆掉时检查会红 ——
 
 def control_budget():
-    """给夹具造一个超大文件：体积守卫必须报红。
+    """体积守卫的两个方向都要能红：单文件超限、总量超限（评审 r7 P2）。
 
     这里用**字面**上限（1 MiB / 5 MiB，来自任务书与铁律 8），不读
     `FIXTURE_*_LIMIT_BYTES`——否则把常量调大时控件会跟着变宽，守卫被悄悄放开
@@ -754,10 +967,33 @@ def control_budget():
             handle.write(b'\0')
         try:
             check_budget(root)
-        except CheckFailure:
-            return 'oversized fixture is rejected'
-    raise CheckFailure('budget guard did not reject an oversized fixture '
-                       '(the size limit was removed)')
+        except CheckFailure as error:
+            if 'single fixture file over' not in str(error):
+                raise CheckFailure(
+                    f'oversized fixture rejected by the wrong judgment: {error}') from error
+        else:
+            raise CheckFailure('budget guard did not reject an oversized fixture '
+                               '(the size limit was removed)')
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-budget-') as tmp:
+        # 总量方向：每个文件都**不超**单文件上限，合起来超总量上限——只判单文件的
+        # 守卫对这批文件全放行（评审 r7 P2：此前总量判定没有任何违反样本）。
+        root = Path(tmp) / 'fixtures'
+        shutil.copytree(FIXTURES, root)
+        padding = 1 << 20
+        for index in range(4):
+            filler = root / f'round-0{index + 1}' / 'driver' / f'filler-{index}.bin'
+            with open(filler, 'wb') as handle:
+                handle.truncate(padding)  # 每个恰 1 MiB，不触单文件线
+        try:
+            check_budget(root)
+        except CheckFailure as error:
+            if 'fixtures total' not in str(error):
+                raise CheckFailure(
+                    f'total-limit violation rejected by the wrong judgment: {error}') from error
+        else:
+            raise CheckFailure('budget guard did not reject a total-size violation '
+                               '(the total limit was removed)')
+    return 'oversized and over-total fixtures are both rejected'
 
 
 def control_lock():
@@ -808,7 +1044,9 @@ def wiring_samples():
     删掉一个闸门 step / r5 标量形态四种（run 行内续行、聚合 job `if` 续行、Require
     `if` 续行、`|`→`>` 折叠块）加 job 挪出 `jobs:`（行首正则会认 `on:` 下的假块）与
     **根级** `defaults.run.shell`（workflow 级 shell 模板让全部闸门无条件 rc=0，评审
-    r6 P0）。
+    r6 P0）/ r7 执行层五条（闸门 step 删 `shell` 行、闸门 step 换 shell 值、Require
+    step 换 shell 值、**非闸门 job**（rust fmt）删 `shell` 行——专测全 workflow 巡走、
+    checkout 加 `with: {ref: …}` 跑另一棵树——DS P1）。
 
     每条样本都**真的能造成假绿**，不是语法坏掉的变异体：`bash -e` 下要么命令没执行、
     要么失败被吞、要么 step / job 被跳过，而 job 结果仍是 success。
@@ -855,16 +1093,22 @@ def wiring_samples():
         + lines[job_start + 1:])))
 
     # 命令文本整行挪进同一个 step 的 `env.UNUSED: |`：YAML 合法，run 里只剩
-    # `echo disabled`——按「文件里有没有这一行」判的守卫会假 PASS。
+    # `echo disabled`——按「文件里有没有这一行」判的守卫会假 PASS。重建的 step
+    # 保留 `shell: bash`，让失败落在 env 这个键上而不是「缺 shell」。
     controls_start, controls_end = _step_range(lines, '接线守卫变异自检')
+    if lines[controls_start + 1].rstrip('\n') != '        shell: bash' \
+            or lines[controls_start + 2].rstrip('\n') != '        run: |':
+        raise CheckFailure('the 接线守卫变异自检 step is not in the registered '
+                           'shape (name / shell / run) to move into env')
     samples.append(('commands-moved-to-env', ''.join(
         lines[:controls_start]
         + ['      - name: 接线守卫变异自检\n',
+           '        shell: bash\n',
            '        run: |\n',
            '          echo disabled\n',
            '        env:\n',
            '          UNUSED: |\n']
-        + ['    ' + line for line in lines[controls_start + 2:controls_end]]
+        + ['    ' + line for line in lines[controls_start + 3:controls_end]]
         + lines[controls_end:])))
 
     # 聚合 Require 的 `run: exit 1` 被嵌套键冒充：`env:` 下的 `run: exit 1` 只是环境
@@ -967,6 +1211,45 @@ def wiring_samples():
         '\njobs:\n',
         '\ndefaults:\n  run:\n    shell: /bin/true {0}\njobs:\n', 1)))
 
+    # —— r7（评审 P0 的执行层守卫）：ci.yml 每个 run step 都显式 `shell: bash`，
+    # 删掉 / 换掉这一行都必须红。gate / Require step 各有「键集 + 值」两条判定；
+    # 非闸门 job 的 run step（rust job 的 fmt 是必需检查的一环）只有 r7 新增的
+    # 全 workflow 巡走兜着——`rust-step-shell-removed` 专测那个新判定。——
+    if lines[check_start + 1].rstrip('\n') != '        shell: bash':
+        raise CheckFailure('the check step does not carry `shell: bash` at the '
+                           'registered position to mutate')
+    samples.append(('gate-step-shell-removed', ''.join(
+        lines[:check_start + 1] + lines[check_start + 2:])))
+    gate_shell_swapped = list(lines)
+    gate_shell_swapped[check_start + 1] = '        shell: /bin/true {0}\n'
+    samples.append(('gate-step-shell-swapped', ''.join(gate_shell_swapped)))
+    if lines[require_start + 2].rstrip('\n') != '        shell: bash':
+        raise CheckFailure('the aggregate Require step does not carry `shell: bash` '
+                           'at the registered position to mutate')
+    require_shell_swapped = list(lines)
+    require_shell_swapped[require_start + 2] = '        shell: /bin/true {0}\n'
+    samples.append(('require-step-shell-swapped', ''.join(require_shell_swapped)))
+    fmt_run = next((index for index, line in enumerate(lines)
+                    if line.rstrip('\n') == '        run: cargo fmt --all --check'), None)
+    if fmt_run is None or lines[fmt_run - 1].rstrip('\n') != '        shell: bash':
+        raise CheckFailure('the rust job fmt step is not in the registered shape '
+                           'to drop its shell line')
+    samples.append(('rust-step-shell-removed', ''.join(
+        lines[:fmt_run - 1] + lines[fmt_run:])))
+
+    # —— r7（DS P1）：uses step 的 `with` 逐键钉死的违反样本——给 retirement job 的
+    # checkout 加 `with: {ref: …}`，登记的 `run` 标量逐字不变，闸门却跑的是
+    # 另一棵树的脚本。——
+    checkout_line = next((index for index in range(job_start, job_end)
+                          if lines[index].rstrip('\n')
+                          == '      - uses: actions/checkout@v4'), None)
+    if checkout_line is None:
+        raise CheckFailure('the retirement job has no checkout step to mutate')
+    samples.append(('checkout-with-ref', ''.join(
+        lines[:checkout_line + 1]
+        + ['        with:\n', '          ref: attacker-branch\n']
+        + lines[checkout_line + 1:])))
+
     # —— r5：标量形态绕过。r4 的行式 / 缩进式切块在源码行层面看文本，而这四种
     # 形态的**执行文本**（YAML 解析后的完整标量）已经不同——只有按解析后的标量
     # 比对并显式判红形态才能抓住（#2017 P0 复现 P1-1 / P1-2a / P1-2b / P1-3 / P1-4）。——
@@ -1031,7 +1314,7 @@ def wiring_samples():
     fake_job_end = next(index for index, line in enumerate(lines)
                         if line == f'  {AGGREGATE_JOB}:\n')
     fake_retirement = lines[fake_job_start:fake_job_end]
-    fake_require_end = require_start + 3
+    fake_require_end = require_start + 4  # name / if / shell / run 四行整块
     fake = (['on:\n', f'  {RETIREMENT_JOB}:\n'] + fake_retirement[1:]
             + [f'  {AGGREGATE_JOB}:\n',
                '    needs: [scope, metadata-observer, rust, a51-coverage, '
@@ -1058,18 +1341,66 @@ def wiring_samples():
     return samples
 
 
-# 样本必须红在**点名的判定**上（评审 r5 P1 / r6）：改错行的样本只是把 YAML 弄坏被
-# 「误杀」，KILLED 不能证明对应形态真的被守卫看见。键为样本名，值为该样本失败文案
-# 必含的锚串——锚串落点同时证明变异体仍是可解析的单文档 YAML（否则红在解析失败）。
+# 样本必须红在**点名的判定**上（评审 r5 P1 / r6；r7 P1 起全量登记）：改错行的样本
+# 只是把 YAML 弄坏被「误杀」，KILLED 不能证明对应形态真的被守卫看见。这份字典是
+# 接线变异样本的**登记簿**：键为样本名（顺序与 `wiring_samples()` 一致），值为该样本
+# 失败文案必含的锚串——锚串落点同时证明变异体仍是可解析的单文档 YAML（否则红在解析
+# 失败）。`control_wiring` 断言样本集合与登记簿**逐名全等**（少一条 = 有形态失保，
+# 多一条 = 没登记就上岗），任何一条红在别的判定上都算 misattributed；数量同步登记
+# 在装置 README（r7 起三十一条）。锚串全部取自真实运行的失败文案（2026-11-07 实测，
+# `_tmp/20261107-issue-1809-r7/`）。
 SAMPLE_FAILURE_ANCHORS = {
-    'aggregate-job-if-continuation': '`check` job condition',
+    'removed': 'no `retirement-outcome-parity` job under `jobs:`',
+    'commented-out': 'no `retirement-outcome-parity` job under `jobs:`',
+    'disabled-step': 'may only carry `name`, `run` and `shell`',
+    'quoted-if-step': 'may only carry `name`, `run` and `shell`',
+    'continue-on-error-step': 'may only carry `name`, `run` and `shell`',
+    'job-level-continue-on-error':
+        'job carries the unregistered key `continue-on-error`',
+    'commands-moved-to-env': "found ['env', 'name', 'run', 'shell']",
+    'nested-env-run': "found ['env', 'if', 'name', 'run', 'shell']",
+    'false-if-block': 'does not run the registered script',
+    'negated-command': 'does not run the registered script',
+    'suppressed-command': 'does not run the registered script',
+    'echoed-command': 'does not run the registered script',
+    'removed-gate-step': 'must keep exactly 8 steps',
+    'disabled-require-step': 'the aggregate Require step condition',
+    'weakened-require-step': 'the aggregate Require step condition',
+    'continue-on-error-require-step':
+        "found ['continue-on-error', 'if', 'name', 'run', 'shell']",
+    'and-false-require-step': 'the aggregate Require step condition',
+    'exit-zero-require-step': 'must run exactly `exit 1`',
+    'aggregate-job-if-false': '`check` job condition',
+    'multi-document': 'expected exactly one YAML document',
     'root-defaults-shell': 'unregistered root key',
+    'gate-step-shell-removed': "found ['name', 'run']",
+    'gate-step-shell-swapped': 'must pin `shell: bash`',
+    'require-step-shell-swapped': 'the aggregate Require step must pin `shell: bash`',
+    'rust-step-shell-removed': 'has a run step without the pinned `shell: bash`',
+    'checkout-with-ref': 'must carry exactly the registered `with` keys',
+    'run-continuation': 'plain (continuation-folding) scalar',
+    'aggregate-job-if-continuation': '`check` job condition',
+    'require-if-continuation': 'the aggregate Require step condition',
+    'folded-block': 'is a folded block',
+    'job-outside-jobs': 'no `retirement-outcome-parity` job under `jobs:`',
 }
 
 
 def control_wiring():
-    """`wiring_samples()` 的每一条都必须让接线守卫变红。"""
+    """`wiring_samples()` 的每一条都必须让接线守卫变红，且红在登记的判定上。
+
+    样本集合必须与 `SAMPLE_FAILURE_ANCHORS` 登记簿逐名全等（评审 r7 P1：样本被删 /
+    漏登记时不能静默缩水）；每条样本的失败文案必须含各自的锚串（红在别的判定 =
+    形态被误杀，对该形态零回归保护）。
+    """
     samples = wiring_samples()
+    labels = [label for label, _ in samples]
+    registered = list(SAMPLE_FAILURE_ANCHORS)
+    if labels != registered:
+        raise CheckFailure(
+            f'wiring sample set drifted from the registry: got {labels}, '
+            f'registered {registered}; a missing sample leaves that mutation '
+            'shape unprotected and an unregistered sample proves nothing')
     survived = []
     misattributed = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
@@ -1079,8 +1410,8 @@ def control_wiring():
             try:
                 check_wiring(candidate)
             except CheckFailure as error:
-                anchor = SAMPLE_FAILURE_ANCHORS.get(label)
-                if anchor is not None and anchor not in str(error):
+                anchor = SAMPLE_FAILURE_ANCHORS[label]
+                if anchor not in str(error):
                     misattributed.append(
                         f'{label}: rejected by the wrong judgment ({error}), '
                         f'expected the failure to mention `{anchor}`')

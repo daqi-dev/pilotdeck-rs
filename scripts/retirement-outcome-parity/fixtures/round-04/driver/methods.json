@@ -4,531 +4,658 @@
       "method": "submit_turn",
       "shape": "stream",
       "outcome": "ok",
-      "events": 8
+      "events": 8,
+      "lastEventType": "turn_completed",
+      "finalSeen": true,
+      "elapsedMs": 699
     },
     {
       "method": "run_get",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "run_events",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 9
     },
     {
       "method": "run_reattach",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "active_turn_snapshot",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "permission_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "list_sessions",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "memory_list",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway memory provider is unavailable.",
+      "elapsedMs": 5
     },
     {
       "method": "snapshot_list",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway snapshot provider is unavailable.",
+      "elapsedMs": 2
     },
     {
       "method": "snapshot_get",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway snapshot provider is unavailable.",
+      "elapsedMs": 1
     },
     {
       "method": "snapshot_restore",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway snapshot provider is unavailable.",
+      "elapsedMs": 1
     },
     {
       "method": "manager_sessions",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 6
     },
     {
       "method": "manager_browsers",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway manager browser provider is unavailable.",
+      "elapsedMs": 1
     },
     {
       "method": "native_archive_manifest",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 7
     },
     {
       "method": "native_archive_entries",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 9
     },
     {
       "method": "native_archive_artifact",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "ARCHIVE_ARTIFACT_NOT_FOUND"
+      "errorCode": "ARCHIVE_ARTIFACT_NOT_FOUND",
+      "error": "Archive artifact fixture.txt was not found.",
+      "elapsedMs": 5
     },
     {
       "method": "describe_server",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "list_projects",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "describe_project",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "project_files_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "project_file_read",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "commands_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 15
     },
     {
       "method": "model_catalog_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "session_model_get",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "session_model_set",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "ROUTER_AUTO_UNAVAILABLE"
+      "errorCode": "ROUTER_AUTO_UNAVAILABLE",
+      "error": "Router auto is not available for this project.",
+      "elapsedMs": 5
     },
     {
       "method": "session_model_clear",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 18
     },
     {
       "method": "supported_agents",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "usage_snapshot",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "model_usage_snapshot",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "output_styles_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 10
     },
     {
       "method": "reload_output_styles",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "resolve_settings",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "read_session_messages",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 13
     },
     {
       "method": "background_tasks",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "background_task_stop",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "BACKGROUND_TASK_NOT_FOUND"
+      "errorCode": "BACKGROUND_TASK_NOT_FOUND",
+      "error": "Background task retirement-none is not owned by session web:retirement-calib.",
+      "elapsedMs": 1
     },
     {
       "method": "cron_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 10
     },
     {
       "method": "user_dialog_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 7
     },
     {
       "method": "mcp_server_status",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 9
     },
     {
       "method": "sop_status",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "SOP_MODULE_DISABLED"
+      "errorCode": "SOP_MODULE_DISABLED",
+      "error": "The StaffDeck SOP module is not enabled for this project.",
+      "elapsedMs": 1
     },
     {
       "method": "memory_wipe",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "CAPABILITY_UNAVAILABLE"
+      "errorCode": "CAPABILITY_UNAVAILABLE",
+      "error": "Gateway memory provider is unavailable.",
+      "elapsedMs": 3
     },
     {
       "method": "seed_read_state",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 112
     },
     {
       "method": "record_agent_status_message",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "hook_async_result",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "new_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "resume_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "export_session_transcript",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 5
     },
     {
       "method": "restore_session_transcript",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "SESSION_BUSY"
+      "errorCode": "SESSION_BUSY",
+      "error": "Cannot restore over an active Gateway session.",
+      "elapsedMs": 4
     },
     {
       "method": "fork_session",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "fork_entry_not_found"
+      "errorCode": "fork_entry_not_found",
+      "error": "Transcript entry not found: retirement-none",
+      "elapsedMs": 2
     },
     {
       "method": "replace_last_turn",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "replace_turn_conflict"
+      "errorCode": "replace_turn_conflict",
+      "error": "The selected message is no longer the latest user turn.",
+      "elapsedMs": 12
     },
     {
       "method": "finalize_last_turn_replacement",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "replace_transaction_conflict"
+      "errorCode": "replace_transaction_conflict",
+      "error": "The replacement transaction is no longer pending.",
+      "elapsedMs": 1
     },
     {
       "method": "rewind_files",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 14
     },
     {
       "method": "rename_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 7
     },
     {
       "method": "tag_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "set_permission_mode",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "apply_flag_settings",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "update_settings",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "set_session_thinking",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "set_output_style",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 9
     },
     {
       "method": "set_mcp_servers",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 20
     },
     {
       "method": "mcp_server_reconnect",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "MCP_SERVER_NOT_FOUND"
+      "errorCode": "MCP_SERVER_NOT_FOUND",
+      "error": "SDK-owned MCP server retirement-none is not configured for session web:retirement-calib.",
+      "elapsedMs": 1
     },
     {
       "method": "mcp_server_toggle",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "MCP_SERVER_NOT_FOUND"
+      "errorCode": "MCP_SERVER_NOT_FOUND",
+      "error": "SDK-owned MCP server retirement-none is not configured for session web:retirement-calib.",
+      "elapsedMs": 2
     },
     {
       "method": "set_mcp_permission_mode_override",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "grant_session_permission",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "steer_turn",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "cancel_steer",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "abort_turn",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "reconnect_interaction",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "elicitation_respond",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 6
     },
     {
       "method": "permission_decide",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "user_dialog_claim",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 6
     },
     {
       "method": "user_dialog_release",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "INVALID_USER_DIALOG_RELEASE"
+      "errorCode": "INVALID_USER_DIALOG_RELEASE",
+      "error": "sessionKey, requestId, and leaseId are required.",
+      "elapsedMs": 1
     },
     {
       "method": "user_dialog_respond",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 7
     },
     {
       "method": "read_subagent_messages",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "sop_resume",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "APPROVAL_INPUT_INVALID"
+      "errorCode": "APPROVAL_INPUT_INVALID",
+      "error": "APPROVAL_INPUT_INVALID",
+      "elapsedMs": 1
     },
     {
       "method": "upload_create",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 12
     },
     {
       "method": "upload_get",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "UPLOAD_NOT_FOUND"
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "error": "Unknown uploadId: retirement-none",
+      "elapsedMs": 6
     },
     {
       "method": "upload_part",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "UPLOAD_NOT_FOUND"
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "error": "Unknown uploadId: retirement-none",
+      "elapsedMs": 5
     },
     {
       "method": "upload_complete",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "UPLOAD_NOT_FOUND"
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "error": "Unknown uploadId: retirement-none",
+      "elapsedMs": 6
     },
     {
       "method": "upload_cancel",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "UPLOAD_NOT_FOUND"
+      "errorCode": "UPLOAD_NOT_FOUND",
+      "error": "Unknown uploadId: retirement-none",
+      "elapsedMs": 4
     },
     {
       "method": "cron_create",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 4
     },
     {
       "method": "cron_update",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "cron_run_now",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "cron_stop",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "cron_delete",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "reload_config",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "reload_extensions",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "prepare_weixin_login",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 20
     },
     {
       "method": "skill_list",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 41
     },
     {
       "method": "skill_read",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "not_found"
+      "errorCode": "not_found",
+      "error": "SKILL.md not found at /Users/da/ws/pilotdeck-rs/_tmp/20261105-issue-1355/retirement-run-r1/round-04/project/.pilotdeck/skills/retirement-calib/SKILL.md.",
+      "elapsedMs": 2
     },
     {
       "method": "skill_create",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 6
     },
     {
       "method": "skill_write",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 3
     },
     {
       "method": "skill_validate",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     },
     {
       "method": "skill_scan",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 27
     },
     {
       "method": "skill_import",
       "shape": "request",
       "outcome": "error",
-      "errorCode": "source_missing"
+      "errorCode": "source_missing",
+      "error": "Source path does not exist: /retirement-none",
+      "elapsedMs": 2
     },
     {
       "method": "skill_delete",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "always_on_apply",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 2
     },
     {
       "method": "always_on_abort",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "always_on_rerun_plan",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "close_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 0
     },
     {
       "method": "delete_session",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 6
     },
     {
       "method": "close_project_sessions",
       "shape": "request",
-      "outcome": "ok"
+      "outcome": "ok",
+      "elapsedMs": 1
     }
   ]
 }
