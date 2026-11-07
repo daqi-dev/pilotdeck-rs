@@ -86,4 +86,9 @@ lib 穷举单测 `js_is_space_unit_pins_the_ts_trim_whitespace_set`，末行绑�
 断言（oracle 记 `resultJson` 还是 `error`）——此前两个分支压成同一个 JSON 值，
 把抛错当成功体返回仍能过全部 74 步。新文件提交前不在 HEAD，
 `mutating_sources` 拒跑：提交后由协调者在宿主执行
-（`CARGO_TARGET_DIR` 由调用方设置）。
+（`CARGO_TARGET_DIR` 由调用方设置）。同轮补两条表自身的地基（codex sibling
+P1）：① 名册钉死——`EXPECTED_NAMES` 与 `mutations` 逐项同序，删除/改名一行
+即拒绝运行，避免分母缩水后「剩余全 KILLED」的假通过；② 行绑定的断言文案收
+到 `#1214 <案例> step <n> (<方法>):` 前缀——新增的「步骤种类」断言与既有的
+逐字节比对断言都带这段前缀，任一先命中都算该格被真判杀死，不再因为先撞上
+种类断言而整行记 INVALID。

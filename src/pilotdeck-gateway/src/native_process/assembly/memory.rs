@@ -6,7 +6,6 @@ use super::{
 use crate::metadata::{Metadata, NativeFiles};
 use crate::runtime::project::RuntimeLease;
 use pilotdeck_protocol::JsValue;
-use std::path::Path;
 use std::sync::Arc;
 
 /// `ProjectMemoryRegistry` adapter over the native `ProjectRuntimeRegistry`.
@@ -28,7 +27,7 @@ use std::sync::Arc;
 /// disabled or absent).
 struct NativeMemoryRegistry {
     project: Arc<ProjectRuntimeRegistry>,
-    project_root: std::path::PathBuf,
+    options: Options,
     metadata: Metadata,
 }
 
@@ -36,7 +35,7 @@ impl NativeMemoryRegistry {
     fn new(project: Arc<ProjectRuntimeRegistry>, options: &Options) -> Self {
         Self {
             project,
-            project_root: options.project.clone(),
+            options: options.clone(),
             // Same base the management snapshot route builds
             // (`PersistenceResources::snapshot_gateway(PathBuf::new())`), so
             // both management families resolve a project key identically.
@@ -48,17 +47,17 @@ impl NativeMemoryRegistry {
         }
     }
 
-    /// The isolation boundary of the sibling management routes
-    /// (`Options::serves_project`): the key the projection already resolved
-    /// must fold lexically onto the one project this process staged. Both
-    /// sides are `path.resolve`-shaped — `options.project` runs through
-    /// `resolve_process_path` at parse, the key through the project catalog —
-    /// so the comparison is spelling-insensitive but project-exact.
+    /// The isolation boundary of the sibling management routes, delegated to
+    /// the one predicate they all use (`Options::serves_project`): the key the
+    /// projection already resolved must fold lexically onto the one project
+    /// this process staged. Both sides are `path.resolve`-shaped — the
+    /// configured project runs through `resolve_process_path` at parse, the key
+    /// through the project catalog — so the comparison is spelling-insensitive
+    /// but project-exact, and it cannot drift from the sibling routes.
     fn serves_project(&self, project_key: &JsString) -> bool {
-        project_key.to_utf8().is_ok_and(|key| {
-            crate::metadata::resolve_process_path(Path::new(""), Path::new(&key))
-                .is_ok_and(|path| path == self.project_root)
-        })
+        project_key
+            .to_utf8()
+            .is_ok_and(|key| self.options.serves_project(&key))
     }
 }
 
@@ -235,6 +234,13 @@ mod tests {
         fn other(&self) -> std::path::PathBuf {
             self.0.join("other-project")
         }
+        /// A registered project whose spelling *starts with* the served root as
+        /// a string (`<tmp>/project-2`): a gate degraded to `str::starts_with`
+        /// would admit it and wipe the served project's memory, so the foreign
+        /// keys must include one that shares the root's textual prefix.
+        fn prefix_sibling(&self) -> std::path::PathBuf {
+            self.0.join("project-2")
+        }
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
@@ -313,6 +319,17 @@ mod tests {
         std::fs::create_dir_all(&other_entry).expect("#1456 other catalog entry");
         std::fs::write(other_entry.join(".cwd"), other.to_string_lossy().as_bytes())
             .expect("#1456 other project marker");
+        // A third registered project sharing the served root's textual prefix,
+        // so the gate cannot be weakened to `str::starts_with`.
+        let prefix_sibling = scratch.prefix_sibling();
+        std::fs::create_dir_all(&prefix_sibling).expect("#1456 prefix sibling directory");
+        let prefix_entry = home.join("projects/a8-prefix");
+        std::fs::create_dir_all(&prefix_entry).expect("#1456 prefix catalog entry");
+        std::fs::write(
+            prefix_entry.join(".cwd"),
+            prefix_sibling.to_string_lossy().as_bytes(),
+        )
+        .expect("#1456 prefix sibling marker");
         let mut env = Env::new();
         env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
         let provider_in_factory = Arc::clone(provider);
@@ -467,6 +484,7 @@ mod tests {
         // under another project's key).
         let others = [
             scratch.other().to_string_lossy().into_owned(),
+            scratch.prefix_sibling().to_string_lossy().into_owned(),
             scratch.home().to_string_lossy().into_owned(),
         ];
         for foreign in &others {
