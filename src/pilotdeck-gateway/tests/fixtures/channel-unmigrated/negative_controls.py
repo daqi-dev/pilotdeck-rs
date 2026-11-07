@@ -116,16 +116,16 @@ MUTATIONS = [
      'for key in CHANNEL_LOADER_KEYS {',
      [('rejects_unmigrated_qq', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_wecom', '#1386 unmigrated channel must reject startup')]),
-    # M12 (#1853 r2 review): the loader table gains a key in neither the
-    # rejection group nor the silent group; the partition covering cell must
-    # kill it — without this row nothing pinned the fail-closed cell of
+    # M12 (#1853 r2 review): the loader table gains a key in none of the
+    # three groups; the partition covering cell must kill it — without this
+    # row nothing pinned the fail-closed cell of
     # `loader_keys_partition_rejected_and_silent_subset` (M1 only covers the
-    # ten-key count).
+    # nine-key count).
     ('loader-table-gains-ungrouped-key', source / 'loader.rs',
      'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",',
      'pub const CHANNEL_LOADER_KEYS: [&str; 16] = [\n    "probe1853",\n    "telegram",',
      'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 every loader key is rejected or silent-subset'),
+     '#1853 every loader key is rejected, silent-subset, or native-mount'),
     # M13 (#1853 r2 r1 review): the loader table loses the silent key `sms`;
     # the silent-group reverse closure must kill it (M1/M12 only touch the
     # count and covering cells).
@@ -140,7 +140,7 @@ MUTATIONS = [
      '#1853 every silent-subset key is a loader-table key'),
     # M14 (#1853 r2 r1 review): the rejection table gains a key that is
     # neither a loader key nor a strict bundle key; the rejection-side
-    # reverse closure must kill it (the count stays ten — probe1853 is not a
+    # reverse closure must kill it (the count stays nine — probe1853 is not a
     # loader key).
     ('rejection-table-gains-foreign-key', source / 'loader.rs',
      '    "telegram",\n    "qq",\n    "wecom",\n];',
