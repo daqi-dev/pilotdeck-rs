@@ -66,6 +66,16 @@ fn err(code: &str, msg: impl Into<DiagnosticText>) -> Error {
 fn invalid(msg: impl Into<DiagnosticText>) -> Error {
     err("invalid_config_value", msg)
 }
+/// An explicitly selected local Kernel owns authentication. The product may
+/// inventory a route without copying credentials into its configuration. Only
+/// absent/null is an inventory declaration; malformed explicit keys still fail.
+pub(super) fn kernel_inventory(value: &JsValue, env: &Env) -> bool {
+    nullish(value)
+        && env.get("PILOTDECK_SESSION_BACKEND").map(String::as_str) == Some("kernel")
+        && env
+            .get("PILOTDECK_KERNEL_SOCKET")
+            .is_some_and(|socket| std::path::Path::new(socket).is_absolute())
+}
 pub(super) fn credential(value: &JsValue, env: &Env) -> Result<(), Error> {
     let Some(s) = value.as_string() else {
         return Err(err(
@@ -227,7 +237,9 @@ fn provider(id: &JsString, raw: &JsValue, env: &Env) -> Result<Provider, Error> 
             None => raw_key.clone(),
         }
     };
-    credential(&effective, env)?;
+    if !kernel_inventory(raw_key, env) {
+        credential(&effective, env)?;
+    }
     positive(field(raw, "timeoutMs"), "timeoutMs")?;
     let headers = field(raw, "headers");
     if !headers.is_undefined() {

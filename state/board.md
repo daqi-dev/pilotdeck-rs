@@ -4600,3 +4600,7 @@ Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接�
 ### 2026-11-08 原生绝对 deadline 与接受时钟（lane C）
 
 按 A 的通用 facade，只有 execution.open.features 广告 scheduler.input-limits.v1 时，产品 prepared execution.operationDeadline 才转换为 outer execution.input.limits.deadline_ms；未广告明确拒绝配置，limits 不塞 opaque input，不把模型 rounds 换成 Scheduler steps。待 capture 用户行读取 call.accepted.payload.accepted_at_ms，时钟随 Kernel journal 保留；旧 journal 使用 metadata 缓存里的首次回执观察时间，并标 clockSource，不再每次 read 使用 now。focused kernel 23/23 通过（含 exact UTC wire、旧 host 拒绝、无 rounds 映射及 pending 时间稳定）。真实 deadline 仍由总集成配 A 新 host 验收；原 retained UI activity summary 的 Processed 时间还受原 bridge replay 时间影响，未宣称完整耗时显示验收。
+
+### 2026-11-08 Kernel keyless 模型目录安装修复（lane C）
+
+总集成真实 installed upgrade 首阶段报 agent.model references unknown provider，定位原 credential validator 会排除无 key 的 provider。现仅在显式 Kernel default 且 socket 为绝对路径时，缺省/null apiKey 作为 Kernel-owned inventory 保留合法 protocol/url/model；snapshot 标 credentialSource=kernel 且完全省略 apiKey，不读取/复制 ambient OPENAI_API_KEY。显式非法 key、相对 socket、旧默认 legacy 均不放宽。目录可读 metadata，但 NativeModelInvocationProvider 的 direct stream/complete 在 HTTP 前明确拒绝；B 已确认本文件无并发所有权。focused kernel 30/30 通过（其中包含本轮两个配置/transport 正负例及尚未提交的 archive/compact 接线测试）；此提交只交安装配置修复，真实升级/密钥边界由总集成继续验。
