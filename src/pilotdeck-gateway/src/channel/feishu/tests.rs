@@ -1190,6 +1190,79 @@ async fn queued_turns_drain_after_the_active_turn() {
     let _ = bounded("queue drain stop", handle.stop("done")).await;
 }
 
+/// A batch timer superseded by a newer message must return without taking the
+/// messages and without claiming `draining`: the live timer drains them. This
+/// is the pin for the reason `clearTimeout` is a sequence bump here instead of
+/// `JoinHandle::abort` — abort only lands at the task's next yield point, and
+/// for a timer that already woke up and is blocked on the state lock that
+/// point is inside this drain, after `mem::take` would have dropped the
+/// messages and left `draining` set with no drainer to clear it.
+#[tokio::test]
+async fn superseded_batch_timer_does_not_drain() {
+    const CHAT: &str = "c-timer";
+    let (channel, _slot) = case_channel(0);
+    {
+        let mut state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let batch = Batch {
+            id: 7,
+            timer_seq: 3,
+            ..Batch::default()
+        };
+        state.batches.insert(CHAT.to_owned(), batch);
+        let batch = state.batches.get_mut(CHAT).expect("#1329 batch entry");
+        batch.messages.push(InboundMessage {
+            chat_id: CHAT.to_owned(),
+            text: "first".to_owned(),
+            event_id: "ev-timer-1".to_owned(),
+            message_id: Some("om_timer_1".to_owned()),
+            message_type: Some("text".to_owned()),
+            content: None,
+        });
+    }
+    // Stale sequence (the batch is on 3): nothing is taken, nothing is claimed.
+    channel.runtime.drain_inbound_batch(CHAT, 7, 2).await;
+    {
+        let state = channel.runtime.state.lock().expect("#1329 state mutex");
+        let batch = state.batches.get(CHAT).expect("#1329 batch kept");
+        assert_eq!(
+            batch.messages.len(),
+            1,
+            "a superseded timer must not take the queued messages"
+        );
+        assert!(
+            !batch.draining,
+            "a superseded timer must not claim the drain"
+        );
+    }
+    // Stale batch id (a `/new` replacement): the same no-op.
+    channel.runtime.drain_inbound_batch(CHAT, 6, 3).await;
+    assert!(
+        channel
+            .runtime
+            .state
+            .lock()
+            .expect("#1329 state mutex")
+            .batches
+            .get(CHAT)
+            .is_some_and(|batch| batch.messages.len() == 1 && !batch.draining),
+        "a timer from a replaced batch must not touch the new one"
+    );
+    // The live timer drains and drops the batch (no gateway: the group is
+    // taken and dropped, which is what a turn without a gateway does).
+    channel.runtime.drain_inbound_batch(CHAT, 7, 3).await;
+    assert!(
+        channel
+            .runtime
+            .state
+            .lock()
+            .expect("#1329 state mutex")
+            .batches
+            .get(CHAT)
+            .is_none(),
+        "the live timer finishes the batch and removes the entry"
+    );
+}
+
 /// `/new <正文>` resets the session and then submits the text on the *new*
 /// session key (TS returns early only when `!mapped.message`). The mapper pin
 /// covers the parse; this one covers the channel actually reaching the
