@@ -47,15 +47,24 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 **仍未闭合（如实登记，不用跟进单冒充验收证据）**：
 
 - `session_dir` 族 `sessionKey` 的**门位置/形状**（本条新登记，未批准）：TS 基线在 **IPG 层**对这五个方法都没有 `?.trim()` 门（`InProcessGateway.ts:2026`、`:2049`、`:2229`、`:2211`、`:2220`），**但端到端必须逐方法分开说**：
-  - `renameSession` / `tagSession` / `deleteSession`：IPG 只是转发（`this.options.renameSession(input)` `InProcessGateway.ts:2211-2218`、`this.options.tagSession(input)` `:2220-2227`、`await this.options.deleteSession(input)` `:2229-2239`；`deleteSession` 之前还先试 `deleteEphemeralSession` 钩子，`:2230` —— 空白键在该钩子里命中与否本探针**未测**）。转发到的 CLI provider 门**不是链上第一步**：`resolveProjectKey(input.projectKey ?? fallbackProjectRoot)` 先跑（`createLocalGateway.ts:1117` / `:1130` / `:1143`），项目解析不了就先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:41-59`），**只有项目能解析时**才轮到 `if (!input.sessionKey?.trim()) throw new DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`:1118` / `:1131` / `:1144`，与 `ledger.json:4111` / `:4335` / `:4406` 同锚）。所以「错误码与报文相同」**只在「projectKey 是能解析的字符串、sessionKey 缺失/空白」这一组合下成立**。其余组合**首错不同**，`projectKey` 侧逐类如下（Node v22.22.0 实测，原始输出见机器判据）：
-    - `projectKey` 是字符串但解析不了（未注册的应用内路径）：TS 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`），Rust 先报 `INVALID_SESSION_KEY`。
-    - `projectKey` 非字符串（如数字 `7`）：`resolve(projectKey)`（`projectRegistry.ts:42`）由 Node 参数校验先抛 `TypeError` / `ERR_INVALID_ARG_TYPE`（`The "paths[0]" argument must be of type string. Received type number (7)`）；Rust 先报 `INVALID_SESSION_KEY`（`require_session_key` 在 `resolve_project` 之前）。
-    - `projectKey` 为空白串 `""`：`""` 不是 nullish，`resolve("")` = **cwd**（实测 `/Users/da/ws/pilotdeck-rs`）；cwd 恰等于 `generalProjectKey` 时 `resolveProjectKey` 直接返回，否则才走注册判定。**两种分支本探针都未测**，这里只登记「不等于 PROJECT_NOT_FOUND 的必然」。
+  - `renameSession` / `tagSession` / `deleteSession`：IPG 只是转发（`this.options.renameSession(input)` `InProcessGateway.ts:2211-2218`、`this.options.tagSession(input)` `:2220-2227`、`await this.options.deleteSession(input)` `:2229-2239`；`deleteSession` 之前还先试 `deleteEphemeralSession` 钩子，`:2230` —— 空白键在该钩子里命中与否本探针**未测**）。转发到的 CLI provider 门**不是链上第一步**：`resolveProjectKey(input.projectKey ?? fallbackProjectRoot)` 先跑（`createLocalGateway.ts:1117` / `:1130` / `:1143`），**只有项目能解析时**才轮到 `if (!input.sessionKey?.trim()) throw new DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`:1118` / `:1131` / `:1144`，与 `ledger.json:4111` / `:4335` / `:4406` 同锚）。注意 `??` 是 **nullish 回退**，不是「必须是字符串」：`projectKey` 缺失 / `undefined` / `null` 都会换成 `fallbackProjectRoot` 再解析。
+
+    所以「同码同报文」不能概括成「projectKey 是能解析的字符串」一条，必须按**两个字段的取值**分。下表**只覆盖 `sessionKey` 缺失或空白**（非字符串 `sessionKey` 正交，另列在表后）。Rust 侧这一族在任何 `projectKey` 取值下都**先**跑 `require_session_key`（`session_dir.rs:73-80`，在 `resolve_project` 之前），故这一路径上的基准答案恒为 `INVALID_SESSION_KEY` / `sessionKey is required.`：
+
+    | `projectKey` | TS 在 sessionKey 门之前发生什么 | 首错是否与 Rust 相同 |
+    |---|---|---|
+    | 缺失 / `undefined` / `null` | `?? fallbackProjectRoot` 回退（`createLocalGateway.ts:1117`）；回退项目**能解析时**照常到达 sessionKey 门 | **相同**（回退项目恒可解析属读码推断，**未实测**；解析不了则不同） |
+    | 能解析的字符串（`generalProjectKey` 或已注册项目） | 直接到达 sessionKey 门 | 相同 |
+    | 字符串但解析不了（未注册的应用内路径） | 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`） | 不同 |
+    | 非 nullish 的非字符串（如数字 `7`） | `resolve(projectKey)`（`projectRegistry.ts:42`）由 Node 参数校验先抛 `TypeError` / `ERR_INVALID_ARG_TYPE`（实测报文 `The "paths[0]" argument must be of type string. Received type number (7)`） | 不同 |
+    | 空白串 `""` | `""` 不是 nullish，`resolve("")` = **cwd**（实测 `/Users/da/ws/pilotdeck-rs`）；cwd 命中 `generalProjectKey` 或已注册项目时到达 sessionKey 门（相同），否则 `PROJECT_NOT_FOUND`（不同）。**两种分支本探针都未测** | **按解析结果分支，未实测** |
+
+    **非字符串 `sessionKey`（与上表正交，单列）**：Rust 的基准答案**不是** `INVALID_SESSION_KEY`——`trim_guard` 走 `NotAString` 分支，答 `gateway_request_failed` + `input.sessionKey?.trim is not a function`（`methods/mod.rs:175-177`；本 PR 用例 `a_non_string_session_key_throws_the_optional_chain_type_error` 在 `session_dir.rs:882-890` 断言了这两个值）。TS 侧在 `delete/rename/tag` 的同一位置抛 `TypeError`、报文逐字相同（探针 sessionKey 分节 `number 7` 行），即**报文一致、外层形状不同**（TS 保留 `TypeError` 名，Rust 由边界序列化成 `gateway_request_failed`）。`resume` / `close` 不在这条路径上，见下两条。
 
     与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
   - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。
   - `closeSession`：`router.close(input.sessionKey)` 之后还执行 `interactionCoordinator.closeSession` / `permissionModes.clear` / `dialogProjectKeys.delete`（`:2049-2054`），整条链**没有任何 `INVALID_SESSION_KEY` 拒绝、也没有 `trim`**；非字符串 `sessionKey` 会原样传给 router，行为本探针**未测**。
-  - **非字符串的可选链 TypeError 只对「确实走到门」的路径成立**（delete/rename/tag 的 provider 门）：`resume` 不校验、`close` 只透传，两侧在非字符串上**不同形状**，不能概括成「五个方法同形状」。
+  - **非字符串的可选链 TypeError 只对「确实走到门」的路径成立**（delete/rename/tag 的 provider 门，且 `projectKey` 能解析）：`resume` 不校验、`close` 只透传，这**两个方法**上两侧不同形状，不能概括成「五个方法同形状」。
 
   **-R2:28 没有登记这条**——它登记的是「非字符串的错误形状与 TS 的 TypeError 不一致，待 #1457 装配回调时定夺」，不是门的位置差异。这条差异属 #1455 遗留、非 #1604 引入，已开 **#2090**（前置于 #1457 与 #1604 关单）。U+0085 一侧的翻转在 **gateway 的 `trim_guard` / `require_text` 这一层没有用例钉住**（BOM 一侧有）；`pilotdeck-cli` 的 `paths.rs:189-192` 钉的是它**自己那份** `js_trim` 拷贝，不穿透本门。已开跟进单 **#2097**，前置于 #1604 关单。
 - `session_dir` 族其余 `projectKey` 读点（`resolve_project` / `session_new`）仍是旧形状 → **#2068**。
@@ -112,6 +121,14 @@ $ git show origin/main:src/pilotdeck-gateway/src/native_process/methods/session_
 （.filter(super::config::trimmed_string_is_non_empty) + 断言 is_ok()==true 的既有用例）
 $ git show origin/main:src/pilotdeck-gateway/src/native_process/methods/tools.rs | sed -n '54,64p'
 （`s.to_utf8().map(|u| u.trim().is_empty()).unwrap_or(false)`）
+$ grep -n "input.projectKey ?? fallbackProjectRoot" resources/PilotDeck/src/cli/createLocalGateway.ts | head -3
+1004:          const resolvedProjectKey = await dialog.projects.resolveProjectKey(input.projectKey ?? fallbackProjectRoot);
+1117:      const projectKey = await dialog.projects.resolveProjectKey(input.projectKey ?? fallbackProjectRoot);
+1130:      const projectKey = await dialog.projects.resolveProjectKey(input.projectKey ?? fallbackProjectRoot);
+$ sed -n '41,60p' resources/PilotDeck/src/gateway/dialog/projectRegistry.ts
+（`const requestedProjectKey = resolve(projectKey);` @:42 + 两处 `PROJECT_NOT_FOUND` @:50 / :57）
+$ sed -n '882,890p' src/pilotdeck-gateway/src/native_process/methods/session_dir.rs
+（a_non_string_session_key_throws_the_optional_chain_type_error：断言 `gateway_request_failed` + `input.sessionKey?.trim is not a function`）
 $ python3 -I scripts/gateway-parity/check_frozen.py --base origin/main
 {"status": "PASS", "failures": [], "entries": 30}
 ```
