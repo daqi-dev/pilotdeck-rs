@@ -2,6 +2,7 @@
 mod chat_search;
 mod config;
 mod cron;
+mod gateway_setup;
 pub(crate) mod paths;
 pub(crate) mod sdk;
 pub(crate) mod skills;
@@ -156,7 +157,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         Some("server") => Err(Failure::Todo("pilotdeck server")),
         Some("gateway") => {
             if argv.get(1).map(String::as_str) == Some("setup") {
-                return Err(Failure::Todo("pilotdeck gateway setup"));
+                return gateway_setup::run(&argv[2..], env, cwd);
             }
             stderr_line("Usage: pilotdeck gateway setup [feishu|weixin|wecom]");
             Ok(1)

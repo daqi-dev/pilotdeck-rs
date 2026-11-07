@@ -1,0 +1,7 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "yamlVersion": "2.9.0",
+  "input": "item: \" a\\nb\"\n",
+  "expected": "item: |2-\n   a\n  b\nadapters:\n  feishu:\n    enabled: true\n    appId: fixture-app\n    appSecret: fixture-secret\n    connectionMode: stream\n    domainName: feishu\n"
+}

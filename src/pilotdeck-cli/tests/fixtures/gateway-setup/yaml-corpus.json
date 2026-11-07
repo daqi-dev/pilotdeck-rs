@@ -1,0 +1,459 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "yamlVersion": "2.9.0",
+  "options": {
+    "lineWidth": 0,
+    "singleQuote": false
+  },
+  "cases": [
+    {
+      "id": "null",
+      "value": null,
+      "yaml": "null\n"
+    },
+    {
+      "id": "bool",
+      "value": [
+        true,
+        false
+      ],
+      "yaml": "- true\n- false\n"
+    },
+    {
+      "id": "numbers",
+      "value": [
+        0,
+        1,
+        -1,
+        1.5,
+        100000000000000000000,
+        1e-8
+      ],
+      "yaml": "- 0\n- 1\n- -1\n- 1.5\n- 100000000000000000000\n- 1e-8\n"
+    },
+    {
+      "id": "string-00",
+      "value": "",
+      "yaml": "\"\"\n"
+    },
+    {
+      "id": "string-01",
+      "value": "true",
+      "yaml": "\"true\"\n"
+    },
+    {
+      "id": "string-02",
+      "value": "false",
+      "yaml": "\"false\"\n"
+    },
+    {
+      "id": "string-03",
+      "value": "null",
+      "yaml": "\"null\"\n"
+    },
+    {
+      "id": "string-04",
+      "value": "Null",
+      "yaml": "\"Null\"\n"
+    },
+    {
+      "id": "string-05",
+      "value": "NULL",
+      "yaml": "\"NULL\"\n"
+    },
+    {
+      "id": "string-06",
+      "value": "~",
+      "yaml": "\"~\"\n"
+    },
+    {
+      "id": "string-07",
+      "value": "0",
+      "yaml": "\"0\"\n"
+    },
+    {
+      "id": "string-08",
+      "value": "1",
+      "yaml": "\"1\"\n"
+    },
+    {
+      "id": "string-09",
+      "value": "-1",
+      "yaml": "\"-1\"\n"
+    },
+    {
+      "id": "string-10",
+      "value": "1.0",
+      "yaml": "\"1.0\"\n"
+    },
+    {
+      "id": "string-11",
+      "value": "1e3",
+      "yaml": "\"1e3\"\n"
+    },
+    {
+      "id": "string-12",
+      "value": "0x10",
+      "yaml": "\"0x10\"\n"
+    },
+    {
+      "id": "string-13",
+      "value": "01",
+      "yaml": "\"01\"\n"
+    },
+    {
+      "id": "string-14",
+      "value": "NaN",
+      "yaml": "NaN\n"
+    },
+    {
+      "id": "string-15",
+      "value": ".nan",
+      "yaml": "\".nan\"\n"
+    },
+    {
+      "id": "string-16",
+      "value": ".inf",
+      "yaml": "\".inf\"\n"
+    },
+    {
+      "id": "string-17",
+      "value": "a:b",
+      "yaml": "a:b\n"
+    },
+    {
+      "id": "string-18",
+      "value": "a: b",
+      "yaml": "\"a: b\"\n"
+    },
+    {
+      "id": "string-19",
+      "value": ":",
+      "yaml": "\":\"\n"
+    },
+    {
+      "id": "string-20",
+      "value": "a#b",
+      "yaml": "a#b\n"
+    },
+    {
+      "id": "string-21",
+      "value": "a #b",
+      "yaml": "\"a #b\"\n"
+    },
+    {
+      "id": "string-22",
+      "value": "#abc",
+      "yaml": "\"#abc\"\n"
+    },
+    {
+      "id": "string-23",
+      "value": " leading",
+      "yaml": "\" leading\"\n"
+    },
+    {
+      "id": "string-24",
+      "value": "trailing ",
+      "yaml": "\"trailing \"\n"
+    },
+    {
+      "id": "string-25",
+      "value": " both ",
+      "yaml": "\" both \"\n"
+    },
+    {
+      "id": "string-26",
+      "value": "\"double\"",
+      "yaml": "\"\\\"double\\\"\"\n"
+    },
+    {
+      "id": "string-27",
+      "value": "'single'",
+      "yaml": "\"'single'\"\n"
+    },
+    {
+      "id": "string-28",
+      "value": "a \"b\" c",
+      "yaml": "a \"b\" c\n"
+    },
+    {
+      "id": "string-29",
+      "value": "a 'b' c",
+      "yaml": "a 'b' c\n"
+    },
+    {
+      "id": "string-30",
+      "value": "a\\b",
+      "yaml": "a\\b\n"
+    },
+    {
+      "id": "string-31",
+      "value": "tab\there",
+      "yaml": "tab\there\n"
+    },
+    {
+      "id": "string-32",
+      "value": "null\u0000byte",
+      "yaml": "\"null\\0byte\"\n"
+    },
+    {
+      "id": "string-33",
+      "value": "bell\u0007",
+      "yaml": "\"bell\\a\"\n"
+    },
+    {
+      "id": "string-34",
+      "value": "cr\rhere",
+      "yaml": "\"cr\\rhere\"\n"
+    },
+    {
+      "id": "string-35",
+      "value": "中文",
+      "yaml": "中文\n"
+    },
+    {
+      "id": "string-36",
+      "value": "😀",
+      "yaml": "😀\n"
+    },
+    {
+      "id": "string-37",
+      "value": "one\ntwo",
+      "yaml": "|-\none\ntwo\n"
+    },
+    {
+      "id": "string-38",
+      "value": "one\n\ntwo",
+      "yaml": "|-\none\n\ntwo\n"
+    },
+    {
+      "id": "string-39",
+      "value": "one\n",
+      "yaml": "|\none\n"
+    },
+    {
+      "id": "string-40",
+      "value": "one\n\n",
+      "yaml": "|+\none\n\n"
+    },
+    {
+      "id": "string-41",
+      "value": "\n",
+      "yaml": "|+\n\n"
+    },
+    {
+      "id": "string-42",
+      "value": "\n\n",
+      "yaml": "|+\n\n\n"
+    },
+    {
+      "id": "string-43",
+      "value": "\none",
+      "yaml": "|-\n\none\n"
+    },
+    {
+      "id": "string-44",
+      "value": "one\n two",
+      "yaml": "|-\none\n two\n"
+    },
+    {
+      "id": "string-45",
+      "value": "a b",
+      "yaml": "a b\n"
+    },
+    {
+      "id": "string-46",
+      "value": "- x",
+      "yaml": "\"- x\"\n"
+    },
+    {
+      "id": "string-47",
+      "value": "? x",
+      "yaml": "\"? x\"\n"
+    },
+    {
+      "id": "string-48",
+      "value": "[x]",
+      "yaml": "\"[x]\"\n"
+    },
+    {
+      "id": "string-49",
+      "value": "{x}",
+      "yaml": "\"{x}\"\n"
+    },
+    {
+      "id": "string-50",
+      "value": "yes",
+      "yaml": "yes\n"
+    },
+    {
+      "id": "string-51",
+      "value": "on",
+      "yaml": "on\n"
+    },
+    {
+      "id": "string-52",
+      "value": "off",
+      "yaml": "off\n"
+    },
+    {
+      "id": "string-53",
+      "value": "2026-11-08",
+      "yaml": "2026-11-08\n"
+    },
+    {
+      "id": "special-values",
+      "value": {
+        "0": "",
+        "1": "true",
+        "2": "false",
+        "3": "null",
+        "4": "Null",
+        "5": "NULL",
+        "6": "~",
+        "7": "0",
+        "8": "1",
+        "9": "-1",
+        "10": "1.0",
+        "11": "1e3",
+        "12": "0x10",
+        "13": "01",
+        "14": "NaN",
+        "15": ".nan",
+        "16": ".inf",
+        "17": "a:b",
+        "18": "a: b",
+        "19": ":",
+        "20": "a#b",
+        "21": "a #b",
+        "22": "#abc",
+        "23": " leading",
+        "24": "trailing ",
+        "25": " both ",
+        "26": "\"double\"",
+        "27": "'single'",
+        "28": "a \"b\" c",
+        "29": "a 'b' c",
+        "30": "a\\b",
+        "31": "tab\there",
+        "32": "null\u0000byte",
+        "33": "bell\u0007",
+        "34": "cr\rhere",
+        "35": "中文",
+        "36": "😀",
+        "37": "one\ntwo",
+        "38": "one\n\ntwo",
+        "39": "one\n",
+        "40": "one\n\n",
+        "41": "\n",
+        "42": "\n\n",
+        "43": "\none",
+        "44": "one\n two",
+        "45": "a b",
+        "46": "- x",
+        "47": "? x",
+        "48": "[x]",
+        "49": "{x}",
+        "50": "yes",
+        "51": "on",
+        "52": "off",
+        "53": "2026-11-08"
+      },
+      "yaml": "\"0\": \"\"\n\"1\": \"true\"\n\"2\": \"false\"\n\"3\": \"null\"\n\"4\": \"Null\"\n\"5\": \"NULL\"\n\"6\": \"~\"\n\"7\": \"0\"\n\"8\": \"1\"\n\"9\": \"-1\"\n\"10\": \"1.0\"\n\"11\": \"1e3\"\n\"12\": \"0x10\"\n\"13\": \"01\"\n\"14\": NaN\n\"15\": \".nan\"\n\"16\": \".inf\"\n\"17\": a:b\n\"18\": \"a: b\"\n\"19\": \":\"\n\"20\": a#b\n\"21\": \"a #b\"\n\"22\": \"#abc\"\n\"23\": \" leading\"\n\"24\": \"trailing \"\n\"25\": \" both \"\n\"26\": \"\\\"double\\\"\"\n\"27\": \"'single'\"\n\"28\": a \"b\" c\n\"29\": a 'b' c\n\"30\": a\\b\n\"31\": tab\there\n\"32\": \"null\\0byte\"\n\"33\": \"bell\\a\"\n\"34\": \"cr\\rhere\"\n\"35\": 中文\n\"36\": 😀\n\"37\": |-\n  one\n  two\n\"38\": |-\n  one\n\n  two\n\"39\": |\n  one\n\"40\": |+\n  one\n\n\"41\": |+\n  \n\"42\": |+\n  \n\n\"43\": |-\n  \n  one\n\"44\": |-\n  one\n   two\n\"45\": a b\n\"46\": \"- x\"\n\"47\": \"? x\"\n\"48\": \"[x]\"\n\"49\": \"{x}\"\n\"50\": yes\n\"51\": on\n\"52\": off\n\"53\": 2026-11-08\n"
+    },
+    {
+      "id": "special-keys",
+      "value": {
+        "0": "value",
+        "1": "value",
+        "": "value",
+        "true": "value",
+        "false": "value",
+        "null": "value",
+        "Null": "value",
+        "NULL": "value",
+        "~": "value",
+        "-1": "value",
+        "1.0": "value",
+        "1e3": "value",
+        "0x10": "value",
+        "01": "value",
+        "NaN": "value",
+        ".nan": "value",
+        ".inf": "value",
+        "a:b": "value",
+        "a: b": "value",
+        ":": "value",
+        "a#b": "value",
+        "a #b": "value",
+        "#abc": "value",
+        " leading": "value",
+        "trailing ": "value",
+        " both ": "value",
+        "\"double\"": "value",
+        "'single'": "value",
+        "a \"b\" c": "value",
+        "a 'b' c": "value",
+        "a\\b": "value",
+        "tab\there": "value",
+        "null\u0000byte": "value",
+        "bell\u0007": "value",
+        "cr\rhere": "value",
+        "中文": "value",
+        "😀": "value",
+        "one\ntwo": "value",
+        "one\n\ntwo": "value",
+        "one\n": "value",
+        "one\n\n": "value",
+        "\n": "value",
+        "\n\n": "value",
+        "\none": "value",
+        "one\n two": "value",
+        "a b": "value",
+        "- x": "value",
+        "? x": "value",
+        "[x]": "value",
+        "{x}": "value",
+        "yes": "value",
+        "on": "value",
+        "off": "value",
+        "2026-11-08": "value"
+      },
+      "yaml": "\"0\": value\n\"1\": value\n\"\": value\n\"true\": value\n\"false\": value\n\"null\": value\n\"Null\": value\n\"NULL\": value\n\"~\": value\n\"-1\": value\n\"1.0\": value\n\"1e3\": value\n\"0x10\": value\n\"01\": value\nNaN: value\n\".nan\": value\n\".inf\": value\na:b: value\n\"a: b\": value\n\":\": value\na#b: value\n\"a #b\": value\n\"#abc\": value\n\" leading\": value\n\"trailing \": value\n\" both \": value\n\"\\\"double\\\"\": value\n\"'single'\": value\na \"b\" c: value\na 'b' c: value\na\\b: value\ntab\there: value\n\"null\\0byte\": value\n\"bell\\a\": value\n\"cr\\rhere\": value\n中文: value\n😀: value\n\"one\\ntwo\": value\n\"one\\n\\ntwo\": value\n\"one\\n\": value\n\"one\\n\\n\": value\n\"\\n\": value\n\"\\n\\n\": value\n\"\\none\": value\n\"one\\n two\": value\na b: value\n\"- x\": value\n\"? x\": value\n\"[x]\": value\n\"{x}\": value\nyes: value\non: value\noff: value\n2026-11-08: value\n"
+    },
+    {
+      "id": "nested",
+      "value": {
+        "map": {
+          "array": [
+            null,
+            true,
+            {
+              "inner": "hello\nworld"
+            },
+            [],
+            {}
+          ]
+        },
+        "emptyMap": {},
+        "emptyArray": []
+      },
+      "yaml": "map:\n  array:\n    - null\n    - true\n    - inner: |-\n        hello\n        world\n    - []\n    - {}\nemptyMap: {}\nemptyArray: []\n"
+    },
+    {
+      "id": "numeric-key-order",
+      "value": {
+        "0": "zero",
+        "1": "one",
+        "2": "two",
+        "10": "ten",
+        "4294967294": "index",
+        "01": "zero-one",
+        "a": "a",
+        "4294967295": "max"
+      },
+      "yaml": "\"0\": zero\n\"1\": one\n\"2\": two\n\"10\": ten\n\"4294967294\": index\n\"01\": zero-one\na: a\n\"4294967295\": max\n"
+    }
+  ]
+}
