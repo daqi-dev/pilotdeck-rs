@@ -885,6 +885,24 @@ fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
         std::cmp::Ordering::Less,
         "#132 explicit fr-Latn-CA opts out of fr-CA's backward secondary"
     );
+    // The repair is Latin-only: a region match under another script must not
+    // get it. Comparing against the explicit spelling keeps this independent of
+    // whatever order ICU4X picks for `fr-Cyrl-CA`, while still going red if
+    // `latin_or_none` were widened to accept every script.
+    let cyrillic: Locale = "fr-Cyrl-CA".parse().unwrap();
+    let default_cyrillic = node_collator(&cyrillic).unwrap();
+    assert_eq!(
+        default_cyrillic.compare("coté", "côte"),
+        node_explicit_collator(&cyrillic)
+            .unwrap()
+            .compare("coté", "côte"),
+        "#132 a non-Latin script does not get fr-CA's backward secondary"
+    );
+    assert_ne!(
+        default_cyrillic.compare("coté", "côte"),
+        default.compare("coté", "côte"),
+        "#132 the script tag still selects different collation data"
+    );
 }
 
 #[test]

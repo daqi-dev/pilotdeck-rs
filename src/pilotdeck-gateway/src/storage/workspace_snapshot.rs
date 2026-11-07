@@ -45,11 +45,11 @@
 //! - Strings read back from disk keep their raw UTF-16 units (`JsString`), so
 //!   a hand-planted manifest or marker with lone surrogates lists and reads
 //!   back exactly as TS does.
-//! - `localeCompare` over an unpaired surrogate in a sorting key is an
-//!   explicit host boundary (R19): ICU4X folds every unpaired surrogate to
-//!   U+FFFD while Node keeps distinct weights, so `list()` returns an error
-//!   instead of a silently different order when such a key actually has to be
-//!   compared. All valid Unicode and U+FFFD still sort natively.
+//! - `localeCompare` over an unpaired surrogate in a sorting key used to be an
+//!   explicit host boundary (R19). #132 retired it: the comparison now runs
+//!   through `compare_utf16_preserving_surrogates`, so a lone surrogate keeps
+//!   Node's distinct implicit weight and `list()` answers natively instead of
+//!   returning an error.
 use super::{
     ledger::field,
     transcript::{timestamp, uuid},
