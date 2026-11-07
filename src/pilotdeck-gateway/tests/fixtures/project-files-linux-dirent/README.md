@@ -11,7 +11,7 @@ v22.22.0）上补齐端到端验收：
   `createDialogProjectRegistry`）跑全部请求，记录 wire 响应；另记
   `fs.readdir(root, {withFileTypes: true})` 的原始视图与字节序排序视图
   （`Buffer.compare` 稳定排序，镜像 Rust 的解码名 UTF-8 字节排序）。探针先自检
-  Node/ICU/locale/基线 HEAD，不符输出 `BLOCKED` 并以 3 退出——环境错不是对拍失败。
+  Node/ICU/libuv/locale/基线 HEAD，不符输出 `BLOCKED` 并以 3 退出——环境错不是对拍失败。
   输出原子发布（tmp+rename）。
 - `src/pilotdeck-gateway/src/project_files/tests/linux_dirent.rs`（门控测试，
   由 `tests.rs` 末尾 `mod linux_dirent;` 挂载，`#[cfg(target_os = "linux")]`）：
