@@ -4734,3 +4734,7 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · SDK model/project 校验补齐（Codex，仅本机）
 
 移除SDK model缺project的TODO，按真实TS双连接请求顺序输出原错误，并对本地终态释放query/control；远端同文错误保留原生命周期。mbp2新真实子进程测试含四个TS格、空串/空白project、远端同文与SIGINT/SIGTERM交叉通过；preflight/run与信号普通回归、all-targets clippy通过（信号冻结96格未重跑，不能报全量P08）。旧“应报TODO”测试被更强真实对照测试替代；原始首轮失败与最终记录保留主仓 `_tmp/20261108-cli-sdk-gaps/`，差异仍AI代批待人复核。继续TUI实际连接/权限和WeCom/Weixin；提交仅本机，完整CLI与阶段均未标完成。
+
+### 2026-11-08 · TUI 纯模型首片（Codex/Terra，仅本机）
+
+新增TUI事件状态模型与slash命令解析，真实TS reducer金样覆盖UTF-16孤立代理/缺字段/结构化输出，mbp2两测试与all-targets clippy通过；独立审查本片有效GatewayEvent范围无确认P0/P1。命令分派另已采35个真实TS效果原件，下一片接Rust回归，证据主仓 `_tmp/20261108-cli-tui/`。当前仅库模型，用户TUI入口仍未接入，绝不作为TUI完成；下一片由Terra接同连接权限应答/取消与会话流，root持验证与最终整合，本机不构建、不推远端。

@@ -1,0 +1,2359 @@
+{
+  "sourceSha256": "85e8528dff0c6a3596415aebbfbb01039b3f90c3a2d64f781e1667fe332696cc",
+  "initial": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "question"
+      }
+    ],
+    "activity": [],
+    "mode": "default",
+    "isRunning": false,
+    "pendingPermissions": []
+  },
+  "events": [
+    {
+      "type": "turn_started"
+    },
+    {
+      "type": "assistant_thinking_delta",
+      "text": "😀"
+    },
+    {
+      "type": "assistant_thinking_delta",
+      "text": ""
+    },
+    {
+      "type": "assistant_text_delta",
+      "text": "hello"
+    },
+    {
+      "type": "assistant_text_delta",
+      "text": " world"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t0",
+      "name": "tool0"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t1",
+      "name": "tool1"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t2",
+      "name": "tool2"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t3",
+      "name": "tool3"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t4",
+      "name": "tool4"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t5",
+      "name": "tool5"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t6",
+      "name": "tool6"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t7",
+      "name": "tool7"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t8",
+      "name": "tool8"
+    },
+    {
+      "type": "tool_call_started",
+      "toolCallId": "t9",
+      "name": "tool9"
+    },
+    {
+      "type": "permission_request",
+      "requestId": "p1",
+      "toolName": "bash",
+      "payload": {
+        "command": "git status"
+      }
+    },
+    {
+      "type": "permission_request",
+      "requestId": "p2",
+      "toolName": "read_file",
+      "payload": {
+        "path": "a"
+      }
+    },
+    {
+      "type": "tool_call_finished",
+      "toolCallId": "t9",
+      "toolName": "tool9",
+      "ok": true,
+      "resultPreview": "  done \n",
+      "resultLineCount": 8,
+      "resultPath": "/fake/output"
+    },
+    {
+      "type": "tool_result_detail_available",
+      "toolCallId": "absent",
+      "fullText": "ignored"
+    },
+    {
+      "type": "tool_result_detail_available",
+      "toolCallId": "t9",
+      "resultPath": null,
+      "fullText": "details"
+    },
+    {
+      "type": "assistant_text_delta",
+      "text": "after tool"
+    },
+    {
+      "type": "structured_output",
+      "payload": {
+        "z": 1,
+        "a": [
+          true,
+          {
+            "x": "a\nb"
+          }
+        ]
+      }
+    },
+    {
+      "type": "structured_output",
+      "payload": {}
+    },
+    {
+      "type": "structured_output",
+      "payload": []
+    },
+    {
+      "type": "structured_output"
+    },
+    {
+      "type": "assistant_text_delta",
+      "text": "\ud800"
+    },
+    {
+      "type": "structured_output",
+      "payload": {
+        "lone": "\ud800",
+        "empty": [],
+        "object": {}
+      }
+    },
+    {
+      "type": "permission_request",
+      "requestId": "undefined-payload",
+      "toolName": "test"
+    },
+    {
+      "type": "plan_mode_changed",
+      "mode": "plan"
+    },
+    {
+      "type": "turn_completed"
+    },
+    {
+      "type": "turn_started"
+    },
+    {
+      "type": "permission_request",
+      "requestId": "p3",
+      "toolName": "bash",
+      "payload": {}
+    },
+    {
+      "type": "error",
+      "message": "failure"
+    },
+    {
+      "type": "future_event"
+    }
+  ],
+  "states": [
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        }
+      ],
+      "activity": [],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        },
+        {
+          "id": "thinking-2",
+          "text": "😀",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        },
+        {
+          "id": "thinking-2",
+          "text": "",
+          "status": "info"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        },
+        {
+          "id": "t0",
+          "text": "tool0",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        },
+        {
+          "id": "t1",
+          "text": "tool1",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "t9",
+          "text": "tool9",
+          "status": "running"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        },
+        {
+          "id": "t2",
+          "text": "tool2",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t9",
+          "text": "tool9",
+          "status": "running"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        },
+        {
+          "id": "t3",
+          "text": "tool3",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t9",
+          "text": "tool9",
+          "status": "running"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "undefined-payload",
+          "text": "permission: test",
+          "status": "info"
+        },
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "default",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        },
+        {
+          "requestId": "undefined-payload",
+          "toolName": "test"
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "undefined-payload",
+          "text": "permission: test",
+          "status": "info"
+        },
+        {
+          "id": "p2",
+          "text": "permission: read_file",
+          "status": "info"
+        },
+        {
+          "id": "p1",
+          "text": "permission: bash",
+          "status": "info"
+        },
+        {
+          "id": "t8",
+          "text": "tool8",
+          "status": "running"
+        },
+        {
+          "id": "t7",
+          "text": "tool7",
+          "status": "running"
+        },
+        {
+          "id": "t6",
+          "text": "tool6",
+          "status": "running"
+        },
+        {
+          "id": "t5",
+          "text": "tool5",
+          "status": "running"
+        },
+        {
+          "id": "t4",
+          "text": "tool4",
+          "status": "running"
+        }
+      ],
+      "mode": "plan",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        },
+        {
+          "requestId": "p2",
+          "toolName": "read_file",
+          "payload": {
+            "path": "a"
+          }
+        },
+        {
+          "requestId": "undefined-payload",
+          "toolName": "test"
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [],
+      "mode": "plan",
+      "isRunning": false,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [],
+      "mode": "plan",
+      "isRunning": true,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        }
+      ],
+      "activity": [
+        {
+          "id": "p3",
+          "text": "permission: bash",
+          "status": "info"
+        }
+      ],
+      "mode": "plan",
+      "isRunning": true,
+      "pendingPermissions": [
+        {
+          "requestId": "p3",
+          "toolName": "bash",
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        },
+        {
+          "role": "error",
+          "text": "failure"
+        }
+      ],
+      "activity": [],
+      "mode": "plan",
+      "isRunning": false,
+      "pendingPermissions": []
+    },
+    {
+      "messages": [
+        {
+          "role": "user",
+          "text": "question"
+        },
+        {
+          "role": "assistant",
+          "text": "hello world",
+          "thinking": "😀"
+        },
+        {
+          "role": "tool",
+          "text": "done",
+          "ok": true,
+          "toolCallId": "t9",
+          "toolName": "tool9",
+          "lineCount": 8,
+          "resultPath": "/fake/output",
+          "fullText": "details"
+        },
+        {
+          "role": "assistant",
+          "text": "after tool"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"z\": 1,\n  \"a\": [\n    true,\n    {\n      \"x\": \"a\\nb\"\n    }\n  ]\n}"
+        },
+        {
+          "role": "system",
+          "text": "{}"
+        },
+        {
+          "role": "system",
+          "text": "[]"
+        },
+        {
+          "role": "system"
+        },
+        {
+          "role": "assistant",
+          "text": "\ud800"
+        },
+        {
+          "role": "system",
+          "text": "{\n  \"lone\": \"\\ud800\",\n  \"empty\": [],\n  \"object\": {}\n}"
+        },
+        {
+          "role": "error",
+          "text": "failure"
+        }
+      ],
+      "activity": [],
+      "mode": "plan",
+      "isRunning": false,
+      "pendingPermissions": []
+    }
+  ]
+}
