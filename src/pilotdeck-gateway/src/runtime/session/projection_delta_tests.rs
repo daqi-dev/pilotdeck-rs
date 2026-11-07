@@ -554,6 +554,17 @@ fn tail_generator_cleans_only_owned_work() {
             ],
             "#1253 tail generator removes only its owned work root"
         );
+        // #1500 P2-2 r2: the inventory above pins the marker's *name* only, so
+        // writing the wrong owner string (e.g. copying `turn-runner`'s
+        // `'turn-runner\n'`, one segment away in `turn-runner/generate.mts:62`)
+        // stays green. Pin the identity too, same as the factory side below and
+        // `projection_cache_tests.rs` does for its generator.
+        assert_eq!(
+            fs::read_to_string(root.join(".generation-owner"))
+                .expect("#1500 tail generator ownership marker"),
+            "turn-runner-tail\n",
+            "#1500 tail generator writes its ownership marker"
+        );
         assert_eq!(
             fs::read_to_string(root.join("run-existing/keep"))
                 .expect("#1253 foreign work retained"),
