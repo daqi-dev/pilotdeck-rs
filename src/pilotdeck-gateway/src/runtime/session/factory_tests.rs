@@ -10,7 +10,7 @@ use crate::storage::JsonlTranscriptStore;
 use pilotdeck_protocol::parse_json;
 use std::{
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -162,6 +162,18 @@ impl Harness {
         Self::with_fence_timeout(name, Duration::from_secs(1))
     }
     fn with_fence_timeout(name: &'static str, writer_busy_wait_timeout: Duration) -> Self {
+        Self::with_options(name, writer_busy_wait_timeout, None)
+    }
+    /// #897: the factory runs the tool-result budget preflight against
+    /// `tool_results_dir` at composition time.
+    fn with_tool_results_dir(name: &'static str, tool_results_dir: PathBuf) -> Self {
+        Self::with_options(name, Duration::from_secs(1), Some(tool_results_dir))
+    }
+    fn with_options(
+        name: &'static str,
+        writer_busy_wait_timeout: Duration,
+        tool_results_dir: Option<PathBuf>,
+    ) -> Self {
         let root = std::env::temp_dir().join(format!("pdrs-745-{name}-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("#745 scratch");
         let registry = Arc::new(ProjectRuntimeRegistry::new(
@@ -407,6 +419,8 @@ impl Harness {
                 diagnostic_obs.event(d.code);
                 lock(&diagnostic_obs.diagnostics).push(d.clone());
             }),
+            tool_results_dir: tool_results_dir
+                .map(|dir| Arc::new(move |_: &JsString| dir.clone()) as ToolResultsDir),
         }));
         let owner_factory: Arc<dyn SessionFactory> = Arc::new(PublishGate {
             factory: factory.clone(),
@@ -2096,6 +2110,7 @@ async fn writer_lease_excludes_second_factory_and_alias() {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     });
     let creating = second.create(h.context(), None);
     let error = creating
@@ -2167,6 +2182,7 @@ fn adopt_factory(
         }),
         admission,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     }))
 }
 
@@ -2362,6 +2378,7 @@ async fn writer_adopt_retires_retained_opener_writer_clones() {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     }));
     let handle = bounded("adopt retire create", factory.create(h.context(), None))
         .await
@@ -2483,6 +2500,7 @@ async fn writer_adopt_budget_excludes_slow_drained_snapshot() {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     }));
     let canonical = crate::storage::canonical_transcript_path(&path)
         .expect("#1019 adopt slow plan canonical path");
@@ -4174,6 +4192,7 @@ async fn writer_fence_rejects_zero_budget() {
             create_storage: h.factory.options.create_storage.clone(),
             admission: None,
             diagnostic: Arc::new(|_| {}),
+            tool_results_dir: None,
         })
     }));
     assert!(rejected.is_err(), "#745 zero fence budget rejected");
@@ -4450,6 +4469,7 @@ async fn writer_factory_rejects_already_locked_storage() {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     });
     let error = bounded(
         "#1027 locked storage create",
@@ -6995,6 +7015,7 @@ async fn writer_busy_budget_excludes_drained_snapshot() {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     });
     tokio::time::pause();
     let waiting = tokio::spawn(factory.create(h.context(), Some(old)));
@@ -7565,4 +7586,142 @@ fn projection_cache_append_benchmark() {
             break;
         }
     }
+}
+
+// #897: TS composes the session-context bundle — whose first statement
+// constructs the tool-result budget (`SessionContextRuntimeBundle.ts:83-89`)
+// — inside `ProjectSessionFactory.createSession`'s try
+// (`ProjectSessionFactory.ts:125-163`), so a deleted cwd with a relative
+// tool-results dir rejects the create itself: no handle is published, no turn
+// slot is occupied, the opened storage is closed and the prepared resources
+// are released (`resumeAgentSession.ts:121-135` then the create catch). The
+// harness factory resolves the directory the per-turn ports would use; the
+// worker deletes its own cwd so composition cannot read a live one (the
+// per-turn live-read difference stays registered, A7.4-TOOLBUDGET-CWD-001).
+const SESSION_CWD_PREFLIGHT_WORKER: &str =
+    "runtime::session::factory::tests::session_cwd_preflight_worker";
+
+#[test]
+fn session_cwd_preflight_rejects_create_and_rolls_back() {
+    let root = std::env::temp_dir().join(format!("pdrs-897-preflight-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(root.join("cwd")).expect("#897 scratch directories");
+    let absolute = root.join("files").join("spill");
+    let root_env = root.to_str().expect("#897 UTF-8 scratch root").to_owned();
+    crate::test_process::run_cases(
+        SESSION_CWD_PREFLIGHT_WORKER,
+        [
+            ("relative-deleted", "../spill".to_owned()),
+            ("relative-healthy", "../spill".to_owned()),
+            (
+                "absolute-deleted",
+                absolute.to_str().expect("#897 UTF-8 spill dir").to_owned(),
+            ),
+        ]
+        .into_iter()
+        .map(|(case, dir)| {
+            (
+                case.to_owned(),
+                vec![
+                    ("PDRS_SESSION_CWD_CASE".into(), case.into()),
+                    ("PDRS_SESSION_CWD_ROOT".into(), root_env.clone()),
+                    ("PDRS_SESSION_CWD_DIR".into(), dir),
+                ],
+            )
+        })
+        .collect(),
+    );
+}
+
+#[tokio::test]
+#[ignore = "worker only; parent supplies isolated cwd and checks one receipt"]
+async fn session_cwd_preflight_worker() {
+    let name = std::env::var("PDRS_SESSION_CWD_CASE").expect("#897 parent case");
+    let root = std::env::var("PDRS_SESSION_CWD_ROOT").expect("#897 parent scratch root");
+    let dir = std::env::var("PDRS_SESSION_CWD_DIR").expect("#897 parent dir");
+    let oracle = js(include_str!(
+        "../../../tests/fixtures/tool-budget-cwd/oracle.json"
+    ));
+    let expected = oracle
+        .get("cases")
+        .and_then(|cases| match cases {
+            JsValue::Array(items) => Some(items),
+            _ => None,
+        })
+        .expect("#897 oracle cases")
+        .iter()
+        .find(|row| {
+            row.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|value| value.equals_str("relative-deleted"))
+        })
+        .expect("#897 oracle relative-deleted row")
+        .get("outcome")
+        .and_then(|outcome| outcome.get("error"))
+        .and_then(|error| error.get("message"))
+        .and_then(JsValue::as_string)
+        .expect("#897 oracle uv_cwd message")
+        .to_utf8()
+        .expect("#897 oracle message UTF-8");
+
+    let cwd = Path::new(&root).join("cwd");
+    let original = std::env::current_dir().expect("#897 original cwd");
+    // Each case runs in its own worker process; a deleted-cwd case removes
+    // this directory, so recreate it rather than assuming the parent's state.
+    std::fs::create_dir_all(&cwd).expect("#897 scratch cwd directory");
+    std::env::set_current_dir(&cwd).expect("#897 enter scratch cwd");
+    if name == "relative-deleted" || name == "absolute-deleted" {
+        std::fs::remove_dir(&cwd).expect("#897 remove scratch cwd");
+        assert!(
+            std::env::current_dir().is_err(),
+            "#897 deleted cwd must fail current_dir"
+        );
+    }
+    let harness = Harness::with_tool_results_dir("session-cwd-preflight", PathBuf::from(dir));
+    let outcome = bounded(
+        "#897 preflight",
+        harness.owner.get_or_create(harness.context()),
+    )
+    .await;
+    // Restore before assertions, even if the product returned an unexpected result.
+    std::env::set_current_dir(original).expect("#897 restore original cwd");
+    if name == "relative-deleted" {
+        let error = match outcome {
+            Err(error) => error,
+            // A handle here is the pre-#897 shape: the error was deferred to
+            // the first turn poll (or masked by a pre-poll cancel).
+            Ok(_) => {
+                crate::negative_assert!(
+                    false,
+                    "#897 deleted-cwd composition must reject the create itself"
+                );
+                unreachable!("#897 negative_assert always panics");
+            }
+        };
+        crate::negative_assert_eq!(
+            error.message,
+            expected,
+            "#897 create rejection must preserve the TS uv_cwd message"
+        );
+        let events = lock(&harness.observed.events);
+        crate::negative_assert!(
+            events.iter().any(|event| event == "close.1"),
+            "#897 create rejection must close the storage it opened"
+        );
+        crate::negative_assert!(
+            events.iter().any(|event| event == "release.1"),
+            "#897 create rejection must release the prepared resources"
+        );
+        crate::negative_assert!(
+            ordered(&events, "storage.1", "close.1") && ordered(&events, "close.1", "release.1"),
+            "#897 rollback follows the TS storage-close-then-release order"
+        );
+        drop(events);
+    } else {
+        let _session = crate::test_negative_receipt::expect_ok(
+            outcome,
+            "#897 healthy cwd (or absolute dir) composition must still create the session",
+        );
+    }
+    harness.finish("#897 preflight").await;
+    crate::test_process::receipt(&name);
 }

@@ -8,6 +8,7 @@ use crate::{
     host::modules::tool_context::{HostToolCheckpoint, SeedState},
     runtime::{
         cleanup_task::lock,
+        context::tool_budget::{ToolResultBudget, ToolResultBudgetOptions},
         mcp::registry::SessionMcpRuntimeRegistry,
         project::{
             DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult, persistence::SessionRecording,
@@ -814,6 +815,13 @@ pub type CreateStorage =
     Arc<dyn Fn(SessionContext) -> BoxFuture<Result<SessionStorage, RuntimeError>> + Send + Sync>;
 pub type Admission =
     Arc<dyn Fn(SessionContext) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> + Send + Sync>;
+/// #897: resolve one session's tool-results directory at composition time, so
+/// `construct` can run the tool-result budget constructor before publishing a
+/// handle — the position TS gives it by composing `SessionContextRuntimeBundle`
+/// (whose first statement constructs the budget, `SessionContextRuntimeBundle.ts:85`)
+/// inside `createSession`'s try. The per-turn assembly keeps its own live cwd
+/// read; the Node process.cwd() cache difference stays registered (A7.4).
+pub type ToolResultsDir = Arc<dyn Fn(&JsString) -> PathBuf + Send + Sync>;
 pub struct FactoryOptions {
     /// Predecessor drain + occupied process-lock wait budget, chosen by the
     /// host's cancellation policy (e.g. POST_CANCEL_EXIT_TIMEOUT), not a total
@@ -827,6 +835,7 @@ pub struct FactoryOptions {
     pub create_storage: CreateStorage,
     pub admission: Option<Admission>,
     pub diagnostic: Arc<dyn Fn(&Diagnostic) + Send + Sync>,
+    pub tool_results_dir: Option<ToolResultsDir>,
 }
 #[derive(Clone)]
 pub struct ProjectSessionFactory {
@@ -1016,6 +1025,29 @@ impl ProjectSessionFactory {
                 checkpoint: checkpoint.clone(),
                 projection: storage.projection.clone(),
             };
+            // #897: TS composes the session-context bundle — whose first
+            // statement constructs the tool-result budget
+            // (`SessionContextRuntimeBundle.ts:83-89`) — inside
+            // `createSession`'s try, after storage creation and before the
+            // agent session (`ProjectSessionFactory.ts:141-163`), so a deleted
+            // cwd with a relative tool-results dir rejects session creation
+            // here: no handle is published, the opened storage is closed, and
+            // the prepared resources are released. The constructor is
+            // side-effect-free, so the per-turn assembly below keeps its own
+            // live cwd read; the Node process.cwd() cache difference stays
+            // registered (A7.4-TOOLBUDGET-CWD-001).
+            if let Some(resolve) = self.options.tool_results_dir.as_ref()
+                && !crate::mutants::on("session-cwd-preflight-skipped")
+                && let Err(error) = ToolResultBudget::new(ToolResultBudgetOptions::new(resolve(
+                    &context.session_key,
+                )))
+            {
+                return Err(if crate::mutants::on("session-cwd-preflight-message") {
+                    RuntimeError::new(format!("Host execution failed: {error}"))
+                } else {
+                    RuntimeError::new(error.to_string())
+                });
+            }
             let host = (prepared.host)(binding)?;
             let projection = storage.projection.clone();
             let tail = SessionTail::new(
@@ -1066,7 +1098,26 @@ impl ProjectSessionFactory {
             Err(error) => {
                 // The outer TS create catch swallows prepared-release errors.
                 // recreate reverses the order relative to resume rollback.
-                let rollback = if previous.is_some() {
+                // (#897 mutant: session-cwd-rollback-order swaps both orders;
+                // the resume order is the TS createSession rollback order —
+                // resumeAgentSession's storage dispose, then the outer catch's
+                // prepared release. PreparedResources::drop is the async
+                // fallback when an explicit release is skipped, so only the
+                // order is a killable rollback observable.)
+                let swap = crate::mutants::on("session-cwd-rollback-order");
+                let rollback = if swap {
+                    if previous.is_some() {
+                        // Named `closed` (not `rollback`) so the
+                        // session-factory `admission-read-reject` anchor stays
+                        // unique in this file.
+                        let closed = storage.close_owned().await;
+                        let _ = prepared.resources.release().await;
+                        closed
+                    } else {
+                        let _ = prepared.resources.release().await;
+                        storage.close_owned().await
+                    }
+                } else if previous.is_some() {
                     let _ = prepared.resources.release().await;
                     storage.close_owned().await
                 } else {

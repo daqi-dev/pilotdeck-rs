@@ -433,6 +433,9 @@ async fn start_assembly(
     };
     let storage_project = project.clone();
     let storage_options = options.clone();
+    // #897: the composition-time budget preflight resolves the same directory
+    // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
+    let budget_project = options.project.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, _| {
@@ -672,6 +675,9 @@ async fn start_assembly(
             })
         }),
         admission: None,
+        tool_results_dir: Some(Arc::new(move |session_id| {
+            super::tools::session_tool_results_dir(&budget_project, session_id)
+        })),
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
     }));
     let built = (|| -> Result<_, ProxyError> {

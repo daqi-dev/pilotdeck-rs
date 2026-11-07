@@ -28,9 +28,26 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, admission::ExecutionIdentity};
 use pilotdeck_transport::{server::ExecutionClock, system_clock::SystemExecutionClock};
 use std::{
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
+
+/// `ProjectSessionStorage.ts:413`: one session's tool-results directory under
+/// the project root, with the path-safe session id. Shared by the per-turn
+/// ports and the #897 session-composition preflight so the two cannot drift.
+pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) -> PathBuf {
+    let dir = if crate::mutants::on("session-cwd-dir-layout") {
+        project.join("tool-results")
+    } else {
+        project.join(".pilotdeck/tool-results")
+    };
+    if crate::mutants::on("session-cwd-dir-unsanitized") {
+        dir.join(String::from_utf16_lossy(session_id.units()))
+    } else {
+        dir.join(crate::storage::sanitize_session_id(session_id))
+    }
+}
 
 pub struct SessionTools {
     options: Options,
@@ -156,11 +173,7 @@ impl SessionTools {
                 ..RouterModelPortOptions::main_agent()
             },
             recorder: None,
-            tool_results_dir: self
-                .options
-                .project
-                .join(".pilotdeck/tool-results")
-                .join(crate::storage::sanitize_session_id(&identity.session_id)),
+            tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
             context_runtime: None,
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
