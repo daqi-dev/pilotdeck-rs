@@ -402,9 +402,10 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
         first.abort();
         let cancelled = matches!(first.await, Err(error) if error.is_cancelled());
         let second = match tokio::time::timeout(FLUSH_DEADLINE, second).await {
-            // Only the timeout is the wedge; a join error (panic) or a flush
-            // error is a different failure and must not read as `None`.
-            Ok(joined) => Some(joined.is_ok()),
+            // Only the timeout is the wedge. A panic (join error) and a flush
+            // error are both `Some(false)`: the inner `Result` must be `Ok`, or
+            // "the retry writes" would pass on a retry that wrote nothing.
+            Ok(joined) => Some(joined.is_ok_and(|result| result.is_ok())),
             Err(_) => None,
         };
         Observed {
