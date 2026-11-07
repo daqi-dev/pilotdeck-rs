@@ -2070,7 +2070,7 @@
 },
 "format_version": 2,
 "input_files": {
-"docs/plan/005_phase-a-session-domain.md": "c64e42949cae9a531f698d5c9ebd306455de487d7feeea56786f1c0511301600",
+"docs/plan/005_phase-a-session-domain.md": "294d06952e112d67b31336a0baf18a2bb5159fdbed3020d965b1245d4b0cdf25",
 "docs/research/005_phase-a-gateway/method-inventory.md": "31c279ee832bbc94c93d75f4ce0f0428ad0c4be86bc7095cf772b2cb0672f316",
 "docs/research/008_phase-a-session-domain/gap.md": "df5ce3ceaffb7fb70571e25aad03741bbc10f374fab8fbce2cd1ad1f3878a37e",
 "schema/gateway-methods.snapshot.json": "b7c2ef5b8ec24da3f17cd00129360f284963580e08e6e0bf3921a3a214c7b49c",
