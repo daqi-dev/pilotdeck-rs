@@ -126,6 +126,35 @@ MUTATIONS = [
      'pub const CHANNEL_LOADER_KEYS: [&str; 16] = [\n    "probe1853",\n    "telegram",',
      'loader_keys_partition_rejected_and_silent_subset',
      '#1853 every loader key is rejected or silent-subset'),
+    # M13 (#1853 r2 r1 review): the loader table loses the silent key `sms`;
+    # the silent-group reverse closure must kill it (M1/M12 only touch the
+    # count and covering cells).
+    ('loader-table-loses-silent-sms', source / 'loader.rs',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
+     '    "bluebubbles",\n    "dingtalk",\n    "wecomCallback",\n    "email",\n    "sms",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
+     '    "bluebubbles",\n    "dingtalk",\n    "wecomCallback",\n    "email",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every silent-subset key is a loader-table key'),
+    # M14 (#1853 r2 r1 review): the rejection table gains a key that is
+    # neither a loader key nor a strict bundle key; the rejection-side
+    # reverse closure must kill it (the count stays ten — probe1853 is not a
+    # loader key).
+    ('rejection-table-gains-foreign-key', source / 'loader.rs',
+     '    "telegram",\n    "qq",\n    "wecom",\n];',
+     '    "telegram",\n    "probe1853",\n    "qq",\n    "wecom",\n];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every rejection-table key is a loader key or a strict bundle key'),
+    # M15 (#1853 r2 r1 review): the bundle table gains the silent key `sms`;
+    # the bundle-outside-loader cell fires first (sms is a loader key), which
+    # is the registered receipt for this row.
+    ('bundle-gains-silent-sms', source / 'loader.rs',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "sms"];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 bundle keys stay outside the loader table'),
 ]
 
 
