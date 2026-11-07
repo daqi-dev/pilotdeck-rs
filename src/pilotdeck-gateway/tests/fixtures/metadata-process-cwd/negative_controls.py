@@ -22,12 +22,17 @@ BRIDGE = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/bridge.rs'
 FIXTURE = ROOT / 'src/pilotdeck-gateway/tests/fixtures/metadata-process-cwd'
 PREFIX = 'metadata::process_cwd_tests::'
 # #2133: neg-for-diff.sh derives the host's negative-control list from the diff
-# and matches tables by the literal `dir/file` of every changed .rs file. The
+# and matches tables by the literal `dir/file` of every changed file. The
 # `META` / `CONFIG` / ... constants below spell the whole path, so their keys
-# are already inline; `FIXTURE / "regression.rs"` takes its directory from the
-# constant and needs the anchor. `regression.rs` is a fixture file, but the
-# discovery loop matches `fixtures/**` changes too, so it is a real blind spot.
-ANCHORS = ('metadata-process-cwd/regression.rs',)
+# are already inline; the `FIXTURE / "..."` entries take their directory from
+# the constant and need the anchor. The discovery loop keys on any changed file
+# under `fixtures/**`, not only `.rs`: editing the oracle or the generator
+# changes what this table judges, so all three are real blind spots.
+DISCOVERY_ANCHORS = (
+    'metadata-process-cwd/regression.rs',
+    'metadata-process-cwd/oracle.json',
+    'metadata-process-cwd/generate.mts',
+)
 MUTATIONS = [
     ('root-fallback', META,
      'let process_cwd = std::env::current_dir()\n        .map_err(|error| io::Error::new(error.kind(), ProcessCwdError(error)))?;',
