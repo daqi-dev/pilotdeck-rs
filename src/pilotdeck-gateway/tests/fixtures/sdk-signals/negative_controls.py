@@ -45,6 +45,27 @@ close_order_ledger = root / "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-00
 skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
+fixture = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals"
+abort_state = root / "src/pilotdeck-cli/tests/fixtures/sdk-signal-abort-state"
+# #1885: the only file under the fixture trees a control rewrites. Everything
+# else there is a golden read by resident tests and by the replay children.
+MUTABLE_FIXTURE_FILES = frozenset({wrapper_source})
+
+
+def guarded_paths():
+    """Exactly the files a control rewrites.
+
+    #1885: `negative_process.mutating_sources` rewrites every guarded path on
+    exit with a plain `write_bytes` and no atomic publish, so a SIGKILL inside
+    that window truncates whatever the set carries. The whole-fixture globs
+    that used to live at the call site put every golden (`source.json`,
+    `oracle.json`, `capture.py`, `generate.mjs`, ...) at that risk for files no
+    control ever touches. Leftover mutants stay detected without them:
+    `_assert_workspace_sources` scans the whole `src/` tree against HEAD, and
+    both `specs/` ledgers below remain targets in their own right.
+    """
+    return sorted({row[1] for row in mutations}, key=str)
+
 
 EXPECTED_TOTAL = 75
 # #1382: per-ID unordered-close controls are pinned to the registered
@@ -348,6 +369,22 @@ def check_catalog():
         raise RuntimeError("#1145 fixed product mutation denominator")
     if len(set(names)) != EXPECTED_TOTAL:
         raise RuntimeError("#1145 unique product mutation identities")
+    # #1885: the restore set must stay exactly the mutation targets. Restoring
+    # a file no control rewrites re-enters the golden-truncation window without
+    # buying any leftover detection, so pin the fixture-side membership: the
+    # only file under the fixture trees a control may rewrite is the SIGINT
+    # wrapper. Re-broadening `guarded_paths` to a fixture glob, or aiming a
+    # mutation at a golden, fails here.
+    strays = sorted(
+        str(path.relative_to(root))
+        for path in guarded_paths()
+        if path.parent in {fixture, abort_state}
+        and path not in MUTABLE_FIXTURE_FILES
+    )
+    if strays:
+        raise RuntimeError(
+            "#1885 restore set must not carry fixture goldens: " + ", ".join(strays)
+        )
     stale = []
     for name, path, old, new, test, assertion in mutations:
         if not old or old == new:
@@ -447,6 +484,11 @@ def main():
         # The replay owns its case directory exclusively. Each invocation gets
         # a different root, including positive and restored runs of one test.
         run_env["PDRS_SIGNAL_RESULTS"] = str(out / f"{label}.observations")
+        # #1885: this process holds the exclusive tree lock for the whole run,
+        # so a child asking for the shared read lease would block on its own
+        # parent until BUILD_TIMEOUT. The runner is the writer for the bytes its
+        # children read, which is exactly what the bypass asserts.
+        run_env["PDRS_NEGATIVE_LEASE_HELD_ROOT"] = str(root)
         try:
             slot = wait_for_slot(
                 root / "scripts/cargo-slots.sh",
@@ -479,23 +521,7 @@ def main():
             )
             raise
 
-    fixture = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals"
-    guarded = [
-        *sorted((root / "src/pilotdeck-cli/src").rglob("*.rs")),
-        root / "src/pilotdeck-cli/Cargo.toml",
-        root / "src/Cargo.toml",
-        root / "src/Cargo.lock",
-        root / "src/pilotdeck-cli/tests/sdk_signal_exit.rs",
-        root / "src/pilotdeck-cli/tests/common/signal_replay.rs",
-        root / "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md",
-        root / "src/pilotdeck-cli/tests/common/negative_receipt.rs",
-        root / "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md",
-        *sorted(path for path in fixture.iterdir() if path.is_file()),
-        *sorted((fixture.parent / "sdk-signal-abort-state").glob("*")),
-        Path(__file__).resolve(),
-        Path(__file__).resolve().parents[1] / "negative_process.py",
-        Path(__file__).resolve().parents[1] / "negative_suite.py",
-    ]
+    guarded = guarded_paths()
     results = []
     phase = "enter"
     interrupted = False

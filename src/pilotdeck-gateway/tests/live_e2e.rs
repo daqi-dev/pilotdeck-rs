@@ -7,6 +7,8 @@ mod mutants;
 #[allow(dead_code)]
 #[path = "../src/process_group.rs"]
 mod process_group;
+#[path = "common/read_lease.rs"]
+mod read_lease;
 #[allow(dead_code)]
 // Module name matters: `src/test_process.rs` calls
 // `crate::test_exact_receipt::single_pass`, and these integration crates
@@ -77,6 +79,7 @@ use pilotdeck_gateway::{
 use pilotdeck_protocol::{
     JsObject, JsString, JsValue, admission::ExecutionIdentity, parse_json, stringify_json,
 };
+use read_lease::fixture_read_lease;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -716,6 +719,10 @@ fn conversation(transcript: &Value) -> Value {
     Value::Array(messages)
 }
 fn expectation(scenario: &str) -> Value {
+    // #1885: golden `expected/*.json` bytes are read here at runtime; the tree
+    // lock's exclusive holder may be rewriting the fixture tree, so take the
+    // shared fixture read lease for the read.
+    let _lease = fixture_read_lease();
     if scenario != "early-final" {
         return read(&Path::new(FIXTURE).join(format!("expected/{scenario}.json")));
     }
@@ -815,6 +822,12 @@ fn expectation(scenario: &str) -> Value {
 }
 fn verify_artifacts() {
     use sha2::{Digest, Sha256};
+    // #1885: `oracle.json`, the apparatus sources and the golden `expected/*`
+    // bytes are all read here without any lock today, while a committed
+    // negative control can be holding the exclusive tree lock over an in-place
+    // mutation of the same fixture tree. The shared lease makes this reader wait
+    // for the writer's restore instead of hashing a mutant and false-failing.
+    let _lease = fixture_read_lease();
     let mut oracle = read(&Path::new(FIXTURE).join("oracle.json"));
     if mutants::on("live-mitm-hash") {
         oracle["apparatusSha256"]["stdio_mitm.py"] = json!("0".repeat(64));
@@ -925,25 +938,33 @@ fn case_directories_use_cargo_tmpdir() {
 fn live_ts_client_payload() {
     verify_artifacts();
     let directory = case_directory("ts-client");
-    let mut command = Command::new("python3");
-    command
-        .args(["-B", &format!("{FIXTURE}/capture.py"), "text"])
-        .arg(&directory)
-        .env_remove("LIVE_E2E_MUTANT");
-    if mutants::on("live-client-payload") {
-        command.env("LIVE_E2E_MUTANT", "client-payload");
-    }
-    let output = command
-        .output()
-        .expect("#748 independent TS client capture");
-    assert!(
-        output.status.success(),
-        "#748 TS client capture failed: {}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let actual = read(&directory.join("result.json"));
-    let expected = read(&Path::new(FIXTURE).join("expected/text.json"));
+    // #1885: `verify_artifacts` only leases its own read. The block below execs
+    // the fixture's `capture.py` and reads the golden `expected/text.json`, so it
+    // keeps its own lease rather than nesting one inside the helper's.
+    let (actual, expected) = {
+        let _lease = fixture_read_lease();
+        let mut command = Command::new("python3");
+        command
+            .args(["-B", &format!("{FIXTURE}/capture.py"), "text"])
+            .arg(&directory)
+            .env_remove("LIVE_E2E_MUTANT");
+        if mutants::on("live-client-payload") {
+            command.env("LIVE_E2E_MUTANT", "client-payload");
+        }
+        let output = command
+            .output()
+            .expect("#748 independent TS client capture");
+        assert!(
+            output.status.success(),
+            "#748 TS client capture failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        (
+            read(&directory.join("result.json")),
+            read(&Path::new(FIXTURE).join("expected/text.json")),
+        )
+    };
     negative_assert_eq!(
         serde_json::to_vec(&actual["events"]).expect("#748 client bytes"),
         serde_json::to_vec(&expected["events"]).expect("#748 golden client bytes"),
