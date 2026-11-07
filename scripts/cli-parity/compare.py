@@ -61,6 +61,7 @@ snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
 ROOT = _common.ROOT
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
+protected_trees = _load('policy', _here / 'policy.py').protected_trees
 ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
 
 RECORDING_ORIGIN = 'live-os-sandbox'
@@ -147,7 +148,7 @@ def coalesce(events):
     return out
 
 
-def load_round(path):
+def load_round(path, rust_bin=None):
     errors, cases = [], {}
     def require(condition, rule):
         if not condition:
@@ -198,12 +199,19 @@ def load_round(path):
         require(isinstance(roots_raw, list) and all(isinstance(root, str) and Path(root).is_absolute() for root in roots_raw),
                 'round.ts-read-dirs')
         roots = tuple(roots_raw)
-        # #2231 r1: being absolute is not enough. The offline validator
-        # replays the same alias-safe protected-tree scope the recorder
-        # enforced, so a tampered round whose tsReadDirs cover home, this
-        # checkout, the evidence tree or the baseline fails closed instead of
-        # merely re-deriving a profile that contains it.
-        require(all(ts_read_root_overlap(Path(root), [ROOT, path, Path(baseline['path'])],
+        # #2231 r1 + r2: being absolute is not enough. The offline validator
+        # replays the recorder's protected-tree scope from the same single
+        # source (policy.protected_trees), so a tampered round whose tsReadDirs
+        # cover home, this checkout, the evidence tree, the baseline or the
+        # Rust candidate's directory fails closed instead of merely re-deriving
+        # a profile that contains it. A Rust round's candidate parent comes from
+        # that round's own provenance executable; a TS round does not record the
+        # candidate, so the operator-supplied --rust-bin (compare's expected_rust)
+        # fills the tree in — a compare without it cannot replay that one tree
+        # (recorded residual, same spelling as the recorder's own scope).
+        candidate = provenance['executable']['path'] if run['side'] == 'rust' else rust_bin
+        require(all(ts_read_root_overlap(Path(root), protected_trees(ROOT, path, baseline['path'],
+                                                                    rust_bin=candidate),
                                            home=Path.home()) is None for root in roots_raw),
                 'round.ts-read-dirs-protected')
         if run['side'] == 'ts':
@@ -358,8 +366,12 @@ def compare(left, right, expected_rust=None):
     except Blocked as error:
         return {'status': 'BLOCKED', 'failures': [{'rule': 'apparatus.mock-gateway', 'error': str(error)}],
                 'scenarios': 0, 'scope': 'D0-pr1 calibration only'}
-    a, ac, ae = load_round(Path(left))
-    b, bc, be = load_round(Path(right))
+    # r2 P1: thread the CLI's --rust-bin identity into both load_round calls
+    # so a TS round's replay also protects the candidate directory; a Rust
+    # round derives it from its own provenance inside load_round.
+    candidate = (expected_rust or {}).get('executable', {}).get('path')
+    a, ac, ae = load_round(Path(left), rust_bin=candidate)
+    b, bc, be = load_round(Path(right), rust_bin=candidate)
     failures = [{'side': side, 'rule': rule} for side, errors in (('left', ae), ('right', be)) for rule in errors]
     if a and b:
         if a['side'] != 'ts':

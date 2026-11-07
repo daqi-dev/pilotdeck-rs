@@ -4,7 +4,7 @@ D0-pr1 / Refs #122，仅离线定标。规则先登记于 [normalization](../../
 
 ```sh
 python3 -I scripts/cli-parity/run_round.py --help
-python3 -I scripts/cli-parity/run_round.py --baseline /absolute/PilotDeck --output _tmp/20261017-d0/calibration
+python3 -I scripts/cli-parity/run_round.py --baseline /absolute/PilotDeck --node /opt/homebrew/bin/node --ts-read-dir /opt/homebrew/opt/libuv/lib --output _tmp/20261017-d0/calibration
 python3 -I scripts/cli-parity/controls.py --source _tmp/20261017-d0/calibration/ts-1 --output _tmp/20261017-d0/controls
 python3 -I scripts/cli-parity/test_cli_parity.py
 ```

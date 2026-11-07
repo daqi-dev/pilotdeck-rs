@@ -87,7 +87,12 @@ def alias_at_or_below(inner, outer):
                 break
             current = parent
     inner_n, outer_n = os.path.realpath(inner_s), os.path.realpath(outer_s)
-    return inner_n == outer_n or outer_n in Path(inner_n).parents
+    # r2: containment must compare Path to Path — the previous
+    # ``outer_n in Path(inner_n).parents`` compared a str against PosixPath
+    # elements and was always False, so the lexical fallback could only ever
+    # prove equality, never containment (the offline replay of protected trees
+    # that do not exist on the validating host silently never fired).
+    return Path(inner_n).is_relative_to(outer_n)
 
 
 def ts_read_root_overlap(root, protected, home=None):
@@ -104,6 +109,20 @@ def ts_read_root_overlap(root, protected, home=None):
     if home is not None and alias_at_or_below(home, root):
         return home
     return None
+
+
+def protected_trees(root, output, baseline, rust_bin=None):
+    """Single source of the #122 alias-safe protected-tree scope (r2 P1): the
+    recorder (run_round.ts_read_roots) and the offline validator
+    (compare.load_round) both build the trees a declared TS read root must not
+    overlap here, so the two scopes cannot drift apart again — the recorder
+    protects the Rust candidate's parent directory, and the offline side
+    replays that same tree from the recorded provenance. ``rust_bin`` is the
+    Rust candidate executable; its parent directory is the protected tree."""
+    trees = [Path(root).resolve(), Path(output).resolve(), Path(baseline).resolve()]
+    if rust_bin:
+        trees.append(Path(rust_bin).resolve().parent)
+    return trees
 
 
 def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False, ts_read_dirs=()):

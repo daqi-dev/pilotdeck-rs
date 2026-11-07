@@ -981,8 +981,10 @@ class ContractTests(unittest.TestCase):
 
     def test_host_control_empty_suite_exits_nonzero(self):
         output = self.root / 'empty-host-control'
+        declared = self.root / 'deps/libuv-1.52.1/lib'
         argv = ['host_negative_controls.py', '--baseline', str(self.root),
-                '--node', str(self.root / 'node'), '--output', str(output)]
+                '--node', str(self.root / 'node'), '--output', str(output),
+                '--ts-read-dir', str(declared), '--ts-read-dir', str(declared.parent)]
         completed = subprocess.CompletedProcess([], 0, b'', b'')
         with patch('sys.argv', argv), patch('host_negative_controls.SCENARIOS', []), \
                 patch('host_negative_controls.output_path', return_value=output), \
@@ -994,6 +996,11 @@ class ContractTests(unittest.TestCase):
         report = json.loads((output / 'control.json').read_text())
         self.assertEqual(report['status'], 'BLOCKED')
         self.assertIsNone(report['scenario'])
+        # r2 P2 (DS sibling#3): the host control forwards --ts-read-dir to
+        # run_round.py verbatim, repeatable and in order — dropping the
+        # forwarding loop must fail here, not only in real host runs.
+        self.assertEqual(report['runnerArgv'][-4:],
+                         ['--ts-read-dir', str(declared), '--ts-read-dir', str(declared.parent)])
 
     def test_exact_ts_warning_prefix_only_once_without_mutating_raw_evidence(self):
         source = self.source()
@@ -1248,9 +1255,11 @@ class ContractTests(unittest.TestCase):
         pristine = self.source()
         reference, left = self.root / 'reference', self.root / 'left'
 
-        def rebind(path, roots=(root,)):
-            run = json.loads((path / 'round.json').read_text())
-            run['provenance']['tsReadDirs'] = list(roots)
+        def rebind_profiles(path, run):
+            # r2 P2: single-mutation helper — re-derive every profile binding
+            # (round level and the per-case record.json digests) from run's
+            # provenance, so a tampered round differs from the honest one only
+            # in the mutated field instead of also breaking profile binding.
             bind_policy(run)
             if 'mockIsolation' in run:
                 bind_mock_policy(run)
@@ -1261,6 +1270,11 @@ class ContractTests(unittest.TestCase):
                 binding = run['mockIsolation'] if scenario['id'] in mock_ids else run['isolation']
                 row['profileSha256'] = binding['profileSha256']
                 save(row_path, row)
+
+        def rebind(path, roots=(root,)):
+            run = json.loads((path / 'round.json').read_text())
+            run['provenance']['tsReadDirs'] = list(roots)
+            rebind_profiles(path, run)
             return run
 
         shutil.copytree(pristine, reference)
@@ -1269,14 +1283,18 @@ class ContractTests(unittest.TestCase):
         rebind(left)
         self.assertEqual(compare(left, reference)['status'], 'PASS')
 
-        def tampered(rule, change):
+        def tampered(rule, change, stays_clean=()):
             shutil.rmtree(left)
             shutil.copytree(pristine, left)
             run = rebind(left)
             change(run)
             save(left / 'round.json', run)
-            self.assertIn(rule, [row['rule'] for row in compare(left, reference)['failures']],
+            rules = [row['rule'] for row in compare(left, reference)['failures']]
+            self.assertIn(rule, rules,
                           f'the comparator must reject tampered {rule} evidence')
+            for clean in stays_clean:
+                self.assertNotIn(clean, rules,
+                                 f'{clean} must stay green: the {rule} mutation is single')
 
         def profile_without_roots(run):
             # The realistic mutant: a comparator that derives profiles while
@@ -1297,22 +1315,54 @@ class ContractTests(unittest.TestCase):
         tampered('round.ts-read-dirs', lambda run: run['provenance'].pop('tsReadDirs'))
         tampered('round.node-identity', lambda run: run['provenance'].__setitem__(
             'nodeIdentity', {'node': 'v22.22.0', 'icu': '77.1', 'uv': '1.52.1'}))
-        # #2231 r1: the offline validator replays the recorder's protected-tree
-        # scope — recorded roots that cover home or the evidence tree itself
-        # fail closed, even though the profile bytes are re-derived from them
-        # consistently.
-        tampered('round.ts-read-dirs-protected',
-                 lambda run: run['provenance'].__setitem__('tsReadDirs', [str(Path.home())]))
-        tampered('round.ts-read-dirs-protected',
-                 lambda run: run['provenance'].__setitem__('tsReadDirs', [str(left)]))
-        tampered('round.ts-read-dirs-protected',
-                 lambda run: run['provenance'].__setitem__(
-                     'tsReadDirs', [run['provenance']['baseline']['path']]))
+        # #2231 r1 + r2: the offline validator replays the recorder's
+        # protected-tree scope from the same single source (policy.protected_trees).
+        # Each mutation below changes tsReadDirs alone and re-derives every
+        # profile binding from them, so the round stays internally consistent —
+        # the protected-tree rule, not an accidental profile mismatch, is the
+        # guard that fails.
+        def protected_roots(roots_of):
+            def change(run):
+                run['provenance']['tsReadDirs'] = [str(item) for item in roots_of(run)]
+                rebind_profiles(left, run)
+            return change
+
+        for why, roots_of in (('home itself', lambda run: [Path.home()]),
+                              ('the evidence tree', lambda run: [left]),
+                              ('the baseline', lambda run: [run['provenance']['baseline']['path']])):
+            with self.subTest(protected=why):
+                tampered('round.ts-read-dirs-protected', protected_roots(roots_of),
+                         stays_clean=('round.profile-binding', 'round.probe-profile'))
         # Consistent but different roots on one side only: not a PASS pair.
         shutil.rmtree(left)
         shutil.copytree(pristine, left)
         rebind(left, roots=('/PDRS-NODE-DEPS/other/lib',))
         self.assertIn('round.ts-read-dirs', [row['rule'] for row in compare(left, reference)['failures']])
+
+    def test_rust_round_ts_read_dirs_covering_the_candidate_fail_offline(self):
+        # r2 P1: the offline validator used to replay a narrower protected-tree
+        # scope than the recorder — the Rust candidate's parent directory was
+        # missing, so a tampered round whose tsReadDirs cover the candidate
+        # compared PASS although the recorder BLOCKS that root. Both sides now
+        # build the scope with the shared policy.protected_trees; the Rust
+        # round's tree is derived from its own provenance executable.
+        source, target = self.root / 'source', self.root / 'target'
+        synthetic_round(source, self.root / 'fixed-runtime')
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        run = json.loads((target / 'round.json').read_text())
+        # Single mutation: the declared roots alone. The Rust side profile never
+        # carries them (only the always-TS probe profile does), so every binding
+        # stays internally consistent and the candidate tree is the only guard
+        # that can fail.
+        run['provenance']['tsReadDirs'] = [expected['executable']['path']]
+        bind_policy(run)
+        if 'mockIsolation' in run:
+            bind_mock_policy(run)
+        save(target / 'round.json', run)
+        result = compare(source, target, expected)
+        self.assertEqual({row['rule'] for row in result['failures']},
+                         {'round.ts-read-dirs-protected', 'round.ts-read-dirs'}, result)
 
     def test_rust_stage_copies_binary_and_skills_and_keeps_baseline_unreadable(self):
         baseline, output = self.root / 'baseline', self.root / 'out'
@@ -3134,6 +3184,36 @@ class ContractTests(unittest.TestCase):
         summary = json.loads((output / 'summary.json').read_text())
         self.assertEqual(summary['status'], 'BLOCKED')
         self.assertIn('synthetic EPERM', summary['error'])
+
+    def test_ts_read_dir_cli_wiring_reaches_provenance_and_profiles(self):
+        # r2 P2 (DS sibling#3): end-to-end wiring for the --ts-read-dir CLI
+        # face — argv → ts_read_roots → provenance tsReadDirs and the profile
+        # file. The function-level tests pin the scope rules; this one fails if
+        # the CLI argument stops reaching the recorder's provenance or the
+        # profile derivation. (The legacy core suite has no mock-gateway
+        # scenario, so ts.sb is the profile written on this path.)
+        declared = self.root / 'deps/libuv-1.52.1/lib'
+        declared.mkdir(parents=True)
+        output = self.root / 'wired-run'
+        with patch('sys.argv', ['run_round.py', '--node', sys.executable,
+                                '--ts-read-dir', str(declared)]), \
+             patch('run_round.output_path', return_value=output), \
+             patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
+             patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
+             patch('run_round.node_identity', return_value=dict(PINNED_NODE)), \
+             patch('run_round.parity_lock', return_value=nullcontext({'pid': 1})), \
+             patch('run_round.preflight', return_value={'synthetic': 'preflight'}), \
+             patch('run_round.compare', return_value={'status': 'FAIL', 'failures': [{'rule': 'synthetic'}],
+                                                     'scenarios': 0}), \
+             patch('run_round.run_round') as product, redirect_stdout(io.StringIO()):
+            self.assertEqual(main(), 1)
+        self.assertEqual(product.call_count, 2)
+        provenance = product.call_args[0][5]
+        self.assertEqual(provenance['tsReadDirs'], [str(declared)])
+        self.assertEqual(provenance['nodeIdentity'], dict(PINNED_NODE))
+        text = (output / 'ts.sb').read_text()
+        self.assertIn(f'(subpath "{declared}")', text,
+                      'ts.sb must carry the declared dependency root')
 
     def test_snapshot_does_not_follow_links_or_open_fifo(self):
         root = self.root / 'tree'

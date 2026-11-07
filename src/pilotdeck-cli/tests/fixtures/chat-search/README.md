@@ -15,9 +15,12 @@ D0 的 30 个场景是本 JSON 的子集，沿用相同夹具、argv、stdout、
 ```sh
 PDRS_CLI_PARITY_SUITE=chat-search python3 -I scripts/cli-parity/run_round.py \
   --baseline /Users/da/ws/pilotdeck-rs/resources/PilotDeck \
-  --node /opt/homebrew/bin/node --output _tmp/20261023-d2-pr2-chat-search/d0 \
+  --node /opt/homebrew/bin/node --ts-read-dir /opt/homebrew/opt/libuv/lib \
+  --output _tmp/20261023-d2-pr2-chat-search/d0 \
   --rust-bin "$PWD/_build/cargo-target/debug/pilotdeck" --rust-source "$PWD"
 ```
+
+Node 必须恰为钉版 `v22.22.0 / ICU 78.2 / libuv 1.52.1`（2026-10-31 决策卡 A 案）：`run_round.node_identity()` 每轮启动即打印并断言，不符即 BLOCKED，绝不静默换用本机其它 Node。本机 `/opt/homebrew/bin/node` 实测（2026-11-07）即该构建，其 libuv 在 `/opt/homebrew/opt/libuv`；钉版 Node 的依赖目录在 Homebrew 前缀之外的目标机上必须改用对应的 `--ts-read-dir DIR` 只读登记（口径见 `scripts/cli-parity/README.md`）。
 
 D0 保留原隔离能力探针、共享锁、30 场景预算和两轮 TS 定标。宿主不具备能力时结果必须记录为 BLOCKED。
 
