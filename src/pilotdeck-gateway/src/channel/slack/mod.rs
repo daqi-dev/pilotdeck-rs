@@ -51,9 +51,12 @@ const DEFAULT_BASE_URL: &str = "https://slack.com/api";
 const WEBSOCKET_ERROR: &str = "Error: websocket error";
 
 /// The socket-mode session a live `this.app` holds: the WS send half, used
-/// only by `stop()`'s `close(1000)`. `None` until the socket opens — the
-/// failed `connections.open` cell keeps `app` non-null with no socket, exactly
-/// like the TS instance whose `start()` threw after `new BoltApp(...)`.
+/// only by `stop()`'s `close(1000)`. `None` until the socket opens — a failed
+/// `connections.open` or handshake leaves `app` empty here, where the TS
+/// instance keeps `this.app` set after `new BoltApp(...)` threw; the
+/// divergence is unobservable without a socket (no inbound frames reach
+/// `sendReply`) and is registered in A8.3-CH-SLACK-001 范围 item 6, to be
+/// settled with the production wiring.
 struct LiveApp {
     sink: Option<
         futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
@@ -259,8 +262,11 @@ impl ChannelAdapter for SlackChannel {
             // shared fields), `event`/`error` registration (the reader task),
             // `app.start()` (connections.open + WS), `auth.test`, the connected
             // log. A failure logs `slack: start failed: ${e}` and returns the
-            // empty handle with `this.app` still set — the TS instance never
-            // clears it on the start path, and neither does the port.
+            // empty handle. TS keeps `this.app` set on the failed-start path;
+            // the port leaves `runtime.app` set only when the failure landed
+            // after the WS opened (auth.test and later), and empty for a
+            // failed `connections.open` / handshake — the registered
+            // divergence (A8.3-CH-SLACK-001 范围 item 6).
             if let Err(error) = start_session(&shared).await {
                 shared.log("error", format!("slack: start failed: {error}"));
                 return Ok(Arc::new(NoopHandle) as Arc<dyn ChannelHandle>);
