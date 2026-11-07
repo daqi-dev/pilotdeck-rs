@@ -1009,6 +1009,21 @@ class EnvironmentControls(unittest.TestCase):
             ('temp-base-overridden-by-an-absolute-target',
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = PUBLISH_DIR / path.parent / f'.negctl-{path.name}.tmp'"),
+            # r9（zai boundary P1 + DeepSeek boundary P1）：f-string 插值位也能塞进绝对路径。
+            ('temp-fstring-interpolates-the-target',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'{path}'"),
+            # r9（zai sibling P2 + DeepSeek sibling P2）：r3 的「三处各一条」配对补齐。
+            ('temp-escapes-the-scratch-dir',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / '..' / 'src' / f'.negctl-{path.name}.tmp'"),
+            ('root-constant-rebound-to-another-tree',
+             'ROOT = Path(__file__).resolve().parents[5]',
+             "ROOT = Path(__file__).resolve().parents[5]\nROOT = Path('/tmp')"),
+            # r9（zai boundary P2）：计数仍是 1，只有「派生逐字钉」判得出来。
+            ('root-constant-retargeted-one-level-up',
+             'ROOT = Path(__file__).resolve().parents[5]',
+             'ROOT = Path(__file__).resolve().parents[4]'),
         ),
         'model-complete/negative-controls.py': (
             ('scratch-rebound-after-the-correct-derivation',
@@ -1069,6 +1084,14 @@ class EnvironmentControls(unittest.TestCase):
             ('temp-base-overridden-by-an-absolute-target',
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = PUBLISH_DIR / path.parent / f'.negctl-{path.name}.tmp'"),
+            # r9（DeepSeek sibling P1）：插值位里放目录，同样把基抵消掉。
+            ('temp-fstring-interpolates-a-directory',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'{path.parent}' / f'.negctl-{path.name}.tmp'"),
+            # r9（DeepSeek sibling P2）：小写仓根常量的重绑也要有 kill 证明。
+            ('root-constant-rebound-to-another-tree',
+             'root = Path(__file__).resolve().parents[5]',
+             "root = Path(__file__).resolve().parents[5]\nroot = Path('/tmp')"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1217,15 +1240,43 @@ class EnvironmentControls(unittest.TestCase):
 
         r8（DeepSeek boundary P1）：只判左侧是 `PUBLISH_DIR` 时，右侧能用 `'..'` 把基
         抵消掉 —— `PUBLISH_DIR / '..' / 'src' / f'…'` 判绿，而落盘正好是被扫的 `src/`。
+        r9（zai boundary P1 + DeepSeek boundary/sibling P1）：f-string 的插值位原先无条件
+        放行 —— `f'{path}'` 插进来就是绝对路径，pathlib 丢掉整条左侧基，临时文件**就是**
+        被变异源本身（`open('wb')` 原地截断）。插值只收「文件名原子」：`X.name/.stem/.suffix`。
         """
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value
-            return bool(value) and not value.startswith('/') and '..' not in value.split('/')
+            if not value:
+                return True
+            return not value.startswith('/') and '..' not in value.split('/')
         if isinstance(node, ast.JoinedStr):
-            return all(self.plain_relative_component(part)
-                       if isinstance(part, ast.Constant) else True
-                       for part in node.values)
+            return all(self.plain_relative_component(part) for part in node.values)
+        if isinstance(node, ast.FormattedValue):
+            value = node.value
+            return (isinstance(value, ast.Attribute)
+                    and value.attr in ('name', 'stem', 'suffix')
+                    and isinstance(value.value, ast.Name))
         return False
+
+    @staticmethod
+    def first_parameter(body):
+        """函数体的第一个位置形参名（没有则空串）。"""
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if isinstance(node, ast.FunctionDef):
+                args = node.args.posonlyargs + node.args.args
+                return args[0].arg if args else ''
+        return ''
+
+    @staticmethod
+    def module_binding_source(source, name):
+        """模块顶层 `name = <表达式>` 的右侧源码；不是唯一一条顶层绑定时返回空串。"""
+        values = []
+        for node in ast.parse(source).body:
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == name):
+                values.append(ast.unparse(node.value))
+        return values[0] if len(values) == 1 else ''
 
     def roots_at(self, body, node, root_constant, seen=None):
         """表达式是否**以** `root_constant` 为基底派生（不是「里面提到过」）。
@@ -1261,7 +1312,12 @@ class EnvironmentControls(unittest.TestCase):
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             if (ast.unparse(node.left) == 'Path(root)' and isinstance(node.right, ast.Name)
                     and node.right.id == root_constant):
-                return self.body_binding_count(body, 'root') == 1
+                # r9（zai concurrency P2 + DeepSeek boundary P2）：只数绑定次数分不出
+                # 「形参」与「本地重绑」—— 把形参改名再补 `root = path.parent`，计数仍是 1。
+                # 要求 `root` 正是第一个形参、且全函数只绑这一次；`Path` 本身也不许被重绑。
+                return (self.first_parameter(body) == 'root'
+                        and self.body_binding_count(body, 'root') == 1
+                        and self.body_binding_count(body, 'Path') == 0)
             if not self.plain_relative_component(node.right):
                 return False
             return self.roots_at(body, node.left, root_constant, seen)
@@ -1306,6 +1362,12 @@ class EnvironmentControls(unittest.TestCase):
         # 判成仓外，临时文件落回被变异源旁边。
         self.assertEqual(self.body_binding_count(source, base), 1,
                          f'#1692 §9 r2 the repository-root constant {base} is bound exactly once')
+        # r9（zai boundary P2）：只数次数不看值 —— `parents[5]` 改成 `parents[4]` 让
+        # PUBLISH_DIR 落进被扫的 `src/`，或整体改 `Path('/tmp')` 让 `is_relative_to` 极性翻转，
+        # 计数都还是 1。仓根常量的派生逐字钉死。
+        self.assertEqual(self.module_binding_source(source, base),
+                         'Path(__file__).resolve().parents[5]',
+                         f'#1692 §9 r9 the repository-root constant {base} is the tree root')
         # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
         # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
         # r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的派生判据还是
@@ -2257,6 +2319,27 @@ self_check_controls_run | return | return problems
                 ('atomic-publish-root-rebound-before-the-derivation',
                  '    publish = Path(root) / PUBLISH_DIR',
                  '    root = path.parent\n    publish = Path(root) / PUBLISH_DIR'),
+                # r9（DeepSeek boundary P1）：共享实现的插值位同样能塞进绝对路径。
+                ('atomic-publish-temp-fstring-interpolates-the-target',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'{path}'"),
+                # r9（zai sibling P2 + DeepSeek sibling P2）：核心 body 上的 `..` 逃逸与
+                # 绝对右操作数也要各有 kill 证明（`roots_at` 是同一份判据，但接线要证）。
+                ('atomic-publish-temp-escapes-the-scratch-dir',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / '..' / 'src' / f'.negctl-{path.name}.tmp'"),
+                ('atomic-publish-temp-base-overridden-by-an-absolute-target',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / path.parent / f'.negctl-{path.name}.tmp'"),
+                # r9（zai concurrency P2 + DeepSeek boundary P2）：形参改名 + 本地重绑，
+                # 只数 `root` 的绑定次数时仍是 1。
+                ('atomic-publish-root-parameter-renamed-and-rebound',
+                 'def write_source_atomic(root, path, data):\n',
+                 'def write_source_atomic(tree_root, path, data):\n    root = path.parent\n'),
+                # r9（DeepSeek sibling P2）：判据里的 `Path` 本身也不许被重绑。
+                ('atomic-publish-path-callable-rebound',
+                 '    publish = Path(root) / PUBLISH_DIR',
+                 '    Path = lambda value: path.parent\n    publish = Path(root) / PUBLISH_DIR'),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
