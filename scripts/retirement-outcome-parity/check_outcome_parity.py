@@ -73,6 +73,12 @@ sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
 
+# 负控件条数（N1–N17）：本文件是三件套共享的**单一登记点**——negative_controls 的
+# 执行器（run_locked 拿到 controls 后核数量）与 self_check 的 check_negctl（钉
+# KILLED 数）都从这里读，不各抄一份（评审 r7 P1：控件集被删到 0 条时执行器自己
+# 判 PASS rc=0 的空真）。
+EXPECTED_CONTROLS = 17
+
 # —— 登记事实（diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md「基线依据」）——
 SCHEMA = 'retirement-outcome-parity/ts-oracle v1'
 BASELINE_REVISION = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'

@@ -123,43 +123,105 @@ def is_own_summary_artifact(name):
     return name in ('summary.json', 'summary.json.tmp') or tmp_owner_pid(name) is not None
 
 
-def invalidate_stale_summary(out_root):
+def _output_lock_guard_fd(out_root):
+    """以非阻塞 flock 探测输出目录锁，供模块体失效段用（评审 r7 P2）。
+
+    真正的互斥仍在 `check_outcome_parity.output_lock`（run_locked 里拿）；这里只回答
+    「现在**敢不敢**删这个目录里已发布的 summary.json」。返回 ``(fd, held)``：
+    fd 为 None 时 held 一定为 True——**fail-closed**：fcntl 缺失 / 锁路径打不开 /
+    探测本身出错都当被占，宁可不删也绝不删掉一个活进程刚发布的结果。
+    拿到锁时 fd 保持持有、由调用方在删完后释放：删除期间持锁，别的执行器不可能
+    同时往这个目录发布新 summary（否则「探测空闲→对方发布→我们再删」的窗口里
+    还是会误删）。
+    """
+    path = os.path.join(os.fspath(out_root), '.retirement-outcome-parity.lock')
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0),
+                     0o600)
+    except (OSError, ValueError):
+        return None, True
+    try:
+        import fcntl
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return None, True
+    except Exception:  # noqa: BLE001 - fcntl 缺失 / 平台不支持：fail-closed 当被占
+        os.close(fd)
+        return None, True
+    return fd, False
+
+
+def _release_output_lock_guard(fd):
+    try:
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except Exception:  # noqa: BLE001 - 释放失败只剩 close 兜底
+        pass
+    os.close(fd)
+
+
+def invalidate_stale_summary(out_root, respect_output_lock=False):
     """删掉该目录里上一轮的 ``summary.json`` 与残留 tmp。
 
     只动本执行器自己的产物名；另一个**仍在跑**的执行器的
     ``summary.json.<pid>.tmp`` 不删（删掉它会让对方的原子发布 ``replace`` 抛
-    ``FileNotFoundError``；并发互斥的残余登记在跟进单）。目录不存在时**不创建**。
+    ``FileNotFoundError``）。目录不存在时**不创建**。
+
+    ``respect_output_lock=True``（模块体早退路径用）：先非阻塞探测输出目录锁，
+    锁被**另一个进程**占着时不删已发布的 ``summary.json``（那是持锁方刚发布的
+    结果，删掉就是丢证据），只回收死 pid 的残留 tmp；探测到空闲才持锁删除。
+    锁文件名与 `check_outcome_parity.LOCK_BASENAME` 同源常量（字面一致）。
     """
     root = os.fspath(out_root)
+    skip_published = False
+    guard_fd = None
+    if respect_output_lock:
+        guard_fd, skip_published = _output_lock_guard_fd(out_root)
     try:
-        if not os.path.exists(root):
-            return True  # 新目录：没有旧结果可失效，也不必替调用方创建
-        if not os.path.isdir(root):
-            print(f'negative_controls: {root} is not a directory', file=sys.stderr)
-            return False
-        entries = sorted(os.listdir(root))
-    except OSError as error:
-        print(f'negative_controls: cannot use {root}: {error}', file=sys.stderr)
-        return False
-    removed = []
-    for name in entries:
-        path = os.path.join(root, name)
-        if not (os.path.isfile(path) and is_own_summary_artifact(name)):
-            continue
-        owner = tmp_owner_pid(name)
-        if owner is not None and owner != os.getpid() and pid_alive(owner):
-            print(f'negative_controls: keeping live {name} (pid {owner} runs)',
-                  file=sys.stderr)
-            continue
         try:
-            os.unlink(path)
+            if not os.path.exists(root):
+                return True  # 新目录：没有旧结果可失效，也不必替调用方创建
+            if not os.path.isdir(root):
+                print(f'negative_controls: {root} is not a directory', file=sys.stderr)
+                return False
+            entries = sorted(os.listdir(root))
         except OSError as error:
-            print(f'negative_controls: cannot remove {path}: {error}', file=sys.stderr)
+            print(f'negative_controls: cannot use {root}: {error}', file=sys.stderr)
             return False
-        removed.append(name)
-    if removed:
-        print(f'removed stale {", ".join(removed)}', file=sys.stderr)
-    return True
+        removed = []
+        for name in entries:
+            path = os.path.join(root, name)
+            if not (os.path.isfile(path) and is_own_summary_artifact(name)):
+                continue
+            if skip_published and name == 'summary.json':
+                # 输出目录锁被别的进程占着：这个 summary.json 是持锁方（或它之前
+                # 那轮）的现行结果，失效它归 run_locked 拿到锁之后的权威失效负责。
+                print(f'negative_controls: output lock held; keeping {name}',
+                      file=sys.stderr)
+                continue
+            owner = tmp_owner_pid(name)
+            if owner is not None and owner != os.getpid() and pid_alive(owner):
+                print(f'negative_controls: keeping live {name} (pid {owner} runs)',
+                      file=sys.stderr)
+                continue
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                # 并发失效 / 别的进程先删了同一批条目：目标已达成（不在盘上），
+                # 不算失败（评审 r7 P2：返回 False 会让本进程被当成 rc2 早退）。
+                continue
+            except OSError as error:
+                print(f'negative_controls: cannot remove {path}: {error}', file=sys.stderr)
+                return False
+            removed.append(name)
+        if removed:
+            print(f'removed stale {", ".join(removed)}', file=sys.stderr)
+        return True
+    finally:
+        if guard_fd is not None:
+            _release_output_lock_guard(guard_fd)
 
 
 def build_classifier():
@@ -368,7 +430,10 @@ if __name__ == '__main__':
         # argparse 起不来时**不猜复杂形状**，但字面写出的输出目录仍必须失效，
         # 否则旧 PASS 冒充本轮（Codex r12 P0）。清完按入口失败 rc2 退出。
         _outputs = literal_outputs(sys.argv[1:])
-    _failures = [path for path in _outputs if not invalidate_stale_summary(path)]
+    # 模块体失效在输出目录锁**之外**：加 respect_output_lock 探测，锁被别人占着时
+    # 只回收死 pid tmp、不删已发布的 summary.json（run_locked 拿到锁后有权威失效）。
+    _failures = [path for path in _outputs
+                 if not invalidate_stale_summary(path, respect_output_lock=True)]
     if _failures or not _classified:
         raise SystemExit(2)
 
@@ -378,6 +443,7 @@ if not sys.flags.isolated:
 
 import importlib.util
 import json
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -445,6 +511,9 @@ def load_checker():
 CHECK = load_checker()
 # 判据侧常量的唯一登记值（不在负控里再硬编码一份，避免常量漂移后测错对象）。
 CAPABILITY_UNAVAILABLE = CHECK.CAPABILITY_UNAVAILABLE
+# 控件条数同源读 check_outcome_parity（评审 r7 P1）：执行器拿到 controls 后核
+# 数量，控件集被删空 / 删部分时**空真不得判 PASS**——rc2 收口，不发布 summary。
+EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
 
 
 class OutputError(Exception):
@@ -542,19 +611,33 @@ def open_output_dir(root, parts=()):
 
 
 def write_at(dir_fd, name, text, exclusive=False):
-    """相对 ``dir_fd`` 写一个文件：``O_NOFOLLOW`` + 失败一律折成 ``OutputError``（rc2）。
+    """相对 ``dir_fd`` 写一个文件：``O_NOFOLLOW|O_NONBLOCK`` + ``S_ISREG`` + 失败一律折成
+    ``OutputError``（rc2）。
 
     ``O_NOFOLLOW`` 让预置的 ``.../methods.json -> ~/.bashrc`` 直接 ``ELOOP`` 失败，
-    而不是以本进程权限截断目标（DeepSeek r11 P1）。``exclusive`` 再叠 ``O_EXCL``，
+    而不是以本进程权限截断目标（DeepSeek r11 P1）。``O_NONBLOCK`` + ``S_ISREG``
+    （评审 r7 P2）挡**预置 FIFO**：无读者端的 FIFO 会让裸 ``O_WRONLY`` open 永久
+    阻塞（整个执行器连同 CI job 一起挂死），带读者端的 FIFO 则 open 立即成功、
+    只有 ``fstat`` 后的 ``S_ISREG`` 判定能拒。``exclusive`` 再叠 ``O_EXCL``，
     用于原子发布的 tmp。``UnicodeEncodeError`` / 嵌入 NUL 的路径是 ``ValueError``
     而不是 ``OSError``，不接住就会冒成 traceback rc1（两家评审 r13）。
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _NOFOLLOW
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _NOFOLLOW | os.O_NONBLOCK
     if exclusive:
         flags |= os.O_EXCL
     try:
         path_fd = os.open(name, flags, 0o600, dir_fd=dir_fd)
     except (OSError, ValueError) as error:
+        raise OutputError(f'cannot write {name}: {error}') from error
+    # fstat 的是**要写入的那个 fd 本身**（fd 不可变），不是再走一次路径名——
+    # 带读者端的 FIFO 在上面 open 成功，只有这里的 S_ISREG 能拒。
+    try:
+        if not stat.S_ISREG(os.fstat(path_fd).st_mode):
+            os.close(path_fd)
+            raise OutputError(
+                f'cannot write {name}: not a regular file (planted FIFO / '
+                'device / socket); refusing to write')
+    except OSError as error:
         raise OutputError(f'cannot write {name}: {error}') from error
     try:
         with os.fdopen(path_fd, 'w', encoding='utf-8') as handle:
@@ -1363,6 +1446,13 @@ def run_locked(args, out_root):
         return 2
     except Exception as error:  # noqa: BLE001 - 控件构造失败同样按输入不可用收口
         print(f'negative_controls: cannot assemble controls: {error!r}', file=sys.stderr)
+        return 2
+    if len(controls) != EXPECTED_CONTROLS:
+        # 控件集数量与登记值不符（被删空 / 删部分 / 多了未知条目）：空集会让下面的
+        # `SURVIVED == 0 and INVALID == 0` 空真判 PASS、rc=0（评审 r7 P1）。
+        print(f'negative_controls: assembled {len(controls)} controls but '
+              f'{EXPECTED_CONTROLS} are registered (N1–N{EXPECTED_CONTROLS}); '
+              'refusing to judge an unexpected control set', file=sys.stderr)
         return 2
 
     records = []
