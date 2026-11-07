@@ -631,6 +631,10 @@ class _Constants(dict):
 
 
 CHDIR_CALLS = frozenset({'chdir', 'fchdir'})
+# Modules whose ``chdir`` moves the process directory: ``os`` / ``os.path``
+# (``import os.path`` binds the name ``os`` to ``os.path`` in the import map)
+# and ``contextlib`` (the 3.11+ context manager).
+CHDIR_MODULES = frozenset({'os', 'os.path', 'contextlib'})
 
 
 def _changes_directory(tree):
@@ -654,15 +658,19 @@ def _changes_directory(tree):
             continue
         module_part, _, name = spelling.rpartition('.')
         if module_part:
-            # ``os.chdir`` and ``import os as o; o.chdir`` — the module part
-            # resolves through the import map.
-            if name in CHDIR_CALLS and aliases.get(module_part, module_part) == 'os':
+            # ``os.chdir`` / ``contextlib.chdir`` and their aliases — the
+            # module part resolves through the import map. ``import os.path``
+            # binds ``os`` to ``os.path`` in that map, yet ``os.chdir`` is
+            # still a real chdir, so the whole os family is accepted.
+            module = aliases.get(module_part, module_part)
+            if name in CHDIR_CALLS and module in CHDIR_MODULES:
                 return True
             continue
         # A bare name: ``from os import chdir`` / ``... import chdir as cd``
         # reaches the same call through the qualified name the map records.
         qualified = aliases.get(name, name)
-        if name in CHDIR_CALLS or (qualified.startswith('os.')
+        owner = qualified.rpartition('.')[0]
+        if name in CHDIR_CALLS or (owner in CHDIR_MODULES
                                   and qualified.rpartition('.')[2] in CHDIR_CALLS):
             return True
     return False
@@ -713,76 +721,152 @@ def _mutated_containers(tree):
     stale key was accepted.
 
     Deep writes (``CH['a']['b'] = ...``) and mutations of a nested container
-    (``CH['a'].update(...)``) are attributed to the outermost name. This is
-    deliberately blunt: the whole point is to report the shape rather than
-    guess which element the runtime sees.
-    """
-    names = set()
+    (``CH['a'].update(...)``) are attributed to the outermost name. The point
+    is to report the shape rather than guess which element the runtime sees.
 
-    def collect_from_target(target):
+    Depth is tracked because a shallow copy separates the two cases: replacing
+    ``{**CH}['k']`` writes a key of the *copy* and leaves ``CH['k']`` alone,
+    while ``{**CH}['a']['b'] = ...`` rewrites the nested dict ``CH['a']`` names.
+    Depths saturate at two — nothing below the first level changes a verdict.
+    """
+    NESTED = 1
+    depths = {}  # name -> non-empty set of depths at which its container is hit
+
+    def record(container):
+        name = _container_root_name(container)
+        depth = _container_depth(container)
+        if name is None or depth is None:
+            return
+        depths.setdefault(name, set()).add(min(depth, 2))
+
+    def record_target(target):
         for child in ast.walk(target):
             if isinstance(child, ast.Subscript):
-                name = _container_root_name(child.value)
-                if name is not None:
-                    names.add(name)
+                # ``CH['k'] = ...`` mutates the container *holding* the key,
+                # so the depth is that of ``child.value``, not of the target.
+                record(child.value)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                collect_from_target(target)
+                record_target(target)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            collect_from_target(node.target)
+            record_target(node.target)
             if (isinstance(node, ast.AugAssign)
                     and isinstance(node.target, ast.Name)):
                 # ``CH |= {...}`` / ``CH += [...]`` rebinds through the same
                 # name and leaves the literal out of date.
-                names.add(node.target.id)
+                record(node.target)
         elif isinstance(node, ast.Delete):
             for target in node.targets:
-                collect_from_target(target)
+                record_target(target)
         elif isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name)):
             func = node.func
             if isinstance(func, ast.Attribute) and func.attr in MUTATING_METHODS:
-                name = _container_root_name(func.value)
-                if name is not None:
-                    names.add(name)
+                record(func.value)
             elif node.args and _dotted_spelling(func) in SETITEM_CALLS:
-                name = _container_root_name(node.args[0])
-                if name is not None:
-                    names.add(name)
-    aliases = []
+                record(node.args[0])
+    # (name, root, levels between them); ``copy_of`` marks shallow copies,
+    # whose top level is a separate object while every nested one is shared.
+    same_object = []
+    copy_of = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
         pairs, _ = _assignment_pairs(node)
         for name, value in pairs:
-            root = None
             if isinstance(value, ast.Name):
                 # ``ALIAS = CH``: the same object under a second name.
-                root = value.id
+                same_object.append((name, value.id, 0))
             elif isinstance(value, ast.Subscript):
-                # ``SUB = CH['a']`` names the *same* nested object; the root
-                # is followed through any number of aliases by the closure.
+                # ``SUB = CH['a']`` names the *same* nested object one level
+                # down; the closure below follows any number of aliases.
                 root = _container_root_name(value)
-            elif (isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Attribute)
-                    and value.func.attr == 'copy'
-                    and not value.args and not value.keywords):
-                # ``CP = CH.copy()`` is shallow: the top level is new, but a
-                # nested container is still shared, so a write through the copy
-                # keeps rewriting what ``CH['a']`` reads.
-                root = _container_root_name(value.func.value)
-            if root is not None:
-                aliases.append((name, root))
+                depth = _container_depth(value)
+                if root is not None and depth is not None:
+                    same_object.append((name, root, min(depth, 2)))
+            else:
+                for root in _shallow_copy_roots(value):
+                    copy_of.append((name, root))
     grew = True
     while grew:
         grew = False
-        for left, right in aliases:
-            if (left in names) != (right in names):
-                names.add(left)
-                names.add(right)
-                grew = True
-    return frozenset(names)
+        for name, root, levels in same_object:
+            # A write through ``name`` at depth d is a write into ``root`` at
+            # depth d + levels; the reverse is d - levels, and a write that
+            # does not reach that far leaves ``name``'s container alone.
+            for source, target, shift in ((name, root, levels),
+                                          (root, name, -levels)):
+                for depth in tuple(depths.get(source, ())):
+                    reached = depth + shift
+                    if reached < 0:
+                        continue
+                    reached = min(reached, 2)
+                    if reached not in depths.setdefault(target, set()):
+                        depths[target].add(reached)
+                        grew = True
+        for name, root in copy_of:
+            # Only the nested containers survive the copy; a write into the
+            # copy's own top level never reaches the original.
+            for source, target in ((name, root), (root, name)):
+                nested = {depth for depth in depths.get(source, ())
+                          if depth >= NESTED}
+                if not nested <= depths.setdefault(target, set()):
+                    depths[target] |= nested
+                    grew = True
+    return frozenset(name for name, hits in depths.items() if hits)
+
+
+def _shallow_copy_roots(value):
+    """Names whose container ``value`` shallow-copies.
+
+    ``CH.copy()``, ``copy.copy(CH)``, ``dict(CH)``, ``list(CH)``, ``{**CH}``
+    and ``[*CH]`` all build a new top-level object that still holds the very
+    same nested containers, so a write through any of them *below its own top
+    level* rewrites what ``CH['a']`` reads. The earlier reading only recognised
+    the ``.copy()`` method spelling; the other five were edges to nothing and
+    the stale key was accepted. A copy's own top-level key is rebound on the
+    copy alone — replacing ``{**CH}['k']`` leaves ``CH['k']`` untouched — so
+    the edge only carries writes that reach a nested container; see
+    ``_mutated_containers``.
+    """
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+        if value.func.id in ('dict', 'list') and len(value.args) == 1 and not value.keywords:
+            root = _container_root_name(value.args[0])
+            return [root] if root is not None else []
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+        func = value.func
+        if func.attr == 'copy' and not value.keywords:
+            if value.args:
+                # ``copy.copy(CH)``: the module receiver is not a container.
+                root = _container_root_name(value.args[0])
+            elif not value.args:
+                # ``CH.copy()``.
+                root = _container_root_name(func.value)
+            return [root] if root is not None else []
+    if isinstance(value, ast.Dict):
+        return [root for key, element in zip(value.keys, value.values)
+                if key is None and (root := _container_root_name(element)) is not None]
+    if (isinstance(value, ast.List) and len(value.elts) == 1
+            and isinstance(value.elts[0], ast.Starred)):
+        root = _container_root_name(value.elts[0].value)
+        return [root] if root is not None else []
+    return []
+
+
+def _container_depth(node):
+    """How many steps below the root name a container expression reaches.
+
+    ``CH`` is the root itself (0); ``CH['a']`` and ``CH.a`` name a container
+    held *inside* it (1); ``CH['a']['b']`` two levels down (2). Only nested
+    containers survive a shallow copy, so the depth decides whether a write
+    through the copy reaches the original.
+    """
+    depth = 0
+    while isinstance(node, (ast.Subscript, ast.Attribute)):
+        depth += 1
+        node = node.value
+    return depth if isinstance(node, ast.Name) else None
 
 
 def _constants(tree):
@@ -1161,9 +1245,13 @@ def _segments(node, constants, self_path, seen=()):
     satisfy.
     """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        if node.value.startswith('/'):
+        if (node.value.startswith('/') or node.value.startswith('\\')
+                or _is_drive_prefixed(node.value)):
             # An absolute literal is not a path below the repository root; the
-            # discovery loop never keys it, so it needs no anchor.
+            # discovery loop never keys it, so it needs no anchor. A
+            # drive-prefixed or backslash-rooted literal is absolute on
+            # Windows and relative on POSIX, so the key would depend on the
+            # platform: nothing may be keyed and the caller reports it.
             return None
         # Internal ``..`` collapses here as it does at runtime
         # (``Path('sms/../mod.rs')`` is ``mod.rs``), while a *leading* ``..``
@@ -2031,6 +2119,11 @@ def _is_drive_prefixed(value):
             and value[2] in '\\/')
 
 
+def _is_drive_segment(part):
+    """Whether one joined component is a bare drive (``C:`` in ``C:/tmp``)."""
+    return len(part) == 2 and part[0].isalpha() and part[1] == ':'
+
+
 def _resets_join(value):
     """Whether a *filesystem* join argument discards the pieces before it."""
     if value.startswith('/') or value.startswith('\\'):
@@ -2051,6 +2144,9 @@ def _relative_path_segments(node, constants):
     """
     text = _filesystem_join_text(node, constants)
     if not text or _resets_join(text):
+        return None
+    if any(_is_drive_segment(part) or part.startswith('\\')
+           for part in text.split('/')):
         return None
     segments = _normalised_segments(
         tuple(part for part in text.split('/') if part not in ('', '.')))
@@ -2089,7 +2185,69 @@ def _is_path_join_call(func, constants, aliases):
     return False
 
 
-def _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
+def _names_sys_path(node, aliases, bound):
+    """Whether an expression denotes the interpreter's ``sys.path`` list.
+
+    ``sys.path`` is reached through ``import sys as s`` (``s.path``), through
+    ``from sys import path`` (a bare name the import map records), and through
+    a plain binding (``P = sys.path``) — the alias map alone only covers the
+    module spellings.
+    """
+    spelling = _dotted_spelling(node)
+    if spelling is not None:
+        head, _, rest = spelling.partition('.')
+        module = aliases.get(head)
+        if module is not None:
+            spelling = f'{module}.{rest}' if rest else module
+        if spelling == 'sys.path':
+            return True
+    return isinstance(node, ast.Name) and node.id in bound
+
+
+def _sys_path_bindings(tree, aliases):
+    """Names a table binds to ``sys.path`` itself (``P = sys.path``)."""
+    bound = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        pairs, _ = _assignment_pairs(node)
+        for name, value in pairs:
+            if _names_sys_path(value, aliases, frozenset()):
+                bound.add(name)
+    return frozenset(bound)
+
+
+def _inserted_elements(value, constants=None, seen=()):
+    """The directory expressions an insertion adds (container elements too).
+
+    A named list — ``DIRS = [str(FIXTURES / '_shared')]`` followed by
+    ``sys.path.extend(DIRS)`` — keeps the same element behind a constant, so
+    the name is followed through the table exactly as ``_string_value`` does.
+    """
+    if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+        return list(value.elts)
+    if (constants is not None and isinstance(value, ast.Name)
+            and value.id not in seen and value.id in constants):
+        return _inserted_elements(constants[value.id], constants, seen + (value.id,))
+    return [value]
+
+
+def _carries_a_directory_literal(value, constants):
+    """Whether one inserted value names a directory this scanner cannot search.
+
+    An absolute literal outside the repository (``/tmp/thirdparty``) is the
+    same harmless insertion as any third-party ``sys.path`` entry: no module
+    under it can hide a repository file, so it is not reported.
+    """
+    text = _string_value(value, constants)
+    if (text is not None and (text.startswith('/') or text.startswith('\\')
+                              or _is_drive_prefixed(text))):
+        return False
+    return (_spells_a_repository_path(value, constants)
+            or (text is not None and ('/' in text or '\\' in text)))
+
+
+def _inserts_a_repository_directory_into_sys_path(node, constants, aliases, bound=frozenset()):
     """Whether a call adds a repository directory to ``sys.path``.
 
     ``sys.path.insert(0, str(FIXTURES / '_shared'))`` makes a bare ``import
@@ -2097,7 +2255,11 @@ def _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
     directories it knows (the fixture tree and the table's own), so the
     helper's discovery key is never derived and the table looks self-contained.
     A helper changed there would not schedule the table. Any path-carrying
-    argument to ``sys.path.insert/append/extend`` is therefore reported.
+    argument to ``sys.path.insert/append/extend`` is therefore reported,
+    including the elements of a container passed to ``extend`` — and the
+    target is resolved through module aliases and plain bindings, so
+    ``import sys as s; s.path.append(...)`` and ``P = sys.path; P.append(...)``
+    are the same call.
     """
     if not isinstance(node, ast.Call) or not node.args:
         return False
@@ -2105,14 +2267,15 @@ def _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
     if not isinstance(func, ast.Attribute) or func.attr not in (
             'insert', 'append', 'extend'):
         return False
-    target = _dotted_spelling(func.value)
-    # ``from sys import path`` binds the list under a bare name.
-    if target != 'sys.path' and aliases.get(target) != 'sys.path':
+    if not _names_sys_path(func.value, aliases, bound):
         return False
-    return any(_spells_a_repository_path(argument, constants)
-               or (value := _string_value(argument, constants)) is not None
-               and '/' in value
-               for argument in node.args)
+    arguments = list(node.args)
+    if func.attr == 'insert':
+        # ``sys.path.insert(0, directory)`` — the first argument is the index.
+        arguments = arguments[1:]
+    return any(_carries_a_directory_literal(element, constants)
+               for argument in arguments
+               for element in _inserted_elements(argument, constants))
 
 
 def _enumerates_a_directory(func, aliases):
@@ -2164,6 +2327,75 @@ def _bare_tail(node, constants, seen=()):
     return False
 
 
+def _trailing_literal_text(node, constants, seen=()):
+    """The literal path text an expression ends with, in path order.
+
+    Only the tail matters: a discovery key is the last two components, and a
+    piece before them cannot move them. ``os.path.join(ROOT, 'my dir',
+    'mod.rs')`` ends with ``my dir/mod.rs`` even though ``ROOT`` itself has no
+    literal value — that join spelling is not resolvable by ``_segments``, yet
+    its key is exactly as unschedulable when it carries whitespace.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return ''
+        return _trailing_literal_text(constants[node.id], constants, seen + (node.id,))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return (_trailing_literal_text(node.left, constants, seen) + '/'
+                + _trailing_literal_text(node.right, constants, seen))
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id != 'Path':
+                return ''
+            parts = node.args
+        elif isinstance(func, ast.Attribute):
+            spelling = _dotted_spelling(func)
+            if func.attr == 'join' and (spelling in _STDLIB_JOIN_CALLS
+                                        or spelling == 'os.sep.join'):
+                parts = _joined_elements(node)
+            elif func.attr in ('joinpath', 'with_name'):
+                parts = [func.value] + list(node.args)
+            elif func.attr in PATH_CALL_ATTRS:
+                return _trailing_literal_text(func.value, constants, seen)
+            else:
+                # ``template.format(...)`` / ``.upper()``: the result is text,
+                # not a path build, so it contributes no trailing components.
+                return ''
+        else:
+            return ''
+        return '/'.join(_trailing_literal_text(part, constants, seen)
+                        for part in parts)
+    if isinstance(node, ast.Attribute):
+        return _trailing_literal_text(node.value, constants, seen)
+    return ''
+
+
+def _key_contains_whitespace(node, constants, self_path=()):
+    """Whether the discovery key this path builds contains whitespace.
+
+    The host reads its changed-file list through ``for f in $changed``, so a
+    key like ``sms/my file.rs`` arrives as two fragments and matches nothing.
+    ``SMS / 'my file.rs'`` ends in a bare component and ``resolve`` reports it,
+    but a path that spells the whole thing inline — ``ROOT /
+    'src/…/channel/sms/my file.rs'`` — ends in a slash-carrying literal, so
+    ``_bare_tail`` is false and the expression used to be dropped in silence.
+    """
+    segments = _segments(node, constants, self_path)
+    if segments is None:
+        segments = _relative_path_segments(node, constants)
+    if segments is None:
+        if not _is_repo_rooted(node, constants):
+            return False
+        text = _trailing_literal_text(node, constants)
+        segments = tuple(part for part in text.split('/') if part not in ('', '.'))
+    return (len(segments) >= 2
+            and any(character.isspace()
+                    for segment in segments[-2:] for character in segment))
+
+
 def _is_path_shape(node, constants):
     """Whether an expression is a path this scanner must evaluate or report.
 
@@ -2171,8 +2403,12 @@ def _is_path_shape(node, constants):
     component is an opaque runtime value (``root / relative``, ``''.join(rows)``)
     cannot be a repository file key, so it is neither keyed nor reported; the
     alternative — treating every division and every ``.join`` as a path — makes
-    the guard cry wolf on ordinary string handling.
+    the guard cry wolf on ordinary string handling. A path whose derived key
+    contains whitespace is the exception: it is never schedulable, so it has to
+    be reported however its directory is spelled.
     """
+    if _key_contains_whitespace(node, constants):
+        return True
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, ast.Div):
             return _bare_tail(node, constants)
@@ -2392,6 +2628,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     local_ambiguous = _ambiguous_local_names(tree, constants)
     shadowed = _shadowed_names(tree) | unfollowable | local_ambiguous
     aliases = _module_aliases(tree)
+    sys_path_bound = _sys_path_bindings(tree, aliases)
     repository_returns = _repo_returning_functions(tree, constants)
     tainted = _repository_parameters(tree, constants, repository_returns)
     keys = {}
@@ -2482,6 +2719,16 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 or _indexes_a_path_container(node, constants)
                 or relative_directory(node) is not None)
 
+    def report_whitespace_key(expression):
+        # The discovery loop reads its changed-file list through ``for f in
+        # $changed``, so a path with a space arrives as two fragments and
+        # matches no branch at all. An anchor spelled with the space could
+        # never fire, so the key is not merely blind — it is unschedulable,
+        # and accepting it would turn a real hole into a green tick.
+        problems.append('whitespace in a discovery key cannot be scheduled '
+                        '(the discovery loop splits the changed-file list on '
+                        f'whitespace): {expression}')
+
     def record(segments, expression):
         # A single component is not a discovery key: the loop always keys
         # ``dir/file``. Every caller reports it here rather than at its own
@@ -2492,15 +2739,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             problems.append(f'no discovery key (needs a directory and a file name): {expression}')
             return False
         if any(character.isspace() for segment in segments for character in segment):
-            # The discovery loop reads its changed-file list through
-            # ``for f in $changed``, so a path with a space arrives as two
-            # fragments and matches no branch at all. An anchor spelled with
-            # the space could never fire, so the key is not merely blind — it
-            # is unschedulable, and accepting it would turn a real hole into a
-            # green tick.
-            problems.append('whitespace in a discovery key cannot be scheduled '
-                            '(the discovery loop splits the changed-file list on '
-                            f'whitespace): {expression}')
+            report_whitespace_key(expression)
             return False
         keys.setdefault('/'.join(segments[-2:]), []).append(expression)
         return True
@@ -2542,6 +2781,12 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if segments is None:
             segments = _relative_path_segments(node, constants)
         if segments is None:
+            if _key_contains_whitespace(node, constants, self_path):
+                # ``os.path.join(ROOT, '…/my file.rs')``: the join spelling is
+                # not in the resolver's family, but its key is just as
+                # unschedulable as a resolved one.
+                report_whitespace_key(expression)
+                return False
             ambiguous = ambiguous_names(node)
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
@@ -2558,6 +2803,13 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             report_unresolvable(expression)
             return False
         if not _bare_tail(node, constants):
+            # The directory is spelled inline, so the key is findable in the
+            # file text — unless the key itself carries whitespace, in which
+            # case the host can never schedule it (see ``record``).
+            if _key_contains_whitespace(node, constants, self_path):
+                problems.append('whitespace in a discovery key cannot be '
+                                'scheduled (the discovery loop splits the '
+                                f'changed-file list on whitespace): {expression}')
             return False
         return record(segments, expression)
 
@@ -2719,6 +2971,29 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             self.generic_visit(node)
 
+        def visit_Assign(self, node):
+            if any(_names_sys_path(target, aliases, sys_path_bound)
+                   for target in node.targets):
+                values = _inserted_elements(node.value, constants)
+                if any(_carries_a_directory_literal(value, constants)
+                       for value in values):
+                    problems.append('unsupported sys.path replacement of a '
+                                    'repository directory (a module imported '
+                                    'from it is invisible to this scanner): '
+                                    f'{ast.unparse(node)}')
+            self.generic_visit(node)
+
+        def visit_AugAssign(self, node):
+            if (isinstance(node.op, ast.Add)
+                    and _names_sys_path(node.target, aliases, sys_path_bound)
+                    and any(_carries_a_directory_literal(value, constants)
+                            for value in _inserted_elements(node.value, constants))):
+                problems.append('unsupported sys.path extension of a '
+                                'repository directory (a module imported from '
+                                'it is invisible to this scanner): '
+                                f'{ast.unparse(node)}')
+            self.generic_visit(node)
+
         def visit_Call(self, node):
             func = node.func
             enumerates_repository = (
@@ -2736,7 +3011,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # argument — the stdlib ones are the more common shape.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
-            elif _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
+            elif _inserts_a_repository_directory_into_sys_path(
+                    node, constants, aliases, sys_path_bound):
                 # ``sys.path.insert(0, str(FIXTURES / '_shared'))`` followed by
                 # ``import negative_control`` makes the module importable
                 # without spelling the helper's directory anywhere the import
@@ -5443,6 +5719,191 @@ class DiscoveryAnchorTests(unittest.TestCase):
             any('stale anchor' in problem and '../mod.rs' in problem
                 for problem in problems),
             problems)
+
+    def test_a_contextlib_or_dotted_import_chdir_is_recognised(self):
+        """``contextlib.chdir`` and ``import os.path`` move the directory too.
+
+        The check only knew the ``os`` module spelling, so ``with
+        contextlib.chdir(...):`` and a table that imported ``os.path`` (which
+        binds ``os`` to ``os.path`` in the import map) left the repository-root
+        premise standing and keyed a path the runtime builds elsewhere.
+        """
+        shapes = {
+            'contextlib': "import contextlib\ncontextlib.chdir('src/x')\n",
+            'contextlib alias': "import contextlib as ctx\nctx.chdir('src/x')\n",
+            'os.path import': "import os.path\nos.chdir('src/x')\n",
+            'from contextlib import chdir': "from contextlib import chdir\nchdir('src/x')\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                    + "rows = [Path('mod.rs')]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    problems)
+
+    def test_every_sys_path_spelling_is_reported(self):
+        """An alias, a rebound binding or ``+=`` hides the same insertion.
+
+        ``sys.path`` is a list object reached through several spellings; the
+        check only knew ``sys.path.append`` / ``insert`` / ``extend`` directly,
+        so ``import sys as s``, ``P = sys.path``, ``sys.path += [...]`` and an
+        ``extend`` over a named list all left the imported helper invisible.
+        """
+        shapes = {
+            'module alias': "import sys as s\n"
+                            "s.path.append(str(FIXTURES / '_shared'))\n",
+            'rebound binding': "P = sys.path\n"
+                               "P.append(str(FIXTURES / '_shared'))\n",
+            'augmented': "sys.path += [str(FIXTURES / '_shared')]\n",
+            'extend a literal list': "sys.path.extend([str(FIXTURES / '_shared')])\n",
+            'extend a named list': "D = [str(FIXTURES / '_shared')]\n"
+                                   "sys.path.extend(D)\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "import sys\n"
+                    "from pathlib import Path\n"
+                    "FIXTURES = Path(__file__).resolve().parents[1]\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                    + "import negative_control\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unsupported sys.path' in problem for problem in problems),
+                    problems)
+
+    def test_a_shallow_copy_carries_a_nested_write_back_to_the_original(self):
+        """``CH.copy()`` and its five siblings share every nested container.
+
+        A write below the copy's own top level rewrites what ``CH['a']``
+        reads, so the literal behind ``CH`` is stale and the key must not be
+        accepted. Only the ``CH.copy()`` spelling was an edge before; the rest
+        were edges to nothing.
+        """
+        mapping = ("CH = {'a': {'b': 'src/pilotdeck-gateway/src/channel/x'}}\n"
+                   "DISCOVERY_ANCHORS = ('x/mod.rs',)\n")
+        sequence = ("CH = [{'b': 'src/pilotdeck-gateway/src/channel/x'}]\n"
+                    "DISCOVERY_ANCHORS = ('x/mod.rs',)\n")
+        shapes = {
+            'dict()': (mapping, "CP = dict(CH)\n",
+                       "CP['a']['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                       "rows = [Path(CH['a']['b']) / 'mod.rs']\n"),
+            'copy.copy()': (mapping, "import copy\nCP = copy.copy(CH)\n",
+                            "CP['a']['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                            "rows = [Path(CH['a']['b']) / 'mod.rs']\n"),
+            '{**CH}': (mapping, "CP = {**CH}\n",
+                       "CP['a']['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                       "rows = [Path(CH['a']['b']) / 'mod.rs']\n"),
+            'CH.copy()': (mapping, "CP = CH.copy()\n",
+                          "CP['a']['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                          "rows = [Path(CH['a']['b']) / 'mod.rs']\n"),
+            'list()': (sequence, "CP = list(CH)\n",
+                       "CP[0]['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                       "rows = [Path(CH[0]['b']) / 'mod.rs']\n"),
+            '[*CH]': (sequence, "CP = [*CH]\n",
+                      "CP[0]['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n",
+                      "rows = [Path(CH[0]['b']) / 'mod.rs']\n"),
+        }
+        for label, (head, copy, write, rows) in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = ("from pathlib import Path\n" + head
+                             + copy + write + rows)
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    problems)
+
+    def test_a_shallow_copys_own_top_level_write_stays_silent(self):
+        """A copy's top level is a separate object: rebinding it touches nothing.
+
+        ``{**CH}['k'] = ...`` leaves ``CH['k']`` alone, so the reverse control
+        must stay green — reporting it would turn every copy into a false red.
+        """
+        shapes = {
+            'copy()': "CP = CH.copy()\n",
+            '{**CH}': "CP = {**CH}\n",
+            'dict()': "CP = dict(CH)\n",
+        }
+        for label, copy in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "CH = {'k': 'src/pilotdeck-gateway/src/channel/x'}\n"
+                    "DISCOVERY_ANCHORS = ('x/mod.rs',)\n" + copy
+                    + "CP['k'] = 'src/pilotdeck-gateway/src/channel/sms'\n"
+                    "rows = [Path(CH['k']) / 'mod.rs']\n"
+                )
+                self.assertEqual(
+                    violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_whitespace_in_an_inline_spelled_key_is_reported(self):
+        """A key with a space is unschedulable however its directory is spelled.
+
+        ``SMS / 'my file.rs'`` ends in a bare component and was already
+        reported, but ``ROOT / '…/channel/sms/my file.rs'`` spells the whole
+        path inline: ``_bare_tail`` is false, so the expression was dropped
+        while the host still could not schedule ``sms/my file.rs``.
+        """
+        shapes = {
+            'path divide': "rows = [ROOT / 'src/pilotdeck-gateway/src/channel/sms/my file.rs']\n",
+            'Path call': "rows = [Path(ROOT, 'src/pilotdeck-gateway/src/channel/sms/my file.rs')]\n",
+            'os.path.join': "rows = [os.path.join(ROOT, 'src/pilotdeck-gateway/src/channel/sms/my file.rs')]\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('whitespace in a discovery key cannot be scheduled' in problem
+                        for problem in problems),
+                    problems)
+
+    def test_an_absolute_sys_path_entry_outside_the_repository_stays_silent(self):
+        """``/tmp/thirdparty`` cannot hide a repository module, so it is silent.
+
+        The insertion guard reported any argument carrying a slash, which turned
+        every third-party ``sys.path`` entry into a false red.
+        """
+        synthetic = (
+            "import sys\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "sys.path.insert(0, '/tmp/thirdparty')\n"
+            "import negative_control\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_drive_prefixed_segment_inside_a_join_is_reported(self):
+        """``C:/tmp`` is an absolute path even when joined after a directory.
+
+        On Windows ``Path('sms') / 'C:/tmp'`` is ``C:/tmp``; treating the piece
+        as a relative segment keyed ``tmp/mod.rs`` inside the repository. A
+        leading backslash is the same shape. Both must be reported instead.
+        """
+        shapes = {
+            'path divide': "rows = [Path('sms') / 'C:/tmp' / 'mod.rs']\n",
+            'os.path.join': "rows = [os.path.join('sms', 'C:/tmp', 'mod.rs')]\n",
+            'os.sep.join': "rows = [os.sep.join(('sms', 'C:/tmp', 'mod.rs'))]\n",
+            'leading backslash': "rows = [os.path.join('sms', r'\\\\tmp', 'mod.rs')]\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = ("import os\nfrom pathlib import Path\n"
+                             "DISCOVERY_ANCHORS = ()\n" + body)
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    problems)
 
 
 if __name__ == '__main__':
