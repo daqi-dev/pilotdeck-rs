@@ -291,22 +291,18 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
 
         // The newest state must land; pre-fix it was claimed and then dropped,
         // and `flush` waited forever on the orphaned in-flight entry.
-        let flushed = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            persistence.flush(),
-        )
-        .await
-        .is_ok();
+        let flushed =
+            tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush())
+                .await
+                .is_ok();
         let after_flush = read_state(&file);
 
         // And the key must not be wedged: a later save still persists.
         persistence.save(&key, state_with_value(3.0));
-        let later_flushed = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            persistence.flush(),
-        )
-        .await
-        .is_ok();
+        let later_flushed =
+            tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush())
+                .await
+                .is_ok();
         Observed {
             settled,
             early_write,
@@ -316,10 +312,7 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
             after_later: read_state(&file),
         }
     });
-    crate::negative_assert!(
-        observed.settled,
-        "#2073 the superseded timer must settle"
-    );
+    crate::negative_assert!(observed.settled, "#2073 the superseded timer must settle");
     crate::negative_assert!(
         !observed.early_write,
         "#2073 a superseded timer must not write before the debounce elapses"
@@ -415,7 +408,10 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
         "#2073 the waiting flush must not hang on an abandoned entry"
     );
     crate::negative_assert!(
-        observed.second.as_ref().is_some_and(|result| result.is_ok()),
+        observed
+            .second
+            .as_ref()
+            .is_some_and(|result| result.is_ok()),
         "#2073 the retry writes"
     );
     crate::negative_assert_eq!(
