@@ -1,5 +1,6 @@
 # anchor-selfcheck: unsupported subprocess isolation and candidate-baseline regression tests
 """#994: real HEAD-guarded Python probes; no synthetic Git or Cargo workspace."""
+import codecs
 import contextlib
 import importlib.util
 import inspect
@@ -86,6 +87,9 @@ AREA_CHECKS_PER_RUN = 2
 GIT_CALLS_PER_AREA_CHECK = 4
 OTHER_GIT_CALLS = 1
 SCANNER_SECONDS = 60
+# Diagnostic prefix kept per stream while draining the child's pipes; the
+# drain itself never stops, so this only bounds retained memory.
+DRAIN_KEEP_BYTES = 256 * 1024
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
 
@@ -189,8 +193,12 @@ def drain_child_output(child, buffers):
     write() and burn the whole readiness budget instead of reporting its own
     failure -- and that budget is deliberately large (#2127 codex concurrency
     r9 P1). Keeping the pipes empty costs one non-blocking read per poll.
-    Bytes are buffered, never dropped: read_child_output() prepends them, so a
-    later failure still shows what the child said before it stopped.
+
+    The retained prefix is capped per stream: draining is unbounded in time
+    (up to the whole budget), so keeping every byte would let a runaway child
+    exhaust the suite's memory (#2127 codex boundary r10 P0). Everything is
+    read; only DRAIN_KEEP_BYTES per stream is kept, and read_child_output()
+    reports how much was dropped.
     """
     for name, stream in (('stdout', child.stdout), ('stderr', child.stderr)):
         if stream is None:
@@ -199,8 +207,30 @@ def drain_child_output(child, buffers):
             chunk = os.read(stream.fileno(), 65536)
         except (BlockingIOError, InterruptedError, OSError, ValueError):
             continue
-        if chunk:
-            buffers[name].append(chunk)
+        if not chunk:
+            continue
+        buffers['total'][name] += len(chunk)
+        room = DRAIN_KEEP_BYTES - len(buffers[name])
+        if room > 0:
+            buffers[name].extend(chunk[:room])
+
+
+def drained_text(child, name, buffers):
+    """Decode the retained prefix without letting a split character raise.
+
+    os.read() can stop in the middle of a multi-byte character and the rest of
+    the stream is decoded separately by communicate(), so decode with an
+    incremental decoder that substitutes instead of raising (#2127 codex
+    boundary r10 P2). A trailing partial character is dropped, not fatal: this
+    text is diagnostic only.
+    """
+    encoding = getattr(child.stdout, 'encoding', None) or 'utf-8'
+    decoder = codecs.getincrementaldecoder(encoding)('replace')
+    text = decoder.decode(bytes(buffers[name]), final=False)
+    dropped = buffers['total'][name] - len(buffers[name])
+    if dropped:
+        text += f'... [{dropped} bytes dropped by the #2127 drain buffer]'
+    return text
 
 
 def read_child_output(child):
@@ -244,9 +274,8 @@ def read_child_output(child):
         api = shared_process()
         cached = (api._as_text(child, error.output), api._as_text(child, error.stderr))
     if buffers is not None:
-        api = shared_process()
-        cached = (api._as_text(child, b''.join(buffers['stdout'])) + (cached[0] or ''),
-                  api._as_text(child, b''.join(buffers['stderr'])) + (cached[1] or ''))
+        cached = (drained_text(child, 'stdout', buffers) + (cached[0] or ''),
+                  drained_text(child, 'stderr', buffers) + (cached[1] or ''))
     child._verified_output = cached
     return cached
 
@@ -284,7 +313,8 @@ def wait_for_ready(child, ready, seconds):
     """
     started = time.monotonic()
     deadline = started + seconds
-    buffers = {'stdout': [], 'stderr': []}
+    buffers = {'stdout': bytearray(), 'stderr': bytearray(),
+               'total': {'stdout': 0, 'stderr': 0}}
     child._verified_drained = buffers
     set_pipe_blocking(child, False)
     while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
