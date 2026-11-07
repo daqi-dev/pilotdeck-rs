@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1990: mutations that pin handle_path.rs `mod macos` itself (88-94).
+"""#1990: mutations that pin handle_path.rs `mod macos` itself (82-112).
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]

@@ -2308,6 +2308,12 @@ self_check_controls_run | return | return problems
         'src/native_process/review_tests.rs::session_writer_audit_is_linux_only': (
             '#1316 `#[cfg(not(target_os = "linux"))]`: the test does not exist in the '
             'Linux CI job at all, so no nextest entry can name it', ()),
+        'src/handle_path.rs::handle_path_rejects_a_non_utf8_name': (
+            '#1990 `#[cfg(target_os = "macos")]`: the test does not exist in the Linux '
+            'CI job at all, so no nextest entry can name it. The note is still visible '
+            'where the test does run — the macOS host run is `cargo test` (libtest), and '
+            '`stderr_skip_line` writes the stderr handle directly, which libtest does not '
+            'capture', ()),
         'src/skills/tests.rs::permission_not_run': (
             '#1525 helper: the note is printed on behalf of the test that calls it',
             ('skills::tests::unreadable_scan_child_matches_real_ts_before_denial_and_after_restore',
