@@ -709,14 +709,30 @@ def _call_segments(node, constants, self_path, seen):
 def _is_bare_component(value):
     """A single path component that could be a file name.
 
-    ``''``, ``'.'``, ``'..'`` and anything with whitespace are not: the first
-    three are navigation and the discovery loop only keys a *changed file*, while
-    a space means the literal is an operator-shaped string (``' / '.join(...)``),
-    not a path.
+    ``''``, ``'.'`` and ``'..'`` are not: they are navigation, and the discovery
+    loop only keys a *changed file*. Whitespace inside a name is ordinary
+    (``'msg 1.json'``); whitespace *around* it is not — ``' / '.join(...)``
+    splits into two padded pieces, which are operator-shaped strings rather than
+    paths. Rejecting every space used to hide real file names like ``'my file.rs'``
+    from the guard entirely: no key, no report, and the table dropped out of the
+    discovery list.
     """
-    return (bool(value) and '/' not in value and value not in ('.', '..')
-            and not any(character.isspace() for character in value))
+    return (bool(value) and value == value.strip() and '/' not in value
+            and value not in ('.', '..'))
 
+
+
+def _is_fragment_component(value):
+    """A component inside a string *fragment* (``+``, ``%``, f-string, ``join``).
+
+    Whitespace anywhere means the fragment is operator- or prose-shaped
+    (``' / '.join(...)``, ``'; compilation/zero-test failure is not evidence'``)
+    rather than a path piece. A real file name with a space (``'msg 1.json'``)
+    is judged by ``_is_bare_component`` at a ``/`` join or a call tail, where the
+    position itself says the string is a file name.
+    """
+    return (_is_bare_component(value)
+            and not any(character.isspace() for character in value))
 
 
 def _path_literal_ending_in_file(value):
@@ -727,7 +743,7 @@ def _path_literal_ending_in_file(value):
     """
     if '/' not in value:
         return False
-    return _is_bare_component(value.rsplit('/', 1)[1])
+    return _is_fragment_component(value.rsplit('/', 1)[1])
 
 
 def _path_literal_operand(value):
@@ -744,7 +760,7 @@ def _path_literal_operand(value):
     if not isinstance(value, str) or '/' not in value:
         return False
     if value.endswith('/'):
-        return any(_is_bare_component(part) for part in value.split('/'))
+        return any(_is_fragment_component(part) for part in value.split('/'))
     return _path_literal_ending_in_file(value)
 
 
@@ -762,19 +778,30 @@ def _string_value(node, constants, seen=()):
     return None
 
 
-def _joins_a_path_string(node):
-    """Whether an ``Add`` / f-string carries a path-looking string literal.
+def _joins_a_path_string(node, constants=None):
+    """Whether an ``Add`` / ``%`` / ``.format`` / f-string carries a path literal.
 
     List concatenation (``[...] + [...]``) is common in tables and has nothing
-    to do with paths, so the shape alone is not enough: one direct operand must
-    be a string constant that is a path fragment (see ``_path_literal_operand``).
+    to do with paths, so the shape alone is not enough: one operand must be a
+    string that is a path fragment (see ``_path_literal_operand``). With
+    ``constants`` the operand may be a module constant — ``FMT = '{}/mod.rs'``
+    followed by ``FMT % SMS`` builds the same path as spelling it inline, and
+    looking only at direct literals left that spelling silent.
     """
     if isinstance(node, ast.JoinedStr):
         operands = node.values
     else:
         operands = (node.left, node.right)
-    return any(isinstance(operand, ast.Constant)
-               and _path_literal_operand(operand.value) for operand in operands)
+    for operand in operands:
+        if constants is not None:
+            value = _string_value(operand, constants)
+        elif isinstance(operand, ast.Constant) and isinstance(operand.value, str):
+            value = operand.value
+        else:
+            value = None
+        if value is not None and _path_literal_operand(value):
+            return True
+    return False
 
 
 def _adds_a_runtime_file_name(node, constants, self_path):
@@ -996,6 +1023,74 @@ def _module_aliases(tree):
     return aliases
 
 
+def _spells_a_repository_path(node, constants, seen=()):
+    """Whether the *value* of ``node`` is a repository path, not data about one.
+
+    Only the value-producing spine is followed: ``str(...)`` / ``Path(...)``
+    wrappers, ``/`` joins, ``.resolve()`` / ``.parent`` and module constants.
+    A call that merely takes a repository path as one of its arguments —
+    ``difflib.unified_diff(..., fromfile=str(SOURCE))``, ``sorted(unknown)``
+    next to a source path — hands back text or a list, not the path, and must
+    not read as a path join.
+    """
+    if isinstance(node, ast.Name):
+        if node.id in ROOT_NAMES or node.id == '__file__':
+            return True
+        if node.id in seen or node.id not in constants:
+            return False
+        return _spells_a_repository_path(constants[node.id], constants, seen + (node.id,))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return True
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ('str', 'Path') and node.args):
+        return _spells_a_repository_path(node.args[0], constants, seen)
+    if isinstance(node, ast.Attribute):
+        return _spells_a_repository_path(node.value, constants, seen)
+    return False
+
+
+def _joined_elements(node):
+    """The values a ``join`` call actually concatenates.
+
+    ``'/'.join((a, b))`` joins the tuple's elements, not the tuple; a
+    comprehension joins its element expression. Anything else is one opaque
+    value and is judged as such.
+    """
+    if len(node.args) != 1:
+        return list(node.args)
+    argument = node.args[0]
+    if isinstance(argument, (ast.Tuple, ast.List, ast.Set)):
+        return list(argument.elts)
+    if isinstance(argument, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        return [argument.elt]
+    return [argument]
+
+
+def _is_path_join_call(func, constants, aliases):
+    """Whether a call is a string join, in any of the spellings tables use.
+
+    ``'/'.join(parts)`` is the common one, and its receiver may be a module
+    constant (``SEP.join(...)``). ``from os.path import join`` reaches the same
+    unmodelled stdlib function by bare name, and ``from os.path import join as
+    j`` reaches it through the alias map — exactly like the enumeration helpers,
+    which is why that alias check already exists. All of these build a path this
+    scanner cannot follow, so a repository path among the arguments must be
+    reported rather than silently dropped.
+    """
+    if isinstance(func, ast.Attribute):
+        return (func.attr == 'join'
+                and _string_value(func.value, constants) is not None)
+    if isinstance(func, ast.Name):
+        if func.id == 'join':
+            return True
+        qualified = aliases.get(func.id)
+        if not qualified:
+            return False
+        module, _, name = qualified.rpartition('.')
+        return name == 'join' and module in FS_MODULES
+    return False
+
+
 def _enumerates_a_directory(func, aliases):
     """Whether a bare call name is one of the directory-listing functions.
 
@@ -1054,9 +1149,9 @@ def _is_path_shape(node, constants):
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, ast.Div):
             return _bare_tail(node, constants)
-        return _joins_a_path_string(node)      # ``+`` / ``%`` with a path literal
+        return _joins_a_path_string(node, constants)   # ``+`` / ``%`` with a path literal
     if isinstance(node, ast.JoinedStr):
-        return _joins_a_path_string(node)
+        return _joins_a_path_string(node, constants)
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Name):
@@ -1067,9 +1162,8 @@ def _is_path_shape(node, constants):
             if func.attr == 'join':
                 return bool(node.args) and _bare_tail(node.args[-1], constants)
             if func.attr in ('format', 'format_map'):
-                return (isinstance(func.value, ast.Constant)
-                        and isinstance(func.value.value, str)
-                        and _path_literal_ending_in_file(func.value.value))
+                value = _string_value(func.value, constants)
+                return value is not None and _path_literal_ending_in_file(value)
     return False
 
 
@@ -1384,7 +1478,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     operand for operand in _add_operands(node)
                     if (value := _string_value(operand, constants)) is not None
                     and '/' in value]
-                if (_joins_a_path_string(node) or separators
+                if (_joins_a_path_string(node, constants) or separators
                         or _adds_a_runtime_file_name(node, constants, self_path)):
                     # ``str(ROOT) + '/src/x/mod.rs'`` is statically resolvable in
                     # principle but not by this scanner; keeping it silent would
@@ -1411,7 +1505,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             self.generic_visit(node)
 
         def visit_JoinedStr(self, node):
-            joined = _joins_a_path_string(node)
+            joined = _joins_a_path_string(node, constants)
             if not joined:
                 # ``f'{SMS}/{name}'`` names its directory but not its file, the
                 # same unfollowable join as ``SMS / name``: a repository
@@ -1459,9 +1553,14 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # it through the alias.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
-            elif (isinstance(func, ast.Name) and func.id == 'join'
-                    and any(repo_rooted(argument) for argument in node.args)):
-                # ``from os.path import join`` reaches the same unmodelled call.
+            elif (_is_path_join_call(func, constants, aliases)
+                    and any(_spells_a_repository_path(element, constants)
+                            for element in _joined_elements(node))):
+                # ``'/'.join((str(SMS), name))`` and the stdlib spellings
+                # ``from os.path import join`` / ``... import join as j`` reach
+                # the same unmodelled call. The receiver is a string in every
+                # one of them, so a repository path among the joined values
+                # means a key this scanner can never derive from the text.
                 problems.append('unsupported path join of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             if _is_path_shape(node, constants):
@@ -1625,11 +1724,18 @@ def violations(text, table, anchors=None):
 
     ``anchors`` overrides the declared tuple so the negative control can drop an
     entry without rewriting the file.
+
+    A single-component path (``ROOT / 'rust-toolchain.toml'``) is dropped here
+    exactly as ``sweep`` drops it: the discovery loop keys a changed file as
+    ``dir/file`` and never emits a key for a repository-root file, so no anchor
+    could ever satisfy it. Keeping it would fail a legitimate table with a
+    problem its author cannot fix.
     """
     tree = ast.parse(text)
     problems = []
     required, scan_problems = bare_concat_keys(tree, table)
-    problems.extend(scan_problems)
+    problems.extend(problem for problem in scan_problems
+                    if not problem.startswith('no discovery key'))
     for key in sorted(_shared_module_keys(tree, FIXTURES,
                                          tuple(table.split('/')[:-1]))):
         required.setdefault(key, [IMPORTED_HELPER_REASON])
@@ -1705,6 +1811,33 @@ class DiscoveryAnchorTests(unittest.TestCase):
     def test_the_registry_is_not_empty(self):
         """An empty or gutted TABLES list must not turn every check vacuous."""
         self.assertTrue(TABLES, 'TABLES is empty: the guard would measure nothing')
+
+    def test_every_table_declaring_anchors_is_registered(self):
+        """``TABLES`` is the register; a row cannot be dropped from it silently.
+
+        Anchors are only checked for the tables listed in ``TABLES``, and a
+        table's anchors always match its own text, so deleting a row used to
+        leave everything green while the guard stopped measuring that table —
+        the register could be diluted one row at a time without a red test.
+        """
+        declared = set()
+        for path in sorted(FIXTURES.rglob('*negative*.py')):
+            rel = path.relative_to(FIXTURES).as_posix()
+            if path.name in HOST_FILTERED or path.name.startswith('test_'):
+                continue
+            tree = ast.parse(path.read_text(encoding='utf-8'))
+            for statement in tree.body:
+                if isinstance(statement, ast.Assign):
+                    targets = statement.targets
+                elif isinstance(statement, ast.AnnAssign):
+                    targets = [statement.target]
+                else:
+                    continue
+                if any(isinstance(target, ast.Name) and target.id == 'DISCOVERY_ANCHORS'
+                       for target in targets):
+                    declared.add(rel)
+        self.assertEqual(sorted(declared), sorted(TABLES),
+                         'the tables that declare DISCOVERY_ANCHORS and TABLES disagree')
 
     def test_no_table_is_blind_outside_the_registers(self):
         """A new blind table cannot appear silently.
@@ -2614,6 +2747,77 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 problems = violations(synthetic, 'example/negative_controls.py')
                 self.assertTrue(any('unsupported string concatenation' in problem
                                     for problem in problems), problems)
+
+    def test_the_other_string_join_spellings_fail_closed(self):
+        """``join`` by name or alias, ``%`` and ``.format`` build the same path.
+
+        The ``/``, f-string and ``+`` spellings reported since r9. These four
+        were silent in every earlier revision: a table written this way produced
+        no key and no report, so it never had to register an anchor and the
+        discovery loop never scheduled it. ``from os.path import join as j`` is
+        the alias form the enumeration helpers already had to learn.
+        """
+        shapes = {
+            'alias join': "from os.path import join as j\nrows = [j(SMS, 'mod.rs')]\n",
+            'method join': "rows = ['/'.join((str(SMS), 'mod.rs'))]\n",
+            'percent': "FMT = '{}/mod.rs'\nrows = [FMT % SMS]\n",
+            'format': "FMT = '{}/mod.rs'\nrows = [FMT.format(SMS)]\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/example/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(problems, f'{label}: silent, so the table would never be scheduled')
+
+    def test_a_display_join_stays_silent(self):
+        """``' / '.join(...)`` and a ``%`` counter are labels, not paths."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def report(killed, total, parts):\n"
+            "    print(' / '.join(parts))\n"
+            "    print('%d/%d killed' % (killed, total))\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_file_name_with_a_space_still_keys_the_file(self):
+        """``'msg 1.json'`` is an ordinary name; padding around it is not.
+
+        Rejecting every space hid real file names from the guard entirely: no
+        key, no report, so a table that builds ``... / 'msg 1.json'`` was skipped
+        by the discovery loop without anything turning red.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [SMS / 'my file.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: sms/my file.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_single_component_path_is_not_a_discovery_key(self):
+        """``ROOT / 'rust-toolchain.toml'`` gets no key, so it needs no anchor.
+
+        The discovery loop keys a changed file as ``dir/file`` and never emits a
+        key for a repository-root file. Reporting it here would fail a
+        legitimate table with a problem no anchor can satisfy — the negative of
+        every other case in this class.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'rust-toolchain.toml']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_a_display_string_stays_silent(self):
         """A counter or a label joins no repository directory."""
