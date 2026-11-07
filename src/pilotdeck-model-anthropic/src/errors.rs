@@ -782,3 +782,78 @@ mod tests {
         assert!(error.get("recoverableViaCompact").is_none());
     }
 }
+
+/// Original OpenAI SSE error mapping; empty/non-object errors remain absent.
+pub fn openai_stream_error(raw: &JsValue) -> Option<JsObject> {
+    let error = field(raw, "error");
+    if error.as_object().is_none_or(|object| object.is_empty()) {
+        return None;
+    }
+    let read = |value: &JsValue| {
+        value
+            .as_string()
+            .filter(|value| !js_trim(&String::from_utf16_lossy(value.units())).is_empty())
+            .cloned()
+    };
+    let code = read(field(error, "type"))
+        .or_else(|| read(field(error, "code")))
+        .unwrap_or_else(|| "provider_error".into());
+    let message =
+        read(field(error, "message")).unwrap_or_else(|| "OpenAI stream request failed.".into());
+    let code_text = String::from_utf16_lossy(code.units());
+    let retryable = [
+        "rate_limit_error",
+        "overloaded_error",
+        "server_error",
+        "timeout_error",
+    ]
+    .iter()
+    .any(|kind| code_text == *kind);
+    let mut canonical = JsObject::new();
+    canonical.insert("provider".into(), "openai".into());
+    canonical.insert("protocol".into(), "openai".into());
+    canonical.insert("code".into(), JsValue::String(code));
+    canonical.insert("message".into(), JsValue::String(message));
+    canonical.insert("retryable".into(), JsValue::Bool(retryable));
+    canonical.insert("raw".into(), raw.clone());
+    Some(canonical)
+}
+
+#[cfg(test)]
+mod stream_mapping_tests {
+    use super::*;
+    #[test]
+    fn original_stream_type_priority_and_retry_rules_differ_from_http_normalization() {
+        let raw=pilotdeck_protocol::parse_json(r#"{"type":"error","error":{"type":"rate_limit_error","code":"actual_vendor_code","message":"Please try again in 2 seconds","retryable":false},"presentNull":null}"#).unwrap();
+        let openai = openai_stream_error(&raw).unwrap();
+        assert_eq!(openai.get("code"), Some(&JsValue::from("rate_limit_error")));
+        assert_eq!(openai.get("retryable"), Some(&JsValue::Bool(true)));
+        assert!(openai.get("retryAfterMs").is_none());
+        assert_eq!(openai.get("raw"), Some(&raw));
+        let anthropic = crate::anthropic::stream_error(&raw);
+        assert_eq!(
+            anthropic.get("code"),
+            Some(&JsValue::from("rate_limit_error"))
+        );
+        assert_eq!(
+            anthropic.get("retryAfterMs"),
+            Some(&JsValue::Number(2000.0))
+        );
+        assert_eq!(anthropic.get("raw"), Some(&raw));
+        let http = normalize_model_error(
+            &"actual".into(),
+            &"openai".into(),
+            ErrorInput::Value(&raw),
+            Some(429.0),
+        );
+        assert_eq!(
+            http.get("retryable"),
+            Some(&JsValue::Bool(false)),
+            "original HTTP explicit provider retry flag has different precedence"
+        );
+        for value in ["{}", "null", "[]", "\"opaque\""] {
+            let raw = pilotdeck_protocol::parse_json(&format!("{{\"error\":{value}}}")).unwrap();
+            assert!(openai_stream_error(&raw).is_none());
+        }
+    }
+}

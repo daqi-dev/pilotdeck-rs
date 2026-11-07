@@ -459,42 +459,10 @@ pub fn normalize_stream_event_with_limit(
             events
         }
         "message_stop" => flush_failed(state, "unknown", raw),
-        "error" => {
-            let error = field(record, "error");
-            let error = if matches!(error, JsValue::Object(_)) {
-                error
-            } else {
-                &EMPTY
-            };
-            let code = read_string(field(error, "type"))
-                .cloned()
-                .unwrap_or_else(|| "provider_error".into());
-            let message = read_string(field(error, "message"))
-                .cloned()
-                .unwrap_or_else(|| "Anthropic stream error.".into());
-            let retryable = [
-                "overloaded_error",
-                "rate_limit_error",
-                "api_error",
-                "timeout_error",
-            ]
-            .iter()
-            .any(|t| code.equals_str(t));
-            let mut canonical = JsObject::new();
-            canonical.insert("provider".into(), "anthropic".into());
-            canonical.insert("protocol".into(), "anthropic".into());
-            canonical.insert("code".into(), JsValue::String(code));
-            canonical.insert("message".into(), JsValue::String(message.clone()));
-            canonical.insert("retryable".into(), JsValue::Bool(retryable));
-            if let Some(ms) = retry_after_from_message(&String::from_utf16_lossy(message.units())) {
-                canonical.insert("retryAfterMs".into(), JsValue::Number(ms));
-            }
-            canonical.insert("raw".into(), raw.clone());
-            vec![event([
-                ("type", "error".into()),
-                ("error", JsValue::Object(canonical)),
-            ])]
-        }
+        "error" => vec![event([
+            ("type", "error".into()),
+            ("error", JsValue::Object(stream_error(raw))),
+        ])],
         _ => Vec::new(),
     })
 }
@@ -557,4 +525,40 @@ fn flush_failed(state: &mut StreamState, reason: &str, raw: &JsValue) -> Vec<JsV
         ("type", "error".into()),
         ("error", JsValue::Object(canonical)),
     ])]
+}
+
+/// Original Anthropic SSE error mapping (distinct from HTTP error normalization).
+pub fn stream_error(raw: &JsValue) -> JsObject {
+    static EMPTY: JsValue = JsValue::Undefined;
+    let error = field(raw, "error");
+    let error = if matches!(error, JsValue::Object(_)) {
+        error
+    } else {
+        &EMPTY
+    };
+    let code = read_string(field(error, "type"))
+        .cloned()
+        .unwrap_or_else(|| "provider_error".into());
+    let message = read_string(field(error, "message"))
+        .cloned()
+        .unwrap_or_else(|| "Anthropic stream error.".into());
+    let retryable = [
+        "overloaded_error",
+        "rate_limit_error",
+        "api_error",
+        "timeout_error",
+    ]
+    .iter()
+    .any(|t| code.equals_str(t));
+    let mut canonical = JsObject::new();
+    canonical.insert("provider".into(), "anthropic".into());
+    canonical.insert("protocol".into(), "anthropic".into());
+    canonical.insert("code".into(), JsValue::String(code));
+    canonical.insert("message".into(), JsValue::String(message.clone()));
+    canonical.insert("retryable".into(), JsValue::Bool(retryable));
+    if let Some(ms) = retry_after_from_message(&String::from_utf16_lossy(message.units())) {
+        canonical.insert("retryAfterMs".into(), JsValue::Number(ms));
+    }
+    canonical.insert("raw".into(), raw.clone());
+    canonical
 }
