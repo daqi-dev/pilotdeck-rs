@@ -367,6 +367,23 @@ fn non_utf8_home_and_sidecar_are_refused() {
         "#2036 non-UTF-8 --home must be rejected"
     );
 
+    // #2036: a UTF-8 argv spelling can still resolve to raw bytes through a
+    // symlink. Judging the value that lands in `Options` (the canonical path)
+    // and not the argv text is the whole point of this change, so pin it: the
+    // link name is plain ASCII and the rejection still has to happen. A mutant
+    // that moved the check before `canonicalize` would keep the two cases above
+    // green and only fail here.
+    let link_home = scratch.0.join("home-link");
+    std::os::unix::fs::symlink(&raw_home, &link_home).expect("#2036 home symlink");
+    let mut args = scratch.args();
+    args[1] = link_home.into_os_string();
+    let error = Options::parse(args).err().map(|error| error.to_string());
+    negative_assert_eq!(
+        error.as_deref(),
+        Some("home is not UTF-8"),
+        "#2036 --home resolving through a symlink to raw bytes must be rejected"
+    );
+
     let raw_sidecar = scratch.0.join(OsString::from_vec(b"sidecar-\xff".to_vec()));
     std::fs::write(&raw_sidecar, "fixture").expect("#2036 raw sidecar file");
     let mut args = scratch.args();
@@ -376,6 +393,17 @@ fn non_utf8_home_and_sidecar_are_refused() {
         error.as_deref(),
         Some("sidecar is not UTF-8"),
         "#2036 non-UTF-8 --sidecar must be rejected"
+    );
+
+    let link_sidecar = scratch.0.join("sidecar-link");
+    std::os::unix::fs::symlink(&raw_sidecar, &link_sidecar).expect("#2036 sidecar symlink");
+    let mut args = scratch.args();
+    args[9] = link_sidecar.into_os_string();
+    let error = Options::parse(args).err().map(|error| error.to_string());
+    negative_assert_eq!(
+        error.as_deref(),
+        Some("sidecar is not UTF-8"),
+        "#2036 --sidecar resolving through a symlink to raw bytes must be rejected"
     );
 
     // Both fields validated in one parse: the invariant the whole change buys.
