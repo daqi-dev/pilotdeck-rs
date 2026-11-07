@@ -3,12 +3,13 @@
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
+from negative_control import source_copy
 from negative_panic import named_test_killed
 from negative_selection import baseline_passed
 from negative_process import run_owned, wait_for_slot
@@ -108,12 +109,15 @@ def main():
     results = []
     failures = []
     with tempfile.TemporaryDirectory(prefix='pdrs-session-owner-negative-', dir='/tmp') as directory:
-        scratch = Path(directory) / 'src'
+        root = Path(directory)
+        scratch = root / 'src'
         env['CARGO_TARGET_DIR'] = str(scratch / 'target')
         # Same workspace, dependencies and manifests; no new dependency or mock
         # copy of project/refresh behavior is introduced by this harness.
-        shutil.copytree(rust, scratch, ignore=shutil.ignore_patterns('target', '.git', 'node_modules', '.env*'))
-        shutil.copytree(rust.parent / 'specs', Path(directory) / 'specs')
+        # One copy manifest for every control: `source_copy` carries `src/`
+        # plus the compile-time inputs derived from it, so a new input class
+        # cannot reach some controls and miss this one (#1570 r14 sibling).
+        source_copy(root)
         for name, file, before, after, test, marker in [('baseline', None, None, None, '', 'test result: ok')] + mutants:
             for path, original in originals.items():
                 content = original

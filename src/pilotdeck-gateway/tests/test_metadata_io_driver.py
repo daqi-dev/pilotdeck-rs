@@ -538,6 +538,26 @@ class EnvironmentControls(unittest.TestCase):
         self.assertIn(fields.get('working-directory'), (None, ('.', [])),
                       '#994 isolation CI step must run from repository root')
 
+    def test_required_job_runs_the_copy_manifest_self_test(self):
+        # #1570: the fix is a derivation, and the only thing that runs its
+        # self-test is one CI step. Deleting that step, or making it
+        # conditional, must turn a gate red -- otherwise a later refactor can
+        # shrink `compile_inputs` back to `src/` and every mutation reads
+        # INVALID again, which is exactly the failure this issue is about.
+        # Same treatment as the #994 isolation step above.
+        command = 'python3 -B -m unittest -v _shared.test_compile_inputs'
+        jobs = self.ci_jobs('#1570')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#1570')
+        matching = [step for step in steps if self.ci_run_commands(step, '#1570') == [command]]
+        self.assertEqual(len(matching), 1,
+                         '#1570 required CI job must run the copy-manifest self-test')
+        fields = self.ci_step_fields(matching[0], '#1570')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields, '#1570 self-test CI step must be unconditional')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#1570 the self-test imports _shared, so it runs from the fixtures dir')
+
     def test_negative_controls_job_runs_the_gateway_fixture(self):
         # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
         # 让 --self-check 掉队、把 target 指回 src/ 或丢掉历史克隆都必须被判红，
