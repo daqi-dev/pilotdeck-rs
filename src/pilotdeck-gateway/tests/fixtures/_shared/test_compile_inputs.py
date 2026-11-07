@@ -1152,31 +1152,48 @@ class Manifest(unittest.TestCase):
             control.os.fdopen = original
 
     def test_a_git_failure_while_relisting_is_a_refusal(self):
-        # The re-lists after the copy (and the third derivation) turn a git
-        # failure into "the tree moved"; the third derivation did not, so a
-        # `CalledProcessError` escaped `source_copy` and the host triage read
-        # it as "ran and failed" (#1570 r22 sibling P3). Deleting any of those
-        # wrappers fails here.
-        self.workspace('include_str!("../specs/x.json");')
-        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-git-fail-'))
-        self.roots.append(destination)
+        # Every `_tracked` call inside `source_copy` sits under a wrapper that
+        # turns a git failure into a refusal: the host triage reads a bare
+        # `CalledProcessError` as "ran and failed" instead of "never started",
+        # which is the #1570 shape. The third derivation had no wrapper at all
+        # and no test noticed (#1570 r22 sibling P3), so this walks *all six*
+        # calls and pins each one to its own message. Deleting any single
+        # wrapper leaves a `CalledProcessError` escaping here.
+        #
+        # Call order for a workspace that reads `specs/x.json`:
+        #   1 the first `ls-files src`        4 the `src/` re-list
+        #   2 the scan's own `ls-files src`   5 the input-directory re-list
+        #   3 the first input-directory list  6 the third derivation's scan
+        expected = {
+            1: 'cannot list the workspace inputs',
+            2: 'cannot derive the workspace inputs',
+            3: 'cannot list the input directories',
+            4: 'src/ changed while the scratch copy',
+            5: 'an input directory changed while the scratch copy',
+            6: 'the workspace inputs changed while the scratch copy',
+        }
         original = control._tracked
-        calls = []
+        for ordinal, message in expected.items():
+            with self.subTest(git_call=ordinal):
+                self.workspace('include_str!("../specs/x.json");')
+                destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-git-fail-'))
+                self.roots.append(destination)
+                calls = []
 
-        def failing(*directories):
-            if directories == (Path('specs'),):
-                calls.append(directories)
-                if len(calls) == 2:
-                    raise subprocess.CalledProcessError(128, ['git', 'ls-files'])
-            return original(*directories)
+                def failing(*directories, _ordinal=ordinal):
+                    calls.append(directories)
+                    if len(calls) == _ordinal:
+                        raise subprocess.CalledProcessError(128, ['git', 'ls-files'])
+                    return original(*directories)
 
-        control._tracked = failing
-        try:
-            with self.assertRaisesRegex(RuntimeError, 'changed while the scratch copy'):
-                control.source_copy(destination)
-        finally:
-            control._tracked = original
-        self.assertEqual(len(calls), 2)
+                control._tracked = failing
+                try:
+                    with self.assertRaisesRegex(RuntimeError, message):
+                        control.source_copy(destination)
+                finally:
+                    control._tracked = original
+                self.assertEqual(len(calls), ordinal,
+                                 'the failure must land on the call this case names')
 
 
         # The recurrence mode of #1570 is a new control carrying its own
