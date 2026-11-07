@@ -26,6 +26,7 @@ CI 的必需 `metadata-observer` job 自动运行；其现有 `EnvironmentContro
 正控/变异/恢复日志分别留存；不写原源码，不创建 Git 副本或 target。
 信号探针先按同一 HEAD 守卫把共享扫描器捂热，再 spawn 子进程、等原子发布的 ready 文件后发
 SIGTERM / SIGKILL，核真实输入不变；就绪预算 = 子进程自己的树锁等待
-（`mutating_sources` 默认 `lock_timeout`，从签名读取而非抄数）+ 300 s 捂热后路径余量
-（cb8 实测热态 6.7–6.8 s、冷 target 52.4 s），子进程先退出则立即报出、不等满预算；
+（`mutating_sources` 默认 `lock_timeout`，从签名读取而非抄数）+ 900 s 捂热后路径余量
+（cb8 实测热态 6.7–6.8 s、冷 target 52.4 s；余量覆盖取锁后 4×120 s git + 60 s 扫描器上限的 1.7×），
+子进程先退出则立即报出、不等满预算；
 再用真实 HEAD 守卫重新跑一项；no-op 变异必须 SURVIVED 并退出 1，no-op 恢复必须 INVALID。

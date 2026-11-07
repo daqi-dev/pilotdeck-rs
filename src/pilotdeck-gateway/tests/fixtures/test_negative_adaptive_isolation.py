@@ -32,29 +32,32 @@ sys.path.insert(0, str(HERE))
 #
 # The compile is removed from the child's path instead of budgeted for: the
 # test warms the scanner through the same HEAD guard first (see the warm-up in
-# test_term_and_kill...). What is left between spawn and `ready` is bounded by
-# the waits the child is *allowed* to spend:
-#   * mutating_sources(root, [], baseline=...) waits for the shared tree lock
+# test_term_and_kill...). What is left between spawn and `ready` is:
+#   * mutating_sources(root, [], baseline=...) waiting for the shared tree lock
 #     with lock_timeout=900 (negative_process.py:872, read from the signature
 #     by hold_ready_seconds() below). The child cannot wait longer than that:
 #     at 900 s it raises its own TimeoutError and exits, which the assertion
 #     reports as rc + stderr rather than as an expired budget;
-#   * everything after the lock is the warm path measured at 6.7-6.8 s under a
-#     load-17 host (git re-reads + copies, no compile); 300 s is ~44x that and
-#     ~2x again for a slower CI runner.
+#   * the warm post-lock path, measured at 6.7-6.8 s under a load-17 host (git
+#     re-reads + copies, no compile). Its per-step caps are watchdogs for hung
+#     subprocesses, not expected durations: <=4 git calls at GIT_TIMEOUT (120 s,
+#     negative_process.py:395) plus one scanner run at 60 s (:509) is 540 s, and
+#     the allowance below is 900 s -- 1.7x that, and ~130x the measured path.
 #
-# The budget therefore never fires before the child's own bound does, and a
-# child that exits on its own is reported immediately. Residual (not closable
-# from here, and not introduced by this test): a sibling runner that holds the
-# tree lock for the full 900 s still makes this probe fail, because the child
-# gives up on the lock by design. That is a property of the shared lock; the
-# diagnostic names it instead of leaving a bare `rc=None`.
+# The budget therefore expires only after the child's own lock bound, and a
+# child that exits on its own is reported immediately. Two residuals, neither
+# introduced here: a sibling runner that holds the tree lock for the full 900 s
+# still makes this probe fail, because the child gives up on the lock by design
+# (the diagnostic names it instead of leaving a bare `rc=None`); and a host slow
+# enough to spend the per-call git watchdogs on the pre-lock reads would fail
+# dozens of other fixtures too -- that red is a broken runner, not a false one.
 # The "--hold-lock" child never builds: it imports negative_process and takes
 # the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
 # is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
-# Allowance on top of the child's lock wait for the warm post-lock path.
-WARM_PATH_ALLOWANCE = 300
+# Allowance on top of the child's lock wait for the warm post-lock path; see the
+# cap enumeration above.
+POST_LOCK_ALLOWANCE = 900
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
 
@@ -92,7 +95,7 @@ def hold_ready_seconds():
     lift that default to a named constant there.
     """
     signature = inspect.signature(shared_process().mutating_sources)
-    return signature.parameters['lock_timeout'].default + WARM_PATH_ALLOWANCE
+    return signature.parameters['lock_timeout'].default + POST_LOCK_ALLOWANCE
 
 
 def read_child_output(child):
