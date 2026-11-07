@@ -4753,3 +4753,7 @@ WeCom手动配置、旧凭据复用、全部平台别名/菜单3、QR生成/查�
 ### 2026-11-08 · TUI 权限文件（Codex/Terra，仅本机）
 
 权限文件现用共享JS codec保留孤立UTF16/大数真值，按TS规范化别名/去重/字段与正常输出；写入复用共享atomic，损坏JSON/8MiB超限/不支持目标明确拒绝，实际EFBIG旧deny原字节保全且临时文件清理。mbp2 9测试通过，1helper由父实际调用，fmt/alltargets clippy通过，独立审无确认P0/P1，原件主仓 `_tmp/20261108-cli-tui/`。真实TS PTY已采到远端启动/输入/三帧流，退出仍需精确确认；接下来Ratatui runner，local fallback/native权限仍受A装配接线限制。新差异未人批，未标TUI完成；update发布形态问题待用户文本偏好，独立开发继续。
+
+### 2026-11-08 · gateway setup Weixin 与 all 菜单（Codex，本地提交）
+
+Weixin/wechat与菜单2已原生接通，all按Feishu→Weixin→WeCom顺序执行；真实TS+SDK新增14格普通/边界金样与all完整输出，凭据/配置/请求/回调时钟逐项核对。真实TS EFBIG证明旧凭据被截断，Rust复用原子保存保全旧件；独审发现的FIFO/超大凭据与响应慢流已以1MiB/30秒body绝对期限修复，35秒poll headers保持。mbp2 r3最终47通过、4辅助子测试由父实际调用，fmt/严格clippy通过；原件与hash在主仓 `_tmp/20261108-issue-124-setup/weixin-worker/`，两条D2差异仍未批准、无冻结豁免。本轮仅本机提交，真实平台登录/人眼终端待验，不标#124/D2完成；下一步独立native前台serve薄入口。

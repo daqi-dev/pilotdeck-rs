@@ -354,6 +354,9 @@ fn wecom_write_failure_child() {
         let paths = SetupPaths {
             config: path,
             credentials: PathBuf::from("unused-credentials"),
+            credentials_label: PathBuf::from("unused-credentials"),
+            home_pilot: None,
+            home_pilot_label: None,
         };
         let mut dialog = if qr {
             Dialog::new(&["", "", "", ""])

@@ -1,6 +1,6 @@
 # Gateway setup：原生平台配置
 
-本目录验证 Feishu/Lark 与 WeCom 平台配置：手动输入、既有凭据复用、平台别名、菜单路径及 WeCom QR 的隔离 mock。Weixin 及菜单 all 的后续平台仍明确为未实现；这些切片不代表 #124 或 D2 完成。
+本目录验证 Feishu/Lark、Weixin 与 WeCom 平台配置：手动输入、既有凭据复用、平台别名、菜单全部平台顺序及 QR 的隔离 mock。这些切片不代表 #124、D2、真实服务登录或真人终端实效已完成。
 
 参照固定为 `OpenBMB/PilotDeck@cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的 `src/cli/commands/gatewaySetup.ts`。运行器固定 Node v22.22.0 / ICU 78.2，序列化包为基线安装的 `yaml@2.9.0`。实际安装 `@larksuiteoapi/node-sdk@1.65.0` 的 `default ?? module` 没有 `AppTicketManager` 导出，因此本切片走原版实际可达的手动凭据流程，不声称实现了扫码创建应用。
 
@@ -72,3 +72,28 @@ python3 src/pilotdeck-cli/tests/fixtures/gateway-setup/generate-wecom.py \
 ```
 
 生成器与 `wecom-driver.mjs` 为自写测试代码，先核固定 TS 源码字节和 Node/ICU，再在独占 HOME/PILOT_HOME/config/TMPDIR 下运行原函数。它只收集本切片配置副作用，不覆盖旧 bin 的全局代理启动。WeCom 自身保存失败另有真实 `ulimit -f 0` 子进程，分别在旧凭据复用与 QR 拿到凭据后检查失败结果、成功提示不出现、两份原件原字节及临时清理；辅助子测试由父测试通过回执确认实际执行。
+
+
+## Weixin SDK mock 金样
+
+`weixin-oracle.json` 14 格调用真实 TS setup 与安装的 `weixin-ilink@0.1.0`，覆盖旧凭据复用、重新登录、取消、扫码回调、过期刷新、缺凭据、HTTP 失败、Abort 后重试、孤立 UTF-16 qrcode、损坏旧凭据及自定义 PILOT_HOME 缺父目录。`weixin-all.json` 另录菜单 4：Feishu → Weixin → WeCom 的完整输出和取消顺序。Rust 逐格比较完整 stdout、结果、两份文件原文字节、请求/headers、时钟和 legacy HOME 目录副作用。
+
+```sh
+python3 src/pilotdeck-cli/tests/fixtures/gateway-setup/generate-weixin.py \
+  --baseline "$TASK_BASELINE" --node "$TASK_NODE" --output "$TASK_NEW_WEIXIN_OUTPUT"
+python3 src/pilotdeck-cli/tests/fixtures/gateway-setup/generate-weixin.py \
+  --baseline "$TASK_BASELINE" --node "$TASK_NODE" --output "$TASK_NEW_WEIXIN_ALL_OUTPUT" --all-only
+python3 src/pilotdeck-cli/tests/fixtures/gateway-setup/generate-weixin.py \
+  --baseline "$TASK_BASELINE" --node "$TASK_NODE" --output "$TASK_NEW_WEIXIN_FAILURE_OUTPUT" --write-failure
+```
+
+生成器先核固定 TS SHA/源码字节、Node v22.22.0 / ICU 78.2 与 SDK 0.1.0；输出目录必须独占新建。自写 driver 直接调用原函数、替换全部 fetch 与 1 秒轮询计时器，35 秒 SDK abort 保留；不运行旧完整 bin 的全局代理安装，不调用真实微信网络。HOME/PILOT_HOME/config/cwd/TMPDIR 均隔离；版本与 oracle 不能由 Rust 结果重写。源码复用限制见 `weixin.rs`：现有 Gateway public opaque login 无法插入所需原版错误文案与严格 UTF-16 URI 处理，本包只复用其公开默认 URL，复用共同原生 HTTP/TLS、JS codec 与原子保存，未编辑 Gateway 作者占用文件。
+
+`--write-failure` 只对子进程设真实 RLIMIT_FSIZE=0、忽略 SIGXFSZ 并禁用 tsx 磁盘缓存。原版在两次 fake 请求成功后将旧凭据截断为零，配置原件不变；`weixin-write-failure.json` 保留该事实与完整失败输出。事件回执改经 stdout 管道返回，避免写失败影响装置本身。Rust 对应父测试实际启动同样大小限制的辅助子测试，逐字比较失败输出并确认旧凭据和配置保留、无成功提示和临时残留；不是以构造 IO 错误代替真实失败。
+
+Weixin 独立安全边界：凭据以非阻塞 open 后检查同一 fd，只接受普通文件，最大 1 MiB；文件增长也由 limit+1 有界读取截获。非普通/超限/读取失败明确拒绝，旧凭据与配置保留。无 writer FIFO 与超限稀疏文件由父进程的 3 秒期限保护真实子测试；超时会杀收子进程并失败。JSON 本身损坏时仍按基线允许用户明确选择新扫码登录，正常凭据不会因资源边界被静默清空。
+
+iLink QR/status 的响应独立限制为最大 1 MiB、最终 headers 到完整 body 最多 30 秒，期限不因 chunk 续期；poll 的 35 秒 abort 仍只覆盖 headers，body guard 是明确失败而非 Abort 重试。真实 loopback 测试以构造参数缩小同一生产 guard 的 limit/timeout，发送超限 body 与持续每 5ms 发数据的慢流，覆盖 initial QR 和 poll，并确认旧凭据/配置不写入。Feishu/WeCom 的既有传输语义不因此收窄。差异见 `D2-WEIXIN-CREDENTIAL-ATOMIC-001` 与 `D2-WEIXIN-RESOURCE-BOUNDS-001`；它们未批准为冻结评分豁免。
+
+
+`probe-weixin-resources.py` 使用同样的固定版本与独占目录，真实执行旧setup：父进程2秒杀收无writer FIFO挂起子进程，另证明1MiB以上有效凭据仍进入原版复用提示；不读FIFO来采集结果，不访问外网。调用参数与生成器相同。其原件只归档任务目录，不作为Rust正常金样重写。

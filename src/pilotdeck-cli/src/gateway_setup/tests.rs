@@ -73,6 +73,9 @@ impl Scratch {
         SetupPaths {
             config: self.0.join("nested/pilotdeck.yaml"),
             credentials: self.0.join("creds.json"),
+            credentials_label: self.0.join("creds.json"),
+            home_pilot: None,
+            home_pilot_label: None,
         }
     }
 }
@@ -837,3 +840,6 @@ fn atomic_save_refuses_bsd_flags_without_losing_them() {
 
 #[path = "tests_wecom.rs"]
 mod wecom_tests;
+
+#[path = "tests_weixin.rs"]
+mod weixin_tests;

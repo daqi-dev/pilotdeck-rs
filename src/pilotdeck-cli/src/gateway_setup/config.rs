@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 pub(super) struct SetupPaths {
     pub config: PathBuf,
     pub credentials: PathBuf,
+    pub credentials_label: PathBuf,
+    pub home_pilot: Option<PathBuf>,
+    pub home_pilot_label: Option<PathBuf>,
 }
 impl SetupPaths {
     pub fn new(env: &Env, cwd: &Path) -> Result<Self, Failure> {
@@ -27,13 +30,40 @@ impl SetupPaths {
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join("pilotdeck.yaml"));
+        let credentials_label = join_clean(&home, "weixin-credentials.json");
+        let home_pilot_label = env
+            .string("HOME")
+            .map(|home| join_clean(Path::new(&home), ".pilotdeck"));
+        let home_pilot = home_pilot_label
+            .as_ref()
+            .map(|home| paths::resolve(cwd, home));
         Ok(Self {
+            credentials_label,
+            home_pilot,
+            home_pilot_label,
             config: paths::resolve(cwd, &config),
             credentials: paths::resolve(cwd, &home.join("weixin-credentials.json")),
         })
     }
 }
 
+fn join_clean(base: &Path, name: &str) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in base.join(name).components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if out.file_name().is_some_and(|name| name != "..") {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push("..");
+                }
+            }
+            part => out.push(part.as_os_str()),
+        }
+    }
+    out
+}
 fn empty_graph() -> ValueGraph {
     ValueGraph {
         root: Value::Null,

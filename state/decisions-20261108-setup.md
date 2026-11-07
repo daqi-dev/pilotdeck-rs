@@ -19,3 +19,14 @@
 - 建议与决定：**AI 代批，待人复核**，采用 `D2-SETUP-ATOMIC-SAVE-001`：新配置 0600，旧普通文件 mode/uid/gid 保留，symlink 跟到目标，hardlink/断链/特殊权限位/BSD flags/ACL/xattrs 拒绝。无法可靠保留的形态 fail-closed；不是已批准的冻结豁免。
 - 原则与断言：候选内容完整写入并同步前不截断原文件；实际 EFBIG、metadata 注入、symlink 和身份变化回归必须证明旧字节保留，不以构造错误对象替代真实失败。
 - 证据与边界：主仓 `_tmp/20261108-issue-124-setup/atomic-worker/` 保留三轮原始测试与最终 fmt/clippy、哈希清单；最终27通过，辅助子测试由父测试实际调用。未建立所有旧写者的互斥协议，不宣称目录项跨断电耐久；WeCom/Weixin、真实服务登录与人工终端体验继续推进。
+
+## 2026-11-08 · Weixin 凭据原子保存与资源上限
+
+- 卡在哪：真实TS在凭据EFBIG后截断旧文件；独审指出无writer FIFO读取挂起、超大凭据/响应无界分配及持续body慢流。SDK35秒只覆盖headers，不能据此声称body也有期限。
+- 谁受影响：CLI setup微信凭据异常读取/写入和iLink QR/status响应；正常Feishu/WeCom、Gateway公共登录实现均不改。
+- 能否撤回：可以，无凭据格式迁移。被拒绝旧件不转换、不删除；正常成功JSON/输出保持金样。
+- 动不动尺子/意向：不动冻结装置或判分；按现有默认修复丢数据/安全问题授权执行，协调者明确确认1MiB及30秒预算。
+- 选项与后果：照搬会损坏旧凭据或挂起/耗尽内存；只设chunk inactivity不能约束持续慢流；限输入种类/字节/绝对deadline并复用原子发布能保全支持范围内原件。
+- 建议与决定：**AI代批，待人复核**。两条差异分开登记为 `D2-WEIXIN-CREDENTIAL-ATOMIC-001` 和 `D2-WEIXIN-RESOURCE-BOUNDS-001`，均**未批准，非已接受差异**，不提供冻结豁免。凭据最大1MiB且仅普通文件，O_NONBLOCK后同fd核形态；iLink body最大1MiB/最终headers后30秒，poll35秒headers不变。
+- 原则与断言：读取资源失败不得退为空凭据后覆盖；读取上限和body期限必须落到实际IO路径。真实FIFO/稀疏文件及持续loopback慢流测试核错误和旧件不变；真实EFBIG核失败输出完整一致、原子保存保留旧凭据，辅助子测试由父实际调用。
+- 证据与边界：真实TS固定SHA/Node22.22/ICU78.2/SDK0.1.0原件、mbp2测试和源码hash见主仓 `_tmp/20261108-issue-124-setup/weixin-worker/`。两个文件不构成跨文件事务，不宣称故障文件系统IO可被强制中断、与全部旧写者互斥或目录项跨断电耐久。真实平台登录、人眼终端实效仍待验，未据本包宣布#124/D2完成。

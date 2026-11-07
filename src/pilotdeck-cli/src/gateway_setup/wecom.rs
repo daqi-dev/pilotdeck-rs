@@ -240,7 +240,7 @@ fn first<'a>(a: &'a JsValue, b: &'a JsValue) -> &'a JsValue {
         a
     }
 }
-fn js_string(value: &JsValue) -> JsString {
+pub(super) fn js_string(value: &JsValue) -> JsString {
     match value {
         JsValue::String(value) => value.clone(),
         JsValue::Array(values) => {
@@ -276,7 +276,7 @@ fn trim_units(value: JsString) -> JsString {
         .map_or(start, |index| index + 1);
     JsString::from_utf16(units[start..end].to_vec())
 }
-fn component(value: &JsString) -> Result<String, String> {
+pub(super) fn component(value: &JsString) -> Result<String, String> {
     let value = value.to_utf8().map_err(|_| "URI malformed".to_owned())?;
     let mut out = String::new();
     for byte in value.bytes() {

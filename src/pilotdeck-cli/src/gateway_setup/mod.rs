@@ -6,6 +6,7 @@ mod prompt;
 mod save;
 mod terminal;
 mod wecom;
+mod weixin;
 
 use crate::{Failure, paths::Env};
 use config::SetupPaths;
@@ -35,9 +36,7 @@ fn run_with(
     let platform = argv.first().map(|value| value.to_lowercase());
     match platform.as_deref() {
         Some("feishu" | "lark") => feishu::setup(paths, io, network),
-        Some("weixin" | "wechat") => {
-            Err(SetupError::Failure(Failure::Todo("gateway setup weixin")))
-        }
+        Some("weixin" | "wechat") => weixin::setup(paths, io, network),
         Some("wecom" | "work-weixin" | "workwechat") => wecom::setup(paths, io, network),
         _ => {
             let config = config::load(&paths.config);
@@ -72,14 +71,14 @@ fn run_with(
             io.line("  q) 退出\n")?;
             match io.ask("请选择 [1/2/3/4/q]: ")?.as_str() {
                 "1" | "feishu" => feishu::setup(paths, io, network),
-                "2" | "weixin" => Err(SetupError::Failure(Failure::Todo("gateway setup weixin"))),
+                "2" | "weixin" => weixin::setup(paths, io, network),
                 "3" | "wecom" => wecom::setup(paths, io, network),
                 "4" | "all" => {
                     feishu::setup(paths, io, network)?;
                     io.line("")?;
-                    Err(SetupError::Failure(Failure::Todo(
-                        "gateway setup remaining platforms",
-                    )))
+                    weixin::setup(paths, io, network)?;
+                    io.line("")?;
+                    wecom::setup(paths, io, network)
                 }
                 _ => io.line("未选择任何平台，退出。"),
             }
