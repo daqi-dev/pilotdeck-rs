@@ -11,7 +11,8 @@
 
 1. session-lease 守卫集移除 `capture.py`，capture 案例改 `--memory-run` 注入（见
    `session-lease/`，其自带 26 项案例含两个 #1662 变异）。
-2. `sdk_signal_exit.rs` 的读盘测试统一持共享读租约（本负控的对象）。
+2. `sdk_signal_exit.rs` 的读盘测试统一持共享读租约；#1885 起该租约实现下沉到
+   `src/pilotdeck-cli/tests/common/read_lease.rs`（本负控的对象，`TEST_SOURCE`）。
 
 ## 三段式判杀（GREEN / RED / writer-exit-contract）
 
@@ -36,9 +37,9 @@
 
   cargo 名额在起 writer **之前**取（`cargo-slots.sh` 是查询式），所以 90 s 的持锁
   只需要覆盖测试本身，不必覆盖最长 900 s 的名额排队。
-- **RED `lease-removed-false-fail`**：`mutating_sources(root, [sdk_signal_exit.rs,
+- **RED `lease-removed-false-fail`**：`mutating_sources(root, [common/read_lease.rs,
   capture.py])` 内把租约的持锁者等待（`thread::sleep(Duration::from_millis(50));`）
-  换成 `return file;`（变异体先经 `cargo test` 隐式编译验证），capture.py 追加变异行，
+  换成 `return Some(file);`（变异体先经 `cargo test` 隐式编译验证），capture.py 追加变异行，
   持锁跑同一测试 → 期望 FAIL 于
   `#1145 source file SHA256 matches disk: probeSha256/capture.py`。
 
@@ -71,7 +72,7 @@ GREEN 不能只看「测试通过」——没等到 writer 也会通过；也不
   「拒绝不在本次 writer 区间内」；把 `HOLD_SECONDS` 误写成旁边的
   `STOP_CHECK_HOLD_SECONDS` 正好会落进这一格（r9/r10 P3）。
 - 只有「测试 PASS + `blocked` 落在本次 writer 的持锁区间 + 等待 ≥ 500 ms」才是 KILLED。
-- marker 字面量漂移守卫：`LEASE_MARKER` 不在 `sdk_signal_exit.rs` 文本里时 GREEN 直接
+- marker 字面量漂移守卫：`LEASE_MARKER` 不在 `common/read_lease.rs` 文本里时 GREEN 直接
   INVALID，避免两侧改名后控制项静默失效。
 
 prewarm（`--no-run`）返回非 0 直接 INVALID：否则第二次运行会在计时窗口里重编译。

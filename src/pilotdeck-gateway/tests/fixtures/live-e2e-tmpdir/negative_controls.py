@@ -62,6 +62,13 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
+    # #1885: this run holds the exclusive tree lock for its whole duration, so a
+    # child asking for the shared read lease would block on its own parent. The
+    # bound test today (`case_directories_use_cargo_tmpdir`) takes no lease, so
+    # the value is inert; injecting it keeps all three lock-holding runners on
+    # the same contract instead of leaving a 900 s self-deadlock for the next
+    # test binding.
+    env['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(ROOT)
     guarded = [SOURCE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs']
