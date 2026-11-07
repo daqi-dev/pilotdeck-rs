@@ -316,9 +316,23 @@ def _copyable(relative, tracked=None):
             return False
     except OSError:
         return False
-    if tracked is not None:
-        return relative in tracked or not _ignored(relative)
-    return _tracked_but_deleted(relative) or not _ignored(relative)
+    return _in_index(relative, tracked) or not _ignored(relative)
+
+
+def _in_index(relative, tracked=None):
+    """True when `relative` is in the index the way the copy list reads it.
+
+    `src/` members are looked up in the caller's `ls-files` listing (it
+    already has one; asking git per file would be a subprocess each), and
+    everything else asks git. One dispatch for both callers -- deriving and
+    copying from two different rules is how #1570 came back twice
+    (#1570 r21 zai simplify P2).
+    """
+    if relative.parts[:1] == ('src',):
+        if tracked is None:
+            tracked = _tracked('src')
+        return relative in tracked
+    return _tracked_but_deleted(relative)
 
 
 def _indexed(path, tracked):
@@ -335,9 +349,7 @@ def _indexed(path, tracked):
             relative = path.relative_to(base)
         except ValueError:
             continue
-        if relative.parts[:1] == ('src',):
-            return relative in tracked
-        return _tracked_but_deleted(relative)
+        return _in_index(relative, tracked)
     return False
 
 
@@ -401,6 +413,30 @@ def _sha256_of(descriptor):
         for chunk in iter(lambda: handle.read(1 << 20), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_input(path, root_identity=None):
+    """bytes of one workspace input, read from a single checked descriptor.
+
+    The scan used to call `read_bytes()` on the path: a source swapped for a
+    FIFO in that window blocks the control forever, and a source swapped for
+    a link is read through it (#1570 r21 zai sibling P2). One open, one type
+    check, one read -- the same rule as the copy and the final digest.
+    """
+    try:
+        descriptor = _open_input(path, root_identity)
+    except OSError as error:
+        raise RuntimeError(f'source_copy: {path} changed while the control was starting '
+                           f'({error}); refusing to run the control') from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f'source_copy: {path} is not a regular file; the control '
+                               'reads plain files only, so refusing to run the control')
+        with os.fdopen(descriptor, 'rb', closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(descriptor)
 
 
 def _source_digest(path, root_identity=None):
@@ -930,7 +966,7 @@ def compile_inputs(*, sources=None, read=None):
         if source in scanned:
             continue
         scanned.add(source)
-        data = (REPO / source).read_bytes()
+        data = _read_input(source)
         if read is not None:
             read[source] = hashlib.sha256(data).hexdigest()
         text = data.decode('utf-8', 'surrogateescape')
@@ -1194,7 +1230,7 @@ def source_copy(root):
     # as something the user is expected to fix (#1570 r20 zai concurrency P3).
     try:
         relisted_src = set(_tracked('src')) | set(_untracked_files('src'))
-    except RuntimeError as error:
+    except (RuntimeError, subprocess.SubprocessError) as error:
         raise RuntimeError('src/ changed while the scratch copy was being made '
                            f'({error}); refusing to run the control against a moving '
                            'tree') from error
@@ -1211,7 +1247,7 @@ def source_copy(root):
     if directories:
         try:
             relisted = set(_tracked(*directories)) | set(_untracked_files(*directories))
-        except RuntimeError as error:
+        except (RuntimeError, subprocess.SubprocessError) as error:
             raise RuntimeError('an input directory changed while the scratch copy was being '
                                f'made ({error}); refusing to run the control against a moving '
                                'tree') from error
