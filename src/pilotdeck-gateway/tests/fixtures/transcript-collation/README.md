@@ -8,11 +8,14 @@
 
 | case | 真实 TS 顺序（`createdAt` 码位） | 判别力 |
 |---|---|---|
-| lone-high-among-valid-code-points | `𐀀` → `\ud800` → `` → `�` | 若把孤立代理折叠成 U+FFFD，`\ud800` 与 `�` 变成平局，顺序改变 |
-| distinct-lone-code-units | `\ud800` → `\ud801` → `\udc00` | 折叠后三者全部相等，稳定排序保留输入序，顺序改变 |
+| lone-high-among-valid-code-points | `U+10000` → `U+D800` → `U+E000` → `U+FFFD` | 若把孤立代理折叠成 U+FFFD，`U+D800` 与 `U+FFFD` 变成平局，顺序改变 |
+| distinct-lone-code-units | `U+D800` → `U+D801` → `U+DC00` | 折叠后三者全部相等，稳定排序保留输入序，顺序改变 |
 
-排序结果在 `native-collation/oracle.json` 的 14 个 locale 上逐一核对过，这四个/三个键的
-相对顺序与进程 locale 无关，因此 Rust 断言不依赖宿主 `LANG`。
+上表用码位书写，因为 `U+E000` 单独打印是不可见/空白字形，容易误读成「没覆盖 U+10000」。
+前一组四个键 `U+10000` / `U+D800` / `U+E000` / `U+FFFD` 都在 `native-collation/oracle.json`
+的 61 键表内（keys 下标 28 / 17 / 23 / 14）；逐 locale 读该文件的 `rows`，14 个 locale
+的符号矩阵对这四键都是严格升序 `U+10000 < U+D800 < U+E000 < U+FFFD`，与上表的 TS 顺序
+互为逆序，因此 Rust 断言不依赖宿主 `LANG`。后一组三个孤立码元同理（下标 17 / 18 / 20，同为严格升序）。
 
 Rust 侧由 `storage::tests::equal_sequence_created_at_keeps_isolated_utf16_weights` 重放：
 写同一份 JSONL，按 `stringify_json` 逐条对照 `entries`，并要求 `diagnostics` 为空。

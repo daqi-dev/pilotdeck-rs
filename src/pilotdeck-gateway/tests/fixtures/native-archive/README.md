@@ -4,7 +4,7 @@
 
 `cases.json` 原样取自保留的旧候选 `feat/a4-native-archive@9589be4`，SHA-256 `60e878bb9f5433424129822309d1783207cda8c65cbd65d951eabd3a472adef7`。138 个真实公开 RPC 请求/响应保留原字节与磁盘事实，8 份基线源码 SHA 已重核。旧 `forward` 与 `securityEvidence.approvedDifference` 是历史作者元数据，不是本候选路由或人的授权；本候选不使用它们。D6 现在让 138 项全部本地逐字节相等；真实 pairing 后的 observer fence 与 silence 检查上游零请求。原录制快照不因路由期望变化而改写。另将33条文件事实在本轮临时目录实际物化（两大文件为sparse），仅一致替换home/cwd绝对路径及.cwd内容；138条Native响应和138条Native配对逐字节符合显式路径迁移后的原件。该测试不是重写Node原响应，固定原件SHA不变。
 
-`host-boundary.json` 是本轮真实 Node 默认装配的 11 个独立公开 RPC 与文件事实：同 sequence 的孤立 UTF-16 和 +0/-0 同组精确退回4项；唯一 sequence 的孤立 UTF-16、有效代理对、坏行优先报 invalid，以及不读取 transcript 的 artifact 共7项本地。配对测试实际核对4条原样上游请求和7条本地响应。#132 的 A8 宿主边界仍未关闭；#133 Linux 非法字节 dirent 已由 `../project-files-linux-dirent/` 的 Linux 门控测试覆盖，需 cb8 主机运行（证据由协调者产出后收口）。
+`host-boundary.json` 是本轮真实 Node 默认装配的 11 个独立公开 RPC 与文件事实：同 sequence 的孤立 UTF-16 和 +0/-0 同组 4 项、唯一 sequence 的孤立 UTF-16、有效代理对、坏行优先报 invalid，以及不读取 transcript 的 artifact 共 7 项。前 4 项在 #132 前是宿主边界（`Ok(None)` 转发），现由 vendored `compare_utf16_preserving_surrogates` 本地排序，11 项全部本地逐字节应答。配对测试实际核对 11 条本地响应，上游除一条无关的 `describe_server` fence 外零请求；#133 Linux 非法字节 dirent 已由 `../project-files-linux-dirent/` 的 Linux 门控测试覆盖，需 cb8 主机运行（证据由协调者产出后收口）。
 
 `io-errors.json` 是两个 transcript method 自己的12条真实 RPC：每个分别 ENOENT/EISDIR/ELOOP/ENOTDIR/EACCES/ENAMETOOLONG。read-only fs observer 保留真实 stat/readFile 的 API、目标、errno/syscall/message，不注入错误。`RUN` 只能由目标实际抛出预期 errno 获得；NOT_RUN 不准入。Rust 以这些固定错误事实重放整个 RPC，并实际 pairing 核对12条本地响应；不是恢复权限后的 Native errno 重现。method 专属 whitelist 与这12条来源集合精确相等，未知 errno/非OS错误仍为显式 host 边界，唯 archive 非 regular/超过既有 2GiB 边界的专用拒绝标记由 transcript 本地返回 PATH_NOT_ALLOWED（artifact 仍按既有契约归并 ARCHIVE_ARTIFACT_NOT_FOUND）；transcript 最多读取 50MiB+1，实际超过 50MiB 返回 SESSION_TRANSCRIPT_INVALID。自然 stat ELOOP 保留 Node 错误；NOFOLLOW 安全失败与 canonical 之后 checked stat/open 的 ENOTDIR 则本地拒绝，不能发回不安全 TS。
 
@@ -18,7 +18,7 @@
 
 `marker-node.json`是本轮新增三method×static/race/inside共9条真实默认Node RPC，sync/async read observer保留`.cwd`实际读取的字节与pre-open替换事件。Node没有canonical检查，不把它称为stat→read竞态。Rust只在archive调用链使用RegistryFiles：marker内容的允许根为canonical PILOT_HOME，archive transcript内容根仍为canonical PILOT_HOME，artifact内容根为canonical project。静态外链在任何内容打开前拒绝；受控替换在marker canonical之后、真正descriptor打开前发生，实际命中并拒绝。测试禁止原始Files.read和session_summary旁读。当前非legacy注册fixture的候选响应为PROJECT_NOT_FOUND；内根marker链接保持原响应，已有legacy恢复规则仍保留。Native/真实pairing各9条唯一marker receipt。这个拒绝原版可读外部marker的差异也明确等待#134同一精确授权，不继承#68。
 
-本候选没有承诺所有metadata访问安全：registry目录枚举名称、stat元数据、项目根选择仍沿用现有语义；不会把内容安全9探针泛化为整条metadata安全。#134待批准范围包括指定transcript/artifact静态外链、canonical后leaf/ancestor/root替换，以及`.cwd`静态外链/检查后替换。artifact错误归并、普通自然errno、孤立UTF16宿主边界分别按上述原件说明。
+本候选没有承诺所有metadata访问安全：registry目录枚举名称、stat元数据、项目根选择仍沿用现有语义；不会把内容安全9探针泛化为整条metadata安全。#134待批准范围包括指定transcript/artifact静态外链、canonical后leaf/ancestor/root替换，以及`.cwd`静态外链/检查后替换。artifact错误归并、普通自然errno按上述原件说明；孤立UTF16排序的宿主边界已在#132本地应答（见上）。
 
 `project-key-identity.json` 是独立新增的 4 条真实 Node WS 原件，由
 `tests/record_native_archive_project_key.mts` 在全新隔离 scratch 生成，不改历史

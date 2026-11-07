@@ -188,6 +188,14 @@ pub(super) fn read_entries(path: &Path) -> Result<Vec<fs::DirEntry>, Failure> {
 pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> {
     // Same Node/ICU locale selection already measured for gateway project_files.
     // D2's independent C-locale probe is scripts/cli-parity/skills_probe.mjs.
+    //
+    // Known divergence from `gateway/src/node_locale.rs` (#132 P2, registered
+    // as a follow-up): this CLI parser is deliberately simpler. It drops the
+    // whole POSIX suffix at the first `.` or `@` (so `fr_CA@collation=eor`
+    // becomes `fr-CA`), and a malformed tag falls back to `en-US` wholesale
+    // instead of keeping ICU's valid prefix. Both only matter for exotic LANG
+    // values; the collations compared here (skill directory basenames) come
+    // from the same process locale either way.
     let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|key| env.string(key))
@@ -208,11 +216,22 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
     let create = |preferences: CollatorPreferences| {
         Collator::try_new(preferences, Default::default()).map(|collator| {
             // Same measured Node/ICU 78.2 gap as gateway `node_collator`: the
-            // baked metadata omits fr-CA's backward-secondary bit. `fr-Latn-CA`
-            // resolves to `fr` in Node (no backward secondary), so the script
-            // guard is part of the boundary, not an accident.
+            // baked metadata omits fr-CA's backward-secondary bit. This path
+            // mirrors Node's *default* locale, i.e. `localeCompare` with no
+            // locale argument, which is what `migrateSkills.ts` uses. Measured
+            // on v22.22.0 / ICU 78.2: under `LANG=fr_Latn_CA.UTF-8` the default
+            // collator reports `resolvedOptions().locale == "fr-Latn-CA"` yet
+            // orders like `fr-CA` (`coté > côte`), while an explicit
+            // `new Intl.Collator("fr-Latn-CA")` orders like generic `fr`. So the
+            // script tag on CA does not opt out here; a non-Latin script tag is
+            // untested and left alone, and an explicit collation keeps its own
+            // metadata. The probe row `fr_Latn_CA.UTF-8` pins this on both
+            // sides.
             if locale.id.language.as_str() == "fr"
-                && locale.id.script.is_none()
+                && locale
+                    .id
+                    .script
+                    .is_none_or(|script| script.to_string() == "Latn")
                 && locale
                     .id
                     .region
@@ -680,10 +699,14 @@ mod tests {
                 .unwrap();
         assert_eq!(probe["node"], "v22.22.0", "#132 probe Node pin");
         assert_eq!(probe["icu"], "78.2", "#132 probe ICU pin");
-        for case in probe["cases"].as_array().unwrap() {
+        let cases = probe["cases"].as_array().unwrap();
+        assert!(!cases.is_empty(), "#132 probe records locales");
+        for case in cases {
             let lang = case["lang"].as_str().unwrap();
             let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)])).unwrap();
-            for pair in case["pairs"].as_array().unwrap() {
+            let pairs = case["pairs"].as_array().unwrap();
+            assert!(!pairs.is_empty(), "#132 {lang}: probe records pairs");
+            for pair in pairs {
                 let left = pair[0].as_str().unwrap();
                 let right = pair[1].as_str().unwrap();
                 let sign = match collator.compare(left, right) {

@@ -558,6 +558,10 @@ fn equal_sequence_created_at_keeps_isolated_utf16_weights() {
         panic!("#132 transcript collation results")
     };
     assert_eq!(inputs.len(), results.len(), "#132 one result per case");
+    assert!(
+        !inputs.is_empty(),
+        "#132 transcript collation inputs are recorded"
+    );
     let scratch = Scratch::new();
     for (input, result) in inputs.iter().zip(results) {
         let id = string(field(input, "id"));
@@ -567,7 +571,8 @@ fn equal_sequence_created_at_keeps_isolated_utf16_weights() {
         let body = lines.iter().map(string).collect::<Vec<_>>().join("\n") + "\n";
         let path = scratch.0.join(format!("{id}.jsonl"));
         fs::write(&path, body).unwrap();
-        let read = transcript::read_transcript(&path).unwrap();
+        let read = transcript::read_transcript(&path)
+            .expect("#132 isolated surrogates keep Node's implicit weights");
         assert!(read.diagnostics.is_empty(), "{id}: {:?}", read.diagnostics);
         let actual = read
             .entries

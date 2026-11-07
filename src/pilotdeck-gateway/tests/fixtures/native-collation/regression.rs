@@ -33,7 +33,7 @@ fn encode(v: &JsValue) -> String {
         .expect("#132 defined fixture")
 }
 fn matrix() -> JsValue {
-    let v = parse_json(MATRIX).expect("#132 matrix JSON");
+    let v = crate::test_baseline::oracle(MATRIX);
     assert_eq!(text(field(&v, "node")), "v22.22.0", "#132 pinned Node");
     assert_eq!(text(field(&v, "icu")), "78.2", "#132 pinned ICU");
     assert_eq!(array(field(&v, "locales")).len(), 5, "#132 five locales");

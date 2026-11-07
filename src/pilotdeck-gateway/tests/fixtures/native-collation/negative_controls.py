@@ -28,6 +28,7 @@ WORKSPACE = root / 'src/pilotdeck-gateway/src/storage/workspace_snapshot.rs'
 STORAGE_TESTS = root / 'src/pilotdeck-gateway/src/storage/tests.rs'
 DISPATCH = root / 'src/pilotdeck-gateway/src/dispatch.rs'
 ORACLE = root / 'src/pilotdeck-gateway/tests/fixtures/native-collation/oracle.json'
+TRANSCRIPT_ORACLE = root / 'src/pilotdeck-gateway/tests/fixtures/transcript-collation/oracle.json'
 VENDOR_SCOPE = 'icu_collator_vendor_scope_matches_approved_lib_only_boundary'
 PREFIX = 'pairing::native_collation_tests::'
 MATRIX = PREFIX + 'native_matrix_matches_node'
@@ -144,7 +145,10 @@ mutations = [
     ('archive-local-method-lost', DISPATCH,
      '    "native_archive_manifest",\n', '',
      'pairing::tests::archive_lone_surrogate_ties_never_reach_upstream',
-     '#132 pairing response deadline'),
+     # The forwarded request never produces a frame, so the test dies in the
+     # read helper's `expect("read timeout")`; bind that message, not the
+     # unrelated worker deadline.
+     'read timeout'),
     # #132 P2-5: the matrix pairing test had no reverse mutation. Dropping one
     # locally answered business method makes every locale row forward its first
     # catalog request upstream, so the parent test must red with the failed
@@ -158,6 +162,13 @@ mutations = [
      '"sourceCommit":"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
      '"sourceCommit":"0000000000000000000000000000000000000000"',
      PAIRS, '#1109 oracle baseline commit mismatch'),
+    # The transcript gold has the same provenance contract; corrupting it must
+    # trip the git-free commit check before any entry comparison runs.
+    ('transcript-oracle-commit-corrupt', TRANSCRIPT_ORACLE,
+     '"sourceCommit":"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
+     '"sourceCommit":"0000000000000000000000000000000000000000"',
+     'storage::tests::equal_sequence_created_at_keeps_isolated_utf16_weights',
+     '#1109 oracle baseline commit mismatch'),
 ]
 
 
@@ -199,6 +210,7 @@ def main():
     guarded = [PROJECT, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, ARCHIVE, TRANSCRIPT,
                WORKSPACE, STORAGE_TESTS, DISPATCH, FIXTURE / 'regression.rs',
                FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve(),
+               TRANSCRIPT_ORACLE,
                root / 'src/vendor/icu_collator/src/elements.rs',
                *(FIXTURE.parent / name for name in (
                    'negative_process.py', 'negative_suite.py', 'negative_panic.py', 'pending_reanchor.py'))]

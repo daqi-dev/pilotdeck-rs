@@ -118,9 +118,10 @@ impl SnapshotProjectionError {
     }
     /// True when the native projection hit a measured host boundary (R19): the
     /// A8 entry must forward the request, not surface this as a TS-shaped
-    /// error. Two shapes carry it: the fs-errno admission boundary
-    /// (`NODE_IO_REQUIRED`, empty message, as in `session_model`/`skills`) and
-    /// the storage provider's `HostRequired` (`JS_HOST_REQUIRED`).
+    /// error. #132 retired the storage provider's `HostRequired`
+    /// (`JS_HOST_REQUIRED`) shape together with the native collation boundary,
+    /// so one shape carries it now: the fs-errno admission boundary
+    /// (`NODE_IO_REQUIRED`, empty message, as in `session_model`/`skills`).
     pub fn requires_host(&self) -> bool {
         self.requires_host
     }
@@ -1198,9 +1199,30 @@ mod tests {
                 &params(&[("projectKey", project.to_string_lossy().as_ref().into())]),
             )
             .expect("#888 known method routes");
-        assert!(
-            matches!(routed, SnapshotDispatch::Response(_)),
-            "#132 unpaired-surrogate collation answers locally, never forwards"
+        // Asserting only `Response(_)` would also accept the old boundary
+        // answered as a local *error* object (#132 review P1): require the
+        // list payload so reinstating the refusal turns this red.
+        let SnapshotDispatch::Response(response) = routed else {
+            panic!("#132 unpaired-surrogate collation answers locally, never forwards");
+        };
+        let Some(JsValue::Array(items)) = response.get("items") else {
+            panic!("#132 collation case answers with a list, not an error: {response:?}");
+        };
+        let mut ids = items
+            .iter()
+            .map(|descriptor| {
+                descriptor
+                    .get("snapshotId")
+                    .and_then(JsValue::as_string)
+                    .and_then(|id| id.to_utf8().ok())
+                    .expect("#132 snapshot id is UTF-8")
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(
+            ids,
+            ["a", "b", "c"],
+            "#132 every descriptor answers locally instead of a refusal"
         );
     }
 }
