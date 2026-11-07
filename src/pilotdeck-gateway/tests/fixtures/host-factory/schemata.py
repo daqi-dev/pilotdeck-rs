@@ -31,6 +31,20 @@ switches = [
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
     TESTS,
+    # #2228 DS r2 P1: the bindings inherit via `use super::*` from
+    # host_factory.rs, which assembles host_factory_tests.rs itself
+    # (`#[path]` at the `mod tests` boundary), and every bound lease-wait
+    # test pulls the paused-cleanup peer through PausedHostCleanup —
+    # concurrent edits to either during a run must be caught by the source
+    # guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the host_factory module the bindings resolve
+    # through, and runtime/mod.rs declares turn itself, capping the chain at
+    # the same declarator depth the project chain registers elsewhere.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
+    FIXTURES / 'host-factory/peer.py',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

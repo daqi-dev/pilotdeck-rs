@@ -53,6 +53,44 @@ GUARDED = [
     EVENTS,
     NOTICE_TESTS,
     BASELINE,
+    # #1274 opus-P2 follow-along: the notices-wiring binding runs through
+    # factory_tests.rs's #[path] assembly of this module (live_notice and its
+    # Scratch/registry helpers live here), so a concurrent edit during a run
+    # must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
+    # #1274 MM r1 P1: the parents of that #[path] chain — factory_tests.rs
+    # assembles this module and defines the Scratch/registry helpers the
+    # binding inherits via `use super::*`, and factory.rs assembles
+    # factory_tests itself, so concurrent edits to either must be caught by
+    # the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory.rs',
+    # #2228 MM r2 P2: the top of that chain — factory.rs inherits its names
+    # from project.rs via `use super::{...}` (mod factory in project.rs), and
+    # runtime/mod.rs declares the project module, so concurrent edits to
+    # either must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
+    # #2228 DS r2 P2: the NOTICES bindings run through runner.rs's #[path]
+    # assembly of runner_tests.rs, which assembles runner_notice_tests.rs
+    # itself; the bindings inherit via `use super::*` from both parents, so
+    # concurrent edits to either must be caught by the source guard.
+    SRC / 'runner_tests.rs',
+    # #2228 DS r3 P1: the row bindings bake turn-start-notices/oracle.json
+    # into the binary (include_str! via runner_notice_tests.rs), the
+    # notices-regeneration binding runs turn-start-notices/generate.mts
+    # through tests/common/baseline.rs, and the notices-wiring binding runs
+    # live-session/peer.py as a python3 subprocess through
+    # interaction_host_tests.rs's client(), so concurrent edits to any of them
+    # during a run must be caught by the source guard.
+    FIXTURES / 'turn-start-notices/oracle.json',
+    FIXTURES / 'turn-start-notices/generate.mts',
+    FIXTURES / 'live-session/peer.py',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the live/runner modules the bindings
+    # resolve through, capping the chain at the same declarator depth the
+    # project chain above already registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

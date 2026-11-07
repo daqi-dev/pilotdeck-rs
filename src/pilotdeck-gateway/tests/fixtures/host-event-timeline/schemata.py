@@ -31,6 +31,28 @@ SUBMIT = ('runtime::turn::live::stream_tests::'
           'submit_assembles_one_timeline_across_wire_host_and_terminal')
 CANCEL_WINDOW = ('runtime::turn::live::stream_tests::'
                  'session_abort_still_drains_and_positions_post_cancel_events')
+# #1220 fix-r2 P2-1 / fix-r3: both cancel-window mutants park the pump
+# (`pending()`), so the negative control dies at the timeout anchor inside the
+# bounded wait. #1274 P2-1 widened the set for the break shape — an assembly
+# that leaves the loop instead of parking makes next() resolve with the
+# synthesized turn_failed terminal, the bounded wait's three expects pass, and
+# the test dies at the `drained and positioned` assert_eq below them (or at
+# the must-not-fail / must-not-end expects for the stream-error/None shapes).
+# No break-form mutant is compiled in the current tree, so those anchors are
+# the defensive alternate set: they keep a hypothetical break form judged
+# KILLED instead of INVALID. #2228 r3: both rows share this list verbatim by
+# design (either death anchor of the race is a valid kill for either mutant);
+# adding a break-form mutant with runtime evidence is a tracked follow-up.
+CANCEL_WINDOW_ANCHORS = [
+    '#1220 cancel window: the first post-abort host event is still drained by the pump',
+    '#1220 cancel window: the first host event queued after the abort is drained and positioned',
+    '#1220 cancel window: draining the first post-abort host event must not fail',
+    '#1220 cancel window: the first post-abort host event must not end the stream',
+    '#1220 cancel window: the second post-abort host event is still drained by the pump',
+    '#1220 cancel window: the second host event queued after the abort is drained and positioned',
+    '#1220 cancel window: draining the second post-abort host event must not fail',
+    '#1220 cancel window: the second post-abort host event must not end the stream',
+]
 switches = [
     ('timeline-order-frozen', TIMELINE, REPLAY, '#1220 timeline: wire-deltas event 5'),
     ('timeline-boundary-omitted', TIMELINE, REPLAY, '#1220 timeline: wire-boundaries event 2'),
@@ -51,18 +73,17 @@ switches = [
     # fix-r2 P2-1: a cancelled turn must keep pumping — post-abort host events
     # are still drained and positioned at the next tick. fix-r3: the failing
     # assertion moved into the bounded wait itself, so the mutated pump dies at
-    # the timeout anchor, not a 15 s silent no-message timeout.
-    ('timeline-cancel-stops-pump', LIVE, CANCEL_WINDOW,
-     '#1220 cancel window: the first post-abort host event is still drained by the pump'),
+    # the timeout anchor, not a 15 s silent no-message timeout. The anchor set
+    # is the shared CANCEL_WINDOW_ANCHORS above.
+    ('timeline-cancel-stops-pump', LIVE, CANCEL_WINDOW, CANCEL_WINDOW_ANCHORS),
     # fix-r3 DS P2-1: the loop-top twin of the in-tick checkpoint above — the
     # shape a cancel assembly would most naturally take, checked beside the
     # `stopped` flag. The iteration already in flight when the abort lands
     # still drains one more host batch, so the second post-abort host event
-    # catches it; the anchor list is the alternate set for the race where the
-    # abort is observed at the very top and the first event is lost instead.
-    ('timeline-cancel-parks-pump', LIVE, CANCEL_WINDOW,
-     ['#1220 cancel window: the first post-abort host event is still drained by the pump',
-      '#1220 cancel window: the second post-abort host event is still drained by the pump']),
+    # catches it; the first-event anchors cover the race where the abort is
+    # observed at the very top and the first event is lost instead. The anchor
+    # set is the same shared CANCEL_WINDOW_ANCHORS above.
+    ('timeline-cancel-parks-pump', LIVE, CANCEL_WINDOW, CANCEL_WINDOW_ANCHORS),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
@@ -70,6 +91,12 @@ GUARDED = [
     LIVE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_timeline_tests.rs',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the live/timeline modules the bindings
+    # resolve through, and runtime/mod.rs declares turn itself, capping the
+    # chain at the same declarator depth the project chain registers elsewhere.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/execution.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests.rs',

@@ -21,6 +21,13 @@ ARTIFACTS = SRC / 'runner_artifacts.rs'
 RUNNER = SRC / 'runner.rs'
 LIVE = SRC / 'live.rs'
 PROMPT = SRC / 'runner_prompt.rs'
+# #2228 DS r2 P1: tail-empty-blocks binds a test in runner_prompt_tests.rs,
+# which runner.rs assembles through runner_tests.rs (`#[path]` chain); the
+# binding inherits via `use super::*` from both parents.
+RUNNER_TESTS = SRC / 'runner_tests.rs'
+PROMPT_TESTS = SRC / 'runner_prompt_tests.rs'
+# Assembled by live.rs itself (`#[path]` at the `mod tail_tests` boundary).
+LIVE_TAIL_TESTS = SRC / 'live_tail_tests.rs'
 # The regeneration switch lives at the library-test call site: the shared
 # baseline module is compiled into integration-test crates as well, where the
 # library's switches do not exist.
@@ -113,7 +120,30 @@ GUARDED = [
     RUNNER,
     LIVE,
     PROMPT,
+    RUNNER_TESTS,
+    PROMPT_TESTS,
     TAIL_TESTS,
+    # #2228 DS r3 P1 / zai r3 P1 (independent hit): the LIVE_UNIT bindings run
+    # through live.rs's #[path] assembly of live_tail_tests.rs — the
+    # live_tail_progress_and_drop test body lives there and inherits via
+    # `use super::*`, and its setup() runs live-session/peer.py as a python3
+    # subprocess — so concurrent edits to either during a run must be caught
+    # by the source guard.
+    LIVE_TAIL_TESTS,
+    FIXTURES / 'live-session/peer.py',
+    # #2228 DS r3 P1: the row bindings bake turn-runner-tail/oracle.json into
+    # the binary (include_str! via runner_tail_tests.rs's row()) and the
+    # tail-regeneration binding runs turn-runner-tail/generate.mts through
+    # tests/common/baseline.rs, so concurrent edits to either during a run
+    # must be caught by the source guard.
+    FIXTURES / 'turn-runner-tail/oracle.json',
+    FIXTURES / 'turn-runner-tail/generate.mts',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the runner/live modules the bindings
+    # resolve through, and runtime/mod.rs declares turn itself, capping the
+    # chain at the same declarator depth the project chain registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     BASELINE,
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',

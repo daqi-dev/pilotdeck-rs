@@ -73,6 +73,42 @@ GUARDED = [
     PROMPT_TESTS,
     BASELINE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_prompt_tests.rs',
+    # #1274 opus P2: the HOST bindings run through factory_tests.rs's #[path]
+    # assembly of this module — client()/client_with_arg() (peer argument,
+    # execution_timeout) live here, so a concurrent edit during a run must be
+    # caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
+    # #1274 MM r1 P1: the parents of that #[path] chain — factory_tests.rs
+    # assembles this module and defines the Scratch/helpers the bindings
+    # inherit via `use super::*`, and factory.rs assembles factory_tests
+    # itself, so concurrent edits to either must be caught by the source
+    # guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory.rs',
+    # #2228 MM r2 P2: the top of that chain — factory.rs inherits its names
+    # from project.rs via `use super::{...}` (mod factory in project.rs), and
+    # runtime/mod.rs declares the project module, so concurrent edits to
+    # either must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
+    # #2228 DS r2 P2: the UNIT bindings run through runner.rs's #[path]
+    # assembly of runner_tests.rs, which assembles runner_prompt_tests.rs
+    # itself; the bindings inherit via `use super::*` from both parents, so
+    # concurrent edits to either must be caught by the source guard.
+    SRC / 'runner.rs',
+    SRC / 'runner_tests.rs',
+    # #2228 DS r3 P1: the row bindings bake turn-prompt-hooks/oracle.json into
+    # the binary (include_str! via runner_prompt_tests.rs) and the
+    # prompt-regeneration binding runs turn-prompt-hooks/generate.mts through
+    # tests/common/baseline.rs, so concurrent edits to either during a run must
+    # be caught by the source guard.
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
+    FIXTURES / 'turn-prompt-hooks/generate.mts',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the runner module (and live) the bindings
+    # resolve through, capping the chain at the same declarator depth the
+    # project chain above already registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
