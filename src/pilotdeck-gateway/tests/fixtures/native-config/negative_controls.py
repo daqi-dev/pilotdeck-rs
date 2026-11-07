@@ -38,6 +38,11 @@ LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # `permissionMode` (the copy `tool_context` / `resolve_workspace_path` read),
 # so both read points die together when the write-back is removed.
 TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
+# Two #1864 rows mutate `live.rs` / `tools.rs` but their bound test asserts on a
+# message written in the *test* file, so these must be scanned as well or the
+# completeness rule cannot see those anchors (#2065 r3).
+LIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs'
+REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 CFG = 'native_process::methods::config::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
@@ -284,22 +289,30 @@ mutations = [
 
 # #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic
 # that rides one can only be matched by text the source holds verbatim -- the
-# `{label}` stays literal in the payload. The `format!`-backed
-# `negative_assert!` / `negative_assert_eq!` macros are the opposite: their
-# anchors legitimately expand `{...}` and appear in the source only as the
-# template. `classify` stays untouched; this refuses a run whose literal anchor
-# could never match.
+# `{label}` stays literal in the payload. `negative_assert!` /
+# `negative_assert_eq!` interpolate through `format!`, but only the templates
+# that actually contain `{...}` differ from the payload; a macro assertion with
+# no placeholder is verbatim source text like any other (#1457 busy message).
+# `classify` stays untouched; this refuses a run whose literal anchor could
+# never match.
 #
-# The table pins every anchor that is verbatim source text today (33 of the 40
-# rows; the other seven ride a `{...}` template). Pinning is the point: when a
-# message is reworded, `--check` fails here instead of surfacing as a false
-# INVALID hours into a host run. `check_literal_anchors` also refuses a row whose
-# anchor is verbatim source text but was left unpinned, so a new row cannot skip
-# registration. Anchors that must stay *prefixes* of a longer source literal are
-# stored as that prefix -- see the `permission-mode-gate-removed` row. A pin is
-# bound only to a row asserting it **exactly**, so reverting that row to a
-# longer, invented suffix (the #2065 shape) fails as `unbound to any row`
+# The table pins every anchor that is verbatim in the scanned files: 35 of the
+# 40 rows (30 distinct strings, 31 entries -- `the transcript still loads` is
+# registered once per file), the remaining five rows ride a `{...}` template and
+# cannot be pinned. Row and entry counts differ on purpose: rows vs. distinct
+# strings vs. (string, file) pairs are three different numbers. Pinning is the
+# point: when a message is reworded, `--check` fails here instead of surfacing as
+# a false INVALID hours into a host run. `check_literal_anchors` also refuses a
+# row whose anchor is verbatim source text but was left unpinned, so a new row
+# cannot skip registration. Anchors that must stay *prefixes* of a longer source
+# literal are stored as that prefix -- see the `permission-mode-gate-removed` row.
+# A pin is bound only to a row asserting it **exactly**, so reverting that row to
+# a longer, invented suffix (the #2065 shape) fails as `unbound to any row`
 # instead of passing on a substring.
+#
+# Known softness: the presence test is a plain whole-file substring, so a pin
+# whose text also sits in a comment still reads as present. That only weakens
+# the warning, never turns a broken run green (the run itself is fail-closed).
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -330,11 +343,15 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1457 a cold append must not run beside a session that owns the writer'),
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
+    (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
+    (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
 ]
 
-# Where an assertion can live: the mutated sources plus the read-side files the
-# #1864 rows assert on, so a cross-file anchor is recognised as literal too.
-SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS)
+# Where an assertion can live: the mutated sources, the read-side files the
+# #1864 rows assert on, and the two test files those rows bind to. A pin may not
+# name a path outside this tuple (checked below) -- a pin the completeness scan
+# does not read would be a guard with a blind spot.
+SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS, REVIEW_TESTS)
 
 
 def _assertions(case):
@@ -344,8 +361,10 @@ def _assertions(case):
 def check_literal_anchors(cases):
     texts = {path: path.read_text() for path in SOURCE_TEXTS}
     for path, anchor in LITERAL_ANCHORS:
-        text = texts.get(path) or path.read_text()
-        if anchor not in text:
+        if path not in texts:
+            raise SystemExit(
+                f'#2065 literal anchor declared outside SOURCE_TEXTS: {path.name}')
+        if anchor not in texts[path]:
             raise SystemExit(f'#2065 literal anchor not in {path.name}: {anchor!r}')
         if not any(anchor == assertion
                    for case in cases for assertion in _assertions(case)):
@@ -355,10 +374,11 @@ def check_literal_anchors(cases):
         for assertion in _assertions(case):
             if assertion in pinned:
                 continue
-            where = [path.name for path, text in texts.items() if assertion in text]
+            where = next((path.name for path, text in texts.items()
+                          if assertion in text), None)
             if where:
                 raise SystemExit('#2065 unpinned literal anchor '
-                                 f'(verbatim in {where[0]}): {assertion!r}')
+                                 f'(verbatim in {where}): {assertion!r}')
 
 
 def mutate(case, original):

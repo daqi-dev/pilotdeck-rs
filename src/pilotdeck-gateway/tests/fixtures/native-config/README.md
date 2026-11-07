@@ -21,7 +21,9 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
-除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被变异源码里（另一头 `negative_assert!` / `negative_assert_eq!` 走 `format!`，锚点本来就是展开后的文本，不进这张表）。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。表项与行的绑定是**逐字相等**：某行断言必须原样等于表里的一条（取源码前缀的行，表里就存那个前缀），所以把行改回比前缀更长的自造后缀会被判 `unbound to any row`；反过来，断言逐字出现在源码里却没登记会被判 `unpinned literal anchor`。
+起跑前先跑这一条：CI 与宿主链都不会替你跑它（gateway 夹具不在 CI 的 negative-controls 作业里），跳过就只能等整轮跑完、以 INVALID 的形式发现坏锚。
+
+除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被扫描源码里；`negative_assert!` / `negative_assert_eq!` 经 `format!` 插值，**只有带 `{...}` 占位符的模板**才与载荷不同（无占位符的宏断言同样是逐字源码文本，照常登记）。扫描面是 `SOURCE_TEXTS`：被变异的 5 个源文件，加上 `live_stream_tests.rs` / `review_tests.rs` 两个承载 #1864 断言消息的测试文件；表项路径必须落在其中，否则 `--check` 报 `outside SOURCE_TEXTS`。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。表项与行的绑定是**逐字相等**：某行断言必须原样等于表里的一条（取源码前缀的行，表里就存那个前缀），所以把行改回比前缀更长的自造后缀会被判 `unbound to any row`；反过来，断言逐字出现在源码里却没登记会被判 `unpinned literal anchor`。
 
 ## 每条变异做什么
 
