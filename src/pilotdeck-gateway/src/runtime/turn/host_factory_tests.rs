@@ -172,9 +172,12 @@ const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
 /// product default of 1 s, which is exactly how "steer closed before the
 /// durable write" stopped being observable.
 const STEER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
-const STEER_CLOSE_WINDOW: Duration = Duration::from_secs(2);
+/// Derived rather than a second literal plus a guard: an `as_secs()`-style
+/// check truncates sub-second values, so `TIMEOUT = 1500 ms` with a 2 s window
+/// would still have passed while sitting below the 2× bound.
+const STEER_CLOSE_WINDOW: Duration =
+    Duration::from_nanos(2 * STEER_CLOSE_TIMEOUT.as_nanos() as u64);
 const STEER_CLOSE_STEP: Duration = Duration::from_millis(5);
-const _: () = assert!(STEER_CLOSE_WINDOW.as_secs() >= 2 * STEER_CLOSE_TIMEOUT.as_secs());
 
 async fn bounded_liveness<T>(future: impl Future<Output = T>) -> T {
     timeout(SIDECAR_LIVENESS, future)
@@ -1772,16 +1775,23 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                         // `run.wait()` sees the serialized mailbox drain — so
                         // a `turn_result` landing here was written before the
                         // steer closed.
+                        // #2054: only complete, newline-terminated lines are
+                        // evidence. The poll below races the writer's single
+                        // `write_all`, and a torn tail would otherwise panic on
+                        // the JSON parse (a false red, not a real violation).
                         let turn_result_written = || {
-                            std::fs::read_to_string(recorder.writer().path())
-                                .expect("#743 steer transcript exists")
-                                .lines()
-                                .any(|line| {
-                                    parse_json(line)
-                                        .expect("#743 steer transcript JSON")
-                                        .get("type")
-                                        == Some(&"turn_result".into())
-                                })
+                            let bytes = std::fs::read(recorder.writer().path())
+                                .expect("#743 steer transcript exists");
+                            let text = String::from_utf8_lossy(&bytes);
+                            let Some(end) = text.rfind('\n') else {
+                                return false;
+                            };
+                            text[..=end].lines().any(|line| {
+                                parse_json(line)
+                                    .expect("#743 steer transcript JSON")
+                                    .get("type")
+                                    == Some(&"turn_result".into())
+                            })
                         };
                         let started = tokio::time::Instant::now();
                         let mut early_result = None;
@@ -1796,12 +1806,22 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                                 break;
                             }
                             let step = STEER_CLOSE_STEP.min(STEER_CLOSE_WINDOW - elapsed);
-                            match timeout(step, &mut next).await {
-                                Ok(_) => {
+                            if timeout(step, &mut next).await.is_ok() {
+                                // The mutant writes `turn_result` and only then
+                                // lets the terminal frame through, so both can
+                                // become visible inside one polling step.
+                                // Attribute the failure to the registered
+                                // anchor whenever the write is already on disk:
+                                // panicking on the "terminal" assertion instead
+                                // would leave the negative-control matrix
+                                // reporting the mutant as INVALID (wrong panic)
+                                // rather than KILLED.
+                                if turn_result_written() {
+                                    early_result = Some(started.elapsed());
+                                } else {
                                     early_event = true;
-                                    break;
                                 }
-                                Err(_) => {}
+                                break;
                             }
                         }
                         if let Some(seen) = early_result {
