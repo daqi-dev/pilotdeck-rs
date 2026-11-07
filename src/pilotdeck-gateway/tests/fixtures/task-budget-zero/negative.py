@@ -152,10 +152,10 @@ names = [case[0] for case in cases]
 if len(names) != len(set(names)):
     refuse('duplicate control name')
 try:
-    cases = select(cases, arguments, always=())
+    run_rows = select(cases, arguments, always=())
 except ValueError as error:
     refuse(str(error))
-if not cases:
+if not run_rows:
     refuse('no controls selected')
 
 refuse_unusable_target()
@@ -201,7 +201,7 @@ with mutating_sources(root, [source]) as originals:
     if not baseline_ok:
         raise RuntimeError('unmutated baseline did not pass; mutants not run')
 
-    for name, path, before, after in cases:
+    for name, path, before, after in run_rows:
         original = originals[path].decode()
         status, reason = 'INVALID', 'not run'
         try:
