@@ -16,9 +16,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
-use tokio::task::JoinHandle;
-
 use super::{
     ActiveChat,
     im_cron::{CronResultDelivery, deliver_chat_cron_result},
@@ -29,6 +26,7 @@ use super::{
     },
 };
 use crate::metadata::js_trim;
+use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 mod client;
 mod crypto;
@@ -199,7 +197,17 @@ struct Batch {
     id: u64,
     messages: Vec<InboundMessage>,
     draining: bool,
-    timer: Option<JoinHandle<()>>,
+    /// Sequence of the live timer; every enqueue bumps it.
+    ///
+    /// `clearTimeout` cannot be expressed with `JoinHandle::abort`: abort only
+    /// takes effect at the task's next yield point, and a timer that already
+    /// woke up is blocked on the state lock *inside* `drain_inbound_batch` —
+    /// the abort would land after it claimed the batch and took its messages,
+    /// dropping them and leaving `draining` set with no drainer left to clear
+    /// it (the chat would never drain again). Each timer instead carries the
+    /// sequence it was armed with and returns untouched when a newer message
+    /// superseded it.
+    timer_seq: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -518,15 +526,13 @@ impl Runtime {
         }
         let batch = state.batches.get_mut(&chat_id).expect("#1329 batch entry");
         // `clearTimeout(batch.timer)`: a timer whose drain already started
-        // cannot be stopped — the running drainer picks up the new message
-        // in its re-read loop — so only a not-yet-fired timer is aborted.
-        // Aborting unconditionally would cancel a mid-flight drain (and its
-        // outbound sends), which JS cannot express.
-        if let Some(previous) = batch.timer.take()
-            && !batch.draining
-        {
-            previous.abort();
-        }
+        // must not be stopped — the running drainer picks up the new message
+        // in its re-read loop. `JoinHandle::abort` cannot draw that line (see
+        // `Batch::timer_seq`), so the superseded timer is retired by bumping
+        // the sequence instead: when it wakes it finds a newer sequence and
+        // returns before touching the batch or claiming `draining`.
+        batch.timer_seq += 1;
+        let timer_seq = batch.timer_seq;
         batch.messages.push(input);
         // The timer is spawned only after the message is visible in `batches`,
         // while the state lock is still held: a `delay == 0` task stolen by
@@ -537,10 +543,13 @@ impl Runtime {
         // lock is not held across a suspension point.
         let runtime = self.clone();
         let timer_chat = chat_id.clone();
-        batch.timer = Some(tokio::spawn(async move {
+        let timer_batch = batch.id;
+        tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay)).await;
-            runtime.drain_inbound_batch(&timer_chat).await;
-        }));
+            runtime
+                .drain_inbound_batch(&timer_chat, timer_batch, timer_seq)
+                .await;
+        });
     }
 
     /// `tryHandlePendingInteraction`: synchronous decision, detached answer.
@@ -653,12 +662,19 @@ impl Runtime {
         Ok(())
     }
 
-    async fn drain_inbound_batch(self: &Arc<Self>, chat_id: &str) {
+    async fn drain_inbound_batch(self: &Arc<Self>, chat_id: &str, batch_id: u64, timer_seq: u64) {
         let batch_id = {
             let mut state = self.state.lock().expect("#1329 state mutex");
             let Some(batch) = state.batches.get_mut(chat_id) else {
                 return;
             };
+            // A superseded timer (a newer message re-armed the window, or a
+            // `/new` replaced the entry) returns without touching anything:
+            // the live timer drains every message that is still queued, and a
+            // stale one must not claim `draining` on its way out.
+            if batch.id != batch_id || batch.timer_seq != timer_seq {
+                return;
+            }
             if batch.draining {
                 return;
             }
@@ -822,15 +838,12 @@ impl Runtime {
             state.permission_answering.remove(chat_id);
             // `clearTimeout(batch?.timer)`: once the timer fired and the
             // drain is running, clearTimeout is a no-op in JS — the drain
-            // (including this /new's own send) runs to completion. Aborting
-            // unconditionally would cancel the very task executing this
-            // branch, silently dropping the "已创建新会话。" reply.
-            if let Some(mut batch) = state.batches.remove(chat_id)
-                && let Some(timer) = batch.timer.take()
-                && !batch.draining
-            {
-                timer.abort();
-            }
+            // (including this /new's own send) runs to completion. Removing
+            // the entry has the same effect here: a timer that has not
+            // claimed the batch yet finds no entry (or a fresh one with a
+            // different id/sequence) and returns, while a running drainer
+            // keeps going and only drops its claim when it re-reads.
+            state.batches.remove(chat_id);
         }
         self.interaction.elicitation_clear(chat_id);
         self.interaction.permission_clear_after_turn(chat_id);
