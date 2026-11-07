@@ -711,6 +711,12 @@ async fn start_assembly(
                                 &options.project,
                             )?
                         {
+                            let allowed=binding.context.allowed_tools.clone();
+                            let denied=binding.context.disallowed_tools.clone();
+                            let kernel_port_preflight:crate::runtime::refresh::BoxFuture<crate::runtime::project::RuntimeResult>=Box::pin(async move {
+                                crate::runtime::session::kernel_config::session_tool_filters(allowed.as_deref(),denied.as_deref())?;
+                                kernel_port_preflight.await
+                            });
                             let mut kernel_config = config.clone();
                             kernel_config.insert(
                                 "modelPricingEntries".into(),

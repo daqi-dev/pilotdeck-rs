@@ -1961,6 +1961,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn kernel_tool_filter_rejection_prevents_any_execution_input_or_rpc_connection() {
+        let socket =
+            std::path::PathBuf::from("/tmp").join(format!("pdf-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let session = session(socket.clone());
+        for input in [
+            json!({"type":"text","text":"denied","allowedTools":[]}),
+            json!({"type":"text","text":"denied","allowedTools":["web_fetch"]}),
+            json!({"type":"text","text":"denied","disallowedTools":["web.fetch"]}),
+        ] {
+            assert!(
+                session
+                    .submit(
+                        js(&input).unwrap(),
+                        js(&json!({"turnId":"filtered"})).unwrap()
+                    )
+                    .is_err()
+            );
+            assert!(super::super::kernel_config::tool_filters_js(&js(&input).unwrap()).is_err());
+        }
+        assert!(
+            session
+                .submit(
+                    js(&json!({"type":"text","text":"denied"})).unwrap(),
+                    js(&json!({"turnId":"filtered","allowedTools":[]})).unwrap()
+                )
+                .is_err()
+        );
+        // The resolved programmatic SessionContext is checked in its lazy
+        // effect preflight too, so bypassing public JSON cannot drop a scope.
+        session.port_check.lock().await.pending = Some(Box::pin(async {
+            super::super::kernel_config::session_tool_filters(Some(&[]), None)
+        }));
+        let mut turn = session
+            .submit(
+                js(&json!({"type":"text","text":"denied"})).unwrap(),
+                js(&json!({"turnId":"filtered"})).unwrap(),
+            )
+            .unwrap();
+        assert!(turn.next().await.is_err());
+        drop(turn);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+        assert!(session.state.lock().unwrap().call.is_none());
+        assert!(!session.started.load(Ordering::SeqCst));
+        assert!(
+            super::super::kernel_config::tool_filters_js(
+                &js(&json!({"allowedTools":null,"disallowedTools":[]})).unwrap()
+            )
+            .is_ok()
+        );
+        assert!(super::super::kernel_config::session_tool_filters(None, Some(&[])).is_ok());
+        // Metadata reads remain available despite a configured unsupported scope.
+        assert!(
+            session
+                .backend_request("session_model_get".into(), JsValue::Null)
+                .await
+                .is_ok()
+        );
+        drop(session);
+        drop(listener);
+        std::fs::remove_file(socket).unwrap();
+    }
+
+    #[tokio::test]
     async fn native_text_permission_and_terminal_use_original_scheduler_execution() {
         let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
         let listener = UnixListener::bind(&socket).unwrap();
