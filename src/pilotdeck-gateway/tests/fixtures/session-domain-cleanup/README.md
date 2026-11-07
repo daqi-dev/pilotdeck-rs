@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 264 mutants:
+`JUDGES`, keyed by the same names. The current table has 272 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -442,7 +442,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-rebind-if`, `calibrate-for-target-after-match`,
 `calibrate-comp-dict-result`, `calibrate-comp-name-iter`,
 `calibrate-for-target-return`, `calibrate-for-target-alias`,
-`calibrate-starred-const-subscript-write`, `calibrate-comp-handle-relay`.
+`calibrate-starred-const-subscript-write`, `calibrate-comp-handle-relay`,
+`calibrate-for-target-finally-rebind`, `calibrate-for-target-closure`,
+`calibrate-for-target-shadowed-fresh`, `calibrate-for-target-with-alias`,
+`calibrate-for-target-except-alias`, `calibrate-for-target-name-iter`,
+`calibrate-comp-handle-relay-for`, `calibrate-comp-handle-relay-chain`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1207,3 +1211,27 @@ The wrapper-name family (`iter`/`next`/`tuple`/`list`/`sorted`/`reversed`/
 `set`/`frozenset`) is one constant shared by the iteration decoder and the
 literal-element decoder; the subscript decoder also unwraps `hs[:]` and
 `hs.copy()` now, so `hs.copy()[0]('common', <stub>)` is caught.
+
+### Closed by `fix-r1` round 8 (codex r4 five P0 / three P1)
+
+Round 7 enumerated the *escaping* spellings and review found four more, so the
+audit now walks the scope's statements in execution order and keeps a name in
+the tracked set unless it is provably fresh; a tracked name counts as a use
+unless it sits in one of the few positions that only read it.  The five P0
+shapes therefore close structurally rather than one spelling at a time.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Rebind control never reaches**: `raise` then `h = None`, then `finally: h('common', <stub>)`. | `calibrate-for-target-finally-rebind` |
+| **Closure captures the loop target**: `def _inner(): h('common', <stub>)` after the loop. | `calibrate-for-target-closure` |
+| **Shadowed constructor name**: `object = lambda: hs[0]; h = object(); h('common', <stub>)` hands the handle back. | `calibrate-for-target-shadowed-fresh` |
+| **`with`-statement binding**: `with nullcontext(h) as f: f('common', <stub>)`. | `calibrate-for-target-with-alias` |
+| **Exception round-trip**: `raise Exception(h)` / `except Exception as e: f = e.args[0]; f(...)`. | `calibrate-for-target-except-alias` |
+| **`for` over a name-bound literal**: `items = (hs[0],); for h in items`. | `calibrate-for-target-name-iter` |
+| **Relayed container iterated by `for`**: `g = [h for h in hs]; for f in g: f(...)`. | `calibrate-comp-handle-relay-for` |
+| **Relayed through two comprehensions**: `g = [h for h in hs]; j = [f for f in g]; j[0](...)`. | `calibrate-comp-handle-relay-chain` |
+| Comparison is a pure read (false FAIL guard): `return h is None`. | self-test `loop_return_compare_probe` |
+| Rebind in a statically taken branch (false FAIL guard): `if True: h = lambda: None; h()`. | self-test `loop_rebind_block_probe` |
+| Relay through a statically empty comprehension (false FAIL guard). | self-test `comp_relay_empty_probe` |
+| Nested definition that rebinds the name locally (false FAIL guard). | self-test `loop_local_shadow_probe` |
+| The six new escape shapes above, replayed in memory. | self-tests `loop_finally_rebind_probe`, `loop_closure_probe`, `loop_shadowed_fresh_probe`, `loop_with_alias_probe`, `loop_except_alias_probe`, `comp_relay_chain_probe` |
