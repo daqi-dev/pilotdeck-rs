@@ -640,7 +640,7 @@ with mutating_sources(root, [target]):
     target.write_text('// killed residue\n')
     (control / 'mutated.tmp').write_text('mutated')
     (control / 'mutated.tmp').replace(control / 'mutated')
-    time.sleep(15)
+    time.sleep(float(sys.argv[6]))
 '''
         waiter = r'''
 from pathlib import Path
@@ -689,15 +689,23 @@ except SourceBaselineError: print('REFUSED')
         # honest bound for the whole handshake (#2127 codex
         # sibling/concurrency/boundary r14-r15 P1, zai boundary r15 P1).
         #
-        # Every handshake in this test uses that one bound -- `held`, `waiting`,
-        # `mutated` and the waiter's `REFUSED` -- and both children are given it
-        # as their own deadline: the holder waits for `mutate` for exactly as
-        # long as the parent may wait for `waiting`, and the waiter waits for
-        # the tree lock for exactly as long as the parent may keep the holder
-        # alive. Mixing a derived parent bound with a hard-coded child bound
-        # lets the child give up first on a slow host, so the parent then waits
-        # for a handshake that can no longer happen (#2127 codex
-        # sibling/concurrency/boundary r16 P1).
+        # Every parent-side handshake in this test -- `held`, `waiting`,
+        # `mutated` and the waiter's `REFUSED` -- uses that one bound. The two
+        # children get twice as long, because their clocks start later: the
+        # holder begins timing `mutate` when it publishes `held`, and only then
+        # does the parent start timing `waiting`; the waiter begins timing the
+        # tree lock when it publishes `waiting`, and only then does the parent
+        # start timing `mutated` and killing the holder. Equal durations would
+        # therefore let the child expire first on a slow host, and the parent
+        # would go on waiting for a handshake that can no longer happen. With
+        # two, the second half covers everything the parent may still do before
+        # it ends the child (#2127 codex sibling/concurrency/boundary r16-r17
+        # P1; the hard-coded 10 s these replaced was r16's version of the same
+        # mistake). The holder's stay-alive after publishing `mutated` is the
+        # parent's own bound for that handshake: it must not restore the
+        # residue while the parent may still be about to kill it, or the next
+        # holder would rightly accept a clean tree (#2127 codex sibling r17
+        # P1, the copied 15 s there).
         lock_seconds = inspect.signature(
             api.mutating_sources).parameters['lock_timeout'].default
         api._ensure_workspace_scanner()
@@ -705,15 +713,16 @@ except SourceBaselineError: print('REFUSED')
         batches = len(list(api._pathspec_batches(literals)))
         held_seconds = (lock_seconds
                         + ((2 + batches) * 4 + 2) * api.GIT_TIMEOUT + 60)
+        child_seconds = 2 * held_seconds
         children = []
         try:
             children.append(subprocess.Popen([sys.executable, '-B', '-c', holder, helper,
                                               str(self.root), str(target), str(control),
-                                              str(held_seconds)],
+                                              str(child_seconds), str(held_seconds)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
             wait('held', held_seconds, children[0])
             children.append(subprocess.Popen([sys.executable, '-B', '-c', waiter, helper,
-                                              str(self.root), str(control), str(held_seconds)],
+                                              str(self.root), str(control), str(child_seconds)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
             wait('waiting', held_seconds, children[1])
             (control / 'mutate.tmp').write_text('mutate')
