@@ -7,7 +7,7 @@
 原样转译执行。`weixin-ilink` 用真 npm 包；其 HTTP 端点全部指向本地 loopback
 假服务端（`FakeIlink`），不接触任何真实账号或外网。
 
-## 15 个场景（`oracle.json`，输入步骤 + TS 期望同录）
+## 20 个场景（`oracle.json`，输入步骤 + TS 期望同录）
 
 1. prepare 三形状（无 server → unsupported；有 server → QR 登录 → requested:true）
    + 消息回复；
@@ -26,7 +26,18 @@
 12. confirmed 但 `bot_token:""`（JS falsy）→ 登录失败 → 凭证监视器恢复；
 13. confirmed 但 `ilink_bot_id:""` → 同上（auth.js:81 的另一半）；
 14. 响应 `get_updates_buf:""` 不清游标：后续 poll 体仍带持久化 cursor；
-15. `typing_ticket:""` 时仍取 getconfig 但不发 sendtyping。
+15. `typing_ticket:""` 时仍取 getconfig 但不发 sendtyping；
+16. **纯图片消息**（`image_item.cdn_url`）：loopback CDN 下载 → 图片解密诊断行
+    → 空文本换成「请查看我发送的附件。」→ `submitTurn` 带 `attachments`；
+17. **文本 + 文件项**：`file_size` 先进声明大小闸、`file_name`（CJK）决定落盘名
+    与 mime 猜测，消息文本不变；
+18. **语音 + 视频项**：语音转写进文本，视频跳过进诊断段（无附件时
+    诊断段本身就是消息文本）；
+19. **URL 链全缺**（image/file 都没有 `cdn_url`/`url`/`media`）：两条跳过诊断按
+    item 顺序进同一个诊断段，不发起下载；
+20. **加密图片 + `media.full_url`**：`aeskey`（32 hex）解密成已知图片，
+    `mimeType` 取嗅探值（不是 `application/octet-stream` 头），`source` 记
+    `media.full_url`。
 
 12–15 是 JS 真值语义（`if (x)` 对空串为假）的金样钉子：去掉对应的空串
 `filter`，回放即变红。负控 `empty-*` 四条变异一格一条，死法分两种：
@@ -54,7 +65,7 @@ weixin 的 transport 不提供 `edit` / `maxMessageLength`（TS 同形，
 ## #1823 入站媒体（26 个解密/URL 场景 + 5 个 CDN 下载场景）
 
 `generate.mts` 在同一个基线提交上追加 `expectedMediaCaseCount` 与 31 条
-`kind` 标注的用例（`decrypt` / `download`）；渠道 15 条不动。Rust 侧重放在
+`kind` 标注的用例（`decrypt` / `download`）；渠道场景不动。Rust 侧重放在
 `src/pilotdeck-gateway/src/channel/weixin/media/tests.rs`
 （`decrypt_replays_the_oracle_media_cases` / `download_replays_the_oracle_cases`）。
 
@@ -143,6 +154,27 @@ Rust 侧的重定向走 crate 共享的 `fetch_redirect::follow`（undici 的
 listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 EADDRINUSE，
 也就不需要登记固定段（原任务书的端口冲突风险随之消失）。
 
+## #1822 入站附件接线（c16–c20）
+
+`FakeIlink` 增加 `bodyHex`/`contentType` 脚本项，回 CDN 原始字节（十六进制，
+保持 fixture JSON 可读）；`script` 步骤与 `credentials` 一样做 `$BASE`
+替换，消息项因此能指向 loopback CDN。Rust 侧 `replay_tests.rs` 同步支持
+（`decode_hex` + 三元组响应，`content-type` 由脚本项给出）。
+
+五格覆盖 `extractIncomingMessage` 的分支：纯附件（无文本）走兜底文案、
+附件计数日志 `attachments=N`、`submitTurn` 的 `attachments` 数组（`type` /
+`name` / `path` / `mimeType` / `bytes` / `metadata`，路径掩码成
+`<tmp>/.pilotdeck/im-attachments/weixin/<chat>/<message>/<name>`）、语音转写、
+视频与缺 URL 的诊断段、以及 `media.full_url` + AES 解密的 `source` 分支。
+落盘顺序（声明大小闸 → 取件 → transform → 再量一次 → mime 归一 → mkdir 0700
+→ 文件名 → 越界检查 → 写 0600 → `stat`）只有 mock transport 能驱动，由
+`src/pilotdeck-gateway/src/channel/im_attachment/tests.rs` 的聚焦格钉住。
+
+负控六条（全部 KILLED）：`weixin-attachment-fallback-text` /
+`-submit-dropped` / `-diagnostics-dropped` / `-source-branch` 死在金样比对；
+`im-attachment-declared-size-guard-dropped` / `-image-sniff-dropped` 死在
+`#1822` 聚焦格的 `negative_assert*` 收据上。
+
 ## 确定性
 
 - getupdates 长轮询保持到脚本下一条，且**在响应时刻**才记录（消除 poll 到达与
@@ -178,5 +210,5 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 忽略测试 `weixin_channel_regenerates_identically` 必须在具备固定基线的宿主
 显式运行。pr1 未覆盖面（elicitation/permission、live-reply 节流、cron、
 命令注册表、真实 WS 关停顺序、其他 bundle 渠道、config 热重载事件源）见
-RESULT「后续」；入站附件（#1823）已由本文件上一节覆盖，出站上传（#1824）与
-入站消息项接线（#1822）仍不在本 fixture 内。
+RESULT「后续」；入站媒体解密（#1823）与入站消息项接线（#1822）已由本文件
+上述各节覆盖，出站上传（#1824）仍不在本 fixture 内。

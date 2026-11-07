@@ -205,6 +205,14 @@ class FakeIlink {
       res.end(item.text ?? '');
       return;
     }
+    // #1822: a raw-body script item serves the bytes a CDN download returns
+    // (hex keeps the fixture JSON text-safe); `contentType` is what
+    // `saveFromUrl` reads back as the mime fallback.
+    if (item && typeof item.bodyHex === 'string') {
+      res.writeHead(200, { 'content-type': item.contentType ?? 'application/octet-stream' });
+      res.end(Buffer.from(item.bodyHex, 'hex'));
+      return;
+    }
     const json = item ?? this.defaultFor(pathname);
     if (pathname === '/ilink/bot/get_qrcode_status') this.lastQrStatus = json;
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -218,6 +226,25 @@ class FakeIlink {
   }
 }
 
+// Byte fixtures shared by the #1822 attachment scenarios and the #1823 media
+// cases (declared once, above both).
+const seq = (length: number, start = 0) =>
+  Buffer.from(Array.from({ length }, (_, index) => (start + index) & 0xff));
+const jpegBuffer = () => Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
+  seq(300, 7),
+]);
+const pdfBuffer = () => Buffer.concat([Buffer.from('%PDF-1.7\n'), seq(300, 1), Buffer.from('\n%%EOF\n')]);
+const textBuffer = () => Buffer.from(`${'x'.repeat(200)}\n`);
+const encryptEcb = (plaintext: Buffer, key: Buffer) => {
+  const cipher = createCipheriv(`aes-${key.length * 8}-ecb`, key, null);
+  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
+};
+const key16 = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex');
+const key16b = Buffer.from('101112131415161718191a1b1c1d1e1f', 'hex');
+const key24 = Buffer.from('000102030405060708090a0b0c0d0e0f1011121314151617', 'hex');
+const key32 = Buffer.from('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex');
+
 // --- Scenario definitions ---------------------------------------------------
 const CONFIG_OFF = {};
 const CONFIG_ON = { adapters: { weixin: { enabled: true } } };
@@ -229,6 +256,17 @@ function message(from: string, text: string, context: string | undefined, id: st
     from_user_id: from,
     ...(context ? { context_token: context } : {}),
     item_list: [{ type: 1, text_item: { text } }],
+  };
+}
+// #1822: a message carrying rich items (image/file/voice/video) rather than a
+// single text item; `extractIncomingMessage` walks `item_list` in order.
+function richMessage(from: string, items: any[], context: string | undefined, id: string) {
+  return {
+    message_type: 1,
+    message_id: id,
+    from_user_id: from,
+    ...(context ? { context_token: context } : {}),
+    item_list: items,
   };
 }
 const update = (cursor: string, msgs: any[]) => ({ ret: 0, get_updates_buf: cursor, msgs });
@@ -481,7 +519,92 @@ scenario('empty-typing-ticket-skips-sendtyping', [
   { op: 'close' },
 ], { turns: [{ events: [typingWait(1, 0), started('run-15'), delta('ok')] }] });
 
-const EXPECTED_CASE_COUNT = 15;
+// c16: an image-only message takes the attachment path: the item's `cdn_url`
+// is downloaded from the loopback CDN, the passthrough image decrypt logs its
+// shape, and the empty text becomes the fallback line the model sees. The
+// stored attachment reaches `submitTurn` with the baseline path/name/metadata.
+scenario('image-attachment-fallback-text', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-16', accountId: 'acct-16', cursor: 'cur-0' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/cdn/msg-16.jpg', items: [{ bodyHex: jpegBuffer().toString('hex'), contentType: 'image/jpeg' }] },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [richMessage('user-16', [
+    { type: 2, image_item: { cdn_url: '$BASE/cdn/msg-16.jpg', width: 640, height: 480 } },
+  ], 'ctx-16', 'm-16')])] },
+  { op: 'wait-requests', path: '/cdn/msg-16.jpg', count: 1 },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-16'), delta('收到图片')] }] });
+
+// c17: text plus a FILE item. The declared `file_size` feeds the pre-download
+// guard, `file_name` decides the stored basename (a CJK one, so the UTF-16
+// handling is pinned) and the mime guess, and the message text is unchanged.
+scenario('file-attachment-with-text', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-17', accountId: 'acct-17', cursor: 'cur-0' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/cdn/msg-17.pdf', items: [{ bodyHex: pdfBuffer().toString('hex'), contentType: 'application/pdf' }] },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [richMessage('user-17', [
+    { type: 1, text_item: { text: '看下这个文件' } },
+    { type: 4, file_item: { cdn_url: '$BASE/cdn/msg-17.pdf', file_name: '季度报告.pdf', file_size: pdfBuffer().length } },
+  ], 'ctx-17', 'm-17')])] },
+  { op: 'wait-requests', path: '/cdn/msg-17.pdf', count: 1 },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-17'), delta('收到文件')] }] });
+
+// c18: a voice item contributes its transcription text, a video item is
+// skipped with a diagnostic; with no attachments stored, the diagnostics
+// paragraph itself is the message text.
+scenario('voice-transcript-and-video-diagnostic', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-18', accountId: 'acct-18', cursor: 'cur-0' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [richMessage('user-18', [
+    { type: 3, voice_item: { text: '帮我看看这个' } },
+    { type: 5, video_item: { play_length: 5 } },
+  ], 'ctx-18', 'm-18')])] },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-18'), delta('收到')] }] });
+
+// c19: both skip branches of the URL chain (no cdn_url/url/media at all) land
+// in the diagnostics paragraph, in item order, and nothing is downloaded.
+scenario('attachment-missing-urls-diagnostics', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-19', accountId: 'acct-19', cursor: 'cur-0' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [richMessage('user-19', [
+    { type: 2, image_item: { width: 10 } },
+    { type: 4, file_item: { file_name: 'notes.txt' } },
+  ], 'ctx-19', 'm-19')])] },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-19'), delta('收到')] }] });
+
+// c20: the `media.full_url` branch with an encrypted body: `aeskey` (hex) is
+// tried, the decrypt changes the bytes into a known image, the stored mime is
+// the sniffed one (not the octet-stream header) and `source` says
+// `media.full_url`.
+scenario('encrypted-image-full-url', [
+  { op: 'credentials', json: { baseUrl: '$BASE', botToken: 'tok-20', accountId: 'acct-20', cursor: 'cur-0' } },
+  { op: 'server', config: CONFIG_ON },
+  { op: 'wait-reports', state: 'connected' },
+  { op: 'script', endpoint: '/cdn/msg-20.jpg', items: [{ bodyHex: encryptEcb(jpegBuffer(), key16).toString('hex'), contentType: 'application/octet-stream' }] },
+  { op: 'script', endpoint: '/ilink/bot/getupdates', items: [update('cur-1', [richMessage('user-20', [
+    { type: 2, image_item: { media: { full_url: '$BASE/cdn/msg-20.jpg' }, aeskey: key16.toString('hex') } },
+  ], 'ctx-20', 'm-20')])] },
+  { op: 'wait-requests', path: '/cdn/msg-20.jpg', count: 1 },
+  { op: 'wait-requests', path: '/ilink/bot/sendmessage', count: 1 },
+  { op: 'wait-submits', count: 1 },
+  { op: 'close' },
+], { turns: [{ events: [typingWait(1, 1), started('run-20'), delta('解密成功')] }] });
+
+const EXPECTED_CASE_COUNT = 20;
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1328 weixin generator case count');
 
 // --- Harness ----------------------------------------------------------------
@@ -742,7 +865,10 @@ async function run(definition: any) {
         await mkdir(dirname(credentialsPath), { recursive: true });
         await writeFile(credentialsPath, JSON.stringify(json, null, 2), 'utf8');
       } else if (step.op === 'script') {
-        fake.pushScript(step.endpoint, step.items);
+        // #1822: message items point at the loopback CDN through `$BASE`
+        // (the credentials step's substitution, applied to scripted items).
+        const items = JSON.parse(JSON.stringify(step.items).replaceAll('$BASE', baseUrl));
+        fake.pushScript(step.endpoint, items);
       } else if (step.op === 'wait-requests') {
         await until(() => fake.countPath(step.path) >= step.count);
       } else if (step.op === 'wait-reports') {
@@ -847,22 +973,6 @@ const { ImAttachmentStore } = loadModule(
   join(baseline, 'src/adapters/channel/protocol/ImAttachmentStore.ts'));
 
 const mediaCases: any[] = [];
-const seq = (length: number, start = 0) =>
-  Buffer.from(Array.from({ length }, (_, index) => (start + index) & 0xff));
-const jpegBuffer = () => Buffer.concat([
-  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]),
-  seq(300, 7),
-]);
-const pdfBuffer = () => Buffer.concat([Buffer.from('%PDF-1.7\n'), seq(300, 1), Buffer.from('\n%%EOF\n')]);
-const textBuffer = () => Buffer.from(`${'x'.repeat(200)}\n`);
-const encryptEcb = (plaintext: Buffer, key: Buffer) => {
-  const cipher = createCipheriv(`aes-${key.length * 8}-ecb`, key, null);
-  return Buffer.concat([cipher.update(plaintext), cipher.final()]);
-};
-const key16 = Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex');
-const key16b = Buffer.from('101112131415161718191a1b1c1d1e1f', 'hex');
-const key24 = Buffer.from('000102030405060708090a0b0c0d0e0f1011121314151617', 'hex');
-const key32 = Buffer.from('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f', 'hex');
 
 // `WeixinChannel.ts:631-643` log tail, composed from the same primitives.
 function imageDecryptLog(buffer: Buffer, mediaOwner: unknown): string {

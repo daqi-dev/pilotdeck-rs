@@ -3,6 +3,7 @@
 pub mod api_server;
 pub mod feishu;
 pub(crate) mod http_client;
+pub(crate) mod im_attachment;
 pub mod im_cron;
 pub(crate) mod im_interaction;
 pub mod loader;

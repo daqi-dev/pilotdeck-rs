@@ -773,7 +773,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 15,
+  "expectedCaseCount": 20,
   "expectedMediaCaseCount": 31,
   "mediaSliceSha256": "35b85feb7bfdcc71f44447b01d0a851a7ffe4bc1ef2ef5672a5f43e2f050cc9a",
   "cdnBaseUrl": "https://novac2c.cdn.weixin.qq.com/c2c",
@@ -6376,6 +6376,1604 @@
             "botToken": "tok-15",
             "accountId": "acct-15",
             "cursor": "cur-16"
+          },
+          "weixinState": null,
+          "runtimeStatus": {
+            "updatedAt": "<now>",
+            "channels": {
+              "weixin": {
+                "channelKey": "weixin",
+                "state": "stopped",
+                "updatedAt": "<now>",
+                "message": "weixin: stopped (server-shutdown)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "image-attachment-fallback-text",
+      "steps": [
+        {
+          "op": "credentials",
+          "json": {
+            "baseUrl": "$BASE",
+            "botToken": "tok-16",
+            "accountId": "acct-16",
+            "cursor": "cur-0"
+          }
+        },
+        {
+          "op": "server",
+          "config": {
+            "adapters": {
+              "weixin": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "op": "wait-reports",
+          "state": "connected"
+        },
+        {
+          "op": "script",
+          "endpoint": "/cdn/msg-16.jpg",
+          "items": [
+            {
+              "bodyHex": "ffd8ffe000104a46494600010708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132",
+              "contentType": "image/jpeg"
+            }
+          ]
+        },
+        {
+          "op": "script",
+          "endpoint": "/ilink/bot/getupdates",
+          "items": [
+            {
+              "ret": 0,
+              "get_updates_buf": "cur-1",
+              "msgs": [
+                {
+                  "message_type": 1,
+                  "message_id": "m-16",
+                  "from_user_id": "user-16",
+                  "context_token": "ctx-16",
+                  "item_list": [
+                    {
+                      "type": 2,
+                      "image_item": {
+                        "cdn_url": "$BASE/cdn/msg-16.jpg",
+                        "width": 640,
+                        "height": 480
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "wait-requests",
+          "path": "/cdn/msg-16.jpg",
+          "count": 1
+        },
+        {
+          "op": "wait-requests",
+          "path": "/ilink/bot/sendmessage",
+          "count": 1
+        },
+        {
+          "op": "wait-submits",
+          "count": 1
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "turns": [
+        {
+          "events": [
+            {
+              "waitRequests": [
+                {
+                  "path": "/ilink/bot/getconfig",
+                  "count": 1
+                },
+                {
+                  "path": "/ilink/bot/sendtyping",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": {
+                "type": "turn_started",
+                "runId": "run-16"
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "收到图片"
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-16",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-0",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/cdn/msg-16.jpg",
+            "headers": {},
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getconfig",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-16",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-16",
+              "context_token": "ctx-16",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendtyping",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-16",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-16",
+              "typing_ticket": "tt-1",
+              "status": 1,
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendmessage",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-16",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "msg": {
+                "from_user_id": "",
+                "to_user_id": "user-16",
+                "client_id": "<client-id>",
+                "message_type": 2,
+                "message_state": 2,
+                "context_token": "ctx-16",
+                "item_list": [
+                  {
+                    "type": 1,
+                    "text_item": {
+                      "text": "收到图片"
+                    }
+                  }
+                ]
+              },
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-16",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          }
+        ],
+        "reports": [
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-16"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped (server-shutdown)"
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "[adapters] channel weixin startup task completed"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: image decrypt input=312 output=312 changed=false image=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[]"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-16)"
+          ],
+          [
+            "info",
+            "weixin: polled 1 message(s)"
+          ],
+          [
+            "info",
+            "weixin: received message from user-16 attachments=1"
+          ],
+          [
+            "info",
+            "weixin: sent reply to user-16"
+          ],
+          [
+            "info",
+            "weixin: stopping (server-shutdown)"
+          ]
+        ],
+        "submits": [
+          {
+            "sessionKey": "weixin:chat=user-16:general",
+            "channelKey": "weixin",
+            "message": "请查看我发送的附件。",
+            "attachments": [
+              {
+                "type": "image",
+                "name": "image-m-16.jpg",
+                "path": "<tmp>/.pilotdeck/im-attachments/weixin/user-16/m-16/image-m-16.jpg",
+                "mimeType": "image/jpeg",
+                "bytes": 312,
+                "metadata": {
+                  "channelKey": "weixin",
+                  "chatId": "user-16",
+                  "messageId": "m-16",
+                  "sourceUrl": "http://127.0.0.1:<port>/cdn/msg-16.jpg",
+                  "width": 640,
+                  "height": 480,
+                  "itemType": "image",
+                  "source": "url"
+                }
+              }
+            ],
+            "allowPlanModeTools": false
+          }
+        ],
+        "aborts": [],
+        "results": [
+          null
+        ],
+        "hostCloses": 1,
+        "files": {
+          "credentials": {
+            "baseUrl": "http://127.0.0.1:<port>",
+            "botToken": "tok-16",
+            "accountId": "acct-16",
+            "cursor": "cur-1"
+          },
+          "weixinState": null,
+          "runtimeStatus": {
+            "updatedAt": "<now>",
+            "channels": {
+              "weixin": {
+                "channelKey": "weixin",
+                "state": "stopped",
+                "updatedAt": "<now>",
+                "message": "weixin: stopped (server-shutdown)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "file-attachment-with-text",
+      "steps": [
+        {
+          "op": "credentials",
+          "json": {
+            "baseUrl": "$BASE",
+            "botToken": "tok-17",
+            "accountId": "acct-17",
+            "cursor": "cur-0"
+          }
+        },
+        {
+          "op": "server",
+          "config": {
+            "adapters": {
+              "weixin": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "op": "wait-reports",
+          "state": "connected"
+        },
+        {
+          "op": "script",
+          "endpoint": "/cdn/msg-17.pdf",
+          "items": [
+            {
+              "bodyHex": "255044462d312e370a0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c0a2525454f460a",
+              "contentType": "application/pdf"
+            }
+          ]
+        },
+        {
+          "op": "script",
+          "endpoint": "/ilink/bot/getupdates",
+          "items": [
+            {
+              "ret": 0,
+              "get_updates_buf": "cur-1",
+              "msgs": [
+                {
+                  "message_type": 1,
+                  "message_id": "m-17",
+                  "from_user_id": "user-17",
+                  "context_token": "ctx-17",
+                  "item_list": [
+                    {
+                      "type": 1,
+                      "text_item": {
+                        "text": "看下这个文件"
+                      }
+                    },
+                    {
+                      "type": 4,
+                      "file_item": {
+                        "cdn_url": "$BASE/cdn/msg-17.pdf",
+                        "file_name": "季度报告.pdf",
+                        "file_size": 316
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "wait-requests",
+          "path": "/cdn/msg-17.pdf",
+          "count": 1
+        },
+        {
+          "op": "wait-requests",
+          "path": "/ilink/bot/sendmessage",
+          "count": 1
+        },
+        {
+          "op": "wait-submits",
+          "count": 1
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "turns": [
+        {
+          "events": [
+            {
+              "waitRequests": [
+                {
+                  "path": "/ilink/bot/getconfig",
+                  "count": 1
+                },
+                {
+                  "path": "/ilink/bot/sendtyping",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": {
+                "type": "turn_started",
+                "runId": "run-17"
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "收到文件"
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-17",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-0",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/cdn/msg-17.pdf",
+            "headers": {},
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getconfig",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-17",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-17",
+              "context_token": "ctx-17",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendtyping",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-17",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-17",
+              "typing_ticket": "tt-1",
+              "status": 1,
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendmessage",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-17",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "msg": {
+                "from_user_id": "",
+                "to_user_id": "user-17",
+                "client_id": "<client-id>",
+                "message_type": 2,
+                "message_state": 2,
+                "context_token": "ctx-17",
+                "item_list": [
+                  {
+                    "type": 1,
+                    "text_item": {
+                      "text": "收到文件"
+                    }
+                  }
+                ]
+              },
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-17",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          }
+        ],
+        "reports": [
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-17"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped (server-shutdown)"
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "[adapters] channel weixin startup task completed"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: file decrypt input=316 output=316 changed=false known=true keyShape=ownerAesKeyLen=0,ownerAesKeyHex=false,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-17)"
+          ],
+          [
+            "info",
+            "weixin: polled 1 message(s)"
+          ],
+          [
+            "info",
+            "weixin: received message from user-17 attachments=1"
+          ],
+          [
+            "info",
+            "weixin: sent reply to user-17"
+          ],
+          [
+            "info",
+            "weixin: stopping (server-shutdown)"
+          ]
+        ],
+        "submits": [
+          {
+            "sessionKey": "weixin:chat=user-17:general",
+            "channelKey": "weixin",
+            "message": "看下这个文件",
+            "attachments": [
+              {
+                "type": "file",
+                "name": "季度报告.pdf",
+                "path": "<tmp>/.pilotdeck/im-attachments/weixin/user-17/m-17/季度报告.pdf",
+                "mimeType": "application/pdf",
+                "bytes": 316,
+                "metadata": {
+                  "channelKey": "weixin",
+                  "chatId": "user-17",
+                  "messageId": "m-17",
+                  "sourceUrl": "http://127.0.0.1:<port>/cdn/msg-17.pdf",
+                  "itemType": "file",
+                  "source": "url"
+                }
+              }
+            ],
+            "allowPlanModeTools": false
+          }
+        ],
+        "aborts": [],
+        "results": [
+          null
+        ],
+        "hostCloses": 1,
+        "files": {
+          "credentials": {
+            "baseUrl": "http://127.0.0.1:<port>",
+            "botToken": "tok-17",
+            "accountId": "acct-17",
+            "cursor": "cur-1"
+          },
+          "weixinState": null,
+          "runtimeStatus": {
+            "updatedAt": "<now>",
+            "channels": {
+              "weixin": {
+                "channelKey": "weixin",
+                "state": "stopped",
+                "updatedAt": "<now>",
+                "message": "weixin: stopped (server-shutdown)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "voice-transcript-and-video-diagnostic",
+      "steps": [
+        {
+          "op": "credentials",
+          "json": {
+            "baseUrl": "$BASE",
+            "botToken": "tok-18",
+            "accountId": "acct-18",
+            "cursor": "cur-0"
+          }
+        },
+        {
+          "op": "server",
+          "config": {
+            "adapters": {
+              "weixin": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "op": "wait-reports",
+          "state": "connected"
+        },
+        {
+          "op": "script",
+          "endpoint": "/ilink/bot/getupdates",
+          "items": [
+            {
+              "ret": 0,
+              "get_updates_buf": "cur-1",
+              "msgs": [
+                {
+                  "message_type": 1,
+                  "message_id": "m-18",
+                  "from_user_id": "user-18",
+                  "context_token": "ctx-18",
+                  "item_list": [
+                    {
+                      "type": 3,
+                      "voice_item": {
+                        "text": "帮我看看这个"
+                      }
+                    },
+                    {
+                      "type": 5,
+                      "video_item": {
+                        "play_length": 5
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "wait-requests",
+          "path": "/ilink/bot/sendmessage",
+          "count": 1
+        },
+        {
+          "op": "wait-submits",
+          "count": 1
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "turns": [
+        {
+          "events": [
+            {
+              "waitRequests": [
+                {
+                  "path": "/ilink/bot/getconfig",
+                  "count": 1
+                },
+                {
+                  "path": "/ilink/bot/sendtyping",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": {
+                "type": "turn_started",
+                "runId": "run-18"
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "收到"
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-18",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-0",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getconfig",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-18",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-18",
+              "context_token": "ctx-18",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendtyping",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-18",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-18",
+              "typing_ticket": "tt-1",
+              "status": 1,
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendmessage",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-18",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "msg": {
+                "from_user_id": "",
+                "to_user_id": "user-18",
+                "client_id": "<client-id>",
+                "message_type": 2,
+                "message_state": 2,
+                "context_token": "ctx-18",
+                "item_list": [
+                  {
+                    "type": 1,
+                    "text_item": {
+                      "text": "收到"
+                    }
+                  }
+                ]
+              },
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-18",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          }
+        ],
+        "reports": [
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-18"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped (server-shutdown)"
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "[adapters] channel weixin startup task completed"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-18)"
+          ],
+          [
+            "info",
+            "weixin: polled 1 message(s)"
+          ],
+          [
+            "info",
+            "weixin: received message from user-18 attachments=0"
+          ],
+          [
+            "info",
+            "weixin: sent reply to user-18"
+          ],
+          [
+            "info",
+            "weixin: stopping (server-shutdown)"
+          ]
+        ],
+        "submits": [
+          {
+            "sessionKey": "weixin:chat=user-18:general",
+            "channelKey": "weixin",
+            "message": "[微信语音转文字]\n帮我看看这个\n[Attachment diagnostics]\n- 微信视频附件暂未接入内容理解，已跳过。",
+            "allowPlanModeTools": false
+          }
+        ],
+        "aborts": [],
+        "results": [
+          null
+        ],
+        "hostCloses": 1,
+        "files": {
+          "credentials": {
+            "baseUrl": "http://127.0.0.1:<port>",
+            "botToken": "tok-18",
+            "accountId": "acct-18",
+            "cursor": "cur-1"
+          },
+          "weixinState": null,
+          "runtimeStatus": {
+            "updatedAt": "<now>",
+            "channels": {
+              "weixin": {
+                "channelKey": "weixin",
+                "state": "stopped",
+                "updatedAt": "<now>",
+                "message": "weixin: stopped (server-shutdown)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "attachment-missing-urls-diagnostics",
+      "steps": [
+        {
+          "op": "credentials",
+          "json": {
+            "baseUrl": "$BASE",
+            "botToken": "tok-19",
+            "accountId": "acct-19",
+            "cursor": "cur-0"
+          }
+        },
+        {
+          "op": "server",
+          "config": {
+            "adapters": {
+              "weixin": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "op": "wait-reports",
+          "state": "connected"
+        },
+        {
+          "op": "script",
+          "endpoint": "/ilink/bot/getupdates",
+          "items": [
+            {
+              "ret": 0,
+              "get_updates_buf": "cur-1",
+              "msgs": [
+                {
+                  "message_type": 1,
+                  "message_id": "m-19",
+                  "from_user_id": "user-19",
+                  "context_token": "ctx-19",
+                  "item_list": [
+                    {
+                      "type": 2,
+                      "image_item": {
+                        "width": 10
+                      }
+                    },
+                    {
+                      "type": 4,
+                      "file_item": {
+                        "file_name": "notes.txt"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "wait-requests",
+          "path": "/ilink/bot/sendmessage",
+          "count": 1
+        },
+        {
+          "op": "wait-submits",
+          "count": 1
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "turns": [
+        {
+          "events": [
+            {
+              "waitRequests": [
+                {
+                  "path": "/ilink/bot/getconfig",
+                  "count": 1
+                },
+                {
+                  "path": "/ilink/bot/sendtyping",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": {
+                "type": "turn_started",
+                "runId": "run-19"
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "收到"
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-19",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-0",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getconfig",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-19",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-19",
+              "context_token": "ctx-19",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendtyping",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-19",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-19",
+              "typing_ticket": "tt-1",
+              "status": 1,
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendmessage",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-19",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "msg": {
+                "from_user_id": "",
+                "to_user_id": "user-19",
+                "client_id": "<client-id>",
+                "message_type": 2,
+                "message_state": 2,
+                "context_token": "ctx-19",
+                "item_list": [
+                  {
+                    "type": 1,
+                    "text_item": {
+                      "text": "收到"
+                    }
+                  }
+                ]
+              },
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-19",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          }
+        ],
+        "reports": [
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-19"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped (server-shutdown)"
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "[adapters] channel weixin startup task completed"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-19)"
+          ],
+          [
+            "info",
+            "weixin: polled 1 message(s)"
+          ],
+          [
+            "info",
+            "weixin: received message from user-19 attachments=0"
+          ],
+          [
+            "info",
+            "weixin: sent reply to user-19"
+          ],
+          [
+            "info",
+            "weixin: stopping (server-shutdown)"
+          ]
+        ],
+        "submits": [
+          {
+            "sessionKey": "weixin:chat=user-19:general",
+            "channelKey": "weixin",
+            "message": "[Attachment diagnostics]\n- 微信图片附件缺少下载 URL，已跳过。调试信息：image_item 中未找到 url/cdn_url/media.full_url。\n- 微信文件 notes.txt 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。",
+            "allowPlanModeTools": false
+          }
+        ],
+        "aborts": [],
+        "results": [
+          null
+        ],
+        "hostCloses": 1,
+        "files": {
+          "credentials": {
+            "baseUrl": "http://127.0.0.1:<port>",
+            "botToken": "tok-19",
+            "accountId": "acct-19",
+            "cursor": "cur-1"
+          },
+          "weixinState": null,
+          "runtimeStatus": {
+            "updatedAt": "<now>",
+            "channels": {
+              "weixin": {
+                "channelKey": "weixin",
+                "state": "stopped",
+                "updatedAt": "<now>",
+                "message": "weixin: stopped (server-shutdown)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "encrypted-image-full-url",
+      "steps": [
+        {
+          "op": "credentials",
+          "json": {
+            "baseUrl": "$BASE",
+            "botToken": "tok-20",
+            "accountId": "acct-20",
+            "cursor": "cur-0"
+          }
+        },
+        {
+          "op": "server",
+          "config": {
+            "adapters": {
+              "weixin": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "op": "wait-reports",
+          "state": "connected"
+        },
+        {
+          "op": "script",
+          "endpoint": "/cdn/msg-20.jpg",
+          "items": [
+            {
+              "bodyHex": "dc6a2cbe7f411d7304cae80089afe53593f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241410a177df0b45109a5a62b0633cdf86f7d54969c20e013e6b0f1c8d20de6c4d39080c7ba95760f41a687741ff8f2bb58c1646c256c94194cd41cfd6221044793c7f0cabe6903c13149fb541a11c415b8e3856eedd92032aab21ca9d88cb67611101e02dd658a59e90de2f63304e6121b7890e2331f77ebf033c079740480c94cc689f9dda73adce2928b3a44544cee816d12472f7b1dec2a10a41421cb89ff27d257ae4f3e2257afa02c70c3905ee4b70aa2d03ebdb2a967a465cdcbddcab067001b7c08d9ff6810f3fa762b1a0f3f540f701905a15f5f2ab31d982461c2cd1cd93f852da4939139a07ccd9b37d9fbe832768633dbb27f1020102e4560ef1241495db55403dbc37275384b84fb0514555",
+              "contentType": "application/octet-stream"
+            }
+          ]
+        },
+        {
+          "op": "script",
+          "endpoint": "/ilink/bot/getupdates",
+          "items": [
+            {
+              "ret": 0,
+              "get_updates_buf": "cur-1",
+              "msgs": [
+                {
+                  "message_type": 1,
+                  "message_id": "m-20",
+                  "from_user_id": "user-20",
+                  "context_token": "ctx-20",
+                  "item_list": [
+                    {
+                      "type": 2,
+                      "image_item": {
+                        "media": {
+                          "full_url": "$BASE/cdn/msg-20.jpg"
+                        },
+                        "aeskey": "000102030405060708090a0b0c0d0e0f"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "op": "wait-requests",
+          "path": "/cdn/msg-20.jpg",
+          "count": 1
+        },
+        {
+          "op": "wait-requests",
+          "path": "/ilink/bot/sendmessage",
+          "count": 1
+        },
+        {
+          "op": "wait-submits",
+          "count": 1
+        },
+        {
+          "op": "close"
+        }
+      ],
+      "turns": [
+        {
+          "events": [
+            {
+              "waitRequests": [
+                {
+                  "path": "/ilink/bot/getconfig",
+                  "count": 1
+                },
+                {
+                  "path": "/ilink/bot/sendtyping",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": {
+                "type": "turn_started",
+                "runId": "run-20"
+              }
+            },
+            {
+              "event": {
+                "type": "assistant_text_delta",
+                "text": "解密成功"
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-20",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-0",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "GET",
+            "path": "/cdn/msg-20.jpg",
+            "headers": {},
+            "body": null
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getconfig",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-20",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-20",
+              "context_token": "ctx-20",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendtyping",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-20",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "ilink_user_id": "user-20",
+              "typing_ticket": "tt-1",
+              "status": 1,
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/sendmessage",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-20",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "msg": {
+                "from_user_id": "",
+                "to_user_id": "user-20",
+                "client_id": "<client-id>",
+                "message_type": 2,
+                "message_state": 2,
+                "context_token": "ctx-20",
+                "item_list": [
+                  {
+                    "type": 1,
+                    "text_item": {
+                      "text": "解密成功"
+                    }
+                  }
+                ]
+              },
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          },
+          {
+            "method": "POST",
+            "path": "/ilink/bot/getupdates",
+            "headers": {
+              "content-type": "application/json",
+              "authorization": "Bearer tok-20",
+              "authorizationtype": "ilink_bot_token",
+              "x-wechat-uin": "<uin>"
+            },
+            "body": {
+              "get_updates_buf": "cur-1",
+              "base_info": {
+                "channel_version": "weixin-ilink/0.1.0"
+              }
+            }
+          }
+        ],
+        "reports": [
+          {
+            "channelKey": "weixin",
+            "state": "starting",
+            "message": "weixin: starting in background"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: connected",
+            "accountId": "acct-20"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "connected",
+            "message": "weixin: started"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped"
+          },
+          {
+            "channelKey": "weixin",
+            "state": "stopped",
+            "message": "weixin: stopped (server-shutdown)"
+          }
+        ],
+        "logs": [
+          [
+            "info",
+            "[adapters] channel weixin startup task completed"
+          ],
+          [
+            "info",
+            "weixin: connected, poll loop started"
+          ],
+          [
+            "info",
+            "weixin: image decrypt input=320 output=312 changed=true image=true keyShape=ownerAesKeyLen=32,ownerAesKeyHex=true,mediaAesKeyLen=0,mediaAesKeyDecodedLen=0 candidates=[0:aes-128:len=312:head=ffd8ffe000104a46:image=true]"
+          ],
+          [
+            "info",
+            "weixin: loaded saved credentials (account: acct-20)"
+          ],
+          [
+            "info",
+            "weixin: polled 1 message(s)"
+          ],
+          [
+            "info",
+            "weixin: received message from user-20 attachments=1"
+          ],
+          [
+            "info",
+            "weixin: sent reply to user-20"
+          ],
+          [
+            "info",
+            "weixin: stopping (server-shutdown)"
+          ]
+        ],
+        "submits": [
+          {
+            "sessionKey": "weixin:chat=user-20:general",
+            "channelKey": "weixin",
+            "message": "请查看我发送的附件。",
+            "attachments": [
+              {
+                "type": "image",
+                "name": "image-m-20.jpg",
+                "path": "<tmp>/.pilotdeck/im-attachments/weixin/user-20/m-20/image-m-20.jpg",
+                "mimeType": "image/jpeg",
+                "bytes": 312,
+                "metadata": {
+                  "channelKey": "weixin",
+                  "chatId": "user-20",
+                  "messageId": "m-20",
+                  "sourceUrl": "http://127.0.0.1:<port>/cdn/msg-20.jpg",
+                  "itemType": "image",
+                  "source": "media.full_url"
+                }
+              }
+            ],
+            "allowPlanModeTools": false
+          }
+        ],
+        "aborts": [],
+        "results": [
+          null
+        ],
+        "hostCloses": 1,
+        "files": {
+          "credentials": {
+            "baseUrl": "http://127.0.0.1:<port>",
+            "botToken": "tok-20",
+            "accountId": "acct-20",
+            "cursor": "cur-1"
           },
           "weixinState": null,
           "runtimeStatus": {

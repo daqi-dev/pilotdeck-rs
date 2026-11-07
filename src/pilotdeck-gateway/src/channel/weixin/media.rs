@@ -24,6 +24,9 @@
 //! explicit scanner rather than an engine configuration.
 #![cfg_attr(not(test), allow(dead_code))]
 
+use crate::channel::im_attachment::{
+    AttachmentError, AttachmentFetchFuture, AttachmentFetcher, FetchedAttachment,
+};
 use aes::{
     Aes128, Aes192, Aes256,
     cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray},
@@ -251,6 +254,21 @@ pub fn summarize_weixin_image_decrypt(buffer: &[u8], image: &JsValue) -> String 
     )
 }
 
+/// `WeixinChannel.ts:646-650` log tail for the file path:
+/// `input=… output=… changed=… known=… keyShape=…`.
+pub fn summarize_weixin_file_decrypt(buffer: &[u8], file: &JsValue) -> String {
+    let decrypted = try_decrypt_weixin_media_if_needed(buffer, file, is_likely_known_file_buffer);
+    let output = decrypted.as_deref().unwrap_or(buffer);
+    format!(
+        "input={} output={} changed={} known={} {}",
+        buffer.len(),
+        output.len(),
+        decrypted.is_some(),
+        is_likely_known_file_buffer(output),
+        summarize_weixin_media_key_shape(file)
+    )
+}
+
 /// `extractWeixinMediaKeys`: `owner.aeskey` (32 hex chars) and
 /// `media.aes_key` (base64; both the raw decoded key and its hex text), with
 /// the base64 fallback for an `owner.aeskey` that is not 32 hex chars.
@@ -412,6 +430,15 @@ impl WeixinCdnClient {
     /// both the declared and the received size. The attachment store itself
     /// (paths, names, metadata) belongs to #1822.
     pub async fn download(&self, url: &str) -> Result<Vec<u8>, WeixinClientError> {
+        Ok(self.download_with_headers(url).await?.bytes)
+    }
+
+    /// `download` plus the response `content-type`, which `saveFromUrl` reads
+    /// back as the mime fallback when the item declared none.
+    pub async fn download_with_headers(
+        &self,
+        url: &str,
+    ) -> Result<WeixinCdnDownload, WeixinClientError> {
         let target = url::Url::parse(url).map_err(|_| WeixinClientError {
             name: "TypeError".into(),
             message: format!("Failed to parse URL from {url}"),
@@ -444,6 +471,11 @@ impl WeixinCdnClient {
                 status.as_u16()
             )));
         }
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         if let Some(declared) = response
             .headers()
             .get(header::CONTENT_LENGTH)
@@ -455,7 +487,7 @@ impl WeixinCdnClient {
                 "Attachment is {declared} bytes (limit {WEIXIN_ATTACHMENT_MAX_BYTES})."
             )));
         }
-        read_body(
+        let bytes = read_body(
             response.into_body(),
             WEIXIN_ATTACHMENT_MAX_BYTES,
             Some(WEIXIN_CDN_BODY_TIMEOUT),
@@ -475,6 +507,56 @@ impl WeixinCdnClient {
                 message: "terminated".into(),
             },
             BodyError::Aborted => WeixinClientError::abort(),
+        })?;
+        Ok(WeixinCdnDownload {
+            bytes,
+            content_type,
+        })
+    }
+}
+
+/// A CDN response: the buffered body plus the `content-type` header
+/// `saveFromUrl` reads for its mime fallback.
+pub struct WeixinCdnDownload {
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
+}
+
+/// The weixin adapter's [`AttachmentFetcher`]: `saveFromUrl`'s `fetchImpl`
+/// bound to the CDN client, so the store stays transport-agnostic.
+pub struct WeixinAttachmentFetcher {
+    client: WeixinCdnClient,
+}
+
+impl Default for WeixinAttachmentFetcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl WeixinAttachmentFetcher {
+    pub fn new() -> Self {
+        Self {
+            client: WeixinCdnClient::new(),
+        }
+    }
+}
+
+impl AttachmentFetcher for WeixinAttachmentFetcher {
+    fn fetch<'a>(&'a self, url: &'a str, _headers: &'a HeaderMap) -> AttachmentFetchFuture<'a> {
+        Box::pin(async move {
+            let download = self
+                .client
+                .download_with_headers(url)
+                .await
+                .map_err(|error| AttachmentError {
+                    name: error.name,
+                    message: error.message,
+                })?;
+            Ok(FetchedAttachment {
+                bytes: download.bytes,
+                content_type: download.content_type,
+            })
         })
     }
 }

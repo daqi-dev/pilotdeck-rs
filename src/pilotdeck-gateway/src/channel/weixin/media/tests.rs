@@ -82,14 +82,16 @@ fn oracle_declares_the_media_cases() {
     let decrypt = media_cases(&oracle, "decrypt");
     let download = media_cases(&oracle, "download");
     let all = oracle["cases"].as_array().expect("#1823 oracle cases");
+    // #1822 added five channel scenarios (c16-c20), so the channel half of
+    // the shared oracle is 20 while the media half stays at 31.
     crate::negative_assert_eq!(
         all.len() - decrypt.len() - download.len(),
-        15,
+        20,
         "#1823 the channel cases are untouched"
     );
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
-        json!(15),
+        json!(20),
         "#1823 generator channel declaration"
     );
     crate::negative_assert_eq!(
