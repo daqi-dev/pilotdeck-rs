@@ -61,6 +61,12 @@ GUARDED = [
     FIXTURES / 'tool-budget-cwd/oracle.json',
     FIXTURES / 'tool-budget-cwd/generate.mts',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the declarators above the
+    # switch sites — runtime/turn/mod.rs declares host_factory/live, and
+    # runtime/mod.rs declares turn; context/mod.rs declares tool_budget itself.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/context/mod.rs',
     # Workers are re-executed with env_clear; the selector forwarding lives
     # here and must not change under a running suite.
     ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
