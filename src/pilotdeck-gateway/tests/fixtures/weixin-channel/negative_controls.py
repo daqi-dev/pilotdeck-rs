@@ -20,6 +20,10 @@ fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
 native = root / 'src/pilotdeck-gateway/src/native_process'
 REPLAY = 'channel::weixin::replay_tests::weixin_replays_the_ts_channel_oracle'
+SUPERSEDED = ('channel::weixin::tests::'
+               'superseded_debounce_timer_must_not_drop_the_newest_state')
+ABANDONED = ('channel::weixin::tests::'
+              'abandoned_drain_restores_the_claimed_state_and_waiters_retry')
 UNSUPPORTED = ('native_process::methods::tests::'
                'prepare_weixin_login_without_callback_answers_unsupported')
 FORWARDED = ('native_process::methods::tests::'
@@ -147,6 +151,34 @@ MUTATIONS = [
      '        Some(expected) => Ok(expected),',
      'channel::weixin::replay_tests::recorded_expected_rejects_wrong_type',
      '#1328 #1808 rejects expected type drift'),
+    # #2073: `clearTimeout` cannot be `JoinHandle::abort` (abort lands at the
+    # task's next yield, after a woken timer claimed the newest state). Three
+    # mutants pin the three load-bearing guards against the multi_thread repro;
+    # each is killed by a different assertion.
+    # 1) the in-lock identity check never rejects: the sequence stops moving,
+    #    so a superseded timer believes it is still current and writes early.
+    ('weixin-state-timer-superseded-ignored', weixin / 'state.rs',
+     '            let seq = inner.timer_seq.entry(channel_key.clone()).or_insert(0);\n'
+     '            *seq += 1;',
+     '            let seq = inner.timer_seq.entry(channel_key.clone()).or_insert(0);\n'
+     '            *seq += 0;',
+     SUPERSEDED, '#2073 a superseded timer must not write before the debounce'),
+    # 2) a cancelled drain reports completion: the waiter returns a success
+    #    that never wrote (this is the pre-fix shape, where the entry also
+    #    stayed forever).
+    ('weixin-state-drain-cancel-reported-done', weixin / 'state.rs',
+     '            completed: false,',
+     '            completed: true,',
+     ABANDONED, '#2073 the claimed state must not be lost with the dropped drain'),
+    # 3) the cancelled drain does not put back the state it claimed.
+    ('weixin-state-claimed-not-restored', weixin / 'state.rs',
+     '            .or_insert(state);',
+     '            .or_insert(JsValue::Null);',
+     ABANDONED, '#2073 the claimed state must not be lost with the dropped drain'),
+    # Note: restoring `timer.abort()` on its own survives — the identity check
+    # retires the woken timer before its first yield, so the abort never lands
+    # (`weixin-state-timer-abort-restored` measured SURVIVED, 2026-11-07). The
+    # abort removal is defence in depth; the guard is what the test pins.
     # #1808: the absent arm is a separate guard; regress it to the old blind
     # read (fall back to the case itself) and the same plain assertion dies.
     ('weixin-recorded-expected-absent', weixin / 'replay_tests.rs',
