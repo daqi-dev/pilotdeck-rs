@@ -220,12 +220,6 @@ fn project_error(error: WorkspaceSnapshotError, method: &str) -> SnapshotProject
             message,
             requires_host: false,
         },
-        WorkspaceSnapshotError::HostRequired(message) => SnapshotProjectionError {
-            code: Some("JS_HOST_REQUIRED".into()),
-            name: "Error",
-            message: JsString::from(message),
-            requires_host: true,
-        },
     }
 }
 
@@ -869,11 +863,12 @@ mod tests {
         assert_eq!(directories, 1, "#888 no extra directories were left behind");
     }
 
-    /// #322-2 regression: the doc names two host-boundary shapes and both must
-    /// set `requires_host` with their own wire code; an ordinary projection
-    /// error never does.
+    /// #322-2 regression: an errno the port cannot represent must set
+    /// `requires_host` with its own wire code; an ordinary projection error
+    /// never does. (#132 removed the collation provider shape this test used
+    /// to cover: unpaired surrogates now compare natively.)
     #[test]
-    fn requires_host_covers_both_boundary_shapes() {
+    fn requires_host_covers_the_errno_boundary_shape() {
         let errno = mkdtemp_error(
             &io::Error::from_raw_os_error(libc::EACCES),
             "/tmp/x/.pilotdeck-restore-abc123",
@@ -884,25 +879,6 @@ mod tests {
         assert!(
             errno.message().units().is_empty(),
             "#888 errno has no message"
-        );
-
-        let collation = project_error(
-            WorkspaceSnapshotError::HostRequired(
-                "Snapshot createdAt collation requires the Node host for unpaired surrogates."
-                    .into(),
-            ),
-            "snapshot_list",
-        );
-        assert_eq!(
-            collation.code(),
-            Some("JS_HOST_REQUIRED"),
-            "#888 provider shape"
-        );
-        assert_eq!(collation.name(), "Error", "#888 provider shape name");
-        assert!(collation.requires_host(), "#888 provider shape forwards");
-        assert!(
-            !collation.message().units().is_empty(),
-            "#888 provider shape keeps its explanation"
         );
 
         let ordinary = project_error(
@@ -1173,10 +1149,11 @@ mod tests {
         }
     }
 
-    /// `dispatch` forwards the whole request when the projection hits the
-    /// measured collation host boundary; it never synthesizes that error.
+    /// `dispatch` used to forward the whole request when the projection hit the
+    /// measured collation host boundary. #132 removed that boundary, so the
+    /// same input now answers locally with Node's order.
     #[test]
-    fn dispatch_forwards_the_collation_host_boundary() {
+    fn dispatch_answers_the_collation_case_locally() {
         let scratch = TempDir::new();
         let home = scratch.0.join("pilot-home");
         let project = scratch.0.join("project");
@@ -1221,10 +1198,9 @@ mod tests {
                 &params(&[("projectKey", project.to_string_lossy().as_ref().into())]),
             )
             .expect("#888 known method routes");
-        assert_eq!(
-            routed,
-            SnapshotDispatch::Forward,
-            "#888 collation host boundary forwards the request"
+        assert!(
+            matches!(routed, SnapshotDispatch::Response(_)),
+            "#132 unpaired-surrogate collation answers locally, never forwards"
         );
     }
 }

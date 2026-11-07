@@ -1600,3 +1600,9 @@ fn surrogate_collation_matrix_covers_locale_and_key_classes() {
 fn native_collation_regenerates_identically() {
     baseline::regenerates_identically("native-collation");
 }
+
+#[test]
+#[ignore = "#132 requires pinned Node v22.22.0 / ICU 78.2 and TS baseline"]
+fn transcript_collation_regenerates_identically() {
+    baseline::regenerates_identically("transcript-collation");
+}

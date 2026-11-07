@@ -57,7 +57,7 @@ use super::{
 use crate::{
     js_value::number_string,
     metadata::{js_trim, resolve as lexical_resolve, resolve_units},
-    project_files::{has_unpaired_surrogate, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use sha2::{Digest, Sha256};
@@ -223,25 +223,13 @@ pub enum WorkspaceSnapshotError {
     /// UTF-16 units of the offending argument, so a lone surrogate next to
     /// the NUL stays `\ud800` instead of becoming U+FFFD.
     TypeError(JsString),
-    /// R19 host boundary: the comparison needs Node's collator for unpaired
-    /// surrogates. Callers wire this to the host instead of accepting a
-    /// silently different order.
-    HostRequired(String),
-}
-impl WorkspaceSnapshotError {
-    /// True for errors that the host must answer because the native port
-    /// cannot represent the input (R19 unpaired-surrogate collation).
-    pub fn requires_host(&self) -> bool {
-        matches!(self, Self::HostRequired(_))
-    }
 }
 impl fmt::Display for WorkspaceSnapshotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid(message)
-            | Self::Syntax(message)
-            | Self::HostRequired(message)
-            | Self::Io { message, .. } => f.write_str(message),
+            Self::Invalid(message) | Self::Syntax(message) | Self::Io { message, .. } => {
+                f.write_str(message)
+            }
             // Display cannot carry a lone surrogate; callers that serialize an
             // error to JSON use the raw `JsString` instead.
             Self::NotFound(message) | Self::TypeError(message) => {
@@ -332,38 +320,8 @@ impl WorkspaceSnapshotProvider {
         let locale = node_locale(|key| std::env::var(key).ok());
         let collator = node_collator(&locale)
             .map_err(|(_, message)| WorkspaceSnapshotError::Invalid(message))?;
-        let keys: Vec<&[u16]> = descriptors
-            .iter()
-            .map(|descriptor| {
-                descriptor
-                    .created_at
-                    .as_ref()
-                    .map_or(&[][..], JsString::units)
-            })
-            .collect();
-        // ICU4X folds every unpaired surrogate to U+FFFD, so it cannot tell
-        // Node's distinct weights apart. Reject only when such a key really
-        // takes part in a comparison: one descriptor (or one distinct key
-        // everywhere) never calls Array#sort's comparator.
-        let has_distinct_keys = keys
-            .first()
-            .is_some_and(|first| keys.iter().any(|key| key != first));
-        let requires_host = has_distinct_keys
-            && descriptors.iter().any(|descriptor| {
-                descriptor
-                    .created_at
-                    .as_ref()
-                    .is_some_and(has_unpaired_surrogate)
-            });
-        drop(keys);
-        if requires_host {
-            return Err(WorkspaceSnapshotError::HostRequired(
-                "Snapshot createdAt collation requires the Node host for unpaired surrogates."
-                    .into(),
-            ));
-        }
         descriptors.sort_by(|left, right| {
-            collator.compare_utf16(
+            collator.compare_utf16_preserving_surrogates(
                 right.created_at.as_ref().map_or(&[][..], JsString::units),
                 left.created_at.as_ref().map_or(&[][..], JsString::units),
             )

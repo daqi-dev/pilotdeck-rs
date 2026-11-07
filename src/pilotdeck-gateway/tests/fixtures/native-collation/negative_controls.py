@@ -22,6 +22,12 @@ SESSION = root / 'src/pilotdeck-gateway/src/session_model.rs'
 COMPARISON = root / 'src/vendor/icu_collator/src/comparison.rs'
 BOUNDARY = root / 'src/pilotdeck-gateway/tests/unsafe_boundary.rs'
 MANIFEST = root / 'src/vendor/icu_collator/Cargo.toml'
+ARCHIVE = root / 'src/pilotdeck-gateway/src/native_archive.rs'
+TRANSCRIPT = root / 'src/pilotdeck-gateway/src/storage/transcript.rs'
+WORKSPACE = root / 'src/pilotdeck-gateway/src/storage/workspace_snapshot.rs'
+STORAGE_TESTS = root / 'src/pilotdeck-gateway/src/storage/tests.rs'
+DISPATCH = root / 'src/pilotdeck-gateway/src/dispatch.rs'
+ORACLE = root / 'src/pilotdeck-gateway/tests/fixtures/native-collation/oracle.json'
 VENDOR_SCOPE = 'icu_collator_vendor_scope_matches_approved_lib_only_boundary'
 PREFIX = 'pairing::native_collation_tests::'
 MATRIX = PREFIX + 'native_matrix_matches_node'
@@ -54,13 +60,13 @@ mutations = [
      PAIRS, '#132 comparator raw weights'),
     ('catalog-host-remains', CATALOG,
      '    items.sort_by(|a, b| node_compare_utf16(&collator, &a.0, &b.0));',
-     '    if items.len() > 1 && items.iter().any(|(id, _)| crate::project_files::has_unpaired_surrogate(id)) {\n'
+     '    if items.len() > 1 && items.iter().any(|(id, _)| char::decode_utf16(id.units().iter().copied()).any(|unit| unit.is_err())) {\n'
      '        return Err(config::Error { code: "JS_HOST_REQUIRED".into(), message: "".into(), diagnostics: vec![], name: "Error", requires_host: true });\n'
      '    }\n    items.sort_by(|a, b| node_compare_utf16(&collator, &a.0, &b.0));',
      MATRIX, '#132 matrix must terminate natively'),
     ('session-host-remains', SESSION,
      '    if entries.len() > 1 {\n        let collator',
-     '    if entries.iter().any(|e| crate::project_files::has_unpaired_surrogate(field(e, "createdAt").as_string().unwrap())) {\n'
+     '    if entries.iter().any(|e| char::decode_utf16(field(e, "createdAt").as_string().unwrap().units().iter().copied()).any(|unit| unit.is_err())) {\n'
      '        let mut host = error("JS_HOST_REQUIRED", ""); host.requires_host = true; return Err(host);\n'
      '    }\n    if entries.len() > 1 {\n        let collator',
      MATRIX, '#132 matrix must terminate natively'),
@@ -85,6 +91,73 @@ mutations = [
     ('french-script-fallback-lost', PROJECT,
      '&& locale.id.script.is_none()',
      '&& true', PAIRS, '#132 comparator raw weights'),
+    # Paired mutations for the three boundaries this task retires plus the
+    # ownership handoff: each one reinstates the pre-#132 behaviour and must
+    # turn its bound test red.
+    ('archive-host-remains', ARCHIVE,
+     '    if entries.len() > 1 {\n        let locale = node_locale(',
+     '    let mut counts = std::collections::HashMap::new();\n'
+     '    for entry in &entries {\n'
+     '        let sequence = field(entry, "sequence").as_number().unwrap();\n'
+     '        *counts.entry(if sequence == 0.0 { 0 } else { sequence.to_bits() }).or_insert(0usize) += 1;\n'
+     '    }\n'
+     '    if entries.iter().any(|entry| {\n'
+     '        let sequence = field(entry, "sequence").as_number().unwrap();\n'
+     '        counts[&if sequence == 0.0 { 0 } else { sequence.to_bits() }] > 1\n'
+     '            && char::decode_utf16(field(entry, "createdAt").as_string().unwrap().units().iter().copied())\n'
+     '                .any(|unit| unit.is_err())\n'
+     '    }) {\n'
+     '        return Ok(None);\n'
+     '    }\n'
+     '    if entries.len() > 1 {\n        let locale = node_locale(',
+     'native_archive::tests::archive_lone_surrogate_ties_answer_natively_with_ts_bytes',
+     'unexpected forward ties-lone-native_archive_manifest'),
+    ('transcript-host-remains', TRANSCRIPT,
+     '    let collator = if ties.is_empty() {\n        None\n    } else {\n        Some(',
+     '    let collator = if ties.is_empty() {\n        None\n    } else {\n'
+     '        for entry in &read.entries {\n'
+     '            let n = field(entry, "sequence").as_number().unwrap();\n'
+     '            if ties.contains(&if n == 0.0 { 0 } else { n.to_bits() })\n'
+     '                && char::decode_utf16(field(entry, "createdAt").as_string().unwrap().units().iter().copied())\n'
+     '                    .any(|unit| unit.is_err())\n'
+     '            {\n'
+     '                return Err(invalid("Transcript timestamp collation requires the Node host for unpaired surrogates."));\n'
+     '            }\n'
+     '        }\n'
+     '        Some(',
+     'storage::tests::equal_sequence_created_at_keeps_isolated_utf16_weights',
+     "#132 isolated surrogates keep Node's implicit weights"),
+    ('workspace-host-remains', WORKSPACE,
+     '        descriptors.sort_by(|left, right| {',
+     '        if descriptors.iter().any(|descriptor| {\n'
+     '            descriptor.created_at.as_ref().is_some_and(|value| {\n'
+     '                char::decode_utf16(value.units().iter().copied()).any(|unit| unit.is_err())\n'
+     '            })\n'
+     '        }) {\n'
+     '            return Err(WorkspaceSnapshotError::Invalid(\n'
+     '                "Snapshot createdAt collation requires the Node host for unpaired surrogates.".into(),\n'
+     '            ));\n'
+     '        }\n'
+     '        descriptors.sort_by(|left, right| {',
+     'runtime::snapshot::tests::dispatch_answers_the_collation_case_locally',
+     '#132 unpaired-surrogate collation answers locally, never forwards'),
+    ('archive-local-method-lost', DISPATCH,
+     '    "native_archive_manifest",\n', '',
+     'pairing::tests::archive_lone_surrogate_ties_never_reach_upstream',
+     '#132 pairing response deadline'),
+    # #132 P2-5: the matrix pairing test had no reverse mutation. Dropping one
+    # locally answered business method makes every locale row forward its first
+    # catalog request upstream, so the parent test must red with the failed
+    # locale child named in the panic.
+    ('catalog-local-method-lost', DISPATCH,
+     '    "model_catalog_list",\n    "session_model_get",',
+     '    "session_model_get",',
+     PREFIX + 'matrix_pairing_has_zero_business_upstream',
+     'matrix_pairing_has_zero_business_upstream/en_US.UTF-8'),
+    ('oracle-commit-corrupt', ORACLE,
+     '"sourceCommit":"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
+     '"sourceCommit":"0000000000000000000000000000000000000000"',
+     PAIRS, '#1109 oracle baseline commit mismatch'),
 ]
 
 
@@ -116,13 +189,15 @@ def main():
         slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
         with (out / (label + '.slots.log')).open('x') as stream:
             stream.write(slot.stdout + slot.stderr)
-        target = ['--lib'] if test.startswith(PREFIX) else ['--test', 'unsafe_boundary']
+        # Lib tests carry a module path; integration test names do not.
+        target = ['--lib'] if '::' in test else ['--test', 'unsafe_boundary']
         result = run_owned(command + target + arguments, cwd=root, env=env, timeout=900)
         with (out / (label + '.log')).open('x') as stream:
             stream.write(result.stdout + result.stderr)
         return result
 
-    guarded = [PROJECT, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, FIXTURE / 'regression.rs',
+    guarded = [PROJECT, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, ARCHIVE, TRANSCRIPT,
+               WORKSPACE, STORAGE_TESTS, DISPATCH, FIXTURE / 'regression.rs',
                FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve(),
                root / 'src/vendor/icu_collator/src/elements.rs',
                *(FIXTURE.parent / name for name in (

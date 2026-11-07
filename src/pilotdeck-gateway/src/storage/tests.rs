@@ -541,6 +541,53 @@ fn terminal_json_order_surrogates_and_validation_match_ts() {
     unknown.last_applied_sequence = Some(-2.5);
     unknown_sequence.result_unknown(&unknown).unwrap();
 }
+/// #132: equal-sequence entries fall back to `createdAt.localeCompare`, which
+/// keeps distinct implicit weights for isolated UTF-16 surrogates. `oracle.json`
+/// is the real baseline `readTranscript` output under the pinned Node v22.22.0 /
+/// ICU 78.2, so the entry lists are compared byte for byte: folding every lone
+/// surrogate to U+FFFD reorders them and turns this red.
+#[test]
+fn equal_sequence_created_at_keeps_isolated_utf16_weights() {
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../tests/fixtures/transcript-collation/oracle.json"
+    ));
+    let Some(JsValue::Array(inputs)) = oracle.get("inputs") else {
+        panic!("#132 transcript collation inputs")
+    };
+    let Some(JsValue::Array(results)) = oracle.get("results") else {
+        panic!("#132 transcript collation results")
+    };
+    assert_eq!(inputs.len(), results.len(), "#132 one result per case");
+    let scratch = Scratch::new();
+    for (input, result) in inputs.iter().zip(results) {
+        let id = string(field(input, "id"));
+        let Some(JsValue::Array(lines)) = input.get("lines") else {
+            panic!("#132 transcript collation lines")
+        };
+        let body = lines.iter().map(string).collect::<Vec<_>>().join("\n") + "\n";
+        let path = scratch.0.join(format!("{id}.jsonl"));
+        fs::write(&path, body).unwrap();
+        let read = transcript::read_transcript(&path).unwrap();
+        assert!(read.diagnostics.is_empty(), "{id}: {:?}", read.diagnostics);
+        let actual = read
+            .entries
+            .iter()
+            .map(|entry| stringify_json(entry).unwrap().unwrap())
+            .collect::<Vec<_>>();
+        let Some(JsValue::Array(expected)) = result.get("entries") else {
+            panic!("#132 transcript collation entries")
+        };
+        let expected = expected
+            .iter()
+            .map(|entry| stringify_json(entry).unwrap().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual, expected,
+            "#132 isolated surrogates keep Node's implicit weights: {id}"
+        );
+    }
+}
+
 #[test]
 fn seed_projection_preserves_duplicates_and_drops_unknown_fields() {
     let seed = parse_json(r#"{"allowedReadFiles":["a","a"],"readFileState":{"a":{"kind":"text","mtimeMs":1,"ignored":true,"offset":"bad"}},"ignored":1}"#).unwrap();

@@ -5,7 +5,7 @@ use super::{
 use crate::{
     metadata::js_trim,
     node_io::{descriptor_error, path_error},
-    project_files::{has_unpaired_surrogate, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 #[cfg(unix)]
@@ -187,17 +187,6 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
     let collator = if ties.is_empty() {
         None
     } else {
-        for entry in &read.entries {
-            let n = field(entry, "sequence").as_number().unwrap();
-            if ties.contains(&if n == 0.0 { 0 } else { n.to_bits() })
-                && has_unpaired_surrogate(field(entry, "createdAt").as_string().unwrap())
-            {
-                // Ledger: gateway accepted-diffs A6.2-TRANSCRIPT-COLLATION-001 (unapproved).
-                return Err(invalid(
-                    "Transcript timestamp collation requires the Node host for unpaired surrogates.",
-                ));
-            }
-        }
         Some(
             node_collator(&node_locale(|key| std::env::var(key).ok()))
                 .map_err(|(_, message)| invalid(message))?,
@@ -209,10 +198,13 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
         if a_seq != b_seq {
             (a_seq - b_seq).partial_cmp(&0.0).unwrap_or(Ordering::Equal)
         } else {
-            collator.as_ref().unwrap().compare_utf16(
-                field(a, "createdAt").as_string().unwrap().units(),
-                field(b, "createdAt").as_string().unwrap().units(),
-            )
+            collator
+                .as_ref()
+                .unwrap()
+                .compare_utf16_preserving_surrogates(
+                    field(a, "createdAt").as_string().unwrap().units(),
+                    field(b, "createdAt").as_string().unwrap().units(),
+                )
         }
     });
     Ok((bytes, read))
