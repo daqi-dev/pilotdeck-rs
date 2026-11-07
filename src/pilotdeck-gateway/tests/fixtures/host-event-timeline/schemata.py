@@ -167,12 +167,6 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/host/tests/resume.rs',
     FIXTURES / 'host-module-binding/oracle.json',
     FIXTURES / 'host-cancel-timeout/oracle.json',
-    # #2228 r11 (MM r10 sibling P1): the registered face cancel_exit.rs
-    # executes tests/fixtures/host-cancel-timeout/peer.py as a python3 child
-    # (cancel_exit.rs:11-17, runtime-read — no recompile needed to take
-    # effect), the same peer registration turn-gates/live-session/
-    # host-factory already have for their peers.
-    FIXTURES / 'host-cancel-timeout/peer.py',
     FIXTURES / 'host-event/oracle.json',
     FIXTURES / 'host-model/oracle.json',
     FIXTURES / 'host-modules/oracle.json',
@@ -182,14 +176,22 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'scripts/a6-host/fixture.py',
-    # #2228 r11 (MM r10 sibling P2#3, P2-a in-round): the registered carrier
-    # host/tests.rs also executes the two sibling probe scripts —
-    # scripts/a6-host/orphan_probe.py and scripts/a6-host/preinstall_probe.py
-    # (host/tests.rs:279-289, spawned at :292-293/:1346-1347) — runtime-read
-    # inputs of a registered carrier; fixture.py was the only a6-host script
-    # registered before this.
-    ROOT / 'scripts/a6-host/orphan_probe.py',
-    ROOT / 'scripts/a6-host/preinstall_probe.py',
+    # #2228 r12 (DS r11 boundary P1 + MM r11 concurrency P2/boundary P3,
+    # criterion unified): runtime-read (spawned/imported) inputs are
+    # registered iff this fixture's bound rows execute them — baked
+    # (include_str!) inputs follow the carrier closure instead. The
+    # timeline-submit bound row runs fixture.py (host/tests.rs:291-295
+    # command()), and fixture.py imports lifetime unconditionally at its
+    # top (fixture.py:11, the #1779 parent-death/lifetime watchdog), so
+    # both must be caught. The remaining a6-host scripts are dead inputs
+    # here: orphan_probe.py (spawned at host/tests.rs:1219/:1270) and
+    # preinstall_probe.py (:1347) are launched only by host::tests rows this
+    # fixture's bound rows never run, and resume_fixture.py (fixture.py:
+    # 46-49, reconnect-* modes only) has no such bound row either — r11's
+    # registration of the two probes is reverted with this criterion, and
+    # host-cancel-timeout/peer.py (cancel_exit.rs:11-17) stays out the same
+    # way turn-gates/peer.py does (above).
+    ROOT / 'scripts/a6-host/lifetime.py',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',
