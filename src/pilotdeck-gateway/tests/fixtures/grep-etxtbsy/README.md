@@ -55,8 +55,11 @@ paused_poll`）；fdinfo
 实测：僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid exec 后→EACCES）即释放
 （`fdinfo_unreadable`，配 Linux 单元测试）；#1409 起两级读都按这条口径分开：
 `read_dir` 失败交给来源分类（自身/后代/关系读不出→关；已消失→跳过），
-`read_link` 只有 ENOENT 算释放、其余 errno 一律上报再由来源分类裁决——此前
-两级都是「读不到就 continue」，一条都看不见也照样出干净结论。
+`read_link` 只有 ENOENT 算释放、其余 errno 一律由来源裁决（持有者已消失或
+已终态才算释放，本进程/后代/读不出状态的一律当作仍持有）——此前两级都是
+「读不到就 continue」，一条都看不见也照样出干净结论。这条规则只有一处实现
+`link_failure_is_a_release`，三处 `read_link`（枚举、fdinfo 复检、宽限复检）
+都走它，所以三处不会各走各的漂移。
 pid 模式 stranger 由 `sleep 5`
 改为停驻 `sleep 30`（与组模式一致，只有守卫 kill 能终结），kill 契约因此可
 判杀。fix-r3（fix-r3 评审 P1-1）：受控用例的暂停改为**事件屏障**——helper
@@ -251,16 +254,32 @@ panic 用例
 - `boundary-grace-never-evicts`（#1409 第 3 条，Linux，同一单元测试）：
   重检照跑但 `retain(|_| true)` 永不剔除——同一个假 FAIL 换慢路径，同一
   锚点判杀。
+- `link-failure-always-release`（#1409 第 1/3 条，Linux，绑定单元测试）：
+  `link_failure_is_a_release` 的来源裁决恒为释放——ENOENT 之外任何 errno 都
+  当作 fd 已释放。这正是 setuid exec 或 LSM 藏起活 fd 的形状：扫描从没看见
+  写端，也照样出干净结论。三处 `read_link`（枚举、fdinfo 复检、宽限复检）走
+  同一个函数，一条变异体覆盖三处；绑定
+  `an_unreadable_link_is_a_release_only_when_its_holder_is_gone` 的
+  `#1409 an unreadable link of this process must never count as a release`。
+- `blind-source-settle-always-terminal`（#1409 第 1 条，Linux，绑定单元测试）：
+  收尾重查的超时从 Related 改成 Terminal——本进程这类「可读但不终态」的来源
+  在 50ms 后被宣判已死、可跳过，宿主藏起后代描述符时未知就变成「那里没有」。
+  绑定 `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`
+  的 `#1409 this process is the scan's own source and must never be skipped`。
 - `blind-source-self-unrelated`（#1409 第 1 条，P1 复审补，Linux，绑定
   单元测试）：来源分类短路成「一律 Unrelated」——本进程自己也变成可跳过，
   任何宿主一旦藏起某进程的描述符，扫描都会当成「那里没有」照常出干净结论。
   绑定 `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`
   的 `#1409 this process is the scan's own source and must never be
-  skipped`。同一分类里「关系进程正在退出」的收尾重查没有确定性的宿主侧
-  触发（只在一段微秒级内核窗口里成立），不设变异体，改由实测钉住：cb8
-  6.17 上 20 s、289 万次 `/proc/<pid>/fd` 读取里，退出窗口内 `R` 态
-  EACCES 14 次（原始记录 `_tmp/20261107-issue-1409/exit-window-probe.log`），
-  正是重查要吸收的那 14 次——不收尾就会变成健康路径上的假 FAIL。
+  skipped`；其中「关系进程正在退出」的收尾重查由
+  `blind-source-settle-always-terminal` 钉住超时那一臂。窗口量级由实测给出
+  （cb8 6.17，`_tmp/20261107-issue-1409/exit-window-probe-3000.log`）：3000 轮
+  `/bin/true`、74,584 次 `/proc/<pid>/fd` 读取，14,290 次 EACCES（同刻状态
+  `R` 71,504 / `Z` 3,000 / `D` 80），可观测退出窗口 2810 轮，时长 p50 26.7µs、
+  p90 38.2µs、p99 48.1µs、max 2.7ms，**没有一次达到 50ms 的
+  `BLIND_SOURCE_SETTLE`**——50ms 是三个数量级的余量，不是贴着窗口调出来的
+  值；不收尾这 2810 轮就会变成健康路径上的假 FAIL，收尾过短则在重载下漏掉
+  正在退出的后代。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -303,6 +322,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=31 lib=2 test=29 unix=16 linux-survives=9 linux-invalid=6 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts blind-source-self-unrelated -->
+<!-- mutants: total=33 lib=2 test=31 unix=16 linux-survives=9 linux-invalid=8 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal blind-source-self-unrelated -->
 

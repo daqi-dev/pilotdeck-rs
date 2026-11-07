@@ -1577,22 +1577,58 @@ fn group_exists(group: Pid) -> bool {
 /// access check with ESRCH/EACCES (cb8 probe, 6.17: an unreaped zombie's
 /// fdinfo reads ENOENT while its fd link already reads EACCES, and a
 /// setuid-exec'd child's fdinfo reads EACCES) — so the release is proven by
-/// the fd itself being gone, re-read here: an fd that still resolves to the
-/// pipe keeps the scan fail-closed, and only this binary's children can
-/// hold the pipe — none of them execs anything setuid — so an fd that can
-/// no longer be shown to exist, unreadable included, is a release, never a
-/// leak.
+/// the fd itself, re-read here, and the re-read follows the same rule as
+/// every other link read in this file (#1409): `ENOENT` is a release, an
+/// unreadable link is one only when its holder is gone or already dead,
+/// and an fd that still resolves to the pipe keeps the scan fail-closed.
 #[cfg(target_os = "linux")]
 fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Error> {
-    fs::read_link(fd)
-        .ok()
-        .is_some_and(|target| target.to_string_lossy() == wanted)
-        .then(|| {
-            io::Error::other(format!(
-                "#1155 reading the fdinfo of {}: {error}",
-                fd.display()
-            ))
-        })
+    match fs::read_link(fd) {
+        Ok(target) if target.to_string_lossy() == wanted => Some(io::Error::other(format!(
+            "#1155 reading the fdinfo of {}: {error}",
+            fd.display()
+        ))),
+        Ok(_) => None,
+        // #1409: only a link that is gone proves the release — the same rule
+        // the enumeration reads by ([`link_failure_is_a_release`]).
+        Err(link) if link_failure_is_a_release(fd, &link) => None,
+        Err(link) => Some(io::Error::other(format!(
+            "#1155 reading the fdinfo of {}: {error}; re-reading the fd itself: {link}",
+            fd.display()
+        ))),
+    }
+}
+
+/// #1409: the process behind a `/proc/<pid>/fd/<n>` path, or `None` when the
+/// path does not name a numeric pid (`/proc/self/…`, a synthetic test path) —
+/// an unknown holder, which the callers treat as still holding.
+#[cfg(target_os = "linux")]
+fn holder_of(fd: &Path) -> Option<String> {
+    let rest = fd.to_str()?.strip_prefix("/proc/")?;
+    let pid = rest.split('/').next()?;
+    (!pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit())).then(|| pid.to_owned())
+}
+
+/// #1409: whether a failed `read_link` on a descriptor path proves the fd is
+/// released. Only `ENOENT` does; every other errno (EACCES after a setuid
+/// exec or behind an LSM, EIO) leaves a descriptor the scan cannot see, and
+/// the source decides: a holder that is gone or already dead holds nothing,
+/// while this process, a descendant, or a holder whose state cannot be read
+/// keeps the descriptor live as far as the scan is concerned. All three
+/// `read_link` sites in this file — the enumeration, the fdinfo re-check and
+/// the grace re-check — go through this one rule so they cannot drift apart.
+#[cfg(target_os = "linux")]
+fn link_failure_is_a_release(fd: &Path, error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::NotFound {
+        return true;
+    }
+    match holder_of(fd) {
+        Some(pid) => matches!(
+            blind_source(&pid),
+            BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated
+        ),
+        None => false,
+    }
 }
 
 /// #1155 r3 review P2-1: the return-boundary proof. The scan runs inside
@@ -1853,12 +1889,12 @@ fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
             // #1409: only a link that vanished between the enumeration and
             // the read is a release. Any other errno (EACCES from a setuid
             // exec or an LSM, EIO) leaves a descriptor the scan cannot see
-            // — reported, so the caller classifies its source instead of
-            // passing it over.
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            // — the source decides, and a related one fails the scan closed.
+            Err(error) if link_failure_is_a_release(&descriptor.path(), &error) => continue,
             Err(error) => {
                 return Err(io::Error::other(format!(
-                    "#1409 reading the descriptors of {pid}: {error}"
+                    "#1409 reading the descriptor {} of {pid}: {error}",
+                    descriptor.path().display()
                 )));
             }
         };
@@ -1939,8 +1975,14 @@ fn retain_through_grace(candidates: &mut Vec<String>, wanted: &str, grace: Durat
     let deadline = Instant::now() + grace;
     while !candidates.is_empty() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(25));
-        candidates
-            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));
+        candidates.retain(|fd| match fs::read_link(fd) {
+            Ok(target) => target.to_string_lossy() == wanted,
+            // #1409: an unreadable link is not a release unless its holder
+            // is gone or already dead — the same rule as the enumeration, so
+            // a descriptor hidden mid-grace stays a survivor instead of
+            // being quietly dropped from the verdict.
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+        });
     }
 }
 
@@ -2009,8 +2051,11 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
     );
     // Init cannot descend from this process — unless the test binary *is*
     // PID 1 (a container entrypoint), in which case the self check above is
-    // the same assertion and this one must not contradict it.
-    if mine != "1" {
+    // the same assertion and this one must not contradict it; and on a host
+    // that hides other users' processes (`hidepid`) `/proc/1/stat` is not
+    // readable, which is the blind case this scan exists to fail on, not a
+    // classification result to assert.
+    if mine != "1" && Path::new("/proc/1/stat").exists() {
         assert_eq!(
             blind_source("1"),
             BlindSource::Unrelated,
@@ -2026,6 +2071,33 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
         blind_source(&pid),
         BlindSource::Vanished,
         "#1409 a reaped process is gone and holds nothing"
+    );
+}
+
+/// #1409: the one rule the three `read_link` sites share, pinned on its own —
+/// `ENOENT` proves the release, any other errno leaves a descriptor the scan
+/// cannot see, and only the source settles it: this process and a path with
+/// no numeric pid keep it live, a holder that no longer exists releases it.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unreadable_link_is_a_release_only_when_its_holder_is_gone() {
+    let eacces = io::Error::from_raw_os_error(13);
+    let mine = format!("/proc/{}/fd/0", process::id());
+    assert!(
+        !link_failure_is_a_release(Path::new(&mine), &eacces),
+        "#1409 an unreadable link of this process must never count as a release"
+    );
+    assert!(
+        !link_failure_is_a_release(Path::new("/proc/self/fd/0"), &eacces),
+        "#1409 a path with no numeric pid has an unknown holder, not a release"
+    );
+    assert!(
+        link_failure_is_a_release(Path::new(&mine), &io::Error::from(io::ErrorKind::NotFound)),
+        "#1409 a link that is gone is a release whatever its holder is"
+    );
+    assert!(
+        link_failure_is_a_release(Path::new("/proc/2147483647/fd/0"), &eacces),
+        "#1409 an unreadable link behind a holder that does not exist is a release"
     );
 }
 
