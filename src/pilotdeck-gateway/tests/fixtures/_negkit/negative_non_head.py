@@ -108,11 +108,20 @@ VARIANTS = (
      'GateTests', 'test_resolver_crash_refuses',
      '#1540 a resolver crash is a refusal, never a traceback exit 1'),
     ('ignored-record-honesty',
-     "document.update(baseline='HEAD', requestedBaseline=baseline_sha,\n"
+     "document.update(baseline='HEAD', baselineSource='HEAD',\n"
+     "                            requestedBaseline=baseline_sha,\n"
      "                            overrideIgnored=True, nonHeadBaseline=False)",
      'pass',
      'VerdictTests', 'test_ignored_record_is_honest_about_head',
      '#1540 the ignored record says HEAD was tested, not the request'),
+    # #1540 review r3 boundary#1 / sibling#1: the ``nonHeadBaseline=False``
+    # clause gets its own variant — the block-level mutation above dies at
+    # the first (baseline) assertion, so nothing proves the new clause and
+    # its assertion are bound to each other.
+    ('ignored-nonhead-baseline',
+     'nonHeadBaseline=False)', 'nonHeadBaseline=True)',
+     'VerdictTests', 'test_ignored_record_is_honest_about_head',
+     '#1540 the ignored record does not claim a non-HEAD baseline'),
 )
 
 # #1540 review r1 boundary#5: frozen roster — deleting or renaming a variant
@@ -125,7 +134,7 @@ EXPECTED_VARIANTS = (
     'provenance-direct-write', 'provenance-fields', 'ignored-detail',
     'gate-verify', 'gate-announce', 'gate-ignored-announce', 'gate-refusal',
     'empty-override', 'verdict-normalize', 'resolver-crash-refusal',
-    'ignored-record-honesty',
+    'ignored-record-honesty', 'ignored-nonhead-baseline',
 )
 
 
@@ -162,8 +171,9 @@ def controls(output, selected=None):
     # filesystem, then claim the directory the same refusal-first way every
     # sibling runner does — a repeated name or an existing directory is a
     # "never started" refusal (2), never a shorter green run or a traceback.
-    if selected is not None and not selected:
-        refuse('empty variant selection')
+    # An explicit empty selection follows the shared helper's documented
+    # "empty selection runs every control" semantics (#813); the CLI never
+    # produces one (main() normalizes [] to None).
     try:
         chosen = select(VARIANTS, list(selected or ()), always=())
         registered(VARIANTS, EXPECTED_VARIANTS)

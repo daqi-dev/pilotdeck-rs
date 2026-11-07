@@ -136,6 +136,50 @@ class RosterTests(unittest.TestCase):
         self.assertTrue(not out.exists(),
                         '#1540 the refusal claims no evidence directory')
 
+    def test_existing_output_directory_refuses_without_claiming(self):
+        # #1540 review r3 sibling#3 / concurrency#1: an existing evidence
+        # directory means "never started" (exit 2), not a FileExistsError
+        # traceback the host would misread as "ran but not green" (exit 1).
+        import negative_non_head
+        temp = tempfile.TemporaryDirectory(prefix='negkit-non-head-exists-')
+        self.addCleanup(temp.cleanup)
+        out = Path(temp.name) / 'evidence'
+        out.mkdir()
+        with redirect_stderr(io.StringIO()) as stderr:
+            try:
+                negative_non_head.controls(out)
+            except SystemExit as raised:
+                code = raised.code
+            else:
+                code = None
+        self.assertTrue(code == 2,
+                        '#1540 an existing evidence directory refuses before any run')
+        self.assertTrue('already exists' in stderr.getvalue(),
+                        '#1540 the refusal names the existing directory')
+        self.assertTrue(not (out / 'summary.json').exists(),
+                        '#1540 the refusal writes no summary')
+
+    def test_repeated_selection_refuses(self):
+        # #1540 review r3 sibling#3: a repeated name is a selection error
+        # (exit 2), not a silently shortened full run.
+        import negative_non_head
+        temp = tempfile.TemporaryDirectory(prefix='negkit-non-head-repeat-')
+        self.addCleanup(temp.cleanup)
+        out = Path(temp.name) / 'evidence'
+        with redirect_stderr(io.StringIO()) as stderr:
+            try:
+                negative_non_head.controls(out, ['gate-verify', 'gate-verify'])
+            except SystemExit as raised:
+                code = raised.code
+            else:
+                code = None
+        self.assertTrue(code == 2,
+                        '#1540 a repeated variant selection refuses before any run')
+        self.assertTrue('repeated control name' in stderr.getvalue(),
+                        '#1540 the refusal names the repetition')
+        self.assertTrue(not out.exists(),
+                        '#1540 the refusal claims no evidence directory')
+
 
 class VerdictTests(unittest.TestCase):
     longMessage = True
@@ -226,6 +270,7 @@ class VerdictTests(unittest.TestCase):
         self.assertTrue(result == 42, '#1540 the ignored flavor still exits 42')
         record = json.loads((self.out / 'baseline.json').read_text(encoding='utf-8'))
         self.assertTrue(record['baseline'] == 'HEAD'
+                        and record['baselineSource'] == 'HEAD'
                         and record['requestedBaseline'] == self.sha
                         and record['overrideIgnored'] is True
                         and record['hostEvidence'] is False,

@@ -131,12 +131,15 @@ def non_head_exit(baseline_source, baseline_sha=None, *, code=0, evidence=None,
                     'hostEvidence': False,
                     'exit': NON_HEAD_EXIT}
         if ignored:
-            # #1540 review r1 boundary#4 / r2 boundary#4: the record must not
-            # imply the requested tree was tested when the guard ignored the
-            # request and stayed on HEAD — including via ``nonHeadBaseline``,
-            # which keeps its repo-wide meaning "the tested baseline is not
-            # HEAD" (settings-gateway/native-settings define it the same way).
-            document.update(baseline='HEAD', requestedBaseline=baseline_sha,
+            # #1540 review r1 boundary#4 / r2 boundary#4 / r3 boundary#2: the
+            # record must not imply the requested tree was tested when the
+            # guard ignored the request and stayed on HEAD. ``baselineSource``
+            # follows the tested baseline, so the sibling field formula
+            # ``nonHeadBaseline = baselineSource != 'HEAD'`` keeps holding;
+            # the request itself stays traceable via requestedBaseline +
+            # overrideIgnored.
+            document.update(baseline='HEAD', baselineSource='HEAD',
+                            requestedBaseline=baseline_sha,
                             overrideIgnored=True, nonHeadBaseline=False)
         temporary = Path(evidence) / 'baseline.json.tmp'
         temporary.write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
