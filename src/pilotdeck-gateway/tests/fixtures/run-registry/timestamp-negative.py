@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
 import negative_suite
 from negative_control import scratch
 from negative_process import mutating_sources, run_owned
-from negative_suite import Case, run_cases
+from negative_suite import Case, invalidate_completed, publish_summary, run_cases
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/tests/fixtures/run-registry/generate.mts'
@@ -210,7 +210,10 @@ def main():
     # the deadline before the guarded window opens (#1147 P2-1): a signal then
     # unwinds through run_cases' #1076 handling and every mutating_sources'
     # shielded restore, the tree is verified against HEAD, and run_owned's
-    # group kill reaps the session-own cargo/node children.
+    # group kill reaps the session-own cargo/node children. Shielded during
+    # restore are SIGINT/SIGTERM/SIGHUP/SIGQUIT only: the SIGALRM deadline is
+    # NOT deferred through the restore window (registered as #2360 / M6
+    # #1099; changing _SHIELDED_SIGNALS touches the M6-exclusive suite).
     try:
         return _guarded_body(env, out, base_guarded)
     except SystemExit as error:
@@ -231,39 +234,72 @@ def main():
 def _guarded_body(env, out, base_guarded):
     # No `as root`: the guarded window and run_cases take the repository
     # root (module-level `root`), not scratch's temporary directory.
-    with scratch('run-registry-timestamp', deadline=1800):
-        # Discover imports only after the entry, probe, runner and this
-        # script's judge inputs are checked under the tree lock, then keep
-        # that reentrant lock through the closure guard (#1147 P2-2, mirroring
-        # count-negative.guarded_inputs). The probe executes the generator in
-        # place, so the probe's closure contains the generator's whole local
-        # import closure as well.
-        with mutating_sources(root, base_guarded):
-            closure = count_runner().local_import_closure(probe, root)
-            with mutating_sources(root, closure):
-                # run_cases resolves run_owned/passed/classify through its
-                # module globals at call time, so the node command factory and
-                # probe judges are injected here without touching the
-                # M6-exclusive shared suite (#1147 P2-3; test_negative_suite's
-                # cancellation tests patch the same attributes). wait_for_slot
-                # gets the no-op probe_slot for the same reason (#1147 r1).
-                saved = (negative_suite.run_owned, negative_suite.passed,
-                         negative_suite.classify, negative_suite.wait_for_slot)
-                negative_suite.run_owned = ProbeFactory(out)
-                negative_suite.passed = probe_passed
-                negative_suite.classify = probe_classify
-                negative_suite.wait_for_slot = probe_slot
-                try:
-                    # The timeout is the node probe window; a .mts mutant's
-                    # compilation proof is the node run itself (a syntax error
-                    # exits nonzero and is INVALID), matching count-negative's
-                    # #1139 generator rows: cargo would only compile unmutated
-                    # Rust here, so no cargo receipt is recorded.
-                    return run_cases(root, [Case(*row) for row in mutations],
-                                     out, env, mutate, timeout=150, script=__file__)
-                finally:
-                    (negative_suite.run_owned, negative_suite.passed,
-                     negative_suite.classify, negative_suite.wait_for_slot) = saved
+    # Every summary publication is deferred until each guard window has
+    # closed: run_cases publishes inside its own (already restored and
+    # re-verified) window, but this runner stacks the closure guards and
+    # scratch outside it, and a cancellation or close-out failure there must
+    # not leave the verdict summary on disk (#1076; #1147 r2). run_cases
+    # resolves publish_summary through its module globals at call time - the
+    # same injection point as the factory and judges below - so a local
+    # wrapper buffers the call instead of reaching the disk.
+    verdict, completed, publications = 1, False, []
+
+    def deferred_publish(out_dir, rows):
+        publications.append((out_dir, rows))
+
+    error = None
+    try:
+        with scratch('run-registry-timestamp', deadline=1800):
+            # Discover imports only after the entry, probe, runner and this
+            # script's judge inputs are checked under the tree lock, then keep
+            # that reentrant lock through the closure guard (#1147 P2-2, mirroring
+            # count-negative.guarded_inputs). The probe executes the generator in
+            # place, so the probe's closure contains the generator's whole local
+            # import closure as well.
+            with mutating_sources(root, base_guarded):
+                closure = count_runner().local_import_closure(probe, root)
+                with mutating_sources(root, closure):
+                    # run_cases resolves run_owned/passed/classify through its
+                    # module globals at call time, so the node command factory and
+                    # probe judges are injected here without touching the
+                    # M6-exclusive shared suite (#1147 P2-3; test_negative_suite's
+                    # cancellation tests patch the same attributes). wait_for_slot
+                    # gets the no-op probe_slot for the same reason (#1147 r1).
+                    saved = (negative_suite.run_owned, negative_suite.passed,
+                             negative_suite.classify, negative_suite.wait_for_slot,
+                             negative_suite.publish_summary)
+                    negative_suite.run_owned = ProbeFactory(out)
+                    negative_suite.passed = probe_passed
+                    negative_suite.classify = probe_classify
+                    negative_suite.wait_for_slot = probe_slot
+                    negative_suite.publish_summary = deferred_publish
+                    try:
+                        # The timeout is the node probe window; a .mts mutant's
+                        # compilation proof is the node run itself (a syntax error
+                        # exits nonzero and is INVALID), matching count-negative's
+                        # #1139 generator rows: cargo would only compile unmutated
+                        # Rust here, so no cargo receipt is recorded.
+                        verdict = run_cases(root, [Case(*row) for row in mutations],
+                                            out, env, mutate, timeout=150, script=__file__)
+                        completed = True
+                    finally:
+                        (negative_suite.run_owned, negative_suite.passed,
+                         negative_suite.classify, negative_suite.wait_for_slot,
+                         negative_suite.publish_summary) = saved
+    except BaseException as caught:
+        error = caught
+    if error is not None and completed:
+        # run_cases finished and buffered its verdict, but a guard's
+        # close-out failed afterwards: that verdict is unverified, void it
+        # before any publication reaches the disk (#1076; count-negative's
+        # main does the same on its unwind).
+        for _out_dir, rows in publications:
+            invalidate_completed(rows, f'source guard: {type(error).__name__}: {error}')
+    for out_dir, rows in publications:
+        publish_summary(out_dir, rows)
+    if error is not None:
+        raise error
+    return verdict
 
 
 if __name__ == '__main__':

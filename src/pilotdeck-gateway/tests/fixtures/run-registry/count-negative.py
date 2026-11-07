@@ -393,7 +393,8 @@ def run_controls(root, results):
             restored_oracle = json.loads((Path(command[-1]) / 'oracle.json').read_text())
             assert len(restored_oracle['scenarios']) == 25, '#1129 restored generator scenario count'
         except Exception as error:
-            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+            row.update(status='INVALID',
+                       reason=row['reason'] + f'; {type(error).__name__}: {error}')
         results.append(row)
 
 
