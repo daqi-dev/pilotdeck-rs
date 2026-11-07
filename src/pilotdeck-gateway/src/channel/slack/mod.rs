@@ -13,7 +13,7 @@
 //!
 //! The baseline's `@slack/bolt not installed` branch has no Rust counterpart
 //! (the module is always present — a product enhancement, registered in the
-//! parity ledger as A8.3-CHANNEL-SLACK-003).
+//! parity ledger as A8.3-CH-SLACK-001, 范围 item 3).
 pub mod mapper;
 pub mod render;
 #[cfg(test)]
