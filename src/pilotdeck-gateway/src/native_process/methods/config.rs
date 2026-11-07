@@ -305,7 +305,7 @@ impl Requests {
             Path::new(project_root),
             session_key,
         );
-        let write_fence = transcript_locks::acquire(&fence_path).await;
+        let write_fence = transcript_locks::acquire(&fence_path).await?;
         // #1457 fix-r2: when the session is loaded its recorder owns the writer
         // (and the writer lease) with an in-memory sequence, so the entry is
         // appended *through* it. Closing it first aborted an admitted turn and
