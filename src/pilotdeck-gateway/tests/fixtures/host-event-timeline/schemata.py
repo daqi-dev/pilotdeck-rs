@@ -52,17 +52,42 @@ switches = [
     # are still drained and positioned at the next tick. fix-r3: the failing
     # assertion moved into the bounded wait itself, so the mutated pump dies at
     # the timeout anchor, not a 15 s silent no-message timeout.
+    # #1274 P2-1: the break shape — the assembly leaves the loop instead of
+    # parking — can make next() resolve with the synthesized turn_failed
+    # terminal instead of hanging, so the bounded wait's three expects pass and
+    # the test dies at the `drained and positioned` assert_eq below them (or at
+    # the must-not-fail / must-not-end expects for the stream-error/None
+    # shapes); those messages join the alternate set so a break-form control is
+    # judged KILLED, not INVALID.
     ('timeline-cancel-stops-pump', LIVE, CANCEL_WINDOW,
-     '#1220 cancel window: the first post-abort host event is still drained by the pump'),
+     ['#1220 cancel window: the first post-abort host event is still drained by the pump',
+      '#1220 cancel window: the first host event queued after the abort is drained and positioned',
+      '#1220 cancel window: draining the first post-abort host event must not fail',
+      '#1220 cancel window: the first post-abort host event must not end the stream',
+      '#1220 cancel window: the second post-abort host event is still drained by the pump',
+      '#1220 cancel window: the second host event queued after the abort is drained and positioned',
+      '#1220 cancel window: draining the second post-abort host event must not fail',
+      '#1220 cancel window: the second post-abort host event must not end the stream']),
     # fix-r3 DS P2-1: the loop-top twin of the in-tick checkpoint above — the
     # shape a cancel assembly would most naturally take, checked beside the
     # `stopped` flag. The iteration already in flight when the abort lands
     # still drains one more host batch, so the second post-abort host event
     # catches it; the anchor list is the alternate set for the race where the
     # abort is observed at the very top and the first event is lost instead.
+    # #1274 P2-1: same break-shape alternates as the in-tick twin above — the
+    # r4 review traced a break form whose turn_failed terminal resolves the
+    # bounded wait, moving the death to the `drained and positioned`
+    # assert_eq, which the drained-by-the-pump anchors alone would misread as
+    # INVALID.
     ('timeline-cancel-parks-pump', LIVE, CANCEL_WINDOW,
      ['#1220 cancel window: the first post-abort host event is still drained by the pump',
-      '#1220 cancel window: the second post-abort host event is still drained by the pump']),
+      '#1220 cancel window: the first host event queued after the abort is drained and positioned',
+      '#1220 cancel window: draining the first post-abort host event must not fail',
+      '#1220 cancel window: the first post-abort host event must not end the stream',
+      '#1220 cancel window: the second post-abort host event is still drained by the pump',
+      '#1220 cancel window: the second host event queued after the abort is drained and positioned',
+      '#1220 cancel window: draining the second post-abort host event must not fail',
+      '#1220 cancel window: the second post-abort host event must not end the stream']),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
