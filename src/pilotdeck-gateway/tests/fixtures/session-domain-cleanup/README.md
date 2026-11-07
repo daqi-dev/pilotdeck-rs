@@ -1678,3 +1678,34 @@ Like rounds 24 to 27, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 29 (codex r27 two P0s, two P1s; GLM boundary r27 three P1s, one P2; GLM sibling r27 two P1s, one P2)
+
+Codex found the function-scope copy builder handing the AST node where the
+resolver expects a name (P0), the self-copy `lookup = lookup` hiding the head
+(P0), the carrier never expiring (P1), and a nested dead branch counted as an
+outer one (P1).  GLM found the carrier family still reading only
+`ast.Assign` (P1), the `Starred` pairing missing one end (P1), the
+attribute-spelled `getattr` factory unrecognised (P1), `while False:` not
+treated as dead (P2), and a carrier taken from a rebound alias still counted
+as a site (P2).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A function-local copy of the builtins module**: `import builtins as bi; bi = bi` inside the function. | self-test `round 29: a function-local copy of the builtins module`; the function-scope copy builder shares `_alias_pairs` instead of storing the AST node |
+| **A self-copy of a dynamic head alias keeps the head**: `lookup = globals; lookup = lookup; import builtins as bi; lookup()['main'](...)`. | self-test `round 29: a self-copy of a dynamic head alias keeps the head`; `_module_alias_sources` keys its guard on `(name, position)` and resolves a self-copy strictly before itself |
+| **A carrier rebound before the call is not a site** (false FAIL guard): `f = globals()['main']; f = lambda ...; import builtins as bi; f(...)`. | self-test `round 29: a dynamic-lookup carrier rebound before the call`; `_dynamic_result_in_force` resolves the in-force binding at the call site |
+| **A nested dead branch import is out of reach of the outer one** (false FAIL guard): `if False:\n    if False:\n        import builtins as bi\n    main(...)`. | self-test `round 29: a nested dead branch import is out of reach of the outer one`; `_dead_shadowed` requires every containing span to cover the query |
+| **An annotated assignment carries a looked-up function**: `_held: object = globals()['main']`. | self-test `round 29: an annotated assignment carries a looked-up function`; the carrier table reads the same binding shapes as `_alias_pairs` |
+| **A module walrus carries a looked-up function**: `if (_held := globals()['main']) or flag: ...`. | self-test `round 29: a module walrus carries a looked-up function` |
+| **An attribute-form head in the carrier value**: `_held = _bi.vars()['main']`. | probe in the PR body (`carrier_attr_head`, old/mid `False` -> new `True`); `_contains_dynamic_lookup` accepts `ast.Attribute` heads |
+| **A `Starred`-first target still pairs the tail element**: `*_, a = 0, main`. | self-test `round 29: a Starred-first target still pairs the tail element`; `_plain_alias_pairs` aligns the determinable tail from the end |
+| **A value-side `Starred` keeps the prefix pairs**: `a, b = main, *rest`. | probe in the PR body (`starred_value`) |
+| **An attribute-spelled `getattr` factory hands the function over**: `mod.getattr(mod, 'main')(...)`. | self-test `round 29: an attribute-spelled getattr factory hands the function over`; `_spelled_callee` matches `Attribute.attr == 'getattr'` |
+| **A `while False:` import does not restore the module reading** (false FAIL guard). | self-test `round 29: a while-False import does not restore the module reading`; `_dead_line_ranges` covers `ast.While` with a false constant |
+| **A carrier built from a rebound alias is not a site** (false FAIL guard): `lookup = globals; lookup = print; held = lookup(); import builtins as bi; held(...)`. | self-test `round 29: a carrier built from a rebound alias is not a site`; the alias table is sorted into source order before the late dynamic pass |
+
+Like rounds 24 to 28, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).

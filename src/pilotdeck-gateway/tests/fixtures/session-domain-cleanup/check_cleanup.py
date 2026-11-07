@@ -6592,20 +6592,32 @@ def _plain_alias_pairs(node):
             # target used to throw the whole assignment away, though the
             # elements before it still pair positionally.  ``a, *rest = main,
             # print, x`` hands ``main`` to ``a``.
+            # #1953 fix-r1 round 29 (GLM boundary r27 P1-2): both ends pair,
+            # not just the prefix -- ``*_, a = 0, main`` hands ``main`` to the
+            # tail element (aligned from the end), and a ``Starred`` on the
+            # value side keeps the prefix (``a, b = main, *rest``).
             targets = list(target.elts)
             values = list(value.elts)
-            if any(isinstance(item, ast.Starred) for item in values):
-                continue
-            if (len(targets) == len(values)
-                    and not any(isinstance(item, ast.Starred)
-                                for item in targets)):
-                prefix = len(targets)
-            else:
-                prefix = next((index for index, item in enumerate(targets)
-                               if isinstance(item, ast.Starred)), len(targets))
-                prefix = min(prefix, len(values))
+            target_star = next((index for index, item in enumerate(targets)
+                                if isinstance(item, ast.Starred)), None)
+            value_star = next((index for index, item in enumerate(values)
+                               if isinstance(item, ast.Starred)), None)
+            prefix = min(len(targets) if target_star is None else target_star,
+                         len(values) if value_star is None else value_star)
+            tail = 0
+            if target_star is not None and value_star is None:
+                tail = min(len(targets) - target_star - 1,
+                           len(values) - prefix)
+            elif value_star is not None and target_star is None:
+                tail = min(len(values) - value_star - 1,
+                           len(targets) - prefix)
             for inner_target, inner_value in zip(targets[:prefix],
                                                  values[:prefix]):
+                if (isinstance(inner_target, ast.Name)
+                        and isinstance(inner_value, ast.Name)):
+                    pairs.append((inner_target.id, inner_value.id))
+            for offset in range(1, tail + 1):
+                inner_target, inner_value = targets[-offset], values[-offset]
                 if (isinstance(inner_target, ast.Name)
                         and isinstance(inner_value, ast.Name)):
                     pairs.append((inner_target.id, inner_value.id))
@@ -6633,36 +6645,65 @@ def _alias_pairs(node):
     return []
 
 
-def _contains_dynamic_lookup(value, heads):
-    """True when *value* reaches a name without spelling it (round 27)."""
+def _contains_dynamic_lookup(value, heads, bindings=None):
+    """True when *value* reaches a name without spelling it (round 27).
+
+    #1953 fix-r1 round 29 (GLM sibling r27 P1-2): the head table covers the
+    name and the attribute spelling since round 28, so ``_held =
+    _bi.vars()['main']`` must count too -- matching only ``ast.Name`` lost the
+    carrier and the later ``import builtins`` went unseen (false PASS).
+
+    *bindings* (when given) resolves an alias spelling at the expression's own
+    position, so ``lookup = globals; lookup = print; held = lookup()`` is not a
+    carrier (GLM sibling r27 P2-3, false FAIL direction).
+    """
     for node in ast.walk(value):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in heads:
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            if func.id in heads:
                 return True
+            if bindings is not None and (
+                    _module_alias_sources(
+                        bindings, func.id, (node.lineno, node.col_offset))
+                    & _OPEN_CALL_HEADS):
+                return True
+        elif isinstance(func, ast.Attribute) and func.attr in heads:
+            return True
     return False
 
 
-def _dynamic_result_names(tree, heads):
-    """Module-level names that may hold a dynamically looked-up object (r27).
+def _dynamic_result_in_force(bindings, name, position, loops=()):
+    """True when *name* may hold a dynamically looked-up object at *position*.
 
     #1953 fix-r1 round 27 (codex r26 P0-3): ``f = globals()['main']`` puts the
     function in ``f`` without a call there; the call that writes is ``f(r)``,
     often after a later import.  The lookup position alone is not the call
     position, so a name holding the result is treated as one more open site.
+
+    #1953 fix-r1 round 29 (codex r27 P1-1): the name is not a permanent
+    carrier.  ``f = globals()['main']; f = lambda x: None; f(r)`` runs the
+    lambda, and keeping the site anyway reported a write (false FAIL).  The
+    binding entries carry the order (and the same certainty rule
+    :func:`_module_alias_sources` uses), so the value is resolved at the call.
     """
-    names = set()
-    for level, node in _walk_scoped(tree):
-        if level is not None or not isinstance(node, ast.Assign):
-            continue
-        if not _contains_dynamic_lookup(node.value, heads):
-            continue
-        for target in node.targets:
-            names.update(_target_names(target))
-    return names
+    entries = [item for item in bindings.get(name, ())
+               if item[0] <= position
+               or (loops and item[3] and set(item[3]) & set(loops))]
+    if not entries:
+        return False
+    chosen_index = -1
+    for index, item in enumerate(entries):
+        if not item[1] and item[0] <= position:
+            chosen_index = index
+    in_force = [item for index, item in enumerate(entries)
+                if index == chosen_index or (item[1] and index > chosen_index)]
+    return any(item[4] for item in in_force)
 
 
-def _module_alias_bindings(tree):
-    """``name -> [((line, col), conditional, source, loops)]`` at module scope.
+def _module_alias_bindings(tree, dynamic_heads=None):
+    """``name -> [((line, col), conditional, source, loops, dynamic)]``.
 
     Round 26 for the first three fields; round 27 adds the loop context so
     :func:`_module_alias_sources` can follow a loop back edge.
@@ -6677,28 +6718,49 @@ def _module_alias_bindings(tree):
     lambda, and reading the earlier hand-off reported a write.  The entries
     keep the binding order and whether the binding certainly runs, so
     :func:`_module_alias_sources` can resolve the value per call site.
+
+    #1953 fix-r1 round 29 (codex r27 P1-1): the fifth field marks a right side
+    that reaches a dynamic-lookup head (``f = globals()['main']``), so the
+    carrier of a looked-up function is resolved at the call site like any
+    other hand-off instead of staying a site forever.
     """
+    heads = _OPEN_CALL_HEADS if dynamic_heads is None else dynamic_heads
     marks = _flow_marks(tree.body)
     bindings = {}
+    late = []
     for level, node in _walk_scoped(tree):
         if level is not None or not isinstance(
                 node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
         conditional, loops = marks.get(id(node), (True, ()))
         pairs = dict(_alias_pairs(node))
+        dynamic = _contains_dynamic_lookup(node.value, heads)
         targets = (node.targets if isinstance(node, ast.Assign)
                    else (node.target,))
         for target in targets:
             for name in _target_names(target):
-                bindings.setdefault(name, []).append(
-                    ((node.lineno, node.col_offset), conditional,
-                     pairs.get(name), loops))
+                items = bindings.setdefault(name, [])
+                items.append(((node.lineno, node.col_offset), conditional,
+                              pairs.get(name), loops, dynamic))
+                if not dynamic:
+                    late.append((items, len(items) - 1, node.value))
+    # The binding table is filled in walk order, which is not source order, and
+    # :func:`_module_alias_sources` reads the entries in list order -- sort
+    # before the late pass or ``a = globals; a = print`` resolves backwards.
     for items in bindings.values():
         items.sort(key=lambda item: item[0])
+    # #1953 fix-r1 round 29 (GLM sibling r27 P2-3): a right side that calls an
+    # *alias* of a head (``held = lookup()``) is resolved once every binding is
+    # collected -- resolving while the table is still half-built would miss an
+    # alias bound further down the module.
+    for items, index, value in late:
+        if _contains_dynamic_lookup(value, heads, bindings):
+            items[index] = items[index][:4] + (True,)
     return bindings
 
 
-def _module_alias_sources(bindings, name, position, loops=(), seen=()):
+def _module_alias_sources(bindings, name, position, loops=(), seen=(),
+                          strict=False):
     """Names *name* may denote at *position* (round 26).
 
     The last certain binding decides; a conditional binding after it may also
@@ -6708,12 +6770,20 @@ def _module_alias_sources(bindings, name, position, loops=(), seen=()):
     after the bindings the body wrote *after* it, so a binding sharing the
     call's loop is a candidate too (the back edge).  Ignoring it lost
     ``for ...: a(r); import builtins as bi; a = main``.
+
+    #1953 fix-r1 round 29 (codex r27 P0-2): ``lookup = globals; lookup =
+    lookup`` hands the head over unchanged, but the second binding names the
+    same spelling -- the earlier name-based guard stopped there and the head
+    disappeared.  A binding whose source is its own name is resolved strictly
+    *before* itself, and the guard keys on (name, position) so a self-copy
+    cannot loop while the earlier binding is still followed.
     """
-    if name in seen:
+    key = (name, position, strict)
+    if key in seen:
         return {name}
     all_items = bindings.get(name, ())
     entries = [item for item in all_items
-               if item[0] <= position
+               if (item[0] < position if strict else item[0] <= position)
                or (loops and item[3] and set(item[3]) & set(loops))]
     if not entries:
         return {name}
@@ -6729,8 +6799,8 @@ def _module_alias_sources(bindings, name, position, loops=(), seen=()):
     for item in candidates:
         if item[2] is None:
             continue
-        found |= _module_alias_sources(bindings, item[2], item[0],
-                                       loops, seen + (name,))
+        found |= _module_alias_sources(bindings, item[2], item[0], loops,
+                                       seen + (key,), item[2] == name)
     return found or {name}
 
 
@@ -6779,14 +6849,25 @@ def _module_open_aliases(tree):
 
 
 def _module_definition_names(tree):
-    """Names a module-scope ``Call`` can reach through an attribute (r26)."""
+    """Names a module-scope ``Call`` can reach through an attribute (r26).
+
+    #1953 fix-r1 round 29 (GLM boundary r27 P2-7): the spelling family drifted
+    again -- ``_saved: object = main`` and ``(saved := main)`` are the same
+    hand-off, and a binding inside a module-level block is reachable the same
+    way.  The table now walks every module-scope statement and shares
+    :func:`_target_names` with the alias table.
+    """
     names = set()
-    for node in tree.body:
+    for level, node in _walk_scoped(tree):
+        if level is not None:
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.ClassDef)):
             names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else (node.target,))
+            for target in targets:
                 names.update(_target_names(target))
     return names
 
@@ -6804,7 +6885,15 @@ def _spelled_callee(node, names):
         return func.attr
     if isinstance(func, ast.Call):
         inner = func.func
-        if isinstance(inner, ast.Name) and inner.id == 'getattr':
+        # #1953 fix-r1 round 29 (GLM boundary r27 P1-3): ``getattr`` left the
+        # open-head table in round 26 self-check, so it is only recognised
+        # here -- and the attribute spelling ``bi.getattr(sd, 'main')`` spelled
+        # the factory the way ``getattr`` cannot be a bare ``Name`` for anyone
+        # but the builtin (false PASS).
+        spelled = ((isinstance(inner, ast.Name) and inner.id == 'getattr')
+                   or (isinstance(inner, ast.Attribute)
+                       and inner.attr == 'getattr'))
+        if spelled:
             if len(func.args) >= 2 and isinstance(func.args[1], ast.Constant):
                 literal = func.args[1].value
                 if isinstance(literal, str) and literal in names:
@@ -6827,9 +6916,14 @@ def _module_open_calls(tree):
     the same site.
     """
     aliases = _module_open_aliases(tree)
+    # #1953 fix-r1 round 29 (GLM sibling r27 P2-3): the alias set is resolved
+    # per binding position inside the table, so the flat closure is not handed
+    # in as a head spelling (``lookup = globals; lookup = print; held =
+    # lookup()`` is not a carrier).
     bindings = _module_alias_bindings(tree)
     names = _module_definition_names(tree)
-    carriers = _dynamic_result_names(tree, _OPEN_CALL_HEADS | aliases)
+    carriers = {name for name, items in bindings.items()
+                if any(item[4] for item in items)}
     sites = []
     spelled = {}
     stack = [(child, ()) for child in reversed(tree.body)]
@@ -6844,7 +6938,10 @@ def _module_open_calls(tree):
             position = (node.lineno, node.col_offset)
             if isinstance(node.func, ast.Name):
                 name = node.func.id
-                if name in _OPEN_CALL_HEADS or name in carriers:
+                if name in _OPEN_CALL_HEADS:
+                    sites.append((position, loops))
+                elif name in carriers and _dynamic_result_in_force(
+                        bindings, name, position, loops):
                     sites.append((position, loops))
                 elif name in aliases:
                     # #1953 fix-r1 round 28 (GLM sibling r26 P2-3): resolve the
@@ -6889,9 +6986,12 @@ def _dead_line_ranges(tree):
     # line and the call on the next line look like two unrelated dead blocks,
     # so a dead-branch negative control (import + call inside the same
     # ``if False:``) lost its import.
+    # #1953 fix-r1 round 29 (GLM boundary r27 P2-4): ``while False:`` is just
+    # as statically dead as ``if False:``; keeping only ``ast.If`` let a dead
+    # import decide a copy (false FAIL).
     ranges = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
+        if not isinstance(node, (ast.If, ast.While)):
             continue
         test = node.test
         if not (isinstance(test, ast.Constant) and not test.value):
@@ -6927,6 +7027,12 @@ def _dead_shadowed(item_position, query_position, dead_ranges):
     #1953 fix-r1 round 28 (GLM boundary r26 P1-2): the spans carry columns, so
     a live binding on the same *line* as a one-line ``if False: ...`` -- the
     ``if`` itself or a statement before it -- is not swallowed any more.
+
+    #1953 fix-r1 round 29 (codex r27 P1-2): nested dead branches nest their
+    spans too.  The query must sit inside **every** span that holds the
+    binding -- ``if False:\\n    if False:\\n        import builtins as bi\\n
+    main(r)`` resolves at the outer branch only, so the inner import is out
+    of reach and must not be handed to ``main`` (false FAIL).
     """
     if not dead_ranges:
         return False
@@ -6936,7 +7042,7 @@ def _dead_shadowed(item_position, query_position, dead_ranges):
         return False
     if query_position is None:
         return True
-    return not any(span[0] <= query_position <= span[1] for span in inside)
+    return not all(span[0] <= query_position <= span[1] for span in inside)
 
 
 def _module_outer_def(tree):
@@ -7340,6 +7446,12 @@ def _imported_write_aliases(function, outer_imports=None):
                 conditional, loops)
         elif isinstance(node, ast.stmt):
             names, value = _local_bound_names(node)
+            # #1953 fix-r1 round 29 (codex r27 P0-1): the module-scope builder
+            # hands the resolver the *plain source name*, this one still handed
+            # the AST node, so a function-local ``import builtins as bi;
+            # bi = bi`` lost the module reading (the write disappeared).  Both
+            # callers now share ``_alias_pairs``.
+            pairs = dict(_alias_pairs(node)) if value is not None else {}
             for name in names:
                 items = add(name, (node.lineno, node.col_offset), None,
                             conditional, loops, certain=False)
@@ -7349,8 +7461,10 @@ def _imported_write_aliases(function, outer_imports=None):
                                     value))
                     module_copies.append(
                         (name, (node.lineno, node.col_offset), conditional,
-                         loops, value))
+                         loops, pairs.get(name)))
         elif isinstance(node, ast.NamedExpr):
+            source = (node.value.id if isinstance(node.value, ast.Name)
+                      else None)
             for name in _target_names(node.target):
                 items = add(name, (node.lineno, node.col_offset), None,
                             conditional, loops, certain=False)
@@ -7359,7 +7473,7 @@ def _imported_write_aliases(function, outer_imports=None):
                                 node.value))
                 module_copies.append(
                     (name, (node.lineno, node.col_offset), conditional,
-                     loops, node.value))
+                     loops, source))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
                 add(name, (node.lineno, node.col_offset), None,
@@ -12197,6 +12311,98 @@ def aggregation_audit():
              "import builtins as _bi82\n"
              "_a82(object())\n"
              "_bi82 = object()\n", True),
+            ("a function-local copy of the builtins module",
+             "def main(report):\n"
+             "    import builtins as _bi83\n"
+             "    _bi83 = _bi83\n"
+             "    _f = _bi83.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", True),
+            ("a self-copy of a dynamic head alias keeps the head",
+             "import json as _bi84\n"
+             "def main(report):\n"
+             "    _f = _bi84.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_lookup84 = globals\n"
+             "_lookup84 = _lookup84\n"
+             "import builtins as _bi84\n"
+             "_lookup84()['main'](object())\n"
+             "_bi84 = object()\n", True),
+            ("a dynamic-lookup carrier rebound before the call",
+             "import json as _bi85\n"
+             "def main(report):\n"
+             "    _f = _bi85.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_f85 = globals()['main']\n"
+             "_f85 = lambda report: None\n"
+             "import builtins as _bi85\n"
+             "_f85(object())\n"
+             "_bi85 = object()\n", False),
+            ("a nested dead branch import is out of reach of the outer one",
+             "import json as _bi86\n"
+             "def main(report):\n"
+             "    _f = _bi86.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "if False:\n"
+             "    if False:\n"
+             "        import builtins as _bi86\n"
+             "    main(object())\n"
+             "_bi86 = object()\n", False),
+            ("an annotated assignment carries a looked-up function",
+             "import json as _bi87\n"
+             "def main(report):\n"
+             "    _f = _bi87.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_held87: object = globals()['main']\n"
+             "import builtins as _bi87\n"
+             "_held87(object())\n", True),
+            ("a module walrus carries a looked-up function",
+             "import json as _bi88\n"
+             "def main(report):\n"
+             "    _f = _bi88.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "if (_held88 := globals()['main']) or _flag88:\n"
+             "    pass\n"
+             "import builtins as _bi88\n"
+             "_held88(object())\n", True),
+            ("a Starred-first target still pairs the tail element",
+             "import json as _bi89\n"
+             "def main(report):\n"
+             "    _f = _bi89.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "*_rest89, _a89 = 0, main\n"
+             "import builtins as _bi89\n"
+             "_a89(object())\n"
+             "_bi89 = object()\n", True),
+            ("an attribute-spelled getattr factory hands the function over",
+             "import json as _bi90\n"
+             "def main(report):\n"
+             "    _f = _bi90.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "import builtins as _bi90\n"
+             "_mod90.getattr(_mod90, 'main')(object())\n"
+             "_bi90 = object()\n", True),
+            ("a while-False import does not restore the module reading",
+             "import builtins as _bi91\n"
+             "_bi91 = object()\n"
+             "while False:\n"
+             "    import builtins as _bi91\n"
+             "    _bi91 = _bi91\n"
+             "def main(report):\n"
+             "    _f = _bi91.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", False),
+            ("a carrier built from a rebound alias is not a site",
+             "import json as _bi92\n"
+             "def main(report):\n"
+             "    _f = _bi92.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_lookup92 = globals\n"
+             "_lookup92 = print\n"
+             "_held92 = _lookup92()\n"
+             "import builtins as _bi92\n"
+             "_held92(object())\n", False),
             ("a builtins import inside a statically dead branch",
              "import json as _bi65\n"
              "def main(report):\n"
