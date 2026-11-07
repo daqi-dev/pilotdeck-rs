@@ -228,7 +228,7 @@ mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
 # check into `utf8_argument`, so the anchor follows the call.)
 mutations.append(('storage-root-nonutf8-accepted', ENTRY,
                   '                .map(|v| utf8_argument(v, "storage root"))',
-                  '                .map(|v| utf8_argument(v, "storage root").or(Ok("lost")))',
+                  '                .map(|v| utf8_argument(v, "storage root").or(Ok::<&str, ProxyError>("lost")))',
                   'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
                   '#1323 non-UTF-8 --storage-root must be rejected'))
 
@@ -282,6 +282,29 @@ mutations.append(('legacy-project-id-trim-omitted', METADATA,
                   '    let result = result;',
                   'native_process::management_tests::legacy_project_id_trims_leading_dashes',
                   '#1323 legacy slug of'))
+
+# #2036: `--home` / `--sidecar` are canonicalised before the rejection, so their
+# only bound test has to create a raw-named entry on disk. APFS / HFS+ refuse
+# those bytes with EILSEQ, the test skips itself there (#1400 probe), and a
+# skipped test reads exactly like a passing one to `classify` — the two rows
+# below would be SURVIVED on every darwin host. Same shape as cron-store's
+# `LINUX_ONLY` rows: off Linux they are recorded SKIPPED (neither KILLED nor
+# INVALID) so a default full run does not fail on a control this host
+# structurally cannot kill; the real kill evidence comes from Linux (cb8).
+LINUX_ONLY = {'home-non-utf8-accepted', 'sidecar-non-utf8-accepted'}
+
+
+def skipped_on_this_platform(rows, platform=None):
+    """#2036: drop the LINUX_ONLY rows where their bound test skips itself.
+
+    Kept as a function so the accounting can be exercised without a filesystem
+    that refuses raw names (import the module and call it with `platform`).
+    """
+    platform = sys.platform if platform is None else platform
+    if platform == 'linux':
+        return []
+    return [case for case in rows if case.mutation in LINUX_ONLY]
+
 
 # #1538/#1869 review: the table used to be its own denominator — delete a row
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
@@ -437,6 +460,21 @@ def main():
     env.pop('LC_MESSAGES', None)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     results = []
+    skipped = skipped_on_this_platform(selected_rows)
+    if skipped:
+        # #2036: see LINUX_ONLY. Recorded before the loop so the summary keeps
+        # one row per selected control; these rows are neither KILLED nor
+        # INVALID, and the exit code below does not fail on them.
+        for case in skipped:
+            results.append(dict(mutation=case.mutation, test=case.test,
+                                assertion=case.assertion, status='SKIPPED',
+                                compiled=False,
+                                reason='bound test skips itself off Linux '
+                                       '(APFS/HFS+ reject non-UTF-8 names), so '
+                                       'the mutant is never reached'))
+            print(f'{case.mutation}: SKIPPED: Linux-only kill, bound test skips off Linux',
+                  flush=True)
+        selected_rows = [case for case in selected_rows if case.mutation not in LINUX_ONLY]
 
     def run(label, args):
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
@@ -479,7 +517,7 @@ def main():
         results.append(row)
         print(f"{case.mutation}: {row['status']}: {row['reason']}", flush=True)
     publish_summary(out, results)
-    return int(not results or any(row['status'] != 'KILLED' for row in results))
+    return int(not results or any(row['status'] not in ('KILLED', 'SKIPPED') for row in results))
 
 
 if __name__ == '__main__':
