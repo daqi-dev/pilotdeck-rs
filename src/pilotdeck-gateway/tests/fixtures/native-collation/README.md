@@ -14,7 +14,7 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
   src/pilotdeck-gateway/tests/fixtures/native-collation/generate.mts /absolute/new-output
 ```
 
-`negative_controls.py` 对产品做独立变异：码元排序、FFFD 折叠、PUA 碰撞、catalog/session 各自残留边界、拆坏合法 pair、丢法加倒序 secondary，以及 Identical 的 normalization/ignorable。每项正控→应用→编译→绑定断言失败→恢复→正控；全部执行后汇总，任何非 KILLED 即非零。过期锚点是错误，不是 SURVIVED。现共 **22 条**：本单新增三处边界装回（archive / transcript / workspace snapshot）、两处本地方法丢失（archive / catalog）、两条金样来源 `sourceCommit` 篡改，以及 fr-CA 默认拼写与显式拼写各一条（`fr-Latn-CA` 的倒序 secondary 只属于进程默认拼写）。
+`negative_controls.py` 对产品做独立变异：码元排序、FFFD 折叠、PUA 碰撞、catalog/session 各自残留边界、拆坏合法 pair、丢法加倒序 secondary，以及 Identical 的 normalization/ignorable。每项正控→应用→编译→绑定断言失败→恢复→正控；全部执行后汇总，任何非 KILLED 即非零。过期锚点是错误，不是 SURVIVED。现共 **23 条**：本单新增三处边界装回（archive / transcript / workspace snapshot）、两处本地方法丢失（archive / catalog）、两条金样来源 `sourceCommit` 篡改，以及 fr-CA 默认拼写、显式拼写、Latin 判定放宽三个方向各一条（`fr-Latn-CA` 的倒序 secondary 只属于进程默认拼写，`fr-Cyrl-CA` 两边都不该补）。
 
 ```sh
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-collation/negative_controls.py --check-anchors

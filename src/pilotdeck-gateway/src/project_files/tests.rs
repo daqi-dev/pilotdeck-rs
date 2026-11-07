@@ -886,9 +886,13 @@ fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
         "#132 explicit fr-Latn-CA opts out of fr-CA's backward secondary"
     );
     // The repair is Latin-only: a region match under another script must not
-    // get it. Comparing against the explicit spelling keeps this independent of
-    // whatever order ICU4X picks for `fr-Cyrl-CA`, while still going red if
-    // `latin_or_none` were widened to accept every script.
+    // get it. Measured against real Node (v22.22.0 / ICU 78.2) as row
+    // `fr_Cyrl_CA.UTF-8` of `pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`:
+    // the default collator resolves `fr-Cyrl-CA` and orders `coté < côte` like
+    // generic `fr`, i.e. no repair — matching both spellings here. Comparing
+    // against the explicit spelling keeps the assertion independent of whatever
+    // order ICU4X picks for `fr-Cyrl-CA`; negative control
+    // `french-script-widened` proves it goes red if `latin_or_none` is widened.
     let cyrillic: Locale = "fr-Cyrl-CA".parse().unwrap();
     let default_cyrillic = node_collator(&cyrillic).unwrap();
     assert_eq!(

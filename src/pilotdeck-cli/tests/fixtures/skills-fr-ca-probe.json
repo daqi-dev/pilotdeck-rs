@@ -57,6 +57,32 @@
       ]
     },
     {
+      "lang": "fr_Cyrl_CA.UTF-8",
+      "resolved": "fr-Cyrl-CA",
+      "pairs": [
+        [
+          "coté",
+          "côte",
+          -1
+        ],
+        [
+          "côte",
+          "coté",
+          1
+        ],
+        [
+          "cote",
+          "côte",
+          -1
+        ],
+        [
+          "coté",
+          "cote",
+          1
+        ]
+      ]
+    },
+    {
       "lang": "fr_CA@collation=eor",
       "resolved": "fr-CA",
       "pairs": [
