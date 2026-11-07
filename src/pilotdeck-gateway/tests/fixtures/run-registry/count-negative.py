@@ -403,11 +403,13 @@ def main():
     out = Path(sys.argv[1]).resolve()
     try:
         out.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
-        # #1666/#1734: a taken evidence directory means "never started" (2),
-        # not "ran and did not pass" (1); nothing was measured.
-        print(f'INVALID: output directory already exists: {out}', file=sys.stderr,
-              flush=True)
+    except OSError as error:
+        # #1666/#1734: an evidence directory that cannot be created (already
+        # taken, EACCES, ENOSPC, a non-directory in the path) means
+        # "never started" (2), not "ran and did not pass" (1); nothing was
+        # measured. The shared claim_dir refuses the same way.
+        print(f'INVALID: cannot create output directory {out}: {error}',
+              file=sys.stderr, flush=True)
         return 2
     results = []
     # #1147: negative_suite.run_cases' three-state exit contract, adopted here
