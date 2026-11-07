@@ -1003,6 +1003,13 @@ class EnvironmentControls(unittest.TestCase):
             ('root-constant-retargeted-one-level-up',
              'ROOT = Path(__file__).resolve().parents[5]',
              'ROOT = Path(__file__).resolve().parents[4]'),
+            # r10（zai sibling P1 + DeepSeek sibling P1）：函数体里一次 `Path` 绑定都没有，
+            # 重绑放在模块顶层（`ROOT = …` 之前）—— 只扫函数体的钉子全绿，而 `Path(root)`
+            # 已经换成自定义可调用对象。
+            ('path-callable-shadowed-at-module-level',
+             'from pathlib import Path',
+             'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
+             "    return __import__('pathlib').Path('/tmp', value)"),
         ),
         'model-complete/negative-controls.py': (
             ('scratch-rebound-after-the-correct-derivation',
@@ -1071,6 +1078,18 @@ class EnvironmentControls(unittest.TestCase):
             ('root-constant-rebound-to-another-tree',
              'root = Path(__file__).resolve().parents[5]',
              "root = Path(__file__).resolve().parents[5]\nroot = Path('/tmp')"),
+            # r10（DeepSeek boundary P1）：只认「属性名 ∈ {name,stem,suffix} 且接收者是
+            # 某个名字」时，任意对象的 `.name` 都能是目录 —— 这里 `_E.name == '../src'`，
+            # 落盘直接逃出暂存目录。接收者必须正是被 `os.replace()` 发布的目标。
+            ('temp-fstring-interpolates-a-foreign-attribute',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    class _E:\n        name = '../src'\n"
+             "    tmp = PUBLISH_DIR / f'.negctl-{_E.name}.tmp'"),
+            # r10（DeepSeek boundary P1 同一族）：format spec 能把填充符变成前导 `/`，
+            # `f'{path.name:/>100}'` 生成的是绝对路径。
+            ('temp-fstring-uses-a-format-spec',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'{path.name:/>100}.tmp'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1214,7 +1233,18 @@ class EnvironmentControls(unittest.TestCase):
                 return ast.unparse(value.left), value.right.value
         return None, None
 
-    def plain_relative_component(self, node):
+    @staticmethod
+    def replacement_target_names(body):
+        """`os.replace(<tmp>, <target>)` 里的 `<target>` 名字集合（AST）。"""
+        names = set()
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'replace' and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Name)):
+                names.add(node.args[1].id)
+        return names
+
+    def plain_relative_component(self, node, body):
         """`<基> / <右侧>` 的右侧只能是单个相对名：不许 `..`、不许绝对路径、不许再套除法。
 
         r8（DeepSeek boundary P1）：只判左侧是 `PUBLISH_DIR` 时，右侧能用 `'..'` 把基
@@ -1222,6 +1252,9 @@ class EnvironmentControls(unittest.TestCase):
         r9（zai boundary P1 + DeepSeek boundary/sibling P1）：f-string 的插值位原先无条件
         放行 —— `f'{path}'` 插进来就是绝对路径，pathlib 丢掉整条左侧基，临时文件**就是**
         被变异源本身（`open('wb')` 原地截断）。插值只收「文件名原子」：`X.name/.stem/.suffix`。
+        r10（DeepSeek boundary P1）：光看属性名还不够 —— `f'{E.name}'` 里任意对象的
+        `.name` 都能是 `'../src'`，`f'{path.name:/>100}'` 的 format spec 也能把填充符变成
+        前导 `/`。接收者必须是**被发布目标的那个名字**，且不许带 format spec。
         """
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value
@@ -1229,12 +1262,14 @@ class EnvironmentControls(unittest.TestCase):
                 return True
             return not value.startswith('/') and '..' not in value.split('/')
         if isinstance(node, ast.JoinedStr):
-            return all(self.plain_relative_component(part) for part in node.values)
+            return all(self.plain_relative_component(part, body) for part in node.values)
         if isinstance(node, ast.FormattedValue):
             value = node.value
-            return (isinstance(value, ast.Attribute)
+            return (node.format_spec is None
+                    and isinstance(value, ast.Attribute)
                     and value.attr in ('name', 'stem', 'suffix')
-                    and isinstance(value.value, ast.Name))
+                    and isinstance(value.value, ast.Name)
+                    and value.value.id in self.replacement_target_names(body))
         return False
 
     @staticmethod
@@ -1297,7 +1332,7 @@ class EnvironmentControls(unittest.TestCase):
                 return (self.first_parameter(body) == 'root'
                         and self.body_binding_count(body, 'root') == 1
                         and self.body_binding_count(body, 'Path') == 0)
-            if not self.plain_relative_component(node.right):
+            if not self.plain_relative_component(node.right, body):
                 return False
             return self.roots_at(body, node.left, root_constant, seen)
         if (isinstance(node, ast.Call)
@@ -1347,6 +1382,15 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(self.module_binding_source(source, base),
                          'Path(__file__).resolve().parents[5]',
                          f'#1692 §9 r9 the repository-root constant {base} is the tree root')
+        # r10（zai sibling P1 + DeepSeek sibling P1）：r9 的「`Path` 不许被重绑」只扫
+        # **函数体**。在 `ROOT = …` 之前补一句模块级 `Path = lambda value: Path('/tmp', value)`
+        # （或干脆 `Path = pathlib.Path` 之外的自定义可调用对象），函数体里一次绑定都没有，
+        # `body_binding_count(body, 'Path') == 0` 照样成立，而 `Path(root)` 走的是重绑后的
+        # 对象 —— 仓根判定与 `PUBLISH_DIR` 派生全被改掉、钉子却全绿。模块顶层 `Path` 只准有
+        # 那一条 import 绑定。
+        self.assertEqual(self.body_binding_count(source, 'Path'), 1,
+                         '#1692 §9 r10 the only module-level binding of Path is '
+                         '"from pathlib import Path"')
         # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
         # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
         # r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的派生判据还是
@@ -2086,6 +2130,13 @@ self_check_controls_run | return | return problems
         ——断言作用域因此从「夹具源码」扩到「被变异源的全部写入点」。
         """
         body = self.write_source_atomic_body(source)
+        # r10（zai boundary P1 + DeepSeek sibling P1）：与同族夹具同口径 —— r9 只在函数体里
+        # 禁止重绑 `Path`，模块另一处补 `Path = <自定义可调用对象>` 就能让 `Path(root)` 与
+        # `Path(path).resolve()` 同时改道，函数体一字未动、全部钉子绿。模块顶层 `Path`
+        # 只准有 `from pathlib import Path` 那一条绑定。
+        self.assertEqual(self.body_binding_count(source, 'Path'), 1,
+                         '#1692 §9 r10 the only module-level binding of Path is '
+                         '"from pathlib import Path"')
         # r6（DeepSeek sibling P1）：r5 只在同族夹具那侧把「临时变量名」改成从
         # `os.replace()` 的 AST 实参读，共享实现这里仍把字面量 `temporary` 当判据 ——
         # 换个变量名再重绑就绕开了。这里同样从 AST 取真正被发布的名字。
@@ -2319,6 +2370,22 @@ self_check_controls_run | return | return problems
                 ('atomic-publish-path-callable-rebound',
                  '    publish = Path(root) / PUBLISH_DIR',
                  '    Path = lambda value: path.parent\n    publish = Path(root) / PUBLISH_DIR'),
+                # r10（zai boundary P1 + DeepSeek sibling P1）：r9 只扫函数体，模块顶层另起
+                # 一条 `Path` 绑定就让 `Path(root)` / `Path(path).resolve()` 同时改道 ——
+                # `write_source_atomic` 一字未动。
+                ('atomic-publish-path-callable-shadowed-at-module-level',
+                 'from pathlib import Path',
+                 'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
+                 "    return __import__('pathlib').Path('/tmp', value)"),
+                # r10（DeepSeek boundary P1）：任意对象的 `.name` 都能是目录名。
+                ('atomic-publish-temp-fstring-interpolates-a-foreign-attribute',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    _E = type('E', (), {'name': '../src'})\n"
+                 "    temporary = publish / f'.negctl-{_E.name}.tmp'"),
+                # r10（DeepSeek boundary P1 同一族）：format spec 的填充符能拼出绝对路径。
+                ('atomic-publish-temp-fstring-uses-a-format-spec',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name:/>100}.tmp'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
