@@ -279,32 +279,197 @@ fn non_utf8_project_path_is_refused() {
 /// failure and must fail closed: folding another errno into the skip would
 /// silently delete the only coverage of the raw `--home` / `--sidecar`
 /// rejection on the one platform that can run it.
+///
+/// #1672 (issues A + B, same fix as the cron twin
+/// `runtime::cron::tests::non_utf8_names_writable`): the decision is a
+/// tested unit, not an untested call-site `match` — `triage_probe` maps
+/// every outcome (including the fd limit, EMFILE/ENFILE, with exactly one
+/// bounded retry and its own marker; see the cron twin's doc for the mbp2
+/// measurement) and `non_utf8_probe_skip` folds it into skip/fail-closed,
+/// both executed by the unit tests below on every host with synthetic
+/// errors.
 #[cfg(unix)]
-fn probe_failure_is_a_rejected_name(error: &std::io::Error) -> bool {
-    error.raw_os_error() == Some(libc::EILSEQ)
+#[derive(Debug)]
+enum NonUtf8Probe {
+    /// The scratch accepted the raw bytes: the case can run here.
+    Writable,
+    /// The name bytes themselves are rejected: skip, never fail.
+    RejectsName,
+    /// The process or system fd limit (EMFILE/ENFILE): the failure's cause
+    /// lives outside the probed directory.
+    FdLimit(std::io::Error),
+    /// Any other errno: a real failure of the scratch, must fail closed.
+    Failed(std::io::Error),
+}
+
+#[cfg(unix)]
+fn triage_probe(mut attempt: impl FnMut() -> std::io::Result<()>) -> NonUtf8Probe {
+    let mut outcome = attempt();
+    if let Err(error) = &outcome
+        && probe_hit_the_fd_limit(error)
+    {
+        outcome = attempt();
+    }
+    match outcome {
+        Ok(()) => NonUtf8Probe::Writable,
+        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => NonUtf8Probe::RejectsName,
+        Err(error) if probe_hit_the_fd_limit(&error) => NonUtf8Probe::FdLimit(error),
+        Err(error) => NonUtf8Probe::Failed(error),
+    }
+}
+
+/// #1672 (issue B): whether this probe failure is the process's own fd
+/// table (EMFILE) or the system's open-file table (ENFILE) running out —
+/// the one errno family whose cause lives outside the probed directory.
+#[cfg(unix)]
+fn probe_hit_the_fd_limit(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE) | Some(libc::ENFILE)
+    )
+}
+
+/// #1672 (issue A): the skip decision over a triaged outcome — the half
+/// that used to sit untested at the call site. A regression to "any error
+/// skips" silently deletes the raw `--home` / `--sidecar` coverage on the
+/// one platform that can run it; the unit test below executes every arm,
+/// so that regression is a red test, not a code review.
+#[cfg(unix)]
+fn non_utf8_probe_skip(probe: &NonUtf8Probe, probed: &Path) -> bool {
+    match probe {
+        NonUtf8Probe::Writable => true,
+        NonUtf8Probe::RejectsName => false,
+        NonUtf8Probe::FdLimit(error) => panic!(
+            "#2036 probing {} hit the process fd limit, not the file name: {error}",
+            probed.display()
+        ),
+        NonUtf8Probe::Failed(error) => panic!(
+            "#2036 probing {} failed for a reason other than the file name: {error}",
+            probed.display()
+        ),
+    }
 }
 
 /// The executable half of that contract. Runs on every host: the errors are
 /// synthetic, so it does not need a filesystem that can refuse a raw name.
 #[cfg(unix)]
 #[test]
-fn only_eilseq_makes_the_non_utf8_probe_skippable() {
+fn triage_probe_sorts_every_outcome_with_one_bounded_fd_retry() {
     let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
     assert!(
-        probe_failure_is_a_rejected_name(&error(libc::EILSEQ)),
+        matches!(triage_probe(|| Ok(())), NonUtf8Probe::Writable),
+        "#2036 a succeeding probe means the scratch accepts the raw bytes: run the case, do not skip"
+    );
+    assert!(
+        matches!(
+            triage_probe(|| Err(error(libc::EILSEQ))),
+            NonUtf8Probe::RejectsName
+        ),
         "#2036 EILSEQ means the filesystem rejects these bytes: skip, do not fail"
     );
     for errno in [
         libc::EACCES,
         libc::ENOSPC,
         libc::EROFS,
-        libc::EMFILE,
         libc::EINVAL,
         libc::ENOENT,
     ] {
         assert!(
-            !probe_failure_is_a_rejected_name(&error(errno)),
+            matches!(triage_probe(|| Err(error(errno))), NonUtf8Probe::Failed(_)),
             "#2036 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip"
+        );
+    }
+    // #1672 (issue B): the fd limit is its own triage category, not a
+    // scratch failure whose panic message would blame the file name for a
+    // process-level condition.
+    for errno in [libc::EMFILE, libc::ENFILE] {
+        assert!(
+            matches!(triage_probe(|| Err(error(errno))), NonUtf8Probe::FdLimit(_)),
+            "#2036 errno {errno} is the process or system fd limit, not the scratch's own failure: it must reach its own retry arm, not the scratch-failure marker"
+        );
+    }
+    // The retry is exactly one: an fd freed after the first EMFILE lets
+    // the second attempt through.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        if calls == 1 {
+            Err(error(libc::EMFILE))
+        } else {
+            Ok(())
+        }
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::Writable) && calls == 2,
+        "#2036 an EMFILE probe gets exactly one retry: a later-freed fd must let the second attempt through"
+    );
+    // Termination: a persistent limit is retried once and then stops —
+    // never a loop — landing in the fd-limit category.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        Err(error(libc::EMFILE))
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::FdLimit(_)) && calls == 2,
+        "#2036 the EMFILE retry is bounded: exactly one retry, then the fd-limit outcome, never a loop"
+    );
+    // The retried attempt's terminal errno wins: an EILSEQ seen after the
+    // fd-limit retry still skips — that host genuinely cannot host the
+    // case.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        if calls == 1 {
+            Err(error(libc::EMFILE))
+        } else {
+            Err(error(libc::EILSEQ))
+        }
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::RejectsName) && calls == 2,
+        "#2036 the retried attempt's errno wins: an EILSEQ seen after the fd-limit retry still skips"
+    );
+}
+
+/// #1672 (issue A): the fail-closed half — the piece that used to live
+/// only at the call site, where no test could reach it. A regression to
+/// `Err(_) => false` (any error skips) makes this test fail instead of
+/// silently deleting the raw-name coverage.
+#[cfg(unix)]
+#[test]
+fn non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision() {
+    let probed = Path::new("/nonexistent-probe");
+    assert!(
+        non_utf8_probe_skip(&NonUtf8Probe::Writable, probed),
+        "#2036 a writable probe must run the case, not skip it"
+    );
+    assert!(
+        !non_utf8_probe_skip(&NonUtf8Probe::RejectsName, probed),
+        "#2036 a name-rejecting filesystem must skip the case, not fail it"
+    );
+    for (probe, marker) in [
+        (
+            NonUtf8Probe::Failed(std::io::Error::from_raw_os_error(libc::EACCES)),
+            "failed for a reason other than the file name",
+        ),
+        (
+            NonUtf8Probe::FdLimit(std::io::Error::from_raw_os_error(libc::EMFILE)),
+            "hit the process fd limit",
+        ),
+    ] {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            non_utf8_probe_skip(&probe, probed)
+        }))
+        .expect_err("#2036 a probe failure must fail closed (panic), not skip");
+        let text = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            text.contains("#2036") && text.contains(marker),
+            "#2036 the fail-closed panic must carry its own diagnosis ({marker}), got: {text}"
         );
     }
 }
@@ -317,16 +482,9 @@ fn only_eilseq_makes_the_non_utf8_probe_skippable() {
 fn non_utf8_names_writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStringExt;
     let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
-    let outcome = std::fs::write(&probe, b"");
+    let outcome = triage_probe(|| std::fs::write(&probe, b""));
     let _ = std::fs::remove_file(&probe);
-    match outcome {
-        Ok(()) => true,
-        Err(error) if probe_failure_is_a_rejected_name(&error) => false,
-        Err(error) => panic!(
-            "#2036 probing {} failed for a reason other than the file name: {error}",
-            probe.display()
-        ),
-    }
+    non_utf8_probe_skip(&outcome, &probe)
 }
 
 /// #2036: a non-UTF-8 `--home` / `--sidecar` is refused at parse, exactly like
