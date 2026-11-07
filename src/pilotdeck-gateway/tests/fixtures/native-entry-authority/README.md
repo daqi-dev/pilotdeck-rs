@@ -24,7 +24,7 @@ P2：原先 `read_to_end` 撞 5 秒截止期，常驻子进程每次白等满 5 
 半句」当成正控通过（#1401 评审 P0；换行也是形状的一部分——EOF 或 `take` 截断的残行不带
 换行，`advertises` 直接拒绝）。读取函数 `read_advertisement` 对流与两个时限泛化，函数级
 负控用字节切片、超长无换行行与 duplex 管道分别覆盖「完整广告 / EOF 残行 / 上限截断 / 静默」
-四支，不再只有真实子进程一条路（#1401 评审 P0）。调用点的两种破坏各有专属观察：删除调用时子进程会带着
+四支，另加可控读错流与「持续输出非广告整行」两支，不再只有真实子进程一条路（#1401 评审 P0 / #1989 项 5）。调用点的两种破坏各有专属观察：删除调用时子进程会带着
 被接受的权限常驻，stderr 出现子进程自己的 `native listening` 行即判杀（主机慢本身不是
 证据）；后移调用时装配层的项目注册 / 运行清单会在拒绝前写入 `home`，测试断言 `home`
 除自身写入的 config 外无新增条目。
@@ -57,27 +57,35 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 
 ## 运行
 
-`python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）：除 marker
-模板、三个键名与 scrub 标记外，还按**测试函数体切段**绑定观察——rejects 测试里的
+`python3 -I negative_controls.py --check` 检查锚点与标记绑定（不依赖 cargo）。两个
+`--check`（本脚本与 `early_exit_invalid.py`）的 marker 常量与每一根 needle 都放在同目录的
+`native_entry_binding.py`：两张表此前各存一份且已经分叉（scrub「无法判定」针一张绑整句、
+一张只绑 `if !advertised { panic!(`），#1989 项 6 合并成一处，各脚本只留自己的
+`GATE` / pin 段 / `ANCHOR` / `ROWS`。绑定按**测试函数体切段**：rejects 测试里的
 `observe_child_stderr(stderr)` 与三条判杀断言**整条调用**（`negative_assert!(!advertised,
 "…"`、`!status.success()`、`leftover.is_empty()`），scrub 测试里的
 `Failed to parse default config YAML.`、同一条广播观察、判继承键的断言整条调用
 （`negative_assert!(!leaked_parse, "…"`）与它自己的「无法判定」分支
-（`if !advertised { panic!("…"`）
-（#1401 项 4 / 评审 P2：整文件 needle 分不清哪个测试在观察，两个测试都含
+（`if !advertised { panic!("…"`）。整文件 needle 分不清哪个测试在观察，两个测试都含
 `native listening` 后删掉 rejects 那处仍会通过；只绑片段也不够——三处断言复用同一句消息，
 删掉其中一条、反转条件极性、或把它改写成 `let _ = (!leaked_parse, "…");` 都仍会通过，所以
 needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_source.squeeze` 折叠**字面量
-之外**的空白，rustfmt 换行不影响绑定。两个 pin 测试也一并绑：`--check` 按函数体切出
-`native_listening_advertisement_shape`（正反两张形状表、尾部多余内容与 IPv6 各一条）与
-`native_listening_observation_needs_a_finished_line`（完整广告 / EOF 残行 / 上限截断 /
-静默四支），并直接绑 `advertises` 开头的换行守卫——两个变异体都只打印拒绝行或一条完整
-广告，看不出形状被放宽成前缀匹配，只有 pin 自己会红（#1401 评审 P2）。这几条漂移由 `_tmp/20261107-issue-1401/r4/check-drift.py`
-逐例证明能让相应脚本 rc=1（断言级五例两家都红，pin 三例 `negative_controls.py` 红：裁剪
-形状反例表、删掉换行守卫、删掉 EOF 残行用例）；切段函数由
-两个脚本共用
+之外**的空白，rustfmt 换行不影响绑定。
+
+两个 pin 测试也一并绑：`native_listening_advertisement_shape` 绑两条形状断言整条调用（含
+正反对照表里的尾部多余内容与 IPv6 输入），`native_listening_observation_needs_a_finished_line`
+绑完整广告 / EOF 残行 / 上限截断 / 静默 / 读错 / 总预算六支的**输入与断言**，加上两条
+`Instant` 上界（静默 50 ms 与预算 5 s 都必须在 1 s 内收口，把调用点两个实参互换变成红）与
+`collected.len() <= CHILD_STDERR_LIMIT`；`advertises` 里的换行守卫按
+`squeeze(test_body(…, 'advertises'))` 整条绑定（`if !line.ends_with(b"\n") { return false; }`），
+短路与返回动作改写都算漂移——两个变异体都只打印拒绝行或一条完整广告，看不出形状被放宽成
+前缀匹配，只有 pin 自己会红（#1401 评审 P2）。每根 needle 咬不咬得住由同目录的
+`test_native_entry_binding.py` 逐条变异证明（20 条漂移负控，外加两个脚本不许再留私有副本、
+两处 `--check` 在真树上 rc=0）；`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
+字节与 C 串 / lifetime / 行与嵌套块注释，注释整段丢弃但仍分隔 token）由
+`../test_negative_source.py` 的碰撞反例覆盖（#1989 项 1–4）。切段函数由两个脚本共用
 `negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
-函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认）。实际负控命令
+函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认。实际负控命令
 为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方设置
 `CARGO_TARGET_DIR`，证据目录走共享 `new_output_directory`（`#953` 非空拒用、
 `.claim` O_EXCL），使用共享 HEAD 守卫、进程所有权和最终汇总：每项先正控，再
