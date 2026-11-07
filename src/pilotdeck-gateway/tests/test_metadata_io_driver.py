@@ -36,6 +36,31 @@ class EnvironmentControls(unittest.TestCase):
     # switch; replaying the output of tests that can skip), never to the
     # scheduler — the drift guards below pin their full text, not just a prefix.
     permission_faults_env = ['PDRS_REQUIRE_PERMISSION_FAULTS: "1"']
+    # #2017（#1809 r6，DS/MM 两家 r5 撞报）：job 级与聚合 step 级的 `if:` / `needs:`
+    # 必须按 PyYAML 解析后的**完整标量**钉死（与 self_check 的 r5 判据同口径）。行式
+    # 正则只收键所在的那一行：4 空格 job 级键的 plain 续行把条件折叠成恒假（job 被跳过
+    # → GitHub 把被跳过的必需检查报成 success → 合并放行），对它完全不可见；
+    # `gateway-schema-baseline` 是必需检查且此前没有任何 job 级键断言。解析器版本
+    # 钉死（ci.yml 两个 job 的「安装钉死 PyYAML」步骤与装置 README 同步登记）。
+    pinned_pyyaml_version = '6.0.3'
+    parsed_docs_only_if = "${{ needs.scope.outputs.docs_only != 'true' }}"
+    ci_job_level_registry = {
+        'scope': ({'outputs', 'runs-on', 'steps'}, None, None),
+        'metadata-observer': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
+        'negative-controls': ({'env', 'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+                              ['scope'], parsed_docs_only_if),
+        'retirement-outcome-parity': ({'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+                                      ['scope'], parsed_docs_only_if),
+        'check': ({'if', 'needs', 'runs-on', 'steps'},
+                  ['scope', 'metadata-observer', 'rust', 'a51-coverage',
+                   'negative-controls', 'retirement-outcome-parity'],
+                  '${{ always() }}'),
+        'rust': ({'defaults', 'env', 'if', 'needs', 'runs-on', 'steps'},
+                 ['scope'], parsed_docs_only_if),
+        'a51-coverage': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
+        # 必需检查必须无条件跑：`if` / `needs` 都不在白名单里。
+        'gateway-schema-baseline': ({'env', 'runs-on', 'steps'}, None, None),
+    }
     nextest_success_output_filter = (
         'test(=case_insensitive_cwd_spelling_writes_and_edits) | '
         'test(=nfd_directory_with_nfc_cwd_writes_and_edits) | '
@@ -207,11 +232,55 @@ class EnvironmentControls(unittest.TestCase):
         # scope runs Python/git only and gates the four heavy jobs (#1199);
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
         # negative-controls is Python/cargo only (#1632) and is gated like a heavy job;
+        # retirement-outcome-parity is pure Python (#1809) and is gated the same way;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
         self.assertEqual(set(jobs), {'scope', 'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'negative-controls', 'gateway-schema-baseline'},
+                                    'negative-controls', 'retirement-outcome-parity',
+                                    'gateway-schema-baseline'},
                          f'{issue} exact CI job inventory')
         return jobs
+
+    def ci_parsed_jobs(self, issue='#2017'):
+        """按 PyYAML 解析后的节点取 `jobs:`（单文档、无重复键）：job → {键: 值节点}。
+
+        只在构造变异样本时用行式锚点；**判定**一律走解析后的完整标量（r5 判据）。
+        PyYAML 缺失 / 版本不符时 fail-closed（self.fails），绝不降级回行式解析。
+        """
+        try:
+            import yaml
+        except ImportError as error:
+            self.fail(f'{issue} PyYAML is required for the parsed gate guards (pinned '
+                      f'{self.pinned_pyyaml_version}, installed by the CI step '
+                      f'安装钉死 PyYAML): {error}')
+        self.assertEqual(yaml.__version__, self.pinned_pyyaml_version,
+                         f'{issue} PyYAML version is pinned (CI step 安装钉死 PyYAML '
+                         'and the device README register it); a different YAML build may '
+                         'parse the workflow differently')
+        text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+        documents = list(yaml.compose_all(text))
+        self.assertEqual(len(documents), 1, f'{issue} exactly one YAML document')
+        root = documents[0]
+        self.assertIsInstance(root, yaml.MappingNode, f'{issue} the workflow is a mapping')
+        root_keys = [key.value for key, _ in root.value]
+        self.assertEqual(len(root_keys), len(set(root_keys)), f'{issue} no duplicate root keys')
+        jobs_node = next((value for key, value in root.value if key.value == 'jobs'), None)
+        self.assertIsInstance(jobs_node, yaml.MappingNode, f'{issue} jobs is a mapping')
+        job_names = [key.value for key, _ in jobs_node.value]
+        self.assertEqual(len(job_names), len(set(job_names)), f'{issue} no duplicate job keys')
+        parsed = {}
+        for key, value in jobs_node.value:
+            self.assertIsInstance(value, yaml.MappingNode,
+                                  f'{issue} the {key.value} job is a mapping')
+            fields, names = {}, []
+            for field, node in value.value:
+                self.assertIsInstance(field, yaml.ScalarNode,
+                                      f'{issue} the {key.value} job has scalar keys')
+                names.append(field.value)
+                fields[field.value] = node
+            self.assertEqual(len(names), len(set(names)),
+                             f'{issue} the {key.value} job has no duplicate job-level keys')
+            parsed[key.value] = fields
+        return yaml, parsed
 
     def ci_steps(self, name, body, issue='#904'):
         self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
@@ -295,7 +364,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
@@ -306,7 +376,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 5, '#904 exactly five rejection steps')
+        self.assertEqual(len(steps), 6, '#904 exactly six rejection steps')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -342,10 +412,105 @@ class EnvironmentControls(unittest.TestCase):
                             == ['node src/pilotdeck-gateway/tests/test_metadata_observer.mjs']
                             for step in observer_steps), '#904 observer generation control runs')
 
+    def test_ci_job_level_gates_are_pinned_by_parsed_yaml(self):
+        # #2017（#1809 r6）：上面的行式断言只收键所在的那一行，对 plain 续行折叠不可见；
+        # 这里按 PyYAML 解析后的完整标量把每个 job 的 job 级键白名单与 `if:` / `needs:`
+        # 值一并钉死（gateway-schema-baseline 首次纳入），聚合 Require step 的 `if:` 同口径。
+        yaml, parsed = self.ci_parsed_jobs()
+        self.assertEqual(set(parsed), set(self.ci_job_level_registry),
+                         '#904 exact CI job inventory (parsed)')
+        for name, (allowed, needs, condition) in self.ci_job_level_registry.items():
+            fields = parsed[name]
+            self.assertEqual(set(fields), allowed,
+                             f'#2017 the {name} job-level keys are exactly the registered set '
+                             '(a job-level if/needs/continue-on-error/env/defaults can skip '
+                             'the job or swallow its gates without touching any step)')
+            if needs is not None:
+                node = fields['needs']
+                self.assertIsInstance(node, yaml.SequenceNode,
+                                      f'#2017 the {name} job needs is the parsed registered list')
+                self.assertEqual([item.value for item in node.value], needs,
+                                 f'#2017 the {name} job needs is the parsed registered list')
+            if condition is not None:
+                node = fields['if']
+                self.assertIsInstance(node, yaml.ScalarNode,
+                                      f'#2017 the {name} job if is the parsed registered condition')
+                self.assertEqual(node.value, condition,
+                                 f'#2017 the {name} job if is the parsed registered condition')
+        # 聚合 `check` job 的六个 Require step：键集合与 `run: exit 1` 逐字钉死，
+        # `if:` 按**解析后**的完整标量与登记集比对——step 级续行把恒执行条件折叠成
+        # 恒假（step 从不执行，job 仍 success）只有这里能看见。
+        expected = {"${{ always() && needs.scope.result != 'success' }}"}
+        for job in ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                    'retirement-outcome-parity'):
+            expected.add('${{ always() && needs.' + job + ".result != 'success' && !(needs."
+                         + job + ".result == 'skipped' && needs.scope.outputs.docs_only "
+                         "== 'true') }}")
+        steps_node = parsed['check']['steps']
+        self.assertIsInstance(steps_node, yaml.SequenceNode,
+                              '#2017 the check job steps is a sequence')
+        seen = []
+        for item in steps_node.value:
+            self.assertIsInstance(item, yaml.MappingNode,
+                                  '#2017 every aggregate step is a mapping')
+            step = {}
+            for field, node in item.value:
+                step[field.value] = node
+            self.assertLessEqual(set(step), {'if', 'name', 'run', 'working-directory'},
+                                 '#2017 aggregate Require step keys are exactly the registered set')
+            run = step.get('run')
+            self.assertIsInstance(run, yaml.ScalarNode,
+                                 '#904 rejection steps exit one (parsed)')
+            self.assertEqual(run.value, 'exit 1', '#904 rejection steps exit one (parsed)')
+            if 'working-directory' in step:
+                self.assertEqual(step['working-directory'].value, '.',
+                                 '#904 rejection steps run from the repository root (parsed)')
+            self.assertIn('if', step,
+                          '#2017 aggregate Require step if conditions are the parsed registered set')
+            seen.append(step['if'].value)
+            self.assertIn(step['if'].value, expected,
+                          '#2017 aggregate Require step if conditions are the parsed registered set')
+        self.assertEqual(sorted(seen), sorted(expected),
+                         '#2017 all six parsed Require conditions appear exactly once')
+
+    def test_ci_rejects_parsed_job_level_gate_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#2017 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # job 级 `if:` plain 续行折叠成恒假：只收键所在行的行式断言（上面那组）看不见，
+        # 解析后的条件已经不等——job 永远被跳过，必需检查被 GitHub 报成 success。
+        docs_only_line = "    if: ${{ needs.scope.outputs.docs_only != 'true' }}\n"
+        change_job('metadata-observer-job-if-continuation', 'metadata-observer',
+                   docs_only_line, docs_only_line + '      && false\n',
+                   '#2017 the metadata-observer job if is the parsed registered condition')
+        change_job('check-job-if-continuation', 'check',
+                   '    if: ${{ always() }}\n',
+                   '    if: ${{ always() }}\n      && false\n',
+                   '#2017 the check job if is the parsed registered condition')
+        # 聚合 Require step 的 `if:` 续行折叠成恒假：step 从不执行，job 仍 success。
+        change_job('require-scope-if-continuation', 'check',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n",
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '          && false\n',
+                   '#2017 aggregate Require step if conditions are the parsed registered set')
+        # 必需检查 gateway-schema-baseline 加 job 级条件：被跳过即报 success，合并放行
+        # （#2017 场景 A：此前该 job 没有任何 job 级键断言）。
+        change_job('baseline-job-conditional', 'gateway-schema-baseline',
+                   '    steps:\n', '    if: false\n    steps:\n',
+                   '#2017 the gateway-schema-baseline job-level keys are exactly the registered set')
+        self.check_ci_mutations(cases, 'test_ci_job_level_gates_are_pinned_by_parsed_yaml', '#2017')
+
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         cases = []
 
         def change(label, old, new, message):
@@ -373,12 +538,14 @@ class EnvironmentControls(unittest.TestCase):
                       "        if: ${{ always() && needs.scope.result != 'success' }}\n"
                       '        working-directory: .\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly five rejection steps')
+        change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
         change('check-needs-drops-scope',
-               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-               'needs: [metadata-observer, rust, a51-coverage, negative-controls]',
+               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
+               'needs: [metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
                '#904 exact required needs')
         # #1199 规格 4：重 job 加 continue-on-error → 必须失败。
         for owner in heavy:
@@ -742,8 +909,10 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         cases = []
         for name, body in self.ci_jobs().items():
-            if name in ('check', 'scope', 'negative-controls'):
-                continue  # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑 Python/cargo（#1632）
+            if name in ('check', 'scope', 'negative-controls', 'retirement-outcome-parity'):
+                # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑
+                # Python/cargo（#1632）；retirement-outcome-parity 只跑 Python（#1809）。
+                continue
             setups = re.findall(r'      - uses: actions/setup-node@v4\n'
                                 r'(?:        .*\n|          .*\n)*', body)
             self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
@@ -2925,8 +3094,10 @@ self_check_controls_run | return | return problems
         cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
                       '#922 文档测试 occurs once in rust'))
         for old, new, message in (
-                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-                 'needs: [scope, metadata-observer, a51-coverage, negative-controls]',
+                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
+                 'needs: [scope, metadata-observer, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
                  '#904 exact required needs'),
                 ("needs.rust.result != 'success'", "needs.rust.result == 'failure'",
                  '#904 rust rejects every non-success beyond the docs-only skip')):

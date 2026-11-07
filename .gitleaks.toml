@@ -1,5 +1,5 @@
 # gitleaks 配置：继承默认规则，按值放行已知非密钥。
-# 9 条值级条目（7 条哈希 + 1 条 RFC 6455 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
+# 10 条值级条目（8 条哈希 + 1 条 RFC 6455 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
 # 5 条 PEM 片段条目是唯一例外，只用 match 子串语义——判据是「解码后真是私钥 DER 的开头」
 # （SEQUENCE + INTEGER 版本号 0/1 + AlgorithmIdentifier/私钥 OCTET STRING），不是按值的形状或前缀分桶，
 # 所以大写 hex / 128-hex / 带前缀的 sha256:… / 普通长 base64 都进不了这个桶。
@@ -17,6 +17,11 @@ regexes = ['''^200651a8b2d5912f692db89468a7d47d86a3ed6844f48f1b15f2be1d9c9a7e5e$
 description = "A8.2-pr1 upload-gateway 夹具的 idempotencyKeyHash = sha256(\"key\")（generate.mts:220 固定幂等键 'key'），可用 printf key | shasum -a 256 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
 regexTarget = "secret"
 regexes = ['''^2c70e12b7a0646f92279f427c7b38e7334d8e5389cff167a1dc30e73f826b683$''']
+
+[[allowlists]]
+description = "retirement 校准轮（#1355 采集 / #1809 入库）夹具 scripts/retirement-outcome-parity/fixtures/round-01..05/driver/frames.jsonl 的 idempotencyKeyHash = sha256(\"retirement-calib-1\")（校准夹具固定的幂等键，同一 manifest 的 clientFileId 就是 calib-1，upload.create 只是把它哈希后回显给客户端），可用 printf 'retirement-calib-1' | shasum -a 256 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"
+regexTarget = "secret"
+regexes = ['''^8793640e3a9571de463228a0e7092f71511bc421e39160f9c7c33cdd33827c4f$''']
 
 [[allowlists]]
 description = "A6.4-pr2a model-cost 夹具 sourceSha256：固定基线 cc7c4e6 公开源文件的 SHA-256（键名含 Token 触发 generic-api-key），可用 shasum -a 256 resources/PilotDeck/<path> 复算，不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"

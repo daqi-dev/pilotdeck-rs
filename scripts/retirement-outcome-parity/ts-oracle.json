@@ -17,27 +17,27 @@
     "files": [
       {
         "round": "round-01",
-        "methodsSha256": "c46f74315569d5009592a42e05b01d523c1710b7587263d64f4c55cdb43bca0e",
+        "methodsSha256": "d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d",
         "framesSha256": "0945e78eca71dce65135d0eb8a4bbcb4a828fc4f2f35ae16f3a566fa5dded034"
       },
       {
         "round": "round-02",
-        "methodsSha256": "5b8398a91e3cd08c8697c81fa7f87076d0c8054be8b6f061b5a5731aca6acee0",
+        "methodsSha256": "d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d",
         "framesSha256": "902366ef5363009121c6e72633c35aace41282b2533b7638c46bc6c93f83b2a4"
       },
       {
         "round": "round-03",
-        "methodsSha256": "da8f21606c098f931530d7bc12de54a9819753e0471a45da53902bc89eb98ced",
+        "methodsSha256": "d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d",
         "framesSha256": "0afa3a14ab2f552e9df0a3760f913755f68085db7f2f6acad7171af4392a7888"
       },
       {
         "round": "round-04",
-        "methodsSha256": "820deb64fefdf44be769c5439fcc3382295b6b942a59fa61e1f1afd8849ebd03",
+        "methodsSha256": "d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d",
         "framesSha256": "311657e03529f970b84ad133d576860cef368df434f97e8c66860761b59c9446"
       },
       {
         "round": "round-05",
-        "methodsSha256": "b6ef2848952fdc4e736959597eb007d2c1a18275779046f101c3ddc1d2623b6d",
+        "methodsSha256": "d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d",
         "framesSha256": "641d95cb2712bce5f68640a828049ca9f0550fb5afaa9c9fbba68c4cd814397b"
       }
     ]

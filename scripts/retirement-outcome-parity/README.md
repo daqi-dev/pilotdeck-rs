@@ -10,13 +10,20 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
 | `negative_controls.py` | N1–N17 汇总式控件执行器（见下）。 |
+| `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，`du -sk` 1548 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
+| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / CI 接线），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
 
 ## 金样来源
 
 - TS 基线：`cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，Node v22.22.0，#1355
   `--suite retirement` TS 参考轮 **k=5**。
-- 原始数据：`_tmp/20261106-issue-1477/r1/data/round-01..05/driver/{methods.json,frames.jsonl}`
-  （目录名与逐文件 sha256 记在 `ts-oracle.json` 的 `rounds` 里——金样来源可核，不是手搓）。
+- 原始数据（仓外，未跟踪）：`_tmp/20261106-issue-1477/r1/data/round-01..05/driver/{methods.json,frames.jsonl}`。
+- **入库夹具（判据与 CI 的实际输入）**：`fixtures/round-01..05/driver/{methods.json,frames.jsonl}`
+  ——干净检出即可跑。切片规则（`methods.json` 只留判据消费的 5 个字段、`frames.jsonl` 逐字节
+  照搬）与「原始 ↔ 切片 sha256」对照见 `fixtures/PROVENANCE.md`。逐文件 sha256 记在
+  `ts-oracle.json` 的 `rounds.files` 里——金样来源可核，不是手搓。**切片后 5 轮的
+  `methodsSha256` 相同**（去掉容差字段后内容本就一致），逐轮可区分性由 `framesSha256` 保留
+  （5 个互不相同），审计时别拿 `methodsSha256` 判「是不是同一轮」。
 - 分布（对本数据独立复算）：101 方法 / 轮 = 77 ok + 24 error（15 种错误码）；
   `submit_turn` 唯一 `stream`；6 个 `CAPABILITY_UNAVAILABLE`（`manager_browsers`、
   `memory_list`、`memory_wipe`、`snapshot_get`、`snapshot_list`、`snapshot_restore`）；
@@ -26,17 +33,17 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 ## 重生成（必须与已提交金样逐字节相同）
 
 ```sh
+F=scripts/retirement-outcome-parity/fixtures
 python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \
   --oracle /tmp/oracle.json \
-  --round _tmp/20261106-issue-1477/r1/data/round-01 \
-  --round _tmp/20261106-issue-1477/r1/data/round-02 \
-  --round _tmp/20261106-issue-1477/r1/data/round-03 \
-  --round _tmp/20261106-issue-1477/r1/data/round-04 \
-  --round _tmp/20261106-issue-1477/r1/data/round-05
+  --round $F/round-01 --round $F/round-02 --round $F/round-03 \
+  --round $F/round-04 --round $F/round-05
 cmp /tmp/oracle.json scripts/retirement-outcome-parity/ts-oracle.json   # 必须无差异
 ```
 
-不一致说明金样来源不明或含未登记变异——停下来写清楚哪一轮哪一行不同，不得继续。
+不一致说明夹具或金样有一个被改过而另一个没跟上（或有人手改金样）——停下来写清楚哪一轮
+哪一行不同，不得继续。重采全量 TS 数据后用同一命令重生成，并把新旧 sha256 对照补进
+`fixtures/PROVENANCE.md`。
 
 ## Rust retirement 轮怎么调用
 
@@ -57,7 +64,8 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   fail-closed，绝不当 PASS。
 - 报告含 `p7Rounds` / `p7Evaluated`：只跑 1 轮时 P7 是空判，`status: PASS` 不得当作
   「跨轮稳定已核」的证据。
-- 两个入口都要求 `python3 -I`（断言 `sys.flags.isolated`，同装置族其它入口）；缺 `-I` 与
+- 三个入口（`check_outcome_parity.py` / `negative_controls.py` / `self_check.py`）都要求
+  `python3 -I`（断言 `sys.flags.isolated`，同装置族其它入口）；缺 `-I` 与
   其它入口级失败一律 rc=2（输入不可用），不是 rc=1。
 - **Rust 轮必须显式跑本装置**：判据尚未接进冻结装置 `session_domain.py`（见「容差与残余」③）。
 
@@ -80,16 +88,34 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输出目录> \
-  [--data _tmp/20261106-issue-1477/r1/data] \
+  [--data scripts/retirement-outcome-parity/fixtures] \
   [--oracle scripts/retirement-outcome-parity/ts-oracle.json]
 ```
+
+`--data` 默认指向**入库夹具**（相对脚本位置，不依赖 cwd，干净检出即可跑，CI 同此）；
+`--data` 仍可覆盖，用于重采后的新参考轮。`--oracle` 默认同目录金样。
+
+**输出目录互斥（#1809 条目 4）**：整轮运行（权威失效 → 控件构造 → 逐条写 `N*/driver/*`
+→ 发布 `summary.json`）都在一把 `fcntl.flock` 独占锁下，锁文件是
+`<输出目录>/.retirement-outcome-parity.lock`。第二个进程**阻塞等待**（不是失败、不是
+静默跳过），等锁期间在 stderr 打一行 `waiting for output lock …`。理由：并发跑两次是
+合法用法（CI 与本机各一次、审计者边跑边看），明确失败会被误读成数据问题；阻塞既能保证
+「一次只有一个进程在写」，又不会把合法的并发调用打红。缺 `fcntl` / `O_NOFOLLOW` 的平台
+按 rc2 拒跑（与 `require_safe_writes` 同口径），不静默退化成「没锁」。锁文件必须打开成
+**普通文件**（`fstat` + `S_ISREG`）且用 `O_NONBLOCK` 打开：预置同名 FIFO 时不带
+`O_NONBLOCK` 的只读 `open` 会一直等写端（`O_NOFOLLOW` 拦不住 FIFO），整个装置连同 CI job
+一起挂死；预置目录则会被当成「锁」静默通过。三者（FIFO / 目录 / 符号链接）都在
+`self_check.py` 的 lock 用例里各造一次，必须快速 rc2。`emit` 写金样时用
+**同一把** `output_lock`（锁金样所在目录），两个入口不会在同一个目录里交错写。
 
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
 `summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分三步：**先核各原始轮对金样
 rc=0**（原始数据本就有违规时，注入后的违规不能算作注入被杀）→ **注入是否落地**（重读
 落盘文件核对变异事实）→ **归因是否落到被注入对象**（**每条期望规则都** fire 且点名被注入
-方法；期望两条规则时任一命中不算 KILLED）。
+方法；期望两条规则时任一命中不算 KILLED）。前置自检覆盖 `--data` 下**全部**轮次（逐轮 +
+一次跨轮合并；#1809 条目 5——此前写死 `round-01`/`round-02`，换 `--data` 后
+`round-03..05` 的 PASS 不在自检范围）。
 N10（99/101 unavailable，线缆同步）是 F5 / DS-P0-1 的闭环证据：旧 `UNIFORM_UNAVAILABLE`
 语义（全 101 才 FAIL）在该形状下一条规则都不触发。N12（`shape` request↔`stream` 互换）与
 N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的规则配了具名控件。N14
@@ -168,11 +194,15 @@ token 的旧扫描同结论；Codex r16 用独立的 54 278 个 token 复算也�
 
 失效只碰本执行器自己的产物名（`summary.json`、`summary.json.tmp`、`summary.json.<pid>.tmp`）：
 `summary.json.backup` 之类的既有文件不动，**存活 pid** 的 tmp 也不动（否则会把另一个仍在跑的
-执行器的原子发布打掉；并发互斥残余见跟进单）。前置自检除逐轮外还跑一次**跨轮合并**
-（`check --round round-01 --round round-02`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
+执行器的原子发布打掉）。并发互斥由 `<输出目录>/.retirement-outcome-parity.lock` 的独占
+`flock` 保证（见上节）；锁在**权威失效之前**拿到，所以后到者不会在先到者发布 `summary.json`
+的窗口里读到半成品。前置自检逐轮覆盖 `--data` 下的**全部**轮次，另跑一次**跨轮合并**
+（`check --round <全部轮次>`，`p7Evaluated=true`）：单轮 P7 是空判，不先排除
 「参考轮对本身已漂移」，N11 的跨轮归因就不成立。checker 子进程带 600 s 超时（`TimeoutExpired`
-收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。两个入口
-成对设 `sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
+收口为 rc2）；注入用常量取自判据实现（`CHECK.CAPABILITY_UNAVAILABLE`），不另抄一份。三个入口
+（`check_outcome_parity.py` / `negative_controls.py` / `self_check.py`，含 `self_check` 的
+`check_lock` 在子进程里再加载 checker 的那一处）都成对设
+`sys.pycache_prefix` + `sys.dont_write_bytecode`（同族 `scripts/gateway-parity/*`、
 `scripts/parity/*` 口径）：只挡写不挡读时，`spec_from_file_location` 仍可执行陈旧 `.pyc`
 （PEP 552 unchecked-hash），负控的 KILLED 归因就不再是「跑当前源码」；没有可写临时目录时回退到
 一个**核实不存在**、名字带 16 位随机字节的目录（固定的 `.no-pycache-<pid>` 可预测，等于给
@@ -196,6 +226,74 @@ unchecked-hash pyc 留了可投毒的位置）——**启动依赖不得先于�
 `emit` 的 tmp 用 `tempfile.mkstemp` 取不可预测的名字（`<name>.<pid>.tmp` 在世界可写目录里可被
 预置符号链接），失败路径先删 tmp 再收口。
 `raise SystemExit('消息')` 返回的是 **1**，会被下游当成「判据 FAIL」。
+
+## CI（#1809）
+
+`.github/workflows/ci.yml` 的 `retirement-outcome-parity` job 每次 PR / 合入 main / merge
+queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤——纯 Python，本机实测
+六项全跑 3.1 s、变异自检 0.4 s）：
+
+| 步骤 | 判据 |
+|---|---|
+| 安装钉死 PyYAML（#2017-A） | 装出 `pyyaml==6.0.3` venv 并前置 PATH，供下方 `python3 -I` 闸门使用 |
+| `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
+| `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
+| 负控 N1–N17 | 全 KILLED（任一 SURVIVED / INVALID 即红） |
+| `self_check.py`（六项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · CI 接线，六条守卫本身都还在 |
+| `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
+
+`self_check.py` 是这些守卫的单一实现，本地可整跑：
+
+```sh
+python3 -I scripts/retirement-outcome-parity/self_check.py            # 六项全跑
+python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
+```
+
+`--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
+超大夹具；CI 接线用**二十六种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
+加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
+`run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
+`! ` 取反退出码 / `echo` 前缀 / 删掉一个闸门 step / 给 Require step 换掉 `if:` ·
+加 `continue-on-error` · 末尾追加 `&& false` · 把 `run: exit 1` 改成 `exit 0` / 把聚合 `check` job 的 `if:` 改成 `false` / 追加一份 `---` 之后的 YAML 文档 / r5 标量形态四种——`run` 行内续行、
+聚合 job `if` 续行 `&& false`、Require `if` 续行 `&& false`、块标量 `|`→`>`——加把两个 job
+整块挪到 `on:` 下冒充（行首正则会认这种假块）与 **r6 根级** `defaults.run.shell:
+/bin/true {0}`（workflow 级 shell 模板让每个 run step 无条件 rc=0，只看 `jobs:` 的守卫逐字
+全等仍假 PASS；锚定样本的失败文案必须落在点名判定上，见 `SAMPLE_FAILURE_ANCHORS`)）；输出目录锁用
+三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即
+挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一
+正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」
+的机器证据。
+
+**每条变异样本都实测过「真的造成假绿」**：从变异后的 workflow 里取出该 step 真正会执行的
+脚本，用 `bash -e` + 一个必失败的 `python3` 替身跑——命令没执行 / 失败被吞的样本必须 rc=0，
+未变异基线必须 rc=1。样本本身不成立就不是样本（例如把 `|| true` 加在以续行反斜杠结尾的行上
+会变成 rc=127；`bash -e` 下末尾补 `exit 0` 根本走不到，同样不算假绿）。
+
+接线守卫认的是 **PyYAML 解析后的完整标量**，不是源码行文本（#2017 r5py 重写）：守卫不再做任何
+行式 / 缩进式切块，也没有结构比对的兜底正则——`yaml.compose_all` 取唯一文档（多文档 / 解析失败
+即红），**根文档直属键白名单**（`name` / `on` / `jobs` / `permissions` / `concurrency` /
+`run-name`；根级 `defaults` / `env` 即红——workflow 级 `defaults.run.shell` 会替换每个 run
+step 的 shell，与 job 级 `defaults` 同一判法，r6 P0），job 只在 `jobs:` 映射里找（挂在
+`on:` 等别处的同名块不是 job）；两个 job 的直属键白名单
+（job 级 `continue-on-error` 即红，重复键也红——两个解析器可以对「哪个键活着」各执一词）；
+retirement job 的 `if:` 与聚合 `check` job 的 `if:` 归一化后逐字等于登记值（GitHub 把**被跳过的
+job 报成 success**，而 `check` 自己是必需检查，跳掉它就再没有东西挡合并）；retirement job 的
+step 顺序与名字按登记比对；闸门 step 只许有 `name` + 一个**直属** `run`（`env` / `with` /
+`if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门 step 的 `run` 必须是
+**literal 块标量（`|`）**且完整标量值与 `GATE_SCRIPTS` **逐字相等**——续行拼接（plain 多行
+标量，换行折叠成空格）、`>` 折叠块、引号标量**显式判红并写明是哪一种形态**；聚合 Require
+只许 `name` / `if` / `run`，`run` 恰为 `exit 1`，`if:` 归一化空白后逐字等于登记值。逐字相等
+同样意味着**等价写法会被误拒**（`run` 写成 plain / 引号标量、`if` 折叠续行、重排 `--round`
+参数），这是有意的
+fail-closed：本仓这段 YAML 只有一个写方，宁可误拒也不放过「文本活着但闸门失效」；改闸门脚本
+必须同步改 `GATE_SCRIPTS`。PyYAML 不可用**或版本不符**时同样 fail-closed 判红，不降级回行式
+解析；解析器版本钉死 **`pyyaml==6.0.3`**（#2017-A，本机实测 `yaml.__version__` 6.0.3），
+CI 里由两个 job 的「安装钉死 PyYAML（#2017-A）」步骤装进 venv 并前置到 PATH
+（`python3 -I` 不读 user site，但 venv 的 site-packages 属解释器自身配置、`-I` 下仍可见），
+`self_check.py` 的 `PYYAML_PINNED_VERSION` 与 `src/pilotdeck-gateway/tests/
+test_metadata_io_driver.py` 的 `pinned_pyyaml_version`（兄弟守卫同一登记）各有一份
+fail-closed 断言；换版本必须三处同步改。
 
 ## 为什么不在 `scripts/gateway-parity/`
 

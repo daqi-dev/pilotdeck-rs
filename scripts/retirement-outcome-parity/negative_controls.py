@@ -410,7 +410,10 @@ sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
 CHECKER = HERE / 'check_outcome_parity.py'
-DEFAULT_DATA = Path('_tmp/20261106-issue-1477/r1/data')
+# 参考轮数据**入库**在 `fixtures/`（#1809 条目 1）：干净检出即可跑，不再依赖未跟踪的
+# `_tmp/20261106-issue-1477/r1/data`。默认值相对**脚本位置**而不是 cwd——以前的相对
+# 默认值在别的工作目录下直接 `[Errno 2]`，换机 / CI 上跑不了。`--data` 仍可覆盖。
+DEFAULT_DATA = HERE / 'fixtures'
 DEFAULT_ORACLE = HERE / 'ts-oracle.json'
 INJECTED_MESSAGE = 'injected by negative controls for retirement-outcome-parity'
 ALT_CODE = 'UPLOAD_NOT_FOUND'
@@ -976,6 +979,28 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     ]
 
 
+def reference_rounds(data_root):
+    """``--data`` 下所有轮次目录（含 ``driver/methods.json``），按名字排序。
+
+    早期版本把 preflight 写死成 ``round-01`` / ``round-02``：``--data`` 换目录后
+    ``round-03..05`` 的 PASS 不在自检范围（#1809 条目 5）。参考数据切片入库后 5 轮
+    都可复现，改成**全量发现**——参考轮里只要有一轮本来就不 PASS 金样，注入后的
+    违规就不能归因给注入。少于 2 轮直接 rc2：N11 的跨轮漂移归因需要成对的轮次。
+    """
+    root = Path(data_root)
+    try:
+        names = sorted(entry.name for entry in root.iterdir()
+                       if (entry / 'driver' / 'methods.json').is_file())
+    except OSError as error:
+        raise CHECK.InputError(
+            f'cannot list reference rounds under {root}: {error}') from error
+    if len(names) < 2:
+        raise CHECK.InputError(
+            f'{root}: need at least 2 reference rounds for the cross-round '
+            f'preflight, found {names}')
+    return tuple(names)
+
+
 def preflight_base_rounds(data_root, oracle, names):
     """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。
 
@@ -1135,6 +1160,20 @@ def main(argv=None):
     if not args.output:
         parser.error('--output must not be empty')
     out_root = Path(args.output)
+    # 输出目录互斥（#1809 条目 4）：整轮运行（含权威失效、控件构造、逐条写
+    # `N*/driver/*`、发布 summary）都在同一把 flock 下。被占时**阻塞等待**（理由见
+    # `check_outcome_parity.output_lock`），等锁提示走 stderr，不静默跳过。
+    # 锁在**权威失效之前**拿到：否则后到者可能在先到者写 summary 的窗口里读到半成品。
+    try:
+        with CHECK.output_lock(out_root):
+            return run_locked(args, out_root)
+    except CHECK.InputError as error:
+        # 拿不到锁 / 锁路径不可用是「跑不了」（rc2），不是某个控件的判据 FAIL（rc1）。
+        print(f'negative_controls: 输出目录不可用：{error}', file=sys.stderr)
+        return 2
+
+
+def run_locked(args, out_root):
     if not invalidate_stale_summary(out_root):
         return 2
     data = Path(args.data)
@@ -1144,9 +1183,9 @@ def main(argv=None):
         # 前置：未变异的参考轮必须本来 PASS。否则「期望规则 fire」可能是既有违规，
         # 归因就不成立（例如 --data 指向的轮本就有 P4）。逐轮之外还要跑一次
         # 跨轮合并：单轮 P7 是空判，N11 的「跨轮漂移」归因必须先排除参考轮对
-        # 本身已漂移。
+        # 本身已漂移。#1809 条目 5：覆盖 `--data` 下**全部**轮次，不写死 round-01/02。
         preflight = preflight_base_rounds(data, Path(args.oracle),
-                                          ('round-01', 'round-02'))
+                                          reference_rounds(data))
         if preflight != 0:
             print('negative_controls: 未变异的参考轮已不 PASS 金样，负控无法归因；'
                   '先修数据或金样', file=sys.stderr)
