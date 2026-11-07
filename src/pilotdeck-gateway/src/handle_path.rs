@@ -299,7 +299,23 @@ mod tests {
         let file_path = scratch
             .0
             .join(std::ffi::OsStr::from_bytes(b"bad\xff\xfe.bin"));
-        match fs::write(&file_path, b"non-utf8-bytes") {
+        // #1672 fix-r1 (DS boundary P1, sibling P2 — same site, take the
+        // higher grade): the fd limit (EMFILE/ENFILE) lives in the process
+        // or the system, not in this name. Mirror the
+        // `non_utf8_names_writable` triage: exactly one bounded retry, then
+        // fail closed with its own marker instead of blaming the file name
+        // for a process-level condition.
+        let fd_limit = |error: &std::io::Error| {
+            matches!(
+                error.raw_os_error(),
+                Some(libc::EMFILE) | Some(libc::ENFILE)
+            )
+        };
+        let mut write_outcome = fs::write(&file_path, b"non-utf8-bytes");
+        if let Err(error) = &write_outcome && fd_limit(error) {
+            write_outcome = fs::write(&file_path, b"non-utf8-bytes");
+        }
+        match write_outcome {
             Ok(()) => {}
             Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
                 // The filesystem refuses the name, so no handle for it can
@@ -312,6 +328,12 @@ mod tests {
                      the bytes-to-path rejection above already ran\n",
                 );
                 return;
+            }
+            Err(error) if fd_limit(&error) => {
+                panic!(
+                    "#1990 the non-UTF-8 named scratch write hit the process fd \
+                     limit, not the file name: {error}"
+                );
             }
             Err(error) => panic!(
                 "#1990 write the non-UTF-8 named scratch file failed for a reason \

@@ -360,12 +360,19 @@ fn triage_probe_sorts_every_outcome_with_one_bounded_fd_retry() {
         matches!(triage_probe(|| Ok(())), NonUtf8Probe::Writable),
         "#2036 a succeeding probe means the scratch accepts the raw bytes: run the case, do not skip"
     );
+    // fix-r1 (DS boundary P2): the counting closures pin the tight half of
+    // the retry contract too — a non-fd error is attempted exactly once, so
+    // loosening the retry condition into "any error retries" is a red test.
+    let mut calls = 0;
     assert!(
         matches!(
-            triage_probe(|| Err(error(libc::EILSEQ))),
+            triage_probe(|| {
+                calls += 1;
+                Err(error(libc::EILSEQ))
+            }),
             NonUtf8Probe::RejectsName
-        ),
-        "#2036 EILSEQ means the filesystem rejects these bytes: skip, do not fail"
+        ) && calls == 1,
+        "#2036 EILSEQ means the filesystem rejects these bytes: skip, do not fail, with no retry"
     );
     for errno in [
         libc::EACCES,
@@ -374,9 +381,16 @@ fn triage_probe_sorts_every_outcome_with_one_bounded_fd_retry() {
         libc::EINVAL,
         libc::ENOENT,
     ] {
+        let mut calls = 0;
         assert!(
-            matches!(triage_probe(|| Err(error(errno))), NonUtf8Probe::Failed(_)),
-            "#2036 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip"
+            matches!(
+                triage_probe(|| {
+                    calls += 1;
+                    Err(error(errno))
+                }),
+                NonUtf8Probe::Failed(_)
+            ) && calls == 1,
+            "#2036 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip, and must not be retried"
         );
     }
     // #1672 (issue B): the fd limit is its own triage category, not a
