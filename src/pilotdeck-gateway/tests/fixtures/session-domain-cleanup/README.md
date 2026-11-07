@@ -1778,3 +1778,25 @@ Like rounds 24 to 31, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 33 (self-check of the 331-mutant table: three `calibrate-match-capture-*` mutants came back SURVIVED)
+
+The full table at the round-32 head reported three SURVIVED mutants in the
+`match` family, and the reason was not a missed write: the audit died.
+`ast.match_case` carries no position, and both binding walks read
+`node.lineno` off it -- `_module_binding_events` for a module-scope `match`,
+`_imported_write_aliases` for one inside a function.  The crash arrived as
+`#164-fix-r7 aggregation-audit: AttributeError: 'match_case' object has no
+attribute 'lineno'`, which is not the failure the mutants assert, so all three
+were recorded as survivors.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A module-scope `match` capture keeps its binding** (crash guard): `match operator.setitem: case h: h(...)`. | self-test message `... crashed on a match capture with no position (round 33)`; `_match_case_position` falls back to the pattern, then to the first body statement |
+| **A function-local `match` capture keeps its binding** (crash guard): the same shape inside a `def`. | self-test message `... lost a match capture (round 33)`; the function-side branch passes the same position instead of the case node |
+| **A wildcard case binds nothing** (negative): `case _:` with no body capture. | `_match_capture_names` already skips it; the position fallback reaches the body statement |
+
+Like rounds 24 to 32, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
