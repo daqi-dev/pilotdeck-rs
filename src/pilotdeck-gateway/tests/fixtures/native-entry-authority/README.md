@@ -61,12 +61,13 @@ cargo 目标为 `--test native_process`（非 `--lib`）：`env!("CARGO_BIN_EXE_
 `--check`（本脚本与 `early_exit_invalid.py`）的 marker 常量与每一根 needle 都放在同目录的
 `native_entry_binding.py`：两张表此前各存一份且已经分叉（scrub「无法判定」针一张绑整句、
 一张只绑 `if !advertised { panic!(`），#1989 项 6 合并成一处，各脚本只留自己的
-`GATE` / pin 段 / `ANCHOR` / `ROWS`。绑定按**测试函数体切段**：rejects 测试里的
+`GATE` / pin 段 / `ANCHOR` / `ROWS`；`GATE` 自己也按整条守卫绑定（条件 + panic 头 + 消息），
+短路条件或把 panic 降级成 `let _ = "…"` 都算漂移。绑定按**测试函数体切段**：rejects 测试里的
 `observe_child_stderr(stderr)` 与三条判杀断言**整条调用**（`negative_assert!(!advertised,
 "…"`、`!status.success()`、`leftover.is_empty()`），scrub 测试里的
 `Failed to parse default config YAML.`、同一条广播观察、判继承键的断言整条调用
 （`negative_assert!(!leaked_parse, "…"`）与它自己的「无法判定」分支
-（`if !advertised { panic!("…"`）。整文件 needle 分不清哪个测试在观察，两个测试都含
+（`if !advertised { panic!("…"); }` 整条守卫）。整文件 needle 分不清哪个测试在观察，两个测试都含
 `native listening` 后删掉 rejects 那处仍会通过；只绑片段也不够——三处断言复用同一句消息，
 删掉其中一条、反转条件极性、或把它改写成 `let _ = (!leaked_parse, "…");` 都仍会通过，所以
 needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_source.squeeze` 折叠**字面量
@@ -79,9 +80,13 @@ needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_so
 `collected.len() <= CHILD_STDERR_LIMIT`；`advertises` 里的换行守卫按
 `squeeze(test_body(…, 'advertises'))` 整条绑定（`if !line.ends_with(b"\n") { return false; }`），
 短路与返回动作改写都算漂移——两个变异体都只打印拒绝行或一条完整广告，看不出形状被放宽成
-前缀匹配，只有 pin 自己会红（#1401 评审 P2）。每根 needle 咬不咬得住由同目录的
-`test_native_entry_binding.py` 逐条变异证明（20 条漂移负控，外加两个脚本不许再留私有副本、
-两处 `--check` 在真树上 rc=0）；`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
+前缀匹配，只有 pin 自己会红（#1401 评审 P2）。整条调用 / 整条守卫的 needle 咬不咬得住由同目录的
+`test_native_entry_binding.py` 逐条变异证明（22 条漂移负控，含 scrub「无法判定」分支的
+极性 / 消息两条与 `early_exit_invalid.py` 自己那根拒绝闸门的短路 / 降级两条；外加真源码满足
+全部绑定、两个脚本不许再留私有副本——按 AST 收集赋值名，缩进、类型注解、同行多赋值都算——
+与两处 `--check` 在真树上 rc=0，共 26 条）。纯输入 needle（IPv6、尾部多余内容、
+`Failed to parse default config YAML.`、`!status.success()`、`leftover.is_empty()`）没有专属
+变异，只由「真源码满足全部绑定」兜底——改动它们要真跑负控才能判；`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
 字节与 C 串 / lifetime / 行与嵌套块注释，注释整段丢弃但仍分隔 token）由
 `../test_negative_source.py` 的碰撞反例覆盖（#1989 项 1–4）。切段函数由两个脚本共用
 `negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
