@@ -1,7 +1,7 @@
 use super::{Options, assembly::Recorders};
 use crate::{
     config::Env,
-    metadata::{object, text_field},
+    metadata::{object, resolve_units, text_field},
     runtime::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
@@ -92,10 +92,12 @@ struct AttachEntry {
     /// `attachment.type === "text"` (composer :224).
     text_type: bool,
     path: String,
-    /// A truthy-but-non-UTF-8 `path` (a lone surrogate), lossy-spelled for
-    /// the not-found diagnostic only (P1-d): it never reaches the lease
-    /// guard, an open, or allowedReadFiles.
-    invalid_path: Option<String>,
+    /// A truthy-but-non-UTF-8 `path` (a lone surrogate), kept as the raw
+    /// UTF-16 for the not-found diagnostic (P1-d/#1461: the outer path is
+    /// the TS `path.resolve` form of it — surrogate included — and only the
+    /// fs error spelling is lossy): it never reaches the lease guard, an
+    /// open, or allowedReadFiles.
+    invalid_path: Option<JsString>,
     /// Raw `attachment.name` ("" when absent or not UTF-8).
     name: String,
     mime: String,
@@ -460,6 +462,30 @@ fn attachment_not_found(entry: &AttachEntry, path: &str, error: &std::io::Error)
     }
 }
 
+/// #1461 (P1-d, ts-probe `_tmp/20261108-issue-1460-r2/probe/composer-probe.out`
+/// "Probe B"): the not-found diagnostic of a lone-surrogate path keeps two
+/// spellings. The outer path is the `path.resolve` form of the raw UTF-16 —
+/// Node's lexical resolve keeps an unpaired surrogate and adds the absolute
+/// prefix, so the diagnostic text carries it verbatim — and only the fs layer
+/// mangles the surrogate to U+FFFD: Node converts the string to a native path
+/// lossily before the stat, so the ENOENT message carries that spelling. The
+/// resolve runs over UTF-16 units (`resolve_units`) because a lone surrogate
+/// is not representable in a Rust `String` at all, and the route words the
+/// line (image/pdf/file) like `attachment_not_found` does.
+fn surrogate_path_not_found(entry: &AttachEntry, original: &JsString, cwd: &Path) -> JsString {
+    let resolved = resolve_units(&cwd.to_string_lossy(), original);
+    let lossy = String::from_utf16_lossy(resolved.units());
+    let prefix = match attachment_route(entry, &lossy) {
+        AttachmentRoute::Image => "Image attachment not found: ",
+        AttachmentRoute::Pdf => "PDF attachment not found: ",
+        AttachmentRoute::File => "Attachment not found: ",
+    };
+    let mut units: Vec<u16> = prefix.encode_utf16().collect();
+    units.extend_from_slice(resolved.units());
+    units.extend(format!(" (ENOENT: no such file or directory, stat '{lossy}').").encode_utf16());
+    JsString::from_utf16(units)
+}
+
 /// TS AttachmentResolver.ts:171 — the file too-large diagnostic.
 fn file_too_large(path: &str, bytes: u64, limit: u64) -> String {
     format!("Attachment {path} is {bytes} bytes (limit {limit}); skipped.")
@@ -646,12 +672,13 @@ pub(super) fn compose_attachment_turn(
         // a silent skip in TS — Node keeps it, `path.resolve` keeps it, fs
         // mangles it to U+FFFD and the stat fails ENOENT, so the resolver
         // emits its not-found diagnostic (ts-probe/probe.out
-        // "P1-d composer lone-surrogate"). The lossy spelling feeds that
-        // diagnostic only.
+        // "P1-d composer lone-surrogate"). #1461: the raw UTF-16 feeds that
+        // diagnostic — the outer path keeps the surrogate and the resolve
+        // prefix, only the fs error spelling is lossy.
         let (path, invalid_path) = match attachment.get("path") {
             Some(JsValue::String(value)) if !value.is_empty() => match value.to_utf8() {
                 Ok(path) => (path, None),
-                Err(_) => (String::new(), Some(String::from_utf16_lossy(value.units()))),
+                Err(_) => (String::new(), Some(value.clone())),
             },
             _ => (String::new(), None),
         };
@@ -728,14 +755,21 @@ pub(super) fn compose_attachment_turn(
 
     let mut direct_blocks: Vec<JsValue> = Vec::new();
     let mut inline_blocks: Vec<JsValue> = Vec::new();
-    let mut diagnostics: Vec<String> = Vec::new();
+    // #1461: the lines are `JsString`s — a lone-surrogate path keeps its
+    // unpaired surrogate in the outer diagnostic text, which a Rust `String`
+    // cannot hold at all.
+    let mut diagnostics: Vec<JsString> = Vec::new();
     let mut registered: Vec<RegisteredAttachment> = Vec::new();
 
     // TS composer :211-227 — content blocks are produced before any path
-    // handling, and the producing attachment never reaches the path branch
-    // (`continue` at :221/:226 — P1-a: the guard, open, read and diagnostics
-    // are all skipped, so a root-escaping path cannot fail or read a content
-    // turn).
+    // handling, and the producing attachment's `continue` (:221/:226 — P1-a:
+    // the guard, open, read and diagnostics of the resolver projection are
+    // all skipped, so a root-escaping path cannot fail or read a content
+    // turn) skips only that projection. #1460: the registration collection
+    // (`collectRegisteredAttachmentReadFiles`, composer :57/:173-193) is a
+    // pass of its own that runs over every attachment — a content
+    // attachment with a valid path and a channelKey is registered
+    // (allowedReadFiles + path note) exactly like a path-only one.
     let mut produced_direct = vec![false; entries.len()];
     for (index, entry) in entries.iter().enumerate() {
         if entry.image_type
@@ -757,24 +791,25 @@ pub(super) fn compose_attachment_turn(
     }
 
     for (index, entry) in entries.iter().enumerate() {
-        if produced_direct[index] {
-            continue;
-        }
+        // #1460: `content_only` marks an attachment whose block the pass
+        // above already emitted. Everything below still runs for it — the
+        // registration needs the validated path — except the resolver
+        // projection the TS `continue` skips.
+        let content_only = produced_direct[index];
         // TS composer :229 — a missing or empty path is skipped silently;
         // the content branches above already handled their blocks.
         if entry.path.is_empty() {
             // P1-d: the lone-surrogate spelling is truthy in TS, so the
             // resolver stats it and diagnoses not-found. An audio-shaped
             // spelling stays silent, matching the audio skip (:230-233)
-            // which never reaches the resolver.
-            if let Some(lossy) = &entry.invalid_path
-                && !is_audio_shape(&entry.mime, lossy)
+            // which never reaches the resolver; a content-produced one is
+            // equally silent (#1460 — the resolver projection, and its
+            // diagnostics with it, is what the content `continue` skips).
+            if let Some(original) = &entry.invalid_path
+                && !content_only
+                && !is_audio_shape(&entry.mime, &String::from_utf16_lossy(original.units()))
             {
-                let error = std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("ENOENT: no such file or directory, stat '{lossy}'"),
-                );
-                diagnostics.push(attachment_not_found(entry, lossy, &error));
+                diagnostics.push(surrogate_path_not_found(entry, original, project_dir));
             }
             continue;
         }
@@ -783,24 +818,30 @@ pub(super) fn compose_attachment_turn(
         // stat/realpath failure silently: no diagnostic, no turn failure.
         // Mirror that on every path-inspection failure below while leaving
         // the success path's open-first revalidation order unchanged.
+        // #1460: a content-produced attachment joins audio in that
+        // relationship — its block is already emitted (:221/:226), and the
+        // collection pass swallows its own stat errors — so neither enters
+        // the resolver projection and both keep every failure below silent.
         let audio = is_audio_attachment(entry);
+        let no_resolver = audio || content_only;
         let resolved = match lease_guard(&entry.path, &lease_lexical_roots, lease_canon.as_deref())
         {
             Ok(LeaseGuard::Resolved(resolved)) => resolved,
             Ok(LeaseGuard::Unresolved(error)) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
                 // A lease TTL cleanup race becomes a TS-shaped not-found
                 // diagnostic, not a whole-turn failure.
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
             Err(rejected) => {
                 // #1464: the only remaining rejection is the P2 internal
                 // error (a non-NotFound canonicalize failure of the path
-                // itself under a valid root) — audio stays silent.
-                if audio {
+                // itself under a valid root) — audio and a content-produced
+                // attachment stay silent.
+                if no_resolver {
                     continue;
                 }
                 return Err(rejected);
@@ -885,22 +926,22 @@ pub(super) fn compose_attachment_turn(
         swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeApprovedStat, &resolved);
         let approved_stat = match fs::symlink_metadata(&resolved) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
                 let error = std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     "attachment lease path became a symlink after validation",
                 );
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
             Ok(metadata) => metadata,
             Err(error) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
         };
@@ -909,10 +950,10 @@ pub(super) fn compose_attachment_turn(
         let mut file = match File::open(&resolved) {
             Ok(file) => file,
             Err(error) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
         };
@@ -926,14 +967,14 @@ pub(super) fn compose_attachment_turn(
                 // no valid root left, P0-a). No read, no registration —
                 // the TS-shaped not-found diagnostic.
                 _ => {
-                    if audio {
+                    if no_resolver {
                         continue;
                     }
                     let error = std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         "attachment resolved outside the lease root after open",
                     );
-                    diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                    diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                     continue;
                 }
             },
@@ -942,10 +983,10 @@ pub(super) fn compose_attachment_turn(
             // not-found diagnostic, never a whole-turn failure (#1459 owns
             // the hard-failure shapes).
             Err(error) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
         };
@@ -954,32 +995,32 @@ pub(super) fn compose_attachment_turn(
         let path_stat = match fs::metadata(&resolved) {
             Ok(metadata) => metadata,
             Err(error) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
         };
         let metadata = match file.metadata() {
             Ok(metadata) => metadata,
             Err(error) => {
-                if audio {
+                if no_resolver {
                     continue;
                 }
-                diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+                diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
         };
         if !attachment_identity_matches(&path_stat, &metadata) {
-            if audio {
+            if no_resolver {
                 continue;
             }
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "attachment resolved to a different file between revalidation and read",
             );
-            diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+            diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
             continue;
         }
         // #1468 step 4: bind the approval to the opened handle. This is the
@@ -1000,14 +1041,14 @@ pub(super) fn compose_attachment_turn(
             None => false,
         };
         if !handle_bound {
-            if audio {
+            if no_resolver {
                 continue;
             }
             let error = std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "attachment handle is not the lease object approved before the open",
             );
-            diagnostics.push(attachment_not_found(entry, &entry.path, &error));
+            diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
             continue;
         }
         // P1-f (gate boundary#1) — composer :181: only attachments with a
@@ -1021,8 +1062,10 @@ pub(super) fn compose_attachment_turn(
             });
         }
         // TS composer :230-233 — audio stays a registered path reference for
-        // the FunASR MCP consumer; it is never read here.
-        if audio {
+        // the FunASR MCP consumer and is never read here; a content-produced
+        // attachment (#1460) already emitted its block in the pass above and
+        // equally never reaches the resolver projection.
+        if no_resolver {
             continue;
         }
         match route {
@@ -1056,7 +1099,7 @@ pub(super) fn compose_attachment_turn(
                 // (:259-263) keeps it only for an unregistered (uploaded,
                 // channelKey-less) pdf — a registered pdf's info is dropped.
                 if diagnostic_enters(DiagnosticSeverity::Info, entry.channel_key) {
-                    diagnostics.push(pdf_size_estimate(metadata.len(), estimated_pages));
+                    diagnostics.push(pdf_size_estimate(metadata.len(), estimated_pages).into());
                 }
             }
             routed => {
@@ -1078,7 +1121,7 @@ pub(super) fn compose_attachment_turn(
                         DiagnosticSeverity::Warning
                     };
                     if diagnostic_enters(severity, entry.channel_key) {
-                        diagnostics.push(unsupported_file_message(&entry.path, &ext));
+                        diagnostics.push(unsupported_file_message(&entry.path, &ext).into());
                     }
                     continue;
                 }
@@ -1092,11 +1135,14 @@ pub(super) fn compose_attachment_turn(
                 // below stays as the defensive backstop for a file that grew
                 // between the fstat and the read.
                 if metadata.len() > limit {
-                    diagnostics.push(if image {
-                        image_too_large(&entry.path, metadata.len(), limit)
-                    } else {
-                        file_too_large(&entry.path, metadata.len(), limit)
-                    });
+                    diagnostics.push(
+                        (if image {
+                            image_too_large(&entry.path, metadata.len(), limit)
+                        } else {
+                            file_too_large(&entry.path, metadata.len(), limit)
+                        })
+                        .into(),
+                    );
                     continue;
                 }
                 let bytes = match read_bounded(&mut file, limit) {
@@ -1127,11 +1173,14 @@ pub(super) fn compose_attachment_turn(
                 // message.
                 if bytes.len() as u64 == limit + 1 {
                     let oversize = metadata.len().max(bytes.len() as u64);
-                    diagnostics.push(if image {
-                        image_too_large(&entry.path, oversize, limit)
-                    } else {
-                        file_too_large(&entry.path, oversize, limit)
-                    });
+                    diagnostics.push(
+                        (if image {
+                            image_too_large(&entry.path, oversize, limit)
+                        } else {
+                            file_too_large(&entry.path, oversize, limit)
+                        })
+                        .into(),
+                    );
                     continue;
                 }
                 if image {
@@ -1142,10 +1191,14 @@ pub(super) fn compose_attachment_turn(
                             Some(bytes.len() as f64),
                         )),
                         // AttachmentResolver.ts:216-227
-                        None => diagnostics.push(format!(
-                            "Cannot determine image mime type from {}; provide mimeType explicitly.",
-                            entry.path
-                        )),
+                        None => diagnostics.push(
+                            format!(
+                                "Cannot determine image mime type from {}; provide mimeType \
+                                 explicitly.",
+                                entry.path
+                            )
+                            .into(),
+                        ),
                     }
                 } else {
                     // TS AttachmentResolver.ts:176-182 — readText into the
@@ -1224,18 +1277,20 @@ pub(super) fn compose_attachment_turn(
     blocks.extend(direct_blocks);
     blocks.extend(inline_blocks);
     if !diagnostics.is_empty() {
-        // TS composer :270-274
-        let note = format!(
-            "[Attachment diagnostics]\n{}",
-            diagnostics
-                .iter()
-                .map(|line| format!("- {line}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
+        // TS composer :270-274 — assembled over raw UTF-16 (#1461): a line
+        // keeps a lone surrogate the way the JS string carries it, not as a
+        // replacement character.
+        let mut units: Vec<u16> = "[Attachment diagnostics]\n".encode_utf16().collect();
+        for (index, line) in diagnostics.iter().enumerate() {
+            if index > 0 {
+                units.push(u16::from(b'\n'));
+            }
+            units.extend("- ".encode_utf16());
+            units.extend_from_slice(line.units());
+        }
         blocks.push(object([
             ("type", "text".into()),
-            ("text", JsValue::from(note.as_str())),
+            ("text", JsValue::String(JsString::from_utf16(units))),
         ]));
     }
     if !note_lines.is_empty() {
