@@ -867,9 +867,17 @@ impl CronRuntime {
     /// `now` check and `createdAt`/`nextRunAt` must be the *same* instant:
     /// reading the clock twice lets a millisecond tick in between turn a valid
     /// run-now into the TS-faithful "One-time Cron tasks must be scheduled in
-    /// the future." rejection. TS has the identical window (`new Date()` in
-    /// `runTaskNow`, `Date.now()` in `createTask`), so this removes a
-    /// sub-millisecond race without changing any observable answer.
+    /// the future." rejection. That intermittent rejection is the bug being
+    /// removed, not a behaviour worth keeping: the baseline's own golden cell
+    /// `run-now-shape` (`tests/fixtures/native-cron/oracle.json`, recorded
+    /// from real TS at cc7c4e6) pins `{"started":true,…}` for this exact
+    /// input, so a second read could only make the baseline contradict its own
+    /// recorded behaviour — bug criterion ② in `.42cog/intent.md` §不做什么
+    /// (2026-10-14 人定「默认修」), which is why the approval for this seam is
+    /// recorded as an accepted difference rather than left implicit. Only a
+    /// clock that ticks between the two reads can observe the change; the
+    /// production clock is a single source (`store::now_millis`, whole
+    /// milliseconds), so no real request lands in that window.
     fn create_task_at(&self, input: &JsValue, now_ms: f64) -> Result<JsValue, CronError> {
         if !self.config.enabled {
             return Err(CronError::error(JsString::from(
