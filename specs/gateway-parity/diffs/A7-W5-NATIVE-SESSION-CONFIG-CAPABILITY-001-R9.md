@@ -54,17 +54,17 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 门序组合（空白 `sessionKey` + `projectKey:"/nonexistent/pdrs-2090"`）：`delete/rename/tag` 三个方法均 `gateway_request_failed` / `The isolated native process serves only its configured project.`——准入先于方法派发，故也先于 `require_session_key`。
 
-`projectKey: null` 实测（`_tmp/20261107-issue-2090/rust-probe/null-probe.out`）：五个方法 ×（空白键 / 合法键）六种组合**全部** `gateway_request_failed` / `The isolated native process serves only its configured project.`，合法键也不例外——准入只放过 `undefined`（`requests.rs:305-314` 的 `.filter(|v| !v.is_undefined())`），`null` 落到「不是本进程服务的项目」那一支。
+`projectKey: null` 实测（`_tmp/20261107-issue-2090/rust-probe/null-probe.out`）：五个方法 ×（空白键 / 合法键）**十种**组合**全部** `gateway_request_failed` / `The isolated native process serves only its configured project.`，合法键也不例外——准入只放过 `undefined`（`requests.rs:305-314` 的 `.filter(|v| !v.is_undefined())`），`null` 落到「不是本进程服务的项目」那一支。
 
-同一进程内对 `null` 的两种解释并存，这是本条登记的事实基础：准入（`requests.rs:305-314`）把 `null` 当显式项目并拒绝；`fill_default_project_key`（`native_archive.rs:44-55`，先把 nullish 换成配置项目）与 `resolve_project` 的 `unwrap_or_else`（`session_dir.rs:53`）都把 `null` 当「没给」用回退值。也就是说，若绕过准入，`projectKey: null` 在本族里会照常走回退项目并只被 `sessionKey` 门拦住；实际客户端看到的是准入错误。修它是对齐行为（改准入语义，影响所有方法），不在本 PR 范围。
+同一进程内对 `null` 的两种解释并存，这是本条登记的事实基础：准入（`requests.rs:305-314`）把 `null` 当显式项目并拒绝；`fill_default_project_key`（`native_archive.rs:44-56`，先把 nullish 换成配置项目）与 `resolve_project` 的 `unwrap_or_else`（`session_dir.rs:53`）都把 `null` 当「没给」用回退值。这个「两种口径」不是读码推断：把准入关掉（同一变异 `filter(|v| !v.is_undefined())` → `filter(|_| false)`）后重跑同一组请求，`_tmp/20261107-issue-2090/rust-negctl/null-fallback-under-mutated-admission.out` 记录到五方法 ×（空白键 / 合法键）变成——空白键全部 `INVALID_SESSION_KEY` / `sessionKey is required.`（回退到配置项目后由各自方法的 `require_session_key` 拦住，含不解析项目的 `resume` / `close`）；合法键 `resume` 回显 `{"sessionKey":"pdrs-2090-control"}`、`close` 返回 `undefined`、`delete` 答 `SESSION_NOT_FOUND`、`rename` / `tag` 答 `{"updated":true}`（`delete/rename/tag` 走到回退项目的会话查找，与场景 A 的 TS 结果同形；`resume` 亦同形；`close` 只剩前面记过的 `undefined` → `{"ok":true}` 包装差别，与准入无关）。即：null 这一格的分歧**完全**来自准入层，本族其余部分对 null 的处理与 TS 同向；修它是对齐行为（改准入语义，影响所有方法），不在本 PR 范围。
 
 与 TS 的差异收敛为五条：
 
 1. `resume_session` / `close_session`：TS 三种输入全部成功（resume 回显入参，close `{"ok":true}`），Rust 三种输入全部拒绝（缺键 / 空白 → `INVALID_SESSION_KEY`；非字符串 → `gateway_request_failed` + 可选链报文）。**这两个方法上三种输入的行为全部不同**。
 2. 项目可解析时的 `delete/rename/tag`：缺键 / 空白两侧同为 `INVALID_SESSION_KEY` / `sessionKey is required.`；非字符串两侧同为 `gateway_request_failed` / `input.sessionKey?.trim is not a function`。
-3. 显式 `projectKey` 不受本进程服务时：两侧都在 `sessionKey` 门之前拒绝，但码与报文不同——TS `PROJECT_NOT_FOUND` / `Unknown projectKey: …`，Rust 准入 `gateway_request_failed` / `The isolated native process serves only its configured project.`。这一条是全体方法共有的隔离准入形状，不是 `session_dir` 族特有；本条只登记它对本族首错顺序的影响，不重复登记准入本身。
-4. 未给 `projectKey` 且回退项目解析不了时（场景 B）：TS 在 provider 层先抛 `PROJECT_NOT_FOUND`；Rust 的回退是**本进程的配置项目**（`resolve_project` 的 `unwrap_or_else`，`session_dir.rs:53`），恒被 `serves_project` 接受，所以同一输入在 `delete/rename/tag` 上先撞 `require_session_key`，答 `INVALID_SESSION_KEY`。这一格两侧连**首错位置**都不同（TS 项目门在前，Rust sessionKey 门在前）。
-5. `projectKey: null`：TS 当 nullish（回退到 `fallbackProjectRoot`），于是场景 A 答 `INVALID_SESSION_KEY`、场景 B 答 `PROJECT_NOT_FOUND`，`resume/close` 照常成功；Rust 准先把 null 当显式项目拒绝，**五个方法、连合法键都答** `gateway_request_failed` / 隔离项目报文。这一格在 R7 里只有 TS 侧描述，Rust 侧当时按守卫级推断成「恒 `INVALID_SESSION_KEY`」（见「类别」第 4 条）。
+3. 显式 `projectKey` 不受本进程服务时——**这一条只在会解析项目的那三个方法（`delete/rename/tag`）上成立**：两侧都在 `sessionKey` 门之前拒绝，但码与报文不同——TS 对**未注册**的路径答 `PROJECT_NOT_FOUND` / `Unknown projectKey: …`，Rust 准入答 `gateway_request_failed` / `The isolated native process serves only its configured project.`。两点限定：① `resume_session` / `close_session` 在 TS 侧根本不读 `projectKey`（`InProcessGateway.ts:2026-2028` / `:2049-2054`），同一输入在 TS 上照常成功，因此这两格只有 Rust 侧的准入拒绝可记，没有「两侧都拒绝」可比较；② 两侧对「受服务」的定义不同（Rust：必须等于本进程配置项目；TS：注册表能解析），探测用的路径是特意选的「TS 侧未注册」路径，不能反过来推断「Rust 拒的项目在 TS 一定未注册」。这一条是全体方法共有的隔离准入形状，不是 `session_dir` 族特有；本条只登记它对本族首错顺序的影响，不重复登记准入本身。
+4. 未给 `projectKey` 且回退项目解析不了时（场景 B）：TS 在 provider 层先抛 `PROJECT_NOT_FOUND`；Rust 的回退是**本进程的配置项目**（`resolve_project` 的 `unwrap_or_else`，`session_dir.rs:53`），恒被 `serves_project` 接受，所以同一输入在 `delete/rename/tag` 上先撞 `require_session_key`——**按输入分两种答案**：缺键 / 空白键 → `INVALID_SESSION_KEY` / `sessionKey is required.`；非字符串（`42`）→ `gateway_request_failed` / `input.sessionKey?.trim is not a function`（与场景 A 相同，`probe.out` 有记录）。TS 对这三种输入在场景 B 全是 `PROJECT_NOT_FOUND`，所以这一格两侧连**首错位置**都不同（TS 项目门在前，Rust sessionKey 门在前）。
+5. `projectKey: null`：TS 当 nullish（回退到 `fallbackProjectRoot`），空白键于是由 provider 的 `sessionKey` 门答——场景 A `INVALID_SESSION_KEY`、场景 B `PROJECT_NOT_FOUND`；合法键则按方法各自的结果（`delete` 场景 A `SESSION_NOT_FOUND` / 场景 B `PROJECT_NOT_FOUND`，`rename`/`tag` 场景 A `{"updated":true}` / 场景 B `PROJECT_NOT_FOUND`），`resume`/`close` 两场景都成功且不看 `projectKey`。Rust 准先把 null 当显式项目拒绝，**五个方法、连合法键都答** `gateway_request_failed` / 隔离项目报文。这一格在 R7 里只有 TS 侧描述，Rust 侧当时按守卫级推断成「恒 `INVALID_SESSION_KEY`」（见「类别」第 4 条）。
 
 ## 范围
 
@@ -72,7 +72,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
 - TS 真实链路，场景 A（`pilotHome == projectRoot`，回退项目可解析）：五个方法 × 三种输入；外加五个方法 × `projectKey: null` ×（空白键 / 合法键）。
 - TS 真实链路，场景 B（`pilotHome != projectRoot`，回退项目未注册）：`delete/rename/tag` × 三种输入，「空白 `sessionKey` + 显式 `projectKey:"/nonexistent/pdrs-2090"`」，以及 `delete/rename/tag` × `projectKey: null` ×（空白键 / 合法键）。`resume_session` / `close_session` 不解析项目（`InProcessGateway.ts:2026-2028` / `:2049-2054`），启动形状对它们不适用，场景 B 下只实测了 `projectKey: null` 两格并确认与场景 A 同结果。
-- Rust 请求级：一个隔离进程 fixture（配置项目可服务）× 五个方法 × 三种输入；外加 `delete/rename/tag` 的门序组合（显式不可解析 `projectKey` + 空白键、同项目 + 合法键对照），以及五个方法 × `projectKey: null` ×（空白键 / 合法键）。Rust 侧没有「回退项目解析不了」这一形状可测——它的回退恒为配置项目（差异第 4 条）。
+- Rust 请求级（`rust-probe/probe.out`）：一个隔离进程 fixture（配置项目可服务）× 五个方法 × 三种输入；外加 `delete/rename/tag` 的「空白键 + 显式不可解析 `projectKey`」三格。`projectKey: null` 的十格见 `rust-probe/null-probe.out`。**「同项目 + 合法键」这一格不在 `probe.out` 里**——它由入库用例钉住（`gate-order-tests.out` 的绿跑与 `mutant-run-r2.out` 的红跑都是这份用例的证据）；「准入关掉后 null 走回退」的十格见 `rust-negctl/null-fallback-under-mutated-admission.out`。Rust 侧没有「回退项目解析不了」这一形状可测——它的回退恒为配置项目（差异第 4 条）。
 - 「非 nullish 非字符串」以一个代表值（数字 `42`）覆盖，不是全类型枚举。
 - 入库用例（`session_dir.rs`）钉五步：缺键 / 空白（无 `projectKey`）→ `INVALID_SESSION_KEY`；显式不受服务 `projectKey` + 空白键、同项目 + 合法键、`projectKey: null` + 空白键 → 同一条准入错误。
 
@@ -109,7 +109,7 @@ test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 5070 filtered out
 
 新增请求级用例（`session_dir.rs`）：`resume_session_blank_key_gate_order`（`:941`）、`close_session_blank_key_gate_order`（`:946`）、`delete_session_blank_key_gate_order`（`:951`）、`rename_session_blank_key_gate_order`（`:956`）、`tag_session_blank_key_gate_order`（`:961`），共用 `blank_key_gate_order`（`:866`）与两条报文常量（`:862-864`）。每条钉两步：无 `projectKey` 时缺键 / 空白键 → `INVALID_SESSION_KEY` / `sessionKey is required.`；显式不可解析 `projectKey` + 空白键、同项目 + 合法键、`projectKey: null` + 空白键 → **同一条**准入错误（后两格是对照：证明这一步由准入决定而非 `sessionKey`，同时把 null 格的现状钉住）。
 
-判别力负控（`_tmp/20261107-issue-2090/rust-negctl/`，命令见其 `commands.txt`）：在 cb8 副本上把准入改成永不拒绝（`filter(|v| !v.is_undefined())` → `filter(|_| false)`，变异体 sha256 `0136be7d…`），`mutant-run-r2.out` 为 `12 passed; 5 failed`，五条用例全红且都是 `left: "INVALID_SESSION_KEY" right: "gateway_request_failed"`；还原后 `requests.rs` sha256 回到 `cdfa0b99…`，`restore-r2.out` 为 `17 passed`。还原后必须先 `touch` 源文件再跑：`rsync -a` 保留源 mtime，cargo 会认为制品仍是新的（第一次还原跑出 `Finished in 0.08s`，仍是变异体二进制，5 红）。
+判别力负控（`_tmp/20261107-issue-2090/rust-negctl/`，命令见其 `commands.txt`）：在 cb8 副本上把准入改成永不拒绝（`filter(|v| !v.is_undefined())` → `filter(|_| false)`，变异体 sha256 `0136be7d…`），`mutant-run-r2.out` 为 `12 passed; 5 failed`，五条用例全红且都是 `left: "INVALID_SESSION_KEY" right: "gateway_request_failed"`。**这份负控的证明范围要写清**：用例是顺序断言的，准入一关就停在第一步（「空白键 + 不受服务项目」），所以它直接证明的是第一步有判别力；第二、三步（合法键对照、null 格）没有被这一步单独证明——null 格的定向证据是 `null-fallback-under-mutated-admission.out`（同一变异下 null 的答案从准入错误变成 `INVALID_SESSION_KEY` / 方法各自的成功值），合法键对照则只有读码支持（准入关掉后它会走 `resolve_project`，不再是准入错误）。还原后 `requests.rs` sha256 回到 `cdfa0b99…`，`restore-r2.out` 为 `17 passed`。还原后必须先 `touch` 源文件再跑：`rsync -a` 保留源 mtime，cargo 会认为制品仍是新的（第一次还原跑出 `Finished in 0.08s`，仍是变异体二进制，5 红）。
 
 ```
 $ python3 -I scripts/gateway-parity/check_frozen.py --base origin/main
