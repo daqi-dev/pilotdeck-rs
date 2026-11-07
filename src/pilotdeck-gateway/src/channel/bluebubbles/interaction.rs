@@ -77,7 +77,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.elicitation
             .lock()
-            .expect("#1343 elicitation mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .has_pending(&id)
     }
 
@@ -88,7 +88,7 @@ impl InteractionPort for HelperInteraction {
         let text = self
             .elicitation
             .lock()
-            .expect("#1343 elicitation mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .capture(&id, &session_key, event);
         String::from_utf16_lossy(text.units())
     }
@@ -105,7 +105,10 @@ impl InteractionPort for HelperInteraction {
         Box::pin(async move {
             let id = Self::js_id(chat_id);
             let entry = {
-                let mut elicitation = self.elicitation.lock().expect("#1343 elicitation mutex");
+                let mut elicitation = self
+                    .elicitation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 elicitation.take(&id)
             };
             let Some(entry) = entry else {
@@ -129,7 +132,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.elicitation
             .lock()
-            .expect("#1343 elicitation mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear(&id);
     }
 
@@ -137,7 +140,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .has_pending(&id)
     }
 
@@ -151,7 +154,7 @@ impl InteractionPort for HelperInteraction {
         let session_key = JsString::from(session_key);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .capture(&id, &session_key, event)
             .map(|text| String::from_utf16_lossy(text.units()))
     }
@@ -161,7 +164,7 @@ impl InteractionPort for HelperInteraction {
         let expected = request_id.map(JsString::from);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .confirm_initial_prompt(&id, delivered, expected.as_ref());
     }
 
@@ -178,7 +181,10 @@ impl InteractionPort for HelperInteraction {
             let id = Self::js_id(chat_id);
             let text = JsString::from(text);
             let began = {
-                let mut permissions = self.permissions.lock().expect("#1343 permissions mutex");
+                let mut permissions = self
+                    .permissions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 permissions.begin_answer(&id, &text)
             };
             match began {
@@ -216,7 +222,7 @@ impl InteractionPort for HelperInteraction {
                         Err(error) => {
                             self.permissions
                                 .lock()
-                                .expect("#1343 permissions mutex")
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .fail_answer(&id, generation, entry, shifted_rest);
                             guard.settle();
                             Err(error)
@@ -225,7 +231,7 @@ impl InteractionPort for HelperInteraction {
                             let answer = self
                                 .permissions
                                 .lock()
-                                .expect("#1343 permissions mutex")
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .finish_answer(
                                     &id,
                                     answer_token,
@@ -251,7 +257,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .release_answer(&id, answer_token.map(|token| token as u32));
     }
 
@@ -263,7 +269,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take_next_prompt(&id, answer_token.map(|token| token as u32))
             .map(|text| String::from_utf16_lossy(text.units()))
     }
@@ -276,7 +282,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get_prompt_request_id(&id, answer_token.map(|token| token as u32))
             .map(|text| String::from_utf16_lossy(text.units()))
     }
@@ -292,7 +298,7 @@ impl InteractionPort for HelperInteraction {
         let expected = request_id.map(JsString::from);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .confirm_next_prompt(
                 &id,
                 delivered,
@@ -305,7 +311,7 @@ impl InteractionPort for HelperInteraction {
         let id = Self::js_id(chat_id);
         self.permissions
             .lock()
-            .expect("#1343 permissions mutex")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear_after_turn(&id);
     }
 }
