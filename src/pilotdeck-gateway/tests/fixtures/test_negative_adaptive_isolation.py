@@ -31,19 +31,29 @@ sys.path.insert(0, str(HERE))
 #
 # The compile is removed from the child's path instead of budgeted for: the
 # test warms the scanner through the same HEAD guard first (see the warm-up in
-# test_term_and_kill...), so the budget only has to cover the warm path. 600 s
-# is ~40x that measured 6.7-6.8 s under a load-17 host (CI is ~2x slower), and
-# stays below the 900 s tree_lock() wait that another runner in the same tree
-# may be spending: a probe that never publishes can hold the shared tree lock
-# but cannot make a sibling's lock wait expire.
-HOLD_READY_SECONDS = 600
+# test_term_and_kill...). What is left between spawn and `ready` is then
+# bounded by the waits the child is *allowed* to spend:
+#   * mutating_sources(root, [], baseline=...) waits for the shared tree lock
+#     with lock_timeout=900 (negative_process.py:872) -- a sibling runner that
+#     took the lock between our warm-up and the spawn can legally hold it for
+#     that long, so the budget must cover it or contention turns into a false
+#     FAIL;
+#   * everything after the lock is the warm path measured at 6.7-6.8 s under a
+#     load-17 host (git re-reads + copies, no compile); 300 s is ~44x that and
+#     ~2x again for a slower CI runner.
+# 900 + 300 = 1200 s. The bound stays finite, and a child that exits on its own
+# is reported immediately rather than at the deadline.
+HOLD_READY_SECONDS = 1200
 # The "--hold-lock" child never builds: it imports negative_process and takes
 # the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
 # is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
-# Reading a child's pipes after a signal is bounded: a child that neither exits
-# nor publishes `ready` is caught at the deadline above instead.
-PIPE_CLOSE_SECONDS = 30
+# Reading a child's pipes after a signal is bounded, and deliberately at the
+# same value as negative_process.KILL_TIMEOUT (:31) that negative_process
+# ._collect() uses for the identical step: the child hands cargo its own PIPE
+# in a fresh session (negative_process.py:166-168), so this bound only ever
+# waits for a descendant that called setsid() (#528).
+PIPE_CLOSE_SECONDS = 10
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
 
@@ -57,7 +67,7 @@ def _as_text(child, value):
     return value
 
 
-def read_child_output(child, seconds=PIPE_CLOSE_SECONDS):
+def read_child_output(child):
     """Read a child's piped output once, bounded like negative_process._collect().
 
     The child does not leak these pipes to cargo: negative_process.run_owned()
@@ -80,10 +90,10 @@ def read_child_output(child, seconds=PIPE_CLOSE_SECONDS):
     if cached is not None:
         return cached
     try:
-        cached = child.communicate(timeout=seconds)
+        cached = child.communicate(timeout=PIPE_CLOSE_SECONDS)
     except subprocess.TimeoutExpired as error:
         try:
-            child.wait(timeout=seconds)
+            child.wait(timeout=PIPE_CLOSE_SECONDS)
         except subprocess.TimeoutExpired:
             pass
         for stream in (child.stdout, child.stderr):
@@ -94,22 +104,31 @@ def read_child_output(child, seconds=PIPE_CLOSE_SECONDS):
     return cached
 
 
-def reap_child(child, seconds=PIPE_CLOSE_SECONDS):
+def reap_child(child):
     """Kill the probe's process group if it is alive, then always reap it.
 
-    The lead is waited for explicitly: read_child_output() answers from its
-    cache on a second call, so without this a leader killed in a finally block
-    would stay a zombie until the interpreter exits.
+    killpg mirrors negative_process._kill_group (:80-92): macOS can report
+    EPERM for a group whose leader has exited but has not been reaped yet, so a
+    PermissionError means "reap once, then retry" -- never "give up and leave a
+    zombie". The lead is waited for explicitly because read_child_output()
+    answers from its cache on a second call.
     """
     if child.poll() is None:
-        try:
-            os.killpg(child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        for _ in range(2):
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+                break
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                try:
+                    child.wait(timeout=PIPE_CLOSE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
     read_child_output(child)
     if child.poll() is None:
         try:
-            child.wait(timeout=seconds)
+            child.wait(timeout=PIPE_CLOSE_SECONDS)
         except subprocess.TimeoutExpired:
             pass
 
@@ -120,13 +139,18 @@ def wait_for_ready(child, ready, seconds):
     Stops as soon as the child exits (a crash must never wait for the whole
     budget) and otherwise at the bounded deadline.
     """
-    deadline = time.monotonic() + seconds
+    started = time.monotonic()
+    deadline = started + seconds
     while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
         time.sleep(.05)
-    diagnostic = f'rc={child.poll()}'
-    if not ready.exists() and child.poll() is not None:
+    if ready.exists():
+        return ''
+    diagnostic = f'rc={child.poll()} after {time.monotonic() - started:.1f}s'
+    if child.poll() is not None:
         stdout, stderr = read_child_output(child)
         diagnostic += f' stdout={stdout[-2000:]!r} stderr={stderr[-2000:]!r}'
+    else:
+        diagnostic += ' (child alive: still inside verified_inputs(), most likely queued on the shared tree lock)'
     return diagnostic
 
 
