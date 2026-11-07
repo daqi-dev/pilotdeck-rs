@@ -272,12 +272,47 @@ fn non_utf8_project_path_is_refused() {
     );
 }
 
-/// #2036: the probe twin of `tests/workspace_snapshot.rs` and
-/// `runtime::cron::tests`. Only `EILSEQ` — what APFS/HFS+ returns for these
-/// bytes, measured on darwin 25.6 for `open(O_CREAT)`/`mkdir`/`create_dir_all`
-/// alike (os error 92) — means "this filesystem can never host the case, skip".
-/// Any other error is our scratch's fault and panics rather than silently
-/// dropping the only coverage of the raw `--home` / `--sidecar` rejection.
+/// #2036: the triage contract behind the probe, in one place. Only `EILSEQ` —
+/// what APFS/HFS+ return for these bytes, measured on darwin 25.6 for
+/// `open(O_CREAT)`/`mkdir`/`create_dir_all` alike (os error 92) — means "this
+/// filesystem can never host the case". Everything else is our scratch's own
+/// failure and must fail closed: folding another errno into the skip would
+/// silently delete the only coverage of the raw `--home` / `--sidecar`
+/// rejection on the one platform that can run it.
+#[cfg(unix)]
+fn probe_failure_is_a_rejected_name(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EILSEQ)
+}
+
+/// The executable half of that contract. Runs on every host: the errors are
+/// synthetic, so it does not need a filesystem that can refuse a raw name.
+#[cfg(unix)]
+#[test]
+fn only_eilseq_makes_the_non_utf8_probe_skippable() {
+    let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
+    assert!(
+        probe_failure_is_a_rejected_name(&error(libc::EILSEQ)),
+        "#2036 EILSEQ means the filesystem rejects these bytes: skip, do not fail"
+    );
+    for errno in [
+        libc::EACCES,
+        libc::ENOSPC,
+        libc::EROFS,
+        libc::EMFILE,
+        libc::EINVAL,
+        libc::ENOENT,
+    ] {
+        assert!(
+            !probe_failure_is_a_rejected_name(&error(errno)),
+            "#2036 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip"
+        );
+    }
+}
+
+/// The probe performs the file-write shape; the `--home` case below additionally
+/// needs `create_dir_all`. Both shapes were measured to return the same `EILSEQ`
+/// on APFS and to succeed on ext4, and any other outcome panics rather than
+/// skipping, so the difference cannot soften the guard.
 #[cfg(unix)]
 fn non_utf8_names_writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStringExt;
@@ -286,7 +321,7 @@ fn non_utf8_names_writable(dir: &Path) -> bool {
     let _ = std::fs::remove_file(&probe);
     match outcome {
         Ok(()) => true,
-        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,
+        Err(error) if probe_failure_is_a_rejected_name(&error) => false,
         Err(error) => panic!(
             "#2036 probing {} failed for a reason other than the file name: {error}",
             probe.display()
@@ -306,6 +341,15 @@ fn non_utf8_home_and_sidecar_are_refused() {
     use std::os::unix::ffi::OsStringExt;
     let scratch = Scratch::new();
     if !non_utf8_names_writable(&scratch.0) {
+        // #2036: the skip is printed, never silent — on APFS a run of this
+        // test has to be distinguishable from one that actually covered the
+        // rejection. Written through the shared writer, not `eprintln!`
+        // (libtest captures the macro for a passing test), and registered in
+        // `.config/nextest.toml` so CI replays the line (#1525).
+        crate::test_skip_line::stderr_skip_line(
+            "non_utf8_home_and_sidecar_are_refused: skipped, \
+             filesystem rejects non-UTF-8 file names\n",
+        );
         return;
     }
     // Control: the same arguments with UTF-8 spellings parse, so the rejection
