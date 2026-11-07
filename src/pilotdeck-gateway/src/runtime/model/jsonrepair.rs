@@ -1,4 +1,5 @@
 //! Original UTF-16 jsonrepair implementation shared with independent providers.
+#[cfg(test)]
 pub(crate) use pilotdeck_model_anthropic::jsonrepair::*;
 
 #[cfg(test)]

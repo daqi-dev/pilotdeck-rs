@@ -1,5 +1,6 @@
 //! Extracted original PilotDeck Anthropic request/stream protocol. No gateway, Kernel, credentials or network authority.
 pub mod anthropic;
+pub mod errors;
 pub mod blocks;
 pub mod headers;
 pub mod jsonrepair;
