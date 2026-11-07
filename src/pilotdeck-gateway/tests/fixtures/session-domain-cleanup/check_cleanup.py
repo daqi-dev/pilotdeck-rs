@@ -6371,7 +6371,7 @@ def _event_position(event):
 
 
 def _binding_event_at(events, position, loops=(), anywhere=False,
-                      positions=(), call_only=False):
+                      positions=(), call_only=False, dead_ranges=()):
     """The binding event *events* put in force, or ``None`` (round 14).
 
     Events are ``(line, col, helper, conditional, loops, certain)``.  A use
@@ -6397,7 +6397,19 @@ def _binding_event_at(events, position, loops=(), anywhere=False,
     later ``import builtins as bi`` used to read the *later* import even when
     every call ran before it (false FAIL); the write-helper table keeps the
     round-14 fallback because missing a write is the worse error there.
+
+    #1953 fix-r1 round 26 (codex r25 P1-3): *dead_ranges* holds the line spans
+    of ``if False:`` bodies.  A binding there never runs and must not decide
+    what a use outside that block reads; a use inside the same block keeps it,
+    so the injected negative-control mutants stay detected.
     """
+    if dead_ranges:
+        _all_events = events
+        events = [item for item in events
+                  if not _dead_shadowed(_event_position(item), position,
+                                        dead_ranges)]
+    else:
+        _all_events = events
     if anywhere and positions:
         writes = []
         for entry in positions:
@@ -6406,7 +6418,8 @@ def _binding_event_at(events, position, loops=(), anywhere=False,
                 _call, _call_loops = entry
             else:
                 _call, _call_loops = entry, ()
-            item = _binding_event_at(events, _call, _call_loops)
+            item = _binding_event_at(_all_events, _call, _call_loops,
+                                     dead_ranges=dead_ranges)
             if item is not None and item[2] is not None:
                 writes.append(item)
         if writes:
@@ -6471,8 +6484,12 @@ class _ModuleEvents(dict):
         self.value_uses = None
         # #1953 fix-r1 round 25 (codex r24 P0-2): the module can reach a
         # function without ever naming it -- ``globals()['main']`` -- so the
-        # call list is not exhaustive at all there.
-        self.open_calls = False
+        # call list is not exhaustive at all there.  Round 26 keeps the sites
+        # as positions instead of a flag.
+        self.open_calls = []
+        # #1953 fix-r1 round 26 (codex r25 P1-3): spans of ``if False:``
+        # bodies, so a dead binding cannot decide a live use.
+        self.dead_ranges = ()
         # #1953 fix-r1 round 25 (codex r24 P0-2): ``name -> [call sites]`` for
         # module-level aliases (``saved = main; saved(...)``).
         self.alias_calls = {}
@@ -6547,61 +6564,205 @@ def _module_value_uses(tree):
     return uses
 
 
-def _module_alias_calls(tree, calls):
-    """``func -> [call sites]`` for module-level ``alias = func`` hand-offs.
+def _plain_alias_pairs(node):
+    """``[(target, source)]`` the plain-name hand-offs of an Assign make (r26).
+
+    #1953 fix-r1 round 26 (codex r25 P0-1): ``a, b = main, print`` hands
+    ``main`` to ``a`` exactly like ``a = main``; the round-25 reader only
+    looked at a whole-value ``ast.Name`` and missed the unpacked form.
+    """
+    value = node.value
+    pairs = []
+    for target in node.targets:
+        if isinstance(target, ast.Name) and isinstance(value, ast.Name):
+            pairs.append((target.id, value.id))
+        elif (isinstance(target, (ast.Tuple, ast.List))
+                and isinstance(value, (ast.Tuple, ast.List))
+                and len(target.elts) == len(value.elts)
+                and not any(isinstance(item, ast.Starred)
+                            for item in list(target.elts) + list(value.elts))):
+            for inner_target, inner_value in zip(target.elts, value.elts):
+                if (isinstance(inner_target, ast.Name)
+                        and isinstance(inner_value, ast.Name)):
+                    pairs.append((inner_target.id, inner_value.id))
+    return pairs
+
+
+def _module_alias_bindings(tree):
+    """``name -> [((line, col), conditional, source)]`` at module scope (r26).
 
     #1953 fix-r1 round 25 (codex r24 P0-2): ``saved = main; import builtins as
     bi; saved(report)`` runs ``main`` after the later import without ever
     calling the name ``main``, so the direct call list missed the time the
-    module reading was in force.  Only plain module-level ``alias = name``
-    assignments are followed (one hop per alias, repeated to a fixpoint); a
-    dynamic lookup is covered by :func:`_module_open_calls` instead.
+    module reading was in force.
+
+    #1953 fix-r1 round 26 (codex r25 P1-1): an alias is only in force until
+    the name is bound again -- ``a = main; a = lambda ...; a(report)`` runs the
+    lambda, and reading the earlier hand-off reported a write.  The entries
+    keep the binding order and whether the binding certainly runs, so
+    :func:`_module_alias_sources` can resolve the value per call site.
     """
-    aliases = {}
+    marks = _flow_marks(tree.body)
+    bindings = {}
     for level, node in _walk_scoped(tree):
-        if level is not None:
+        if level is not None or not isinstance(node, ast.Assign):
             continue
-        if not isinstance(node, ast.Assign) or not isinstance(
-                node.value, ast.Name):
-            continue
+        conditional = marks.get(id(node), (True, ()))[0]
+        pairs = dict(_plain_alias_pairs(node))
         for target in node.targets:
-            if isinstance(target, ast.Name):
-                aliases.setdefault(node.value.id, set()).add(target.id)
+            for name in _target_names(target):
+                bindings.setdefault(name, []).append(
+                    ((node.lineno, node.col_offset), conditional,
+                     pairs.get(name)))
+    for items in bindings.values():
+        items.sort(key=lambda item: item[0])
+    return bindings
+
+
+def _module_alias_sources(bindings, name, position, seen=()):
+    """Names *name* may denote at *position* (round 26).
+
+    The last certain binding decides; a conditional binding after it may also
+    be the value, so both are kept -- a missed hand-off is a missed write.
+    """
+    if name in seen:
+        return {name}
+    entries = [item for item in bindings.get(name, ()) if item[0] <= position]
+    if not entries:
+        return {name}
+    chosen_index = -1
+    for index, item in enumerate(entries):
+        if not item[1]:
+            chosen_index = index
+    candidates = [item for index, item in enumerate(entries)
+                  if index == chosen_index or (item[1] and index > chosen_index)]
+    found = set()
+    for item in candidates:
+        if item[2] is None:
+            continue
+        found |= _module_alias_sources(bindings, item[2], item[0],
+                                       seen + (name,))
+    return found or {name}
+
+
+def _module_alias_calls(tree, calls):
+    """``func -> [call sites]`` for module-level ``alias = func`` hand-offs."""
+    bindings = _module_alias_bindings(tree)
     found = {}
-    changed = True
-    while changed:
-        changed = False
-        for target, names in aliases.items():
-            extra = set(names)
-            for name in list(names):
-                extra |= aliases.get(name, set())
-            if extra != names:
-                aliases[target] = extra
-                changed = True
-    for target, names in aliases.items():
-        extra = []
-        for name in names:
-            extra.extend(calls.get(name, ()))
-        if extra:
-            found[target] = list(calls.get(target, ())) + extra
+    for name, entries in calls.items():
+        for entry in entries:
+            position = (entry[0] if isinstance(entry, tuple)
+                        and isinstance(entry[0], tuple) else entry)
+            for source in _module_alias_sources(bindings, name, position):
+                if source != name:
+                    found.setdefault(source, []).append(entry)
     return found
 
 
+def _module_open_aliases(tree):
+    """Module-level names that may denote a dynamic-lookup head (round 26).
+
+    ``lookup = globals; lookup()['main'](report)`` reaches ``main`` without
+    spelling it and without calling a head by name (codex r25 P0-2).
+    """
+    sources = {}
+    for level, node in _walk_scoped(tree):
+        if level is not None or not isinstance(node, ast.Assign):
+            continue
+        for target, source in _plain_alias_pairs(node):
+            sources.setdefault(target, set()).add(source)
+    changed = True
+    while changed:
+        changed = False
+        for target, values in sources.items():
+            extra = set(values)
+            for value in list(values):
+                extra |= sources.get(value, set())
+            if extra != values:
+                sources[target] = extra
+                changed = True
+    return {target for target, values in sources.items()
+            if values & _OPEN_CALL_HEADS}
+
+
 def _module_open_calls(tree):
-    """True when the module can call a name it never spells (round 25).
+    """Module-scope sites that can call a name the module never spells (r25).
 
     #1953 fix-r1 round 25 (codex r24 P0-2): ``globals()['main'](report)`` runs
     ``main`` at a time the recorded call sites do not describe, yet it produces
-    no ``ast.Name('main')``.  Any module-scope dynamic lookup or namespace call
-    makes the call list non-exhaustive, so ``call_only`` has to stay off.
+    no ``ast.Name('main')``.
+
+    #1953 fix-r1 round 26 (codex r25 P1-2): the site is a *position*, not a
+    flag -- an unrelated ``getattr`` before the later import must not move the
+    reading to the end of the module -- and only module scope counts: a
+    ``getattr`` inside a function that never runs says nothing about the
+    module-level call history.  An alias of a head (``lookup = globals``) is
+    the same site.
     """
-    for node in ast.walk(tree):
+    aliases = _module_open_aliases(tree)
+    sites = []
+    stack = [(child, ()) for child in reversed(tree.body)]
+    while stack:
+        node, loops = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef, ast.Lambda)):
+            stack.extend((item, loops)
+                         for item in reversed(_definition_header(node)))
+            continue
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in _OPEN_CALL_HEADS:
-                return True
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and node.attr in (
+            if (node.func.id in _OPEN_CALL_HEADS
+                    or node.func.id in aliases):
+                sites.append(((node.lineno, node.col_offset), loops))
+        elif isinstance(node, ast.Attribute) and node.attr in (
                 'globals', 'locals', 'vars'):
+            sites.append(((node.lineno, node.col_offset), loops))
+        inner = loops
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            inner = loops + (id(node),)
+        for child in reversed(list(ast.iter_child_nodes(node))):
+            stack.append((child, inner))
+    return sites
+
+
+def _dead_line_ranges(tree):
+    """Line spans of statically dead ``if False:`` bodies (round 26).
+
+    #1953 fix-r1 round 26 (codex r25 P1-3): a binding inside a dead branch
+    never runs, so it must not decide what an alias reads outside that branch.
+    The writes *inside* the branch stay analysed -- the negative controls
+    inject their mutants there -- which is why the rule keeps an event when
+    the resolving site sits in the same dead block.
+    """
+    ranges = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (isinstance(test, ast.Constant) and not test.value):
+            continue
+        for statement in node.body:
+            start = getattr(statement, 'lineno', None)
+            end = getattr(statement, 'end_lineno', None)
+            if start is not None:
+                ranges.append((start, end if end is not None else start))
+    return ranges
+
+
+def _dead_shadowed(item_position, query_position, dead_ranges):
+    """True when *item_position* sits in a dead block *query_position* is not in.
+
+    An unknown query position (*None*, the "the module may call this at any
+    time" fallback) is never inside a dead block, so every dead binding is out
+    of reach there too.
+    """
+    if not dead_ranges:
+        return False
+    line = item_position[0]
+    if query_position is None:
+        return True
+    query = query_position[0]
+    for start, end in dead_ranges:
+        if start <= line <= end and not start <= query <= end:
             return True
     return False
 
@@ -6852,6 +7013,7 @@ def _module_binding_events(tree):
     events.value_uses = _module_value_uses(tree)
     events.open_calls = _module_open_calls(tree)
     events.alias_calls = _module_alias_calls(tree, events.calls)
+    events.dead_ranges = tuple(_dead_line_ranges(tree))
     return events
 
 
@@ -6922,19 +7084,27 @@ def _imported_write_aliases(function, outer_imports=None):
     outer_def = getattr(outer_imports, 'outer_def', None) or {}
     func_name = outer_def.get(id(function), getattr(function, 'name', None))
     alias_calls = getattr(outer_imports, 'alias_calls', None) or {}
-    positions = list(calls.get(func_name, ())) + list(
-        alias_calls.get(func_name, ())) if func_name is not None else []
+    # #1953 fix-r1 round 26 (codex r25 P0-2 / P1-2): a dynamic site is one
+    # more position the function may run at -- not a blanket "the call list is
+    # useless" -- so the reading is resolved at the site instead of at the end
+    # of the module.  An unrelated ``getattr`` before a later import no longer
+    # turns a clean module into a write, and the read stays fail-closed for a
+    # site after the import.
+    open_calls = list(getattr(outer_imports, 'open_calls', None) or ())
+    positions = (list(calls.get(func_name, ()))
+                 + list(alias_calls.get(func_name, ()))
+                 + open_calls) if func_name is not None else []
     # #1953 fix-r1 round 24 (self-check of codex r22 P1-2): the call list only
     # describes the module-scope calls; a name the module also reads as a value
     # can run at a time the list does not cover, so ``call_only`` stays off.
     value_uses = getattr(outer_imports, 'value_uses', None)
-    open_calls = bool(getattr(outer_imports, 'open_calls', False))
+    dead_ranges = tuple(getattr(outer_imports, 'dead_ranges', None) or ())
     call_only = (bool(positions) and func_name is not None
-                 and value_uses is not None and func_name not in value_uses
-                 and not open_calls)
+                 and value_uses is not None and func_name not in value_uses)
     for name, items in (outer_imports or {}).items():
         chosen = _binding_event_at(items, None, anywhere=True,
-                                   positions=positions)
+                                   positions=positions,
+                                   dead_ranges=dead_ranges)
         if chosen is not None:
             add(name, (-2, -2), chosen[2])
     # #1953 fix-r1 round 22 (codex r21 P0-1): a module-level ``import builtins
@@ -6947,7 +7117,8 @@ def _imported_write_aliases(function, outer_imports=None):
         # not the module inside this function (see ``_binding_event_at``).
         chosen = _binding_event_at(items, None, anywhere=True,
                                    positions=positions,
-                                   call_only=call_only)
+                                   call_only=call_only,
+                                   dead_ranges=dead_ranges)
         if chosen is not None:
             events.builtins_modules.setdefault(name, []).append(
                 (-2, -2, chosen[2], False, (), True))
@@ -11650,6 +11821,84 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 25)')
+    # Round 26 (codex r25 P0-1 / P0-2 / P1-1 / P1-2 / P1-3): unpacked and
+    # aliased dynamic hand-offs stay in the call graph, a rebound alias is not
+    # a call to the old target, an unrelated ``getattr`` outside the module's
+    # own call path does not move the reading to the end of the module, and a
+    # binding inside ``if False:`` is not in force outside that block.
+    for _label, _source, _want in (
+            ("a builtins alias reached through an unpacked hand-off",
+             "class Safe:\n"
+             "    @staticmethod\n"
+             "    def getattr(obj, name):\n"
+             "        return lambda *a, **k: None\n"
+             "_bi60 = Safe\n"
+             "def main(report):\n"
+             "    _f = _bi60.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "saved, other = main, print\n"
+             "import builtins as _bi60\n"
+             "saved(object())\n"
+             "_bi60 = Safe\n", True),
+            ("a builtins alias reached through a dynamic-lookup alias",
+             "import json as _bi61\n"
+             "def main(report):\n"
+             "    _f = _bi61.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "lookup = globals\n"
+             "import builtins as _bi61\n"
+             "lookup()['main'](object())\n"
+             "_bi61 = Safe\n", True),
+            ("a module alias certainly rebound before the call",
+             "import json as _bi62\n"
+             "def main(report):\n"
+             "    _f = _bi62.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "saved = main\n"
+             "saved = lambda report: None\n"
+             "import builtins as _bi62\n"
+             "saved(object())\n"
+             "_bi62 = Safe\n", False),
+            ("an unrelated module-level getattr before a later import",
+             "import json as _bi63\n"
+             "def main(report):\n"
+             "    _f = _bi63.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "getattr(str, 'upper')\n"
+             "import builtins as _bi63\n", False),
+            ("a getattr inside a function the module never calls",
+             "import json as _bi64\n"
+             "def main(report):\n"
+             "    _f = _bi64.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi64\n"
+             "def other():\n"
+             "    getattr(str, 'upper')\n", False),
+            ("a builtins import inside a statically dead branch",
+             "import json as _bi65\n"
+             "def main(report):\n"
+             "    _f = _bi65.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "saved = main\n"
+             "if False:\n"
+             "    import builtins as _bi65\n"
+             "saved(object())\n", False)):
+        _tree = ast.parse(_source)
+        _function = next(_node for _node in _tree.body
+                         if isinstance(_node, (ast.FunctionDef,
+                                               ast.AsyncFunctionDef)))
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 26)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
