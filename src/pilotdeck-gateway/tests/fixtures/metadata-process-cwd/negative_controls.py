@@ -32,6 +32,7 @@ DISCOVERY_ANCHORS = (
     'metadata-process-cwd/regression.rs',
     'metadata-process-cwd/oracle.json',
     'metadata-process-cwd/generate.mts',
+    'fixtures/negative_suite.py',
 )
 MUTATIONS = [
     ('root-fallback', META,
