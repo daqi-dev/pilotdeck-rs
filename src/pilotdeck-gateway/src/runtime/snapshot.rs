@@ -1267,9 +1267,9 @@ mod tests {
         // mutant.
         let response = match routed {
             SnapshotDispatch::Response(response) => response,
-            SnapshotDispatch::Error(cause) => panic!(
-                "#132 collation case answers with a list, not an error: {cause:?}"
-            ),
+            SnapshotDispatch::Error(cause) => {
+                panic!("#132 collation case answers with a list, not an error: {cause:?}")
+            }
             SnapshotDispatch::Forward => {
                 panic!("#132 unpaired-surrogate collation answers locally, never forwards")
             }
