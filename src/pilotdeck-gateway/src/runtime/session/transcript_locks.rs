@@ -216,18 +216,18 @@ mod tests {
             "a symlinked leaf is the same transcript"
         );
         assert_eq!(
-            fence_key(&real),
+            fence_key(&real).expect("#1860 same transcript"),
             fence_key(&dir.join(".").join("session-1.jsonl")).expect("#1860 dot key"),
             "a `.` component is the same transcript"
         );
         assert_eq!(
-            fence_key(&real),
+            fence_key(&real).expect("#1860 same transcript"),
             fence_key(&dir.join("..").join("project").join("session-1.jsonl"))
                 .expect("#1860 dotdot key"),
             "a `..` round trip is the same transcript"
         );
         assert_ne!(
-            fence_key(&real),
+            fence_key(&real).expect("#1860 same transcript"),
             fence_key(&dir.join("session-2.jsonl")).expect("#1860 other key"),
             "distinct transcripts must stay distinct fences"
         );
