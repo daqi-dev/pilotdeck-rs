@@ -892,6 +892,342 @@ fn domain_restore_retains_validation_state() {
     ));
     assert_eq!(before, storage.transcript.snapshot_state());
 }
+/// #297 P2#3: `SessionStorage::restore` (persistence.load →
+/// SessionRuntime.restore: validate the whole log, install, then hydrate the
+/// projections) and `Recorder::restore` (the other Rust half of the same TS
+/// call: validate and install, no hydration) share one domain fold
+/// (`fold_domain`). The shared half must agree on the restore outcome and its
+/// Display message, on the installed writer state, and on every subsequent
+/// append — including FaultStore append failures injected before and after
+/// the write (the #297 P2#2 matrix rows #3/#4: the failed append rolls the
+/// writer back to the state the log holds, so the retry reuses the sequence).
+/// The deliberate differences stay pinned with their reasons: a hydrate-illegal
+/// log fails only the adapter path, with the state already installed
+/// (SessionRuntime.restore installs before hydrate), while the recorder path
+/// succeeds; a stale snapshot can only reach the recorder path, because the
+/// adapter path reads and installs under the same writer lock (the #297
+/// persistence tests pin that half).
+#[test]
+fn restore_paths_agree_on_the_shared_domain_fold() {
+    struct Run {
+        restore: std::result::Result<(), String>,
+        state: (u64, Option<String>),
+        duplicate: Option<std::result::Result<(), String>>,
+        failed: std::result::Result<(), String>,
+        after_failure: (u64, Option<String>),
+        retry: std::result::Result<(), String>,
+        after_retry: (u64, Option<String>),
+        transcript: Vec<String>,
+    }
+    struct Case {
+        name: &'static str,
+        entries: Vec<JsValue>,
+        restore: std::result::Result<(), String>,
+        adapter_restore: Option<&'static str>,
+        state: (u64, Option<&'static str>),
+        duplicate: Option<&'static str>,
+        retry_id: &'static str,
+    }
+    fn ids() -> recorder::RecorderUuid {
+        let counter = Arc::new(AtomicUsize::new(0));
+        Arc::new(move || Ok(format!("e-{}", counter.fetch_add(1, Ordering::SeqCst) + 1)))
+    }
+    fn transcript_lines(path: &Path) -> Vec<String> {
+        fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+    fn adapter_run(dir: &Path, fail_after: bool, case: &Case) -> Run {
+        let store = Arc::new(FaultStore {
+            fail_after: if fail_after {
+                HashSet::from([1usize])
+            } else {
+                Default::default()
+            },
+            fail_before: if !fail_after {
+                HashSet::from([1usize])
+            } else {
+                Default::default()
+            },
+            ..FaultStore::default()
+        });
+        let (_adapter, storage) = fresh(dir, store.clone());
+        let key = storage_key(&storage);
+        for entry in &case.entries {
+            store.inner.append(&key, entry).unwrap();
+        }
+        storage
+            .transcript
+            .test_sources
+            .lock()
+            .unwrap()
+            .replace((Arc::new(|| Ok(NOW.to_string())), ids()));
+        let turn_started = |turn: &str| {
+            let mut draft = JsObject::new();
+            draft.insert("type".into(), "turn_started".into());
+            storage
+                .transcript
+                .record_session_event(&"s1".into(), &turn.into(), draft)
+        };
+        let state = |writer: &TranscriptWriter| {
+            let state = writer.snapshot_state();
+            (
+                state.sequence,
+                state
+                    .last_entry_id
+                    .map(|id| String::from_utf16_lossy(id.units())),
+            )
+        };
+        Run {
+            restore: storage.restore().map(|_| ()).map_err(|e| e.to_string()),
+            state: state(&storage.transcript),
+            duplicate: case
+                .duplicate
+                .is_some()
+                .then(|| turn_started("t-1").map_err(|e| e.to_string())),
+            failed: turn_started("t-2").map_err(|e| e.to_string()),
+            after_failure: state(&storage.transcript),
+            retry: turn_started("t-2").map_err(|e| e.to_string()),
+            after_retry: state(&storage.transcript),
+            transcript: transcript_lines(&storage.transcript_path),
+        }
+    }
+    fn recorder_run(dir: &Path, fail_after: bool, case: &Case) -> Run {
+        let store = Arc::new(FaultStore {
+            fail_after: if fail_after {
+                HashSet::from([1usize])
+            } else {
+                Default::default()
+            },
+            fail_before: if !fail_after {
+                HashSet::from([1usize])
+            } else {
+                Default::default()
+            },
+            ..FaultStore::default()
+        });
+        let path = dir.join("chats/s1.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let key = TranscriptKey {
+            project_root: PROJECT_ROOT.into(),
+            pilot_home: PathBuf::new(),
+            session_id: "s1".into(),
+            transcript_path: path,
+        };
+        let recorder = recorder::Recorder::with_sources(
+            store.clone(),
+            key.clone(),
+            Arc::new(|| Ok(NOW.to_string())),
+            ids(),
+        );
+        for entry in &case.entries {
+            store.inner.append(&key, entry).unwrap();
+        }
+        let read = store.read(&key, None).unwrap();
+        let state = |recorder: &recorder::Recorder| {
+            let (sequence, last) = recorder.snapshot_state();
+            (
+                sequence,
+                last.map(|id| String::from_utf16_lossy(id.units())),
+            )
+        };
+        let turn_started = |turn: &str| recorder.start_turn(&"s1".into(), &turn.into());
+        Run {
+            restore: recorder.restore(&read.entries).map_err(|e| e.to_string()),
+            state: state(&recorder),
+            duplicate: case
+                .duplicate
+                .is_some()
+                .then(|| turn_started("t-1").map_err(|e| e.to_string())),
+            failed: turn_started("t-2").map_err(|e| e.to_string()),
+            after_failure: state(&recorder),
+            retry: turn_started("t-2").map_err(|e| e.to_string()),
+            after_retry: state(&recorder),
+            transcript: transcript_lines(&key.transcript_path),
+        }
+    }
+    let cases = [
+        Case {
+            name: "valid",
+            entries: vec![
+                js(&format!(
+                    r#"{{"type":"turn_started","sessionId":"s1","turnId":"t-1","sequence":1,"createdAt":"{NOW}","entryId":"a-1"}}"#
+                )),
+                js(&format!(
+                    r#"{{"type":"step_started","sessionId":"s1","turnId":"t-1","sequence":2,"createdAt":"{NOW}","entryId":"a-2","step":1}}"#
+                )),
+                js(&format!(
+                    r#"{{"type":"session_metadata","sessionId":"s1","turnId":"t-1","sequence":3,"createdAt":"{NOW}","entryId":"a-3","metadata":{{"title":"kept"}}}}"#
+                )),
+            ],
+            restore: Ok(()),
+            adapter_restore: None,
+            state: (3, Some("a-3")),
+            duplicate: Some("Turn t-1 has already started."),
+            retry_id: "e-3",
+        },
+        Case {
+            name: "envelope-illegal",
+            entries: vec![
+                js(&format!(
+                    r#"{{"type":"turn_started","sessionId":"s1","turnId":"t-1","sequence":1,"createdAt":"{NOW}","entryId":"a-1"}}"#
+                )),
+                js(&format!(
+                    r#"{{"type":"step_started","sessionId":"s1","turnId":"t-1","sequence":2,"createdAt":"{NOW}","entryId":"a-1","step":1}}"#
+                )),
+            ],
+            restore: Err("Session event entryId must be unique: a-1.".into()),
+            adapter_restore: None,
+            state: (0, None),
+            duplicate: None,
+            retry_id: "e-2",
+        },
+        Case {
+            name: "domain-illegal",
+            entries: vec![js(&format!(
+                r#"{{"type":"model_request","sessionId":"s1","turnId":"t-x","sequence":1,"createdAt":"{NOW}","entryId":"d-1","step":1}}"#
+            ))],
+            restore: Err("model_request requires an active turn t-x.".into()),
+            adapter_restore: None,
+            state: (0, None),
+            duplicate: None,
+            retry_id: "e-2",
+        },
+        Case {
+            name: "hydrate-illegal",
+            entries: vec![js(&format!(
+                r#"{{"type":"session_metadata","sessionId":"s1","turnId":"t-1","sequence":1,"createdAt":"{NOW}","entryId":"h-1","metadata":null}}"#
+            ))],
+            // The pinned difference: the adapter path fails after installing.
+            restore: Ok(()),
+            adapter_restore: Some("Cannot read properties of null (reading 'title')"),
+            state: (1, Some("h-1")),
+            duplicate: None,
+            retry_id: "e-2",
+        },
+        Case {
+            name: "empty",
+            entries: Vec::new(),
+            restore: Ok(()),
+            adapter_restore: None,
+            state: (0, None),
+            duplicate: None,
+            retry_id: "e-2",
+        },
+    ];
+    for case in &cases {
+        for (fault, fail_after) in [("before-write", false), ("after-write", true)] {
+            let scratch = Scratch::new();
+            let adapter = adapter_run(&scratch.0.join("adapter"), fail_after, case);
+            let recorder = recorder_run(&scratch.0.join("recorder"), fail_after, case);
+            let where_ = format!("#297 P2#3 {} log, {} injection", case.name, fault);
+            // Shared: outcome and Display message (the hydrate difference is the
+            // one documented exception, asserted separately below).
+            if case.adapter_restore.is_none() {
+                assert_eq!(
+                    adapter.restore, recorder.restore,
+                    "{where_}: restore paths disagree on outcome: adapter {:?} vs recorder {:?}",
+                    adapter.restore, recorder.restore
+                );
+            }
+            if let Some(expected) = case.adapter_restore {
+                assert_eq!(
+                    adapter.restore,
+                    Err(expected.to_string()),
+                    "{where_}: adapter path must fail the hydrate after installing"
+                );
+            } else {
+                assert_eq!(
+                    adapter.restore, case.restore,
+                    "{where_}: restore paths must match the shared expectation"
+                );
+            }
+            assert_eq!(
+                recorder.restore, case.restore,
+                "{where_}: recorder path must match the shared expectation"
+            );
+            // Shared: the installed writer state (after the failed hydrate too).
+            assert_eq!(
+                adapter.state, recorder.state,
+                "{where_}: restore paths disagree on the installed state"
+            );
+            assert_eq!(
+                adapter.state,
+                (case.state.0, case.state.1.map(str::to_string)),
+                "{where_}: restore paths installed an unexpected state"
+            );
+            // Shared: the fold seeded the domain — the restored turn stays live.
+            if let Some(expected) = case.duplicate {
+                assert_eq!(
+                    adapter.duplicate, recorder.duplicate,
+                    "{where_}: restore paths disagree on the duplicate turn probe"
+                );
+                assert_eq!(
+                    adapter.duplicate,
+                    Some(Err(expected.to_string())),
+                    "{where_}: the restored turn must stay live on both paths"
+                );
+            }
+            // Shared: an append that fails in the store (before or after its
+            // write) leaves the writer on the state the log holds, so the retry
+            // reuses the sequence and re-validates against the same domain.
+            assert_eq!(
+                adapter.failed, recorder.failed,
+                "{where_}: restore paths disagree on the injected append failure"
+            );
+            assert!(
+                adapter
+                    .failed
+                    .as_ref()
+                    .is_err_and(|e| e.contains("injected append failure 1")),
+                "{where_}: the first append must fail on the injected store error: {:?}",
+                adapter.failed
+            );
+            assert_eq!(
+                adapter.after_failure, adapter.state,
+                "{where_}: a failed append must not move the writer state"
+            );
+            assert_eq!(
+                adapter.retry, recorder.retry,
+                "{where_}: restore paths disagree on the retry after the failed append"
+            );
+            assert_eq!(
+                adapter.retry,
+                Ok(()),
+                "{where_}: the retry after an injected append failure must re-validate and commit"
+            );
+            assert_eq!(
+                adapter.after_retry, recorder.after_retry,
+                "{where_}: restore paths disagree on the state after the retry"
+            );
+            assert_eq!(
+                adapter.after_retry,
+                (case.state.0 + 1, Some(case.retry_id.to_string())),
+                "{where_}: the retry must reuse the sequence the failed append held"
+            );
+            assert_eq!(
+                adapter.transcript, recorder.transcript,
+                "{where_}: restore paths disagree on the written bytes"
+            );
+            let expected_lines = case.entries.len() + usize::from(fail_after) + 1;
+            assert_eq!(
+                adapter.transcript.len(),
+                expected_lines,
+                "{where_}: the transcript must hold the log, the orphaned attempt \
+                 (after-write only) and the retry: {:?}",
+                adapter.transcript
+            );
+            assert_eq!(
+                field(&js(adapter.transcript.last().unwrap()), "sequence").as_number(),
+                Some((case.state.0 + 1) as f64),
+                "{where_}: the retry continues the restored chain"
+            );
+        }
+    }
+}
+
 #[test]
 fn deep_sequence_array_message_is_a_range_error_not_a_stack_overflow() {
     let mut sequence = JsValue::Number(1.0);
