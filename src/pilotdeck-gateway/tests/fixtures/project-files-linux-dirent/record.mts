@@ -12,6 +12,7 @@ import {spawnSync} from 'node:child_process';
 
 const PINNED_NODE = 'v22.22.0';
 const PINNED_ICU = '78.2';
+const PINNED_UV = '1.52.1';
 const PINNED_BASELINE = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const blocked = (message: string) => {
   console.error(`BLOCKED #133 ${message}`);
@@ -23,6 +24,9 @@ const blocked = (message: string) => {
 console.log(JSON.stringify({node: process.version, icu: process.versions.icu, uv: process.versions.uv, platform: process.platform, locale: new Intl.Collator().resolvedOptions().locale}));
 if (process.version !== PINNED_NODE) blocked(`requires Node ${PINNED_NODE}, found ${process.version}`);
 if (process.versions.icu !== PINNED_ICU) blocked(`requires ICU ${PINNED_ICU}, found ${process.versions.icu}`);
+// #2248: the shared libuv drifts under the same node binary on a Homebrew
+// upgrade; run-linux.sh already gates the triple, the probe must not rely on it.
+if (process.versions.uv !== PINNED_UV) blocked(`requires libuv ${PINNED_UV}, found ${process.versions.uv}`);
 const locale = new Intl.Collator().resolvedOptions().locale;
 if (locale !== 'en-US') blocked(`resolved locale ${locale}; run with LANG=C.UTF-8 and no LC_* override`);
 
