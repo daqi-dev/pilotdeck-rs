@@ -1,0 +1,71 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "surrogate-scode",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "raw": "{\"data\":{\"scode\":\"\\ud800\",\"auth_url\":\"https://fixture.invalid/scan\"}}"
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n企业微信扫码失败: URI malformed\n\n扫码未完成或接口不可用，将使用手动输入模式。\n\n手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "deep-shared-cycle-groups",
+      "argv": [
+        "wecom"
+      ],
+      "initial": "shared: &external {policy: open}\nadapters:\n  wecom:\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      groups: &groups\n        first: &entry {allow: [one, two]}\n        second: *entry\n        self: *groups\n        external: *external\n",
+      "answers": [
+        [
+          "重新配置？ [y/N]: ",
+          "no"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有企业微信配置 (Bot ID: old-…t-id)\n重新配置？ [y/N]: 企业微信已启用（使用现有凭据）。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "shared:\n  policy: open\nadapters:\n  wecom:\n    enabled: true\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      websocket_url: wss://openws.work.weixin.qq.com\n      dm_policy: open\n      group_policy: disabled\n      groups: &a2\n        first: &a1\n          allow:\n            - one\n            - two\n        second: *a1\n        self: *a2\n        external:\n          policy: open\n",
+      "events": [],
+      "clock": 0
+    }
+  ]
+}

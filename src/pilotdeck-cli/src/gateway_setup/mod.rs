@@ -5,6 +5,7 @@ mod http;
 mod prompt;
 mod save;
 mod terminal;
+mod wecom;
 
 use crate::{Failure, paths::Env};
 use config::SetupPaths;
@@ -37,9 +38,7 @@ fn run_with(
         Some("weixin" | "wechat") => {
             Err(SetupError::Failure(Failure::Todo("gateway setup weixin")))
         }
-        Some("wecom" | "work-weixin" | "workwechat") => {
-            Err(SetupError::Failure(Failure::Todo("gateway setup wecom")))
-        }
+        Some("wecom" | "work-weixin" | "workwechat") => wecom::setup(paths, io, network),
         _ => {
             let config = config::load(&paths.config);
             let enabled =
@@ -74,7 +73,7 @@ fn run_with(
             match io.ask("请选择 [1/2/3/4/q]: ")?.as_str() {
                 "1" | "feishu" => feishu::setup(paths, io, network),
                 "2" | "weixin" => Err(SetupError::Failure(Failure::Todo("gateway setup weixin"))),
-                "3" | "wecom" => Err(SetupError::Failure(Failure::Todo("gateway setup wecom"))),
+                "3" | "wecom" => wecom::setup(paths, io, network),
                 "4" | "all" => {
                     feishu::setup(paths, io, network)?;
                     io.line("")?;

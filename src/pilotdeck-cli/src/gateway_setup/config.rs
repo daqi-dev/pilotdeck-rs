@@ -64,6 +64,21 @@ fn load_graph(path: &Path) -> ValueGraph {
 }
 pub(super) fn load(path: &Path) -> JsValue {
     let graph = load_graph(path);
+    project_graph(&graph)
+}
+pub(super) fn wecom_defaults(path: &Path) -> (JsValue, Option<ValueGraph>) {
+    let graph = load_graph(path);
+    let groups=graph_field(&graph,&["adapters","wecom","extra","groups"]).filter(|value|matches!(value,Value::Ref(id) if matches!(&graph.nodes[*id],Container::Object(_)|Container::Map(_)|Container::Set(_)))).cloned();
+    let root = project_graph(&graph);
+    (
+        root,
+        groups.map(|root| ValueGraph {
+            root,
+            nodes: graph.nodes,
+        }),
+    )
+}
+fn project_graph(graph: &ValueGraph) -> JsValue {
     // This projection is used only to read prompt defaults. Saving reloads and
     // edits the original graph, so aliases and cycles are never discarded.
     fn project(graph: &ValueGraph, value: &Value, active: &mut Vec<usize>) -> JsValue {
@@ -100,7 +115,7 @@ pub(super) fn load(path: &Path) -> JsValue {
             }
         }
     }
-    project(&graph, &graph.root, &mut Vec::new())
+    project(graph, &graph.root, &mut Vec::new())
 }
 static UNDEFINED: JsValue = JsValue::Undefined;
 pub(super) fn get<'a>(value: &'a JsValue, path: &[&str]) -> &'a JsValue {
@@ -156,6 +171,21 @@ pub(super) fn fallback(value: &JsValue, default: &str) -> String {
 }
 
 pub(super) fn write_adapter(path: &Path, platform: &str, adapter: JsValue) -> SetupResult<()> {
+    write_adapter_inner(path, platform, adapter, None)
+}
+pub(super) fn write_wecom_adapter(
+    path: &Path,
+    adapter: JsValue,
+    groups: Option<ValueGraph>,
+) -> SetupResult<()> {
+    write_adapter_inner(path, "wecom", adapter, groups)
+}
+fn write_adapter_inner(
+    path: &Path,
+    platform: &str,
+    adapter: JsValue,
+    groups: Option<ValueGraph>,
+) -> SetupResult<()> {
     let target = super::save::Target::prepare(path)?;
     let mut graph = read_graph(path)?;
     if matches!(graph.root, Value::Null | Value::Undefined) {
@@ -177,7 +207,55 @@ pub(super) fn write_adapter(path: &Path, platform: &str, adapter: JsValue) -> Se
         )
         .into());
     }
+    // setup reads its prompt defaults once, then writeWeComConfig reloads a
+    // fresh graph. Import the captured groups as a distinct graph: preserving
+    // aliases across those two independent YAML parses would invent sharing.
+    let groups = groups.map(|mut captured| {
+        let offset = graph.nodes.len();
+        fn shift(value: &mut Value, offset: usize) {
+            if let Value::Ref(id) = value {
+                *id += offset;
+            }
+        }
+        shift(&mut captured.root, offset);
+        for node in &mut captured.nodes {
+            match node {
+                Container::Object(entries) => {
+                    for (_, value) in entries {
+                        shift(value, offset);
+                    }
+                }
+                Container::Array(values) | Container::Set(values) => {
+                    for value in values {
+                        shift(value, offset);
+                    }
+                }
+                Container::Map(entries) => {
+                    for (key, value) in entries {
+                        shift(key, offset);
+                        shift(value, offset);
+                    }
+                }
+            }
+        }
+        graph.nodes.extend(captured.nodes);
+        captured.root
+    });
     let adapter_value = from_js(&adapter, &mut graph.nodes);
+    if let Some(groups) = groups
+        && let Value::Ref(id) = adapter_value
+        && let Some(Value::Ref(extra)) = match &graph.nodes[id] {
+            Container::Object(entries) => entries
+                .iter()
+                .find(|(key, _)| key.equals_str("extra"))
+                .map(|(_, value)| value.clone()),
+            _ => None,
+        }
+        && let Container::Object(entries) = &mut graph.nodes[extra]
+    {
+        entries.push(("groups".into(), groups));
+    }
+
     if let Container::Object(entries) = &mut graph.nodes[root] {
         let index = entries
             .iter()
@@ -224,6 +302,17 @@ pub(super) fn write_adapter(path: &Path, platform: &str, adapter: JsValue) -> Se
     let yaml = emit_graph(&graph)?;
     target.publish(yaml.as_bytes())?;
     Ok(())
+}
+fn graph_field<'a>(graph: &'a ValueGraph, path: &[&str]) -> Option<&'a Value> {
+    let mut value = &graph.root;
+    for key in path {
+        let Value::Ref(id) = value else { return None };
+        let Container::Object(entries) = &graph.nodes[*id] else {
+            return None;
+        };
+        value = &entries.iter().find(|(name, _)| name.equals_str(key))?.1;
+    }
+    Some(value)
 }
 fn js_type(value: &Value) -> &'static str {
     match value {
@@ -275,23 +364,45 @@ fn from_js(value: &JsValue, nodes: &mut Vec<Container>) -> Value {
     }
 }
 
+fn graph_entries(values: &[(JsString, Value)]) -> Vec<&(JsString, Value)> {
+    let mut entries: Vec<_> = values.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| match (a.array_index(), b.array_index()) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        _ => std::cmp::Ordering::Equal,
+    });
+    entries
+}
 fn emit_graph(graph: &ValueGraph) -> SetupResult<String> {
-    let mut counts = vec![0usize; graph.nodes.len()];
+    // YAML allocates an anchor when it encounters an already seen object,
+    // before rendering. A nested shared child may be a1 while its enclosing
+    // self-referential object becomes a2.
+    let mut anchors = HashMap::new();
     let mut visited = vec![false; graph.nodes.len()];
     let mut pending = vec![&graph.root];
     while let Some(value) = pending.pop() {
         if let Value::Ref(id) = value {
-            counts[*id] += 1;
-            if !visited[*id] {
-                visited[*id] = true;
-                match &graph.nodes[*id] {
-                    Container::Object(entries) => pending.extend(entries.iter().map(|(_, v)| v)),
-                    Container::Array(values) | Container::Set(values) => pending.extend(values),
-                    Container::Map(entries) => {
-                        for (k, v) in entries {
-                            pending.push(k);
-                            pending.push(v);
-                        }
+            if visited[*id] {
+                let next = anchors.len() + 1;
+                anchors.entry(*id).or_insert(next);
+                continue;
+            }
+            visited[*id] = true;
+            match &graph.nodes[*id] {
+                Container::Object(entries) => pending.extend(
+                    graph_entries(entries)
+                        .into_iter()
+                        .rev()
+                        .map(|(_, value)| value),
+                ),
+                Container::Array(values) | Container::Set(values) => {
+                    pending.extend(values.iter().rev())
+                }
+                Container::Map(entries) => {
+                    for (key, value) in entries.iter().rev() {
+                        pending.push(value);
+                        pending.push(key);
                     }
                 }
             }
@@ -299,9 +410,8 @@ fn emit_graph(graph: &ValueGraph) -> SetupResult<String> {
     }
     struct Emitter<'a> {
         graph: &'a ValueGraph,
-        counts: Vec<usize>,
         anchors: HashMap<usize, usize>,
-        next: usize,
+        emitted: Vec<bool>,
     }
     impl Emitter<'_> {
         fn render(&mut self, value: &Value, depth: usize) -> SetupResult<String> {
@@ -321,27 +431,22 @@ fn emit_graph(graph: &ValueGraph) -> SetupResult<String> {
                     Value::Ref(_) => unreachable!(),
                 });
             };
-            if let Some(anchor) = self.anchors.get(id) {
-                return Ok(format!("*a{anchor}"));
+            if self.emitted[*id] {
+                return Ok(format!(
+                    "*a{}",
+                    self.anchors.get(id).expect("repeated object has anchor")
+                ));
             }
-            let anchor = if self.counts[*id] > 1 {
-                self.next += 1;
-                self.anchors.insert(*id, self.next);
-                format!("&a{}", self.next)
-            } else {
-                String::new()
-            };
+            self.emitted[*id] = true;
+            let anchor = self
+                .anchors
+                .get(id)
+                .map_or_else(String::new, |anchor| format!("&a{anchor}"));
             let mut out = String::new();
             let graph = self.graph;
             match &graph.nodes[*id] {
                 Container::Object(values) => {
-                    let mut ordered: Vec<_> = values.iter().collect();
-                    ordered.sort_by(|(a, _), (b, _)| match (a.array_index(), b.array_index()) {
-                        (Some(a), Some(b)) => a.cmp(&b),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        _ => std::cmp::Ordering::Equal,
-                    });
+                    let ordered = graph_entries(values);
                     if ordered.is_empty() {
                         return Ok(if anchor.is_empty() {
                             "{}".into()
@@ -434,9 +539,8 @@ fn emit_graph(graph: &ValueGraph) -> SetupResult<String> {
     }
     let mut emitter = Emitter {
         graph,
-        counts,
-        anchors: HashMap::new(),
-        next: 0,
+        anchors,
+        emitted: vec![false; graph.nodes.len()],
     };
     let mut out = emitter.render(&graph.root, 0)?;
     out.push('\n');

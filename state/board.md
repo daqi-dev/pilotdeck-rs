@@ -4742,3 +4742,6 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · TUI 同连接传输（Codex/Terra，仅本机）
 
 已接单WS并发RPC/stream/permission_decide/abort、有限积压与写入、hello绝对期限；35格真实TS命令效果与真实wire入测试。独立审查修复准入拒绝挂起、取消slot泄漏与满额竞态、consumer drop误断线、未消费大错误漏计预算；mbp2最终6真实socket+5lib、fmt/all-targets clippy通过，原件主仓 `_tmp/20261108-cli-tui/`。真实native探针明确当前宿主can_prompt=false/emit=false且工具调度ask路径未接，权限闭环不能判通过；TUI终端与权限文件仍未接，继续共享安全保存与实际runner。两项新差异待人复核、未改冻结验收；本轮无GitHub写入、无本机Rust构建。
+### 2026-11-08 · gateway setup WeCom 切片（Codex，本地提交）
+
+WeCom手动配置、旧凭据复用、全部平台别名/菜单3、QR生成/查询/重试/超时/回退已原生实现并复用公共HTTP及原子保存；真实TS新增10格普通+2格UTF16/深层循环groups金样，逐格对齐完整输出、请求、配置原文及mock时钟。mbp2最终39通过，2辅助子测试由父实际调用，fmt/严格clippy通过；证据主仓 `_tmp/20261108-issue-124-setup/wecom-worker/`。独立审查P1非法scode与P2失败保存/复杂groups已闭合，仅本机提交、不推GitHub；下一步Weixin与all菜单顺序，仍不标setup/D2完成，真实平台与真人体验待验。

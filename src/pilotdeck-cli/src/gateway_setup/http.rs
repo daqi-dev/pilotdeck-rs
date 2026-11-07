@@ -11,6 +11,24 @@ pub(super) struct Response {
 }
 pub(super) trait Fetch {
     fn json(&mut self, method: &str, url: &str, body: Option<&str>) -> Result<Response, String>;
+    fn success_json(&mut self, url: &str) -> Result<JsValue, String> {
+        let response = self.json("GET", url, None)?;
+        if !(200..300).contains(&response.status) {
+            return Err(format!("HTTP {}", response.status));
+        }
+        Ok(response.json)
+    }
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
+    fn sleep(&mut self, milliseconds: u64) {
+        std::thread::sleep(Duration::from_millis(milliseconds));
+    }
 }
 pub(super) struct Network;
 impl Network {
@@ -20,6 +38,21 @@ impl Network {
 }
 impl Fetch for Network {
     fn json(&mut self, method: &str, url: &str, body: Option<&str>) -> Result<Response, String> {
+        self.exchange(method, url, body, false)
+    }
+    fn success_json(&mut self, url: &str) -> Result<JsValue, String> {
+        self.exchange("GET", url, None, true)
+            .map(|response| response.json)
+    }
+}
+impl Network {
+    fn exchange(
+        &mut self,
+        method: &str,
+        url: &str,
+        body: Option<&str>,
+        require_success: bool,
+    ) -> Result<Response, String> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -33,7 +66,14 @@ impl Fetch for Network {
                 let mut request = Request::builder()
                     .method(method.as_str())
                     .uri(url.as_str())
-                    .header("User-Agent", "node");
+                    .header(
+                        "User-Agent",
+                        if require_success {
+                            "PilotDeck/1.0"
+                        } else {
+                            "node"
+                        },
+                    );
                 if body.is_some() {
                     request = request.header("Content-Type", "application/json; charset=utf-8");
                 }
@@ -72,6 +112,9 @@ impl Fetch for Network {
                     credential_redirect(&url, &next, body.is_some())?;
                     url = next;
                     continue;
+                }
+                if require_success && !(200..300).contains(&status) {
+                    return Err(format!("HTTP {status}"));
                 }
                 let mut incoming = response.into_body();
                 let mut bytes = Vec::new();

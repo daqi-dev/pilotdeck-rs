@@ -28,6 +28,7 @@ impl Prompt for Dialog {
 struct Fake {
     replies: VecDeque<Result<http::Response, String>>,
     requests: Vec<(String, String, Option<String>)>,
+    time_ms: u64,
 }
 impl Fake {
     fn new(json: &str) -> Self {
@@ -37,10 +38,17 @@ impl Fake {
                 json: parse_json(json).unwrap(),
             })]),
             requests: Vec::new(),
+            time_ms: 0,
         }
     }
 }
 impl http::Fetch for Fake {
+    fn now_ms(&self) -> u64 {
+        self.time_ms
+    }
+    fn sleep(&mut self, milliseconds: u64) {
+        self.time_ms += milliseconds;
+    }
     fn json(
         &mut self,
         method: &str,
@@ -826,3 +834,6 @@ fn atomic_save_refuses_bsd_flags_without_losing_them() {
     assert_no_setup_temporary(paths.config.parent().unwrap());
     println!("BSD_FLAGS_PRESERVED={after}");
 }
+
+#[path = "tests_wecom.rs"]
+mod wecom_tests;
