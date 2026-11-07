@@ -513,6 +513,34 @@ cases = [
     ('ambiguous-seed-accepted', SCANNER, 'existing.len() <= 1,',
      'true || existing.len() <= 1,',
      'WorkspacePristine.test_ambiguous_seed_module_fails_closed', '#1166 each ownership context rejects ambiguous modules'),
+    # #1180 arbitration (rustc 1.99.1): `mod` inside an include!/`#[path]`-
+    # loaded file resolves in that file's OWN parent directory; the containing
+    # side's context never participates. Each wrong context fails closed on
+    # the missing module file, so the bound tests kill both directions of the
+    # original review's proposed rebase onto the includer.
+    ('edge-context-includer-parent', SCANNER,
+     'let module_dir = path.parent().expect("#1166 target parent").to_path_buf();',
+     'let module_dir = self.file.parent().expect("#1180 includer parent").to_path_buf();',
+     'WorkspacePristine.test_included_module_context_is_the_included_file_parent',
+     '#1180 include! module context is the included file parent'),
+    ('edge-context-stem', SCANNER,
+     'let module_dir = path.parent().expect("#1166 target parent").to_path_buf();',
+     'let module_dir = source_module_dir(&path);',
+     'WorkspacePristine.test_path_attribute_module_context_is_the_loaded_file_parent',
+     '#1180 path attribute module context is the loaded file parent'),
+    ('include-base-module-directory', SCANNER,
+     '&self.file.parent().expect("#1166 source parent").join(value),',
+     '&source_module_dir(self.file).join(value),',
+     'WorkspacePristine.test_inline_module_does_not_rebase_included_edges',
+     '#1180 inline modules do not rebase include edges'),
+    # #1180 known limitation: the seed union must stay a union - requiring
+    # every ownership context to resolve would reject the legitimate
+    # custom-target-root world and drop the conservative superset.
+    ('union-requires-every-context', SCANNER,
+     '!resolved.is_empty(),',
+     'resolved.len() == module_dirs.len(),',
+     'WorkspacePristine.test_union_substitution_keeps_substituted_module_guarded',
+     '#1180 seed union keeps the substituted parent-context module'),
     ('runner-target-env-omitted', Path(__file__).resolve(),
      "run_owned(command, cwd=ROOT / 'src', env=env, "
      "timeout=1800, idle_timeout=600)",

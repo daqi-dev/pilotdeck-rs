@@ -75,6 +75,12 @@ fn main() {
                     .to_owned(),
             );
             if edge.rust_source {
+                // #1180: rustc-verified semantics - a file loaded by include!
+                // or `#[path]` owns its OWN parent directory as the module
+                // context for nested `mod` declarations, so the edge carries
+                // one exact context. The seed union above is the only
+                // approximation; see the registered limitation in
+                // tests/fixtures/README.md and source_inputs.rs.
                 pending.push((edge.path, vec![edge.module_dir]));
             }
         }

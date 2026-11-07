@@ -97,4 +97,10 @@ python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
 
 默认模块扫描对 tracked `src/**/*.rs` 种子同时覆盖 crate 根与普通模块两种所有权目录（含该集合内的自定义 target），递归边使用精确目录。该保守输入闭包可能因非实际上下文中的歧义额外拒绝；它不替代 Cargo 编译有效性检查。`src` 外未由 include/path/mod 连接的自定义根不属于该种子发现规则。
 
+### #1180：并集替换方向（登记的已知限制）与边上下文仲裁
+
+**并集替换（已知限制）**：种子的 `mod x;` 只要在任一所有权目录里恰好命中一个文件就通过。普通模块世界里真实上下文（stem 目录）缺文件、而父目录存在同名文件时，扫描器不报错并把父目录文件收进闭包——rustc 对该树按普通模块编译会 E0583 拒绝（即使父目录同名文件存在），而同一文件形状作为自定义 target 根又是完全合法的 Cargo 工程（自定义 `[[bin]]/[[test]] path` 可指向任意位置）。不做 Cargo target 元数据解析就无法区分两个世界，故登记为已知限制：方向保守（被替换文件仍被守卫，闭包偏大不偏小，不会假 PASS），由 `test_union_substitution_keeps_substituted_module_guarded` 锁定替换文件仍受 pristine 守卫。
+
+**边上下文（仲裁为无缺陷）**：include! 被含文件与 `#[path]` 装载文件的 `mod` 解析目录是**该文件自身的父目录**，与包含方上下文无关——这是 rustc 1.99.1 实测语义（覆盖 crate 根、普通模块、mod.rs、inline `mod` 块、fn 体、嵌套 include!、`#[path]` 名字相同 / 指向子目录 / mod.rs 目标等形状；原始输出见该单证据目录）。`push_target` 的 `path.parent()` 因此是精确语义而非并集近似；种子双上下文与边单上下文的「不一致」来自 rustc 本身：边的来历确定上下文，种子的来历未知才需要并集。该语义由 `test_included_module_context_is_the_included_file_parent`、`test_path_attribute_module_context_is_the_loaded_file_parent`、`test_inline_module_does_not_rebase_included_edges` 与对应变异（`edge-context-includer-parent` 等）锁定，防止未来按「包含方上下文」方向改动而偏离 rustc（那会漏掉真实输入）。
+
 共享构建目录的产物守卫只对协作写者负责，对抗写者归已知边界（见 [`state/decisions-20261031-1166-threat.md`](../../../../state/decisions-20261031-1166-threat.md)）。

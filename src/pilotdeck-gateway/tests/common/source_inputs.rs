@@ -259,6 +259,14 @@ fn read_vendored_source(package: &str, file: &Path) -> String {
 // A workspace seed may be a custom Cargo crate root or an ordinary module.
 // Scan the union of both ownership contexts, then use exact contexts on edges.
 // Extra inputs are conservative; no existing decoy can hide the actual input.
+// #1180 arbitration (rustc 1.99.1, evidence in _tmp/20261026-issue-1180/): the
+// edge contexts are *exact* rustc semantics, not an approximation to match the
+// seed union. rustc resolves `mod` inside a file loaded by include! or
+// `#[path]` in that file's OWN parent directory - the containing side's
+// context never participates, in any nesting shape (crate root, ordinary
+// module, mod.rs, inline `mod` block, fn body, nested include!). The seed
+// union exists only because a seed's provenance is unknown; see the
+// registered limitation on the default-module resolution below.
 struct EdgeScanner<'a> {
     package: &'a str,
     directory: &'a Path,
@@ -339,6 +347,20 @@ impl EdgeScanner<'_> {
                             "#1166 macro module cannot be resolved statically"
                         );
                         if !explicit_module {
+                            // #1180 known limitation: rustc requires exactly
+                            // one file in the seed's REAL context (crate root
+                            // -> parent, ordinary module -> stem directory).
+                            // Without Cargo target metadata the scanner cannot
+                            // know which world a seed lives in, so resolution
+                            // succeeds when ANY context provides exactly one
+                            // candidate. Consequence: an ordinary-module seed
+                            // missing its stem-context file is not reported
+                            // when the parent context has a same-named module
+                            // (rustc rejects that code; the scanner keeps the
+                            // substituted file guarded - conservative, no
+                            // false PASS). The reverse direction (extra
+                            // rejection on ambiguity in a non-real context) is
+                            // documented in tests/fixtures/README.md.
                             let mut resolved = Vec::new();
                             for directory in &module_dirs {
                                 let candidates = [
@@ -494,6 +516,12 @@ impl EdgeScanner<'_> {
         } else {
             assert_vendored_source_target(self.package, self.directory, self.file, kind, value)
         };
+        // #1180: the module context of an include!/`#[path]` edge is the
+        // loaded file's OWN parent directory. rustc derives it from the file
+        // alone - never from the containing file's context, in any nesting
+        // shape - so this stays a single exact context on purpose; the
+        // containing side's dual contexts reach the same file only through
+        // the seed scan in workspace_inputs.rs, not through this edge.
         let module_dir = path.parent().expect("#1166 target parent").to_path_buf();
         self.targets.push(SourceEdge {
             path,
@@ -835,5 +863,123 @@ mod tests {
                 "#132 metadata string paths retain a conservative file edge"
             );
         }
+    }
+
+    // #1180: scan as a file whose parent (tests/) differs from the loaded
+    // edge's parent (tests/common/), its stem directory and the walk's module
+    // contexts, so an asserted `module_dir` distinguishes every wrong context.
+    fn scan_from(source: &str, file: &str) -> Vec<SourceEdge> {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let file = directory.join(file);
+        let tokens = lex_source(source).expect("#1180 context fixture must lex");
+        let mut scanner = EdgeScanner {
+            package: "fixture",
+            directory: &directory,
+            file: &file,
+            targets: Vec::new(),
+            macro_depth: 0,
+            workspace: true,
+        };
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scanner.walk(&tokens, true, vec![directory.clone()]);
+        }))
+        .expect("#1180 context scanner resolves the literal edges");
+        scanner.targets
+    }
+
+    #[test]
+    fn include_edge_owns_the_loaded_file_parent() {
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common");
+        let targets = scan_from(
+            "include!(\"common/source_inputs.rs\");",
+            "unsafe_boundary.rs",
+        );
+        assert_eq!(targets.len(), 1, "#1180 include! fixture yields one edge");
+        let edge = &targets[0];
+        assert!(edge.rust_source, "#1180 include! edge stays rust source");
+        assert_eq!(
+            edge.module_dir, parent,
+            "#1180 include! module context is the included file's own parent"
+        );
+    }
+
+    #[test]
+    fn path_attribute_edge_owns_the_loaded_file_parent() {
+        let parent = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common");
+        let targets = scan_from(
+            "#[path = \"common/source_inputs.rs\"] mod renamed;",
+            "unsafe_boundary.rs",
+        );
+        assert_eq!(
+            targets.len(),
+            1,
+            "#1180 path attribute fixture yields one edge"
+        );
+        let edge = &targets[0];
+        assert!(
+            edge.rust_source,
+            "#1180 path attribute edge stays rust source"
+        );
+        assert_eq!(
+            edge.module_dir, parent,
+            "#1180 path attribute module context is the loaded file's own parent"
+        );
+    }
+
+    #[test]
+    fn default_module_edge_owns_the_stem_directory() {
+        let stem = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/unsafe_boundary");
+        let targets = scan_from("mod unsafe_boundary;", "unsafe_boundary.rs");
+        assert_eq!(
+            targets.len(),
+            1,
+            "#1180 default module fixture yields one edge"
+        );
+        let edge = &targets[0];
+        assert!(
+            edge.rust_source,
+            "#1180 default module edge stays rust source"
+        );
+        assert_eq!(
+            edge.module_dir, stem,
+            "#1180 default module context is the resolved file's stem directory"
+        );
+    }
+
+    #[test]
+    fn seed_union_accepts_a_single_context_hit() {
+        // #1180: a seed scanned with both ownership contexts resolves when
+        // ANY context provides exactly one candidate - the registered
+        // known-limitation direction, because crate-root seeds whose stem
+        // directory has no module file are legitimate rustc shapes.
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+        let tokens = lex_source("mod unsafe_boundary;").expect("#1180 union fixture must lex");
+        let file = directory.join("unsafe_boundary.rs");
+        let mut scanner = EdgeScanner {
+            package: "fixture",
+            directory: &directory,
+            file: &file,
+            targets: Vec::new(),
+            macro_depth: 0,
+            workspace: true,
+        };
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            scanner.walk(
+                &tokens,
+                true,
+                vec![directory.join("common"), directory.clone()],
+            );
+        }))
+        .expect("#1180 union scanner resolves a single-context module");
+        assert_eq!(
+            scanner.targets.len(),
+            1,
+            "#1180 union yields the one existing candidate"
+        );
+        assert_eq!(
+            scanner.targets[0].module_dir,
+            directory.join("unsafe_boundary"),
+            "#1180 union resolves the directory that owns the hit"
+        );
     }
 }
