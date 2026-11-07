@@ -1214,6 +1214,30 @@ class ContractTests(unittest.TestCase):
                     ts_read_roots([bad], output, baseline, rust_bin=candidate / 'pilotdeck')
         with self.assertRaisesRegex(Blocked, 'duplicate'):
             ts_read_roots([allowed, allowed], output, baseline)
+        # #2231 r1 (P1): alias spellings must not bypass the guard. On default
+        # macOS the case variant and the /System/Volumes/Data firmlink spell
+        # of home stat to the same (st_dev, st_ino) while resolve() keeps the
+        # alias (real-host probe: _tmp/20261107-coord/2231-r1-probe/), and a
+        # HOME spelled through a symlink must not widen the readable surface
+        # either. Aliases that this host's filesystem does not resolve to the
+        # same tree (case-sensitive volumes, non-darwin) are skipped.
+        home = Path.home()
+        for alias in (str(home).upper(), '/System/Volumes/Data' + str(home)):
+            with self.subTest(alias=alias):
+                if os.path.isdir(alias) and os.path.samefile(alias, home):
+                    with self.assertRaisesRegex(Blocked, 'protected tree'):
+                        ts_read_roots([Path(alias)], output, baseline)
+        target = self.root / 'home-target'
+        target.mkdir()
+        home_link = self.root / 'home-link'
+        home_link.symlink_to(target)
+        with patch.dict(os.environ, {'HOME': str(home_link)}):
+            # Path.home() may or may not fold the symlink; both spellings of
+            # the covered tree must be rejected either way.
+            for spelling in (target, home_link):
+                with self.subTest(symlink_home=str(spelling)):
+                    with self.assertRaisesRegex(Blocked, 'protected tree'):
+                        ts_read_roots([Path(spelling)], output, baseline)
 
     def test_recorded_ts_read_dirs_and_node_identity_are_evidence(self):
         # #122: the declared Node dependency roots and the interpreter pin are
@@ -1273,6 +1297,17 @@ class ContractTests(unittest.TestCase):
         tampered('round.ts-read-dirs', lambda run: run['provenance'].pop('tsReadDirs'))
         tampered('round.node-identity', lambda run: run['provenance'].__setitem__(
             'nodeIdentity', {'node': 'v22.22.0', 'icu': '77.1', 'uv': '1.52.1'}))
+        # #2231 r1: the offline validator replays the recorder's protected-tree
+        # scope — recorded roots that cover home or the evidence tree itself
+        # fail closed, even though the profile bytes are re-derived from them
+        # consistently.
+        tampered('round.ts-read-dirs-protected',
+                 lambda run: run['provenance'].__setitem__('tsReadDirs', [str(Path.home())]))
+        tampered('round.ts-read-dirs-protected',
+                 lambda run: run['provenance'].__setitem__('tsReadDirs', [str(left)]))
+        tampered('round.ts-read-dirs-protected',
+                 lambda run: run['provenance'].__setitem__(
+                     'tsReadDirs', [run['provenance']['baseline']['path']]))
         # Consistent but different roots on one side only: not a PASS pair.
         shutil.rmtree(left)
         shutil.copytree(pristine, left)
@@ -3080,18 +3115,25 @@ class ContractTests(unittest.TestCase):
             self.assertEqual((lock / 'owner.json').stat().st_mode & 0o777, 0o600)
 
     def test_failed_preflight_cannot_start_any_product_round(self):
+        # #2231 r1: since the pinned-Node gate (#122) runs before preflight,
+        # node_identity must be patched too — otherwise it raises first and
+        # the assertions below would pass without preflight ever running.
         output = self.root / 'blocked-run'
         with patch('sys.argv', ['run_round.py', '--node', sys.executable]), \
              patch('run_round.output_path', return_value=output), \
              patch('run_round.baseline_path', return_value=self.root / 'baseline'), \
              patch('run_round.baseline_identity', return_value={'sourceHead': HEAD}), \
+             patch('run_round.node_identity', return_value=dict(PINNED_NODE)), \
              patch('run_round.sandbox_profile', return_value='synthetic policy'), \
              patch('run_round.parity_lock', return_value=nullcontext({'pid': 1})), \
-             patch('run_round.preflight', side_effect=Blocked('synthetic EPERM')), \
+             patch('run_round.preflight', side_effect=Blocked('synthetic EPERM')) as preflight, \
              patch('run_round.run_round') as product, redirect_stdout(io.StringIO()):
             self.assertEqual(main(), 2)
+            preflight.assert_called_once()
             product.assert_not_called()
-        self.assertEqual(json.loads((output / 'summary.json').read_text())['status'], 'BLOCKED')
+        summary = json.loads((output / 'summary.json').read_text())
+        self.assertEqual(summary['status'], 'BLOCKED')
+        self.assertIn('synthetic EPERM', summary['error'])
 
     def test_snapshot_does_not_follow_links_or_open_fifo(self):
         root = self.root / 'tree'

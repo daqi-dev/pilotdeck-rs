@@ -59,7 +59,9 @@ mock_gateway_scenarios = _common.mock_gateway_scenarios
 per_stream_scenarios = _common.per_stream_scenarios
 snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
+ROOT = _common.ROOT
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
+ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
 
 RECORDING_ORIGIN = 'live-os-sandbox'
 PENDING = 'PENDING-TS-CALIBRATION'
@@ -196,6 +198,14 @@ def load_round(path):
         require(isinstance(roots_raw, list) and all(isinstance(root, str) and Path(root).is_absolute() for root in roots_raw),
                 'round.ts-read-dirs')
         roots = tuple(roots_raw)
+        # #2231 r1: being absolute is not enough. The offline validator
+        # replays the same alias-safe protected-tree scope the recorder
+        # enforced, so a tampered round whose tsReadDirs cover home, this
+        # checkout, the evidence tree or the baseline fails closed instead of
+        # merely re-deriving a profile that contains it.
+        require(all(ts_read_root_overlap(Path(root), [ROOT, path, Path(baseline['path'])],
+                                           home=Path.home()) is None for root in roots_raw),
+                'round.ts-read-dirs-protected')
         if run['side'] == 'ts':
             require(provenance['sourceHead'] == HEAD and provenance['executable'] == node
                     and provenance['sourcePath'] == baseline['path'], 'round.ts-source')

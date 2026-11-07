@@ -47,6 +47,65 @@ SCRIPT = _common.SCRIPT
 MOCK_GATEWAY_ALLOW = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))'
 
 
+def _alias_identity(path):
+    """(st_dev, st_ino) of the directory a spelling names, following symlinks
+    and firmlinks; None when it does not currently exist."""
+    try:
+        info = os.stat(os.fspath(path))
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
+
+
+def alias_at_or_below(inner, outer):
+    """True when the tree ``inner`` spells is at or below the tree ``outer``
+    spells on the real filesystem.
+
+    #2231 r1 (P1): the #122 scope guard must compare by identity, not by
+    spelling. Default macOS APFS is case-insensitive and /Users is a firmlink,
+    so ``/USERS/DA`` and ``/System/Volumes/Data/Users/da`` name the same tree
+    as ``/Users/da`` while realpath/resolve keep the alias spelling (real-host
+    probe: _tmp/20261107-coord/2231-r1-probe/). The climb stats each spelling
+    level — stat follows symlinks and the kernel resolves firmlink and case
+    aliases — so every real ancestor is compared by (st_dev, st_ino). Callers
+    pass resolve()-d roots; the climb still catches the aliases that lexical
+    canonicalization misses. When either endpoint does not exist (offline
+    validation on another host), fall back to realpath-normalized lexical
+    containment, which cannot see case/firmlink aliases (recorded limitation).
+    Bounded: nothing is created, symlink loops surface as a non-match plus the
+    lexical fallback, never a hang.
+    """
+    inner_s, outer_s = os.fspath(inner), os.fspath(outer)
+    outer_id = _alias_identity(outer_s)
+    if outer_id is not None:
+        current = inner_s
+        while True:
+            if _alias_identity(current) == outer_id:
+                return True
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+    inner_n, outer_n = os.path.realpath(inner_s), os.path.realpath(outer_s)
+    return inner_n == outer_n or outer_n in Path(inner_n).parents
+
+
+def ts_read_root_overlap(root, protected, home=None):
+    """Shared #122 fail-closed scope check for operator-declared TS read
+    roots, called by the recorder (run_round.ts_read_roots) and the offline
+    validator (compare.load_round): one implementation, no second drift-prone
+    copy. Returns the offending protected tree when ``root`` overlaps one,
+    else None. Protected trees reject equality, containment and coverage;
+    ``home`` only rejects being equaled or covered — a narrow dependency
+    directory inside it is the legitimate use."""
+    for base in protected:
+        if alias_at_or_below(root, base) or alias_at_or_below(base, root):
+            return base
+    if home is not None and alias_at_or_below(home, root):
+        return home
+    return None
+
+
 def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False, ts_read_dirs=()):
     if side not in ('ts', 'rust'):
         raise ValueError('unknown sandbox side')
