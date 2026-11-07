@@ -602,8 +602,9 @@ def _constants(tree):
     so substituting either one keys a directory the code may never build and
     hides the one it does. Such a name is left out and reported at its uses.
     Tables also build paths from local aliases (``source = ROOT / '...'`` inside
-    a function, then ``source.parent / 'x.rs'``); a name assigned exactly once in
-    the whole file has no ambiguity, so it is resolved too. A module-level name
+    a function, then ``source.parent / 'x.rs'``); a name whose assignments all
+    give the same expression has no ambiguity, so it is resolved too — assignments
+    that disagree are reported by ``_ambiguous_local_names``. A module-level name
     that a function rebinds is *not* substituted either: the two sites would
     then mean different directories, and resolving both to the module-level
     value would demand an anchor for a key the runtime never uses while hiding
@@ -615,17 +616,24 @@ def _constants(tree):
     for name, value in module_pairs:
         constants[name] = value        # last one wins, exactly as at runtime
     module_level = {name for name, _ in module_pairs}
-    counts = {}
+    values = {}
     assignments = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             pairs, _ = _assignment_pairs(node)
             for name, value in pairs:
-                counts[name] = counts.get(name, 0) + 1
+                values.setdefault(name, []).append(ast.dump(value))
                 assignments.append((name, value))
     rebound = _rebound_elsewhere(tree)
     for name, value in assignments:
-        if name not in constants and counts[name] == 1 and name not in rebound:
+        if name in constants or name in rebound:
+            continue
+        # A name assigned several times is still a constant when every
+        # assignment gives the same expression: whichever ran, the value is the
+        # same. Assignments that disagree are left out and reported at their
+        # uses by ``_ambiguous_local_names`` — leaving them out *and* silent was
+        # the hole (two functions, two directories, no key, no report).
+        if len(set(values[name])) == 1:
             constants[name] = value
     for name in (set(_shadowed_names(tree)) | _duplicated_module_names(tree)) & module_level:
         constants.pop(name, None)
@@ -678,6 +686,35 @@ def _unfollowable_module_names(tree, constants):
     _, unfollowable = _module_level_pairs(tree)
     return {name for name, value in unfollowable
             if _is_repo_rooted(value, constants)}
+
+
+def _ambiguous_local_names(tree, constants):
+    """Non-constant names whose assignments disagree, at least one a repo path.
+
+    ``def a(): src = ROOT / 'x'`` and ``def b(): src = ROOT / 'y'`` give one name
+    two directories. It is not a constant (substituting either value would key a
+    directory the other site never builds) and it is not module level either, so
+    the module-level report net never saw it: both joins produced no key and no
+    problem, and the table looked clean while the discovery loop never scheduled
+    it. Names bound by another form (parameter, loop target, ...) are left to the
+    parameter/return taint checks instead of being reported twice.
+    """
+    values = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            pairs, _ = _assignment_pairs(node)
+            for name, value in pairs:
+                values.setdefault(name, []).append(value)
+    rebound = _rebound_elsewhere(tree)
+    names = set()
+    for name, bound in values.items():
+        if name in constants or name in rebound:
+            continue
+        if len({ast.dump(value) for value in bound}) < 2:
+            continue
+        if any(_is_repo_rooted(value, constants) for value in bound):
+            names.add(name)
+    return names
 
 
 def _function_scoped_names(tree):
@@ -1450,7 +1487,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                  else tuple(table.split('/')))
     constants = _constants(tree)
     unfollowable = _unfollowable_module_names(tree, constants)
-    shadowed = _shadowed_names(tree) | unfollowable
+    local_ambiguous = _ambiguous_local_names(tree, constants)
+    shadowed = _shadowed_names(tree) | unfollowable | local_ambiguous
     aliases = _module_aliases(tree)
     repository_returns = _repo_returning_functions(tree, constants)
     tainted = _repository_parameters(tree, constants, repository_returns)
@@ -1492,6 +1530,11 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             problems.append('unsupported unpacking of a repository path (this '
                             f'scanner cannot pair the name with a value): '
                             f'{name}: {expression}')
+            return
+        if name in local_ambiguous:
+            problems.append('ambiguous name assigned different values in '
+                            f'several places (this scanner cannot tell which '
+                            f'one is used): {name}: {expression}')
             return
         problems.append('ambiguous module-level name rebound elsewhere: '
                         f'{name}: {expression}')
@@ -1840,6 +1883,19 @@ def violations(text, table, anchors=None):
     """
     tree = ast.parse(text)
     problems = []
+    if '/' not in table:
+        # ``git grep -- "$FX/**/*negative*.py"`` needs at least one directory
+        # below the fixtures root: measured with ``git ls-files``, the ``**/``
+        # form returns 0 files directly under ``fixtures/`` while ``*negative*.py``
+        # returns 18. A top-level table is therefore only ever emitted when the
+        # table file itself changes (``neg-for-diff.sh:27``), so no anchor could
+        # schedule it — accepting one here would turn a real hole into a green
+        # tick. Such tables stay in ``KNOWN_BLIND`` with the host pathspec as the
+        # reason.
+        problems.append('top-level table: the discovery loop\'s grep never reaches a '
+                        f'file sitting directly under fixtures/, so anchors cannot '
+                        f'schedule it: {table}')
+        return problems
     required, scan_problems = bare_concat_keys(tree, table)
     problems.extend(problem for problem in scan_problems
                     if not problem.startswith('no discovery key'))
@@ -2301,6 +2357,82 @@ class DiscoveryAnchorTests(unittest.TestCase):
         problems = violations(dropped, 'example/negative_controls.py')
         self.assertTrue(any('missing anchor: edgeclaw/storage.rs' in p for p in problems),
                         problems)
+
+    def test_local_aliases_with_different_values_fail_closed(self):
+        """Two functions, two directories, one name: no key is right, silence is not.
+
+        ``src = ROOT / 'x'`` in one function and ``src = ROOT / 'y'`` in another
+        leaves the name out of the constant table, and the module-level report net
+        only covers module-level names — so both joins produced no key *and* no
+        problem, and the table read as "needs no anchor" while the discovery loop
+        never scheduled it. An unknown directory must always be reported.
+        """
+        different = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    src = ROOT / 'src/example/x'\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    src = ROOT / 'src/example/y'\n"
+            "    return src / 'mod.rs'\n"
+        )
+        problems = violations(different, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous name assigned different values' in p for p in problems),
+                        problems)
+
+    def test_local_aliases_with_the_same_value_still_carry_their_keys(self):
+        """The reverse control: the same expression twice is not ambiguous.
+
+        Whichever assignment ran, the value is the same, so the joins must be keyed
+        like a single-assignment alias — refusing to resolve would demand nothing
+        and hide a real directory.
+        """
+        same = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ('x/mod.rs', 'x/other.rs')\n"
+            "def a():\n"
+            "    src = ROOT / 'src/example/x'\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    src = ROOT / 'src/example/x'\n"
+            "    return src / 'other.rs'\n"
+        )
+        self.assertEqual(violations(same, 'example/negative_controls.py'), [])
+        dropped = same.replace("DISCOVERY_ANCHORS = ('x/mod.rs', 'x/other.rs')",
+                               "DISCOVERY_ANCHORS = ()")
+        problems = violations(dropped, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: x/mod.rs' in p for p in problems), problems)
+
+    def test_reassigned_display_locals_stay_silent(self):
+        """A local reassigned between non-path values is not a repository path."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def render(rows):\n"
+            "    label = 'a'\n"
+            "    label = 'b'\n"
+            "    return label + ': ' + rows\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_top_level_table_cannot_be_scheduled_by_anchors(self):
+        """Anchors only help where the host's grep looks.
+
+        ``neg-for-diff.sh:29`` greps ``"$FX/**/*negative*.py"``, and that pathspec
+        needs a directory below the fixtures root (measured: ``git ls-files``
+        returns 0 top-level files for it, 18 for ``*negative*.py``). A table
+        sitting directly in ``fixtures/`` is emitted only when the table itself
+        changes, so moving it into ``TABLES`` after adding anchors would report
+        coverage the loop never has — the guard must refuse it instead.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ('x/mod.rs',)\n"
+            "rows = [ROOT / 'src/example/x/mod.rs']\n"
+        )
+        problems = violations(synthetic, 'top_level_negative.py')
+        self.assertTrue(any('top-level table' in p for p in problems), problems)
 
     def test_runtime_directories_need_no_anchor(self):
         """Evidence-dir joins are not repository paths, so they carry no key."""
