@@ -718,23 +718,33 @@ impl ChannelAdapter for SmsChannel {
                 // the channel's sockets are all closed once `stop()`
                 // returns instead of outliving it. The mutation switches are
                 // what prove both halves load-bearing: `sms-stop-no-drain`
-                // restores the pre-#2026 detach shape,
+                // restores the pre-#2026 detach shape (the set is forgotten,
+                // so its aborting drop never runs),
                 // `sms-stop-drain-unbounded` the TS unbounded shape.
-                let drain = async { while connections.join_next().await.is_some() {} };
                 if crate::mutants::on("sms-stop-no-drain") {
-                    // The pre-#2026 shape: stop the accept loop and return,
-                    // the connections run on detached.
-                } else if crate::mutants::on("sms-stop-drain-unbounded") {
-                    drain.await;
-                } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
-                    server_shared.log(
-                        "warn",
-                        format!(
-                            "sms: stop drain exceeded the {STOP_DRAIN_LIMIT:?} bound; \
-                             {} in-flight connection(s) aborted",
-                            connections.len()
-                        ),
-                    );
+                    // The pre-#2026 shape: stop the accept loop and return
+                    // with the connections still running. Forgetting the set
+                    // leaks it, so the aborting `Drop` of a `JoinSet` never
+                    // runs and the connection tasks stay detached, like the
+                    // bare `tokio::spawn`s of the pre-#2026 code.
+                    std::mem::forget(connections);
+                } else {
+                    // Snapshot before the drain: a connection that
+                    // completes between the bound firing and the read
+                    // would otherwise be under-reported as an abort.
+                    let remaining = connections.len();
+                    let drain = async { while connections.join_next().await.is_some() {} };
+                    if crate::mutants::on("sms-stop-drain-unbounded") {
+                        drain.await;
+                    } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
+                        server_shared.log(
+                            "warn",
+                            format!(
+                                "sms: stop drain exceeded the {STOP_DRAIN_LIMIT:?} bound; \
+                                 {remaining} in-flight connection(s) aborted"
+                            ),
+                        );
+                    }
                 }
             });
             Ok(Arc::new(SmsHandle {
