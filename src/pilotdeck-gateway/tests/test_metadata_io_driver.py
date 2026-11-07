@@ -3034,6 +3034,14 @@ self_check_controls_run | return | return problems
         # pristine 检查读到「基线不符」，而且直到有人手工修树为止，每次运行都会这样。
         # 正确形态是 tmp + fsync + 一次 rename：读者只会看到旧字节或新字节。
         # #1903：实现已上提到共享守卫，夹具与 `mutating_sources` 的还原共用同一份。
+        #
+        # 覆盖边界（r18，zai sibling P1 的裁决）：本判据钉的是**共享还原咽喉**
+        # （`mutating_sources` 的出口，所有走它的夹具共用）与三处自带
+        # `write_atomic`/`atomic_write` 的 native 夹具。各夹具**循环内**的
+        # `path.write_text(mutant)` / `path.write_bytes(snapshot)` 仍是原地写
+        # —— 那是 41 个夹具文件（连同各自的负控锚点与 SHA 钉）的逐处改造，
+        # 已由 #1908 第 1 条跟踪，前置于下一轮负控夹具改造。所以这里成立的
+        # 说法是「共享咽喉与三处 native 夹具」，**不是**「全部还原已原子化」。
         base = Path(__file__).resolve().parent/'fixtures'
         fixture = (base/'session-assembly-1316'/'negative_controls.py').read_text()
         shared = (base/'negative_process.py').read_text()
@@ -3312,6 +3320,10 @@ self_check_controls_run | return | return problems
         并且那个函数仍满足 §9 的全部发布钉子。删掉这条断言而不是改写它，会让
         `test_mutation_source_writes_are_published_atomically` 再次被读成「被变异源
         已经全部原子发布」——那正是评审判的假 PASS。
+
+        覆盖边界：本条管**共享还原咽喉**（`mutating_sources` 的出口）与三处 native
+        夹具的本地实现。各夹具循环内的逐变异体写入 / 循环内还原仍是原地写，由
+        #1908 第 1 条跟踪（前置于下一轮负控夹具改造），不在本 PR。
         """
         source = (Path(__file__).resolve().parent/'fixtures/negative_process.py').read_text()
         self.assertEqual(re.findall(r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)', source),
@@ -3343,6 +3355,49 @@ self_check_controls_run | return | return problems
                 target, scratch_root / '.negctl-publish')
         print('#1903 observed publish write_source_atomic: temp from <root>/.negctl-publish '
               '(live)', flush=True)
+        # r18（deepseek concurrency P2）：目标可能在变异窗口里被删掉（变异体删文件是
+        # 合法形态）。还原是**顺序循环**，无条件的 `path.stat()` 会在写第一份之前抛
+        # FileNotFoundError，把后面所有受守卫文件留在变异状态 —— 比缺一个文件更糟。
+        # 两文件一组：删掉第一份，两份都必须还原成功，且重建的那份用 0o600 兜底。
+        with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+            scratch_root = Path(scratch_root)
+            (scratch_root / 'src').mkdir()
+            first = scratch_root / 'src' / 'deleted.rs'
+            second = scratch_root / 'src' / 'kept.rs'
+            second.write_bytes(b'#1903 second\n')
+            shared_module = self.sibling_module('negative_process.py')
+            shared_module['write_source_atomic'](scratch_root, first, b'#1903 first\n')
+            first.unlink()
+            restored = []
+            for path, data in ((first, b'#1903 first\n'),
+                               (second, b'#1903 second\n')):
+                shared_module['write_source_atomic'](scratch_root, path, data)
+                restored.append(path.read_bytes())
+            self.assertEqual(restored, [b'#1903 first\n', b'#1903 second\n'],
+                             '#1903 r18 a restore loop must keep going after the target '
+                             'was deleted mid-window; one missing mode must not abort it')
+            self.assertEqual(stat.S_IMODE(first.stat().st_mode), 0o600,
+                             '#1903 r18 a recreated source has no mode to inherit')
+        print('#1903 deleted-target restore: recreated with the fallback mode (live)',
+              flush=True)
+        # 对杀负控：把 exists() 兜底去掉，同一场景必须抛 FileNotFoundError。
+        fallback = "mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600"
+        source_text = (Path(__file__).resolve().parent/'fixtures/negative_process.py'
+                       ).read_text()
+        self.assertEqual(source_text.count(fallback), 1,
+                         '#1903 r18 the fallback-mode line is unique')
+        mutant = self.sibling_module(
+            'negative_process.py',
+            source_text.replace(fallback, "mode = path.stat().st_mode & 0o7777", 1))
+        with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+            scratch_root = Path(scratch_root)
+            (scratch_root / 'src').mkdir()
+            missing = scratch_root / 'src' / 'deleted.rs'
+            with self.assertRaises(FileNotFoundError,
+                                   msg='#1903 r18 without the exists() fallback the '
+                                       'restore loop dies on a deleted target'):
+                mutant['write_source_atomic'](scratch_root, missing, b'#1903 first\n')
+        print('#1903 deleted-target mutant stat-without-exists: KILLED', flush=True)
         # 行为判据的对杀负控：临时文件改到目标旁边，观测必须红。
         for label, old, new in (
                 ('temp-beside-the-target', "publish = Path(root) / PUBLISH_DIR",

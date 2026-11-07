@@ -902,7 +902,11 @@ def write_source_atomic(root, path, data):
     publish = Path(root) / PUBLISH_DIR
     publish.mkdir(parents=True, exist_ok=True)
     temporary = publish / f'.negctl-{path.name}.tmp'
-    mode = path.stat().st_mode & 0o7777
+    # 目标可能在变异窗口里被删掉（变异体自己删文件是合法形态）。此时没有 mode
+    # 可继承，用 0o600 兜底 —— 无条件的 `path.stat()` 会在写第一份之前抛
+    # FileNotFoundError，而还原是**顺序循环**，一份失败会连带丢掉后面所有受守卫
+    # 文件的还原，把树留在半变异状态（比缺一个文件更糟）。
+    mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600
     try:
         with temporary.open('wb') as stream:
             stream.write(data)
