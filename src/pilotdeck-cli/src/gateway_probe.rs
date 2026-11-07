@@ -3,6 +3,10 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 pub(crate) async fn healthy() -> bool {
+    healthy_at("http://127.0.0.1:18789").await
+}
+
+pub(crate) async fn healthy_at(base: &str) -> bool {
     timeout(Duration::from_millis(200), async {
         // Use the same HTTP/TLS stack already in the Gateway, including redirects.
         let connector = hyper_rustls::HttpsConnectorBuilder::new()
@@ -13,7 +17,7 @@ pub(crate) async fn healthy() -> bool {
         let client: hyper_util::client::legacy::Client<_, http_body_util::Empty<bytes::Bytes>> =
             hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
                 .build(connector);
-        let mut url = url::Url::parse("http://127.0.0.1:18789/health").ok()?;
+        let mut url = url::Url::parse(&format!("{base}/health")).ok()?;
         for redirects in 0..=20 {
             let uri = url.as_str().parse::<hyper::Uri>().ok()?;
             let response = client.get(uri).await.ok()?;

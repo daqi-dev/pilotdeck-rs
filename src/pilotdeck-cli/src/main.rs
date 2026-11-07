@@ -170,13 +170,98 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         Some("chat") => chat_search::run(&argv[1..], env, cwd),
         Some("tui") => {
             if !std::io::stdin().is_terminal() {
-                stderr_line("pilotdeck tui requires an interactive terminal.");
+                tui_stderr_nonblocking("pilotdeck tui requires an interactive terminal.");
                 return Ok(1);
             }
-            Err(Failure::Todo("pilotdeck tui"))
+            match run_tui(env, cwd) {
+                Ok(code) => Ok(code),
+                Err(Failure::Error(message)) => {
+                    tui_stderr_nonblocking(&message);
+                    Ok(1)
+                }
+                Err(Failure::Todo(what)) => {
+                    tui_stderr_nonblocking(&format!(
+                        "pilotdeck-rs TODO: {what} is not implemented yet."
+                    ));
+                    Ok(2)
+                }
+            }
         }
         _ => run_local_cli_channel(argv, env, cwd),
     }
+}
+
+fn tui_stderr_nonblocking(message: &str) {
+    let stderr = std::io::stderr();
+    if let Ok(flags) = rustix::fs::fcntl_getfl(&stderr)
+        && rustix::fs::fcntl_setfl(&stderr, flags | rustix::fs::OFlags::NONBLOCK).is_ok()
+    {
+        let _ = writeln!(stderr.lock(), "{message}");
+        let _ = rustix::fs::fcntl_setfl(&stderr, flags);
+    }
+}
+
+fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    let home = paths::pilot_home(env, cwd)?;
+    let snapshot =
+        pilotdeck_gateway::config::load_snapshot(&home, cwd, &env.strings(), Some("."), 1.0, "")
+            .map_err(|error| {
+                if error.requires_host {
+                    Failure::Todo("config requiring JavaScript host support")
+                } else {
+                    Failure::Error(String::from_utf16_lossy(error.message.units()))
+                }
+            })?;
+    let port = snapshot
+        .get("config")
+        .and_then(|v| v.get("gateway"))
+        .and_then(|v| v.get("port"))
+        .and_then(|v| v.as_number())
+        .unwrap_or(18789.0);
+    if !port.is_finite() || port.fract() != 0.0 || !(1.0..=65535.0).contains(&port) {
+        return Err(Failure::Error("Invalid gateway port.".into()));
+    }
+    let base = format!("http://127.0.0.1:{}", port as u16);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Failure::Error(e.to_string()))?;
+    runtime.block_on(async {
+        if !gateway_probe::healthy_at(&base).await {
+            return Err(Failure::Todo("TUI in-process Gateway"));
+        }
+        let token = read_tui_token(&paths::gateway_token_path(env, cwd)?)
+            .map_err(|_| Failure::Todo("TUI in-process Gateway"))?;
+        let token = String::from_utf8_lossy(&token);
+        let token = paths::js_trim(&token);
+        if token.is_empty() {
+            return Err(Failure::Todo("TUI in-process Gateway"));
+        }
+        let url = format!("ws://127.0.0.1:{}/ws", port as u16);
+        pilotdeck_cli::tui::runner::run(&url, token, &home, cwd)
+            .await
+            .map_err(Failure::Error)
+    })
+}
+
+fn read_tui_token(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other(
+            "Gateway token must be a regular file.",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes)?;
+    if bytes.len() > 65536 {
+        return Err(std::io::Error::other("Gateway token is too large."));
+    }
+    Ok(bytes)
 }
 
 /// createLocalGateway() up to its first observable effects, then CliChannel.
@@ -227,5 +312,34 @@ mod tests {
                 "#983 streamed pretty bytes",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tui_token_tests {
+    use super::read_tui_token;
+    use std::fs;
+
+    #[test]
+    fn token_reads_are_bounded_and_do_not_block_on_fifo() {
+        let dir = std::env::temp_dir().join(format!("pdrs-tui-token-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("token");
+        fs::write(&path, b"fixture-token\n").unwrap();
+        assert_eq!(read_tui_token(&path).unwrap(), b"fixture-token\n");
+        fs::write(&path, vec![b'x'; 65537]).unwrap();
+        assert!(read_tui_token(&path).is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(read_tui_token(&path).is_err());
+        fs::remove_file(&path).unwrap();
+        assert!(read_tui_token(&dir).is_err());
+        fs::remove_dir(&dir).unwrap();
     }
 }

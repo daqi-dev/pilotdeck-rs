@@ -56,3 +56,4 @@
 - [macmini 仅 Wi-Fi](20261106-macmini-wifi-linkloss.md) — en0 无有线，长链断链会作废整批宿主/对拍；B 已让等待器 resume + 证据分轮次，根治仍需现场插网线（#1498 人批 B）
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
 - [新增差异段名](20261108-diff-sections.md) — 六个独立段名、`check_frozen.py -I` 完整退出0后才提交；不合并 Rust 行为与范围
+- [远端源码新鲜度](20261108-remote-source-freshness.md) — 同步完成后刷新源码mtime并绑定bin哈希；库测试通过不证明实际入口已重编

@@ -1,6 +1,6 @@
-# pilotdeck-control：单次调用和流式文本轮次
+# pilotdeck-control：调用、流式文本轮次与显式宿主
 
-新入口连接显式指定的 Gateway，使用已有 hello/request/response 协议，不启动第二个宿主。`call` 在连接前拒绝 `submit_turn`；`stream` 提供单轮文本事件流。它不是持久服务或恢复接口。`schema` 和 `serve` 尚未提供。
+`status`、`capabilities`、`call` 和 `stream` 连接显式指定的 Gateway，使用已有 hello/request/response 协议，不自动启动宿主。`call` 在连接前拒绝 `submit_turn`；`stream` 提供单轮文本事件流。`serve` 显式启动现有原生 Gateway 前台宿主。`schema`、新的 app JSON-RPC 服务及事件恢复尚未提供。
 
 ```sh
 pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token status
@@ -43,3 +43,17 @@ stream 的认证回显过滤保留所有 JSON 键，以及事件顶层 `type`/`f
 关闭或丢失流连接可能按现有 Gateway 规则触发整个 session 的中止。SIGINT、输出失败、超时和进程崩溃均不意味着 detach，也不能证明副作用未执行。事件恢复、后台持久连接、审批恢复和前端 Web 传输仍未提供。
 
 真实组合探针：`tests/fixtures/control-stream/native.py`，传入刚构建的三个 Rust binary 和新的独占证据目录；它使用假 OpenAI SSE 服务、独立 home/project、动态端口，验证真实输出、run_get、transcript、另一连接取消和 provider 关闭，不访问真实用户服务。
+
+## serve 前台宿主
+
+```sh
+pilotdeck-control serve --home /isolated/home --project /isolated/project \
+  --listen 127.0.0.1:0 --token-file /isolated/token \
+  --sidecar /explicit/pilotdeck-agent-loop-sidecar
+```
+
+home、project、配置、token 和 sidecar 需事先准备，home 与 project 为分离的既有目录；所有权限来源均显式给出。监听仅支持 loopback 的高端口或内核分配的端口 0。原生 readiness/stopping 信息写入 stderr，stdout 没有 JSON ready 协议。SIGINT/SIGTERM 交给现有宿主 drain 流程处理。
+
+token 必须为不超过 64 KiB 的普通文件；CLI 以同一描述符有界读取，再经私有匿名文件描述符交给宿主，避免宿主重新打开被替换的原路径。此入口目前要求 Unix 和可用的 `/dev/fd`。它复用已有服务端装配，配置可能启动 cron/IM；调用方负责独占所选数据根。本片没有自动安装或发现 sidecar、跨进程写锁、默认 CLI 本地 fallback 或完整旧 `pilotdeck server` 的 UI 编排。
+
+参数、token 隔离与真实 Rust sidecar 的验证说明见 [control-stream README](tests/fixtures/control-stream/README.md)。上述真实组合探针的 `--host-mode control-serve --signal TERM|INT` 分别验证两种正常退出；假 provider 结果不等于真实 provider 或人工验收。

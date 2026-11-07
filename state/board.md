@@ -4761,3 +4761,7 @@ Weixin/wechat与菜单2已原生接通，all按Feishu→Weixin→WeCom顺序执�
 ### 2026-11-08 · 显式原生宿主入口（Codex，仅本机）
 
 新增 `pilotdeck-control serve` 复用现有 native Gateway 前台装配，显式 home/project/listen/token/sidecar；匿名有界 token 快照防原路径替换/FIFO/增长，真实 EFBIG 失败原件保全且清理。mbp2 r2 fmt/all-targets clippy、6 control 单测（辅助子进程实际四格）、2 serve 进程测试与旧 control/stream 回归、真实共享宿主读写全部通过；真实 Rust sidecar + fake provider TERM/INT 两轮流式/落盘/取消/退出通过，无 POST 负控确认观察并清理 sidecar。原始 r1/r2、源码快照和独审在主仓 `_tmp/20261108-control-cli/`。仅本机提交、不推 GitHub；本片未解决默认 local boot、跨宿主写锁、完整旧 server、app JSON-RPC 或真实 provider 验收，不标 A8/CLI 完成。下一片接通 CLI 已有只读 StaffDeck binding，TUI 继续独立验证。
+
+### 2026-11-08 · 原生远端 TUI 基础交互（Codex/Terra，仅本机）
+
+Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限文件；修复迟到abort误伤下一轮、final-only挂起、终端背压及大文本排版饥饿，显示按字素连续硬换行且分批缓存计入8MiB。mbp2 r12刷新同步源码mtime后重新编译，1031个Rust/manifest/lock哈希与本地零差异；fmt/严格clippy、18库/130旧bin/6control单测通过，辅助子测试按父调用，两个既有ignored仍未代填；实际新bin16PTY全通过。r11因增量缓存仍执行旧bin的结果已作废为当前源码证据，原件与新哈希均保留主仓 `_tmp/20261108-cli-tui/`；serve当前bin实际EFBIG及TERM/INT原生流回归通过。Weixin与serve已本地整合；继续工具焦点/完整帮助/会话导航，Sol独立接只读binding与有界配置facade。所有新差异待人复核；本地fallback、native权限/history、完整D4/CLI与真实使用均未标完成，无GitHub写入、无本机Rust构建。

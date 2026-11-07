@@ -1,0 +1,19 @@
+# Rust 远端 TUI
+
+`pilotdeck tui` 已接入实际终端。它从隔离 `PILOT_HOME` 的配置读取 `gateway.port`，先探测 loopback Gateway，再用该 home 的 `server-token` 建立一条 WebSocket；普通请求、流、取消和权限应答共用这一连接。输入和输出都需要交互式终端。
+
+```sh
+PILOT_HOME=/isolated/home /path/to/pilotdeck tui
+```
+
+配置中的模型、Gateway 端口和 token 需与所选宿主一致。当前尚未接默认进程内 Gateway fallback；未发现可连接的宿主时明确返回未实现状态，不自动启动另一份宿主。显式宿主入口的准备方式见 [CONTROL.md](CONTROL.md)。
+
+当前基础交互包括输入与提交、增量回复、模式及权限文件、`/new`、`/switch`、`/sidebar`、`/view`、`/clear`、`/help` 和 `/exit`，PageUp/PageDown 可翻阅聊天。权限请求展示工具及参数摘要，y/n 分别允许一次或拒绝，a 保存本地允许规则后应答。服务端未确认送达时保留请求，可重试或中止。实际可用能力仍由宿主决定。
+
+运行中 Esc 或 Ctrl-C 请求取消；取消确认前不会提交下一轮或切换会话。取消结果未知时关闭连接并要求退出后重连。空闲 Ctrl-C 退出；退出、错误和信号路径负责恢复终端模式。文字按 Unicode 字素宽度连续硬换行，显示缓存分批更新以让事件和输入继续推进；不承诺复刻旧 Ink 的像素排版。
+
+状态、显示缓存及输入合计约8MiB计数，资源不足会明确提示并中止活动回合，逐步移除最新内容，保留可显示的旧历史。它不是进程 RSS 上限。输入最多64KiB，token最多64KiB；工具输出文件最多读取1MiB。终端短暂不可写会等待，整帧一秒后仍无法写入则失败退出。具体计数与尚待人复核的行为差异见 `specs/gateway-parity/diffs/D4-TUI-*.md`。
+
+本片是远端基础交互，不代表完整 D4。工具焦点/展开、完整帮助与会话分组等剩余功能继续实现；当前 native 宿主的权限发射和历史读取接线仍有限，fake WS 的权限/history 场景不能代表实际宿主已具备这些能力。真实 provider 与人眼终端体验仍需独立验收。
+
+复现脚本见 [tui-pty README](tests/fixtures/tui-pty/README.md)。Rust 编译和 PTY 验证均在 mbp2，证据保留在主仓 `_tmp/20261108-cli-tui/`；真实执行的 bin 必须与本轮源码指纹绑定，不能仅凭增量构建退出0判断来源。
