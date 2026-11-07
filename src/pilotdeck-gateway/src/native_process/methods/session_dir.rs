@@ -246,6 +246,13 @@ impl Requests {
     /// `InProcessGateway.resumeSession` → identity (returns the key unchanged).
     fn session_resume(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let key = require_session_key(params)?;
+        if self.kernel_owned(&key)? {
+            return Ok(object([
+                ("sessionKey", JsValue::String(key)),
+                ("backend", "kernel".into()),
+                ("abortSemantics", "observe_original_terminal".into()),
+            ]));
+        }
         Ok(object([("sessionKey", JsValue::String(key))]))
     }
 

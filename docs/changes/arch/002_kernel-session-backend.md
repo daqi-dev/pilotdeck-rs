@@ -50,3 +50,5 @@ backend 先取得原生 lease，并在存活期间续租；请求 Future 被取�
 Gateway restart active view 在没有本地 attached pump 时从 Kernel root journal 重建，使用原 Gateway projector，保留 root correlation/run ID、原 child wait ID 和真实终态；有界视图最多 512 帧，截断显式标记。该逻辑没有提交 execution.input，也不把恢复观察当审批。Native Unknown 的公开错误 code 是既有产品 `result_unknown`，附 nativeCode `KERNEL_OUTCOME_UNKNOWN` 和原操作 identity；CLI 既有 SDK 因此保持 result_unknown recovery 语义，不改旧 CLI oracle。
 
 UI history/live 对齐使用原始 root correlation 和模型 block identity：WebMessage 保留 blockId/timeline，读取 provider-authored display metadata.turnId/createdAt/kernelMessageId。旧 canonical 缺注释时，只按 journal 唯一 root block 锚点以及该 root 的精确输入组合补 UI identity，不按全局文本去重；内部模型 timeline.turnId 不改。缺失历史时间的旧记录不能据此推断执行时间，新 provider 注释保存原 turn 创建时间。
+
+Reopen 仅观察时不申请 lease；execution input/respond/import 才从公开 lease_status 读实际 holder/epoch，保存的同 node 活跃 lease 用 renew，inactive lease 才 acquire，foreign holder 不被接管。native resume 的 additive backend/abortSemantics 使 CLI 取消 ACK 后继续观察原 turn；legacy resume 响应/SDK 信号行为不变。UI 派生 timeline.turnId 与外层产品 root 保持一致，避免 retained sessionTimeline 把 canonical 内部 turn 当产品 turn；原 Kernel canonical timeline 不修改。

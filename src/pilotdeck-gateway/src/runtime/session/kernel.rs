@@ -192,13 +192,20 @@ impl Rpc {
                 self.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":self.node})).await?;
             }
             if matches!(method,"execution.input"|"execution.respond"|"execution.history.import") {
-                if let Some((session,epoch,since))=self.lease.clone() {
-                    if since.elapsed()>std::time::Duration::from_secs(60) {
-                        let lease_method=if since.elapsed()>std::time::Duration::from_secs(240)&&method=="execution.input"{"session.lease_acquire"}else{"session.lease_renew"};
-                        phase=lease_method.into();
-                        let renewed=self.exchange(lease_method,json!({"session_id":session,"epoch":epoch,"ttl_ms":300000})).await?;
-                        self.lease=Some((session,renewed["data"]["epoch"].as_u64().unwrap_or(epoch),std::time::Instant::now()));
-                    }
+                let session=params["session_id"].as_str().ok_or_else(||error("Effect session identity is missing."))?.to_string();
+                if self.lease.as_ref().is_none_or(|(held,_,since)|held!=&session||since.elapsed()>std::time::Duration::from_secs(60)) {
+                    phase="session.lease_status".into();
+                    let status=self.exchange("session.lease_status",json!({"session_id":session})).await?;
+                    let data=&status["data"];
+                    let active=data["active"].as_bool().ok_or_else(||error("Kernel lease activity is missing."))?;
+                    let lease_method=if active {
+                        if data["holder_node"].as_str()!=Some(self.node.as_str()){return Err(error("Kernel session has an active lease held by another node; observation remains available."));}
+                        "session.lease_renew"
+                    }else{"session.lease_acquire"};
+                    phase=lease_method.into();
+                    let grant=self.exchange(lease_method,json!({"session_id":session,"epoch":data["epoch"],"ttl_ms":300000})).await?;
+                    let epoch=grant["data"]["epoch"].as_u64().filter(|epoch|*epoch>0).ok_or_else(||error("Kernel lease epoch is missing."))?;
+                    self.lease=Some((session,epoch,std::time::Instant::now()));
                 }
             }
             phase=method.into();
@@ -263,6 +270,7 @@ impl Rpc {
                         | "session.lease_acquire"
                         | "session.lease_renew"
                         | "session.lease_release"
+                        | "session.lease_status"
                 ) && reply["status"].is_string()
                     && reply["effect"].is_string()
                     && reply.get("data").is_some()
@@ -458,16 +466,9 @@ impl SessionBackendFactory for KernelBackendFactory {
                     rpc.node = node.to_string();
                 }
             }
-            let lease = rpc
-                .call(
-                    "session.lease_acquire",
-                    json!({"session_id":kernel_id,"ttl_ms":300000}),
-                )
-                .await?;
-            let epoch = lease["data"]["epoch"]
-                .as_u64()
-                .ok_or_else(|| error("Kernel lease epoch missing."))?;
-            rpc.lease = Some((kernel_id.clone(), epoch, std::time::Instant::now()));
+            // Reopening observation never acquires execution authority. The
+            // first effect renews this same owner's live lease or acquires an
+            // inactive lease from authoritative public status.
             if saved.is_none() {
                 write_owner(
                     &self.owner_path,
@@ -1085,6 +1086,10 @@ impl LiveTurn for KernelTurn {
                         let mut agent_event = agent_event.clone();
                         agent_event["sessionId"] = json!(self.session);
                         agent_event["turnId"] = json!(self.run);
+                        super::kernel_projection::normalize_display_timelines(
+                            &mut agent_event,
+                            &self.run,
+                        );
                         if agent_event["type"] == "permission_request" {
                             if let (Some(wait), Some(call)) = (
                                 agent_event["requestId"].as_str(),
@@ -1231,7 +1236,7 @@ mod tests {
                 stream: None,
                 next: 0,
                 node: "test-node".into(),
-                lease: None,
+                lease: Some(("kernel-s".into(), 3, std::time::Instant::now())),
             })),
             kernel_id: "kernel-s".into(),
             session: "pd-s".into(),
@@ -1411,6 +1416,96 @@ mod abi2_wire_tests {
     use super::*;
     use tokio::net::UnixListener;
     #[tokio::test]
+    async fn kernel_reopen_observes_without_lease_and_renews_only_original_holder_before_effect() {
+        for (active, holder) in [(true, "saved-node"), (false, ""), (true, "different-node")] {
+            let socket = std::env::temp_dir().join(format!("pdl-{}.sock", uuid::Uuid::new_v4()));
+            let listener = UnixListener::bind(&socket).unwrap();
+            let holder = holder.to_string();
+            let other = holder == "different-node";
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut seen = Vec::new();
+                loop {
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let req: Value = serde_json::from_str(&line).unwrap();
+                    let method = req["method"].as_str().unwrap().to_string();
+                    seen.push(method.clone());
+                    let result = match method.as_str() {
+                        "initialize" => {
+                            assert_eq!(req["params"]["node_id"], "saved-node");
+                            json!({})
+                        }
+                        "execution.get" => json!({"state":"running"}),
+                        "session.lease_status" => {
+                            json!({"status":"done","effect":"none","data":{"epoch":7,"active":active,"holder_node":holder}})
+                        }
+                        "session.lease_renew" => {
+                            assert!(active);
+                            assert_eq!(req["params"]["epoch"], 7);
+                            json!({"status":"done","effect":"advance","data":{"epoch":7}})
+                        }
+                        "session.lease_acquire" => {
+                            assert!(!active);
+                            json!({"status":"done","effect":"advance","data":{"epoch":8}})
+                        }
+                        "execution.input" => json!({"call_ref":"original"}),
+                        other => panic!("unexpected {other}"),
+                    };
+                    let reply = if method.starts_with("session.") {
+                        result
+                    } else {
+                        json!({"id":req["id"],"result":result})
+                    };
+                    stream
+                        .get_mut()
+                        .write_all(format!("{reply}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+                seen
+            });
+            let mut rpc = Rpc {
+                socket: socket.clone(),
+                stream: None,
+                next: 0,
+                node: "saved-node".into(),
+                lease: None,
+            };
+            assert_eq!(
+                rpc.call(
+                    "execution.get",
+                    json!({"session_id":"same","call_ref":"original"})
+                )
+                .await
+                .unwrap()["state"],
+                "running"
+            );
+            let effect = rpc
+                .call(
+                    "execution.input",
+                    json!({"session_id":"same","idempotency_key":"same-key","input":{}}),
+                )
+                .await;
+            assert_eq!(effect.is_err(), other);
+            drop(rpc);
+            let seen = server.await.unwrap();
+            assert_eq!(
+                &seen[..3],
+                ["initialize", "execution.get", "session.lease_status"]
+            );
+            if other {
+                assert_eq!(seen.len(), 3);
+            } else {
+                assert_eq!(seen.last().unwrap(), "execution.input");
+            }
+            std::fs::remove_file(socket).unwrap();
+        }
+    }
+    #[tokio::test]
     async fn abi2_bare_session_envelope_is_a_reply_and_notification_is_not() {
         let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
         let listener = UnixListener::bind(&socket).unwrap();
@@ -1541,7 +1636,7 @@ mod recovery_contract_tests {
                 stream: None,
                 next: 0,
                 node: "test".into(),
-                lease: None,
+                lease: Some(("native-session".into(), 3, std::time::Instant::now())),
             })),
             kernel_id: "native-session".into(),
             session: "pd-session".into(),

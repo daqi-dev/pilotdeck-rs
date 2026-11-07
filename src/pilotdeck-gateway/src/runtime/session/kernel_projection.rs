@@ -140,6 +140,34 @@ impl KernelProjection {
     }
 }
 
+/// Timeline turns are display-scoped to the product root. The retained UI
+/// gives timeline.turnId precedence over the envelope, so both must agree.
+/// Source block IDs, order, revision and canonical history remain untouched.
+pub(crate) fn normalize_display_timelines(value: &mut Value, run: &str) {
+    match value {
+        Value::Object(object) => {
+            if let Some(timeline) = object.get_mut("timeline").and_then(Value::as_object_mut) {
+                if timeline.get("version") == Some(&json!(1))
+                    && timeline.get("id").is_some_and(Value::is_string)
+                {
+                    timeline.insert("turnId".into(), json!(run));
+                }
+            }
+            for (key, child) in object.iter_mut() {
+                if !matches!(key.as_str(), "input" | "arguments" | "payload" | "metadata") {
+                    normalize_display_timelines(child, run);
+                }
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                normalize_display_timelines(child, run);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Backfill only display identity for pre-annotation native histories. An
 /// assistant block must be observed under exactly one original root. A user
 /// row is paired only through those block anchors plus that root's exact input.
@@ -282,6 +310,9 @@ pub(crate) fn web_messages(
             }
             if block["timeline"].is_object() {
                 row["timeline"] = block["timeline"].clone();
+                if let Some(run) = message["metadata"]["turnId"].as_str() {
+                    normalize_display_timelines(&mut row, run);
+                }
             }
             if let Some(model) = message["metadata"]["model"].as_str() {
                 row["model"] = json!(model);
@@ -387,7 +418,7 @@ mod tests {
     use super::*;
     #[test]
     fn kernel_history_live_identity_uses_root_and_block_not_equal_text() {
-        let history = json!([{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"a","timeline":{"id":"a","turnId":"internal-a"}}]},{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"b"}]}]);
+        let history = json!([{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"a","timeline":{"version":1,"id":"a","turnId":"internal-a"}}]},{"role":"user","content":[{"type":"text","text":"same"}]},{"role":"assistant","content":[{"type":"text","text":"same answer","blockId":"b"}]}]);
         let roots = vec![
             json!({"id":"root-a","invocation":{"correlation_id":"ui-a","payload":{"type":"text","text":"same"}}}),
             json!({"id":"root-b","invocation":{"correlation_id":"ui-b","payload":{"type":"text","text":"same"}}}),
@@ -398,7 +429,8 @@ mod tests {
         assert_eq!(rows["messages"][0]["turnId"], "ui-a");
         assert_eq!(rows["messages"][1]["turnId"], "ui-a");
         assert_eq!(rows["messages"][1]["blockId"], "a");
-        assert_eq!(rows["messages"][1]["timeline"]["turnId"], "internal-a");
+        assert_eq!(rows["messages"][1]["timeline"]["turnId"], "ui-a");
+        assert_eq!(history[1]["content"][0]["timeline"]["turnId"], "internal-a");
         assert_eq!(rows["messages"][2]["turnId"], "ui-b");
         assert_eq!(rows["messages"][3]["turnId"], "ui-b");
         assert!(history[0]["metadata"].is_null());

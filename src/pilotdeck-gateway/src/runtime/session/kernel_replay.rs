@@ -119,6 +119,7 @@ pub(crate) fn snapshot(
     for mut event in raw {
         event["sessionId"] = json!(session);
         event["turnId"] = json!(run);
+        super::kernel_projection::normalize_display_timelines(&mut event, run);
         if event["type"] == "turn_failed" {
             let mut frame = event["error"].clone();
             frame["type"] = json!("error");

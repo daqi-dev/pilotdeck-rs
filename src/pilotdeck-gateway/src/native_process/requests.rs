@@ -153,7 +153,10 @@ impl Requests {
     }
 }
 impl Requests {
-    fn kernel_owned(&self, session: &JsString) -> Result<bool, RequestError> {
+    pub(in crate::native_process) fn kernel_owned(
+        &self,
+        session: &JsString,
+    ) -> Result<bool, RequestError> {
         if let Some(handle) = self.owner.current_handle(session) {
             return Ok(handle.backend_kind() == "kernel");
         }

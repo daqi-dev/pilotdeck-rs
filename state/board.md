@@ -4580,3 +4580,7 @@ Gateway 重启后没有 attached pump 时，active snapshot 现从原 root execu
 ### 2026-11-08 原 UI live/history 身份对齐（lane C）
 
 真实 UI duplicate 根因确认：canonical blockId/timeline 被 converter 丢弃，旧原生 user 无 root identity，canonical timeline 内部 turnId 又不是产品 root correlation。WebMessage 现保留 blockId/timeline，并使用 B 原生作者的 display metadata.turnId/createdAt/kernelMessageId。已有历史只在唯一 journal root block 锚点加该 root 精确原始输入共同证实时补展示身份；不会全局按相同文字合并、不会改 canonical execution history。导入只允许这三个字符串展示注释及原 model，active/runtime 状态仍拒绝。focused kernel 15/15 通过，含两次相同 prompt/answer 保持不同原 run 与 block 的负例；真实 UI 重试由总集成执行。
+
+### 2026-11-08 实际重启 lease / CLI SIGINT / UI timeline 接续（lane C）
+
+真实重启报 LeaseBusy 的原因是同 holder 的 acquire 也不重入；现只读 build/history/active 不拿执行 lease，effect 前查公开 lease_status，同原 node 活跃租约续权威 epoch，inactive 才 acquire，foreign holder 拒绝且仍可观察。CLI 原 native resume 返回显式 backend/abortSemantics；仅该分支在 abort ACK 后继续等原 stream，实际 result_unknown 输出既有 recovery JSON，legacy SDK 信号路径不改。真实 UI 一条 assistant 视觉消失另定位到 sessionTimeline 优先 timeline.turnId 并覆盖外层 root；live/history/replay 派生 timeline 现统一产品 root，原 Source canonical、block ID/order/revision 保持。gateway focused 16/16，CLI 信号组 12/12 + 原有独占端口测试 1 ignored；真实重启/CLI/原 UI 仍由总集成重试。
