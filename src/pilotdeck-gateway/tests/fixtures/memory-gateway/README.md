@@ -89,8 +89,14 @@ lib 穷举单测 `js_is_space_unit_pins_the_ts_trim_whitespace_set`，末行绑�
 （`CARGO_TARGET_DIR` 由调用方设置）。同轮补两条表自身的地基（codex sibling
 P1）：① 名册钉死——`EXPECTED_NAMES` 与 `mutations` 逐项同序（复用
 `negative_selection.registered`，与 `memory-maintenance` 同一实现），删除/改名一行
-即拒绝运行；② 判决覆盖核对——运行结束按选中范围逐名核对 `summary.json` 里真有
-该行的判决，数据变异分支被整段删除时同样拒绝成功（分母不再可能缩水）；③ 行绑定的
+即拒绝运行；② 判决覆盖核对——运行结束按选中范围逐名核对裁决名册，**核对在写
+`summary.json` 与打印计数之前**，数据变异分支被整段删除时直接 exit 1 且不发布
+读作成功的汇总（分母不再可能缩水）；③ 行绑定的
 断言文案收到 `#1214 <案例> step <n> (<方法>):` 前缀——新增的「步骤种类」断言与既有的
 逐字节比对断言都带这段前缀，任一先命中都算该格被真判杀死，不再因为先撞上
 种类断言而整行记 INVALID。
+
+领目录与目标目录门一律走共享件（`claim_dir` / `missing_target` /
+`refuse_unusable_target`）：目录已存在、目标目录缺失 / 空 / 纯空白 / dot / 根 / `src` 内
+都记 exit 2（「从未开跑」），不再落成裸 traceback 的 exit 1。本入口已登记进
+`tests/fixtures/test_negative_optimize_guards.py` 的 `SCRIPTS` 矩阵。
