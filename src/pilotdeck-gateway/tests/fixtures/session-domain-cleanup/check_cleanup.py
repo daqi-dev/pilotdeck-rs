@@ -6587,15 +6587,50 @@ def _plain_alias_pairs(node):
         if isinstance(target, ast.Name) and isinstance(value, ast.Name):
             pairs.append((target.id, value.id))
         elif (isinstance(target, (ast.Tuple, ast.List))
-                and isinstance(value, (ast.Tuple, ast.List))
-                and len(target.elts) == len(value.elts)
-                and not any(isinstance(item, ast.Starred)
-                            for item in list(target.elts) + list(value.elts))):
-            for inner_target, inner_value in zip(target.elts, value.elts):
+                and isinstance(value, (ast.Tuple, ast.List))):
+            # #1953 fix-r1 round 28 (GLM boundary r26 P2-5): a ``Starred``
+            # target used to throw the whole assignment away, though the
+            # elements before it still pair positionally.  ``a, *rest = main,
+            # print, x`` hands ``main`` to ``a``.
+            targets = list(target.elts)
+            values = list(value.elts)
+            if any(isinstance(item, ast.Starred) for item in values):
+                continue
+            if (len(targets) == len(values)
+                    and not any(isinstance(item, ast.Starred)
+                                for item in targets)):
+                prefix = len(targets)
+            else:
+                prefix = next((index for index, item in enumerate(targets)
+                               if isinstance(item, ast.Starred)), len(targets))
+                prefix = min(prefix, len(values))
+            for inner_target, inner_value in zip(targets[:prefix],
+                                                 values[:prefix]):
                 if (isinstance(inner_target, ast.Name)
                         and isinstance(inner_value, ast.Name)):
                     pairs.append((inner_target.id, inner_value.id))
     return pairs
+
+
+def _alias_pairs(node):
+    """``[(target, source)]`` for every plain-name hand-off statement (r28).
+
+    ``_plain_alias_pairs`` reads an ``ast.Assign``; an annotated assignment
+    (``saved: object = main``) and a module-level walrus (``(saved := main)``)
+    bind the same way (GLM boundary r26 P1-4).
+    """
+    if isinstance(node, ast.Assign):
+        return _plain_alias_pairs(node)
+    if isinstance(node, ast.AnnAssign):
+        if (isinstance(node.target, ast.Name)
+                and isinstance(node.value, ast.Name)):
+            return [(node.target.id, node.value.id)]
+        return []
+    if isinstance(node, ast.NamedExpr):
+        if (isinstance(node.target, ast.Name)
+                and isinstance(node.value, ast.Name)):
+            return [(node.target.id, node.value.id)]
+    return []
 
 
 def _contains_dynamic_lookup(value, heads):
@@ -6646,11 +6681,14 @@ def _module_alias_bindings(tree):
     marks = _flow_marks(tree.body)
     bindings = {}
     for level, node in _walk_scoped(tree):
-        if level is not None or not isinstance(node, ast.Assign):
+        if level is not None or not isinstance(
+                node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
         conditional, loops = marks.get(id(node), (True, ()))
-        pairs = dict(_plain_alias_pairs(node))
-        for target in node.targets:
+        pairs = dict(_alias_pairs(node))
+        targets = (node.targets if isinstance(node, ast.Assign)
+                   else (node.target,))
+        for target in targets:
             for name in _target_names(target):
                 bindings.setdefault(name, []).append(
                     ((node.lineno, node.col_offset), conditional,
@@ -6721,9 +6759,10 @@ def _module_open_aliases(tree):
     """
     sources = {}
     for level, node in _walk_scoped(tree):
-        if level is not None or not isinstance(node, ast.Assign):
+        if level is not None or not isinstance(
+                node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
-        for target, source in _plain_alias_pairs(node):
+        for target, source in _alias_pairs(node):
             sources.setdefault(target, set()).add(source)
     changed = True
     while changed:
@@ -6788,6 +6827,7 @@ def _module_open_calls(tree):
     the same site.
     """
     aliases = _module_open_aliases(tree)
+    bindings = _module_alias_bindings(tree)
     names = _module_definition_names(tree)
     carriers = _dynamic_result_names(tree, _OPEN_CALL_HEADS | aliases)
     sites = []
@@ -6801,18 +6841,32 @@ def _module_open_calls(tree):
                          for item in reversed(_definition_header(node)))
             continue
         if isinstance(node, ast.Call):
+            position = (node.lineno, node.col_offset)
             if isinstance(node.func, ast.Name):
-                if (node.func.id in _OPEN_CALL_HEADS
-                        or node.func.id in aliases
-                        or node.func.id in carriers):
-                    sites.append(((node.lineno, node.col_offset), loops))
+                name = node.func.id
+                if name in _OPEN_CALL_HEADS or name in carriers:
+                    sites.append((position, loops))
+                elif name in aliases:
+                    # #1953 fix-r1 round 28 (GLM sibling r26 P2-3): resolve the
+                    # alias at the call site.  ``lookup = globals; lookup =
+                    # print; lookup(x)`` reads the head only up to the rebind;
+                    # the flat closure used to keep the site forever (false
+                    # FAIL once a later import moves the reading).
+                    sources = _module_alias_sources(bindings, name, position,
+                                                    loops)
+                    if sources & _OPEN_CALL_HEADS:
+                        sites.append((position, loops))
+            elif (isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _OPEN_CALL_HEADS):
+                # #1953 fix-r1 round 28 (GLM boundary r26 P1-3): one table for
+                # every head spelling, so ``builtins.exec(...)`` and
+                # ``bi.eval(...)`` count too.  Only a *called* attribute is a
+                # site -- a bare ``cfg.vars`` reaches nothing.
+                sites.append((position, loops))
             target = _spelled_callee(node, names)
             if target is not None:
                 spelled.setdefault(target, []).append(
                     ((node.lineno, node.col_offset), loops))
-        elif isinstance(node, ast.Attribute) and node.attr in (
-                'globals', 'locals', 'vars'):
-            sites.append(((node.lineno, node.col_offset), loops))
         inner = loops
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             inner = loops + (id(node),)
@@ -6842,12 +6896,20 @@ def _dead_line_ranges(tree):
         test = node.test
         if not (isinstance(test, ast.Constant) and not test.value):
             continue
-        spans = [(getattr(statement, 'lineno', None),
-                  getattr(statement, 'end_lineno', None))
-                 for statement in node.body]
-        starts = [start for start, _end in spans if start is not None]
-        ends = [end if end is not None else start
-                for start, end in spans if start is not None]
+        starts = [((statement.lineno, statement.col_offset))
+                  for statement in node.body
+                  if getattr(statement, 'lineno', None) is not None]
+        ends = []
+        for statement in node.body:
+            line = getattr(statement, 'lineno', None)
+            if line is None:
+                continue
+            end_line = getattr(statement, 'end_lineno', None)
+            end_col = getattr(statement, 'end_col_offset', None)
+            if end_line is None or end_col is None:
+                ends.append((line, getattr(statement, 'col_offset', 0)))
+            else:
+                ends.append((end_line, end_col))
         if starts:
             ranges.append((min(starts), max(ends)))
     return ranges
@@ -6861,18 +6923,20 @@ def _dead_shadowed(item_position, query_position, dead_ranges):
     is out of reach at a query outside that same branch.  An unknown query
     position (*None*, the "the module may call this at any time" fallback) is
     outside every dead branch.
+
+    #1953 fix-r1 round 28 (GLM boundary r26 P1-2): the spans carry columns, so
+    a live binding on the same *line* as a one-line ``if False: ...`` -- the
+    ``if`` itself or a statement before it -- is not swallowed any more.
     """
     if not dead_ranges:
         return False
-    line = item_position[0]
-    inside = [(start, end) for start, end in dead_ranges
-              if start <= line <= end]
+    inside = [span for span in dead_ranges
+              if span[0] <= item_position <= span[1]]
     if not inside:
         return False
     if query_position is None:
         return True
-    query = query_position[0]
-    return not any(start <= query <= end for start, end in inside)
+    return not any(span[0] <= query_position <= span[1] for span in inside)
 
 
 def _module_outer_def(tree):
@@ -6968,7 +7032,7 @@ def _import_alias_position(alias, node):
     return (line, col)
 
 
-def _resolve_builtins_module_copies(events, copies):
+def _resolve_builtins_module_copies(events, copies, dead_ranges=()):
     """Keep ``bi = bi`` reading as the module at its own position (r23).
 
     #1953 fix-r1 round 23 (GLM boundary r22 P1-2): the r22 mirror marks every
@@ -6977,14 +7041,21 @@ def _resolve_builtins_module_copies(events, copies):
     behind ``bi.getattr`` disappeared.  A right side that names the module in
     force at the assignment keeps the reading at that position.
 
-    *copies* holds ``(name, position, conditional, loops, value)`` for every
-    module-scope (or function-scope) assignment that bound *name*.
+    *copies* holds ``(name, position, conditional, loops, source)`` for every
+    module-scope (or function-scope) assignment that bound *name*, where
+    *source* is the plain name the right side hands over at that target's
+    position -- so ``bi, other = bi, print`` copies like ``bi = bi``
+    (GLM sibling r26 P1-1) -- or ``None``.
+
+    #1953 fix-r1 round 28 (GLM sibling r26 P1-2): *dead_ranges* keeps a
+    binding inside ``if False:`` from deciding the copy, the same rule
+    :func:`_binding_event_at` applies elsewhere.
     """
-    for name, position, conditional, loops, value in copies:
+    for name, position, conditional, loops, source_name in copies:
         items = events.builtins_modules.get(name)
-        if not items or not isinstance(value, ast.Name):
+        if not items or source_name is None:
             continue
-        source = events.builtins_modules.get(value.id)
+        source = events.builtins_modules.get(source_name)
         if not source:
             continue
         # #1953 fix-r1 round 24 (codex r23 P1 / GLM boundary r23 P1): the copy
@@ -6997,23 +7068,26 @@ def _resolve_builtins_module_copies(events, copies):
         # branch ran, so only a binding that comes after the last reachable
         # module binding can rule it out.
         module_positions = {(item[0], item[1]) for item in source}
-        prior = [item for item in events.get(value.id, ())
-                 if item[3] is False
-                 and (_event_position(item) < position
-                      or (loops and set(item[4]) & set(loops)))]
-        reachable = [item for item in source
-                     if _event_position(item) < position
-                     or (loops and set(item[4]) & set(loops))]
+
+        def in_reach(item, _position=position, _loops=loops):
+            if not (_event_position(item) < _position
+                    or (_loops and set(item[4]) & set(_loops))):
+                return False
+            return not _dead_shadowed(_event_position(item), _position,
+                                      dead_ranges)
+
+        prior = [item for item in events.get(source_name, ())
+                 if item[3] is False and in_reach(item)]
+        reachable = [item for item in source if in_reach(item)]
         if prior and reachable:
             last_prior = max(prior, key=_event_position)
             last_module = max(reachable, key=_event_position)
             if (_event_position(last_prior) > _event_position(last_module)
                     and _event_position(last_prior) not in module_positions):
                 continue
-        earlier = [item for item in source
-                   if _event_position(item) < position
-                   or (loops and set(item[4]) & set(loops))]
-        chosen = _binding_event_at(earlier, position, loops)
+        earlier = [item for item in source if in_reach(item)]
+        chosen = _binding_event_at(earlier, position, loops,
+                                   dead_ranges=dead_ranges)
         if chosen is None or chosen[2] is None:
             continue
         if (position[0], position[1]) in {(item[0], item[1])
@@ -7091,6 +7165,7 @@ def _module_binding_events(tree):
             add(node.name, node, None)
         elif isinstance(node, ast.stmt):
             names, value = _local_bound_names(node)
+            pairs = dict(_alias_pairs(node)) if value is not None else {}
             for name in names:
                 items = add(name, node, None, False)
                 if value is not None:
@@ -7099,8 +7174,10 @@ def _module_binding_events(tree):
                                     items[-1][4], value))
                     module_copies.append(
                         (name, (node.lineno, node.col_offset), items[-1][3],
-                         items[-1][4], value))
+                         items[-1][4], pairs.get(name)))
         elif isinstance(node, ast.NamedExpr):
+            source = (node.value.id if isinstance(node.value, ast.Name)
+                      else None)
             for name in _target_names(node.target):
                 items = add(name, node, None, False)
                 pending.append((items, len(items) - 1,
@@ -7108,20 +7185,21 @@ def _module_binding_events(tree):
                                 items[-1][4], node.value))
                 module_copies.append(
                     (name, (node.lineno, node.col_offset), items[-1][3],
-                     items[-1][4], node.value))
+                     items[-1][4], source))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
                 add(name, node, None, False)
                 items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
+    dead_ranges = tuple(_dead_line_ranges(tree))
     _resolve_assignment_helpers(events, pending)
-    _resolve_builtins_module_copies(events, module_copies)
+    _resolve_builtins_module_copies(events, module_copies, dead_ranges)
     _mirror_builtins_shadows(events)
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
     events.value_uses = _module_value_uses(tree)
     events.open_calls, events.attr_calls = _module_open_calls(tree)
     events.alias_calls = _module_alias_calls(tree, events.calls)
-    events.dead_ranges = tuple(_dead_line_ranges(tree))
+    events.dead_ranges = dead_ranges
     return events
 
 
@@ -12047,6 +12125,78 @@ def aggregation_audit():
              "    import builtins as _bi73\n"
              "    _a73 = main\n"
              "_bi73 = object()\n", True),
+            ("a builtins alias reached through an attribute-form head",
+             "import json as _bi75\n"
+             "def main(report):\n"
+             "    _f = _bi75.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi75\n"
+             "_bi75.eval('main(object())')\n"
+             "_bi75 = object()\n", True),
+            ("a bare attribute spelled like a head is not a call site",
+             "import json as _bi76\n"
+             "def main(report):\n"
+             "    _f = _bi76.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi76\n"
+             "_cfg76.vars\n", False),
+            ("a module-level walrus hands the function over",
+             "import json as _bi77\n"
+             "def main(report):\n"
+             "    _f = _bi77.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "if (_saved77 := main) or _flag77:\n"
+             "    pass\n"
+             "import builtins as _bi77\n"
+             "_saved77(object())\n"
+             "_bi77 = object()\n", True),
+            ("an annotated assignment hands the function over",
+             "import json as _bi78\n"
+             "def main(report):\n"
+             "    _f = _bi78.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_saved78: object = main\n"
+             "import builtins as _bi78\n"
+             "_saved78(object())\n"
+             "_bi78 = object()\n", True),
+            ("an unpacked copy of the builtins module",
+             "import builtins as _bi79\n"
+             "_bi79, _other79 = _bi79, None\n"
+             "def main(report):\n"
+             "    _f = _bi79.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", True),
+            ("a dead import does not restore the builtins reading",
+             "import builtins as _bi80\n"
+             "_bi80 = object()\n"
+             "if False:\n"
+             "    import builtins as _bi80\n"
+             "_bi80 = _bi80\n"
+             "def main(report):\n"
+             "    _f = _bi80.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", False),
+            ("an open alias rebound before the call is not a head",
+             "import json as _bi81\n"
+             "def main(report):\n"
+             "    _f = _bi81.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_lookup81 = globals\n"
+             "_lookup81 = print\n"
+             "import builtins as _bi81\n"
+             "_lookup81(None)\n", False),
+            ("an alias pair before a Starred target",
+             "import json as _bi82\n"
+             "def main(report):\n"
+             "    _f = _bi82.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_a82, *_rest82 = main, print, 0\n"
+             "import builtins as _bi82\n"
+             "_a82(object())\n"
+             "_bi82 = object()\n", True),
             ("a builtins import inside a statically dead branch",
              "import json as _bi65\n"
              "def main(report):\n"

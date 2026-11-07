@@ -1656,3 +1656,25 @@ Like rounds 24 and 25, these shapes need a module-scope trigger plus a
 write inside a function, which one `(old, new)` replacement cannot express;
 the end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+### Closed by `fix-r1` round 28 (GLM boundary r26 one P0, three P1s; GLM sibling r26 two P1s)
+
+Boundary found the round-27 back edge (its P0) and three holes around the
+dynamic-head and dead-branch tables; sibling found the same two hand-off
+forms missing on the `builtins`-module copy table and on the open heads.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A dead branch's spans carry columns**: a live binding on the same line as a one-line `if False: ...` body is not swallowed. | no source-level self-test: a simple statement cannot share a line with the `if`, so the shape is exercised by a unit probe in the PR body (`_dead_line_ranges` `(2, 2)` versus `((2, 4), (2, 10))`) |
+| **The function is reached through an attribute-form head**: `_bi.eval('main(...)')`. | self-test `round 28: a builtins alias reached through an attribute-form head`; one head table for the name and attribute spellings |
+| **A bare attribute spelled like a head is not a call site** (false FAIL guard): `_cfg.vars` without a call. | self-test `round 28: a bare attribute spelled like a head is not a call site` |
+| **A module-level walrus hands the function over**: `if (_saved := main) or flag: ...`. | self-test `round 28: a module-level walrus hands the function over` |
+| **An annotated assignment hands the function over**: `_saved: object = main`. | self-test `round 28: an annotated assignment hands the function over` |
+| **An unpacked copy of the builtins module**: `_bi, other = _bi, None`. | self-test `round 28: an unpacked copy of the builtins module`; the copy table reads the per-target source |
+| **A dead import does not restore the builtins reading** (false FAIL guard): `import builtins as bi; bi = Safe; if False: import builtins as bi; bi = bi`. | self-test `round 28: a dead import does not restore the builtins reading` |
+| **An open alias rebound before the call is not a head** (false FAIL guard): `lookup = globals; lookup = print; lookup(x)`. | self-test `round 28: an open alias rebound before the call is not a head`; the head is resolved at the call site |
+| **An alias pair before a `Starred` target still pairs**: `a, *rest = main, print, x`. | self-test `round 28: an alias pair before a Starred target` |
+
+Like rounds 24 to 27, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
