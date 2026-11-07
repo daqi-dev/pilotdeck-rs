@@ -2126,7 +2126,8 @@ mod comparison_tests {
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1260 stable order original JSON");
-        let registered = registered_unordered_close_ids();
+        let registered_ids = registered_unordered_close_ids();
+        let registered: BTreeSet<&str> = registered_ids.iter().map(String::as_str).collect();
         let cells: [(&str, u64); 16] = [
             ("run--query-hello-hold-sigint", 1006),
             ("run--query-hello-hold-sigterm", 1006),
@@ -2147,9 +2148,37 @@ mod comparison_tests {
         ];
         let unique: BTreeSet<_> = cells.iter().map(|(id, _)| *id).collect();
         assert_eq!(unique.len(), cells.len(), "#1260 unique stable-diff IDs");
+        // Exhaustiveness: across all 96 captures the "query (2) closes first,
+        // control (1) 1005 second" shape must occur for exactly these 16 IDs.
+        // Without this the list could silently lose a cell (or a new same-shape
+        // cell could appear) while every per-cell assertion still passes.
+        let measured: BTreeSet<String> = source["captures"]
+            .as_array()
+            .expect("#1260 stable order captures")
+            .iter()
+            .filter(|row| {
+                let closes = row["closes"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+                closes.len() == 2
+                    && closes[0]["connection"].as_u64() == Some(2)
+                    && matches!(closes[0]["code"].as_u64(), Some(1006) | Some(4003))
+                    && closes[1]["connection"].as_u64() == Some(1)
+                    && closes[1]["code"].as_u64() == Some(1005)
+            })
+            .map(|row| {
+                row["input"]["id"]
+                    .as_str()
+                    .expect("#1260 stable cell id")
+                    .to_owned()
+            })
+            .collect();
+        let expected: BTreeSet<String> = unique.iter().map(|id| (*id).to_owned()).collect();
+        assert_eq!(
+            measured, expected,
+            "#1260 query-before-control shape is exactly the measured stable set"
+        );
         for (id, query_code) in cells {
             assert!(
-                !registered.iter().any(|entry| entry == id),
+                !registered.contains(id),
                 "#1260 stable-diff cell must stay order-strict: {id}"
             );
             let matches: Vec<&Value> = source["captures"]
