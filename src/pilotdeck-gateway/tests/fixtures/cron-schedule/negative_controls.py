@@ -11,7 +11,8 @@ Rows bind one mutation to one named cell replay in
 evidence is that test's own panic payload carrying its `#1324` message. The
 rows pin the port's load-bearing behaviors: the version-3 day-field OR rule,
 the dow 7→0 normalization, the floor (not trunc) minute alignment, the
-leap-day shortcut (and its Date.UTC 0-99→1900-1999 year mapping), the
+leap-day shortcut (its `!dayFieldsUseOr` gate and its Date.UTC 0-99→1900-1999
+year mapping), the exact 366-day `MAX_SEARCH_MINUTES` bound, the
 schedule-timezone `??` precedence, the recorded-ICU timezone acceptance, the
 delay unit table, NaN/Infinity `parseInt` rejection, the UTC-offset-identifier
 resolution through the shared transport resolver (incl. the hour-only `+HH`
@@ -24,6 +25,7 @@ identifiers), so every row runs on both Linux and macOS.
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -62,6 +64,14 @@ mutations = [
      '    let candidate = (after_epoch_ms / MINUTE_MS).trunc() * MINUTE_MS + MINUTE_MS;',
      'runtime::cron::schedule_tests::cron_pre_epoch_exact',
      NEXT_RUN.format(cell='cron/pre-epoch-exact')),
+    # #1509 P2-2a: the 366-day search bound narrows to 365 days, so a run
+    # landing on the very last scanned minute (a 366-day gap across a leap
+    # year) is no longer reached and the cell computes undefined instead.
+    ('search-bound-narrowed', source,
+     'const MAX_SEARCH_MINUTES: u32 = 366 * 24 * 60;',
+     'const MAX_SEARCH_MINUTES: u32 = 365 * 24 * 60;',
+     'runtime::cron::schedule_tests::cron_scan_bound_366_found',
+     NEXT_RUN.format(cell='cron/scan-bound-366-found')),
     # The leap-day shortcut never fires (`0 0 29 2 *` keeps the full dow
     # mask, so `!=` excludes it): the 366-day scan cannot reach a leap day
     # more than a year out.
@@ -70,6 +80,14 @@ mutations = [
      '        && cron.days_of_week != 0b0111_1111',
      'runtime::cron::schedule_tests::cron_leap_day_late_window',
      NEXT_RUN.format(cell='cron/leap-day-late-window')),
+    # #1509 P2-2b: the shortcut's `!day_fields_use_or` gate is dropped, so a
+    # full-mask dow written as `0-6` (OR semantics: every February day) takes
+    # the leap-day path and reports 2032-02-29 instead of 2029-02-01.
+    ('leap-day-or-gate-dropped', source,
+     '    !cron.day_fields_use_or\n        && cron.days_of_month.count_ones() == 1',
+     '    cron.days_of_month.count_ones() == 1',
+     'runtime::cron::schedule_tests::cron_leap_day_or_gate',
+     NEXT_RUN.format(cell='cron/leap-day-or-gate')),
     # `schedule.timezone ?? fallback` becomes an always-fallback: the
     # schedule's Asia/Tokyo run is computed in America/New_York instead.
     ('schedule-timezone-precedence-ignored', source,
@@ -173,6 +191,54 @@ def check_anchor(row, original):
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
 
 
+readme = Path(__file__).with_name('README.md')
+oracle = Path(__file__).with_name('oracle.json')
+SECTIONS = ('nextRuns', 'dayOr', 'validTimezones', 'resolveTimezones', 'delayMs')
+
+
+def check_manifest():
+    """Every hand-copied number must equal the artifact it describes.
+
+    The README's section counts and `Rows:` list, and the `--exact` test name
+    of each mutation, are hand-maintained copies of oracle.json / the replay
+    macro table / this file. A copy that drifts is invisible until the cell or
+    row it names is deleted, so `--check` derives them from the sources.
+    """
+    errors = []
+    manifest = json.loads(oracle.read_text())
+    text = readme.read_text()
+    for section in SECTIONS:
+        match = re.search(rf'^\| `{section}` \| (\d+) \|', text, re.M)
+        count = len(manifest[section])
+        if not match:
+            errors.append(f'README: no counts row for section {section}')
+        elif int(match.group(1)) != count:
+            errors.append(f'README: {section} says {match.group(1)} cells, oracle has {count}')
+    # The list lives in its own paragraph (`Rows: `a`, `b`, …`), so scope the
+    # scan to that paragraph: prose elsewhere in the README that mentions the
+    # list would otherwise be swept into `listed` and compared as rows.
+    blocks = [block for block in re.split(r'\n\s*\n', text) if 'Rows:' in block]
+    listed = (re.findall(r'`([a-z0-9-]+)`', blocks[0].split('Rows:', 1)[1])
+              if len(blocks) == 1 else [])
+    if len(blocks) != 1:
+        errors.append(f'README: expected exactly one Rows paragraph, found {len(blocks)}')
+    expected_rows = [row[0] for row in mutations]
+    if listed != expected_rows:
+        errors.append(f"README: Rows list {listed} != mutations {expected_rows}")
+    replay_source = tests.read_text()
+    bound = set(re.findall(r'=>\s*"([^"]+)"', replay_source))
+    for section in SECTIONS:
+        for entry in manifest[section]:
+            if entry['name'] not in bound:
+                errors.append(f"{section}/{entry['name']}: no bound named replay in schedule_tests.rs")
+    for row in mutations:
+        ident = row[4].rsplit('::', 1)[-1]
+        if not re.search(rf'\bfn {re.escape(ident)}\(', replay_source) \
+                and not re.search(rf'^\s+{re.escape(ident)} => "', replay_source, re.M):
+            errors.append(f'{row[0]}: bound test {ident} is not defined in schedule_tests.rs')
+    return errors
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -182,7 +248,9 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#1324 {len(mutations)} unique anchors checked')
+        errors.extend(check_manifest())
+        print('\n'.join(errors) if errors else
+              f'#1324 {len(mutations)} unique anchors and fixture manifest checked')
         return int(bool(errors))
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']

@@ -304,3 +304,71 @@ async fn cron_error_envelope_matches_the_ws_connection_arms() {
         .expect("#1326 fixture project shutdown");
     drop(scratch);
 }
+
+/// #1509 P2-3b: dispatch runs on the blocking pool, not on an async worker.
+///
+/// The method bodies are synchronous and CPU-bound — `cron.create` /
+/// `cron.update` run `computeNextRunAt`, whose minute scan can walk the whole
+/// `MAX_SEARCH_MINUTES` (366-day) bound before it answers, and every method
+/// touches the cron store. Running that inline parks a whole tokio thread for
+/// the scan.
+///
+/// The property pinned here is structural, not a timing measurement: work
+/// handed to the blocking pool is never ready on the future's first poll, so a
+/// sibling task joined with it must be polled in between. On the
+/// single-threaded runtime below, an inline dispatch answers on that first
+/// poll and `ran_before` stays false.
+#[tokio::test(flavor = "current_thread")]
+async fn cron_request_dispatches_off_the_async_worker() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (scratch, mut requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1326 fixture setup");
+    requests.cron = Some(configured_manager(&requests.options.home));
+
+    let sibling_ran = Arc::new(AtomicBool::new(false));
+    let sibling_flag = Arc::clone(&sibling_ran);
+    let create = async {
+        let result = route(
+            &requests,
+            "cron_create",
+            &json(
+                r#"{"projectKey": "/proj",
+                    "message": "m1",
+                    "sessionKey": "origin-session",
+                    "channelKey": "origin-channel",
+                    "mode": "default",
+                    "schedule": {"type": "cron", "expression": "5 * * * *", "timezone": "UTC"}}"#,
+            ),
+        )
+        .await;
+        (result, sibling_ran.load(Ordering::SeqCst))
+    };
+    let sibling = async move {
+        sibling_flag.store(true, Ordering::SeqCst);
+    };
+    let ((created, ran_before), ()) = tokio::join!(create, sibling);
+
+    let created = created.expect("#1509 cron_create still answers through the blocking pool");
+    negative_assert!(
+        created.get("task").is_some(),
+        "#1509 the dispatched create returns its task record"
+    );
+    negative_assert!(
+        ran_before,
+        "#1509 cron dispatch must yield the async worker before answering"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1326 fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1326 fixture project shutdown");
+    drop(scratch);
+}

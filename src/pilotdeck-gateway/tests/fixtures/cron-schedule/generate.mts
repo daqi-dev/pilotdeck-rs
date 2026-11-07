@@ -155,6 +155,7 @@ const nextRunCells: NextRunCell[] = [
   { name: 'cron/leap-day-ny-midnight', cron: '0 0 29 2 *', tz: 'America/New_York', after: Date.UTC(2028, 1, 28, 20, 0, 0, 1) },
   { name: 'cron/leap-day-kiritimati', cron: '0 0 29 2 *', tz: 'Pacific/Kiritimati', after: Date.UTC(2028, 1, 29) },
   { name: 'cron/leap-day-dow-breaks-shortcut', cron: '0 0 29 2 1', tz: 'UTC', after: Date.UTC(2026, 0, 10) },
+  { name: 'cron/leap-day-or-gate', cron: '0 0 29 2 0-6', tz: 'UTC', after: Date.UTC(2028, 2, 2) },
   { name: 'cron/leap-day-after-year-0050', cron: '0 0 29 2 *', tz: 'UTC', after: Date.parse('0050-01-01T00:00:00.000Z') },
   { name: 'cron/leap-day-after-year-0000', cron: '0 0 29 2 *', tz: 'UTC', after: Date.parse('0000-01-01T00:00:00.000Z') },
   { name: 'cron/leap-day-after-year-1999', cron: '0 0 29 2 *', tz: 'UTC', after: Date.UTC(1999, 5, 1) },
@@ -164,6 +165,7 @@ const nextRunCells: NextRunCell[] = [
   { name: 'cron/after-clip-throws', cron: '0 9 * * *', tz: 'UTC', after: 8_640_000_000_000_000 },
   { name: 'cron/scan-past-clip-throws', cron: '0 9 * * *', tz: 'UTC', after: 8_640_000_000_000_000 - 1 },
   { name: 'cron/never-matches', cron: '0 0 30 2 *', tz: 'UTC', after: Date.UTC(2026, 0, 1) },
+  { name: 'cron/scan-bound-366-found', cron: '0 0 1 3 *', tz: 'UTC', after: Date.UTC(2027, 2, 1) },
   { name: 'cron/negative-epoch-alignment', cron: '0 0 * * *', tz: 'UTC', after: -60_001 },
   { name: 'cron/pre-epoch-exact', cron: '0 0 * * *', tz: 'UTC', after: -1 },
   // -- cron: expression parsing ----------------------------------------------
@@ -309,7 +311,7 @@ const delayMs = delayCells.map((cell) => ({
 // The matrix shape is frozen: the Rust replay asserts the same five counts
 // before replaying, so adding or removing a cell must update both sides.
 for (const [label, actual, expected] of [
-  ['nextRuns', nextRuns.length, 126],
+  ['nextRuns', nextRuns.length, 128],
   ['dayOr', dayOr.length, 13],
   ['validTimezones', validTimezones.length, 39],
   ['resolveTimezones', resolveTimezones.length, 12],
