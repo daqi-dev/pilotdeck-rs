@@ -1355,7 +1355,7 @@ async fn acquiring_a_session_syncs_the_mcp_ask_rules() {
         rule.pattern.is_none(),
         "#1429 the synced rule carries no pattern"
     );
-    submit.abort();
+    turn.abort();
     host.request_shutdown(options.drain_budget);
     let _ = tokio::time::timeout(Duration::from_secs(10), host.stopped()).await;
     probe.release();
