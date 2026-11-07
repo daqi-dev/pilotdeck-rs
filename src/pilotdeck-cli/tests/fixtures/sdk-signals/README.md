@@ -140,14 +140,17 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 无意外差异；原始结果见 `_tmp/20261026-issue-1252/fix-r2/matrix-final-summary.json`。
 **#1260 修复后实跑全部 96 格：94 PASS / 2 FAIL**，失败只剩上面两格动态 runId 的 stdout，
 16 格关闭顺序全部 `ok`；原始 `test result` 行与逐格输出见 `_tmp/20261107-issue-1260/matrix/`
-（mbp2，HEAD `d98cafa18`，dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。同一 16 格在修复前后
+（mbp2，HEAD `14393b5f715a64f721b4ffd1d962db02c89d2daa`，dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。同一 16 格在修复前后
 各重复十轮：修复前 160/160 以 `differing surfaces: ["connection closures"]` 失败，修复后 160/160 `ok`
 （`_tmp/20261107-issue-1260/pre/` 与 `post-repeat/`）。
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
 abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）在 phase4 登记为 94 PASS / 2 FAIL；
 #1252 首轮严格比较的 58 PASS / 38 FAIL 已按上述真实重复结果重新归因，不能沿用 phase4 历史结论。
-`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；16 个稳定关闭顺序差异已由 #1260
+`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较，该 2 格红已登记为
+`specs/gateway-parity/diffs/D1-SDK-SIGNAL-RUNID-LITERAL-001.md`（#2165 人拍 2：只覆盖
+这 2 格的 `recovery.runId` 一个字段，属该登记的预期红格；`comparison.json` 的
+`acceptedDifferences` 不含该条，比较器与金样语义不变）；16 个稳定关闭顺序差异已由 #1260
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
@@ -158,6 +161,18 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
 保留精确 `PilotDeckError: <msg>` 行；比较器测试的 hooks 投影直接来自 TS hooks，不以错误文字推导。
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
+
+整批执行须独占 28999 mock 端口车道：批内只有进程内 `SERIAL` 互斥（`signal_replay.rs:34`），
+跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行（名单用
+`grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/tests scripts` 现取：
+覆盖 `tests/common/`、fixtures 脚本与 `src/`，含仅引用不绑定者，宁多勿漏，
+不在此维护名单）——宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再执行本文件任何
+绑 28999 的命令块（本节 96 格矩阵与下方 pending_abort 单测两处；取不到租约即
+退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；锁的形态、
+回收与残留处置不自创，以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节
+为正本（`owner.json` + guard 互斥，空目录不等于残留）。否则
+`TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
+行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh
