@@ -68,6 +68,13 @@ mutations = [
     ('capability-unwired-method-advertised', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["unwired_skill_scan"], wired: compiled_in },', TABLE, '#1352 commands_list promises a method'),
+    # #1352: registered-but-unserved methods (history.rs answers
+    # CAPABILITY_UNAVAILABLE) must not be promised by any row.
+    ('capability-unserved-history-method', CAPABILITIES,
+     'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
+     'Capability { name: "commands_list", methods: &["export_session_transcript"], wired: compiled_in },',
+     'native_process::capabilities::tests::unserved_history_methods_are_not_promised',
+     '#1352 export_session_transcript answers CAPABILITY_UNAVAILABLE'),
     ('capability-registry-filter-ignored', CAPABILITIES,
      '    promised(capability).all(|method| registered.contains(&method))',
      '    let _ = (capability, registered); false', HOST, '#1231 exact wired capability set'),
@@ -425,7 +432,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 94
+EXPECTED_TOTAL = 95
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -443,6 +450,7 @@ EXPECTED_NAMES = (
     'capability-manager_sessions',
     'capability-commands_list',
     'capability-unwired-method-advertised',
+    'capability-unserved-history-method',
     'capability-registry-filter-ignored',
     'skills-restart-refused',
     'snapshot-storage-omitted',
