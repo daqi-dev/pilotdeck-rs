@@ -685,7 +685,7 @@
  },
  "node": "v22.22.0",
  "icu": "78.2",
- "expectedCaseCount": 20,
+ "expectedCaseCount": 21,
  "cases": [
   {
    "name": "health-and-routing",
@@ -2534,6 +2534,138 @@
      }
     ],
     "gateway": [],
+    "logs": [
+     [
+      "info",
+      "webhook: listening on http://127.0.0.1:0 — routes: main"
+     ]
+    ],
+    "cron": []
+   }
+  },
+  {
+   "name": "object-prototype-route-names",
+   "options": {
+    "port": 0,
+    "secret": "topsecret",
+    "routes": {
+     "main": {
+      "secret": "topsecret"
+     }
+    }
+   },
+   "steps": [
+    {
+     "op": "request",
+     "label": "constructor-signed",
+     "method": "POST",
+     "target": "/webhooks/constructor",
+     "headers": {
+      "x-delivery-id": "d1",
+      "x-hub-signature-256": "a07a19cac43328c30e988bad1cbcef31824ad79a84a907694501e53f27c7c37c"
+     },
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "proto-signed",
+     "method": "POST",
+     "target": "/webhooks/__proto__",
+     "headers": {
+      "x-delivery-id": "d2",
+      "x-hub-signature-256": "a07a19cac43328c30e988bad1cbcef31824ad79a84a907694501e53f27c7c37c"
+     },
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "to-string-unsigned",
+     "method": "POST",
+     "target": "/webhooks/toString",
+     "headers": {
+      "x-delivery-id": "d3"
+     },
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    },
+    {
+     "op": "request",
+     "label": "nope-signed",
+     "method": "POST",
+     "target": "/webhooks/nope",
+     "headers": {
+      "x-delivery-id": "d4",
+      "x-hub-signature-256": "a07a19cac43328c30e988bad1cbcef31824ad79a84a907694501e53f27c7c37c"
+     },
+     "body": "{\"message\":\"hi\"}",
+     "mode": "close"
+    }
+   ],
+   "scripts": [
+    [],
+    []
+   ],
+   "expected": {
+    "responses": [
+     {
+      "label": "constructor-signed",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 40"
+      ],
+      "body": "{\"status\":\"accepted\",\"delivery_id\":\"d1\"}"
+     },
+     {
+      "label": "proto-signed",
+      "status": "HTTP/1.1 200 OK",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 40"
+      ],
+      "body": "{\"status\":\"accepted\",\"delivery_id\":\"d2\"}"
+     },
+     {
+      "label": "to-string-unsigned",
+      "status": "HTTP/1.1 401 Unauthorized",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 542"
+      ],
+      "body": "{\"error\":{\"message\":\"Invalid signature\",\"type\":\"invalid_request_error\",\"code\":\"invalid_signature\",\"userHint\":\"Check the webhook signing secret and signature header.\",\"status\":401,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_invalid_signature\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_invalid_signature\",\"detail\":{\"message\":\"Invalid signature\",\"code\":\"invalid_signature\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook signing secret and signature header.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":401}}}"
+     },
+     {
+      "label": "nope-signed",
+      "status": "HTTP/1.1 404 Not Found",
+      "headers": [
+       "content-type: application/json",
+       "date: <date>",
+       "connection: close",
+       "content-length: 500"
+      ],
+      "body": "{\"error\":{\"message\":\"Unknown route: nope\",\"type\":\"invalid_request_error\",\"code\":\"unknown_route\",\"userHint\":\"Check the webhook route name and retry.\",\"status\":404,\"scope\":\"http\",\"source\":\"webhook\",\"event\":\"webhook_unknown_route\"},\"agent_status\":{\"type\":\"agent_status\",\"event\":\"webhook_unknown_route\",\"detail\":{\"message\":\"Unknown route: nope\",\"code\":\"unknown_route\",\"severity\":\"error\",\"visible\":true,\"userHint\":\"Check the webhook route name and retry.\",\"scope\":\"http\",\"source\":\"webhook\",\"status\":404}}}"
+     }
+    ],
+    "gateway": [
+     {
+      "sessionKey": "webhook:chat=webhook:constructor:d1:general",
+      "channelKey": "webhook",
+      "message": "hi"
+     },
+     {
+      "sessionKey": "webhook:chat=webhook:__proto__:d2:general",
+      "channelKey": "webhook",
+      "message": "hi"
+     }
+    ],
     "logs": [
      [
       "info",

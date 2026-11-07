@@ -754,7 +754,15 @@ async fn handle_webhook(
     client_probe: Option<Arc<TcpStream>>,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let headers = request.headers().clone();
-    let Some(route) = ctx.routes.get(&route_name).cloned() else {
+    // `const route = this.routes[routeName]` walks the prototype chain, so a
+    // name that is no own key can still resolve (#1682). An own key always
+    // wins, including a falsy one (`{"main": null}` still answers 404).
+    let Some(route) = ctx
+        .routes
+        .get(&route_name)
+        .cloned()
+        .or_else(|| prototype_route(&route_name).map(JsValue::Object))
+    else {
         return Ok(unknown_route_response(&route_name, keep_alive));
     };
     if !js_truthy(Some(&route)) {
@@ -1031,6 +1039,47 @@ async fn handle_webhook(
         }
     });
     Ok(response)
+}
+
+/// `Object.prototype`'s own property names under V8 (Node v22.22.0), measured
+/// with `Object.getOwnPropertyNames(Object.prototype)` — see
+/// `_tmp/20261107-issue-1682/probe/probe.out`.
+///
+/// `this.routes` is `options.routes ?? {}` (`WebhookChannel.ts`), a plain
+/// record whose `[[Prototype]]` is `Object.prototype`, so
+/// `this.routes[routeName]` resolves every one of these names: the ten data
+/// properties to a function, and the `__proto__` accessor to
+/// `Object.prototype` itself. All twelve are truthy and none carries `secret`
+/// or `deliver`, so TS treats such a request exactly like one for a route
+/// object with no fields — rate limit, body read, HMAC against the **global**
+/// secret (`route.secret || this.globalSecret`), `deliver ?? "log"`, then
+/// `accepted`. `__proto__` is no exception: the getter yields the prototype
+/// object, not `null` (#1682 measured it; the issue's "returns null" note was
+/// wrong). Rust's `JsObject` lookup is own-key only, so without this table
+/// every one of them answered 404.
+const OBJECT_PROTOTYPE_NAMES: [&str; 12] = [
+    "constructor",
+    "__defineGetter__",
+    "__defineSetter__",
+    "hasOwnProperty",
+    "__lookupGetter__",
+    "__lookupSetter__",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "toLocaleString",
+];
+
+/// What `this.routes[routeName]` resolves to when only the prototype chain has
+/// it: an empty route object, i.e. every field `undefined`.
+/// `webhook-prototype-routes-off` restores the pre-#1682 own-key-only lookup,
+/// so the `object-prototype-route-names` cell turns red.
+fn prototype_route(route_name: &str) -> Option<JsObject> {
+    (OBJECT_PROTOTYPE_NAMES.contains(&route_name)
+        && !crate::mutants::on("webhook-prototype-routes-off"))
+    .then(JsObject::new)
 }
 
 fn unknown_route_response(route_name: &str, keep_alive: bool) -> hyper::Response<Body> {

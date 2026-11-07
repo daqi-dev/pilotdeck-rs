@@ -257,6 +257,16 @@ const post = (label: string, deliveryId: string, body: string, extra: any = {}) 
   mode: 'close',
   ...extra,
 });
+// A POST to an arbitrary webhook route name, signed with `signature`.
+const namedPost = (label: string, deliveryId: string, target: string, signature: string) => ({
+  op: 'request',
+  label,
+  method: 'POST',
+  target,
+  headers: { 'x-delivery-id': deliveryId, 'x-hub-signature-256': signature },
+  body: json({ message: 'hi' }),
+  mode: 'close',
+});
 const json = (value: any) => JSON.stringify(value);
 
 // 1. health-and-routing
@@ -512,7 +522,39 @@ scenario(
   ],
 );
 
-const EXPECTED_CASE_COUNT = 20;
+// 19. object-prototype-route-names (#1682): `const route = this.routes[routeName]`
+// walks the prototype chain, so a name that is not an own key but IS an own
+// property of `Object.prototype` still resolves — to a function, or to
+// `Object.prototype` itself for the `__proto__` accessor (measured on the
+// pinned baseline: the getter returns the prototype object, not `null`, so
+// `__proto__` is NOT falsy and is NOT an exception). Every one of them is
+// truthy and carries neither `secret` nor `deliver`, so TS treats the request
+// exactly like one for an empty route object: the HMAC falls back to the
+// global secret (`route.secret || this.globalSecret`) and `deliver ?? "log"`
+// accepts it. A name absent from both the record and the prototype (`nope`)
+// still answers 404, and a wrong/absent signature still answers 401 — the
+// prototype hit skips only the unknown-route branch, not authentication.
+scenario(
+  'object-prototype-route-names',
+  { port: 0, secret: 'topsecret', routes: { main: { secret: 'topsecret' } } },
+  [
+    namedPost('constructor-signed', 'd1', '/webhooks/constructor', sign(json({ message: 'hi' }), 'topsecret')),
+    namedPost('proto-signed', 'd2', '/webhooks/__proto__', sign(json({ message: 'hi' }), 'topsecret')),
+    {
+      op: 'request',
+      label: 'to-string-unsigned',
+      method: 'POST',
+      target: '/webhooks/toString',
+      headers: { 'x-delivery-id': 'd3' },
+      body: json({ message: 'hi' }),
+      mode: 'close',
+    },
+    namedPost('nope-signed', 'd4', '/webhooks/nope', sign(json({ message: 'hi' }), 'topsecret')),
+  ],
+  [[], []],
+);
+
+const EXPECTED_CASE_COUNT = 21;
 assert.equal(cases.length, EXPECTED_CASE_COUNT, '#1334 generator case count');
 
 // The null-body cell rejects the voided handleRequest promise; keep the

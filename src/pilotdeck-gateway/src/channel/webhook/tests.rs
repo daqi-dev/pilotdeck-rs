@@ -1932,6 +1932,10 @@ replay_tests! {
     invalid_port => "invalid-port",
     cron_delivery => "cron-delivery",
     stop_and_restart => "stop-and-restart",
+    // #1682: `/webhooks/<Object.prototype own property name>` resolves through
+    // the prototype chain in TS, so it authenticates against the global secret
+    // and is accepted instead of 404'd.
+    object_prototype_route_names => "object-prototype-route-names",
 }
 
 /// #1684: oracle cases with a dedicated direct test instead of a generic
@@ -1942,6 +1946,38 @@ replay_tests! {
 /// A8.4-NATIVE-HTTP-001 item 4 class), and the oracle's `closed` flag only
 /// records zero-byte closes, so the socket close is asserted directly too.
 const PINNED_CASE_NAMES: &[&str] = &["http10"];
+
+/// #1682: the fallback table is the *measured* V8 set, not a guess. Pinned
+/// here so dropping a name (which would silently restore a 404 divergence) or
+/// inventing one (which would 200 a genuinely unknown route) fails a test
+/// instead of only a review. The reference list is
+/// `Object.getOwnPropertyNames(Object.prototype)` printed by
+/// `_tmp/20261107-issue-1682/probe/probe.out` on the pinned baseline.
+#[test]
+fn object_prototype_names_match_the_measured_v8_set() {
+    let mut measured = [
+        "constructor",
+        "__defineGetter__",
+        "__defineSetter__",
+        "hasOwnProperty",
+        "__lookupGetter__",
+        "__lookupSetter__",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "toLocaleString",
+    ];
+    measured.sort_unstable();
+    let mut table = super::OBJECT_PROTOTYPE_NAMES;
+    table.sort_unstable();
+    negative_assert_eq!(
+        table,
+        measured,
+        "#1682 Object.prototype own property names under Node v22.22.0"
+    );
+}
 
 /// The replay list, the pinned list and the oracle describe the same case
 /// set; a scenario added to the oracle without a test (or vice versa) fails
@@ -1954,10 +1990,10 @@ fn replay_cases_cover_exactly_the_oracle() {
         .expect("#1334 oracle cases array");
     negative_assert_eq!(
         recorded["expectedCaseCount"].as_u64(),
-        Some(20),
-        "#1334 oracle declares twenty cases"
+        Some(21),
+        "#1334 oracle declares twenty-one cases"
     );
-    negative_assert_eq!(cases.len(), 20, "#1334 oracle carries twenty cases");
+    negative_assert_eq!(cases.len(), 21, "#1334 oracle carries twenty-one cases");
     negative_assert_eq!(
         recorded["node"].as_str(),
         Some("v22.22.0"),
