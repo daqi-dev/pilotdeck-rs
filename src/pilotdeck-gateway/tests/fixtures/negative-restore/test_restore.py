@@ -779,8 +779,13 @@ def negative_controls():
     # `restore failed: source.rs`，所以这条负控仍然只钉在 write 故障上。
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',
-         '                        write_source_atomic(root, path, snapshot[path])',
-         '                        try:\n                            write_source_atomic(root, path, snapshot[path])\n                        except OSError:\n                            pass'),
+         '                        write_source_atomic(root, path, snapshot[path],\n'
+         '                                            mode=snapshot_modes[path])',
+         '                        try:\n'
+         '                            write_source_atomic(root, path, snapshot[path],\n'
+         '                                                mode=snapshot_modes[path])\n'
+         '                        except OSError:\n'
+         '                            pass'),
         ('readback', 'test_restore_readback_mismatch',
          'raise RuntimeError(f"restore failed: {relative}")', 'pass'),
         ('head', 'test_restore_head_mismatch',

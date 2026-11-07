@@ -955,6 +955,12 @@ class EnvironmentControls(unittest.TestCase):
     # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
     # 六种拼写全部漏判。这里每种拼写各配一条存活变异，锚点是仓根常量行（插在它之前，
     # 正文一字不动），逐个跑 `sibling_atomic_guards` / `publish_guards` 必须抛 AssertionError。
+    # 共享还原咽喉的那一次发布调用：判据、变异与自证都以它为唯一锚点。
+    # r19：带上 `mode=snapshot_modes[path]`（目标被删时也要还原原 mode），
+    # 否则 0o644 兜底会把可执行位抹掉、0o600 兜底会留下 mode-only diff。
+    SHARED_RESTORE_CALL = ('write_source_atomic(root, path, snapshot[path],\n'
+                           '                                            '
+                           'mode=snapshot_modes[path])')
     NAMESPACE_TAMPER_MUTANTS = (
         ('setattr-on-builtins',
          'import builtins\n\nsetattr(builtins, "str", lambda value: "../src")\n\n'),
@@ -2310,12 +2316,10 @@ class EnvironmentControls(unittest.TestCase):
                       f'temp-beside-the-target: KILLED', flush=True)
             finally:
                 shutil.rmtree(probe_root, ignore_errors=True)
-        # 暂存目录留在工作树根（`.gitignore:51` 的 `.negctl-*` 盖住）；空了就顺手删，
-        # 非空说明有并发进程在用，留着不动。
-        try:
-            scratch.rmdir()
-        except OSError:
-            pass
+        # 暂存目录留在工作树根（`.gitignore:51` 的 `.negctl-*` 盖住）。
+        # r19（r18 两家 concurrency P2，同一条）：这里**不删**它 —— `rmdir` 与并发
+        # 发布者的 `mkdir` → `open` 之间有 TOCTOU 空窗，删掉正要用它的目录会让对方
+        # 的临时文件创建失败、中断真实还原循环。空目录本身无害。
         # r3（两家 boundary/concurrency）：静态形态钉不住「目标不存在时直接崩」。
         # 真执行一次发布函数：首次创建恢复侧车必须成功，已有目标必须保留 mode。
         module = self.sibling_module('model-complete/negative-controls.py')
@@ -3049,7 +3053,7 @@ self_check_controls_run | return | return problems
         self.publish_guards(shared, scratch="PUBLISH_DIR = '.negctl-publish'",
                             scratch_name='publish')
         # #1903：共享还原点是**唯一**的还原咽喉，它自己也不许有截断写。
-        self.assertEqual(shared.count('write_source_atomic(root, path, snapshot[path])'), 1,
+        self.assertEqual(shared.count(self.SHARED_RESTORE_CALL), 1,
                          '#1903 the shared restore publishes atomically')
         self.assertEqual(re.findall(r'(?<![\w.])path\.write_(?:text|bytes)\(', shared), [],
                          '#1903 the shared restore has no truncating in-place write')
@@ -3145,8 +3149,9 @@ self_check_controls_run | return | return problems
                 # r9（zai concurrency P2 + DeepSeek boundary P2）：形参改名 + 本地重绑，
                 # 只数 `root` 的绑定次数时仍是 1。
                 ('atomic-publish-root-parameter-renamed-and-rebound',
-                 'def write_source_atomic(root, path, data):\n',
-                 'def write_source_atomic(tree_root, path, data):\n    root = path.parent\n'),
+                 'def write_source_atomic(root, path, data, *, mode=None):\n',
+                 'def write_source_atomic(tree_root, path, data, *, mode=None):\n'
+                 '    root = path.parent\n'),
                 # r9（DeepSeek sibling P2）：判据里的 `Path` 本身也不许被重绑。
                 ('atomic-publish-path-callable-rebound',
                  '    publish = Path(root) / PUBLISH_DIR',
@@ -3185,7 +3190,7 @@ self_check_controls_run | return | return problems
                  "    temporary = publish / f'.negctl-{path.name:/>100}.tmp'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
-                 'write_source_atomic(root, path, snapshot[path])',
+                 self.SHARED_RESTORE_CALL,
                  'path.write_bytes(snapshot[path])'),
                 # r13（zai boundary P1 #4）：`os.replace` 的接收者同样没钉 —— 换一个 shim
                 # 对象的同名方法，正文的 `os.fsync` / `os.chmod` 一字未动，发布点却改道。
@@ -3234,7 +3239,7 @@ self_check_controls_run | return | return problems
                 self.publish_guards(mutant, scratch="PUBLISH_DIR = '.negctl-publish'",
                                     scratch_name='publish')
                 self.assertEqual(
-                    mutant.count('write_source_atomic(root, path, snapshot[path])'), 1,
+                    mutant.count(self.SHARED_RESTORE_CALL), 1,
                     '#1903 the shared restore publishes atomically')
                 self.assertEqual(re.findall(r'(?<![\w.])path\.write_(?:text|bytes)\(', mutant), [],
                                  '#1903 the shared restore has no truncating in-place write')
@@ -3329,11 +3334,11 @@ self_check_controls_run | return | return problems
         self.assertEqual(re.findall(r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)', source),
                          [],
                          '#1903 the shared restore must not truncate the source in place')
-        self.assertEqual(source.count('write_source_atomic(root, path, snapshot[path])'), 1,
+        self.assertEqual(source.count(self.SHARED_RESTORE_CALL), 1,
                          '#1903 the shared restore must publish through write_source_atomic')
         self.publish_guards(source, scratch="PUBLISH_DIR = '.negctl-publish'",
                             scratch_name='publish')
-        fixed = source.replace('write_source_atomic(root, path, snapshot[path])',
+        fixed = source.replace(self.SHARED_RESTORE_CALL,
                                'path.write_bytes(snapshot[path])', 1)
         with self.assertRaises(AssertionError,
                                msg='#1903 a truncating shared restore must flip this guard'):
@@ -3358,7 +3363,10 @@ self_check_controls_run | return | return problems
         # r18（deepseek concurrency P2）：目标可能在变异窗口里被删掉（变异体删文件是
         # 合法形态）。还原是**顺序循环**，无条件的 `path.stat()` 会在写第一份之前抛
         # FileNotFoundError，把后面所有受守卫文件留在变异状态 —— 比缺一个文件更糟。
-        # 两文件一组：删掉第一份，两份都必须还原成功，且重建的那份用 0o600 兜底。
+        # r19（r18 两家 P1，同一条）：兜底 mode 不能是 0o600 —— 重建出来的文件与
+        # HEAD 的 100644 只差 mode，`core.filemode=true` 的 `git diff --name-only`
+        # 照样列出，下一次 preflight 整树拒跑，正是本函数要消灭的锁死。兜底取
+        # 0o644；知道原 mode 的调用方（`mutating_sources`）显式传 `mode=`。
         with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
             scratch_root = Path(scratch_root)
             (scratch_root / 'src').mkdir()
@@ -3376,28 +3384,71 @@ self_check_controls_run | return | return problems
             self.assertEqual(restored, [b'#1903 first\n', b'#1903 second\n'],
                              '#1903 r18 a restore loop must keep going after the target '
                              'was deleted mid-window; one missing mode must not abort it')
-            self.assertEqual(stat.S_IMODE(first.stat().st_mode), 0o600,
-                             '#1903 r18 a recreated source has no mode to inherit')
-        print('#1903 deleted-target restore: recreated with the fallback mode (live)',
+            self.assertEqual(stat.S_IMODE(first.stat().st_mode), 0o644,
+                             '#1903 r19 the fallback mode is git 100644: a 0o600 rebuild '
+                             'leaves a mode-only diff and the next preflight refuses '
+                             'the whole tree')
+        print('#1903 deleted-target restore: recreated with the git-canonical mode (live)',
               flush=True)
-        # 对杀负控：把 exists() 兜底去掉，同一场景必须抛 FileNotFoundError。
-        fallback = "mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600"
+        # 可执行位同样要能原样还原：`mutating_sources` 在快照时记下 mode，删除后靠
+        # 显式 `mode=` 传回去。
+        with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+            scratch_root = Path(scratch_root)
+            (scratch_root / 'src').mkdir()
+            executable = scratch_root / 'src' / 'tool.sh'
+            shared_module = self.sibling_module('negative_process.py')
+            shared_module['write_source_atomic'](scratch_root, executable,
+                                                 b'#!/bin/sh\n', mode=0o755)
+            executable.unlink()
+            shared_module['write_source_atomic'](scratch_root, executable,
+                                                 b'#!/bin/sh\n', mode=0o755)
+            self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o755,
+                             '#1903 r19 an explicit mode survives a deleted target')
+        print('#1903 deleted-target restore: explicit mode preserved (live)', flush=True)
+        # 静态钉：共享还原必须把快照里的 mode 传回去（丢了就是上面那条 mode-only diff）。
         source_text = (Path(__file__).resolve().parent/'fixtures/negative_process.py'
                        ).read_text()
+        restore_call = self.SHARED_RESTORE_CALL
+        self.assertEqual(source_text.count(restore_call), 1,
+                         '#1903 r19 the shared restore passes the snapshot mode; without '
+                         'it a deleted target comes back 0o644 and an executable one '
+                         'loses its bit')
+        mode_mutant = self.sibling_module(
+            'negative_process.py',
+            source_text.replace(restore_call,
+                                'write_source_atomic(root, path, snapshot[path])', 1))
+        with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+            scratch_root = Path(scratch_root)
+            (scratch_root / 'src').mkdir()
+            executable = scratch_root / 'src' / 'tool.sh'
+            mode_mutant['write_source_atomic'](scratch_root, executable,
+                                               b'#!/bin/sh\n', mode=0o755)
+            executable.unlink()
+            mode_mutant['write_source_atomic'](scratch_root, executable,
+                                               b'#!/bin/sh\n')
+            self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o644,
+                             '#1903 r19 the mutant must reproduce the mode drift this '
+                             'nail exists to catch')
+        print('#1903 dropped-snapshot-mode mutant: 0o755 → 0o644 drift reproduced '
+              '(the static nail above is what kills it)', flush=True)
+        # 对杀负控：把 `mode is None` 兜底去掉，同一场景必须抛 FileNotFoundError。
+        fallback = ('    if mode is None:\n'
+                    '        mode = path.stat().st_mode & 0o7777 if path.exists() '
+                    'else DEFAULT_SOURCE_MODE\n')
         self.assertEqual(source_text.count(fallback), 1,
-                         '#1903 r18 the fallback-mode line is unique')
+                         '#1903 r19 the fallback-mode branch is unique')
         mutant = self.sibling_module(
             'negative_process.py',
-            source_text.replace(fallback, "mode = path.stat().st_mode & 0o7777", 1))
+            source_text.replace(fallback, '    mode = path.stat().st_mode & 0o7777\n', 1))
         with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
             scratch_root = Path(scratch_root)
             (scratch_root / 'src').mkdir()
             missing = scratch_root / 'src' / 'deleted.rs'
             with self.assertRaises(FileNotFoundError,
-                                   msg='#1903 r18 without the exists() fallback the '
+                                   msg='#1903 r19 without the mode fallback the '
                                        'restore loop dies on a deleted target'):
                 mutant['write_source_atomic'](scratch_root, missing, b'#1903 first\n')
-        print('#1903 deleted-target mutant stat-without-exists: KILLED', flush=True)
+        print('#1903 deleted-target mutant stat-without-fallback: KILLED', flush=True)
         # 行为判据的对杀负控：临时文件改到目标旁边，观测必须红。
         for label, old, new in (
                 ('temp-beside-the-target', "publish = Path(root) / PUBLISH_DIR",
