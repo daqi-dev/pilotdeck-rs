@@ -7,10 +7,13 @@ mod product;
 pub(crate) use product::{
     Failure, json_pretty, paths, skills, stderr_line, stdout_line, write_json_pretty_line,
 };
+#[path = "common/read_lease.rs"]
+mod read_lease;
 #[path = "common/signal_replay.rs"]
 mod signal_replay;
 pub(crate) use product::test_negative_receipt;
 
+use read_lease::fixture_read_lease;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -23,95 +26,8 @@ use std::{
 
 const NEGATIVE_CONTROLS: u64 = 73;
 
-/// #1662 upper bound for waiting out one committed-mode negative control that
-/// holds the tree lock; far above the Python side's 900 s acquisition budget.
-const READ_LEASE_WAIT: Duration = Duration::from_secs(1800);
-/// One stderr line per lease acquisition: the measured wait (ms), the instant of
-/// the first attempt (epoch ms), the instant of the first *refused* attempt
-/// (epoch ms, 0 when the first attempt succeeded) and the acquisition instant
-/// (epoch ms). The paired GREEN control in `sdk-signal-read-lease/` uses the
-/// refused attempt as its witness: `WouldBlock` observed inside the writer's
-/// published hold -- less the upper-end margin `WITNESS_MARGIN_MS` in that
-/// fixture's `negative_controls.py`, which covers the truncated millisecond
-/// bucket -- proves the reader met that lock, and no scheduling delay can
-/// manufacture it. Both sides must agree on this exact spelling.
-const READ_LEASE_MARKER: &str = "#1662 read lease wait ms=";
-
-/// Wall-clock milliseconds since the Unix epoch.
-fn epoch_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or(0)
-}
-
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
-}
-
-fn repo_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("#1662 repository root above the pilotdeck-cli manifest")
-}
-
-/// #1662 shared read lease over the fixture directory's on-disk bytes.
-///
-/// Committed-mode negative controls mutate guarded sources in place while an
-/// exclusive flock on `<root>/.negative-source.lock` is held (the gateway
-/// fixtures' `negative_process.py` TreeLock). A resident test reading those
-/// bytes without that lease races the mutation window and can false-fail the
-/// golden sha256, and a SIGKILLed runner's leftover mutant keeps it red. A
-/// shared lock suffices: readers never exclude each other, and the writer
-/// restores every guarded source before releasing. Exceeding the bound fails
-/// with this marker instead of hanging.
-fn fixture_read_lease() -> fs::File {
-    let path = repo_root().join(".negative-source.lock");
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .expect("#1662 negative source lock file must open");
-    let deadline = Instant::now() + READ_LEASE_WAIT;
-    let started = Instant::now();
-    let first = epoch_ms();
-    // The instant of the first *refused* attempt. `try_lock_shared` returning
-    // `WouldBlock` is a direct observation that an exclusive holder was there at
-    // that instant; nothing else in the process can produce it. The paired
-    // control requires this instant to fall inside the writer's published hold,
-    // which no scheduling delay can fake: a pause before the call, or a stall
-    // after an uncontended acquisition, cannot move it.
-    let mut blocked: Option<u128> = None;
-    loop {
-        match file.try_lock_shared() {
-            Ok(()) => {
-                let at = epoch_ms();
-                eprintln!(
-                    "{READ_LEASE_MARKER}{} first={first} blocked={} at={at}",
-                    started.elapsed().as_millis(),
-                    blocked.unwrap_or(0)
-                );
-                return file;
-            }
-            Err(std::fs::TryLockError::WouldBlock) => {
-                if blocked.is_none() {
-                    blocked = Some(epoch_ms());
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "#1662 fixture read lease wait exceeded {} seconds",
-                    READ_LEASE_WAIT.as_secs()
-                );
-                thread::sleep(Duration::from_millis(50));
-            }
-            Err(std::fs::TryLockError::Error(error)) => {
-                panic!("#1662 fixture read lease acquisition failed: {error}")
-            }
-        }
-    }
 }
 
 fn verify_hash_group(source: &Value, field: &str, root: &Path) {

@@ -23,6 +23,14 @@ TESTS = ROOT / 'src/pilotdeck-gateway/src/native_ws/caps_tests.rs'
 HOST = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gateway.rs'
 HOST_TESTS = HOST.with_name('gateway_tests.rs')
 PREFIX = 'native_ws::caps_tests::'
+# #1885: these selectors flip compile-time feature branches, so no source or
+# fixture byte is ever rewritten. `negative_process.mutating_sources` rewrites
+# every guarded path on exit with a plain `write_bytes` and no atomic publish,
+# so a SIGKILL inside that window truncates whatever the set carries; the old
+# `FIXTURE.iterdir()` entry put `oracle.json` there while no control touched it.
+# Leftovers are still caught: `mutating_sources` proves the whole `src/` input
+# tree equals HEAD, independently of this list.
+RESTORE_SET = ()
 switches = [
     ('ws-caps-request-budget', SOURCE, PREFIX + 'complete_large_requests_share_aggregate_budget', '#1079 complete requests retain aggregate charge'),
     ('ws-caps-request-close-code', SOURCE, PREFIX + 'complete_large_requests_share_aggregate_budget', '#1079 pending aggregate rejection uses close1009'),
@@ -77,6 +85,13 @@ def main():
         if not declares_test(sources[file], short) or '"' + assertion + '"' not in sources[file]:
             raise RuntimeError('#1079 stale test/assertion binding: ' + test)
     if args.check:
+        # #1885: prove-failable pin -- restoring the old guarded list (product
+        # files, shared modules, `FIXTURE.iterdir()`) trips this, while the run
+        # itself reads the same constant.
+        if RESTORE_SET:
+            raise RuntimeError(
+                '#1079 feature switches rewrite no bytes; restore set must stay empty: '
+                + ', '.join(str(path) for path in RESTORE_SET))
         print(f'#1079 {len(switches)} switch bindings valid')
         return 0
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
@@ -91,12 +106,7 @@ def main():
                CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     for key in ('CARGO_TERM_QUIET', ReceiptRun.ENV, ReceiptRun.PARENT_ENV):
         env.pop(key, None)
-    guarded = [SOURCE, TESTS, HOST, HOST_TESTS, ROOT / 'src/pilotdeck-gateway/src/frame.rs',
-               ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
-               ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
-               FIXTURE.parent / 'negative_process.py', FIXTURE.parent / 'negative_suite.py',
-               FIXTURE.parent / '_shared/mutant_switch.py']
-    guarded += [path for path in FIXTURE.iterdir() if path.is_file()]
+    guarded = list(RESTORE_SET)
     rows = []
 
     def run(label, test, current, compile_only=False):

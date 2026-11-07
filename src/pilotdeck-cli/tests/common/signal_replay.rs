@@ -1109,24 +1109,33 @@ pub(super) fn run(id: &str) {
         }
     };
     let fixture = super::fixture_directory();
-    let source: Value = require(
-        serde_json::from_slice(&require(
-            fs::read(fixture.join("source.json")),
+    // #1885: every cell reads `source.json` and the golden producer bytes, which
+    // a committed negative control mutates in place under the exclusive tree
+    // lock. Hold the shared fixture lease for the read only: the rest of the
+    // cell touches no guarded byte, so a long replay must not keep a writer
+    // waiting. The lease is dropped before the product child runs.
+    let source: Value = {
+        let _lease = super::read_lease::fixture_read_lease();
+        let source: Value = require(
+            serde_json::from_slice(&require(
+                fs::read(fixture.join("source.json")),
+                id,
+                "TS original bytes",
+            )),
             id,
-            "TS original bytes",
-        )),
-        id,
-        "TS original JSON",
-    );
-    ensure(
-        std::panic::catch_unwind(|| {
-            super::verify_local_oracle(&fixture);
-            super::verify_all_files(&source, &fixture);
-        })
-        .is_ok(),
-        id,
-        "verified local golden and real TS producer bytes",
-    );
+            "TS original JSON",
+        );
+        ensure(
+            std::panic::catch_unwind(|| {
+                super::verify_local_oracle(&fixture);
+                super::verify_all_files(&source, &fixture);
+            })
+            .is_ok(),
+            id,
+            "verified local golden and real TS producer bytes",
+        );
+        source
+    };
     let captures = source["captures"]
         .as_array()
         .unwrap_or_else(|| panic!("#1145 {id} TS captured cells"));
@@ -1549,6 +1558,10 @@ mod comparison_tests {
     // test needs the ledger; an unreadable file fails it with this message
     // instead of passing silently.
     fn rejection_difference_ledger() -> String {
+        // #1885: this frozen ledger is one of the files `sdk-signals/
+        // negative_controls.py` rewrites in place under the exclusive tree
+        // lock, so read it under the shared fixture lease.
+        let _lease = crate::read_lease::fixture_read_lease();
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
@@ -1908,6 +1921,9 @@ mod comparison_tests {
 
     fn registered_unordered_close_ids() -> Vec<String> {
         // Like #1278, keep ledger access at runtime so src-only builds work.
+        // #1885: the committed close-order controls rewrite this frozen ledger in
+        // place under the exclusive tree lock, so the read takes the shared lease.
+        let _lease = crate::read_lease::fixture_read_lease();
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
@@ -2397,6 +2413,11 @@ mod comparison_tests {
 
     #[test]
     fn signal_wrapper_restores_inherited_sigint_ignore() {
+        // #1885: the probe executes `sigint_default.py` from the fixture tree,
+        // which `sdk-signals/negative_controls.py` rewrites in place under the
+        // exclusive tree lock (`wrapper_source`); the lease covers both launches
+        // so the interpreter never execs a half-mutated wrapper.
+        let _lease = crate::read_lease::fixture_read_lease();
         let wrapper = super::super::fixture_directory().join("sigint_default.py");
         let launch = |wrapped: bool| {
             let mut command = Command::new("/usr/bin/python3");

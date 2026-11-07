@@ -65,6 +65,14 @@ TEXT_BINDINGS = {
 # 清单自己也要有分母：整张表被删掉时循环空转、`+ 0 text bindings: OK` 会假绿。
 EXPECTED_TEXT_BINDINGS = 2
 TURN = ROOT / 'src/pilotdeck-gateway/src/runtime/turn'
+# #1885: `negative_process.mutating_sources` rewrites every guarded path on exit
+# with a plain `write_bytes` and no atomic publish, so a SIGKILL inside that
+# window truncates whatever the set carries. These controls change no source
+# bytes at all, so the set must stay empty: the old whole-fixture glob put every
+# golden (`oracle.json`, `expected/*.json`, `capture.py`) at that risk for
+# nothing. The workspace-equals-HEAD proof is unaffected -- `mutating_sources`
+# runs it over the whole `src/` input tree regardless of this list.
+RESTORE_SET = ()
 
 
 def main():
@@ -98,6 +106,14 @@ def main():
         if (FIXTURE / probe_file).read_text().count(probe) != 1:
             raise RuntimeError(f'#748 {name}: binding probe missing or duplicated in {probe_file}')
     if args.check:
+        # #1885: prove-failable pin. Re-broadening the restore set to the
+        # fixture tree (or to any product path) puts files this runner never
+        # writes back into the write-back window; the check is on the constant
+        # the run actually uses, so restoring the old list turns this red.
+        if RESTORE_SET:
+            raise RuntimeError(
+                '#1885 feature switches rewrite no bytes; restore set must stay empty: '
+                + ', '.join(str(path) for path in RESTORE_SET))
         print(f'#748 {len(ALL_BINDINGS)} feature switches and assertion bindings + {len(TEXT_BINDINGS)} text bindings: OK')
         return 0
     if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
@@ -112,18 +128,18 @@ def main():
     env.pop('LIVE_E2E_MUTANT', None)
     env.pop(ReceiptRun.ENV, None)
     env.pop(ReceiptRun.PARENT_ENV, None)
-    guarded = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/mutants.rs']
-    guarded += [p for p in FIXTURE.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
-    guarded += [ROOT / 'src/pilotdeck-gateway/src' / name for name in [
-        'host/mod.rs', 'host/execution.rs', 'runtime/session/factory.rs',
-        'runtime/turn/live.rs', 'runtime/turn/runner.rs', 'runtime/turn/runner_recording.rs',
-        'runtime/turn/host_factory.rs', 'runtime/turn/submit_host.rs', 'runtime/turn/submit.rs']]
-    guarded += [FIXTURE.parent / 'negative_suite.py', FIXTURE.parent / 'negative_process.py',
-                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs', ROOT / 'src/pilotdeck-gateway/src/test_process.rs',
-                ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs', ROOT / 'src/pilotdeck-gateway/tests/fixtures/_shared/baseline.mts']
-    guarded += [TURN / row[3] for row in LIB_BINDINGS.values()]
-    guarded += list((FIXTURE.parent / 'live-write-order').glob('*'))
-    guarded = list(dict.fromkeys(guarded))
+    # #1885: this process holds the exclusive tree lock for the whole run, so a
+    # child asking for the shared read lease would block on its own parent until
+    # the 180 s harness timeout. The runner is the writer for the bytes its
+    # children read, which is exactly what the bypass asserts.
+    env['PDRS_NEGATIVE_LEASE_HELD_ROOT'] = str(ROOT)
+    # #1885: these controls change no source bytes -- `pdrs-mutants` gates the
+    # switches at compile time -- so the restore set is empty and the goldens
+    # (`oracle.json`, `expected/*.json`, `capture.py`) never enter the
+    # write-back window. `mutating_sources` still takes the tree lock and still
+    # proves the workspace inputs equal HEAD; whichever file a SIGKILL had
+    # truncated is not one this runner ever wrote.
+    guarded = list(RESTORE_SET)
     results = []
 
     def run(label, test, run_env, compile_only=False):
