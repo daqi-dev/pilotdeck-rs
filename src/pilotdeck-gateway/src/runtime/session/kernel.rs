@@ -1105,7 +1105,24 @@ impl LiveSession for KernelSession {
                     result["kernelSessionId"] = json!(kernel_id);
                     result
                 }
-                "restore_session_transcript" => {
+                "restore_session_transcript" | "history_import_receipt" => {
+                    let receipt_only = method == "history_import_receipt";
+                    if receipt_only {
+                        let snapshot = rpc
+                            .lock()
+                            .await
+                            .call(
+                                "execution.history.snapshot",
+                                json!({"session_id":kernel_id,"context_ref":context_ref}),
+                            )
+                            .await?;
+                        let revision = snapshot["revision"].as_u64().ok_or_else(|| {
+                            error("Kernel target import revision is unavailable.")
+                        })?;
+                        if revision == 0 {
+                            return Ok(Some(js(&json!({"found":false}))?));
+                        }
+                    }
                     let transfer = &params["transcript"];
                     let hash = transfer["sha256"]
                         .as_str()
@@ -1132,7 +1149,12 @@ impl LiveSession for KernelSession {
                         .await?;
                         projection.sync(&history)?;
                     }
-                    json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true})
+                    let imported = json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true});
+                    if receipt_only {
+                        json!({"found":true,"import":imported})
+                    } else {
+                        imported
+                    }
                 }
                 "run_get" | "run_reattach" | "run_events" => {
                     let run = params["runId"]
@@ -2353,6 +2375,62 @@ mod recovery_contract_tests {
         );
         assert_eq!(value["effective"]["source"], "kernel_assembly");
     }
+    #[tokio::test]
+    async fn kernel_import_receipt_probe_cannot_create_a_first_import() {
+        for revision in [0, 1] {
+            let socket =
+                std::path::PathBuf::from("/tmp").join(format!("pdi-{}.sock", uuid::Uuid::new_v4()));
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut imports = 0;
+                loop {
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let req: Value = serde_json::from_str(&line).unwrap();
+                    let result = match req["method"].as_str().unwrap() {
+                        "initialize" => json!({}),
+                        "execution.history.snapshot" => json!({"revision":revision,"history":[]}),
+                        "session.get" if revision > 0 => json!({"data":{"generation":7}}),
+                        "execution.history.import" if revision > 0 => {
+                            imports += 1;
+                            assert_eq!(req["params"]["idempotency_key"], "pd-import:original-hash");
+                            assert_eq!(req["params"]["expected_revision"], 0);
+                            assert_eq!(req["params"]["generation"], 7);
+                            json!({"revision":1,"receipt":"original-receipt"})
+                        }
+                        other => panic!("Pristine receipt probe must not send {other}"),
+                    };
+                    stream
+                        .get_mut()
+                        .write_all(
+                            format!(
+                                "{}\n",
+                                json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(imports, revision);
+            });
+            let session = session(socket.clone());
+            let result=session.backend_request("history_import_receipt".into(),js(&json!({"sessionKey":"target","transcript":{"sha256":"original-hash","messages":[]}})).unwrap()).await.unwrap().unwrap();
+            let result = json_value(&result).unwrap();
+            assert_eq!(result["found"], revision > 0);
+            if revision > 0 {
+                assert_eq!(result["import"]["receipt"]["receipt"], "original-receipt");
+            }
+            drop(session);
+            server.await.unwrap();
+            std::fs::remove_file(socket).unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn import_reads_and_sends_original_session_generation_not_lease_epoch() {
         let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));

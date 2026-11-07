@@ -125,3 +125,64 @@ pub(crate) fn fail_next_registry_persist(registry: &FileRunRegistry) {
         .fail_persist
         .store(true, std::sync::atomic::Ordering::SeqCst);
 }
+
+/// A read-only transfer reuses the same domain/operation reducers as writer
+/// hydration. A released file lock alone cannot certify a crashed turn stopped.
+pub(crate) fn verify_history_quiescent(
+    session: &pilotdeck_protocol::JsString,
+    entries: &[pilotdeck_protocol::JsValue],
+) -> Result<()> {
+    struct ReadOnly;
+    impl TranscriptSink for ReadOnly {
+        fn append(
+            &mut self,
+            _: &pilotdeck_protocol::JsString,
+            _: &pilotdeck_protocol::JsString,
+            _: pilotdeck_protocol::JsObject,
+        ) -> Result<()> {
+            Err(invalid("Read-only history validation cannot append."))
+        }
+    }
+    let mut state = session_domain::DomainState::default();
+    let undefined = pilotdeck_protocol::JsValue::Undefined;
+    for entry in entries {
+        if let Some(id) = entry.get("sessionId") {
+            if id.as_string() != Some(session) {
+                return Err(invalid(
+                    "History source session identity does not match the requested key.",
+                ));
+            }
+        }
+        state = state
+            .next(entry)
+            .map_err(|error| invalid(error.to_string()))?;
+        if entry
+            .get("type")
+            .and_then(pilotdeck_protocol::JsValue::as_string)
+            .is_some_and(|kind| kind.equals_str("turn_result"))
+        {
+            let result = entry.get("result").unwrap_or(&undefined);
+            if [
+                result.get("stopReason"),
+                result.get("code"),
+                result.get("error").and_then(|error| error.get("code")),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(pilotdeck_protocol::JsValue::as_string)
+            .any(|value| {
+                String::from_utf16_lossy(value.units())
+                    .to_lowercase()
+                    .contains("unknown")
+            }) {
+                return Err(invalid(
+                    "History source has an unresolved result_unknown terminal.",
+                ));
+            }
+        }
+    }
+    state
+        .ensure_quiescent()
+        .map_err(|error| invalid(error.to_string()))?;
+    SessionOperationLedger::new(session.clone(), ReadOnly, entries)?.ensure_quiescent()
+}

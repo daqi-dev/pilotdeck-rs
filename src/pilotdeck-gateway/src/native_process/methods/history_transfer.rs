@@ -408,7 +408,120 @@ fn verify_envelope(value: &Value) -> Result<(), RequestError> {
     }
     Ok(())
 }
+struct LegacySourceProof {
+    detached: bool,
+    messages: Value,
+    _fence: tokio::sync::OwnedMutexGuard<()>,
+    _external: Option<storage::LedgerLock>,
+    _activity: Option<crate::runtime::session::HandleActivity>,
+}
+fn require_legacy_stop_attestation(detached: bool, params: &JsValue) -> Result<(), RequestError> {
+    if detached && params.get("sourceRuntimeStopped") != Some(&JsValue::Bool(true)) {
+        return Err(err(
+            "Detached legacy import requires explicit sourceRuntimeStopped:true caller attestation after stopping its old runtime. A free Rust ledger lock cannot prove an unrelated TypeScript runtime stopped.",
+        ));
+    }
+    Ok(())
+}
+fn verified_legacy_messages(
+    path: &std::path::Path,
+    session: &JsString,
+) -> Result<Value, RequestError> {
+    let read = storage::read_transcript(path).map_err(|error| err(error.to_string()))?;
+    read.ensure_writable()
+        .map_err(|error| err(error.to_string()))?;
+    if !read.diagnostics.is_empty() {
+        return Err(err(format!(
+            "History source has incomplete or malformed transcript diagnostics: {:?}",
+            read.diagnostics
+        )));
+    }
+    if read.entries.is_empty() {
+        return Err(err("Source transcript does not exist or is empty."));
+    }
+    storage::verify_history_quiescent(session, &read.entries)
+        .map_err(|error| err(error.to_string()))?;
+    let projected = factory::project(&read.entries).map_err(|error| err(error.message))?;
+    to_json(&JsValue::Array(projected.messages))
+}
 impl Requests {
+    async fn legacy_source_proof(
+        &self,
+        session: &JsString,
+    ) -> Result<LegacySourceProof, RequestError> {
+        let path = super::super::assembly::transcript_path(&self.options, session);
+        let path =
+            storage::canonical_transcript_path(&path).map_err(|error| err(error.to_string()))?;
+        let fence = crate::runtime::session::transcript_locks::acquire(&path)
+            .await
+            .map_err(|error| err(String::from_utf16_lossy(error.message.units())))?;
+        let local = self.owner.current_handle(session);
+        let activity = local
+            .as_ref()
+            .map(|handle| {
+                handle
+                    .begin_maintenance()
+                    .map_err(|error| err(error.message))
+            })
+            .transpose()?;
+        let external = if local.is_none() {
+            Some(
+                storage::LedgerLock::acquire(&path)
+                    .map_err(|error| err(format!("Source writer is not quiescent: {error}")))?
+                    .1,
+            )
+        } else {
+            if local
+                .as_ref()
+                .is_some_and(|handle| handle.backend_kind() != "legacy")
+            {
+                return Err(err("History source backend ownership changed."));
+            }
+            let writer = self
+                .recorders
+                .lock()
+                .unwrap()
+                .get(session)
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| err("Source local writer ownership is unavailable."))?;
+            if storage::canonical_transcript_path(writer.writer().path())
+                .map_err(|error| err(error.to_string()))?
+                != path
+            {
+                return Err(err(
+                    "Source writer path does not match its canonical fence.",
+                ));
+            }
+            None
+        };
+        let mut owner_path = path.as_os_str().to_os_string();
+        owner_path.push(".backend.json");
+        match std::fs::read(std::path::PathBuf::from(owner_path)) {
+            Ok(bytes) => {
+                let owner: Value =
+                    serde_json::from_slice(&bytes).map_err(|error| err(error.to_string()))?;
+                let project = std::fs::canonicalize(&self.options.project)
+                    .map_err(|error| err(error.to_string()))?;
+                if owner["backend"] != "legacy"
+                    || owner["session"]
+                        != session.to_utf8().map_err(|error| err(error.to_string()))?
+                    || owner["project"] != project.to_string_lossy().as_ref()
+                {
+                    return Err(err("Source backend/project/session ownership mismatch."));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(err(error.to_string())),
+        }
+        let messages = verified_legacy_messages(&path, session)?;
+        Ok(LegacySourceProof {
+            detached: local.is_none(),
+            messages,
+            _fence: fence,
+            _external: external,
+            _activity: activity,
+        })
+    }
     async fn history_kernel_handle(
         &self,
         session: &JsString,
@@ -545,26 +658,8 @@ impl Requests {
                         .unwrap_or(json!([])),
                 )
             } else {
-                let path = super::super::assembly::transcript_path(&self.options, &session);
-                let _fence = crate::runtime::session::transcript_locks::acquire(&path)
-                    .await
-                    .map_err(|e| err(String::from_utf16_lossy(e.message.units())))?;
-                let _external_lock = if self.owner.current_handle(&session).is_none() {
-                    Some(
-                        storage::LedgerLock::acquire(&path)
-                            .map_err(|e| err(format!("Source writer is not quiescent: {e}")))?
-                            .1,
-                    )
-                } else {
-                    None
-                };
-                let read = storage::read_transcript(&path).map_err(|e| err(e.to_string()))?;
-                read.ensure_writable().map_err(|e| err(e.to_string()))?;
-                if read.entries.is_empty() {
-                    return Err(err("Source transcript does not exist or is empty."));
-                }
-                let projected = factory::project(&read.entries).map_err(|e| err(e.message))?;
-                ("legacy", to_json(&JsValue::Array(projected.messages))?)
+                let proof = self.legacy_source_proof(&session).await?;
+                ("legacy", proof.messages.clone())
             };
             let project =
                 std::fs::canonicalize(&self.options.project).map_err(|e| err(e.to_string()))?;
@@ -610,7 +705,33 @@ impl Requests {
                 "Source has pending approval/question; import cannot resume it.",
             ));
         }
-        self.assert_kernel_quiescent(&source_key, params).await?;
+        let kernel_source = self.assert_kernel_quiescent(&source_key, params).await?;
+        let _kernel_activity = kernel_source
+            .as_ref()
+            .map(|handle| {
+                handle
+                    .begin_maintenance()
+                    .map_err(|error| err(error.message))
+            })
+            .transpose()?;
+        let legacy_proof = if kernel_source.is_none() {
+            Some(self.legacy_source_proof(&source_key).await?)
+        } else {
+            None
+        };
+        if let Some(proof) = &legacy_proof {
+            require_legacy_stop_attestation(proof.detached, params)?;
+        }
+        let actual_backend = if kernel_source.is_some() {
+            "kernel"
+        } else {
+            "legacy"
+        };
+        if transfer["source"]["backend"] != actual_backend {
+            return Err(err(
+                "Transfer source backend does not match its current immutable owner.",
+            ));
+        }
         let _target = self
             .owner
             .begin_maintenance(&session)
@@ -640,6 +761,44 @@ impl Requests {
                 "Import target must be a new Kernel session; existing legacy ownership is immutable.",
             ));
         }
+        // A non-pristine target can only replay an existing exact Kernel
+        // receipt; it can never newly import. Preserve lost-response retry even
+        // when the stopped source has subsequently gained verified history.
+        let replay = handle
+            .backend_request("history_import_receipt".into(), params.clone())
+            .await
+            .map_err(|error| err(error.message))?
+            .ok_or_else(|| err("Kernel import receipt observation unavailable."))?;
+        if replay.get("found") == Some(&JsValue::Bool(true)) {
+            return Ok(replay
+                .get("import")
+                .cloned()
+                .ok_or_else(|| err("Kernel import receipt projection missing."))?);
+        }
+        let current_messages = if let Some(proof) = &legacy_proof {
+            proof.messages.clone()
+        } else {
+            let history = kernel_source
+                .as_ref()
+                .unwrap()
+                .backend_request(
+                    "read_session_messages".into(),
+                    crate::metadata::object([("sessionKey", JsValue::String(source_key.clone()))]),
+                )
+                .await
+                .map_err(|error| err(error.message))?
+                .ok_or_else(|| err("Kernel source history unavailable."))?;
+            to_json(&history)?["canonicalMessages"].clone()
+        };
+        let current = envelope(
+            json!({"project":project,"sessionKey":source,"backend":actual_backend}),
+            current_messages,
+        )?;
+        if current["sha256"] != transfer["sha256"] {
+            return Err(err(
+                "Source history changed or transfer provenance does not match the current verified source. Export again before a first import.",
+            ));
+        }
         let result = handle
             .backend_request("restore_session_transcript".into(), params.clone())
             .await
@@ -651,6 +810,123 @@ impl Requests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn detached_legacy_import_requires_explicit_stop_attestation_without_fabricating_runtime_proof()
+    {
+        for params in [
+            json!({}),
+            json!({"sourceRuntimeStopped":false}),
+            json!({"sourceRuntimeStopped":"true"}),
+        ] {
+            assert!(require_legacy_stop_attestation(true, &to_js(&params).unwrap()).is_err());
+        }
+        assert!(
+            require_legacy_stop_attestation(
+                true,
+                &to_js(&json!({"sourceRuntimeStopped":true})).unwrap()
+            )
+            .is_ok()
+        );
+        assert!(require_legacy_stop_attestation(false, &to_js(&json!({})).unwrap()).is_ok());
+    }
+    fn legacy_fixture(root: &std::path::Path, complete: bool, unknown: bool) -> std::path::PathBuf {
+        use std::sync::Arc;
+        let path = root.join("old.jsonl");
+        let recorder = storage::recorder::Recorder::new(
+            Arc::new(storage::JsonlTranscriptStore::new()),
+            storage::TranscriptKey {
+                project_root: root.into(),
+                pilot_home: root.into(),
+                session_id: "old".into(),
+                transcript_path: path.clone(),
+            },
+        );
+        recorder.start_turn(&"old".into(), &"turn".into()).unwrap();
+        recorder.writer().record_accepted_input(&"old".into(),&"turn".into(),vec![to_js(&json!({"role":"user","content":[{"type":"text","text":"verified historical user"}]})).unwrap()],None).unwrap();
+        if complete {
+            recorder.complete_turn(&"old".into(),&"turn".into(),to_js(&json!({"type":if unknown{"error"}else{"success"},"turnId":"turn","stopReason":if unknown{"result_unknown"}else{"completed"},"usage":{},"permissionDenials":[],"turns":1})).unwrap()).unwrap();
+        }
+        path
+    }
+    #[tokio::test]
+    async fn legacy_transfer_rejects_partial_diagnostics_open_turn_unknown_and_keeps_bytes() {
+        let root = std::env::temp_dir().join(format!("pd-legacy-proof-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = legacy_fixture(&root, true, false);
+        let original = std::fs::read(&path).unwrap();
+        let verified = verified_legacy_messages(&path, &"old".into()).unwrap();
+        assert_eq!(verified.as_array().unwrap().len(), 1);
+        assert!(verified_legacy_messages(&path, &"collision".into()).is_err());
+        for suffix in [b"not-json\n".as_slice(), b"{\"type\":".as_slice()] {
+            let mut corrupt = original.clone();
+            corrupt.extend_from_slice(suffix);
+            std::fs::write(&path, &corrupt).unwrap();
+            assert!(verified_legacy_messages(&path, &"old".into()).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+        }
+        std::fs::remove_file(&path).unwrap();
+        legacy_fixture(&root, false, false);
+        assert!(verified_legacy_messages(&path, &"old".into()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        legacy_fixture(&root, true, true);
+        assert!(verified_legacy_messages(&path, &"old".into()).is_err());
+        std::fs::remove_file(&path).unwrap();
+        legacy_fixture(&root, true, false);
+        let final_bytes = std::fs::read(&path).unwrap();
+        let fence = crate::runtime::session::transcript_locks::acquire(&path)
+            .await
+            .unwrap();
+        let external = storage::LedgerLock::acquire(&path).unwrap().1;
+        let proof = LegacySourceProof {
+            detached: true,
+            messages: verified_legacy_messages(&path, &"old".into()).unwrap(),
+            _fence: fence,
+            _external: Some(external),
+            _activity: None,
+        };
+        assert!(storage::JsonlLedgerStore::open(&path, "old").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), final_bytes);
+        drop(proof);
+        assert!(storage::JsonlLedgerStore::open(&path, "old").is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_transfer_uses_original_operation_recovery_for_unresolved_effects() {
+        let start = json!({"type":"agent_loop_operation_started","sessionId":"old","turnId":"turn","runId":"run","operationId":"operation","requestId":"request","binding":{"moduleInstanceId":"module","connectionGeneration":"generation"}});
+        let mut unknown = start.clone();
+        unknown["type"] = json!("agent_loop_operation_terminal");
+        unknown["outcome"] = json!("result_unknown");
+        unknown["streamId"] = json!("original-stream");
+        unknown["lastAppliedSequence"] = Value::Null;
+        let mut known = unknown.clone();
+        known["outcome"] = json!("completed");
+        known["lastAppliedSequence"] = json!(2);
+        known["result"] = json!({"type":"success"});
+        known["messages"] = json!([]);
+        let entries = |values: Vec<Value>| {
+            values
+                .iter()
+                .map(|value| to_js(value).unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            storage::verify_history_quiescent(&"old".into(), &entries(vec![start.clone()]))
+                .is_err()
+        );
+        assert!(
+            storage::verify_history_quiescent(
+                &"old".into(),
+                &entries(vec![start.clone(), unknown.clone()])
+            )
+            .is_err()
+        );
+        assert!(
+            storage::verify_history_quiescent(&"old".into(), &entries(vec![start, unknown, known]))
+                .is_ok()
+        );
+    }
+
     #[test]
     fn transfer_rejects_changed_hash_pending_tools_and_active_state() {
         let original = envelope(

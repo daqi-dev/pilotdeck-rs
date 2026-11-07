@@ -82,6 +82,15 @@ fn require_step(turn: &DomainTurn, entry: &JsValue, kind: &str) -> RecorderResul
     Ok(turn.open_step.unwrap())
 }
 impl DomainState {
+    pub(super) fn ensure_quiescent(&self) -> RecorderResult<()> {
+        if !self.queue.is_empty() || self.turns.iter().any(|(_, turn)| !turn.closed) {
+            return Err(domain(
+                "history_source_not_quiescent",
+                "History source has an open turn or queued work.",
+            ));
+        }
+        Ok(())
+    }
     pub(super) fn next(&self, entry: &JsValue) -> RecorderResult<Self> {
         let kind = (if crate::mutants::on("null-entry-property") {
             field(entry, "type")

@@ -4614,3 +4614,9 @@ focused kernel 30/30 PASS（含 pinned multipage/newer commit、cache 删除重�
 ### 2026-11-08 lease 握手后的最终 input 取消门（lane C）
 
 补最后一个具体窗口：Rpc 的连接/lease_status/acquire 仍可 await，取消在此前发生时，execution.input 写 wire 前再看原 ingress 取消与已存在同 run 的 Kernel identity。确定未发送的新 input 返回专门 no-send 结果，由原 kernelAccepted=false aborted 路径结束；已接受同 run 仍观察/控制原执行，传输不确定仍按原 Unknown 处理。新增 UDS barrier 卡住 lease_status 后取消的测试，证明确实可拿 lease 但没有 execution.input/started/call，非重放或虚构效果撤销。focused kernel 31/31 PASS；无 Cargo 运行，释放本机槽供 A 原始 ordered acceptance，source import writer fence 另批实现。
+
+### 2026-11-08 legacy 导入源写入 fence / diagnostics / 原 receipt（lane C）
+
+源 export/import 改为复用原 DomainState、AgentLoop operation recovery 的只读验证：open turn、queued work、pending 生命周期、未结束/Unknown operation 及未认证 Unknown turn 均拒绝。transfer 单独拒绝 reader diagnostics（含 malformed/truncated），不改原 reader 的恢复规则，也不写修源字节。外部 LedgerLock 或当前 local writer 的 handle maintenance 与 canonical transcript fence 持有至 target import 返回；核对真实 source owner/backend/project/session，首次导入重算当前 canonical envelope/hash，旧包漂移/伪造 provenance 不通过。准确边界：Rust 锁不能证明任意旧 TS runtime 停止；未 attached legacy import 明确要求 sourceRuntimeStopped:true caller attestation，部署应先停其拥有的旧 runtime 并留实际退出证据，fixture 静止由构造证明，不虚构通用 PID/shutdown receipt。
+
+target revision>0 时只尝试完全相同的原 import key/body：Core pristine fence 保证它只能 replay 旧 receipt 或拒绝，不能新写；因此已成功但丢响应的重试不被后来静止源的内容更新破坏。revision0 首次导入仍须当前源 hash 验证，active/Unknown/损坏源不会因为 receipt 路径被放过。history_transfer 7/7 PASS（真实 Recorder 日志、malformed/truncated 原字节不变、source lock 排他、detached attestation、原 operation Unknown→known reducer），同测试二进制 kernel 32/32 PASS（receipt probe revision0 无 import，revision1 原 receipt/generation，取消/lease/archive 等）。总集成实际冻结原 TS 19-entry fixture、迁移停机证据和公共 WS 导入仍以总集成落盘结果为准；不重写或读取用户私有活跃 transcript。
