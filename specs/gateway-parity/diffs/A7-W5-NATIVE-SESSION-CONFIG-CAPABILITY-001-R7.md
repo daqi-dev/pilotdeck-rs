@@ -53,7 +53,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
     | `projectKey` | TS 在 sessionKey 门之前发生什么 | 首错是否与 Rust 相同 |
     |---|---|---|
-    | 缺失 / `undefined` / `null` | 按上文的 nullish 回退换成 `fallbackProjectRoot` 再解析；回退项目**能解析时**照常到达 sessionKey 门 | **按回退项目能否解析分支**：能解析 → **相同**；解析不了（显式配了一个既不是 `generalProjectKey` 也没注册的回退路径）→ 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`），**不同**。「回退项目恒可解析」属读码推断，**未实测**；启动归一化只保证它是字符串、**不保证它可解析**——`LocalGatewayBootConfig.ts:28` 声明为 `string`、`:52` `input.fallbackProjectRoot ?? projectRoot`——所以真实调用链上不会出现 `undefined`，但会出现「未注册的字符串」 |
+    | 缺失 / `undefined` / `null` | 按上文的 nullish 回退换成 `fallbackProjectRoot` 再解析；回退项目**能解析时**照常到达 sessionKey 门 | **按回退项目能否解析分支**：能解析 → **相同**；解析不了（显式配了一个既不是 `generalProjectKey` 也没注册的回退路径）→ 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`），**不同**。「回退项目恒可解析」属读码推断，**未实测**；启动归一化只在**类型上**保证它是字符串（TS 类型约束，不是运行时校验——JS 调用方传一个非 nullish 的非字符串时 `??` 原样保留，后面的 `path.resolve` 会先抛类型错误）——`LocalGatewayBootConfig.ts:28` 声明为 `string`、`:52` `input.fallbackProjectRoot ?? projectRoot`——所以真实调用链上不会出现 `undefined`，但会出现「未注册的字符串」 |
     | 能解析的字符串（`generalProjectKey` 或已注册项目） | 到达 sessionKey 门 | 相同（`deleteSession` 例外：它先试 `deleteEphemeralSession` 钩子，钩子命中时根本到不了门——本探针**未测**；该钩子只挂在 `createLocalGateway` 构造的 IPG 上，见下） |
     | 字符串但解析不了（未注册的应用内路径） | 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`） | 不同 |
     | 非 nullish 的非字符串（如数字 `7`） | `resolve(projectKey)`（`projectRegistry.ts:42`）由 Node 参数校验先抛 `TypeError` / `ERR_INVALID_ARG_TYPE`（实测报文 `The "paths[0]" argument must be of type string. Received type number (7)`） | 不同 |
@@ -67,7 +67,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
     **`params` 整体为 `null` / `undefined`（本条新登记，按方法分开）**：**rename / tag** 上 TS 先求值 `input.projectKey`（`createLocalGateway.ts:1130` / `:1117` 的实参），报 `TypeError: Cannot read properties of null (reading 'projectKey')`（表达式级实测，见机器判据）；Rust 的 `require_session_key` 先跑，`input_property`（`methods/mod.rs:121-126`）读 `sessionKey`，报 `…(reading 'sessionKey')`（`session_dir.rs:892-903` 钉的是这道守卫本身），**两侧键名不同**。**delete 不同（限挂了该钩子的 `createLocalGateway` 链）**：钩子是**条件调用**——`if (this.options.deleteEphemeralSession && await …)`（`InProcessGateway.ts:2230`），而 option 本身可选（`:312`）。基线有两个 IPG 构造点：`createLocalGateway.ts:1021` 挂了钩子（实现 `:1417`），`createGateway`（`Gateway.ts:45-72`）两个 delete option **都不挂**，`deleteSession(null)` 的首错是 `CAPABILITY_UNAVAILABLE`（`InProcessGateway.ts:2234-2236`）——两种都不是 `projectKey`。在 `createLocalGateway` 链上，钩子实现是 `(input) => registry.deleteEphemeralSession(input.sessionKey)`（`createLocalGateway.ts:1417`）：`input` 为 `null` 时它先读 `input.sessionKey`，所以首错键名**与 Rust 相同**（**读码推断，未实测**；端到端未经探针覆盖）。`session_dir.rs:892-893` 的注释只描述守门自身的形状，不是 TS 端到端首错的断言。
 
-    **`resume` / `close` 的 `params=null` 单列（不在上表）**：`resumeSession` 原样 `return input`（`InProcessGateway.ts:2026-2028`），TS 这一层不回错；Rust `session_resume`（`session_dir.rs:179`）先跑守卫 → `(reading 'sessionKey')` **拒绝**——家族里**结果类别**差异最大的一格。`closeSession` 求值实参 `this.router.close(input.sessionKey)`（`:2049-2050`）时即抛 `(reading 'sessionKey')`，与 Rust `session_close`（`:214`）**同键名**。两格都是读码推断（探针只覆盖 `projectKey` / `sessionKey` 两个门表达式，未跑 `params=null` 的端到端）。
+    **`resume` / `close` 的 `params=null` 单列（不在上表）**：`resumeSession` 原样 `return input`（`InProcessGateway.ts:2026-2028`），TS 这一层不回错；Rust `session_resume`（`session_dir.rs:179`）先跑守卫 → `(reading 'sessionKey')` **拒绝**——家族里**结果类别**差异最大的一格。`closeSession` 求值实参 `this.router.close(input.sessionKey)`（`:2049-2050`）时即抛 `(reading 'sessionKey')`，与 Rust `session_close`（`:214`）**同键名**。两格都**缺请求级端到端用例**：TS 半边是**读码推断**（探针只覆盖 `projectKey` / `sessionKey` 两个门表达式，未跑 `params=null` 的端到端）；Rust 半边已被守卫级用例逐字钉死（`session_dir.rs:894-903` 的 `a_null_params_object_reports_the_optional_chain_read_error` 断言 `gateway_request_failed` / `Cannot read properties of null (reading 'sessionKey')`），只是没有请求级用例钉住「派发到守卫」这一步（见 #2090）。
 
     与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
   - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。Rust 侧相反：`session_resume`（`session_dir.rs:179`）先跑 `require_session_key`，空白 / 缺键答 `INVALID_SESSION_KEY`（请求级用例 `resume_session_rejects_blank_session_key`，`:848-862`）。
@@ -150,13 +150,32 @@ $ sed -n '2230p' resources/PilotDeck/src/gateway/client/InProcessGateway.ts; sed
     if (this.options.deleteEphemeralSession && await this.options.deleteEphemeralSession(input)) {
     deleteEphemeralSession: (input) => registry.deleteEphemeralSession(input.sessionKey),
 $ sed -n '2228,2236p' resources/PilotDeck/src/gateway/client/InProcessGateway.ts   # 钩子是「条件调用」；无 deleteSession option 时 CAPABILITY_UNAVAILABLE
+
+  async deleteSession(input: { sessionKey: string; projectKey?: string }): Promise<void> {
+    if (this.options.deleteEphemeralSession && await this.options.deleteEphemeralSession(input)) {
+      this.dialogProjectKeys.delete(input.sessionKey);
+      return;
+    }
+    if (!this.options.deleteSession) {
+      throw new DialogGatewayError("CAPABILITY_UNAVAILABLE", "delete_session is unavailable.");
+    }
 $ grep -n "deleteEphemeralSession?" resources/PilotDeck/src/gateway/client/InProcessGateway.ts
 312:  deleteEphemeralSession?: (input: { sessionKey: string; projectKey?: string }) => Promise<boolean>;
 $ grep -rn "new InProcessGateway" resources/PilotDeck/src/
 resources/PilotDeck/src/cli/createLocalGateway.ts:1021:  const gateway = new InProcessGateway(router, {
 resources/PilotDeck/src/gateway/Gateway.ts:58:  return new InProcessGateway(router, {
 $ sed -n '2026,2028p;2049,2054p' resources/PilotDeck/src/gateway/client/InProcessGateway.ts
-（resumeSession `return input;`；closeSession `await this.router.close(input.sessionKey)` + 三项清理）
+  async resumeSession(input: { sessionKey: string }): Promise<{ sessionKey: string }> {
+    return input;
+  }
+  async closeSession(input: { sessionKey: string; reason?: string }): Promise<void> {
+    await this.router.close(input.sessionKey);
+    this.interactionCoordinator.closeSession(input.sessionKey, input.reason ?? "session_closed");
+    this.permissionModes.clear(input.sessionKey);
+    this.dialogProjectKeys.delete(input.sessionKey);
+  }
+$ sed -n '892,905p' src/pilotdeck-gateway/src/native_process/methods/session_dir.rs
+（a_null_params_object_reports_the_optional_chain_read_error：断言 `gateway_request_failed` + `Cannot read properties of null (reading 'sessionKey')`）
 $ sed -n '230,232p;300,308p' src/pilotdeck-gateway/src/native_process/methods/session_dir.rs
 （delete：`require_session_key` → `resolve_project`；rename/tag：`require_session_key` → active-turn 检查 → `resolve_project`）
 $ node -e 'const gate=(input)=>{ const pk = input.projectKey ?? "/fb"; return pk; }; try { gate(null) } catch(e) { console.log(JSON.stringify(["null", e.name, e.message])) } const g2=(params)=>{ if (!params.sessionKey?.trim()) throw new Error("x") }; try { g2(null) } catch(e) { console.log(JSON.stringify(["null-sessionKey-gate", e.name, e.message])) } const g3=(input)=>input.sessionKey?.trim(); try { g3(null) } catch(e) { console.log(JSON.stringify(["delete-hook-shape", e.name, e.message])) }'
