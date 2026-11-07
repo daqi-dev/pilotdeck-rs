@@ -803,6 +803,33 @@ class Manifest(unittest.TestCase):
             control.source_copy(destination)
         self.assertFalse((destination / 'specs/.env.production/credentials').exists())
 
+    def test_a_suffix_dotenv_directory_component_is_refused(self):
+        # `_dotenv_part` also matches the `docker --env-file` / python-dotenv
+        # spelling `prod.env`. Without a case of its own the whole `endswith`
+        # branch could be deleted with the suite still green (#1570 r20 zai
+        # sibling P2).
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        (root / 'specs' / 'prod.env').mkdir()
+        (root / 'specs' / 'prod.env' / 'credentials').write_text(
+            'TOKEN=1\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-suffix-dotenv-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'dotenv'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'specs/prod.env/credentials').exists())
+
+    def test_a_suffix_dotenv_include_target_is_refused(self):
+        # Same branch through the derivation: an `include_str!` target named
+        # `prod.env` is refused before the copy loop sees it, so the two
+        # layers cannot disagree about the shape (#1570 r20 zai sibling P2).
+        root = self.workspace('include_str!("../specs/prod.env");\n')
+        (root / 'specs' / 'prod.env').write_text('TOKEN=1\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-suffix-include-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'dotenv'):
+            control.source_copy(destination)
+        self.assertFalse((destination / 'specs/prod.env').exists())
+
     def test_a_tracked_dotenv_input_is_refused(self):
         # The untracked path is not the only one: `git add`ing the file makes
         # it tracked, and the main loop is what refuses it then (#1570 r19
@@ -876,6 +903,52 @@ class Manifest(unittest.TestCase):
         self.assertEqual((destination / 'src/data.txt').read_text(encoding='utf-8'), 'hello\n')
         self.assertEqual((destination / 'src/new.rs').read_text(encoding='utf-8'),
                          'pub const N: &str = include_str!("data.txt");\n')
+
+    def test_a_parent_directory_swap_cannot_reach_outside_bytes(self):
+        # `O_NOFOLLOW` on the last component is not enough: swapping the whole
+        # `specs/` directory for a link to somewhere else still delivers those
+        # bytes (#1570 r20 codex P0). The pre-check refuses the tree, and the
+        # descriptor descent refuses the file on its own -- so the guard does
+        # not rest on the pre-check having seen the same shape.
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-1570-swap-outside-'))
+        self.roots.append(outside)
+        (outside / 'x.json').write_text('SECRET\n', encoding='utf-8')
+        shutil.rmtree(root / 'specs')
+        os.symlink(outside, root / 'specs')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-swap-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'outside the repository'):
+            control.source_copy(destination)
+        with self.assertRaises(RuntimeError):
+            control._copy_input(Path('specs/x.json'), destination / 'x.json')
+        self.assertFalse((destination / 'x.json').exists())
+
+    def test_a_fifo_input_is_refused_instead_of_blocking(self):
+        # `os.open` on a FIFO read-only waits for a writer forever, and the
+        # type check only runs on the descriptor -- so the open has to be
+        # non-blocking, or the control hangs instead of refusing
+        # (#1570 r20 codex P0). `copyfile` raised `SpecialFileError` here.
+        root = self.workspace('include_str!("../specs/x.json");\n')
+        (root / 'specs' / 'x.json').unlink()
+        os.mkfifo(root / 'specs' / 'x.json')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-fifo-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'not a regular file'):
+            control._copy_input(Path('specs/x.json'), destination / 'x.json')
+        self.assertFalse((destination / 'x.json').exists())
+
+    def test_an_ignored_source_input_is_refused(self):
+        # The copy list is `git ls-files` plus the untracked files git does
+        # not ignore, so a plain untracked file that `.gitignore` excludes is
+        # accepted by every shape check and still never copied -- the copy
+        # comes up short on an input the scan had accepted (#1570 r20 codex
+        # P1). `_copyable` asks git the same question the copy list does.
+        root = self.workspace('const X: &str = include_str!("private.json");\n')
+        (root / '.gitignore').write_text('src/private.json\n', encoding='utf-8')
+        (root / 'src' / 'private.json').write_text('{}\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'would not carry'):
+            control.compile_inputs()
 
     def test_no_control_brings_its_own_workspace_copy(self):
         # The recurrence mode of #1570 is a new control carrying its own

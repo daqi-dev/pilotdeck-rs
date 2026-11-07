@@ -271,17 +271,40 @@ def _tracked_but_deleted(relative):
     return completed.returncode == 0
 
 
-def _copyable(relative):
+def _ignored(relative):
+    """True when `.gitignore` excludes `relative` (`--exclude-standard`).
+
+    `check-ignore` takes pathnames rather than pathspecs, so `:(literal)` is
+    rejected outright (`fatal: pathspec magic not supported by this command`)
+    -- a rc other than 0/1 is a broken question, not an answer, and it fails
+    closed (#1570 r20 codex P1).
+    """
+    completed = subprocess.run(['git', 'check-ignore', '-q', '--', relative.as_posix()],
+                               cwd=REPO, capture_output=True)
+    if completed.returncode not in (0, 1):
+        raise RuntimeError(f'source_copy: cannot tell whether git ignores {relative} '
+                           f'(rc={completed.returncode}): '
+                           f'{completed.stderr.decode("utf-8", "replace").strip()}')
+    return completed.returncode == 0
+
+
+def _copyable(relative, tracked=None):
     """True when `source_copy` would carry `relative` as a plain file.
 
     Tracked files are carried, and so are untracked plain files in `src/` or
-    in a derived input directory (#1570 r18). Links, dotenv paths and hard
-    links are refused by the copy loop, so they are not copyable either: the
-    scan must not derive an input the copy would then refuse to make, and it
-    must not refuse one the copy would carry. Both directions were wrong at
-    once -- an untracked `src/data.txt` named by an untracked `src/new.rs` was
-    refused with a message about `git ls-files` that this same change had just
-    made untrue (#1570 r19 codex P1 / sibling P2).
+    in a derived input directory (`git ls-files --others --exclude-standard`)
+    (#1570 r18). Links, dotenv paths and hard links are refused by the copy
+    loop, so they are not copyable either: the scan must not derive an input
+    the copy would then refuse to make, and it must not refuse one the copy
+    would carry. Both directions were wrong at once -- an untracked
+    `src/data.txt` named by an untracked `src/new.rs` was refused with a
+    message about `git ls-files` that this same change had just made untrue
+    (#1570 r19 codex P1). The ignored case is the mirror image: a plain
+    untracked file that `--exclude-standard` leaves out passed every check
+    and was still never copied, so the copy came up short on an input the
+    scan had accepted (#1570 r20 codex P1). `tracked` is the `src/` set the
+    caller already has; the external branch asks git per path instead, which
+    is one subprocess for the three edges this tree has.
     """
     path = REPO / relative
     if path.is_symlink() or not path.is_file():
@@ -289,9 +312,13 @@ def _copyable(relative):
     if _dotenv_part(relative) is not None:
         return False
     try:
-        return path.stat().st_nlink == 1
+        if path.stat().st_nlink != 1:
+            return False
     except OSError:
         return False
+    if tracked is not None:
+        return relative in tracked or not _ignored(relative)
+    return _tracked_but_deleted(relative) or not _ignored(relative)
 
 
 def _indexed(path, tracked):
@@ -314,6 +341,33 @@ def _indexed(path, tracked):
     return False
 
 
+def _open_input(relative):
+    """Open a workspace input without following a link at any level.
+
+    Opening `REPO / relative` with `O_NOFOLLOW` protects only the last
+    component: swap a *parent* directory (`specs -> /tmp/elsewhere`) between
+    the checks and the open, and the bytes still come from outside the
+    checkout (#1570 r20 codex P0). Each component is therefore opened
+    relative to the descriptor of the one above (`openat`), so every level is
+    checked by the open that uses it and no path is resolved twice.
+    `O_NONBLOCK` matters too: opening a FIFO read-only waits for a writer
+    forever, and the type check only happens on the descriptor
+    (#1570 r20 codex P0). On a regular file it changes nothing.
+    """
+    parts = relative.parts
+    directory = os.open(REPO, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=directory)
+            os.close(directory)
+            directory = child
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       dir_fd=directory)
+    finally:
+        os.close(directory)
+
+
 def _copy_input(path, destination):
     """Copy one workspace input from a single opened descriptor.
 
@@ -322,19 +376,18 @@ def _copy_input(path, destination):
     second hard-link name) after `is_symlink()` / `st_nlink` said the file was
     clean, and the final digest check reads through that same link, so it
     agrees with the copy instead of catching it (#1570 r19 concurrency P2).
-    `O_NOFOLLOW` makes the open itself the link check, `fstat` on the
-    descriptor reports the inode whose bytes are about to be written, and the
-    bytes copied are the ones that descriptor holds.
+    `_open_input` makes the open itself the link check at every level,
+    `fstat` on the descriptor reports the inode whose bytes are about to be
+    written, and the bytes copied are the ones that descriptor holds.
     """
-    source = REPO / path
     try:
-        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = _open_input(path)
     except OSError as error:
-        if error.errno == errno.ELOOP:
-            raise RuntimeError(f'source_copy: {path} became a symlink while the control was '
-                               'starting; the control copies the tracked file it names, never '
-                               'the bytes a link points at, so refusing to run the control'
-                               ) from error
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise RuntimeError(f'source_copy: {path} became a symlink or left the repository '
+                               'while the control was starting; the control copies the tracked '
+                               'file it names, never the bytes a link points at, so refusing '
+                               'to run the control') from error
         raise RuntimeError(f'source_copy: cannot copy {path}: {error}') from error
     try:
         info = os.fstat(descriptor)
@@ -671,7 +724,7 @@ def _path_attributes(text, limit):
     this on purpose -- `unsafe_boundary.rs` carries that text). Every invented
     edge fails loudly rather than silently: a target that does not exist is
     left alone like fixture text, and one that exists but is one of the shapes
-    `source_copy` refuses refuses the run too.
+    `source_copy` refuses makes the run refuse too.
     """
     for match in re.finditer(r'#', text):
         index = _skip_trivia(text, match.end(), limit)
@@ -905,11 +958,11 @@ def compile_inputs(*, sources=None, read=None):
                                    'repository only through a link; the scratch copy cannot '
                                    'name it')
             if SRC in target.parents:
-                if not _copyable(relative):
+                if not _copyable(relative, tracked):
                     raise RuntimeError(f'{source}: an include reads {relative}, which the '
-                                       'scratch copy would not carry -- it is untracked, '
-                                       'deleted from the working tree, or one of the shapes '
-                                       'the copy refuses (a link, a hard link, a dotenv '
+                                       'scratch copy would not carry -- it is untracked and '
+                                       'ignored, deleted from the working tree, or one of the '
+                                       'shapes the copy refuses (a link, a hard link, a dotenv '
                                        'file); refusing to run the control')
             else:
                 if relative.parent != Path('.'):
@@ -921,10 +974,10 @@ def compile_inputs(*, sources=None, read=None):
                     # name, so an uncommitted one is still carried.
                     if not _copyable(relative):
                         raise RuntimeError(f'{source}: an include reads {relative}, which the '
-                                           'scratch copy would not carry -- it is untracked, '
-                                           'deleted from the working tree, or one of the '
-                                           'shapes the copy refuses (a link, a hard link, a '
-                                           'dotenv file); refusing to run the control')
+                                           'scratch copy would not carry -- it is untracked '
+                                           'and ignored, deleted from the working tree, or one '
+                                           'of the shapes the copy refuses (a link, a hard '
+                                           'link, a dotenv file); refusing to run the control')
                     # A repository-root file has no directory worth copying:
                     # `git ls-files -- .` would drag in the whole tree.
                     directories.add(relative.parent)
@@ -1071,7 +1124,17 @@ def source_copy(root):
         raise RuntimeError('the scratch copy does not match the sources the scan read; '
                            'the tree changed while the copy was being made, so refusing '
                            'to run the control against a moving tree')
-    if (set(_tracked('src')) | set(_untracked_files('src'))) != set(sources):
+    # The same check for `src/`: a link or directory that appears there during
+    # the copy window would otherwise surface as `_untracked_files`' own
+    # "add it to git (or remove it)" message, which misdescribes a moving tree
+    # as something the user is expected to fix (#1570 r20 zai concurrency P3).
+    try:
+        relisted_src = set(_tracked('src')) | set(_untracked_files('src'))
+    except RuntimeError as error:
+        raise RuntimeError('src/ changed while the scratch copy was being made '
+                           f'({error}); refusing to run the control against a moving '
+                           'tree') from error
+    if relisted_src != set(sources):
         raise RuntimeError('src/ changed while the scratch copy was being made; refusing '
                            'to run the control against a moving tree')
     # The same check for the derived directories: a file that appears there
