@@ -27,9 +27,10 @@ row restores the follow-the-link sample, which lets a link planted before the
 approved stat become the approved object.
 
 The lease-link rows pin the one descriptor the lease entry is checked
-through: three drop the identity comparison, its content term, or the
-non-blocking half of the open, and one drops `O_NOFOLLOW` from that open,
-which lets a link planted in the entry be followed again. All four are
+through: four drop the identity comparison, its content term, the
+end-of-entry length term, or the non-blocking half of the open, and one drops
+`O_NOFOLLOW` from that open, which lets a link planted in the entry be
+followed again. All four are
 killable on every Unix: ``std::fs::hard_link`` does not follow a symlink
 source (``linkat(..., 0)`` on macOS as well as Linux), so the lease entry is
 the link itself and a follow-the-link sample accepts it. Measured 2026-11-06:
@@ -83,6 +84,7 @@ LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_sour
 LEASE_LINK_REWRITE = 'upload::tests::upload_lease_link_of_a_rewritten_attachment_is_rejected'
 LEASE_LINK_FIFO = ('upload::tests::upload_lease_link_of_a_swapped_entry_'
                   'is_not_read_through_the_path')
+LEASE_LINK_GROWN = 'upload::tests::upload_lease_link_of_a_grown_entry_is_rejected'
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -334,6 +336,7 @@ mutations = [
                     &destination,
                     identities.get(index).copied().flatten(),
                     &string(attachment, "sha256").unwrap_or_default(),
+                    number(attachment, "bytes"),
                 ) {''',
      '                if false {',
      LEASE_LINK,
@@ -360,8 +363,8 @@ mutations = [
     # length), so it is killable on every filesystem, not only where inode
     # reuse happens.
     ('lease-link-content-dropped', STORE,
-     '    hash_file(file).is_ok_and(|digest| digest == expected_sha256)',
-     '''    let _ = (file, expected_sha256);
+     '    hash_file_exact(file, expected_bytes as u64).is_ok_and(|digest| digest == expected_sha256)',
+     '''    let _ = (file, expected_sha256, expected_bytes);
     true''',
      LEASE_LINK_REWRITE,
      '#1889 a rewritten artifact must never be pinned into the lease'),
@@ -375,6 +378,16 @@ mutations = [
      '        .custom_flags(libc::O_NOFOLLOW);',
      LEASE_LINK_FIFO,
      '#1889 a FIFO entry must never make the lease acquire wait'),
+    # #1889 (review concurrency#1 / boundary#1): the content term reads exactly
+    # the record's `bytes` and requires the entry to end there, so an approved
+    # inode that keeps growing cannot turn the read into an unbounded stream.
+    # This row drops the end-of-entry term; the named test appends to the
+    # approved inode (same inode, same leading bytes) and must go red.
+    ('lease-link-length-dropped', STORE,
+     '    if trailing != 0 {',
+     '    if trailing != 0 && false {',
+     LEASE_LINK_GROWN,
+     '#1889 an entry that grew after verification must never be pinned into the lease'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
@@ -621,11 +634,11 @@ EXPECTED_NAMES = (
     'read-at-handle-check-dropped', 'read-at-check-before-open',
     'read-at-identity-dropped', 'read-at-approved-stat-follows-link',
     'lease-link-identity-dropped', 'lease-link-follows-symlink-source',
-    # #1887/#1888/#1889 的四条（租约内容摘要 / 租约条目非阻塞打开 / 写侧租约根 /
-    # 读侧词法前缀）也在同一 `registered()` 口径下：名册与运行时逐名同序，
-    # 漏一条即整族 rc 2。
+    # #1887/#1888/#1889 的五条（租约内容摘要 / 租约条目非阻塞打开 / 摘要读长 /
+    # 写侧租约根 / 读侧词法前缀）也在同一 `registered()` 口径下：名册与运行时
+    # 逐名同序，漏一条即整族 rc 2。
     'lease-link-content-dropped', 'lease-link-nonblock-dropped',
-    'lease-root-link-refused',
+    'lease-link-length-dropped', 'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
     # `registered()` rc 2，整族在宿主上被读成「从未开跑」。

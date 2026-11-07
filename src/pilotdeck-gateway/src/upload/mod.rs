@@ -641,6 +641,7 @@ impl UploadStore {
                     &destination,
                     identities.get(index).copied().flatten(),
                     &string(attachment, "sha256").unwrap_or_default(),
+                    number(attachment, "bytes"),
                 ) {
                     return Err(UploadError::dialog(
                         "ATTACHMENT_TAMPERED",
@@ -1498,6 +1499,7 @@ fn lease_link_matches(
     destination: &Path,
     expected: Option<AttachmentIdentity>,
     expected_sha256: &str,
+    expected_bytes: f64,
 ) -> bool {
     let (Some(mut file), Some(want)) = (open_lease_entry(destination), expected) else {
         return false;
@@ -1507,7 +1509,7 @@ fn lease_link_matches(
     };
     listed.file_type().is_file()
         && attachment_identity(&listed) == Some(want)
-        && lease_link_content_matches(&mut file, expected_sha256)
+        && lease_link_content_matches(&mut file, expected_sha256, expected_bytes)
 }
 
 /// The lease entry is opened once, without following a link and without
@@ -1519,7 +1521,6 @@ fn lease_link_matches(
 /// the identity and content terms do not resolve it again.
 #[cfg(unix)]
 fn open_lease_entry(destination: &Path) -> Option<File> {
-    use std::os::unix::fs::OpenOptionsExt;
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
@@ -1532,12 +1533,13 @@ fn lease_link_matches(
     destination: &Path,
     _expected: Option<AttachmentIdentity>,
     expected_sha256: &str,
+    expected_bytes: f64,
 ) -> bool {
     // The identity term has no cross-platform answer (see above), and the
     // `O_NOFOLLOW` open is Unix-only; the content term applies here too
     // rather than being skipped with it.
     match File::open(destination) {
-        Ok(mut file) => lease_link_content_matches(&mut file, expected_sha256),
+        Ok(mut file) => lease_link_content_matches(&mut file, expected_sha256, expected_bytes),
         Err(_) => false,
     }
 }
@@ -1557,12 +1559,53 @@ fn lease_link_matches(
 /// through the same descriptor the identity term fstat'ed, and compares the
 /// same digest. An inode-reusing replacement — and, for free, an in-place
 /// rewrite that keeps the inode — no longer matches. Cost is one extra
-/// sequential read of the attachment per lease.
-fn lease_link_content_matches(file: &mut File, expected_sha256: &str) -> bool {
-    if expected_sha256.is_empty() {
+/// sequential read of the attachment per lease, bounded by the length
+/// `verified` approved (see `hash_file_exact`).
+fn lease_link_content_matches(file: &mut File, expected_sha256: &str, expected_bytes: f64) -> bool {
+    if expected_sha256.is_empty() || !(expected_bytes >= 0.0) {
         return false;
     }
-    hash_file(file).is_ok_and(|digest| digest == expected_sha256)
+    hash_file_exact(file, expected_bytes as u64).is_ok_and(|digest| digest == expected_sha256)
+}
+
+/// `verified()` bound the digest to a handle whose length equalled the
+/// record's `bytes`. Re-reading to EOF here would let an entry that grows
+/// after the `fstat` (same inode, so both identity terms still pass) turn the
+/// acquire into an unbounded read: a sparse multi-TiB file is enough, and a
+/// writer appending at least as fast as the read never reaches EOF at all.
+/// Reading exactly `bytes` and requiring the entry to end there bounds the
+/// work by the approved size.
+fn hash_file_exact(file: &mut File, limit: u64) -> Result<String> {
+    let mut digest = Sha256::new();
+    let mut chunk = [0; 64 * 1024];
+    let mut left = limit;
+    while left > 0 {
+        let want = chunk.len().min(left as usize);
+        let n = file
+            .read(&mut chunk[..want])
+            .map_err(|e| UploadError::io(e, "read", None))?;
+        if n == 0 {
+            return Err(UploadError::io(
+                io::Error::from(io::ErrorKind::UnexpectedEof),
+                "read",
+                None,
+            ));
+        }
+        digest.update(&chunk[..n]);
+        left -= n as u64;
+    }
+    let mut extra = [0_u8; 1];
+    let trailing = file
+        .read(&mut extra)
+        .map_err(|e| UploadError::io(e, "read", None))?;
+    if trailing != 0 {
+        return Err(UploadError::io(
+            io::Error::from(io::ErrorKind::InvalidData),
+            "read",
+            None,
+        ));
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 fn hash_file(file: &mut File) -> Result<String> {

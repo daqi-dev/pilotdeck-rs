@@ -1261,7 +1261,7 @@ fn upload_lease_link_of_a_swapped_entry_is_not_read_through_the_path() {
     fs::remove_file(&dest).unwrap();
     std::os::unix::fs::symlink(&copy, &dest).unwrap();
     assert!(
-        !lease_link_matches(&dest, Some(want), &sha),
+        !lease_link_matches(&dest, Some(want), &sha, approved_bytes.len() as f64),
         "#1889 a symlink swapped into the lease entry must never be followed"
     );
 
@@ -1271,11 +1271,19 @@ fn upload_lease_link_of_a_swapped_entry_is_not_read_through_the_path() {
         .arg(&dest)
         .status()
         .expect("#1889 probe could not run mkfifo");
-    assert!(made.success(), "#1889 probe could not create the FIFO entry");
+    assert!(
+        made.success(),
+        "#1889 probe could not create the FIFO entry"
+    );
     let (tx, rx) = std::sync::mpsc::channel();
     let path = dest.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(lease_link_matches(&path, Some(want), &sha));
+        let _ = tx.send(lease_link_matches(
+            &path,
+            Some(want),
+            &sha,
+            approved_bytes.len() as f64,
+        ));
     });
     match rx.recv_timeout(std::time::Duration::from_secs(2)) {
         Ok(matched) => assert!(
@@ -1284,6 +1292,33 @@ fn upload_lease_link_of_a_swapped_entry_is_not_read_through_the_path() {
         ),
         Err(_) => panic!("#1889 a FIFO entry must never make the lease acquire wait"),
     }
+}
+
+/// #1889 (review concurrency#1 / boundary#1): the content term reads exactly
+/// the record's `bytes` and requires the entry to end there. An append to the
+/// approved inode leaves both identity terms equal and the leading bytes
+/// intact, so only the length term can refuse it — and without that bound the
+/// read would run to whatever EOF the writer allows, up to never.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_of_a_grown_entry_is_rejected() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let approved_bytes = b"approved-bytes-0123456789";
+    let orig = project.join("approved.bin");
+    fs::write(&orig, approved_bytes).unwrap();
+    let mut approved = File::open(&orig).unwrap();
+    let sha = hash_file(&mut approved).unwrap();
+    let dest = project.join("entry");
+    fs::hard_link(&orig, &dest).unwrap();
+    let want = attachment_identity(&fs::symlink_metadata(&dest).unwrap()).unwrap();
+    let mut grown = fs::OpenOptions::new().append(true).open(&orig).unwrap();
+    grown.write_all(b"appended-after-verification").unwrap();
+    drop(grown);
+    assert!(
+        !lease_link_matches(&dest, Some(want), &sha, approved_bytes.len() as f64),
+        "#1889 an entry that grew after verification must never be pinned into the lease"
+    );
 }
 
 /// #1887: the read side of the shared "home" question. A `.tmp` swapped for a
