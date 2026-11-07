@@ -2110,6 +2110,21 @@ fn signed_recording_requires_a_request_step() {
 }
 
 #[test]
+fn signed_recording_rejects_non_string_signature_header() {
+    // A non-string header value cannot be signed or compared, so it is as good
+    // as absent: `as_str()` yields `None` and the empty-value branch fires.
+    crate::negative_assert!(
+        signed_request_headers_checked(&json!({
+            "name": "valid-signature",
+            "sign": true,
+            "steps": [{"op": "request", "headers": {"X-Twilio-Signature": 7}}],
+        }))
+        .is_err(),
+        "#1339 #1957 signed case must record a non-empty X-Twilio-Signature header"
+    );
+}
+
+#[test]
 fn signed_recording_checks_every_request_step() {
     // The guard claims to cover *every* request step of a signed case, so a
     // second request step that lost the signature header must not slip past a
