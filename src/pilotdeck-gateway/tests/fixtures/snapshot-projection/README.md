@@ -144,7 +144,8 @@ mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` �
 
 ## 负控表自身的地基（#1456 r4 补）
 
-`negative_controls.py` 的表共 18 条裁决（16 条源码变异 + 2 条数据变异）。此前删掉
+`negative_controls.py` 的表共 19 条裁决（17 条源码变异 + 2 条数据变异；#2194 补
+`error-mapped-to-response` 镜像 memory-gateway 家族同名行）。此前删掉
 一行、或把某个数据变异的分支整段删掉，其余行全 KILLED 时仍会 `n/n KILLED` 退 0
 （分母静默缩水）。现补两条：① `EXPECTED_NAMES` 与 `mutations` 逐项同序，`main()` 起跑时用
 共享 `negative_selection.registered` 核对，名册漂移 → exit 2 且**不留证据目录**

@@ -163,9 +163,11 @@ mutations = [
      '        descriptors.sort_by(|left, right| {',
      'runtime::snapshot::tests::dispatch_answers_the_collation_case_locally',
      # The reinstated refusal is a *local* error object (`Invalid` renders
-     # through `project_error` with `requires_host: false`), so the dispatch
-     # assertion still sees `Response`; the test dies on the payload check.
-     # Bind that message, not the forward guard above it.
+     # through `project_error` with `requires_host: false`). Since #2194
+     # dispatch carries it as `Error`, never a flattened response, so the
+     # test's variant guard rejects it with this same marker (the payload
+     # check below stays the success-path assertion). Bind that message,
+     # not the forward guard above it.
      '#132 collation case answers with a list, not an error'),
     ('archive-local-method-lost', DISPATCH,
      '    "native_archive_manifest",\n', '',
