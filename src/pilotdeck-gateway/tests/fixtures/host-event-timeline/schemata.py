@@ -167,6 +167,12 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/host/tests/resume.rs',
     FIXTURES / 'host-module-binding/oracle.json',
     FIXTURES / 'host-cancel-timeout/oracle.json',
+    # #2228 r11 (MM r10 sibling P1): the registered face cancel_exit.rs
+    # executes tests/fixtures/host-cancel-timeout/peer.py as a python3 child
+    # (cancel_exit.rs:11-17, runtime-read — no recompile needed to take
+    # effect), the same peer registration turn-gates/live-session/
+    # host-factory already have for their peers.
+    FIXTURES / 'host-cancel-timeout/peer.py',
     FIXTURES / 'host-event/oracle.json',
     FIXTURES / 'host-model/oracle.json',
     FIXTURES / 'host-modules/oracle.json',
@@ -176,6 +182,14 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'scripts/a6-host/fixture.py',
+    # #2228 r11 (MM r10 sibling P2#3, P2-a in-round): the registered carrier
+    # host/tests.rs also executes the two sibling probe scripts —
+    # scripts/a6-host/orphan_probe.py and scripts/a6-host/preinstall_probe.py
+    # (host/tests.rs:279-289, spawned at :292-293/:1346-1347) — runtime-read
+    # inputs of a registered carrier; fixture.py was the only a6-host script
+    # registered before this.
+    ROOT / 'scripts/a6-host/orphan_probe.py',
+    ROOT / 'scripts/a6-host/preinstall_probe.py',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',

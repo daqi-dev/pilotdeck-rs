@@ -106,6 +106,13 @@ GUARDED = [
     # guard.
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory.rs',
+    # #2228 r11 (DS r10 sibling P1): the registered carrier factory_tests.rs
+    # bakes two more oracles into the same --lib binary —
+    # project-runtime-factory/oracle.json (:595) and interaction-events/
+    # oracle.json (:3997) — no fixture had registered either, so concurrent
+    # edits during a run must be caught by the source guard here too.
+    FIXTURES / 'project-runtime-factory/oracle.json',
+    FIXTURES / 'interaction-events/oracle.json',
     # #2228 MM r2 P2: the top of that chain — factory.rs inherits its names
     # from project.rs via `use super::{...}` (mod factory in project.rs), and
     # runtime/mod.rs declares the project module, so concurrent edits to
@@ -150,8 +157,10 @@ GUARDED = [
     # live_stream_tests.rs (registered above) bakes four more oracles into the
     # same --lib binary — live-recording/oracle.json (:3653/:3958),
     # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
-    # and live-write-order/oracle.json (:4816). Same carrier, same set as
-    # host-event-timeline/turn-gates got in r9 — concurrent edits must be
+    # and live-write-order/oracle.json (:4816). Same carrier, same
+    # direct-oracle set every fixture registering it now guards
+    # (host-event-timeline/turn-gates additionally register their own extra
+    # faces — #2241 consolidation target) — concurrent edits must be
     # caught by the source guard.
     FIXTURES / 'live-recording/oracle.json',
     FIXTURES / 'live-history/oracle.json',
