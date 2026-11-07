@@ -67,7 +67,7 @@ MUTATIONS = [
      '                    write(value, depth + 1, out, truncated);\n'
      '                    if *truncated {\n                        ();',
      OBJECT_TEST,
-     '#1929 object siblings after the elided subtree must not be written'),
+     '#1929 an elided object must not name its following key'),
     ('string-budget-dropped', 'permission.rs', STRING_PUSH,
      '                out.push_str('
      '&pilotdeck_protocol::quote_json_string(text));',
@@ -77,7 +77,7 @@ MUTATIONS = [
      '                    out.push_str('
      '&pilotdeck_protocol::quote_json_string(key));',
      OVERSIZED_TEST,
-     '#1929 the oversized key must carry the truncation marker'),
+     '#1929 the oversized key produced'),
 ]
 EXPECTED_NAMES = ('cap-removed', 'cap-off-by-one', 'byte-budget-removed',
                   'truncate-flag-dropped', 'object-break-dropped',
@@ -124,11 +124,15 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
         except Exception as error:  # a timeout must still leave a verdict
             code, log = None, ''
             reason = f'baseline run raised {type(error).__name__}: {error}'
+        logged = True
         try:
             (out / f'baseline-{short}.log').write_text(log)
         except OSError as error:
+            # A baseline whose raw log cannot be archived is not evidence:
+            # record it as INVALID instead of trusting the in-memory verdict.
+            logged = False
             reason = f'{reason}; baseline log not written: {error}'
-        baselines[test] = code == 0 and baseline_passed(log, test)
+        baselines[test] = logged and code == 0 and baseline_passed(log, test)
         print(f'baseline {test}: '
               f'{"PASS" if baselines[test] else "INVALID"}', flush=True)
         if not baselines[test]:
