@@ -660,6 +660,7 @@ fn queued_turn(message: &str) -> QueuedWeixinTurn {
         session_key: js("weixin:chat=chat-panic:general"),
         message: js(message),
         project_key: None,
+        attachments: Vec::new(),
     }
 }
 

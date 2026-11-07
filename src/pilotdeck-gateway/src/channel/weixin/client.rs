@@ -28,6 +28,14 @@ const MAX_QR_REFRESH: u32 = 3;
 
 /// MessageItemType.TEXT (weixin-ilink types.js).
 pub const MESSAGE_ITEM_TYPE_TEXT: f64 = 1.0;
+/// MessageItemType.IMAGE.
+pub const MESSAGE_ITEM_TYPE_IMAGE: f64 = 2.0;
+/// MessageItemType.VOICE.
+pub const MESSAGE_ITEM_TYPE_VOICE: f64 = 3.0;
+/// MessageItemType.FILE.
+pub const MESSAGE_ITEM_TYPE_FILE: f64 = 4.0;
+/// MessageItemType.VIDEO.
+pub const MESSAGE_ITEM_TYPE_VIDEO: f64 = 5.0;
 /// MessageType.BOT.
 const MESSAGE_TYPE_BOT: f64 = 2.0;
 /// MessageState.FINISH.

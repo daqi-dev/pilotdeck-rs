@@ -18,6 +18,9 @@ from negative_suite import matrix_main
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parents[1]
 weixin = root / 'src/pilotdeck-gateway/src/channel/weixin'
+attachments = root / 'src/pilotdeck-gateway/src/channel/im_attachment.rs'
+attachment_tests = (root / 'src/pilotdeck-gateway/src/channel'
+                    / 'im_attachment/tests.rs')
 native = root / 'src/pilotdeck-gateway/src/native_process'
 REPLAY = 'channel::weixin::replay_tests::weixin_replays_the_ts_channel_oracle'
 SUPERSEDED = ('channel::weixin::tests::'
@@ -83,8 +86,8 @@ MUTATIONS = [
      '    for case in oracle_cases(&trimmed) {',
      REPLAY, '#1823 weixin generator media declaration'),
     ('oracle-wrong-declaration', fixtures / 'weixin-channel/oracle.json',
-     '  "expectedCaseCount": 15,',
-     '  "expectedCaseCount": 14,',
+     '  "expectedCaseCount": 20,',
+     '  "expectedCaseCount": 19,',
      REPLAY, '#1328 weixin generator declaration'),
     # JS truthiness (`if (x)` is false for ""): four filters, four golden cases,
     # one row per filter so every case has its own killer. Death points differ:
@@ -143,6 +146,51 @@ MUTATIONS = [
        'activity_delay_is_silent_just_before_ten_minutes',
        '#1821 activity pulses must fire '
        'activity-delay-is-silent-just-before-ten-minutes')]),
+
+    # #1822 inbound attachments. The five added channel scenarios are what
+    # kills the wiring rows (c16/c20 for the fallback text and the stored
+    # attachment, c18/c19 for the diagnostics paragraph, c16's
+    # `source: "url"` for the branch row); the store's own order and the
+    # image sniff only a mock transport can drive, so those two rows name
+    # the focused cells in `channel/im_attachment/tests.rs`.
+    ('weixin-attachment-fallback-text', weixin / 'mod.rs',
+     'const WEIXIN_ATTACHMENT_FALLBACK_TEXT: &str = "请查看我发送的附件。";',
+     'const WEIXIN_ATTACHMENT_FALLBACK_TEXT: &str = "请查看附件。";',
+     REPLAY, '#1328 weixin replay oracle'),
+    ('weixin-attachment-submit-dropped', weixin / 'mod.rs',
+     '        if !turn.attachments.is_empty() {',
+     '        if false {',
+     REPLAY, '#1328 weixin replay oracle'),
+    ('weixin-attachment-diagnostics-dropped', weixin / 'mod.rs',
+     '        if !diagnostics.is_empty() {',
+     '        if false {',
+     REPLAY, '#1328 weixin replay oracle'),
+    # The image item's metadata `source` branch: a `cdn_url`/`url` hit is
+    # `"url"`, the `media.full_url` fallback is the other value.
+    ('weixin-attachment-source-branch', weixin / 'mod.rs',
+     '        metadata.push((\n'
+     '            "source".into(),\n'
+     '            JsValue::String(if from_url { "url" } else { "media.full_url" }.into()),\n'
+     '        ));',
+     '        metadata.push((\n'
+     '            "source".into(),\n'
+     '            JsValue::String(if from_url { "media.full_url" } else { "media.full_url" }.into()),\n'
+     '        ));',
+     REPLAY, '#1328 weixin replay oracle'),
+    ('im-attachment-declared-size-guard-dropped', attachments,
+     '        if let Some(bytes) = input.bytes\n'
+     '            && bytes > self.max_bytes as f64\n'
+     '        {',
+     '        if let Some(bytes) = input.bytes\n'
+     '            && bytes > f64::INFINITY\n'
+     '        {',
+     'channel::im_attachment::tests::save_from_url_guards_sizes_and_applies_the_transform',
+     '#1822 declared size guard'),
+    ('im-attachment-image-sniff-dropped', attachments,
+     '    detect_image_mime(buffer).map(str::to_string).or(mime_type)',
+     '    mime_type',
+     'channel::im_attachment::tests::save_from_url_sniffs_images_over_the_response_mime',
+     '#1822 image sniff wins over the declared header'),
 
     # #1808: the terminal comparison must reject a wrong-typed `expected`
     # instead of falling back to the old blind read.
@@ -251,8 +299,8 @@ MUTATIONS = [
     # *received* size, which no oracle case can record (a 50 MiB body would
     # bloat the fixture), so a dedicated loopback cell kills it.
     ('media-download-received-cap-removed', weixin / 'media.rs',
-     '        read_body(\n            response.into_body(),\n            WEIXIN_ATTACHMENT_MAX_BYTES,',
-     '        read_body(\n            response.into_body(),\n            usize::MAX,',
+     '        let bytes = read_body(\n            response.into_body(),\n            WEIXIN_ATTACHMENT_MAX_BYTES,',
+     '        let bytes = read_body(\n            response.into_body(),\n            usize::MAX,',
      'channel::weixin::media::tests::the_received_body_is_capped_at_the_limit',
      '#1823 received body is capped at the limit'),
     # Baseline scopes the 60 s `AbortController` to `fetch` itself: the timer
@@ -298,6 +346,7 @@ def main():
     guarded += [native / 'channels.rs', native / 'methods/weixin_login.rs',
                 weixin / 'media/tests.rs',
                 root / 'src/pilotdeck-gateway/tests/weixin_channel.rs']
+    guarded += [attachments, attachment_tests]
     guarded.extend(path for path in (fixtures / 'weixin-channel').rglob('*')
                   if path.is_file() and '__pycache__' not in path.parts)
     args = ['--check'] if sys.argv[1:] == ['--check-anchors'] else sys.argv[1:]

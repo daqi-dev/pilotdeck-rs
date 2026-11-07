@@ -143,7 +143,20 @@ fn js_text(value: &JsString) -> String {
 
 struct HeldPoll {
     record: Value,
-    sender: oneshot::Sender<(u16, String)>,
+    sender: oneshot::Sender<(u16, Vec<u8>, String)>,
+}
+
+/// The generator records raw CDN bodies as hex (`bodyHex`), so the replay
+/// decodes them back into the bytes the download must serve.
+fn decode_hex(text: &str) -> Vec<u8> {
+    assert!(
+        text.len().is_multiple_of(2),
+        "#1822 bodyHex has an even length"
+    );
+    (0..text.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&text[index..index + 2], 16).expect("#1822 bodyHex pair"))
+        .collect()
 }
 
 #[derive(Default)]
@@ -177,8 +190,10 @@ impl FakeShared {
             .count()
     }
     /// The response a scripted item produces: status failures keep their text
-    /// body; everything else is the item (or the endpoint default) as JSON.
-    fn respond(&self, pathname: &str, item: Option<Value>) -> (u16, String) {
+    /// body, `bodyHex` items serve raw CDN bytes, and everything else is the
+    /// item (or the endpoint default) as JSON. The third element is the
+    /// response `content-type`.
+    fn respond(&self, pathname: &str, item: Option<Value>) -> (u16, Vec<u8>, String) {
         if let Some(status) = item
             .as_ref()
             .and_then(|item| item.get("status"))
@@ -189,7 +204,26 @@ impl FakeShared {
                 .and_then(|item| item.get("text"))
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            return (status as u16, text.to_string());
+            return (
+                status as u16,
+                text.as_bytes().to_vec(),
+                "text/plain".to_string(),
+            );
+        }
+        // #1822: the CDN download path answers with raw bytes; `contentType`
+        // is what `saveFromUrl` reads for its mime fallback.
+        if let Some(hex) = item
+            .as_ref()
+            .and_then(|item| item.get("bodyHex"))
+            .and_then(Value::as_str)
+        {
+            let content_type = item
+                .as_ref()
+                .and_then(|item| item.get("contentType"))
+                .and_then(Value::as_str)
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            return (200, decode_hex(hex), content_type);
         }
         let json = item.unwrap_or_else(|| self.default_for(pathname));
         if pathname == "/ilink/bot/get_qrcode_status" {
@@ -197,7 +231,10 @@ impl FakeShared {
         }
         (
             200,
-            serde_json::to_string(&json).expect("#1328 response JSON"),
+            serde_json::to_string(&json)
+                .expect("#1328 response JSON")
+                .into_bytes(),
+            "application/json".to_string(),
         )
     }
     fn default_for(&self, pathname: &str) -> Value {
@@ -268,7 +305,8 @@ impl FakeShared {
                 .unwrap_or_else(|| json!(""));
             let _ = poll.sender.send((
                 200,
-                format!(r#"{{"ret":0,"msgs":[],"get_updates_buf":{buffer}}}"#),
+                format!(r#"{{"ret":0,"msgs":[],"get_updates_buf":{buffer}}}"#).into_bytes(),
+                "application/json".to_string(),
             ));
         }
     }
@@ -347,8 +385,8 @@ impl FakeShared {
                 .expect("#1328 held mutex")
                 .push_back(HeldPoll { record, sender });
             self.pump();
-            let (status, body) = receiver.await.expect("#1328 held poll answered");
-            return Ok(build_response(status, "application/json", &body));
+            let (status, body, content_type) = receiver.await.expect("#1328 held poll answered");
+            return Ok(build_response(status, &content_type, &body));
         }
         self.requests
             .lock()
@@ -360,29 +398,21 @@ impl FakeShared {
             .expect("#1328 scripts mutex")
             .get_mut(uri.path())
             .and_then(|queue| queue.pop_front());
-        let (status, body) = self.respond(uri.path(), item);
-        Ok(build_response(
-            status,
-            if status == 200 {
-                "application/json"
-            } else {
-                "text/plain"
-            },
-            &body,
-        ))
+        let (status, body, content_type) = self.respond(uri.path(), item);
+        Ok(build_response(status, &content_type, &body))
     }
 }
 
 fn build_response(
     status: u16,
     content_type: &str,
-    body: &str,
+    body: &[u8],
 ) -> hyper::Response<http_body_util::Full<hyper::body::Bytes>> {
     hyper::Response::builder()
         .status(status)
         .header("content-type", content_type)
         .body(http_body_util::Full::new(hyper::body::Bytes::from(
-            body.to_string(),
+            body.to_vec(),
         )))
         .expect("#1328 static response")
 }
@@ -839,8 +869,13 @@ async fn replay_case(case: &Value) -> Value {
             }
             "script" => {
                 let endpoint = step["endpoint"].as_str().expect("#1328 script endpoint");
-                let items = step["items"].as_array().expect("#1328 script items");
-                fake.shared.push_script(endpoint, items);
+                // #1822: `$BASE` inside message items points at the loopback
+                // CDN, exactly like the credentials step's substitution.
+                let text = serde_json::to_string(&step["items"]).expect("#1328 script JSON");
+                let text = text.replace("$BASE", &base_url);
+                let items: Value = serde_json::from_str(&text).expect("#1328 script parse");
+                let items = items.as_array().expect("#1328 script items").clone();
+                fake.shared.push_script(endpoint, &items);
             }
             "wait-requests" => {
                 let path = step["path"].as_str().expect("#1328 wait path");
@@ -1007,8 +1042,8 @@ fn oracle_cases(oracle: &Value) -> Vec<&Value> {
         .as_array()
         .expect("#1328 weixin oracle cases");
     // #1823 appended media cases (they carry a `kind`); the channel replay
-    // owns the fifteen scenario cases, and `channel::weixin::media::tests`
-    // replays the rest.
+    // owns the twenty scenario cases (#1822 added the five attachment ones),
+    // and `channel::weixin::media::tests` replays the rest.
     let channel: Vec<&Value> = cases
         .iter()
         .filter(|case| case.get("kind").is_none())
@@ -1017,10 +1052,10 @@ fn oracle_cases(oracle: &Value) -> Vec<&Value> {
         !channel.is_empty(),
         "#1328 weixin oracle cases must be non-empty"
     );
-    crate::negative_assert_eq!(channel.len(), 15, "#1328 weixin oracle case count");
+    crate::negative_assert_eq!(channel.len(), 20, "#1328 weixin oracle case count");
     crate::negative_assert_eq!(
         oracle["expectedCaseCount"],
-        json!(15),
+        json!(20),
         "#1328 weixin generator declaration"
     );
     crate::negative_assert_eq!(

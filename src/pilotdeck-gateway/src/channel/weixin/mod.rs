@@ -38,6 +38,10 @@ pub use mapper::{WeixinCommand, WeixinResolveResult, WeixinSessionMapper};
 pub use state::ChannelStatePersistence;
 pub(crate) use state::stringify_pretty;
 
+use super::im_attachment::{
+    AttachmentError, AttachmentKind, AttachmentTransform, ChannelAttachment, ImAttachmentStore,
+    SaveAttachmentFromUrlInput, guess_mime_type_from_name, guess_mime_type_from_url,
+};
 use super::protocol::{
     BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
     ChannelStartDeps,
@@ -74,6 +78,13 @@ const WEIXIN_CONNECTION_RECOVERED_AFTER_LOSS_TEXT: &str =
 const WEIXIN_TIMEOUT_FINAL_TEXT: &str =
     "处理时间已超过上限，任务已停止。你可以调整需求后重新发送。";
 const WEIXIN_NEW_SESSION_TEXT: &str = "已创建新会话。";
+/// `messageText` when only attachments arrived (WeixinChannel.ts:566).
+const WEIXIN_ATTACHMENT_FALLBACK_TEXT: &str = "请查看我发送的附件。";
+/// `extractIncomingMessage` image diagnostic (WeixinChannel.ts:568).
+const WEIXIN_IMAGE_MISSING_URL_TEXT: &str =
+    "微信图片附件缺少下载 URL，已跳过。调试信息：image_item 中未找到 url/cdn_url/media.full_url。";
+/// `extractIncomingMessage` video diagnostic (WeixinChannel.ts:604).
+const WEIXIN_VIDEO_SKIPPED_TEXT: &str = "微信视频附件暂未接入内容理解，已跳过。";
 
 /// TS `CREDENTIALS_PATH = join(homedir(), ".pilotdeck", "weixin-credentials.json")`;
 /// `saveCredentials` always mkdirs `homedir()/.pilotdeck`.
@@ -248,6 +259,9 @@ struct QueuedWeixinTurn {
     session_key: JsString,
     message: JsString,
     project_key: Option<JsString>,
+    /// `QueuedWeixinTurn["attachments"]`: the store's persisted items, empty
+    /// for a text-only message.
+    attachments: Vec<ChannelAttachment>,
 }
 #[derive(Clone, Debug)]
 struct ActiveRun {
@@ -361,6 +375,11 @@ struct Shared {
     key: ChannelKey,
     credentials_path: PathBuf,
     credentials_dir: PathBuf,
+    /// `new ImAttachmentStore({ rootDir: join(homedir(), ".pilotdeck",
+    /// "im-attachments"), channelKey, maxBytes: WEIXIN_MAX_ATTACHMENT_BYTES })`
+    /// (WeixinChannel.ts:148-152). Both roots derive from `homedir()` in the
+    /// baseline, so the injectable `credentials_dir` covers this one too.
+    attachment_store: Arc<ImAttachmentStore>,
     mapper: Arc<WeixinSessionMapper>,
     client_factory: WeixinClientFactory,
     login: WeixinLogin,
@@ -379,10 +398,18 @@ pub struct WeixinChannel(Arc<Shared>);
 
 impl WeixinChannel {
     pub fn new(options: WeixinChannelOptions) -> Self {
+        let credentials_dir = options.credentials_dir.unwrap_or_else(home_pilotdeck_dir);
+        let attachment_store = Arc::new(ImAttachmentStore::new(
+            credentials_dir.join("im-attachments"),
+            CHANNEL_KEY,
+            media::WEIXIN_ATTACHMENT_MAX_BYTES,
+            Arc::new(media::WeixinAttachmentFetcher::new()),
+        ));
         Self(Arc::new(Shared {
             key: ChannelKey::new(CHANNEL_KEY),
             credentials_path: options.credentials_path,
-            credentials_dir: options.credentials_dir.unwrap_or_else(home_pilotdeck_dir),
+            credentials_dir,
+            attachment_store,
             mapper: options.mapper,
             client_factory: options.client_factory,
             login: options.login,
@@ -929,27 +956,25 @@ impl WeixinChannel {
                 .context_tokens
                 .insert(from_user.clone(), token.clone());
         }
-        // pr1 extraction: text items only (image/file/voice are pr2).
+        // Rich items need `await this.extractIncomingMessage(...)` (the CDN
+        // download), so they hand off to the spawned task with the raw
+        // message; a text-only message keeps the synchronous prefix.
+        if has_rich_items(message) {
+            return Some(DispatchStart::Inbound {
+                user: from_user,
+                message: message.clone(),
+            });
+        }
         let mut text_parts: Vec<JsString> = Vec::new();
         if let Some(JsValue::Array(items)) = message.get("item_list") {
             for item in items {
-                if item.get("type") != Some(&JsValue::Number(client::MESSAGE_ITEM_TYPE_TEXT)) {
-                    continue;
-                }
-                if let Some(text) = item
-                    .get("text_item")
-                    .and_then(|value| value.get("text"))
-                    .and_then(JsValue::as_string)
-                    .filter(|text| !text.units().is_empty())
-                {
-                    text_parts.push(text.clone());
+                if let Some(text) = text_item_text(item) {
+                    text_parts.push(text);
                 }
             }
         }
         let joined = String::from_utf16_lossy(join_units(&text_parts).units());
-        let text = crate::metadata::js_trim(&joined);
-        // pr1: attachments are always empty, so the attachment fallback text
-        // is unreachable and `messageText` is the trimmed text.
+        let text = crate::metadata::js_trim(&joined).to_string();
         if text.is_empty() {
             return None;
         }
@@ -960,6 +985,17 @@ impl WeixinChannel {
                 String::from_utf16_lossy(from_user.units())
             ),
         );
+        self.dispatch_mapped(from_user, &text, Vec::new())
+    }
+
+    /// The mapper resolution and `/new` rotation `dispatchMessage` runs after
+    /// its extraction await, shared by the text-only and the attachment paths.
+    fn dispatch_mapped(
+        &self,
+        from_user: JsString,
+        text: &str,
+        attachments: Vec<ChannelAttachment>,
+    ) -> Option<DispatchStart> {
         let previous_session_key = self.0.mapper.get_session(&from_user);
         let mapped = self.0.mapper.resolve(&from_user, &JsString::from(text));
         if mapped.command == Some(WeixinCommand::New) {
@@ -980,6 +1016,7 @@ impl WeixinChannel {
                     session_key: mapped.session_key,
                     message: mapped.message,
                     project_key: mapped.project_key,
+                    attachments,
                 })
             };
             return Some(DispatchStart::NewSession {
@@ -998,12 +1035,250 @@ impl WeixinChannel {
                 session_key: mapped.session_key,
                 message: mapped.message,
                 project_key: mapped.project_key,
+                attachments,
             },
         })
     }
 
+    /// The attachment half of `dispatchMessage`: `extractIncomingMessage`
+    /// (downloads, decrypts, diagnostics), the empty-message guard, the
+    /// `attachments=N` log, and the fallback text, then the shared mapper
+    /// resolution.
+    async fn run_inbound_extraction(&self, user: JsString, message: JsValue) {
+        let extracted = self.extract_incoming_message(&message, &user).await;
+        let joined = String::from_utf16_lossy(join_units(&extracted.text_parts).units());
+        let text = crate::metadata::js_trim(&joined).to_string();
+        if text.is_empty() && extracted.attachments.is_empty() {
+            return;
+        }
+        self.log(
+            "info",
+            format!(
+                "weixin: received message from {} attachments={}",
+                String::from_utf16_lossy(user.units()),
+                extracted.attachments.len()
+            ),
+        );
+        let message_text = if text.is_empty() {
+            WEIXIN_ATTACHMENT_FALLBACK_TEXT.to_string()
+        } else {
+            text
+        };
+        if let Some(start) = self.dispatch_mapped(user, &message_text, extracted.attachments) {
+            self.spawn_dispatch(start);
+        }
+    }
+
+    /// `extractIncomingMessage`: text parts in item order, one stored
+    /// attachment per image/file item, and the diagnostics text part the
+    /// baseline appends when any item was skipped or failed.
+    async fn extract_incoming_message(
+        &self,
+        message: &JsValue,
+        from_user: &JsString,
+    ) -> ExtractedMessage {
+        let mut text_parts: Vec<JsString> = Vec::new();
+        let mut attachments: Vec<ChannelAttachment> = Vec::new();
+        let mut diagnostics: Vec<String> = Vec::new();
+        let message_id = message_id(message);
+        let items = match message.get("item_list") {
+            Some(JsValue::Array(items)) => items.as_slice(),
+            _ => &[],
+        };
+        for item in items {
+            let item_type = item.get("type").and_then(JsValue::as_number);
+            if item_type == Some(client::MESSAGE_ITEM_TYPE_TEXT) {
+                if let Some(text) = text_item_text(item) {
+                    text_parts.push(text);
+                }
+                continue;
+            }
+            if item_type == Some(client::MESSAGE_ITEM_TYPE_IMAGE) {
+                match self.save_image_item(item, from_user, &message_id).await {
+                    Ok(Some(attachment)) => attachments.push(attachment),
+                    Ok(None) => diagnostics.push(WEIXIN_IMAGE_MISSING_URL_TEXT.to_string()),
+                    Err(error) => {
+                        diagnostics.push(format!("微信附件处理失败：{}", error.formatted()));
+                    }
+                }
+                continue;
+            }
+            if item_type == Some(client::MESSAGE_ITEM_TYPE_FILE) {
+                match self.save_file_item(item, from_user, &message_id).await {
+                    Ok(Some(attachment)) => attachments.push(attachment),
+                    Ok(None) => {
+                        let name = js_string_field(item.get("file_item"), "file_name")
+                            .unwrap_or_else(|| "(unknown)".into());
+                        diagnostics.push(format!(
+                            "微信文件 {name} 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
+                        ));
+                    }
+                    Err(error) => {
+                        diagnostics.push(format!("微信附件处理失败：{}", error.formatted()));
+                    }
+                }
+                continue;
+            }
+            if item_type == Some(client::MESSAGE_ITEM_TYPE_VOICE) {
+                if let Some(text) =
+                    js_string_field(item.get("voice_item"), "text").filter(|text| !text.is_empty())
+                {
+                    text_parts.push(JsString::from(format!("[微信语音转文字]\n{text}")));
+                }
+                continue;
+            }
+            if item_type == Some(client::MESSAGE_ITEM_TYPE_VIDEO) {
+                diagnostics.push(WEIXIN_VIDEO_SKIPPED_TEXT.to_string());
+            }
+        }
+        if !diagnostics.is_empty() {
+            let lines: Vec<String> = diagnostics.iter().map(|line| format!("- {line}")).collect();
+            text_parts.push(JsString::from(format!(
+                "[Attachment diagnostics]\n{}",
+                lines.join("\n")
+            )));
+        }
+        ExtractedMessage {
+            text_parts,
+            attachments,
+        }
+    }
+
+    /// One IMAGE item: `image?.cdn_url ?? image?.url ?? extractWeixinMediaUrl`,
+    /// then `saveFromUrl` with the image decrypt transform.
+    async fn save_image_item(
+        &self,
+        item: &JsValue,
+        from_user: &JsString,
+        message_id: &str,
+    ) -> Result<Option<ChannelAttachment>, AttachmentError> {
+        let undefined = JsValue::Undefined;
+        let image = item.get("image_item").unwrap_or(&undefined);
+        let url = js_string_field(Some(image), "cdn_url")
+            .or_else(|| js_string_field(Some(image), "url"))
+            .or_else(|| media::extract_weixin_media_url(image));
+        let Some(url) = url.filter(|url| !url.is_empty()) else {
+            return Ok(None);
+        };
+        let image_owned = image.clone();
+        let log_channel = self.clone();
+        let transform: AttachmentTransform = Arc::new(move |buffer: Vec<u8>| {
+            log_channel.log(
+                "info",
+                format!(
+                    "weixin: image decrypt {}",
+                    media::summarize_weixin_image_decrypt(&buffer, &image_owned)
+                ),
+            );
+            media::decrypt_weixin_image_or_throw(&buffer, &image_owned).map_err(|error| {
+                AttachmentError {
+                    name: error.name,
+                    message: error.message,
+                }
+            })
+        });
+        let mut metadata = Vec::new();
+        for key in ["width", "height"] {
+            if let Some(value) = image.get(key).filter(|v| !matches!(v, JsValue::Undefined)) {
+                metadata.push((key.to_string(), value.clone()));
+            }
+        }
+        metadata.push(("itemType".into(), JsValue::String("image".into())));
+        let from_url = [image.get("cdn_url"), image.get("url")]
+            .into_iter()
+            .flatten()
+            .any(js_truthy_value);
+        metadata.push((
+            "source".into(),
+            JsValue::String(if from_url { "url" } else { "media.full_url" }.into()),
+        ));
+        self.0
+            .attachment_store
+            .save_from_url(SaveAttachmentFromUrlInput {
+                url: url.clone(),
+                headers: hyper::HeaderMap::new(),
+                chat_id: String::from_utf16_lossy(from_user.units()),
+                message_id: message_id.to_string(),
+                kind: AttachmentKind::Image,
+                name: Some(format!("image-{message_id}.jpg")),
+                mime_type: guess_mime_type_from_url(&url, Some("image/jpeg")),
+                bytes: None,
+                metadata,
+                transform: Some(transform),
+            })
+            .await
+            .map(Some)
+    }
+
+    /// One FILE item: same URL chain, `file_name`/`file_size` from the item,
+    /// and the never-throwing file decrypt.
+    async fn save_file_item(
+        &self,
+        item: &JsValue,
+        from_user: &JsString,
+        message_id: &str,
+    ) -> Result<Option<ChannelAttachment>, AttachmentError> {
+        let undefined = JsValue::Undefined;
+        let file = item.get("file_item").unwrap_or(&undefined);
+        let url = js_string_field(Some(file), "cdn_url")
+            .or_else(|| js_string_field(Some(file), "url"))
+            .or_else(|| media::extract_weixin_media_url(file));
+        let Some(url) = url.filter(|url| !url.is_empty()) else {
+            return Ok(None);
+        };
+        let name = js_string_field(Some(file), "file_name");
+        let file_owned = file.clone();
+        let log_channel = self.clone();
+        let transform: AttachmentTransform = Arc::new(move |buffer: Vec<u8>| {
+            log_channel.log(
+                "info",
+                format!(
+                    "weixin: file decrypt {}",
+                    media::summarize_weixin_file_decrypt(&buffer, &file_owned)
+                ),
+            );
+            Ok(media::decrypt_weixin_file(&buffer, &file_owned))
+        });
+        let from_url = [file.get("cdn_url"), file.get("url")]
+            .into_iter()
+            .flatten()
+            .any(js_truthy_value);
+        let metadata = vec![
+            ("itemType".to_string(), JsValue::String("file".into())),
+            (
+                "source".to_string(),
+                JsValue::String(if from_url { "url" } else { "media.full_url" }.into()),
+            ),
+        ];
+        self.0
+            .attachment_store
+            .save_from_url(SaveAttachmentFromUrlInput {
+                url,
+                headers: hyper::HeaderMap::new(),
+                chat_id: String::from_utf16_lossy(from_user.units()),
+                message_id: message_id.to_string(),
+                kind: AttachmentKind::File,
+                name,
+                mime_type: guess_mime_type_from_name(
+                    js_string_field(Some(file), "file_name").as_deref(),
+                )
+                .map(str::to_string),
+                bytes: file.get("file_size").and_then(JsValue::as_number),
+                metadata,
+                transform: Some(transform),
+            })
+            .await
+            .map(Some)
+    }
+
     fn spawn_dispatch(&self, start: DispatchStart) {
         match start {
+            DispatchStart::Inbound { user, message } => {
+                let channel = self.clone();
+                tokio::spawn(async move {
+                    channel.run_inbound_extraction(user, message).await;
+                });
+            }
             DispatchStart::NewSession {
                 user,
                 active_run,
@@ -1140,6 +1415,17 @@ impl WeixinChannel {
         );
         input.insert("channelKey".into(), JsValue::from(CHANNEL_KEY));
         input.insert("message".into(), JsValue::String(turn.message.clone()));
+        if !turn.attachments.is_empty() {
+            input.insert(
+                "attachments".into(),
+                JsValue::Array(
+                    turn.attachments
+                        .iter()
+                        .map(ChannelAttachment::to_js)
+                        .collect(),
+                ),
+            );
+        }
         input.insert("allowPlanModeTools".into(), JsValue::Bool(false));
         if let Some(project_key) = &turn.project_key {
             input.insert("projectKey".into(), JsValue::String(project_key.clone()));
@@ -1548,6 +1834,9 @@ impl WeixinChannel {
 }
 
 enum DispatchStart {
+    /// A message whose `item_list` holds image/file/voice/video items: its
+    /// extraction awaits the CDN download, so it runs in the spawned task.
+    Inbound { user: JsString, message: JsValue },
     NewSession {
         user: JsString,
         active_run: Option<ActiveRun>,
@@ -1558,6 +1847,85 @@ enum DispatchStart {
         user: JsString,
         turn: QueuedWeixinTurn,
     },
+}
+
+/// `extractIncomingMessage`'s result before the join/trim.
+struct ExtractedMessage {
+    text_parts: Vec<JsString>,
+    attachments: Vec<ChannelAttachment>,
+}
+
+/// `item.type === MessageItemType.TEXT && item.text_item?.text`: a non-empty
+/// text item, returned as its exact UTF-16 units.
+fn text_item_text(item: &JsValue) -> Option<JsString> {
+    if item.get("type") != Some(&JsValue::Number(client::MESSAGE_ITEM_TYPE_TEXT)) {
+        return None;
+    }
+    item.get("text_item")
+        .and_then(|value| value.get("text"))
+        .and_then(JsValue::as_string)
+        .filter(|text| !text.units().is_empty())
+        .cloned()
+}
+
+/// Whether any item needs the awaiting extraction path.
+fn has_rich_items(message: &JsValue) -> bool {
+    let Some(JsValue::Array(items)) = message.get("item_list") else {
+        return false;
+    };
+    items.iter().any(|item| {
+        matches!(
+            item.get("type").and_then(JsValue::as_number),
+            Some(
+                client::MESSAGE_ITEM_TYPE_IMAGE
+                    | client::MESSAGE_ITEM_TYPE_FILE
+                    | client::MESSAGE_ITEM_TYPE_VOICE
+                    | client::MESSAGE_ITEM_TYPE_VIDEO
+            )
+        )
+    })
+}
+
+/// `String(msg.message_id ?? msg.client_id ?? Date.now())`.
+fn message_id(message: &JsValue) -> String {
+    ["message_id", "client_id"]
+        .into_iter()
+        .find_map(|key| {
+            message
+                .get(key)
+                .filter(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
+        })
+        .map(js_template_text)
+        .unwrap_or_else(|| {
+            let millis = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or(0);
+            millis.to_string()
+        })
+}
+
+/// A property read as a JS string (`undefined`/`null` stay `None`; `""` is
+/// kept, because the baseline's `??` chain and its `!url` guard are distinct
+/// steps).
+fn js_string_field(value: Option<&JsValue>, key: &str) -> Option<String> {
+    match value?.get(key)? {
+        JsValue::String(text) => Some(String::from_utf16_lossy(text.units())),
+        JsValue::Undefined | JsValue::Null => None,
+        // `image?.width` style reads only ever hit strings in this pipeline;
+        // a non-string URL field is what `??` would hand the `!url` guard.
+        other => Some(js_template_text(other)),
+    }
+}
+
+fn js_truthy_value(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Object(_) | JsValue::Array(_) => true,
+    }
 }
 
 fn join_units(parts: &[JsString]) -> JsString {

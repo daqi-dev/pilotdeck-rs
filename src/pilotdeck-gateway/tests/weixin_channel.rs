@@ -25,7 +25,7 @@ fn weixin_channel_committed_oracle_shape() {
         }
         _ => panic!("#1328 oracle cases must be an array"),
     };
-    assert_eq!(channel, 15, "#1328 weixin oracle case count");
+    assert_eq!(channel, 20, "#1328 weixin oracle case count");
     assert_eq!(media, 31, "#1823 weixin oracle media case count");
     let declared = oracle
         .get("expectedCaseCount")
