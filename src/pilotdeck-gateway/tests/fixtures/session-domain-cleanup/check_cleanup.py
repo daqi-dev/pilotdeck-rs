@@ -6193,7 +6193,7 @@ class _NameBindings(dict):
     """
 
     __slots__ = ('loops_of', 'comps_of', 'comp_bound', 'imported', 'scope',
-                 'slots')
+                 'slots', 'builtins_modules')
 
     def __init__(self):
         super().__init__()
@@ -6211,6 +6211,11 @@ class _NameBindings(dict):
         # along on the table as ``(lineno, builtin or None)`` events, so the
         # use point can pick the one in force (codex r9 P0-2 / P0-5 / P1-6).
         self.imported = {}
+        # #1953 fix-r1 round 22 (codex r21 P0-1): ``name -> [event]`` for the
+        # spellings this scope binds to the ``builtins`` module itself
+        # (``import builtins as bi``), so ``bi.getattr`` reads as the factory
+        # the same way the literal ``builtins.getattr`` does.
+        self.builtins_modules = {}
         # #1953 fix-r1 (codex r1b P1): a comprehension target lives in the
         # comprehension's own scope, but the table recorded it like any other
         # local, so ``[h for h in (operator.setitem,)]`` made an unrelated
@@ -6307,6 +6312,12 @@ def _name_bindings(function, outer_imports=None):
             stack.append((child, inner, inner_comp))
 
     bindings.imported = _imported_write_aliases(function, outer_imports)
+    # #1953 fix-r1 round 22 (codex r21 P0-1): the ``import builtins as bi``
+    # aliases ride on the same table (module-level ones merged in by
+    # ``_imported_write_aliases``), so :func:`_builtins_module` can read the
+    # spelling in force at the use.
+    bindings.builtins_modules = getattr(bindings.imported, 'builtins_modules',
+                                        {})
     # #1953 fix-r1 round 19: the status ruler's by-name handle test has to ask
     # "which binding is in force at the call", and that needs the block table
     # of the scope the table was built from.
@@ -6445,6 +6456,11 @@ class _ModuleEvents(dict):
         super().__init__()
         self.calls = {}
         self.outer_def = {}
+        # #1953 fix-r1 round 22 (codex r21 P0-1): ``name -> [event]`` for the
+        # names this scope binds to the ``builtins`` module itself
+        # (``import builtins as bi``).  The marker rides in the helper slot of
+        # its own table, so the write-helper events stay untouched.
+        self.builtins_modules = {}
 
 
 def _module_call_positions(tree):
@@ -6545,6 +6561,23 @@ def _resolve_assignment_helpers(events, pending):
             return
 
 
+def _mirror_builtins_shadows(events):
+    """Give every other binding of a ``builtins`` alias its own event (r22).
+
+    #1953 fix-r1 round 22 (codex r21 P0-1): ``import builtins as bi`` is not
+    the only binding of ``bi``.  An assignment or a parameter of the same
+    spelling has to be able to take the module reading away at its own
+    position, exactly like the write-helper events next door; without this a
+    later ``bi = other`` still read as the module.  A binding inside a branch
+    stays non-dominating, so it does not erase the import (fail-closed).
+    """
+    for _name, items in events.builtins_modules.items():
+        marked = {(item[0], item[1]) for item in items}
+        for item in events.get(_name, ()):
+            if (item[0], item[1]) not in marked:
+                items.append(item[:2] + (None,) + item[3:])
+
+
 def _module_binding_events(tree):
     """``name -> [event]`` for every binding at module scope (round 14).
 
@@ -6576,11 +6609,17 @@ def _module_binding_events(tree):
             for alias in node.names:
                 name = alias.asname or alias.name.split('.')[0]
                 helper = (alias.name if builtins_import
-                          and (alias.name in _WRITE_HELPERS
-                               or alias.name in _MANAGED_WRITE_ATTRS
-                               or alias.name in _FACTORY_SPELLINGS)
+                          and alias.name in _IMPORTED_HELPER_NAMES
                           else None)
                 add(name, node, helper)
+                if isinstance(node, ast.Import) and alias.name == 'builtins':
+                    # #1953 fix-r1 round 22 (codex r21 P0-1): ``import
+                    # builtins as bi`` -- the alias names the module, and
+                    # ``bi.getattr`` is the builtin factory.
+                    conditional, loops = marks.get(id(node), (True, ()))
+                    events.builtins_modules.setdefault(name, []).append(
+                        (node.lineno, node.col_offset, True, conditional,
+                         loops, True))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                ast.ClassDef)):
             add(node.name, node, None)
@@ -6603,9 +6642,23 @@ def _module_binding_events(tree):
                 add(name, node, None, False)
                 items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
     _resolve_assignment_helpers(events, pending)
+    _mirror_builtins_shadows(events)
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
     return events
+
+
+class _ImportedEvents(dict):
+    """``name -> [event]`` plus the names bound to the ``builtins`` module.
+
+    #1953 fix-r1 round 22 (codex r21 P0-1): an ``import`` alias needs the same
+    position-aware record the write-helper events get; a plain set of names
+    would treat ``bi = other`` after ``import builtins as bi`` as the module.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.builtins_modules = {}
 
 
 def _imported_write_aliases(function, outer_imports=None):
@@ -6622,7 +6675,7 @@ def _imported_write_aliases(function, outer_imports=None):
     ordinary assignment keeps ``False`` because its right-hand side may be
     the builtin under another spelling.
     """
-    events = {}
+    events = _ImportedEvents()
     if isinstance(function, ast.Module):
         # #1953 fix-r1 round 16 (codex r15 P0-4): the module scope is a binding
         # scope like any other.  ``from builtins import setattr as _w`` at
@@ -6666,6 +6719,16 @@ def _imported_write_aliases(function, outer_imports=None):
                                    positions=positions)
         if chosen is not None:
             add(name, (-2, -2), chosen[2])
+    # #1953 fix-r1 round 22 (codex r21 P0-1): a module-level ``import builtins
+    # as bi`` is in force at every call the same way its write-helper events
+    # are (round 13), so the alias rides along with the same resolution.
+    for name, items in (getattr(outer_imports, 'builtins_modules', None)
+                        or {}).items():
+        chosen = _binding_event_at(items, None, anywhere=True,
+                                   positions=positions)
+        if chosen is not None:
+            events.builtins_modules.setdefault(name, []).append(
+                (-2, -2, chosen[2], False, (), True))
     for name in parameters:
         # A parameter shadows at every position.
         add(name, (-1, -1), None)
@@ -6679,9 +6742,15 @@ def _imported_write_aliases(function, outer_imports=None):
                 name = alias.asname or alias.name.split('.')[0]
                 add(name, (node.lineno, node.col_offset),
                     alias.name if builtins_import
-                    and (alias.name in _WRITE_HELPERS
-                         or alias.name in _FACTORY_SPELLINGS) else None,
+                    and alias.name in _IMPORTED_HELPER_NAMES else None,
                     conditional, loops)
+                if isinstance(node, ast.Import) and alias.name == 'builtins':
+                    # #1953 fix-r1 round 22 (codex r21 P0-1): the same alias
+                    # record the module scope keeps, for a function-local
+                    # ``import builtins as bi``.
+                    events.builtins_modules.setdefault(name, []).append(
+                        (node.lineno, node.col_offset, True, conditional,
+                         loops, True))
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.ClassDef)):
@@ -6710,6 +6779,7 @@ def _imported_write_aliases(function, outer_imports=None):
     # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
     # spelling a write helper.
     _resolve_assignment_helpers(events, pending)
+    _mirror_builtins_shadows(events)
     return events
 
 
@@ -7950,6 +8020,16 @@ _WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
 # ``ga = getattr`` merged into the function's event table.
 _FACTORY_SPELLINGS = ('getattr',)
 
+# #1953 fix-r1 round 22 (GLM simplify r21 P2-1): the member set an imported
+# spelling has to belong to was spelled out by hand in three event tables and
+# had already drifted (one site was missing ``_MANAGED_WRITE_ATTRS``).  One
+# place names it now.  ``_scope_import_events`` deliberately keeps the narrower
+# ``_MANAGED_WRITE_ATTRS`` test: its consumer asks "is this callee a *setter*",
+# and ``getattr`` is a read factory when it is handed three arguments, so
+# recording it there would invent writes.
+_IMPORTED_HELPER_NAMES = frozenset(_WRITE_HELPERS) | frozenset(
+    _MANAGED_WRITE_ATTRS) | frozenset(_FACTORY_SPELLINGS)
+
 
 def _bindings_at(bindings, name, node=None):
     """The bindings of *name* a use at *node* can see (#892 r34/r35).
@@ -8068,11 +8148,13 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
         return None
     seen.add(id(node))
     if isinstance(node, ast.Name):
-        if node.id in _WRITE_HELPERS or node.id in ('getattr', 'partial'):
+        if node.id in _WRITE_HELPERS or node.id in _FACTORY_SPELLINGS + ('partial',):
             # #892 r32: ``g = getattr; g(report, '__setitem__')(...)`` binds
             # the helper through the same names the bare spelling uses; the
             # status ruler stopped at the four canonical names (codex sibling
-            # r31 P2-11).
+            # r31 P2-11).  #1953 fix-r1 round 22 (GLM boundary r21 P3-4): the
+            # factory half now reads the one constant, so extending
+            # ``_FACTORY_SPELLINGS`` cannot leave this test behind.
             return node.id
         # #892 r35: every sibling binding gets its own path guard.  Sharing
         # one ``seen`` across them let the first path mark a node the second
@@ -8171,7 +8253,14 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
 
 
 def _name_resolves_to_builtins(node, bindings, depth=0, seen=None):
-    """True when *node* is the ``builtins`` module table (#892 r32)."""
+    """True when *node* is the ``builtins`` module table (#892 r32).
+
+    #1953 fix-r1 round 22 (GLM sibling r21 P1-1): the bindings are read with
+    :func:`_values_in_force`, like :func:`_builtins_module` does since round
+    20.  ``_bindings_at`` returns every reachable binding, so a certain
+    overwrite (``bi = __builtins__`` then ``bi = <something else>``) kept the
+    superseded one and the subscript below decoded a write that is not there.
+    """
     seen = set() if seen is None else seen
     if not isinstance(node, ast.Name) or id(node) in seen:
         return False
@@ -8181,7 +8270,7 @@ def _name_resolves_to_builtins(node, bindings, depth=0, seen=None):
     # #892 r35: per-path guard, same regression as ``_resolved_write_helper``
     # -- one sibling's visit must not blind the next.
     return any(_name_resolves_to_builtins(value, bindings, depth + 1, set(seen))
-               for _line, value in _bindings_at(bindings, node.id, node))
+               for value in _values_in_force(bindings, node.id, node))
 
 
 def _partial_bound_arguments(node, bindings, depth=0, seen=None):
@@ -8273,7 +8362,16 @@ _BUILTINS_MODULE_NAMES = ('builtins', '__builtins__')
 
 
 def _builtins_module(node, bindings, seen=None):
-    """True when *node* names the ``builtins`` module (#1953 fix-r1 round 20)."""
+    """True when *node* names the ``builtins`` module (#1953 fix-r1 round 20).
+
+    #1953 fix-r1 round 22 (codex r21 P0-1): ``import builtins as bi`` binds the
+    module under a new spelling, and only the two literal names below counted,
+    so ``bi.getattr`` read as whatever an unknown object defines and the status
+    write it spells stayed green.  The import tables record these aliases
+    (:func:`_module_binding_events` / :func:`_imported_write_aliases`); the
+    binding in force at the use decides, so a certain rebinding of the name to
+    something else still ends the reading.
+    """
     seen = set() if seen is None else seen
     if id(node) in seen:
         return False
@@ -8282,9 +8380,22 @@ def _builtins_module(node, bindings, seen=None):
         return False
     values = (_values_in_force(bindings, node.id, node)
               if bindings is not None else [])
-    if not values:
-        return node.id in _BUILTINS_MODULE_NAMES
-    return any(_builtins_module(value, bindings, seen) for value in values)
+    if values and any(_builtins_module(value, bindings, seen)
+                      for value in values):
+        return True
+    events = (getattr(bindings, 'builtins_modules', None)
+              or {}).get(node.id, ())
+    if events:
+        loops = tuple(id(item) for item in
+                      getattr(bindings, 'loops_of', {}).get(node, ()))
+        chosen = _binding_event_at(
+            events, (getattr(node, 'lineno', -1),
+                     getattr(node, 'col_offset', -1)), loops)
+        if chosen is not None:
+            return chosen[2] is not None
+    if values:
+        return False
+    return node.id in _BUILTINS_MODULE_NAMES
 
 
 def _getattr_spelling(node, bindings, seen=None):
@@ -8312,23 +8423,33 @@ def _getattr_spelling(node, bindings, seen=None):
     if isinstance(node, ast.Name):
         values = (_values_in_force(bindings, node.id, node)
                   if bindings is not None else [])
-        if not values:
-            # #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1):
-            # an import alias (``from builtins import getattr as _ga``) or a
-            # module-level ``ga = getattr`` leaves no assignment binding in the
-            # function's table; the event table records the spelling in force.
-            events = (getattr(bindings, 'imported', None) or {}).get(node.id, ())
-            if events:
-                loops = tuple(id(item) for item in
-                              getattr(bindings, 'loops_of', {}).get(node, ()))
-                chosen = _binding_event_at(
-                    events, (getattr(node, 'lineno', -1),
-                             getattr(node, 'col_offset', -1)), loops)
-                if chosen is not None:
-                    return chosen[2] == 'getattr'
-            return node.id == 'getattr'
-        return any(_getattr_spelling(value, bindings, seen)
-                   for value in values)
+        if values and any(_getattr_spelling(value, bindings, seen)
+                          for value in values):
+            return True
+        # #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1):
+        # an import alias (``from builtins import getattr as _ga``) or a
+        # module-level ``ga = getattr`` leaves no assignment binding in the
+        # function's table; the event table records the spelling in force.
+        #
+        # #1953 fix-r1 round 22 (codex r21 P0-2 / GLM boundary r21 P0-1): the
+        # table is a *second* source, not a fallback for an empty assignment
+        # list.  One assignment of any other value -- ``_ga = print`` before
+        # the import, or ``if flag: _ga = dict`` after it, which
+        # ``_values_in_force`` widens to the whole group -- short-circuited
+        # the import event and the write behind it vanished.  The event in
+        # force at the use decides which spelling is live.
+        events = (getattr(bindings, 'imported', None) or {}).get(node.id, ())
+        if events:
+            loops = tuple(id(item) for item in
+                          getattr(bindings, 'loops_of', {}).get(node, ()))
+            chosen = _binding_event_at(
+                events, (getattr(node, 'lineno', -1),
+                         getattr(node, 'col_offset', -1)), loops)
+            if chosen is not None:
+                return chosen[2] == 'getattr'
+        if values:
+            return False
+        return node.id == 'getattr'
     if isinstance(node, ast.Attribute):
         return (node.attr == 'getattr'
                 and _builtins_module(node.value, bindings, seen))
@@ -11080,6 +11201,57 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 21)')
+    # Round 22 (codex r21 P0-1 / P0-2, GLM boundary r21 P0-1 / P0-2): the
+    # builtins module itself may be imported under another spelling, and the
+    # import event is a second source of the factory spelling -- one
+    # assignment of some other value must not hide it.
+    for _label, _source, _want in (
+            ("a status write through an imported builtins module alias",
+             "def main(report):\n"
+             "    import builtins as _bi23\n"
+             "    _f = _bi23.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a module-level builtins module alias",
+             "import builtins as _bi24\n"
+             "def main(report):\n"
+             "    _f = _bi24.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through an assignment before the factory import",
+             "def main(report):\n"
+             "    _ga25 = print\n"
+             "    from builtins import getattr as _ga25\n"
+             "    _f = _ga25(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a conditionally overwritten factory import",
+             "def main(report, flag):\n"
+             "    from builtins import getattr as _ga26\n"
+             "    if flag:\n"
+             "        _ga26 = dict\n"
+             "    _f = _ga26(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a certainly overwritten factory import",
+             "def main(report):\n"
+             "    from builtins import getattr as _ga27\n"
+             "    _ga27 = print\n"
+             "    _f = _ga27(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False),
+            ("a status write through a certainly replaced builtins module alias",
+             "def main(report):\n"
+             "    import builtins as _bi28\n"
+             "    _bi28 = other\n"
+             "    _f = _bi28.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = _tree.body[-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 22)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
