@@ -25,9 +25,11 @@ CI 的必需 `metadata-observer` job 自动运行；其现有 `EnvironmentContro
 `isolation_negative.py NEW_OUTPUT_DIR [control...]` 对本轮守卫做 17 项内存变异，逐项编译并绑定完整测试名与消息，
 正控/变异/恢复日志分别留存；不写原源码，不创建 Git 副本或 target。
 信号探针先按同一 HEAD 守卫把共享扫描器捂热，再 spawn 子进程、等原子发布的 ready 文件后发
-SIGTERM / SIGKILL，核真实输入不变；就绪预算在同一守卫内派生，不从别处抄数：
-子进程自己的树锁等待（`mutating_sources` 默认 `lock_timeout`，从签名读）
+SIGTERM / SIGKILL，核真实输入不变；就绪预算在同一守卫内派生，把子进程路径上**每个带看门狗的步骤**加起来，
+不从别处抄数：解释器启动（同 `--hold-lock` 的 120 s）＋ 取锁前 bootstrap 的 `(2 + N)` 次 git（每次 30 s，
+`N` 为已核验输入数，运行时实测）＋ 子进程自己的树锁等待（`mutating_sources` 默认 `lock_timeout`，从签名读）
 ＋ 取锁后各步看门狗之和（`(2 + B) × 4` 次 git ＋ 1 次 rev-parse，每次 `GIT_TIMEOUT`；
-`B` 为扫描器 literal 输入的 32 KiB 批数，运行时用同一个扫描器实测；另加扫描器自身 60 s），
+`B` 为扫描器 literal 输入的 32 KiB 批数，运行时用同一个扫描器实测；另加扫描器自身 60 s）。
+没有看门狗的步骤（纯 Python 读写同一批 N 个文件）不进预算 —— 没有可加的界。
 子进程先退出则立即报出、不等满预算；
 再用真实 HEAD 守卫重新跑一项；no-op 变异必须 SURVIVED 并退出 1，no-op 恢复必须 INVALID。
