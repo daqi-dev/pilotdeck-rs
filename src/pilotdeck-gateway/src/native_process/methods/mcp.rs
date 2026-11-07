@@ -22,7 +22,7 @@ pub(super) const METHODS: &[&str] = &[
 
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::mcp_request);
 
-fn mcp_error(e: SdkMcpError) -> RequestError {
+pub(super) fn mcp_error(e: SdkMcpError) -> RequestError {
     RequestError {
         code: e.code().unwrap_or("gateway_request_failed").into(),
         message: e.message().clone(),

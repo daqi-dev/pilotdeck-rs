@@ -95,7 +95,7 @@ impl Requests {
             match method.as_str() {
                 "usage_snapshot" => self.tools_usage_snapshot(&params),
                 "model_usage_snapshot" => self.tools_model_usage_snapshot(&params),
-                "mcp_server_status" => self.tools_mcp_server_status(),
+                "mcp_server_status" => self.tools_mcp_server_status(&params).await,
                 "rewind_files" => self.tools_rewind_files(&params).await,
                 #[cfg(unix)]
                 "background_task_stop" => self.tools_background_task_stop(&params).await,
@@ -150,13 +150,17 @@ impl Requests {
         Ok(router.router.model_usage_snapshot(session_key.as_ref()))
     }
 
-    /// `mcpServerStatusForSdk`: native isolated mode enforces no configured MCP
-    /// servers (validate_profile_inner), so the status is always an empty list.
-    fn tools_mcp_server_status(&self) -> Result<JsValue, RequestError> {
-        Ok(crate::metadata::object([(
-            "servers",
-            JsValue::Array(vec![]),
-        )]))
+    /// `mcpServerStatusForSdk` (`ProjectRuntimeRegistry.ts:1293-1307`) via the
+    /// #1319 shared SDK MCP config: the same registry the four control
+    /// methods write, so a set server reads back `configured` / `disabled`.
+    /// #1432 replaces the #1311 isolated-mode constant empty list, which
+    /// predated #1319's dynamic writes.
+    async fn tools_mcp_server_status(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        self.mcp
+            .config()
+            .mcp_server_status(params)
+            .await
+            .map_err(super::mcp::mcp_error)
     }
 
     /// `rewindFilesForSdk` — `InProcessGateway.ts:2402-2408` contract.
