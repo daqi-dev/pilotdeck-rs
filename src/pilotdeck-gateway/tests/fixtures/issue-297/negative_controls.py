@@ -11,32 +11,32 @@ further-committed writer position when a caller restores an older snapshot:
   fresh recorder's first restore cannot seed the writer. The existing positive
   control must FAIL, proving the guarded code path is load-bearing.
 
-Run every selected control, then summarize; any non-KILLED control exits
-non-zero (1). A guard failure while restoring the sources revokes every
-recorded row through `negative_suite.invalidate_completed` and exits 2
-("restore unverified") instead — a possibly dirty tree must never publish an
-all-green summary (#979). Anchors that no longer match the committed source are
-INVALID (an expired anchor never counts as SURVIVED). Requires the caller's
-CARGO_TARGET_DIR; cargo always runs through wait_for_slot + run_owned, never
-quiet.
+Each case runs through the shared executor (`negative_suite.run_cases`,
+migrated in r5 to match issue-297-domain-fold): positive -> mutate
+(unique-anchor text replacement) -> negative judged by
+`negative_suite.classify` -> byte-verified restore -> restored positive. A
+compile prepass proves each mutant compiles before the run; `--check` is a
+read-only anchor preflight. Refusals before the run (unknown name, roster
+drift, missing/unusable CARGO_TARGET_DIR, existing output directory) exit 2,
+distinct from 1 ("some control did not kill"); a source-guard failure while
+restoring revokes every recorded row and exits 2 (#979, #1076, #1734).
+SIGINT/SIGTERM raise `SystemExit` so the guard's restore window always
+unwinds and re-verifies the tree.
 """
+import argparse
+import json
 import os
-import sys
 from pathlib import Path
+import signal
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse,
+                                 refuse_unusable_target, registered)
+from negative_suite import Case, invalidate_completed, run_cases
 
 root = Path(__file__).resolve().parents[5]
-fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
-sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import (
-    Case,
-    classify,
-    invalidate_completed,
-    passed,
-    publish_summary,
-)
-from _negative_common import mutate
-
 source = root / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 prefix = 'runtime::project::factory::tests::persistence_tests::'
 # fix-r1 re-anchor: the guard moved from `if state.sequence > inner.sequence {`
@@ -54,109 +54,109 @@ guard = 'if installed {'
 # which one the mutant trips first is an implementation detail of where the test
 # notices, not a change in what the control proves.
 cases = [
-    ('restore-rewinds-stale-writer', source, guard, 'if true {', None,
+    ('restore-rewinds-stale-writer', source, guard, 'if true {',
      prefix + 'stale_snapshot_restore_must_not_corrupt_the_transcript_chain',
      ['#297 a stale snapshot restore wrote a transcript the reader can no longer load',
       '#297 a stale restore must not drop the turns the live writer still holds']),
-    ('restore-never-installs', source, guard, 'if false {', None,
+    ('restore-never-installs', source, guard, 'if false {',
      prefix + 'persistence_real_recorder_survives_runtime_restart_and_isolates_sessions',
      '#297 the reopened session writer must retain the persisted parent chain'),
 ]
+# #1734 denominator rule (r5, MM r3 sibling P1 remedy): a runtime `len(cases)`
+# denominator would let a deleted row shrink the run to a smaller all-green
+# summary; the roster is pinned to the two plan rows in the source.
+EXPECTED = ['restore-rewinds-stale-writer', 'restore-never-installs']
 
 
-def build_env():
-    env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('caller must set CARGO_TARGET_DIR')
-    env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
-               CARGO_PROFILE_TEST_DEBUG='line-tables-only',
-               CARGO_TERM_QUIET='false')
-    return env
+def mutate(content, scope, replacements):
+    for old, new in replacements:
+        count = content.count(old)
+        if count != 1:
+            raise ValueError(f'stale anchor count={count}, expected=1: {old!r}')
+        content = content.replace(old, new, 1)
+    return content
+
+
+def audit(rows):
+    for _, path, old, new, _, _ in rows:
+        mutate(path.read_text(), None, [(old, new)])
+
+
+def compile_controls(rows, out, env):
+    results = []
+    try:
+        with mutating_sources(root, list(dict.fromkeys(row[1] for row in rows))) as originals:
+            for name, path, old, new, _, _ in rows:
+                result = {'mutation': name, 'compiled': False, 'status': 'INVALID', 'reason': ''}
+                try:
+                    path.write_text(mutate(originals[path].decode(), None, [(old, new)]))
+                    slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600)
+                    (out / f'{name}-compile.slots.log').write_text(slot.stdout + slot.stderr)
+                    run = run_owned(['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                                     '-p', 'pilotdeck-gateway', '--lib', '--no-run'],
+                                    cwd=root, env=env, timeout=600)
+                    (out / f'{name}-compile.log').write_text(run.stdout + run.stderr)
+                    result.update(compiled=run.returncode == 0, returncode=run.returncode,
+                                  status='COMPILED' if run.returncode == 0 else 'INVALID')
+                except Exception as error:
+                    result['reason'] = f'{type(error).__name__}: {error}'
+                finally:
+                    path.write_bytes(originals[path])
+                results.append(result)
+    except Exception as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for name, *_ in rows[len(results):]:
+            results.append({'mutation': name, 'compiled': False, 'status': 'INVALID',
+                            'reason': reason})
+    (out / 'compile-summary.json').write_text(json.dumps(results, indent=2) + '\n')
+    for result in results:
+        print(json.dumps(result), flush=True)
+    return all(result['compiled'] and result['status'] == 'COMPILED' for result in results)
 
 
 def main():
-    args = sys.argv[1:]
-    if not args:
-        raise SystemExit('usage: negative_controls.py OUT [mutation names]')
-    out = Path(args[0])
-    out.mkdir(parents=True, exist_ok=False)
-    names = set(args[1:])
-    if names - {case[0] for case in cases}:
-        raise SystemExit('unknown mutation')
-    chosen = [case for case in cases if not names or case[0] in names]
-    chosen = [(name, path, old, new, test, assertion)
-               for name, path, old, new, _scope, test, assertion in chosen]
-    env = build_env()
-    command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-               '-p', 'pilotdeck-gateway', '--lib']
-
-    def run(label, test, compile_only=False):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=900)
-        (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-        argv = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored']
-        result = run_owned(command + argv, cwd=root, env=env, timeout=900)
-        with (out / (label + '.log')).open('x') as log:
-            log.write(result.stdout + result.stderr)
-        return result
-
-    results = []
-    guard_failure = None
-    try:
-        with mutating_sources(root, [source]) as originals:
-            for name, _path, old, new, test, assertion in chosen:
-                row = dict(mutation=name, test=test, assertion=assertion,
-                           status='INVALID', reason='', compiled=False)
-                try:
-                    if not passed(run(name + '-positive', test), test):
-                        raise RuntimeError('bound positive test failed')
-                    changed = mutate(originals[source].decode(), None, [(old, new)])
-                    if changed == originals[source].decode():
-                        raise ValueError('mutation leaves source unchanged')
-                    source.write_text(changed)
-                    if run(name + '-compile', test, compile_only=True).returncode:
-                        raise RuntimeError('mutant compile failed')
-                    row['compiled'] = True
-                    status, reason = classify(
-                        run(name + '-negative', test),
-                        Case(name, source, old, new, test, assertion))
-                    row.update(status=status, reason=reason)
-                except Exception as error:
-                    row.update(reason=f'{type(error).__name__}: {error}')
-                finally:
-                    source.write_bytes(originals[source])
-                if not passed(run(name + '-restored', test), test):
-                    row.update(status='INVALID',
-                               reason=row['reason'] + '; restored test failed')
-                results.append(row)
-                print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
-    except BaseException as error:
-        # #297 review P0 (GLM boundary #1 and concurrency #1, DeepSeek
-        # sibling #1: three roles, two families). `mutating_sources` restores
-        # and re-verifies the source on context exit; when it raises there,
-        # the tree may not be restored and every row already recorded as
-        # KILLED is untrustworthy. Voiding only the unreported rows would
-        # publish an all-green summary and exit 0 from a possibly mutated tree
-        # — the #979 false pass `negative_suite.invalidate_completed` is
-        # written for. Exit 2 marks "restore unverified", distinct from 1
-        # ("some control did not kill").
-        guard_failure = f'source guard: {type(error).__name__}: {error}'
-        invalidate_completed(results, guard_failure)
-        recorded = {row['mutation'] for row in results}
-        for name, _path, _old, _new, test, assertion in chosen:
-            if name not in recorded:
-                results.append(dict(mutation=name, test=test, assertion=assertion,
-                                    status='INVALID', compiled=False,
-                                    reason=guard_failure))
-
-    counts = {status: sum(1 for row in results if row['status'] == status)
-              for status in ('KILLED', 'SURVIVED', 'INVALID')}
-    publish_summary(out, results)
-    print(f'summary: KILLED={counts["KILLED"]}, SURVIVED={counts["SURVIVED"]}, '
-          f'INVALID={counts["INVALID"]}', flush=True)
-    if guard_failure is not None:
-        raise SystemExit(2)
-    raise SystemExit(int(not results or any(row['status'] != 'KILLED' for row in results)))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true')
+    parser.add_argument('--compile-only', action='store_true')
+    parser.add_argument('output', nargs='?')
+    parser.add_argument('selected', nargs='*')
+    args = parser.parse_args()
+    registered(cases, EXPECTED)  # roster drift is a refusal, never a shorter run
+    rows = cases
+    if args.selected:
+        unknown = set(args.selected) - {row[0] for row in rows}
+        if unknown:
+            parser.error(f'unknown mutations: {sorted(unknown)}')
+        rows = [row for row in rows if row[0] in args.selected]
+    audit(rows)  # Stale anchors are errors, never survivors.
+    if args.check:
+        print(f'{len(rows)} unique anchors checked')
+        return 0
+    if not args.output:
+        parser.error('provide a fresh evidence directory')
+    env = dict(os.environ)
+    if missing_target(env):
+        refuse('CARGO_TARGET_DIR must be supplied by the caller')
+    refuse_unusable_target(env)  # #1666: dot / root / repo / src targets too
+    # Positive/compile/restored runs never inherit a stale protocol from a caller.
+    env.pop('PDRS_NEGATIVE_RECEIPTS', None)
+    env.pop('PDRS_NEGATIVE_PARENT_TEST', None)
+    env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
+               CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
+    out = claim_dir(args.output)  # #1734: an existing directory is "never started" (2)
+    # #1076: a signal must unwind through the guard's restore/re-verify window,
+    # not kill the process with a mutated tree left behind.
+    def stop(signum, frame):
+        raise SystemExit(f'interrupted by signal {signum}')
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    compiled = compile_controls(rows, out, env)
+    if args.compile_only:
+        return int(not compiled)
+    return run_cases(root, [Case(*row) for row in rows], out, env, mutate,
+                    timeout=900, script=Path(__file__))
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())
