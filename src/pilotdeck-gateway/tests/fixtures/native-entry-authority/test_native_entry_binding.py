@@ -357,6 +357,21 @@ class SharedTables(unittest.TestCase):
             joined = '; '.join(module.check_errors(drifted))
             self.assertIn('finished advertisement case', joined, module.__name__)
 
+    def test_a_commented_out_row_payload_is_unbound(self):
+        # The early-exit rows must be judged on the same comment-stripped text
+        # as the needles, or a payload left in a comment still "proves" the
+        # row can reach its verdict (#1989 r3 review, second lineage).
+        source = TEST_FILE.read_text()
+        self.assertEqual(source.count(SCRUB_BRANCH), 1)
+        commented = SCRUB_BRANCH.replace(
+            '            "#1261 native entry scrub child neither advertised '
+            'listening nor exited, cannot judge"',
+            '            // "#1261 native entry scrub child neither advertised '
+            'listening nor exited, cannot judge"')
+        self.assertNotEqual(commented, SCRUB_BRANCH)
+        joined = '; '.join(early.check_errors(source.replace(SCRUB_BRANCH, commented, 1)))
+        self.assertIn('payload', joined)
+
     def test_neither_runner_carries_its_own_needle_literals(self):
         # The other half of the same rule: no needle-shaped literal may live
         # in a runner, whatever table it is pasted into.

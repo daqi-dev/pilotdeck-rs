@@ -133,7 +133,11 @@ def check_errors(test_source):
     # Each row's proof must live in the test that row names, or the runtime
     # verdict for that row could never be reached.
     for name, test, _, _, payloads in ROWS:
-        body = test_body(test_source, test)
+        # Squeezed like every needle: a payload left only in a comment must
+        # not prove the row can reach its verdict (#1989 r3 review, second
+        # lineage). `squeeze` keeps literal bytes, so plain matching is
+        # unchanged for a live payload.
+        body = squeeze(test_body(test_source, test))
         for payload in payloads:
             if payload in body:
                 continue

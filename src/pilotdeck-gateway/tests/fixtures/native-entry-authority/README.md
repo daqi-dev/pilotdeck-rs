@@ -86,7 +86,8 @@ needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_so
 全部绑定、两个脚本不许再留私有副本——按 AST 收集赋值名，缩进、类型注解、同行多赋值都算——
 两个 runner 真**消费**共享表（用同一个变异驱动各自的 `--check` 体，返回的错里必须点到这根针）、
 runner 源码里不许出现针形字面量（`assert!(` / `if !advertised` / `line.ends_with` 等），
-与两处 `--check` 在真树上 rc=0，共 28 条）。纯输入 needle（IPv6、尾部多余内容、
+早退行 ROWS 的 payload 校验也走 `squeeze`（注释掉的 payload 不算）、
+与两处 `--check` 在真树上 rc=0，共 29 条）。纯输入 needle（IPv6、尾部多余内容、
 `Failed to parse default config YAML.`、`!status.success()`、`leftover.is_empty()`）没有专属
 变异，只由「真源码满足全部绑定」兜底——改动它们要真跑负控才能判；`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
 字节与 C 串 / lifetime / 行与嵌套块注释，注释整段丢弃但仍分隔 token）由
