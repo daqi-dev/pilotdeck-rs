@@ -192,13 +192,16 @@ struct Harness {
     requests: Requests,
     probe: Probe,
     owner: SessionOwner,
-    root: PathBuf,
+    // Owning the scratch keeps the temp tree cleaned on every path: an
+    // early `expect` failure during construction unwinds through
+    // `Scratch::drop` too (DS r1 concurrency: the previous early
+    // `mem::forget` leaked the tree whenever the harness failed to build).
+    _scratch: Scratch,
 }
 
 fn harness() -> Harness {
     let scratch = Scratch::new();
     let root = scratch.0.clone();
-    std::mem::forget(scratch);
     let options = Options::parse([
         "--home".into(),
         root.join("home").into_os_string(),
@@ -296,13 +299,7 @@ fn harness() -> Harness {
         requests,
         probe,
         owner,
-        root,
-    }
-}
-
-impl Drop for Harness {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        _scratch: scratch,
     }
 }
 
@@ -576,4 +573,46 @@ async fn nullish_params_report_the_type_error() {
         .shutdown()
         .await
         .expect("#1432 harness owner shutdown");
+}
+
+/// The isolation admission gate answers before the shared config: a `null`
+/// or non-string `projectKey` fails the configured-project check and is
+/// refused as an unserved key. The shared config's own contract differs
+/// (`runtime/mcp/sdk.rs`: nullish keeps the injected fallback, a non-string
+/// raises `ERR_INVALID_ARG_TYPE`); that divergence is the #1311-era
+/// isolation admission this route shares with every other method, not
+/// something the #1432 wiring introduces. These two cells pin the current
+/// admission answer so the divergence stays visible instead of drifting.
+#[tokio::test]
+async fn null_and_non_string_project_keys_stay_refused_by_admission() {
+    for params in [
+        r#"{"projectKey":null,"sessionKey":"s"}"#,
+        r#"{"projectKey":5,"sessionKey":"s"}"#,
+    ] {
+        let harness = harness();
+        let error = call(&harness.requests, "mcp_server_status", params)
+            .await
+            .expect_err("#1432 admission must refuse null and non-string project keys");
+        assert_eq!(
+            "gateway_request_failed", error.code,
+            "#1432 the admission refusal carries the family fallback code"
+        );
+        assert_eq!(
+            error
+                .message
+                .to_utf8()
+                .expect("#1432 admission message must be UTF-8"),
+            "The isolated native process serves only its configured project.",
+            "#1432 the isolation gate answers before the shared config"
+        );
+        assert!(
+            harness.probe.events().is_empty(),
+            "#1432 a refused key must not reach the resolver"
+        );
+        harness
+            .owner
+            .shutdown()
+            .await
+            .expect("#1432 harness owner shutdown");
+    }
 }

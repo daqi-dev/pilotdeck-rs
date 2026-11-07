@@ -25,6 +25,7 @@ ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 ASSEMBLY_MEMORY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/memory.rs'
 ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
 SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/runtime/snapshot.rs'
@@ -408,6 +409,19 @@ mutations.append(('legacy-project-id-trim-omitted', METADATA,
                   '    let result = result;',
                   'native_process::management_tests::legacy_project_id_trims_leading_dashes',
                   '#1323 legacy slug of'))
+# #1432: the status route must read the shared config #1319 writes. Rolling
+# the routed body back to the #1311 constant empty list must fail the routed
+# set→status test; the capability-name rows above only pin the method being
+# wired, not that it returns stored state.
+mutations.append(('mcp-status-constant-empty', METHODS_TOOLS,
+                  '        self.mcp\n'
+                  '            .config()\n'
+                  '            .mcp_server_status(params)\n'
+                  '            .await\n'
+                  '            .map_err(super::mcp::mcp_error)',
+                  '        Ok(crate::metadata::object([("servers", JsValue::Array(vec![]))]))',
+                  'native_process::mcp_status_tests::set_then_status_reports_the_session_servers',
+                  '#1432 status reads the shared config'))
 
 # #2036: `--home` / `--sidecar` are canonicalised before the rejection, so their
 # only bound test has to create a raw-named entry on disk. APFS / HFS+ refuse
@@ -436,7 +450,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 95
+EXPECTED_TOTAL = 96
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -533,6 +547,7 @@ EXPECTED_NAMES = (
     'project-storage-id-marker-bypassed',
     'project-storage-id-legacy-slug-omitted',
     'legacy-project-id-trim-omitted',
+    'mcp-status-constant-empty',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
