@@ -8,10 +8,15 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 pub(crate) struct KernelProjection {
+    pub(super) archive: tokio::sync::Mutex<super::kernel_archive::ArchiveProjection>,
+    pub(super) archive_enabled: AtomicBool,
     recorder: Arc<Recorder>,
     projection: Arc<SessionProjection>,
     session: String,
@@ -44,6 +49,8 @@ impl KernelProjection {
         context: String,
     ) -> Self {
         Self {
+            archive: tokio::sync::Mutex::new(Default::default()),
+            archive_enabled: AtomicBool::new(false),
             recorder,
             projection,
             session,
@@ -51,6 +58,9 @@ impl KernelProjection {
             context,
             serial: Mutex::new(()),
         }
+    }
+    pub(crate) fn enable_archive(&self, enabled: bool) {
+        self.archive_enabled.store(enabled, Ordering::SeqCst);
     }
     pub(crate) fn accepted_time(&self, run: &str) -> Option<String> {
         let state = self.projection.snapshot().ok()?;
@@ -74,6 +84,12 @@ impl KernelProjection {
             _ => return Err(error("history must be canonical messages")),
         };
         let sha = digest(&json!(history));
+        let history = snapshot
+            .get("displayHistory")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or(history);
+        let display_sha = digest(&json!(history));
         let index_sha = digest(&json!({"schema":2,"index":snapshot["kernelIndex"]}));
         let start = self.recorder.writer().snapshot_state().sequence;
         let read = crate::storage::read_transcript(self.recorder.writer().path()).map_err(error)?;
@@ -98,7 +114,8 @@ impl KernelProjection {
                 if previous["sha256"] != sha {
                     return Err(error("same Kernel revision has different history"));
                 }
-                if previous["indexSha256"] == index_sha {
+                if previous["indexSha256"] == index_sha && previous["displaySha256"] == display_sha
+                {
                     return Ok(());
                 }
             }
@@ -108,7 +125,7 @@ impl KernelProjection {
         metadata
             .as_object_mut()
             .ok_or_else(|| error("invalid UI metadata"))?;
-        let marker = json!({"kernelSessionId":self.kernel,"contextRef":self.context,"revision":revision,"sha256":sha,"indexSha256":index_sha});
+        let marker = json!({"kernelSessionId":self.kernel,"contextRef":self.context,"revision":revision,"sha256":sha,"displaySha256":display_sha,"indexSha256":index_sha});
         metadata["kernelProjection"] = marker.clone();
         let mut index = snapshot["kernelIndex"].clone();
         if index.is_object() {
@@ -160,7 +177,13 @@ impl KernelProjection {
         let mut records = Vec::new();
         let mut parent = Value::Null;
         for (index, message) in history.iter().enumerate() {
-            let message = normalize(message);
+            let mut message = normalize(message);
+            // Context compaction flags suppress replacement rows in the legacy
+            // projector. This display clone is the full committed archive.
+            if let Some(metadata) = message["metadata"].as_object_mut() {
+                metadata.remove("compactReplacement");
+                metadata.remove("compactSnapshotId");
+            }
             let id = format!("kernel-cache:{revision}:{}:{index}", &sha[..16]);
             let mut record = json!({"type":if message["role"]=="user"{"accepted_input"}else{"durable_message"},"sessionId":self.session,"turnId":format!("kernel-history:{revision}"),"sequence":start+index as u64+1,"entryId":id,"parentEntryId":parent,"createdAt":created,"kernelProjection":marker});
             if message["role"] == "user" {
@@ -396,6 +419,10 @@ pub(crate) fn web_messages(
                 };
             }
             match kind {
+                "compact_boundary" => {
+                    row["kind"] = json!("compact_boundary");
+                    row["payload"] = block["payload"].clone();
+                }
                 "text" => {
                     row["kind"] = json!("text");
                     row["text"] = block["text"].clone();

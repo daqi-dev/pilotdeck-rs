@@ -79,6 +79,7 @@ impl CompactionAbort {
 /// GatewayManualCompactionCoordinator.ts:8-13. Native session manual
 /// compaction is not ported yet; the embedding supplies the router.
 pub trait SubmitCompactionRouter: Send + Sync {
+    fn configured(&self, _session: &JsString) -> bool { true }
     fn compact<'a>(
         &'a self,
         session: &'a JsString,
@@ -205,7 +206,7 @@ impl GatewaySubmitAdmission {
             .cloned()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
         let session = string(field(input, "sessionKey"));
-        let Some(router) = self.options.compaction.as_ref() else {
+        let Some(router) = self.options.compaction.as_ref().filter(|router|router.configured(&session)) else {
             return Err(SubmitError::new(
                 "gateway_submit_failed",
                 "router.compact is not configured. Wire the manual compaction router via createLocalGateway.",
@@ -242,6 +243,7 @@ impl GatewaySubmitAdmission {
             Err(error) => {
                 // GatewayManualCompactionCoordinator.ts:52-64: busy-shaped
                 // failures become session_busy with fixed copy.
+                let unknown = error.code == "result_unknown";
                 let message = error.message;
                 let busy = busy_error(&message);
                 return Ok(vec![with_hint(
@@ -250,7 +252,7 @@ impl GatewaySubmitAdmission {
                         ("runId", JsValue::String(run)),
                         (
                             "code",
-                            if busy {
+                            if unknown { "result_unknown" } else if busy {
                                 "session_busy"
                             } else {
                                 "manual_compaction_failed"
@@ -267,7 +269,7 @@ impl GatewaySubmitAdmission {
                         ),
                         ("recoverable", JsValue::Bool(true)),
                     ]),
-                    if busy {
+                    if unknown { "Inspect the original Kernel execution before retrying /compact; an external effect may still have happened." } else if busy {
                         "Wait for the current work to finish, then run /compact again."
                     } else {
                         "Retry /compact after checking the session state."

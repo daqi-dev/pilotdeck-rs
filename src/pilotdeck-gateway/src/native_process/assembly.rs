@@ -986,6 +986,8 @@ async fn start_assembly(
                 None,
             ));
             let admission = SubmitAdmissionOptions {
+                #[cfg(unix)]
+                compaction: Some(Arc::new(super::compaction::NativeCompactionRouter { owner:owner.clone(),options:options.clone() })),
                 interactions: interactions.clone(),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };

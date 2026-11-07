@@ -11,6 +11,8 @@ pub(crate) mod kernel_config;
 #[cfg(unix)]
 pub(crate) mod kernel_projection;
 #[cfg(unix)]
+mod kernel_archive;
+#[cfg(unix)]
 pub(crate) mod kernel_replay;
 mod owner;
 pub(crate) mod transcript_locks;

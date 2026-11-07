@@ -26,6 +26,8 @@ pub mod kernel_profile;
 mod management_tests;
 mod requests;
 mod services;
+#[cfg(unix)]
+mod compaction;
 mod session_overrides;
 #[cfg(test)]
 mod settings_tests;

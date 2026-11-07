@@ -4604,3 +4604,9 @@ Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接�
 ### 2026-11-08 Kernel keyless 模型目录安装修复（lane C）
 
 总集成真实 installed upgrade 首阶段报 agent.model references unknown provider，定位原 credential validator 会排除无 key 的 provider。现仅在显式 Kernel default 且 socket 为绝对路径时，缺省/null apiKey 作为 Kernel-owned inventory 保留合法 protocol/url/model；snapshot 标 credentialSource=kernel 且完全省略 apiKey，不读取/复制 ambient OPENAI_API_KEY。显式非法 key、相对 socket、旧默认 legacy 均不放宽。目录可读 metadata，但 NativeModelInvocationProvider 的 direct stream/complete 在 HTTP 前明确拒绝；B 已确认本文件无并发所有权。focused kernel 30/30 通过（其中包含本轮两个配置/transport 正负例及尚未提交的 archive/compact 接线测试）；此提交只交安装配置修复，真实升级/密钥边界由总集成继续验。
+
+### 2026-11-08 Kernel archive 完整会话投影与实际 /compact 入口（lane C）
+
+以 A/root 的通用 scheduler.history-archive.v1 原始 revision/history/checkpoint 页重建全产品对话，snapshot revision 固定每次目标；跨页更新不冒充原子快照，同 ID 压缩前全文保留，不同 ID 同正文不合并，synthetic summary 不显示，原 compactMetadata 生成唯一边界。删除 PD JSONL 后仍从 Kernel 版本重建，current contextMessages 与完整 canonicalMessages 分开，边界不参与 canonical 导出。原 /compact admission 现持有 owner/handle maintenance，经 private nativeCommand compact/1 调 Kernel native Loop 原 manualForce 算法；必须 actual saved binding grant+archive feature，B bootstrap 另验安装 marker。无普通提示、无 PD 总结/CAS；普通 submit 注入拒绝；取消只发原 call control 后等真实终态，Unknown 保留 result_unknown/原 IDs；legacy absent-router 协议保留。
+
+focused kernel 30/30 PASS（含 pinned multipage/newer commit、cache 删除重建、不同 ID 相同内容、private compact wire、cancel→原 Unknown/仅1次 input）；原 admission oracle 10 PASS +1 既有需 Node22 regeneration ignored，config/selector 32 PASS。两条新 UDS fixture 首次失败因 macOS SUN_LEN 已改独立 /tmp 随机路径；旧 active-error 文案断言保持原 substring，补 busy 文意。未把这些接线测试记作真实摘要/组合 UI 验收；需要 A24bf459f+root b833df00 和 B cd5c8b7 实际能力组合，由总集成原产品 WS/模型/CAS/重启/压缩后下一轮验。

@@ -62,6 +62,7 @@ pub fn description() -> pilotdeck_protocol::JsValue {
             ),
         ),
         ("supportsController", JsValue::Bool(false)),
+        ("manualCompaction", "requires_saved_native.command.compact.v1_and_scheduler.history-archive.v1".into()),
         (
             "methods",
             JsValue::Array(BACKEND_METHODS.iter().map(|v| JsValue::from(*v)).collect()),

@@ -407,6 +407,62 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
     }
     Ok(state)
 }
+/// Every display row comes from a validated, committed native history version.
+/// A snapshot pins the target revision; newer entries on later pages wait for
+/// the next read rather than being mistaken for an atomic multi-page snapshot.
+async fn projection_history(
+    rpc: &mut Rpc,
+    kernel: &str,
+    context: &str,
+    projection: Option<&Arc<super::kernel_projection::KernelProjection>>,
+) -> Result<Value, RuntimeError> {
+    let mut snapshot = rpc
+        .call(
+            "execution.history.snapshot",
+            json!({"session_id":kernel,"context_ref":context}),
+        )
+        .await?;
+    let Some(projection) =
+        projection.filter(|projection| projection.archive_enabled.load(Ordering::SeqCst))
+    else {
+        return Ok(snapshot);
+    };
+    let target = snapshot["revision"]
+        .as_u64()
+        .ok_or_else(|| error("Kernel history revision is missing."))?;
+    let mut archive = projection.archive.lock().await;
+    if archive.revision > target {
+        return Err(error("Kernel archive revision moved backwards."));
+    }
+    if target == 0 {
+        archive.seed(&snapshot["history"])?;
+    }
+    while archive.revision < target {
+        let page = rpc.call("execution.history.archive",json!({"session_id":kernel,"context_ref":context,"after_revision":archive.revision,"limit":16,"max_bytes":4*1024*1024})).await?;
+        let before = archive.revision;
+        for entry in page["entries"]
+            .as_array()
+            .ok_or_else(|| error("Kernel archive page omitted entries."))?
+        {
+            if entry["revision"]
+                .as_u64()
+                .is_some_and(|revision| revision > target)
+            {
+                break;
+            }
+            archive.apply(entry)?;
+        }
+        if archive.revision == before {
+            return Err(error(
+                "Kernel archive omitted the pinned committed history revision.",
+            ));
+        }
+    }
+    snapshot["displayHistory"] = archive.display();
+    snapshot["archiveRevision"] = json!(archive.revision);
+    Ok(snapshot)
+}
+
 fn with_index(mut history: Value, facts: &State) -> Value {
     if !history.is_object() {
         return history;
@@ -444,6 +500,7 @@ impl NativePortCheck {
     }
 }
 struct KernelSession {
+    compact_supported: bool,
     input_limits_supported: bool,
     port_check: Arc<tokio::sync::Mutex<NativePortCheck>>,
     projection: Option<Arc<super::kernel_projection::KernelProjection>>,
@@ -458,6 +515,116 @@ struct KernelSession {
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 impl KernelSession {
+    fn prepare_turn(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        native_command: bool,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        let options = json_value(&options)?;
+        let limits = self.input_limits(&options)?;
+        let run = options["turnId"]
+            .as_str()
+            .or_else(|| options["runId"].as_str())
+            .ok_or_else(|| error("Kernel turn requires turnId or runId."))?
+            .to_string();
+        let mut payload = json_value(&input)?;
+        if !payload.is_object() {
+            return Err(error("Native input must be an object."));
+        }
+        if payload.get("nativeCommand").is_some() && !native_command {
+            return Err(error(
+                "nativeCommand is reserved for the installed backend command port.",
+            ));
+        }
+        if payload["type"] == "blocks" {
+            return Err(error(
+                "Native block/attachment ingress is awaiting its canonical binding; no input was accepted.",
+            ));
+        }
+
+        super::kernel_config::preflight(&payload)?;
+        super::kernel_config::preflight(&options)?;
+        for container in [
+            &payload,
+            &payload["agent"],
+            &payload["contextOverride"],
+            &options,
+            &options["agent"],
+        ] {
+            if container.get("modelPricingEntries").is_some() {
+                return Err(super::kernel_config::unavailable(
+                    "browser modelPricingEntries override; pricing is owned by the leased product router",
+                ));
+            }
+        }
+        let config = json_value(&JsValue::Object(self.agent_config.clone()))?;
+        super::kernel_config::preflight(&config)?;
+        let mut agent = serde_json::Map::new();
+        for key in [
+            "systemPrompt",
+            "appendSystemPrompt",
+            "planModeInstructions",
+            "runtimeContextSurface",
+            "thinking",
+            "toolChoice",
+            "maxContextMessages",
+            "jsonSelfCorrect",
+            "modelPricingEntries",
+        ] {
+            if let Some(value) = config.get(key) {
+                agent.insert(key.into(), value.clone());
+            }
+        }
+        agent.insert(
+            "permissionMode".into(),
+            json!(text(&self.turn_permission_mode(&options)?)?),
+        );
+        payload["agent"] = Value::Object(agent);
+        for key in ["runMode", "allowPlanModeTools", "basePermissionMode"] {
+            if let Some(value) = options.get(key) {
+                payload[key] = value.clone();
+            }
+        }
+        if payload
+            .get("basePermissionMode")
+            .is_some_and(|value| !matches!(value.as_str(), Some("default" | "bypassPermissions")))
+        {
+            return Err(error("Native basePermissionMode is invalid."));
+        }
+        let mut state = self.state.lock().unwrap();
+        if state.disposed || state.run.is_some() {
+            return Err(error(if native_command {
+                "Kernel session is not idle for manual compaction."
+            } else {
+                "Kernel session is disposed or already running."
+            }));
+        }
+        state.run = Some(run.clone());
+        state.status = "running".into();
+        state.cancelled = None;
+        state.attached = true;
+        self.started.store(false, Ordering::SeqCst);
+        Ok(Box::new(KernelTurn {
+            limits,
+            port_check: self.port_check.clone(),
+            rpc: self.rpc.clone(),
+            kernel_id: self.kernel_id.clone(),
+            session: self.session.clone(),
+            state: self.state.clone(),
+            started: self.started.clone(),
+            input: Some(payload),
+            run,
+            queue: VecDeque::new(),
+            done: false,
+            final_event: None,
+            failure_event: false,
+            accepted: false,
+            interactions: self.interactions.clone(),
+            projection: self.projection.clone(),
+            context_ref: self.context_ref.clone(),
+        }))
+    }
     fn input_limits(&self, options: &Value) -> Result<Option<Value>, RuntimeError> {
         let Some(deadline) = options["execution"]
             .get("operationDeadline")
@@ -583,12 +750,13 @@ impl SessionBackendFactory for KernelBackendFactory {
                 kernel_id.clone(),
                 context_ref.clone(),
             ));
-            let history = rpc
-                .call(
-                    "execution.history.snapshot",
-                    json!({"session_id":kernel_id,"context_ref":context_ref}),
-                )
-                .await?;
+            projection.enable_archive(opened["features"].as_array().is_some_and(|features| {
+                features
+                    .iter()
+                    .any(|feature| feature == "scheduler.history-archive.v1")
+            }));
+            let history =
+                projection_history(&mut rpc, &kernel_id, &context_ref, Some(&projection)).await?;
             projection.sync(&with_index(history, &recovered))?;
 
             let rpc = Arc::new(tokio::sync::Mutex::new(rpc));
@@ -623,6 +791,17 @@ impl SessionBackendFactory for KernelBackendFactory {
                 }
             });
             Ok(Box::new(KernelSession {
+                compact_supported: opened["features"].as_array().is_some_and(|features| {
+                    features
+                        .iter()
+                        .any(|feature| feature == "scheduler.history-archive.v1")
+                }) && opened["loop_permissions"]["resources"]
+                    .as_array()
+                    .is_some_and(|resources| {
+                        resources
+                            .iter()
+                            .any(|resource| resource == "native.command.compact.v1")
+                    }),
                 input_limits_supported: opened["features"].as_array().is_some_and(|features| {
                     features
                         .iter()
@@ -669,101 +848,9 @@ impl LiveSession for KernelSession {
         "kernel"
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        let options = json_value(&options)?;
-        let limits = self.input_limits(&options)?;
-        let run = options["turnId"]
-            .as_str()
-            .or_else(|| options["runId"].as_str())
-            .ok_or_else(|| error("Kernel turn requires turnId or runId."))?
-            .to_string();
-        let mut payload = json_value(&input)?;
-        if !payload.is_object() {
-            return Err(error("Native input must be an object."));
-        }
-        if payload["type"] == "blocks" {
-            return Err(error(
-                "Native block/attachment ingress is awaiting its canonical binding; no input was accepted.",
-            ));
-        }
-
-        super::kernel_config::preflight(&payload)?;
-        super::kernel_config::preflight(&options)?;
-        for container in [
-            &payload,
-            &payload["agent"],
-            &payload["contextOverride"],
-            &options,
-            &options["agent"],
-        ] {
-            if container.get("modelPricingEntries").is_some() {
-                return Err(super::kernel_config::unavailable(
-                    "browser modelPricingEntries override; pricing is owned by the leased product router",
-                ));
-            }
-        }
-        let config = json_value(&JsValue::Object(self.agent_config.clone()))?;
-        super::kernel_config::preflight(&config)?;
-        let mut agent = serde_json::Map::new();
-        for key in [
-            "systemPrompt",
-            "appendSystemPrompt",
-            "planModeInstructions",
-            "runtimeContextSurface",
-            "thinking",
-            "toolChoice",
-            "maxContextMessages",
-            "jsonSelfCorrect",
-            "modelPricingEntries",
-        ] {
-            if let Some(value) = config.get(key) {
-                agent.insert(key.into(), value.clone());
-            }
-        }
-        agent.insert(
-            "permissionMode".into(),
-            json!(text(&self.turn_permission_mode(&options)?)?),
-        );
-        payload["agent"] = Value::Object(agent);
-        for key in ["runMode", "allowPlanModeTools", "basePermissionMode"] {
-            if let Some(value) = options.get(key) {
-                payload[key] = value.clone();
-            }
-        }
-        if payload
-            .get("basePermissionMode")
-            .is_some_and(|value| !matches!(value.as_str(), Some("default" | "bypassPermissions")))
-        {
-            return Err(error("Native basePermissionMode is invalid."));
-        }
-        let mut state = self.state.lock().unwrap();
-        if state.disposed || state.run.is_some() {
-            return Err(error("Kernel session is disposed or already running."));
-        }
-        state.run = Some(run.clone());
-        state.status = "running".into();
-        state.cancelled = None;
-        state.attached = true;
-        self.started.store(false, Ordering::SeqCst);
-        Ok(Box::new(KernelTurn {
-            limits,
-            port_check: self.port_check.clone(),
-            rpc: self.rpc.clone(),
-            kernel_id: self.kernel_id.clone(),
-            session: self.session.clone(),
-            state: self.state.clone(),
-            started: self.started.clone(),
-            input: Some(payload),
-            run,
-            queue: VecDeque::new(),
-            done: false,
-            final_event: None,
-            failure_event: false,
-            accepted: false,
-            interactions: self.interactions.clone(),
-            projection: self.projection.clone(),
-            context_ref: self.context_ref.clone(),
-        }))
+        self.prepare_turn(input, options, false)
     }
+
     fn snapshot(&self) -> JsValue {
         let state = self.state.lock().unwrap();
         js(&json!({"status":state.status,"currentTurnId":state.run,"backend":"kernel","kernelSessionId":self.kernel_id,"executionId":state.call})).unwrap_or(JsValue::Null)
@@ -773,6 +860,83 @@ impl LiveSession for KernelSession {
         method: String,
         params: JsValue,
     ) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> {
+        if method == "kernel_manual_compact_v1" {
+            if !self.compact_supported {
+                return Box::pin(async {
+                    Err(super::kernel_config::unavailable(
+                        "native.command.compact.v1 with scheduler.history-archive.v1",
+                    ))
+                });
+            }
+            let prepared = (|| {
+                let params = json_value(&params)?;
+                self.prepare_turn(
+                    js(
+                        &json!({"nativeCommand":{"kind":"compact","version":1,"manualForce":true}}),
+                    )?,
+                    js(&json!({"turnId":params["turnId"]}))?,
+                    true,
+                )
+            })();
+            return Box::pin(async move {
+                let mut turn = prepared?;
+                let mut result = None;
+                while let Some(event) = turn.next().await? {
+                    let event = json_value(&event)?;
+                    if event["type"] == "turn_completed" {
+                        if event["kernelAccepted"] == false && event["result"]["type"] == "aborted"
+                        {
+                            result = Some(js(&event["result"])?);
+                            continue;
+                        }
+                        if event["status"] == "cancelled" {
+                            result = Some(js(
+                                &json!({"type":"aborted","kernelSessionId":event["kernelSessionId"],"executionId":event["executionId"],"nativeStatus":"cancelled"}),
+                            )?);
+                            continue;
+                        }
+                        if event["status"] == "failed"
+                            && event["nativeResult"]["command"]["kind"] == "compact"
+                            && event["nativeResult"]["command"]["version"] == 1
+                            && event["nativeResult"]["command"]["result"]["type"] == "failed"
+                        {
+                            result = Some(js(&event["nativeResult"]["command"]["result"])?);
+                            continue;
+                        }
+                        if event["status"] != "completed" {
+                            let message = format!(
+                                "Kernel compact original execution outcome {}: {}",
+                                event["status"], event
+                            );
+                            let failure = error(&message);
+                            return Err(if event["status"] == "unknown" {
+                                failure.with_js_error(crate::runtime::project::RuntimeJsError {
+                                    name: "KernelOutcomeUnknown".into(),
+                                    code: Some("result_unknown".into()),
+                                    message: message.into(),
+                                    requires_host: false,
+                                })
+                            } else {
+                                failure
+                            });
+                        }
+                        let command = &event["nativeResult"]["command"];
+                        if command["kind"] != "compact"
+                            || command["version"] != 1
+                            || !command["result"].is_object()
+                        {
+                            return Err(error(
+                                "Kernel compact terminal omitted its installed command result.",
+                            ));
+                        }
+                        result = Some(js(&command["result"])?);
+                    }
+                }
+                result.map(Some).ok_or_else(|| {
+                    error("Kernel compact ended without a committed command terminal.")
+                })
+            });
+        }
         let rpc = self.rpc.clone();
         let projection = self.projection.clone();
         let config = self.agent_config.clone();
@@ -807,12 +971,13 @@ impl LiveSession for KernelSession {
                         )
                         .await?;
                     if let Some(projection) = &projection {
-                        let history = rpc
-                            .call(
-                                "execution.history.snapshot",
-                                json!({"session_id":kernel_id,"context_ref":context_ref}),
-                            )
-                            .await?;
+                        let history = projection_history(
+                            &mut rpc,
+                            &kernel_id,
+                            &context_ref,
+                            Some(&projection),
+                        )
+                        .await?;
                         projection.sync(&with_index(history, &facts))?;
                     }
                     let attached = state.lock().unwrap().attached;
@@ -830,20 +995,22 @@ impl LiveSession for KernelSession {
                     json!({"projectKey":params["projectKey"],"sessionKey":text(&session)?,"saved":{"mode":"model","provider":config["provider"],"model":config["model"]},"effective":{"provider":config["provider"],"model":config["model"],"source":"kernel_assembly"},"immutable":true})
                 }
                 "read_session_messages" | "export_session_transcript" => {
-                    let history = rpc
-                        .lock()
-                        .await
-                        .call(
-                            "execution.history.snapshot",
-                            json!({"session_id":kernel_id,"context_ref":context_ref}),
-                        )
-                        .await?;
+                    let history = projection_history(
+                        &mut *rpc.lock().await,
+                        &kernel_id,
+                        &context_ref,
+                        projection.as_ref(),
+                    )
+                    .await?;
                     let facts = recover(&mut *rpc.lock().await, &kernel_id).await?;
                     let indexed = with_index(history.clone(), &facts);
                     if let Some(projection) = &projection {
                         projection.sync(&indexed)?;
                     }
-                    let mut display = history["history"].clone();
+                    let mut display = history
+                        .get("displayHistory")
+                        .unwrap_or(&history["history"])
+                        .clone();
                     if display.as_array().is_some_and(|messages| {
                         messages
                             .iter()
@@ -905,7 +1072,20 @@ impl LiveSession for KernelSession {
                         params["projectKey"].as_str(),
                         &params,
                     );
-                    result["canonicalMessages"] = history["history"].clone();
+                    result["canonicalMessages"] = json!(
+                        history
+                            .get("displayHistory")
+                            .unwrap_or(&history["history"])
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(
+                                |message| message["metadata"]["kernelProjectionBoundary"] != true
+                            )
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    );
+                    result["contextMessages"] = history["history"].clone();
                     result["revision"] = history["revision"].clone();
                     result["kernelSessionId"] = json!(kernel_id);
                     result
@@ -928,14 +1108,13 @@ impl LiveSession for KernelSession {
                     })?;
                     let receipt=rpc.lock().await.call("execution.history.import",json!({"session_id":kernel_id,"generation":generation,"context_ref":context_ref,"expected_revision":0,"idempotency_key":format!("pd-import:{hash}"),"history":transfer["messages"]})).await?;
                     if let Some(projection) = &projection {
-                        let history = rpc
-                            .lock()
-                            .await
-                            .call(
-                                "execution.history.snapshot",
-                                json!({"session_id":kernel_id,"context_ref":context_ref}),
-                            )
-                            .await?;
+                        let history = projection_history(
+                            &mut *rpc.lock().await,
+                            &kernel_id,
+                            &context_ref,
+                            Some(projection),
+                        )
+                        .await?;
                         projection.sync(&history)?;
                     }
                     json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true})
@@ -1178,7 +1357,7 @@ impl LiveTurn for KernelTurn {
                         *state = original;
                         state.disposed = disposed;
                         return Err(error(
-                            "Kernel has a different active execution; query or cancel that original execution before submitting a new turn.",
+                            "Kernel has a different active execution; the session has an active turn. Query or cancel that original execution before submitting a new turn.",
                         ));
                     }
                     let rpc = self.rpc.clone();
@@ -1207,12 +1386,13 @@ impl LiveTurn for KernelTurn {
                         // before a user can refresh a pending approval page.
                         let mut rpc = self.rpc.lock().await;
                         let facts = recover(&mut rpc, &self.kernel_id).await?;
-                        let history = rpc
-                            .call(
-                                "execution.history.snapshot",
-                                json!({"session_id":self.kernel_id,"context_ref":self.context_ref}),
-                            )
-                            .await?;
+                        let history = projection_history(
+                            &mut rpc,
+                            &self.kernel_id,
+                            &self.context_ref,
+                            self.projection.as_ref(),
+                        )
+                        .await?;
                         projection.sync(&with_index(history, &facts))?;
                     }
                     // A duplicate idempotency key observes its original journal
@@ -1377,15 +1557,13 @@ impl LiveTurn for KernelTurn {
                     self.done = true;
                     self.state.lock().unwrap().attached = false;
                     if let Some(projection) = &self.projection {
-                        let history = self
-                            .rpc
-                            .lock()
-                            .await
-                            .call(
-                                "execution.history.snapshot",
-                                json!({"session_id":self.kernel_id,"context_ref":self.context_ref}),
-                            )
-                            .await?;
+                        let history = projection_history(
+                            &mut *self.rpc.lock().await,
+                            &self.kernel_id,
+                            &self.context_ref,
+                            self.projection.as_ref(),
+                        )
+                        .await?;
                         projection.sync(&history)?;
                     }
                     if outcome == "failed" && !self.failure_event {
@@ -1407,6 +1585,8 @@ impl LiveTurn for KernelTurn {
                         final_event["result"]["type"] = json!("error");
                         final_event["result"]["stopReason"] = json!("kernel_outcome_unknown");
                     }
+                    final_event["nativeResult"] = event["payload"]["content"].clone();
+                    final_event["executionId"] = json!(root);
                     final_event["status"] = json!(outcome);
                     final_event["kernelSessionId"] = json!(self.kernel_id);
                     self.queue.push_back(js(&final_event)?);
@@ -1446,6 +1626,7 @@ mod tests {
     }
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            compact_supported: false,
             input_limits_supported: false,
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
@@ -1476,6 +1657,180 @@ mod tests {
         )
         .unwrap()
     }
+    #[tokio::test]
+    async fn kernel_compact_uses_private_command_and_original_durable_terminal() {
+        let socket = std::env::temp_dir().join(format!("pd-compact-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut admitted = false;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let result = match req["method"].as_str().unwrap() {
+                    "initialize" => json!({}),
+                    "execution.input" => {
+                        assert_eq!(req["params"]["idempotency_key"], "turn-1");
+                        let payload = &req["params"]["input"];
+                        assert_eq!(
+                            payload["nativeCommand"],
+                            json!({"kind":"compact","version":1,"manualForce":true})
+                        );
+                        assert!(payload.get("text").is_none());
+                        assert!(payload.get("originalAgentInput").is_none());
+                        admitted = true;
+                        json!({"call_ref":"original-loop"})
+                    }
+                    "execution.events" if !admitted => json!([]),
+                    "execution.events" => json!([event(
+                        1,
+                        "response",
+                        Some("completed"),
+                        json!({"outcome":"completed","content":{"command":{"kind":"compact","version":1,"result":{"type":"compacted","messagesSummarized":7,"preTokens":900,"usage":{"inputTokens":2}}}}})
+                    )]),
+                    other => panic!("Unexpected compact request {other}"),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = session(socket.clone());
+        assert!(
+            session
+                .backend_request(
+                    "kernel_manual_compact_v1".into(),
+                    js(&json!({"turnId":"turn-1"})).unwrap()
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            session
+                .submit(
+                    js(&json!({"nativeCommand":{"kind":"compact","version":1,"manualForce":true}}))
+                        .unwrap(),
+                    js(&json!({"turnId":"turn-1"})).unwrap()
+                )
+                .is_err()
+        );
+        session.compact_supported = true;
+        let result = session
+            .backend_request(
+                "kernel_manual_compact_v1".into(),
+                js(&json!({"turnId":"turn-1"})).unwrap(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let result = json_value(&result).unwrap();
+        assert_eq!(result["type"], "compacted");
+        assert_eq!(result["messagesSummarized"], 7);
+        assert_eq!(result["preTokens"], 900);
+        drop(session);
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+
+    #[tokio::test]
+    async fn kernel_compact_cancel_observes_original_unknown_without_replaying_summary() {
+        let socket =
+            std::path::PathBuf::from("/tmp").join(format!("pdc-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let ready = Arc::new(tokio::sync::Notify::new());
+        let notify = ready.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut admitted = false;
+            let mut cancelled = false;
+            let mut inputs = 0;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let result = match req["method"].as_str().unwrap() {
+                    "initialize" => json!({}),
+                    "execution.input" => {
+                        inputs += 1;
+                        admitted = true;
+                        json!({"call_ref":"original-loop"})
+                    }
+                    "execution.control" => {
+                        assert_eq!(req["params"]["call_ref"], "original-loop");
+                        assert_eq!(req["params"]["kind"], "cancel");
+                        cancelled = true;
+                        json!({"outcome":"accepted"})
+                    }
+                    "execution.events" if cancelled => json!([event(
+                        1,
+                        "response",
+                        Some("unknown"),
+                        json!({"outcome":"unknown","content":null})
+                    )]),
+                    "execution.events" => {
+                        if admitted {
+                            notify.notify_one();
+                        }
+                        json!([])
+                    }
+                    other => panic!("Unexpected compact cancellation request {other}"),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(inputs, 1);
+            assert!(cancelled);
+        });
+        let mut session = session(socket.clone());
+        session.compact_supported = true;
+        let operation = tokio::spawn(session.backend_request(
+            "kernel_manual_compact_v1".into(),
+            js(&json!({"turnId":"turn-1"})).unwrap(),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(2), ready.notified())
+            .await
+            .unwrap();
+        session.abort(&"timeout:turn-1".into()).unwrap();
+        let error = tokio::time::timeout(std::time::Duration::from_secs(2), operation)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error.js_error().unwrap().code.as_deref(),
+            Some("result_unknown")
+        );
+        assert!(error.message.contains("original-loop"));
+        assert!(error.message.contains("kernel-s"));
+        drop(session);
+        server.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+
     #[tokio::test]
     async fn native_text_permission_and_terminal_use_original_scheduler_execution() {
         let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
@@ -1848,6 +2203,7 @@ mod recovery_contract_tests {
     use tokio::net::UnixListener;
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            compact_supported: false,
             input_limits_supported: false,
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
@@ -2170,5 +2526,146 @@ mod recovery_contract_tests {
         drop(session);
         task.await.unwrap();
         std::fs::remove_file(socket).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod archive_wire_tests {
+    use super::*;
+    use crate::storage::{JsonlTranscriptStore, TranscriptKey, recorder::Recorder};
+    use tokio::net::UnixListener;
+    fn cache(root: &std::path::Path) -> Arc<super::super::kernel_projection::KernelProjection> {
+        let cache = Arc::new(super::super::kernel_projection::KernelProjection::new(
+            Arc::new(Recorder::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                TranscriptKey {
+                    project_root: root.into(),
+                    pilot_home: root.into(),
+                    session_id: "s".into(),
+                    transcript_path: root.join("s.jsonl"),
+                },
+            )),
+            Arc::new(super::super::factory::SessionProjection::default()),
+            "s".into(),
+            "kernel".into(),
+            "default".into(),
+        ));
+        cache.enable_archive(true);
+        cache
+    }
+    #[tokio::test]
+    async fn kernel_archive_pages_pin_context_revision_and_rebuild_deleted_product_cache() {
+        let root = std::path::PathBuf::from("/tmp").join(format!("pda-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("s.jsonl.backend.json"),
+            json!({"backend":"kernel","kernel_session_id":"kernel"}).to_string(),
+        )
+        .unwrap();
+        let socket = root.join("rpc.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut pages = 0;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let old = json!([{"role":"user","metadata":{"kernelMessageId":"u","turnId":"r"},"content":[{"type":"text","text":"full original prompt"}]},{"role":"assistant","metadata":{"kernelMessageId":"a","turnId":"r"},"content":[{"type":"text","text":"full original answer"}]}]);
+                let compressed = json!([{"role":"user","metadata":{"synthetic":true,"kernelMessageId":"summary"},"content":[{"type":"text","text":"compressed model context"}]}]);
+                let result = match req["method"].as_str().unwrap() {
+                    "initialize" => json!({}),
+                    "execution.history.snapshot" => json!({"revision":2,"history":compressed}),
+                    "execution.history.archive" => {
+                        pages += 1;
+                        assert_eq!(req["params"]["context_ref"], "default");
+                        assert_eq!(req["params"]["max_bytes"], 4 * 1024 * 1024);
+                        match req["params"]["after_revision"].as_u64().unwrap() {
+                            0 => {
+                                json!({"entries":[{"revision":1,"history":old}],"latest_revision":2,"next_revision":1,"has_more":true})
+                            }
+                            1 => {
+                                json!({"entries":[{"revision":2,"history":compressed,"checkpoint":{"compaction":{"compactMetadata":{"compactionId":"c","preTokens":100,"postTokens":20,"messagesSummarized":2}}}},{"revision":3,"history":[{"role":"user","content":[{"type":"text","text":"future commit"}]}]}],"latest_revision":3,"next_revision":3,"has_more":false})
+                            }
+                            other => panic!("Unexpected archive cursor {other}"),
+                        }
+                    }
+                    other => panic!("Unexpected archive request {other}"),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(pages, 4);
+        });
+        let mut rpc = Rpc {
+            socket,
+            stream: None,
+            next: 0,
+            node: "observer".into(),
+            lease: None,
+        };
+        let projection = cache(&root);
+        let snapshot = projection_history(&mut rpc, "kernel", "default", Some(&projection))
+            .await
+            .unwrap();
+        assert_eq!(snapshot["revision"], 2);
+        assert_eq!(snapshot["archiveRevision"], 2);
+        assert_eq!(
+            snapshot["history"][0]["content"][0]["text"],
+            "compressed model context"
+        );
+        assert_eq!(snapshot["displayHistory"].as_array().unwrap().len(), 3);
+        assert!(
+            !snapshot["displayHistory"]
+                .to_string()
+                .contains("future commit")
+        );
+        projection.sync(&snapshot).unwrap();
+        let original = std::fs::read(root.join("s.jsonl")).unwrap();
+        let unchanged = projection_history(&mut rpc, "kernel", "default", Some(&projection))
+            .await
+            .unwrap();
+        assert_eq!(unchanged, snapshot);
+        let rows = super::super::kernel_projection::web_messages(
+            &snapshot["displayHistory"],
+            "s",
+            None,
+            &json!({}),
+        );
+        assert_eq!(rows["messages"][0]["text"], "full original prompt");
+        assert_eq!(rows["messages"][2]["kind"], "compact_boundary");
+        drop(projection);
+        std::fs::remove_file(root.join("s.jsonl")).unwrap();
+        let rebuilt = cache(&root);
+        let reread = projection_history(&mut rpc, "kernel", "default", Some(&rebuilt))
+            .await
+            .unwrap();
+        assert_eq!(reread, snapshot);
+        rebuilt.sync(&reread).unwrap();
+        // Record IDs and source rows rebuild deterministically; cache-local clock
+        // and sequence are deliberately not native execution authority.
+        assert!(
+            String::from_utf8(original)
+                .unwrap()
+                .contains("full original answer")
+        );
+        let raw = std::fs::read_to_string(root.join("s.jsonl")).unwrap();
+        assert!(raw.contains("full original answer"));
+        assert!(!raw.contains("\"type\":\"turn_result\""));
+        drop(rpc);
+        task.await.unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

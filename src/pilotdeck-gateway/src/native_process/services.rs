@@ -1418,6 +1418,9 @@ impl SubmitHostServices for Services {
         // The composition does not expose the SDK/model setter yet. Refuse
         // these before session admission instead of reporting a false selection.
         let kernel = self.kernel_input(input)?;
+        if kernel && input.get("nativeCommand").is_some_and(|value| !value.is_undefined()) {
+            return Err(unavailable("nativeCommand is reserved for the installed backend command port; use /compact."));
+        }
         for key in ["modelSelection", "modelOverride", "sdkConfig"] {
             if let Some(value) = input.get(key).filter(|value| !value.is_undefined()) {
                 if kernel {
