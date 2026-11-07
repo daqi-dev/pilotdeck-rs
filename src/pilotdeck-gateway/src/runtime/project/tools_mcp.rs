@@ -17,8 +17,15 @@ use std::{any::Any, sync::Arc};
 
 /// Wraps a `ProjectMcpRuntimeProvider` as a `FamilyResource` so the
 /// production staging machinery can own and dispose it.
-struct McpProviderResource {
+pub struct McpProviderResource {
     provider: Arc<ProjectMcpRuntimeProvider>,
+}
+impl McpProviderResource {
+    /// #1433: the session prepare closure reads the provider to compose each
+    /// session's MCP tools; the resource stays the staging owner.
+    pub fn provider(&self) -> &Arc<ProjectMcpRuntimeProvider> {
+        &self.provider
+    }
 }
 impl FamilyResource for McpProviderResource {
     fn dispose(&self) -> DisposeFuture<'_> {

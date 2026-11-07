@@ -854,6 +854,17 @@ impl ProjectMcpRuntimeProvider {
         Ok((!servers.is_empty()).then_some(servers))
     }
 
+    /// The provider's own runtime factory — the custom factory when one was
+    /// staged, otherwise the native one with the provider's proxy source.
+    /// `SessionMcpRuntimeBundle` builds per-session runtimes with exactly this
+    /// fallback (`createRuntime ?? createNativeMcpRuntime`), so #1433's
+    /// composition must not grow a second, proxy-less default.
+    pub fn create_runtime(&self, servers: Vec<McpServerSpec>) -> Arc<dyn McpRuntimePort> {
+        self.options.create_runtime.clone().unwrap_or_else(|| {
+            super::runtime::native_mcp_runtime_factory_with_proxy(self.options.proxy.clone())
+        })(servers)
+    }
+
     fn assert_active(&self, action: &str) -> Result<(), RuntimeError> {
         let state = self.state();
         if state != McpOwnerState::Active {

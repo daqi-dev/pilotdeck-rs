@@ -969,7 +969,7 @@ async fn production_profile_and_registration() {
 #[test]
 fn tool_policy_and_turn_environment() {
     let lsp = Arc::new(families::DefaultLsp::default());
-    let all = tools::native_tools(None, None, lsp.clone())
+    let all = tools::native_tools(None, None, lsp.clone(), &tools::SessionMcpTools::empty())
         .list()
         .expect("#1071 native tool catalog");
     negative_assert!(
@@ -978,16 +978,22 @@ fn tool_policy_and_turn_environment() {
         "#1071 native read tool installed"
     );
     negative_assert!(
-        tools::native_tools(Some(vec![]), None, lsp.clone())
-            .list()
-            .expect("#1071 restricted catalog")
-            .is_empty(),
+        tools::native_tools(
+            Some(vec![]),
+            None,
+            lsp.clone(),
+            &tools::SessionMcpTools::empty()
+        )
+        .list()
+        .expect("#1071 restricted catalog")
+        .is_empty(),
         "#1071 empty tool allowlist enforced"
     );
     let denied = tools::native_tools(
         Some(vec!["read_file".into()]),
         Some(vec!["read_file".into()]),
         lsp,
+        &tools::SessionMcpTools::empty(),
     )
     .list()
     .expect("#1071 denied catalog");
