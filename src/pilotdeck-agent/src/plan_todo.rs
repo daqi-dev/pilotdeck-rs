@@ -13,7 +13,7 @@ fn object(fields: impl IntoIterator<Item = (&'static str, JsValue)>) -> JsValue 
 fn get<'a>(o: &'a JsObject, k: &str) -> Option<&'a JsValue> {
     o.get(k)
 }
-fn string<'a>(v: Option<&'a JsValue>) -> Result<&'a JsString, PlanError> {
+fn string(v: Option<&JsValue>) -> Result<&JsString, PlanError> {
     v.and_then(JsValue::as_string)
         .ok_or(PlanError("expected string"))
 }
