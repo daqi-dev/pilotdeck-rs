@@ -77,17 +77,26 @@ def mutate(case, text):
     return text.replace(case.old, case.new, 1)
 
 
+def check_errors(test_source):
+    """The `--check` verdict, returned instead of raised (#1989 r3 review).
+
+    Both runners must *consume* the shared table, not merely import it: the
+    drift controls call this with an in-memory mutated source and require the
+    miss, which a re-forked private table could not produce.
+    """
+    for case in (Case(*row) for row in mutations):
+        mutate(case, case.path.read_text())
+    # Every binding shared with `early_exit_invalid.py` lives in
+    # `native_entry_binding` (#1989 item 6); each needle is the whole
+    # assertion call after whitespace folding, bound to the test that
+    # observes it, so a fragment or a rewritten call cannot satisfy it.
+    return binding_errors(test_source)
+
+
 def main():
     selected_rows = [Case(*row) for row in mutations]
     if sys.argv[1:] == ['--check']:
-        test_source = TEST_FILE.read_text()
-        for case in selected_rows:
-            mutate(case, case.path.read_text())
-        # Every binding shared with `early_exit_invalid.py` lives in
-        # `native_entry_binding` (#1989 item 6); each needle is the whole
-        # assertion call after whitespace folding, bound to the test that
-        # observes it, so a fragment or a rewritten call cannot satisfy it.
-        errors = binding_errors(test_source)
+        errors = check_errors(TEST_FILE.read_text())
         if errors:
             raise SystemExit('#1261 ' + '; '.join(errors))
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
