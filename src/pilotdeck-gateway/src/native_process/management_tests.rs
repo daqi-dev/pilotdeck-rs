@@ -2254,18 +2254,59 @@ async fn memory_management_request_disabled_gateway_returns_unavailable() {
         .dispose()
         .await
         .expect("#1322 registry disposal");
-    // MemoryGateway::disabled() returns a response-level DialogGatewayError
-    // rather than a Rust-level RequestError, so the inner Result is Ok(body)
-    // with a JSON body whose "code" field is "CAPABILITY_UNAVAILABLE".
-    let body = json_value(
-        &result
-            .expect("#1322 memory_list must be a management method")
-            .expect("#1322 disabled gateway returns response body"),
-    );
+    // #1456: the TS wrapper throws and `GatewayWsConnection` answers
+    // `{ok:false,error:{code,message}}` (measured in
+    // `_tmp/20261107-issue-1456/ts-baseline/probe.log` row
+    // `capability-unavailable`), so the disabled gateway is a request failure,
+    // not a successful body that describes the failure.
+    let error = result
+        .expect("#1322 memory_list must be a management method")
+        .expect_err("#1456 a failed memory_list must not be an ok body");
     negative_assert_eq!(
-        body["code"].as_str().unwrap_or(""),
+        error.code.as_str(),
         "CAPABILITY_UNAVAILABLE",
         "#1322 memory_list via management_request with disabled gateway"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Gateway memory provider is unavailable.",
+        "#1456 the thrown DialogGatewayError message reaches the wire"
+    );
+}
+
+#[tokio::test]
+async fn memory_management_typeerror_takes_the_node_fallback_code() {
+    // The TS wrapper reads `input.projectKey` off the raw params object, so a
+    // null/undefined params value throws a code-less TypeError and the WS
+    // connection falls back to `gateway_request_failed` (probe rows
+    // `params-typeerror`). A structured error keeps its own code; a code-less
+    // one must not invent DialogGatewayError semantics.
+    let (_scratch, requests) = setup();
+    let result = requests
+        .management_request("memory_list", &pilotdeck_protocol::JsValue::Undefined)
+        .await;
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1456 owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1456 registry disposal");
+    let error = result
+        .expect("#1456 memory_list must be a management method")
+        .expect_err("#1456 a TypeError must be a request failure");
+    negative_assert_eq!(
+        error.code.as_str(),
+        "gateway_request_failed",
+        "#1456 code-less TypeError takes the Node fallback code"
+    );
+    negative_assert_eq!(
+        String::from_utf16_lossy(error.message.units()),
+        "Cannot read properties of undefined (reading 'projectKey')",
+        "#1456 TypeError message reaches the wire unchanged"
     );
 }
 

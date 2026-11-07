@@ -90,9 +90,18 @@ impl Requests {
     /// Dispatch `memory_list` / `memory_wipe` through the staged `MemoryGateway`.
     /// Forward (`requires_host`) becomes `CAPABILITY_UNAVAILABLE` here: the
     /// isolated native process has no Node host to forward to.
+    ///
+    /// A thrown projection error becomes a `RequestError`, matching the TS
+    /// `throw` the WS connection turns into `{ok:false,error:{code,message}}`
+    /// (`GatewayWsConnection.ts:231-260`): a structured `DialogGatewayError`
+    /// keeps its code, and a code-less `TypeError` (null/undefined params)
+    /// takes the same `gateway_request_failed` fallback as Node. Returning the
+    /// error object as a successful body made a failed `memory_list` / wipe
+    /// look like a success to every `ok`-based client (#1456).
     fn memory_dispatch(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
         match self.memory.dispatch(method, params) {
             Some(MemoryDispatch::Response(value)) => Ok(value),
+            Some(MemoryDispatch::Error(cause)) => Err(error(cause.code(), cause.message().clone())),
             Some(MemoryDispatch::Forward) => Err(unavailable()),
             None => Err(unavailable()),
         }

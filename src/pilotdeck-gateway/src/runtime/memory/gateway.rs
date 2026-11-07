@@ -8,8 +8,10 @@
 //! methods stay forwarded to the TS host until then. `dispatch` is the only
 //! wire-facing entry and mirrors [`crate::runtime::snapshot::SnapshotGateway`]:
 //! unknown methods return `None`, a `requires_host` boundary returns
-//! [`MemoryDispatch::Forward`] (the whole request goes to the Node host), and
-//! every other outcome is the wire-shaped response or error JSON.
+//! [`MemoryDispatch::Forward`] (the whole request goes to the Node host), a
+//! success is the wire-shaped result JSON, and a failure is
+//! [`MemoryDispatch::Error`] so the WS entry answers with `ok:false` exactly as
+//! the TS `throw` does.
 //!
 //! Validation order is the TS wrapper's, measured by
 //! `tests/fixtures/memory-gateway`: projectKey first, then the optional
@@ -31,10 +33,15 @@ static UNDEFINED: JsValue = JsValue::Undefined;
 /// One native gateway method outcome. `Forward` is the A8 contract: the
 /// projection hit a measured host boundary (`requires_host`), so the WS entry
 /// must send the whole request to the Node host instead of surfacing a
-/// synthesized error.
+/// synthesized error. `Error` carries a thrown TS error: the real
+/// `memoryList` / `memoryWipe` throw, the WS connection answers
+/// `{ok:false,error:{code,message}}` (`GatewayWsConnection.ts:231-260`), so the
+/// entry must return a request failure rather than a successful response whose
+/// body happens to be an error object (#1456).
 #[derive(Clone, Debug, PartialEq)]
 pub enum MemoryDispatch {
     Response(JsValue),
+    Error(MemoryProjectionError),
     Forward,
 }
 
@@ -124,7 +131,7 @@ impl MemoryGateway {
         Some(match outcome {
             Ok(value) => MemoryDispatch::Response(value),
             Err(error) if error.requires_host() => MemoryDispatch::Forward,
-            Err(error) => MemoryDispatch::Response(error.to_js()),
+            Err(error) => MemoryDispatch::Error(error),
         })
     }
 
@@ -341,20 +348,26 @@ mod tests {
     #[test]
     fn dispatch_routes_only_memory_methods() {
         let gateway = MemoryGateway::disabled();
-        assert_eq!(
-            gateway.dispatch("memory_list", &js(r#"{"projectKey":"/p"}"#)),
-            Some(MemoryDispatch::Response(js(
-                r#"{"name":"DialogGatewayError","code":"CAPABILITY_UNAVAILABLE","message":"Gateway memory provider is unavailable."}"#
-            ))),
-            "#1214 memory_list dispatch"
-        );
-        assert_eq!(
-            gateway.dispatch("memory_wipe", &js(r#"{"projectKey":"/p"}"#)),
-            Some(MemoryDispatch::Response(js(
-                r#"{"name":"DialogGatewayError","code":"CAPABILITY_UNAVAILABLE","message":"Gateway memory provider is unavailable."}"#
-            ))),
-            "#1214 memory_wipe dispatch"
-        );
+        // #1456: a thrown TS error is a request failure, never a successful
+        // response whose result object happens to describe the error.
+        for method in ["memory_list", "memory_wipe"] {
+            let outcome = gateway.dispatch(method, &js(r#"{"projectKey":"/p"}"#));
+            let Some(MemoryDispatch::Error(error)) = outcome else {
+                panic!(
+                    "#1456 {method} failure must dispatch as MemoryDispatch::Error, got {outcome:?}"
+                );
+            };
+            assert_eq!(
+                error.code(),
+                Some("CAPABILITY_UNAVAILABLE"),
+                "#1456 {method} dispatch error code"
+            );
+            assert_eq!(
+                error.name(),
+                "DialogGatewayError",
+                "#1456 {method} dispatch error name"
+            );
+        }
         assert_eq!(
             gateway.dispatch("snapshot_list", &js("{}")),
             None,
