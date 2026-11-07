@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1929 depth-cap mutants: each must break a `#1929`-labelled assertion.
+"""#1929 depth/width-cap mutants: each must break a `#1929`-labelled assertion.
 
 Mutations are applied to `channel/sms/permission.rs` only, through
 `mutating_sources` (tree must equal HEAD, so this runs post-commit on the
@@ -9,7 +9,9 @@ integration host). Run with CARGO_TARGET_DIR set:
 
 Every mutant is compiled (`cargo test --no-run`) before it is judged; a
 non-compiling mutant is INVALID, never SURVIVED, and a stale anchor aborts the
-run instead of recording a verdict.
+run instead of recording a verdict. The unmutated target test must be green
+first: a red baseline is recorded as an INVALID row (so it reaches the exit
+code) and its mutants are not run at all.
 """
 import hashlib
 import json
@@ -30,21 +32,39 @@ TEST_PREFIX = 'channel::sms::permission::tests::'
 
 DEPTH_TEST = TEST_PREFIX + 'depth_past_threshold_truncates_without_panicking'
 WIDE_TEST = TEST_PREFIX + 'wide_deep_payload_stays_bounded_after_first_truncation'
+OBJECT_TEST = TEST_PREFIX + 'object_siblings_stop_after_the_first_truncation'
+BYTE_TEST = TEST_PREFIX + 'wide_shallow_payload_stays_within_the_byte_budget'
+CAP = 'if depth >= MAX_STRINGIFY_DEPTH || out.len() >= MAX_STRINGIFY_BYTES {'
 
 # (name, file, anchor, replacement, target test, kill marker in the payload)
 MUTATIONS = [
-    ('cap-removed', 'permission.rs',
-     '        if depth >= MAX_STRINGIFY_DEPTH {\n            out.push_str("\\"...\\"");',
-     '        if depth >= usize::MAX {\n            out.push_str("\\"...\\"");',
+    ('cap-removed', 'permission.rs', CAP,
+     'if depth >= usize::MAX || out.len() >= MAX_STRINGIFY_BYTES {',
      DEPTH_TEST,
      '#1929 array chain at depth 256 must carry the truncation marker'),
+    ('cap-off-by-one', 'permission.rs', CAP,
+     'if depth > MAX_STRINGIFY_DEPTH || out.len() >= MAX_STRINGIFY_BYTES {',
+     DEPTH_TEST,
+     '#1929 array chain at depth 256 must carry the truncation marker'),
+    ('byte-budget-removed', 'permission.rs', CAP,
+     'if depth >= MAX_STRINGIFY_DEPTH || out.len() >= usize::MAX {',
+     BYTE_TEST,
+     '#1929 the wide payload must carry the truncation marker'),
     ('truncate-flag-dropped', 'permission.rs',
      '            out.push_str("\\"...\\"");\n            *truncated = true;',
      '            out.push_str("\\"...\\"");\n            ();',
      WIDE_TEST,
      '#1929 the wide-deep payload produced'),
+    ('object-break-dropped', 'permission.rs',
+     '                    write(value, depth + 1, out, truncated);\n'
+     '                    if *truncated {\n                        break;',
+     '                    write(value, depth + 1, out, truncated);\n'
+     '                    if *truncated {\n                        ();',
+     OBJECT_TEST,
+     '#1929 object siblings after the elided subtree must not be written'),
 ]
-EXPECTED_NAMES = ('cap-removed', 'truncate-flag-dropped')
+EXPECTED_NAMES = ('cap-removed', 'cap-off-by-one', 'byte-budget-removed',
+                  'truncate-flag-dropped', 'object-break-dropped')
 
 try:
     registered(MUTATIONS, EXPECTED_NAMES)
@@ -74,15 +94,33 @@ def cargo(test, extra):
 with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as snapshots:
     original = snapshots[source / 'permission.rs']
 
+    # #819: every unmutated target test must be green before any mutant
+    # verdict counts. A red baseline is also recorded as its own INVALID row so
+    # it reaches the exit code — listing it in `failures` alone left the run
+    # exiting 0 while nothing had been proven (#1929 review P0).
+    baselines = {}
     for test in dict.fromkeys(row[4] for row in run_rows):
         code, log = cargo(test, [])
         (out / f'baseline-{test.split("::")[-1]}.log').write_text(log)
-        ok = code == 0 and baseline_passed(log, test)
-        print(f'baseline {test}: {"PASS" if ok else "INVALID"}', flush=True)
-        if not ok:
-            failures.append('baseline-' + test)
+        baselines[test] = code == 0 and baseline_passed(log, test)
+        print(f'baseline {test}: '
+              f'{"PASS" if baselines[test] else "INVALID"}', flush=True)
+        if not baselines[test]:
+            baseline_name = 'baseline-' + test.split('::')[-1]
+            failures.append(baseline_name)
+            summary.append(dict(name=baseline_name, test=test,
+                                status='INVALID',
+                                reason='unmutated target test did not pass'))
 
     for name, filename, anchor, replacement, test, marker in run_rows:
+        # A mutant judged against a test that is red without it proves
+        # nothing: never count it, and never mutate the source for it.
+        if not baselines.get(test):
+            print(f'{name}: INVALID baseline failed; mutant not run', flush=True)
+            summary.append(dict(name=name, test=test, status='INVALID',
+                                reason='baseline failed; mutant not run'))
+            failures.append(name)
+            continue
         path = source / filename
         source_sha = hashlib.sha256(original).hexdigest()
         content = original.decode()
@@ -126,6 +164,8 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
 
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
+(out / 'summary.json').write_text(
+    json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 print('summary: ' + ', '.join(f'{state}={count}'
                               for state, count in counts.items()), flush=True)
 if failures:

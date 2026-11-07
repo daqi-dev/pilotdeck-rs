@@ -775,14 +775,26 @@ fn request_id_matches(
 /// `String(payload)`, which rethrows for arrays).
 const MAX_STRINGIFY_DEPTH: usize = 256;
 
+/// Hard byte budget for the rendered text (#1929). The depth cap bounds
+/// recursion, not *width*: the channel's 1 MiB frame limit (`MAX_BODY_BYTES`
+/// in `channel::sms::mod`) still allows ~524k one-digit siblings nested 255
+/// deep, which rendered ~269 MB — and again as a UTF-16 buffer in
+/// `format_payload` — before the 800-unit cut. Nothing past this budget can
+/// reach the prompt, so the writer elides there too. It is deliberately 16×
+/// the largest depth-capped chain (~`2·256²` ≈ 66 KB) so the depth cap always
+/// fires first on depth-only payloads: the two guards stay separately
+/// observable, and relaxing either one is still caught by its own test and
+/// mutant.
+const MAX_STRINGIFY_BYTES: usize = 1024 * 1024;
+
 /// `JSON.stringify(payload, null, 2)` — 2-space indentation, `None` for a
 /// top-level `undefined`.
 fn stringify_indented(payload: &JsValue) -> Option<String> {
-    // Set once the depth cap elides a subtree; every enclosing container then
-    // skips its closing bracket, so the text stays bounded no matter how deep
-    // the payload nests.
+    // Set once a cap elides a subtree; every enclosing container then skips
+    // its remaining siblings and its closing bracket, so the text stays
+    // bounded no matter how deep or how wide the payload nests.
     fn write(value: &JsValue, depth: usize, out: &mut String, truncated: &mut bool) -> Option<()> {
-        if depth >= MAX_STRINGIFY_DEPTH {
+        if depth >= MAX_STRINGIFY_DEPTH || out.len() >= MAX_STRINGIFY_BYTES {
             out.push_str("\"...\"");
             *truncated = true;
             return Some(());
@@ -866,10 +878,11 @@ fn js_number(value: f64) -> String {
     }
 }
 
-/// `formatPayload`. Invariant (#1929): for a payload of any depth this returns
-/// a bounded string without panicking — `stringify_indented` elides past
-/// [`MAX_STRINGIFY_DEPTH`] instead of exhausting the Rust stack, and its
-/// `None` (top-level `undefined` only) never reaches `js_string_of`'s
+/// `formatPayload`. Invariant (#1929): for a payload of any depth or width
+/// this returns a bounded string without panicking or aborting —
+/// `stringify_indented` elides past [`MAX_STRINGIFY_DEPTH`] /
+/// [`MAX_STRINGIFY_BYTES`] instead of exhausting the Rust stack or the heap,
+/// and its `None` (top-level `undefined` only) never reaches `js_string_of`'s
 /// `RangeError` panic, which only a too-deep *array* join triggers.
 fn format_payload(payload: &JsValue) -> JsString {
     let text = stringify_indented(payload)
@@ -938,6 +951,20 @@ mod tests {
         for depth in (0..n).rev() {
             expected = format!(
                 "[\n{}{}\n{}]",
+                "  ".repeat(depth + 1),
+                expected,
+                "  ".repeat(depth)
+            );
+        }
+        expected
+    }
+
+    /// The expected `JSON.stringify(value, null, 2)` text for an object chain.
+    fn expected_object_text(n: usize) -> String {
+        let mut expected = String::from("\"leaf\"");
+        for depth in (0..n).rev() {
+            expected = format!(
+                "{{\n{}\"a\": {}\n{}}}",
                 "  ".repeat(depth + 1),
                 expected,
                 "  ".repeat(depth)
@@ -1050,10 +1077,17 @@ mod tests {
                 );
                 assert!(
                     // The cap bounds the text: 256 opens with their indents,
-                    // then the marker — no closing-bracket tail.
+                    // then the marker — no closing-bracket tail. Counting the
+                    // opens also keeps the depth cap observable when the byte
+                    // budget would stop a runaway chain a few hundred levels
+                    // later anyway.
                     text.len() <= MAX_STRINGIFY_DEPTH * MAX_STRINGIFY_DEPTH * 2,
                     "#1929 {name} chain at depth {depth} produced {} bytes",
                     text.len()
+                );
+                assert!(
+                    text.matches('[').count() + text.matches('{').count() <= MAX_STRINGIFY_DEPTH,
+                    "#1929 {name} chain at depth {depth} nested past the depth cap"
                 );
                 let formatted = format_payload(&value);
                 let units = formatted.units();
@@ -1100,6 +1134,113 @@ mod tests {
     }
 
     #[test]
+    fn object_siblings_stop_after_the_first_truncation() {
+        // A multi-key object: the elided subtree is followed by a sibling key.
+        // Dropping the object branch's `break` writes that sibling, which is
+        // invisible in the single-key objects the other cases use.
+        let mut payload = JsObject::new();
+        payload.insert(JsString::from("deep"), nested_array(MAX_STRINGIFY_DEPTH));
+        payload.insert(
+            JsString::from("after"),
+            JsValue::String(JsString::from("tail-sibling-marker")),
+        );
+        let text = stringify_indented(&JsValue::Object(payload))
+            .expect("#1929 an object with an elided subtree must still stringify");
+        assert!(
+            text.contains("\"...\""),
+            "#1929 the object's deep subtree must carry the truncation marker"
+        );
+        assert!(
+            !text.contains("tail-sibling-marker"),
+            "#1929 object siblings after the elided subtree must not be written"
+        );
+        assert!(
+            !text.trim_end().ends_with('}'),
+            "#1929 an elided object must not close its brace"
+        );
+    }
+
+    #[test]
+    fn wide_shallow_payload_stays_within_the_byte_budget() {
+        // Depth alone is bounded by the depth cap; *width* is not. A 1 MiB
+        // frame can carry ~524k one-digit siblings at depth 255, which used to
+        // render ~269 MB (and again as UTF-16) before the 800-unit cut.
+        let mut items = Vec::new();
+        for _ in 0..200_000 {
+            items.push(JsValue::Number(1.0));
+        }
+        let mut value = JsValue::Array(items);
+        for _ in 0..MAX_STRINGIFY_DEPTH - 2 {
+            value = JsValue::Array(vec![value]);
+        }
+        let text =
+            stringify_indented(&value).expect("#1929 a wide shallow payload must still stringify");
+        assert!(
+            text.contains("\"...\""),
+            "#1929 the wide payload must carry the truncation marker"
+        );
+        assert!(
+            text.len() <= MAX_STRINGIFY_BYTES + 1024,
+            "#1929 the wide payload produced {} bytes",
+            text.len()
+        );
+        let formatted = format_payload(&value);
+        assert!(
+            formatted.units().len() <= 803,
+            "#1929 format_payload on the wide payload returned {} units",
+            formatted.units().len()
+        );
+    }
+
+    #[test]
+    fn threshold_boundary_containers_stay_observable() {
+        // The cap is checked before the type branch, so an *empty* container at
+        // the threshold is elided too; one level below it still renders.
+        let mut empty = JsValue::Array(Vec::new());
+        for _ in 0..MAX_STRINGIFY_DEPTH - 1 {
+            empty = JsValue::Array(vec![empty]);
+        }
+        let rendered = stringify_indented(&empty)
+            .expect("#1929 a threshold-deep empty array must still stringify");
+        assert!(
+            rendered.contains("[]"),
+            "#1929 a container just under the cap must render its empty child"
+        );
+        assert!(
+            !rendered.contains("\"...\""),
+            "#1929 a container just under the cap must not elide"
+        );
+
+        let mut past = empty.clone();
+        past = JsValue::Array(vec![past]);
+        let elided =
+            stringify_indented(&past).expect("#1929 a container at the cap must still stringify");
+        assert!(
+            elided.contains("\"...\"") && !elided.contains("[]"),
+            "#1929 a container at the cap must elide instead of rendering"
+        );
+
+        // `undefined` inside an array is `null` in JSON; at the cap the whole
+        // subtree is elided before the type branch runs.
+        let mut undef = JsValue::Array(vec![JsValue::Undefined]);
+        for _ in 0..MAX_STRINGIFY_DEPTH - 2 {
+            undef = JsValue::Array(vec![undef]);
+        }
+        let shown = stringify_indented(&undef)
+            .expect("#1929 a deep array holding undefined must still stringify");
+        assert!(
+            shown.contains("null") && !shown.contains("\"...\""),
+            "#1929 an array just under the cap must render undefined as null"
+        );
+        let elided_undefined = stringify_indented(&JsValue::Array(vec![undef]))
+            .expect("#1929 an array at the cap holding undefined must still stringify");
+        assert!(
+            elided_undefined.contains("\"...\"") && !elided_undefined.contains("null"),
+            "#1929 an elided subtree must not render its `undefined` child"
+        );
+    }
+
+    #[test]
     fn deep_chain_format_payload_matches_full_json_prefix() {
         // Past the cap the elided `"..."` sits far beyond `format_payload`'s
         // 800-unit cut, so the observable text stays byte-identical to the
@@ -1112,6 +1253,18 @@ mod tests {
             String::from_utf16_lossy(format_payload(&nested_array(300)).units()),
             expected,
             "#1929 format_payload must stay byte-identical to the full-JSON prefix"
+        );
+
+        // Same contract for an object chain: the elided marker and the byte
+        // budget both sit past the 800-unit window.
+        let full = expected_object_text(300);
+        let trimmed = full.trim();
+        let units: Vec<u16> = trimmed.encode_utf16().collect();
+        let expected = String::from_utf16_lossy(&units[..800]) + "...";
+        assert_eq!(
+            String::from_utf16_lossy(format_payload(&nested_object(300)).units()),
+            expected,
+            "#1929 format_payload must keep the object chain's full-JSON prefix"
         );
     }
 }
