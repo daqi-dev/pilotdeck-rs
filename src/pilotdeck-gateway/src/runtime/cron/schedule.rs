@@ -117,7 +117,11 @@ pub fn delay_to_milliseconds(amount: f64, unit: DelayUnit) -> Option<f64> {
 /// replaced: an environment that recovers must resolve on the next call,
 /// exactly like the TS gateway re-reading the zone. The key space is
 /// bounded by the `is_valid_cron_timezone` gate every production caller
-/// passes through.
+/// passes through, **after case folding**: the zoneinfo lookup (like ICU)
+/// is case-insensitive, so the cache key is the lowercased zone — ASCII
+/// case variants of one zone share the memoized parse instead of each
+/// becoming its own permanent map entry (an unbounded, attacker-shaped key
+/// space otherwise).
 ///
 /// The whole [`Self::resolver`] runs under one lock, parse included: the
 /// callers run in `spawn_blocking` (#1509), so only a blocking thread can
@@ -146,14 +150,18 @@ impl CronZoneResolverCache {
     /// recover, like the per-call reads this cache replaced).
     pub(super) fn resolver(&self, timezone: &str) -> Result<ZonedPartsResolver, JsString> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached) = state.zones.get(timezone) {
+        // The zoneinfo parse is case-insensitive (like ICU), so the cache key
+        // is the folded zone: case variants of one zone must share one entry
+        // instead of each holding its own permanent copy of the TZif data.
+        let cache_key = timezone.to_lowercase();
+        if let Some(cached) = state.zones.get(&cache_key) {
             return cached.clone();
         }
         state.parses += 1;
         let resolver = ZonedPartsResolver::new(timezone);
         // Only a successful parse is memoized; a failure stays a miss.
         if let Ok(parsed) = resolver.clone() {
-            state.zones.insert(timezone.to_owned(), Ok(parsed));
+            state.zones.insert(cache_key, Ok(parsed));
         }
         resolver
     }
