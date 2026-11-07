@@ -33,6 +33,11 @@ DISCOVERY_ANCHORS = (
     'metadata-process-cwd/oracle.json',
     'metadata-process-cwd/generate.mts',
     'fixtures/negative_suite.py',
+    'fixtures/negative_panic.py',
+    'fixtures/negative_process.py',
+    'fixtures/negative_selection.py',
+    'fixtures/pending_reanchor.py',
+    'fixtures/negative_scope.py',
 )
 MUTATIONS = [
     ('root-fallback', META,

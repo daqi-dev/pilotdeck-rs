@@ -55,6 +55,7 @@ DISCOVERY_ANCHORS = (
     'fixtures/negative_panic.py',
     'fixtures/negative_process.py',
     'fixtures/negative_selection.py',
+    'fixtures/negative_scope.py',
 )
 
 # (name, path, before, after, marker, bound test). The marker is the
