@@ -76,9 +76,9 @@ Scope: the four tables named by #2133 are the ones that carry anchors today;
 adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
 ``DISCOVERY_ANCHORS`` match its own keys. Everything else that already builds
 repository paths from bare file names, or imports a shared helper without
-spelling its key, is listed in ``KNOWN_BLIND`` — 243 tables, 670 keys at the
-time of writing (329 of them shared-helper imports), 28 of those tables also
-holding shapes the resolver cannot follow at all. That register is a fix list,
+spelling its key, is listed in ``KNOWN_BLIND`` with a measured reason (the register's own
+header carries the counts; every row is re-measured on each run), including
+the tables that also hold shapes the resolver cannot follow at all. That register is a fix list,
 not an exemption: ``test_no_table_is_blind_outside_the_registers`` turns this
 red when a *new* table arrives blind, import-only or unresolvable, and
 ``test_known_blind_counts_match_the_scan`` turns it red when a registered table
@@ -128,8 +128,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 243 tables (215 blind, 2 with unresolvable shapes, 26 in both), 670 keys: 341
-# bare-filename joins and 329 shared-helper imports.
+# 252 files (the host glob can reach all of them), 212 blind only, 2 with unresolvable shapes only, 38 in both; 1276 keys: 355 bare-filename joins and 921 shared-helper import keys.
 KNOWN_BLIND = {
     '_negkit/negative_compare_verdicts.py': '1 key',
     '_negkit/negative_contract.py': '4 keys',
@@ -793,6 +792,77 @@ def _is_repo_rooted(node, constants, seen=(), shadowed=()):
     return False
 
 
+def _repo_returning_functions(tree, constants):
+    """In-file functions that can hand back a repository path.
+
+    ``def source_dir(): return ROOT / 'src/x'`` then ``source_dir() / 'mod.rs'``
+    keeps the directory one call away. The join itself carries a bare file name
+    that the discovery loop needs, so hiding the base behind such a call must
+    not read as "not a repository path" (that shape was silent: no key and no
+    problem, so an unregistered table passed).
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(node):
+            if (isinstance(child, ast.Return) and child.value is not None
+                    and _is_repo_rooted(child.value, constants)):
+                names.add(node.name)
+                break
+    return names
+
+
+def _repository_parameters(tree, constants, returns=()):
+    """Parameter names of in-file functions called with a repository path.
+
+    ``def build(base): return base / 'mod.rs'`` loses the directory at the
+    parameter, but the call site (``build(SMS)``) still names it. Only parameters
+    of functions that are really called that way are tainted, so the ordinary
+    ``def dump(out_dir)`` over an evidence directory stays silent.
+    """
+    returns = set(returns)
+    definitions = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            definitions.setdefault(node.name, []).append(node)
+
+    def from_repository(argument):
+        return _is_repo_rooted(argument, constants) or (
+            isinstance(argument, ast.Call) and isinstance(argument.func, ast.Name)
+            and argument.func.id in returns)
+
+    # Match argument to parameter position: tainting every parameter of a callee
+    # just because *one* argument is repository-rooted would also taint ``out``
+    # in ``save(out, name, restored)`` and turn every ``out / 'summary.json'``
+    # in the tree red.
+    tainted = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        for definition in definitions.get(node.func.id, ()):
+            parameters = (list(definition.args.posonlyargs)
+                          + list(definition.args.args))
+            for parameter, argument in zip(parameters, node.args):
+                if from_repository(argument):
+                    tainted.add(parameter.arg)
+            for keyword in node.keywords:
+                if keyword.arg is not None and from_repository(keyword.value):
+                    tainted.add(keyword.arg)
+    return tainted
+
+
+def _carries_repository_path(node, tainted, returns):
+    """Whether ``node`` mentions a tainted parameter or a repo-returning call."""
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id in tainted:
+            return True
+        if (isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                and child.func.id in returns):
+            return True
+    return False
+
+
 PATH_CALL_ATTRS = frozenset({
     'joinpath', 'with_name', 'with_suffix', 'resolve', 'absolute', 'expanduser',
 })
@@ -1051,11 +1121,17 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     constants = _constants(tree)
     shadowed = _shadowed_names(tree)
     aliases = _module_aliases(tree)
+    repository_returns = _repo_returning_functions(tree, constants)
+    tainted = _repository_parameters(tree, constants, repository_returns)
     keys = {}
     problems = []
 
     def repo_rooted(node):
-        return _is_repo_rooted(node, constants, shadowed=shadowed)
+        # A directory that only reaches the join through a parameter or a call
+        # return is still a repository path: the loop cannot key it from the
+        # text either, so it has to be reported like any other unsupported base.
+        return (_is_repo_rooted(node, constants, shadowed=shadowed)
+                or _carries_repository_path(node, tainted, repository_returns))
 
     def record(segments, expression):
         # A single component is not a discovery key: the loop always keys
@@ -1568,6 +1644,57 @@ class DiscoveryAnchorTests(unittest.TestCase):
                         problems)
         self.assertFalse(any('example/listed.rs' in problem for problem in problems),
                          problems)
+
+    def test_a_repository_path_passed_through_a_parameter_fails_closed(self):
+        """``def build(base): base / 'mod.rs'`` is still a repository path.
+
+        The directory only reaches the join as an argument, so the scanner
+        cannot name the key — that must be reported, not skipped: a table that
+        hides its base this way used to be green while the discovery loop could
+        never schedule it.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def build(base):\n"
+            "    return [('a', base / 'mod.rs', 'x')]\n"
+            "rows = build(SMS)\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
+
+    def test_a_repository_path_returned_from_a_function_fails_closed(self):
+        """``source_dir() / 'mod.rs'`` hides the directory one call deep."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def source_dir():\n"
+            "    return ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+            "rows = [('a', source_dir() / 'mod.rs', 'x')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
+
+    def test_an_evidence_directory_parameter_stays_silent(self):
+        """A helper over the output directory is not a repository path.
+
+        Only parameters of functions actually called with a repository path are
+        tainted; otherwise every ``def dump(out_dir)`` in the tree would turn
+        red and the register would lose its signal.
+        """
+        synthetic = (
+            "import sys\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "out = Path(sys.argv[1])\n"
+            "def dump(out_dir):\n"
+            "    return (out_dir / 'summary.json').write_text('{}')\n"
+            "dump(out)\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_an_inline_directory_needs_no_anchor(self):
         """``SOURCE / "runtime/x.rs"`` already spells the discovery key."""
