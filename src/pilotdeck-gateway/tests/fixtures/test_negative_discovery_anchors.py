@@ -132,7 +132,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 254 files (the host glob can reach all of them), 189 blind only, 3 with unresolvable shapes only, 62 in both; 1284 keys: 358 bare-filename joins and 926 shared-helper import keys.
+# 254 files (the host glob can reach all of them), 183 blind only, 3 with unresolvable shapes only, 68 in both; 1284 keys: 358 bare-filename joins and 926 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -164,7 +164,7 @@ KNOWN_BLIND = {
     'cli-parity-isolation/negative_controls.py': '1 key + 1 unresolvable',
     'cli-parity-lock-bounded/negative_controls.py': '7 keys',
     'cli-parity-mock-gateway/negative_controls.py': '1 key + 1 unresolvable',
-    'closure_guard_negative.py': '3 keys + 1 unresolvable',
+    'closure_guard_negative.py': '3 keys + 2 unresolvable',
     'commands-catalog/negative_controls.py': '4 keys',
     'config-changes/negative_coverage.py': '6 keys',
     'config-store/negative_controls.py': '6 keys',
@@ -235,14 +235,14 @@ KNOWN_BLIND = {
     'live-e2e/negative_controls.py': '7 keys + 7 unresolvable',
     'live-history/negative.py': '1 key',
     'live-recording/negative.py': '10 keys',
-    'live-session/negative_controls.py': '6 keys',
+    'live-session/negative_controls.py': '6 keys + 1 unresolvable',
     'locale-adaptive/negative_controls.py': '7 keys',
     'locale-contract/negative_controls.py': '6 keys',
     'locked-storage/negative_controls.py': '6 keys',
     'manager-gateway/negative_controls.py': '7 keys',
     'mcp-detached-dispatch/negative_controls.py': '6 keys',
     'mcp-gateway/negative_controls.py': '6 keys',
-    'mcp-hooks-spawn/negative_controls.py': '1 key + 1 unresolvable',
+    'mcp-hooks-spawn/negative_controls.py': '1 key + 2 unresolvable',
     'mcp-http-corrupt-body/negative_controls.py': '6 keys',
     'mcp-http-encoding/negative.py': '6 keys',
     'memory-maintenance/negative_controls.py': '2 keys',
@@ -291,29 +291,29 @@ KNOWN_BLIND = {
     'node-provenance/negative.py': '6 keys + 1 unresolvable',
     'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '3 keys',
-    'p01-preflight/negative_controls.py': '6 keys',
+    'p01-preflight/negative_controls.py': '6 keys + 1 unresolvable',
     'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
     'pending-reanchor/negative_controls.py': '4 keys',
     'plugin-loader/negative-controls.py': '4 keys + 2 unresolvable',
     'plugin-runtime/negative-controls.py': '6 keys',
     'plugin-runtime/notify-window-negative.py': '4 keys',
     'plugin-runtime/panic-negative.py': '4 keys',
-    'private-ca/negative_controls.py': '6 keys',
+    'private-ca/negative_controls.py': '6 keys + 1 unresolvable',
     'project-files-linux-dirent/negative_controls.py': '4 keys',
     'projector-cwd/negative_controls.py': '8 keys',
     'provider-http-boundaries/negative_controls.py': '6 keys',
     'proxy-listen-address/negative_controls.py': '7 keys',
     'pump-order-cases/negative_controls.py': '6 keys',
-    'recorder/fix3-negative.py': '7 keys',
+    'recorder/fix3-negative.py': '7 keys + 1 unresolvable',
     'regeneration-masks/negative.py': '6 keys',
     'replacement/negative-518.py': '3 keys',
     'replacement/negative.py': '1 key',
     'retry-after-dialects/negative_controls.py': '6 keys',
-    'run-registry/count-negative.py': '8 keys',
+    'run-registry/count-negative.py': '8 keys + 1 unresolvable',
     'run-registry/timestamp-negative.py': '6 keys',
     'runtime-spawn-panic/helpers_negative.py': '3 keys',
     'runtime-spawn-panic/negative_controls.py': '4 keys + 2 unresolvable',
-    'sdk-cli-lifecycle/negative_controls.py': '6 keys + 1 unresolvable',
+    'sdk-cli-lifecycle/negative_controls.py': '6 keys + 2 unresolvable',
     'sdk-format/negative_controls.py': '8 keys + 2 unresolvable',
     'sdk-mcp-p2/negative.py': '6 keys + 2 unresolvable',
     'sdk-run/negative_controls.py': '9 keys + 3 unresolvable',
@@ -334,7 +334,7 @@ KNOWN_BLIND = {
     'session-domain-native/negative_controls.py': '7 keys',
     'session-domain/adapter-negative.py': '1 key + 2 unresolvable',
     'session-domain/fix1-negative.py': '1 key + 2 unresolvable',
-    'session-domain/fix2-negative.py': '1 key + 2 unresolvable',
+    'session-domain/fix2-negative.py': '1 key + 3 unresolvable',
     'session-drop-release/negative_controls.py': '8 keys',
     'session-factory/append-delta/negative_controls.py': '6 keys + 8 unresolvable',
     'session-factory/negative_controls.py': '16 keys + 1 unresolvable',
@@ -354,7 +354,7 @@ KNOWN_BLIND = {
     'sms-stringify-depth/negative_controls.py': '4 keys + 2 unresolvable',
     'spill-isolation/negative_controls.py': '1 key',
     'stats-cwd/negative_controls.py': '9 keys',
-    'stress-followups/negative_controls.py': '2 keys',
+    'stress-followups/negative_controls.py': '2 keys + 1 unresolvable',
     'surrogate-collation-matrix/negative_controls.py': '7 keys',
     'task-budget-zero/negative.py': '1 key',
     'tool-budget/negative_project.py': '1 key + 1 unresolvable',
@@ -638,22 +638,32 @@ def _changes_directory(tree):
 
     ``Path.cwd()`` is read as the repository root because the host starts a
     table there. ``os.chdir(...)`` — at module level or inside a ``with`` —
-    breaks that premise after the fact: a later ``Path.cwd() / 'mod.rs'`` names
-    a file under whatever directory the table moved to, and the single-component
-    result used to be dropped silently. Any chdir call therefore makes
-    ``Path.cwd()`` unknowable, which is reported at its uses.
+    breaks that premise after the fact: a later join names a file under
+    whatever directory the table moved to, and the single-component result used
+    to be dropped silently. Any chdir call therefore makes the working
+    directory unknowable, which is reported at its uses. ``from os import
+    chdir as cd`` reaches the same call through a bare, aliased name, so the
+    import map is consulted exactly as the enumeration helpers consult it.
     """
+    aliases = _module_aliases(tree)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        func = node.func
-        if isinstance(func, ast.Attribute):
-            name = func.attr
-        elif isinstance(func, ast.Name):
-            name = func.id
-        else:
+        spelling = _dotted_spelling(node.func)
+        if spelling is None:
             continue
-        if name in CHDIR_CALLS:
+        module_part, _, name = spelling.rpartition('.')
+        if module_part:
+            # ``os.chdir`` and ``import os as o; o.chdir`` — the module part
+            # resolves through the import map.
+            if name in CHDIR_CALLS and aliases.get(module_part, module_part) == 'os':
+                return True
+            continue
+        # A bare name: ``from os import chdir`` / ``... import chdir as cd``
+        # reaches the same call through the qualified name the map records.
+        qualified = aliases.get(name, name)
+        if name in CHDIR_CALLS or (qualified.startswith('os.')
+                                  and qualified.rpartition('.')[2] in CHDIR_CALLS):
             return True
     return False
 
@@ -687,15 +697,24 @@ SETITEM_CALLS = frozenset({'operator.setitem', 'setitem'})
 def _mutated_containers(tree):
     """Names whose literal container some statement changes after it is built.
 
-    A name bound to a mutated container (``ALIAS = CH``) refers to the *same*
-    object, so the set is closed over plain aliases in **both** directions: a
-    write through the alias leaves the literal behind ``CH`` just as stale as a
-    write through ``CH`` itself, while ``CP = CH.copy()`` builds a different
-    object and must not taint ``CH``. Deep writes (``CH['a']['b'] = ...``) and
-    mutations of a nested container (``CH['a'].update(...)``) are attributed to
-    the outermost name. This is deliberately blunt: a table that appends to a
-    list of *rows* is only affected when a row of that list is indexed into a
-    repository path, and the whole point is to report that shape rather than
+    A name bound to a mutated container refers to the *same* object, so the set
+    is closed over the alias graph in **both** directions: a write through the
+    alias leaves the literal behind ``CH`` just as stale as a write through
+    ``CH`` itself.
+
+    Every spelling that can carry the reference counts as an edge:
+    ``ALIAS = CH``, ``SUB = CH['a']`` (the *same* nested object, so
+    ``SUB['b'] = ...`` rewrites what ``CH['a']['b']`` reads), and
+    ``CP = CH.copy()`` — the copy is shallow, so a write *through it* into a
+    nested container still rewrites the literal behind ``CH``. Following the
+    graph transitively is what closes ``A = CH; B = A['a']; B['b'] = ...``;
+    the earlier reading only paired a subscript whose root was itself bound to
+    a container literal, so a plain alias in between hid the write and the
+    stale key was accepted.
+
+    Deep writes (``CH['a']['b'] = ...``) and mutations of a nested container
+    (``CH['a'].update(...)``) are attributed to the outermost name. This is
+    deliberately blunt: the whole point is to report the shape rather than
     guess which element the runtime sees.
     """
     names = set()
@@ -731,27 +750,30 @@ def _mutated_containers(tree):
                 name = _container_root_name(node.args[0])
                 if name is not None:
                     names.add(name)
-    module_pairs, _ = _module_level_pairs(tree)
-    containers = set()
-    for name, value in module_pairs:
-        if isinstance(value, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
-            containers.add(name)
     aliases = []
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            pairs, _ = _assignment_pairs(node)
-            for name, value in pairs:
-                if isinstance(value, ast.Name):
-                    aliases.append((name, value.id))
-                elif isinstance(value, ast.Subscript):
-                    # ``ALIAS = CH['a']`` names the *same* nested object, so
-                    # ``ALIAS['b'] = ...`` rewrites what ``CH['a']['b']``
-                    # reads. Pairing the two names is what lets the closure
-                    # below taint ``CH`` from a write spelled through ALIAS;
-                    # without it the stale literal was keyed silently.
-                    root = _container_root_name(value)
-                    if root in containers:
-                        aliases.append((name, root))
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        pairs, _ = _assignment_pairs(node)
+        for name, value in pairs:
+            root = None
+            if isinstance(value, ast.Name):
+                # ``ALIAS = CH``: the same object under a second name.
+                root = value.id
+            elif isinstance(value, ast.Subscript):
+                # ``SUB = CH['a']`` names the *same* nested object; the root
+                # is followed through any number of aliases by the closure.
+                root = _container_root_name(value)
+            elif (isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Attribute)
+                    and value.func.attr == 'copy'
+                    and not value.args and not value.keywords):
+                # ``CP = CH.copy()`` is shallow: the top level is new, but a
+                # nested container is still shared, so a write through the copy
+                # keeps rewriting what ``CH['a']`` reads.
+                root = _container_root_name(value.func.value)
+            if root is not None:
+                aliases.append((name, root))
     grew = True
     while grew:
         grew = False
@@ -1143,7 +1165,12 @@ def _segments(node, constants, self_path, seen=()):
             # An absolute literal is not a path below the repository root; the
             # discovery loop never keys it, so it needs no anchor.
             return None
-        return tuple(part for part in node.value.split('/') if part not in ('', '.'))
+        # Internal ``..`` collapses here as it does at runtime
+        # (``Path('sms/../mod.rs')`` is ``mod.rs``), while a *leading* ``..``
+        # is kept: which directory it climbs from is only known once the join
+        # above it supplies one (``SMS / '../x.rs'``).
+        return _collapsed_segments(
+            tuple(part for part in node.value.split('/') if part not in ('', '.')))
     if isinstance(node, ast.Name):
         if node.id == '__file__':
             return self_path
@@ -1184,6 +1211,22 @@ def _segments(node, constants, self_path, seen=()):
             return None
         return _container_segments(node, constants, self_path, seen + (marker,))
     return None
+
+
+def _collapsed_segments(segments):
+    """Resolve ``.`` and internal ``..`` in one literal, keeping a leading ``..``.
+
+    ``'sms/../mod.rs'`` is ``mod.rs`` at runtime, so keying ``../mod.rs`` picked
+    a file the table never builds. A leading ``..`` is left in place because the
+    directory it climbs from comes from the join above it.
+    """
+    stack = []
+    for part in segments:
+        if part == '..' and stack and stack[-1] != '..':
+            stack.pop()
+        elif part not in ('', '.'):
+            stack.append(part)
+    return tuple(stack)
 
 
 def _normalised_segments(segments):
@@ -1635,34 +1678,57 @@ def _indexes_a_path_container(node, constants):
     return False
 
 
-def _levels_above_file(node, module_values, seen=()):
+def _binding_before(pairs, name, position):
+    """``(index, value)`` for the binding ``name`` has at ``position``.
+
+    The last ``name = ...`` before ``position`` is the value the interpreter
+    sees there. Reading a later binding instead let ``BASE = parents[4]; ROOT =
+    BASE; BASE = parents[5]`` look correct, and a snapshot taken once per
+    spelling could not follow a value captured through an alias at all.
+    """
+    found = None
+    for index, (bound, value) in enumerate(pairs):
+        if index >= position:
+            break
+        if bound == name:
+            found = (index, value)
+    return found
+
+
+def _levels_above_file(node, pairs, position, seen=()):
     """How many path components ``node`` removes from ``__file__``, or None.
 
     ``Path(__file__).resolve().parents[5]`` removes six (the file name plus five
     directories); ``FIXTURES.parents[3]`` adds to whatever ``FIXTURES`` already
-    removed. Only shapes with a statically known depth answer; anything else
-    returns None so the caller stays silent rather than guessing.
+    removed. Names resolve against the bindings *before* ``position``, so an
+    alias captures the value its target had on that line and a later rebinding
+    cannot retroactively change it. Only shapes with a statically known depth
+    answer; anything else returns None so the caller stays silent rather than
+    guessing.
     """
     if isinstance(node, ast.Name):
         if node.id == '__file__':
             return 0
-        if node.id in seen or node.id not in module_values:
+        if node.id in seen:
             return None
-        return _levels_above_file(module_values[node.id], module_values,
-                                  seen + (node.id,))
+        binding = _binding_before(pairs, node.id, position)
+        if binding is None:
+            return None
+        index, value = binding
+        return _levels_above_file(value, pairs, index, seen + (node.id,))
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             and node.func.id == 'Path' and len(node.args) == 1):
-        return _levels_above_file(node.args[0], module_values, seen)
+        return _levels_above_file(node.args[0], pairs, position, seen)
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
             and node.func.attr in ('resolve', 'absolute', 'expanduser')
             and not node.args):
-        return _levels_above_file(node.func.value, module_values, seen)
+        return _levels_above_file(node.func.value, pairs, position, seen)
     if isinstance(node, ast.Attribute) and node.attr == 'parent':
-        inner = _levels_above_file(node.value, module_values, seen)
+        inner = _levels_above_file(node.value, pairs, position, seen)
         return None if inner is None else inner + 1
     if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
             and node.value.attr == 'parents'):
-        inner = _levels_above_file(node.value.value, module_values, seen)
+        inner = _levels_above_file(node.value.value, pairs, position, seen)
         index = node.slice
         if (inner is None or not isinstance(index, ast.Constant)
                 or not isinstance(index.value, int) or index.value < 0):
@@ -1690,31 +1756,26 @@ def _root_definition_problems(tree, self_path, root):
     pairs, _ = _module_level_pairs(tree)
     problems = []
     for name in sorted(ROOT_NAMES):
-        spellings = set()
         for position, (bound, value) in enumerate(pairs):
             if bound != name:
                 continue
-            spelling = ast.unparse(value)
-            if spelling in spellings:
-                continue
-            spellings.add(spelling)
             # **Every** binding is checked, not just the last one: a table
             # that computes ``ROOT`` one level short and only rebinds it
             # correctly afterwards has already built its joins against the
-            # wrong root, and the last-wins reading reported nothing.
-            # Dependencies resolve at the binding's own position for the same
-            # reason: ``BASE = parents[4]; ROOT = BASE; ...; BASE =
-            # parents[5]`` used to be read against the *final* BASE and the
-            # shallow ROOT the code really used went unreported.
-            snapshot = {}
-            for earlier_name, earlier_value in pairs[:position]:
-                snapshot[earlier_name] = earlier_value
-            levels = _levels_above_file(value, snapshot)
-            if levels is not None and levels != expected:
-                problems.append(
-                    f'{name} does not name the repository root (it resolves '
-                    f'{levels} levels above this file, expected {expected}): '
-                    f'{spelling}')
+            # wrong root, and the last-wins reading reported nothing. Two
+            # bindings spelled the same way are not one binding either — the
+            # second may resolve through a dependency that changed in between
+            # (``BASE = parents[4]; ROOT = BASE; BASE = parents[5]; ROOT =
+            # BASE``), so the check is per statement rather than per spelling.
+            spelling = ast.unparse(value)
+            levels = _levels_above_file(value, pairs, position)
+            if levels is None or levels == expected:
+                continue
+            message = (f'{name} does not name the repository root (it resolves '
+                       f'{levels} levels above this file, expected {expected}): '
+                       f'{spelling}')
+            if message not in problems:
+                problems.append(message)
     return problems
 
 
@@ -1904,7 +1965,7 @@ _FILESYSTEM_JOIN_CALLS = _STDLIB_JOIN_CALLS | {'os.sep.join'}
 
 
 def _filesystem_join_text(node, constants):
-    """The text a *filesystem* join of string literals builds, or None.
+    """The text a join of string literals builds, or None.
 
     ``os.path.join('sms', 'mod.rs')`` produces ``sms/mod.rs`` from pieces the
     table spells in full, yet the literal ``sms/mod.rs`` appears nowhere in the
@@ -1912,24 +1973,35 @@ def _filesystem_join_text(node, constants):
     changes. Returning the joined text lets the caller key it and demand an
     anchor, which is what ``Path('sms') / 'mod.rs'`` already gets.
 
-    Only the filesystem APIs count — ``os.path.join`` / ``posixpath.join`` /
-    ``ntpath.join`` / ``os.sep.join``. The *string* spellings (``+``,
-    ``'/'.join``, ``%``, f-strings) are deliberately left out of this
-    resolution: the same shape builds test-cell labels in
-    ``network-timing/negative_private.py`` (``p + '/' + phase + '/idle/' +
-    order``), and keying those would demand anchors for things that are not
-    paths at all. A string join is only followed when a repository root or a
-    repository-directory base proves it is a path. A runtime operand — the boot
-    and temp directories ``os.path.join(_boot_root, ...)`` start from — yields
-    None and stays out of the repository.
+    Two kinds of join count, and they do **not** share reset semantics.
+    ``os.path.join`` / ``posixpath.join`` / ``ntpath.join`` are filesystem
+    joins: an argument that starts with ``/`` discards everything before it
+    (``os.path.join('sms', '/tmp', 'mod.rs')`` is ``/tmp/mod.rs``).
+    ``os.sep.join`` is a plain ``str.join`` — ``os.sep`` is a string — so
+    ``os.sep.join(('sms', '/tmp', 'mod.rs'))`` is ``sms//tmp/mod.rs`` inside
+    the repository; applying the filesystem reset there dropped a call that
+    really does build a path inside the tree. The analyzer models the POSIX
+    separator the discovery keys are spelled with.
+
+    The *string* spellings (``+``, ``'/'.join``, ``%``, f-strings) are
+    deliberately left out of this resolution: the same shape builds test-cell
+    labels in ``network-timing/negative_private.py`` (``p + '/' + phase +
+    '/idle/' + order``), and keying those would demand anchors for things that
+    are not paths at all. A string join is only followed when a repository root
+    or a repository-directory base proves it is a path. A runtime operand — the
+    boot and temp directories ``os.path.join(_boot_root, ...)`` start from —
+    yields None and stays out of the repository.
     """
     if not isinstance(node, ast.Call):
         return None
     func = node.func
     if not isinstance(func, ast.Attribute) or func.attr != 'join':
         return None
-    if _dotted_spelling(func) in _FILESYSTEM_JOIN_CALLS:
-        separator = '/'
+    spelling = _dotted_spelling(func)
+    if spelling in _STDLIB_JOIN_CALLS:
+        resets = True
+    elif spelling == 'os.sep.join':
+        resets = False
     else:
         return None
     pieces = []
@@ -1937,7 +2009,7 @@ def _filesystem_join_text(node, constants):
         value = _string_value(element, constants)
         if value is None:
             return None
-        if _resets_join(value):
+        if resets and _resets_join(value):
             # ``os.path.join('sms', '/tmp', 'mod.rs')`` is ``/tmp/mod.rs``:
             # the absolute argument discards everything before it. Joining the
             # pieces verbatim demanded an anchor for ``tmp/mod.rs``, a file the
@@ -1945,16 +2017,26 @@ def _filesystem_join_text(node, constants):
             pieces = [value]
         else:
             pieces.append(value)
-    return separator.join(pieces)
+    return '/'.join(pieces)
+
+
+def _is_drive_prefixed(value):
+    """Whether a join argument carries a Windows drive prefix (``C:/x``).
+
+    ``C:/tmp`` is absolute on Windows and relative on POSIX, so a join carrying
+    one builds a different key per platform; nothing may be keyed and the shape
+    is reported.
+    """
+    return (len(value) > 2 and value[0].isalpha() and value[1] == ':'
+            and value[2] in '\\/')
 
 
 def _resets_join(value):
-    """Whether a join argument discards the pieces accumulated before it."""
+    """Whether a *filesystem* join argument discards the pieces before it."""
     if value.startswith('/') or value.startswith('\\'):
         return True
     # ``C:\\x`` is absolute on Windows even when the table runs elsewhere.
-    return (len(value) > 2 and value[0].isalpha() and value[1] == ':'
-            and value[2] in '\\/')
+    return _is_drive_prefixed(value)
 
 
 def _relative_path_segments(node, constants):
@@ -1970,8 +2052,9 @@ def _relative_path_segments(node, constants):
     text = _filesystem_join_text(node, constants)
     if not text or _resets_join(text):
         return None
-    segments = tuple(part for part in text.split('/') if part not in ('', '.'))
-    if len(segments) < 2:
+    segments = _normalised_segments(
+        tuple(part for part in text.split('/') if part not in ('', '.')))
+    if segments is None or len(segments) < 2:
         return None
     # A space *inside* a component is ordinary (``'my file.rs'`` is a legal
     # file name the host's fixed-string grep matches); a component padded with
@@ -2004,6 +2087,32 @@ def _is_path_join_call(func, constants, aliases):
         module, _, name = qualified.rpartition('.')
         return name == 'join' and module in FS_MODULES
     return False
+
+
+def _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
+    """Whether a call adds a repository directory to ``sys.path``.
+
+    ``sys.path.insert(0, str(FIXTURES / '_shared'))`` makes a bare ``import
+    negative_control`` resolve; ``_shared_module_keys`` only searches the
+    directories it knows (the fixture tree and the table's own), so the
+    helper's discovery key is never derived and the table looks self-contained.
+    A helper changed there would not schedule the table. Any path-carrying
+    argument to ``sys.path.insert/append/extend`` is therefore reported.
+    """
+    if not isinstance(node, ast.Call) or not node.args:
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr not in (
+            'insert', 'append', 'extend'):
+        return False
+    target = _dotted_spelling(func.value)
+    # ``from sys import path`` binds the list under a bare name.
+    if target != 'sys.path' and aliases.get(target) != 'sys.path':
+        return False
+    return any(_spells_a_repository_path(argument, constants)
+               or (value := _string_value(argument, constants)) is not None
+               and '/' in value
+               for argument in node.args)
 
 
 def _enumerates_a_directory(func, aliases):
@@ -2302,15 +2411,31 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         value = _string_value(node, constants)
         return value is not None and _is_bare_component(value)
 
+    def join_piece_is_opaque(element):
+        """Whether one argument of a join hides the segment it contributes.
+
+        A runtime value is unknowable, and a drive-prefixed literal
+        (``C:/tmp``) is absolute on Windows and relative on POSIX — the key
+        depends on the platform, so nothing may be keyed.
+        """
+        value = _string_value(element, constants)
+        if value is not None and _is_drive_prefixed(value):
+            return True
+        return _segments(element, constants, self_path) is None
+
     def opaque_join_segment(node):
-        """Whether a filesystem join mixes a known directory with runtime pieces.
+        """Whether a join mixes a known directory with runtime pieces.
 
         ``os.path.join('src/…/channel', name, 'mod.rs')`` builds
         ``…/sms/mod.rs`` when ``name`` is ``sms``; the directory half is in the
         text and the file name is not, so no anchor can carry the key and the
-        discovery loop never schedules the table. An absolute argument resets
-        the join (``os.path.join('sms', '/tmp', 'mod.rs')`` is ``/tmp/mod.rs``,
-        outside the repository) and therefore keeps the whole call silent.
+        discovery loop never schedules the table.
+
+        An absolute argument of a *filesystem* join keeps the call silent
+        instead of reporting it: ``os.path.join('sms', '/tmp', 'mod.rs')`` is
+        ``/tmp/mod.rs``, outside the repository, so no discovery key exists.
+        A drive-prefixed piece is different and is reported — see
+        ``join_piece_is_opaque``.
         """
         if not isinstance(node, ast.Call):
             return False
@@ -2321,18 +2446,18 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         elements = _joined_elements(node)
         if len(elements) < 2:
             return False
-        for element in elements:
-            value = _string_value(element, constants)
-            if value is not None and _resets_join(value):
-                return False
+        if _dotted_spelling(func) in _STDLIB_JOIN_CALLS:
+            for element in elements:
+                value = _string_value(element, constants)
+                if value is not None and value.startswith('/'):
+                    return False
         base = elements[0]
         if not (relative_directory(base) is not None
                 or bare_literal_directory(base)
                 or _is_repo_rooted(base, constants, shadowed=shadowed)
                 or _indexes_a_path_container(base, constants)):
             return False
-        return any(_segments(element, constants, self_path) is None
-                   for element in elements[1:])
+        return any(join_piece_is_opaque(element) for element in elements[1:])
 
     def relative_directory(node):
         # A directory written entirely with relative literals: the host runs
@@ -2360,11 +2485,25 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     def record(segments, expression):
         # A single component is not a discovery key: the loop always keys
         # ``dir/file``. Every caller reports it here rather than at its own
-        # call site, so a comprehension and a ``/`` join agree.
+        # call site, so a comprehension and a ``/`` join agree. Returns whether
+        # a key was recorded, so a caller can tell "resolved and keyed" from
+        # "nothing came out of it".
         if len(segments) < 2:
             problems.append(f'no discovery key (needs a directory and a file name): {expression}')
-            return
+            return False
+        if any(character.isspace() for segment in segments for character in segment):
+            # The discovery loop reads its changed-file list through
+            # ``for f in $changed``, so a path with a space arrives as two
+            # fragments and matches no branch at all. An anchor spelled with
+            # the space could never fire, so the key is not merely blind — it
+            # is unschedulable, and accepting it would turn a real hole into a
+            # green tick.
+            problems.append('whitespace in a discovery key cannot be scheduled '
+                            '(the discovery loop splits the changed-file list on '
+                            f'whitespace): {expression}')
+            return False
         keys.setdefault('/'.join(segments[-2:]), []).append(expression)
+        return True
 
     reported_ambiguous = set()
 
@@ -2408,10 +2547,19 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 report_ambiguous(ambiguous[0], expression)
             elif repo_rooted(node) or opaque_join_segment(node):
                 report_unresolvable(expression)
-            return
+            return False
+        if (getattr(constants, 'cwd_unknown', False)
+                and not _is_repo_rooted(node, constants, shadowed=shadowed)):
+            # ``os.chdir(...)`` moved the process away from the repository
+            # root, so a path spelled relative to it no longer starts there:
+            # ``os.chdir('…/channel/sms'); Path('mod.rs')`` reads
+            # ``sms/mod.rs``, and the single-component result used to be
+            # dropped as "no discovery key" while nothing was reported.
+            report_unresolvable(expression)
+            return False
         if not _bare_tail(node, constants):
-            return
-        record(segments, expression)
+            return False
+        return record(segments, expression)
 
     def report_runtime_tail(node):
         """Report a join whose directory is known but whose file name is not.
@@ -2447,11 +2595,19 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         written in this style is neither keyed nor flagged, so a new table using
         it would never be registered — the same false pass this guard exists to
         prevent. Only the outermost call reports, and only when the directory
-        resolves and the file-name argument does not.
+        resolves and a joined argument does not.
+
+        A runtime segment is not only ever the *last* one:
+        ``Path('src/…/channel', name, 'mod.rs')`` and
+        ``…joinpath(name, 'mod.rs')`` build ``…/sms/mod.rs`` when ``name`` is
+        ``sms``, so the literal tail alone proved nothing. Every argument after
+        the directory is checked for the same reason the ``os.path.join``
+        spelling above always checked them.
         """
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in ('joinpath', 'with_name'):
             base = func.value
+            arguments = node.args
         elif (isinstance(func, ast.Attribute) and func.attr == 'join'
                 and _string_value(func.value, constants) is None):
             # ``os.path.join(SMS, name)`` / ``os.sep.join((str(SMS), name))``:
@@ -2464,40 +2620,29 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             elements = _joined_elements(node)
             if len(elements) < 2:
                 return
-            base, tail = elements[0], elements[-1]
-            if (_is_repo_rooted(base, constants, shadowed=shadowed)
-                    or _carries_repository_path(base, tainted, repository_returns)
-                    or _indexes_a_path_container(base, constants)
-                    or relative_directory(base) is not None
-                    or bare_literal_directory(base)):
-                # A runtime segment anywhere after the directory hides the
-                # ``dir/file`` key the loop greps for: ``os.path.join('src/
-                # …/channel', name, 'mod.rs')`` is ``…/sms/mod.rs`` when name
-                # is ``sms``, yet only the tail used to be checked.
-                opaque = [element for element in elements[1:]
-                          if _segments(element, constants, self_path) is None]
-                if opaque:
-                    ambiguous = ambiguous_names(node)
-                    if ambiguous:
-                        report_ambiguous(ambiguous[0], ast.unparse(node))
-                    else:
-                        report_unresolvable(ast.unparse(node))
-            return
+            if _dotted_spelling(func) in _STDLIB_JOIN_CALLS:
+                for element in elements:
+                    value = _string_value(element, constants)
+                    if value is not None and value.startswith('/'):
+                        # ``os.path.join('sms', '/tmp', 'mod.rs')`` is
+                        # ``/tmp/mod.rs``: outside the repository, so the call
+                        # names no discovery key at all.
+                        return
+            base = elements[0]
+            arguments = elements[1:]
         elif (isinstance(func, ast.Name) and func.id == 'Path'
                 and len(node.args) >= 2 and not node.keywords):
             base = node.args[0]
+            arguments = node.args[1:]
         else:
-            return
-        if not node.args:
-            return
-        tail = node.args[-1]
-        if _segments(tail, constants, self_path) is not None:
             return
         if not (_is_repo_rooted(base, constants, shadowed=shadowed)
                 or _carries_repository_path(node, tainted, repository_returns)
                 or _indexes_a_path_container(base, constants)
                 or relative_directory(base) is not None
                 or bare_literal_directory(base)):
+            return
+        if not any(join_piece_is_opaque(argument) for argument in arguments):
             return
         ambiguous = ambiguous_names(node)
         if ambiguous:
@@ -2591,6 +2736,16 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # argument — the stdlib ones are the more common shape.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
+            elif _inserts_a_repository_directory_into_sys_path(node, constants, aliases):
+                # ``sys.path.insert(0, str(FIXTURES / '_shared'))`` followed by
+                # ``import negative_control`` makes the module importable
+                # without spelling the helper's directory anywhere the import
+                # closure looks: the table needs the helper's discovery key and
+                # this scanner derived none, so the mutation is reported rather
+                # than left as a silent green tick.
+                problems.append('unsupported sys.path insertion of a repository '
+                                'directory (a module imported from it is '
+                                f'invisible to this scanner): {ast.unparse(node)}')
             elif (_enumerates_a_directory(func, aliases)
                     and any(repo_rooted(argument) for argument in node.args)):
                 # ``from os import walk`` / ``from os import listdir`` reaches the
@@ -2608,12 +2763,17 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # means a key this scanner can never derive from the text.
                 problems.append('unsupported path join of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
+            keyed = False
             if _is_path_shape(node, constants):
-                resolve(node, ast.unparse(node))
-            else:
-                # ``SMS.joinpath(name)`` / ``Path(SMS, name)``: the directory
-                # half resolves and the file name does not — the call spelling
-                # of ``SMS / name``.
+                keyed = resolve(node, ast.unparse(node))
+            if not keyed:
+                # A shape that ends in a bare file name can still hide a
+                # runtime segment *before* that name — ``Path('src/…/channel',
+                # name, 'mod.rs')`` / ``…joinpath(name, 'mod.rs')``: the shape
+                # resolves its tail, so ``resolve`` keys nothing and says
+                # nothing. The check is skipped only when a key came out, so
+                # one expression is never reported for being both keyed and
+                # unknowable.
                 report_runtime_call_tail(node)
             self.generic_visit(node)
 
@@ -3771,17 +3931,28 @@ class DiscoveryAnchorTests(unittest.TestCase):
             any('unresolvable repository path' in problem for problem in problems),
             problems)
 
-    def test_a_copy_is_not_the_original_container(self):
-        """``CP = CH.copy()`` builds a different object; changing it leaves CH alone."""
+    def test_a_write_through_a_shallow_copy_invalidates_the_container(self):
+        """``CP = CH.copy()`` copies the top level only.
+
+        A write through the copy into a *nested* container rewrites the very
+        object ``CH['a']`` reads, so the literal behind ``CH`` is stale just as
+        if the write had been spelled through ``CH``. The earlier reading
+        treated every copy as an unrelated object and keyed the old value; the
+        blunt direction is deliberate — the guard reports the shape rather
+        than guess which level the runtime writes to.
+        """
         synthetic = (
             "ROOT = Path(__file__).resolve().parents[5]\n"
-            "CH = {'k': 'src/pilotdeck-gateway/src/channel/x'}\n"
+            "CH = {'a': {'b': 'src/pilotdeck-gateway/src/channel/x'}}\n"
             "CP = CH.copy()\n"
-            "CP['k'] = 'src/pilotdeck-gateway/src/channel/y'\n"
-            "DISCOVERY_ANCHORS = ('x/mod.rs',)\n"
-            "rows = [Path(CH['k']) / 'mod.rs']\n"
+            "CP['a']['b'] = 'src/pilotdeck-gateway/src/channel/y'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['a']['b']) / 'mod.rs']\n"
         )
-        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
 
     def test_a_nested_container_mutation_is_attributed_to_the_root(self):
         """``CH['a'].update(...)`` mutates the inner dictionary ``CH`` holds.
@@ -3982,11 +4153,13 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
-    def test_a_file_name_with_a_space_is_keyed(self):
-        """``'my file.rs'`` is a legal name the host's fixed-string grep matches.
+    def test_a_file_name_with_a_space_cannot_be_scheduled(self):
+        """A key the discovery loop can never match must be reported, not keyed.
 
-        Rejecting every whitespace character dropped the join from both nets:
-        no key, no report.
+        The loop reads its changed-file list through ``for f in $changed``, so
+        ``…/sms/my file.rs`` arrives as two fragments and matches no branch at
+        all. Keying it and demanding ``sms/my file.rs`` as an anchor asked for
+        something that could never fire — a green tick over a real hole.
         """
         synthetic = (
             "import os\n"
@@ -3997,6 +4170,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         problems = violations(synthetic, 'example/negative_controls.py')
         self.assertTrue(
+            any('whitespace in a discovery key cannot be scheduled' in problem
+                for problem in problems),
+            problems)
+        self.assertFalse(
             any('missing anchor: sms/my file.rs' in problem for problem in problems),
             problems)
 
@@ -4018,21 +4195,34 @@ class DiscoveryAnchorTests(unittest.TestCase):
         """``os.path.join('sms', '/tmp', 'mod.rs')`` is ``/tmp/mod.rs``.
 
         Joining the pieces verbatim demanded an anchor for ``tmp/mod.rs``, a
-        repository key the code never builds.
+        repository key the code never builds — the reset is what makes the call
+        name nothing the discovery loop can key.
         """
-        shapes = {
-            'posix': "rows = [os.path.join('sms', '/tmp', 'mod.rs')]",
-            'windows drive': "rows = [os.path.join('sms', 'C:/tmp', 'mod.rs')]",
-        }
-        for label, body in shapes.items():
-            with self.subTest(shape=label):
-                synthetic = (
-                    "import os\n"
-                    "from pathlib import Path\n"
-                    "DISCOVERY_ANCHORS = ()\n"
-                    + body + "\n"
-                )
-                self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+        synthetic = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('sms', '/tmp', 'mod.rs')]\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_drive_prefixed_join_argument_is_reported(self):
+        """``C:/tmp`` is absolute on Windows and relative on POSIX.
+
+        ``os.path.join('sms', 'C:/tmp', 'mod.rs')`` is ``sms/C:/tmp/mod.rs`` on
+        POSIX and ``C:/tmp/mod.rs`` on Windows, so which key the host sees
+        depends on the platform: the call is reported instead of keyed.
+        """
+        synthetic = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('sms', 'C:/tmp', 'mod.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
 
     def test_a_setitem_write_invalidates_the_container(self):
         """``operator.setitem(CH, ...)`` and ``CH.__setitem__(...)`` mutate too."""
@@ -4732,12 +4922,12 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
-    def test_a_file_name_with_a_space_still_keys_the_file(self):
-        """``'msg 1.json'`` is an ordinary name; padding around it is not.
+    def test_a_file_name_with_a_space_is_reported_not_keyed(self):
+        """``'msg 1.json'`` is an ordinary name, but the host cannot schedule it.
 
-        Rejecting every space hid real file names from the guard entirely: no
-        key, no report, so a table that builds ``... / 'msg 1.json'`` was skipped
-        by the discovery loop without anything turning red.
+        The discovery loop splits its changed-file list on whitespace, so no
+        anchor for ``sms/my file.rs`` can ever fire; the key is unschedulable
+        and has to be reported rather than demanded.
         """
         synthetic = (
             "ROOT = Path(__file__).resolve().parents[5]\n"
@@ -4746,8 +4936,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "rows = [SMS / 'my file.rs']\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
-        self.assertTrue(any('missing anchor: sms/my file.rs' in problem
+        self.assertTrue(any('whitespace in a discovery key cannot be scheduled' in problem
                             for problem in problems), problems)
+        self.assertFalse(any('missing anchor: sms/my file.rs' in problem
+                             for problem in problems), problems)
 
     def test_a_single_component_path_is_not_a_discovery_key(self):
         """``ROOT / 'rust-toolchain.toml'`` gets no key, so it needs no anchor.
@@ -5045,6 +5237,212 @@ class DiscoveryAnchorTests(unittest.TestCase):
         problems = violations(synthetic, 'example/negative_controls.py')
         self.assertTrue(any('DISCOVERY_ANCHORS assigned 2 times' in problem for problem in problems),
                         problems)
+
+    def test_a_write_through_a_nested_alias_invalidates_the_container(self):
+        """``A = CH; B = A['a']; B['b'] = ...`` rewrites ``CH['a']['b']``.
+
+        The alias graph used to pair a subscript only when its root was itself
+        bound to a container literal, so one plain alias in between hid the
+        write and the stale key was accepted.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'a': {'b': 'src/pilotdeck-gateway/src/channel/x'}}\n"
+            "A = CH\n"
+            "B = A['a']\n"
+            "B['b'] = 'src/pilotdeck-gateway/src/channel/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['a']['b']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_second_root_binding_with_the_same_spelling_is_checked(self):
+        """``ROOT = BASE`` twice is two bindings, not one repeated spelling.
+
+        The depth check de-duplicated by expression text, so the second
+        ``ROOT = BASE`` was skipped even though ``BASE`` had been rebound to a
+        shallower value in between.
+        """
+        synthetic = (
+            "BASE = Path(__file__).resolve().parents[5]\n"
+            "ROOT = BASE\n"
+            "BASE = Path(__file__).resolve().parents[4]\n"
+            "ROOT = BASE\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'Cargo.toml']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('does not name the repository root' in problem for problem in problems),
+            problems)
+
+    def test_a_dependency_captured_through_an_alias_keeps_its_value(self):
+        """``B = A`` captures the value ``A`` had there, not its final one."""
+        synthetic = (
+            "A = Path(__file__).resolve().parents[4]\n"
+            "B = A\n"
+            "A = Path(__file__).resolve().parents[5]\n"
+            "ROOT = B\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'Cargo.toml']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('does not name the repository root' in problem for problem in problems),
+            problems)
+
+    def test_a_runtime_middle_argument_of_path_is_reported(self):
+        """``Path('src/…/channel', name, 'mod.rs')`` hides the key in the middle.
+
+        Only the last argument used to be checked, so a runtime segment placed
+        before a literal file name produced neither a key nor a report.
+        """
+        shapes = {
+            'Path': ("def row(name):\n"
+                     "    return Path('src/pilotdeck-gateway/src/channel', name, 'mod.rs')\n"),
+            'joinpath': ("def row(name):\n"
+                         "    return Path('src/pilotdeck-gateway/src/channel').joinpath(\n"
+                         "        name, 'mod.rs')\n"),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    problems)
+
+    def test_a_relative_path_after_chdir_is_reported(self):
+        """``os.chdir(...); Path('mod.rs')`` reads ``sms/mod.rs``, not ``mod.rs``.
+
+        Only an explicit ``Path.cwd()`` was invalidated by a chdir, so a
+        relative literal was still resolved from the repository root and the
+        single-component result was dropped as "no discovery key".
+        """
+        synthetic = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "os.chdir('src/pilotdeck-gateway/src/channel/sms')\n"
+            "rows = [Path('mod.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_relative_join_after_chdir_is_reported(self):
+        """The same premise break applies to a spelled-out relative join."""
+        synthetic = (
+            "import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "os.chdir('src/pilotdeck-gateway/src/channel')\n"
+            "rows = [os.path.join('sms', 'mod.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_chdir_alias_makes_the_working_directory_unknowable(self):
+        """``from os import chdir as cd`` reaches the same call.
+
+        The enumeration helpers already resolve their aliases; the chdir check
+        only looked at the attribute name, so an aliased call left the
+        repository-root premise standing.
+        """
+        shapes = {
+            'aliased': "from os import chdir as cd\ncd('src/pilotdeck-gateway/src/channel/sms')\n",
+            'module alias': "import os as operating\noperating.chdir('src/sms')\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                    + "rows = [Path('mod.rs')]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    problems)
+
+    def test_a_sys_path_insertion_of_a_repository_directory_is_reported(self):
+        """A module imported from an inserted directory is invisible here.
+
+        ``sys.path.insert(0, str(FIXTURES / '_shared'))`` + ``import
+        negative_control`` gives the table a helper dependency the import
+        closure never sees, so the helper's key is never derived and the table
+        looked self-contained.
+        """
+        shapes = {
+            'module constant': (
+                "import sys\n"
+                "FIXTURES = Path(__file__).resolve().parents[1]\n"
+                "sys.path.insert(0, str(FIXTURES / '_shared'))\n"
+                "import negative_control\n"),
+            'from sys import path': (
+                "from sys import path\n"
+                "path.append(str(Path(__file__).resolve().parents[1] / '_negkit'))\n"
+                "import negative_submit_migration\n"),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unsupported sys.path insertion' in problem for problem in problems),
+                    problems)
+
+    def test_a_string_join_does_not_reset_on_an_absolute_piece(self):
+        """``os.sep`` is a string: ``os.sep.join`` concatenates, it does not reset.
+
+        ``os.sep.join(('…/sms', '/tmp', 'mod.rs'))`` is
+        ``…/sms//tmp/mod.rs`` inside the repository, so the key is
+        ``tmp/mod.rs``. Applying the filesystem reset there hid a real path.
+        """
+        synthetic = (
+            "import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.sep.join((\n"
+            "    'src/pilotdeck-gateway/src/channel/sms', '/tmp', 'mod.rs'\n"
+            "))]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: tmp/mod.rs' in problem for problem in problems),
+            problems)
+
+    def test_a_parent_component_inside_a_relative_join_is_normalised(self):
+        """``os.path.join(SMS, 'sms/..', 'mod.rs')`` is ``SMS/mod.rs``.
+
+        The ``..`` was only normalised for ``/`` joins, so a relative join
+        credited the useless anchor ``../mod.rs`` while the runtime read
+        ``channel/mod.rs``.
+        """
+        synthetic = (
+            "import os\n"
+            "DISCOVERY_ANCHORS = ('../mod.rs',)\n"
+            "rows = [os.path.join(\n"
+            "    'src/pilotdeck-gateway/src/channel', 'sms/..', 'mod.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: channel/mod.rs' in problem for problem in problems),
+            problems)
+        self.assertTrue(
+            any('stale anchor' in problem and '../mod.rs' in problem
+                for problem in problems),
+            problems)
 
 
 if __name__ == '__main__':
