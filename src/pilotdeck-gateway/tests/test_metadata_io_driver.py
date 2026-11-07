@@ -948,6 +948,33 @@ class EnvironmentControls(unittest.TestCase):
         ('model-complete/negative-controls.py', 'atomic_write'),
         ('native-stimulus-plan/negative_controls.py', 'write_atomic'),
     )
+    # r14（zai 6 P1 + deepseek 2 P1）：r13 按「模块级 + 属性名 ∈ 保留名单」枚举，
+    # 于是 setattr 调用 / Subscript 目标 / 函数体 / 接收者反向 / 写方法调用 / 别名导入
+    # 六种拼写全部漏判。这里每种拼写各配一条存活变异，锚点是仓根常量行（插在它之前，
+    # 正文一字不动），逐个跑 `sibling_atomic_guards` / `publish_guards` 必须抛 AssertionError。
+    NAMESPACE_TAMPER_MUTANTS = (
+        ('setattr-on-builtins',
+         'import builtins\n\nsetattr(builtins, "str", lambda value: "../src")\n\n'),
+        ('globals-item-assignment',
+         'globals()["Path"] = lambda value: value\n\n'),
+        ('attribute-write-in-a-function-body',
+         'import builtins\n\n\ndef _pin_namespace():\n'
+         '    builtins.str = lambda value: "../src"\n\n\n_pin_namespace()\n\n'),
+        ('reverse-receiver-attribute-write',
+         'os.replace = __import__("shutil").copyfile\n\n'),
+        ('module-object-mutator-call',
+         'os.__dict__.update(replace=__import__("shutil").copyfile)\n\n'),
+        ('guarded-module-imported-under-another-name',
+         'import os as _pin_os\n\n'),
+        ('exec-of-a-literal-string',
+         'exec("os.replace = __import__(\'shutil\').copyfile")\n\n'),
+    )
+    SIBLING_ROOT_ANCHORS = {
+        'native-config/negative_controls.py': 'ROOT = Path(__file__).resolve().parents[5]',
+        'model-complete/negative-controls.py': 'ROOT = Path(__file__).resolve().parents[5]',
+        'native-stimulus-plan/negative_controls.py':
+            'root = Path(__file__).resolve().parents[5]',
+    }
     # r3（MiniMax boundary P2）：临时文件「由仓根 scratch 派生」这一条要能被变异杀掉。
     SIBLING_TEMP_MUTANTS = {
         'native-config/negative_controls.py':
@@ -1494,9 +1521,29 @@ class EnvironmentControls(unittest.TestCase):
                     and self.roots_at(body, node.body, root_constant, seen))
         return False
 
-    # 判据按**名字**读的模块级对象。`module_import_form_problems` 只钉「这个名字被绑成
-    # 什么形态」，管不到「别人从这个名字上摘一个同名属性下来」。
-    RESERVED_MODULE_ATTRIBUTES = ('Path', 'os', 'str', 'tempfile')
+    # 判据按**名字**在运行期读的模块。`module_import_form_problems` 钉「这个名字被绑成
+    # 什么形态」，管不到「绕开名字、直接改命名空间」。
+    GUARDED_MODULES = ('os', 'sys', 'tempfile', 'pathlib', 'builtins', 'shutil', 'importlib')
+
+    # 健康夹具里**今天真实存在**的全部命名空间写入与写方法调用。判据是**闭集**：
+    # 任何别的写入（不论语法怎么拼）都不在白名单里 —— r13/r14 那种「换一种拼写再来
+    # 一次」的绕过路径因此不存在，新增写入必须显式改这张表（评审能看到这一行）。
+    ALLOWED_NAMESPACE_WRITES = (
+        'sys.dont_write_bytecode',   # native-stimulus-plan：禁 __pycache__ 落盘
+        'sys.modules[name]',         # published_module 的发布与还原
+        'common.__file__',           # 动态 pristine 模块的身份
+        'common.guard',              # 动态 pristine 模块的租约包装
+        'module.__file__',           # published_module 的身份
+        'globals()[_HELD_STATE]',    # 进程内 held-state 缓存（键是私有常量）
+    )
+    GUARDED_MUTATORS = ('update', 'setdefault', '__setitem__', '__delitem__', 'pop',
+                        'popitem', 'clear', 'append', 'extend', 'insert', 'remove',
+                        'discard', 'add')
+    ALLOWED_MUTATOR_CALLS = (
+        'sys.modules.pop',                 # published_module 的清理
+        'builtins.__dict__.setdefault',    # held-state 的原子首次登记
+        'sys.path.insert',                 # 夹具把自己所在目录挂进 import 路径
+    )
 
     @classmethod
     def module_scope_statements(cls, source):
@@ -1514,36 +1561,183 @@ class EnvironmentControls(unittest.TestCase):
             visit(node)
         return statements
 
-    def module_attribute_shadow_problems(self, source):
-        """模块级不许**给**判据读的名字挂属性：`builtins.str = …` 一类。
+    @classmethod
+    def module_scope_names(cls, source):
+        """模块级作用域绑定的名字集合（含 import / 赋值 / 解包 / 循环 / with-as）。"""
+        names = set()
 
-        r13（zai sibling P1 #2 + deepseek sibling/boundary P1）：r12 的 `'str': None`
-        只查 `bound_names` 里的 `Name` 目标 —— `builtins.str = lambda value: '../src'`
-        的赋值目标是 `Attribute`，`bind_target` 直接丢掉，绑定表里看不到任何 `str`，
-        闸门全绿而 `mkstemp(dir=str(scratch))` 走的是被换掉的可调用对象。`import
-        builtins` 也不在任何 import-form 名单上，所以只能从「赋值目标」这一侧堵。
+        def bind(node):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for element in node.elts:
+                    bind(element)
+            elif isinstance(node, ast.Starred):
+                bind(node.value)
 
-        作用域限定在**模块级**、属性名限定在 `RESERVED_MODULE_ATTRIBUTES`：健康夹具里
-        合法地存在 `sys.dont_write_bytecode`（模块级）与 `common.__file__ = …`、
-        `module.__file__`、`common.guard` 这些属性赋值 —— `__file__` 本来就该是属性，
-        一刀切「模块级不许有属性赋值」会是假 FAIL。
+        for node in cls.module_scope_statements(source):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split('.')[0])
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name)
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    bind(target)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                bind(node.target)
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                bind(node.target)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        bind(item.optional_vars)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                names.add(node.name)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+        return names
+
+    @classmethod
+    def module_aliases(cls, source):
+        """一跳别名：`o = os` —— 判据按名字读的模块被挂到另一个名字上。"""
+        return {target.id for node in ast.walk(ast.parse(source))
+                if isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in cls.GUARDED_MODULES
+                for target in node.targets}
+
+    @staticmethod
+    def receiver_root(node):
+        """属性 / 下标链的根接收者（`a.b[c].d` → `a`）。"""
+        while isinstance(node, (ast.Attribute, ast.Subscript)):
+            node = node.value
+        return node
+
+    @classmethod
+    def namespace_write_targets(cls, target):
+        """写目标里的属性 / 下标节点：只看最外层，元组解包递归。"""
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            return [target]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return [sub for element in target.elts
+                    for sub in cls.namespace_write_targets(element)]
+        if isinstance(target, ast.Starred):
+            return cls.namespace_write_targets(target.value)
+        return []
+
+    def namespace_tamper_problems(self, source):
+        """判据按名字读的模块只能被**读**：命名空间的写入是一个**闭集**。
+
+        r13 只钉了「模块级、属性名恰是 `Path`/`os`/`str`/`tempfile` 的赋值目标」。
+        r14（zai sibling P1 #1/#2 + boundary P1 #1/#2 + concurrency P1 #1/#2，
+        deepseek sibling P1 #1/#2）证明这是枚举不完的：换个拼写就能改道而正文一字
+        未动 —— `setattr(builtins, 'str', …)`（调用形态）、`globals()['str'] = …`
+        / `sys.modules['os'].replace = …`（Subscript 目标，`bind_target` 直接丢）、
+        函数体内 `builtins.str = …`（r13 把作用域剪到模块级）、反方向的
+        `os.replace = …` / `Path.is_relative_to = …`（接收者是判据读的模块，属性名
+        不在名单）、`os.__dict__.update(replace=…)`（写方法调用）、`import os as o`
+        （别名）。每一条都让静态钉子全绿而运行期改道。
+
+        改成闭集后这些形态一并判红，且**不再需要逐个枚举**：
+          * 属性 / 下标写目标（含 `del`）只有 `ALLOWED_NAMESPACE_WRITES` 里的六条；
+            目标是函数内局部对象（`self.x` / `row['k']` / `state['held']`）时放行 ——
+            局部对象不是判据读的命名空间。模块级绑定名、判据读的模块、以及它们的
+            一跳别名（`o = os`）都在管辖内。
+          * `setattr(` / `delattr(` 一律判红（健康夹具里零使用）。
+          * `os.__dict__.update(…)` 这类**写方法**调用：接收者根是被监测模块或别名时
+            判红，只放行 `ALLOWED_MUTATOR_CALLS` 三条（`sys.modules.pop` /
+            `builtins.__dict__.setdefault` / `sys.path.insert`）。
+          * 被监测模块的 import：不带头名（`import os as o`）、且只能在模块级
+            （函数体内 `import os` 之后 `os.replace = …` 同样改道）。
+          * `exec(<字面量>)` / `eval(<字面量>)` 判红 —— 它们是「用字符串改命名空间」。
+
+        边界（写清楚，免得下一轮当成新洞）：`exec(<动态表达式>)` 的写入静态不可判
+        （`negative_process.py` 自己要用 `exec(compile(snapshot[path]…))` 做动态
+        pristine 模块），这一支由运行期行为检定兜底，不在本判据内。
         """
+        tree = ast.parse(source)
+        guarded = set(self.GUARDED_MODULES) | self.module_aliases(source)
+        module_names = self.module_scope_names(source)
         problems = []
-        for node in self.module_scope_statements(source):
+        for node in ast.walk(tree):
             if isinstance(node, ast.Assign):
                 targets = node.targets
             elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
                 targets = [node.target]
+            elif isinstance(node, ast.Delete):
+                targets = node.targets
             else:
-                continue
+                targets = []
             for target in targets:
-                for sub in ast.walk(target):
-                    if (isinstance(sub, ast.Attribute)
-                            and sub.attr in self.RESERVED_MODULE_ATTRIBUTES):
+                for sub in self.namespace_write_targets(target):
+                    text = ast.unparse(sub)
+                    if text in self.ALLOWED_NAMESPACE_WRITES:
+                        continue
+                    root = self.receiver_root(sub)
+                    local = (isinstance(root, ast.Name)
+                             and root.id not in guarded and root.id not in module_names)
+                    if not local:
                         problems.append(
-                            f'module scope must not assign the attribute '
-                            f'{ast.unparse(sub)}: the guard reads '
-                            f'"{sub.attr}" by name')
+                            f'line {node.lineno}: namespace write "{text}" is not in the '
+                            f'closed set the guard allows')
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            spelled = ast.unparse(func)
+            if (isinstance(func, ast.Name) and func.id in ('exec', 'eval')
+                    and node.args and isinstance(node.args[0], (ast.Constant, ast.JoinedStr))):
+                problems.append(
+                    f'line {node.lineno}: {spelled}(<literal>) rewrites the module '
+                    f'namespace: {ast.unparse(node)[:100]}')
+            elif isinstance(func, ast.Name) and func.id in ('setattr', 'delattr'):
+                problems.append(
+                    f'line {node.lineno}: {spelled}(…) rewrites a namespace: '
+                    f'{ast.unparse(node)[:100]}')
+            elif (isinstance(func, ast.Attribute) and func.attr in self.GUARDED_MUTATORS
+                    and spelled not in self.ALLOWED_MUTATOR_CALLS):
+                root = self.receiver_root(func)
+                if not isinstance(root, ast.Name) or root.id in guarded:
+                    problems.append(
+                        f'line {node.lineno}: {spelled}(…) mutates a module object the '
+                        f'guard reads')
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split('.')[0] in self.GUARDED_MODULES and alias.asname:
+                        problems.append(
+                            f'line {node.lineno}: the guard reads '
+                            f'"{alias.name.split(".")[0]}" by name; it must not be '
+                            f'imported under another name: {ast.unparse(node)}')
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                if node.module.split('.')[0] in self.GUARDED_MODULES:
+                    for alias in node.names:
+                        if alias.asname:
+                            problems.append(
+                                f'line {node.lineno}: the guard reads these module names '
+                                f'by name; alias import: {ast.unparse(node)}')
+        problems.extend(self.nested_guarded_import_problems(tree))
+        return problems
+
+    def nested_guarded_import_problems(self, tree):
+        """函数 / 类体内的 `import os` 同样是改道入口（局部名 shadow 掉模块名）。"""
+        problems = []
+
+        def visit(node, nested):
+            for child in ast.iter_child_nodes(node):
+                inside = nested or isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                                     ast.ClassDef, ast.Lambda))
+                if inside and isinstance(child, ast.Import):
+                    for alias in child.names:
+                        if alias.name.split('.')[0] in self.GUARDED_MODULES:
+                            problems.append(
+                                f'line {child.lineno}: a guarded module must be imported '
+                                f'at module scope only: {ast.unparse(child)}')
+                visit(child, inside)
+
+        visit(tree, False)
         return problems
 
     def module_import_form_problems(self, source, expected):
@@ -1564,7 +1758,7 @@ class EnvironmentControls(unittest.TestCase):
         `Path(__file__).resolve().parents[5]`，只钉这段**文本**时，在同一行之前插一句
         `__file__ = '/a/b/c/d/e/f/g.py'` 就把仓根搬到别处，而文本一字未变。它同样是
         「判据按名字在运行期读的东西」，必须钉成「模块里不许有绑定」。
-        `module_attribute_shadow_problems` 补另一半：属性目标（`builtins.str = …`）。
+        `namespace_tamper_problems` 补另一半：整个命名空间写入面（r14 起是闭集）。
         """
         problems = []
         for name, form in expected.items():
@@ -1705,9 +1899,12 @@ class EnvironmentControls(unittest.TestCase):
         # r13（zai sibling P1 #2）：上面按 `Name` 目标数绑定，`builtins.str = …` 这类**属性
         # 目标**不在枚举里：`import builtins` 也不在任何 import-form 名单上，绑定表里看不到
         # 任何 `str`，闸门全绿而 `mkstemp(dir=str(scratch))` 已被换掉。
-        self.assertEqual(self.module_attribute_shadow_problems(source), [],
-                         '#1692 §9 r13 module scope must not re-point the names the guard '
-                         'reads (builtins.Path / builtins.str / builtins.os …)')
+        # r14（两家六条 P1）：按形态枚举属性目标永远少一种，改成**命名空间写入闭集**
+        # （`namespace_tamper_problems`）：setattr / Subscript 目标 / 函数体 / 接收者反向
+        # / 写方法 / 别名导入一并判红。
+        self.assertEqual(self.namespace_tamper_problems(source), [],
+                         '#1692 §9 r14 the namespaces the guard reads are read-only: no '
+                         'setattr, no attribute/item write, no module-object mutator call')
         # r11（zai sibling P1 + DeepSeek sibling P1）：mkstemp 的 prefix/suffix 同样是路径
         # 片段，`prefix="../src/" + path.name` 会把临时文件拼到被扫的 `src/`。
         self.assertEqual(self.mkstemp_name_problems(body), [],
@@ -1862,6 +2059,16 @@ class EnvironmentControls(unittest.TestCase):
                                        msg=f'#1692 §9 r2 {relative} {label} must be caught'):
                     self.sibling_atomic_guards(source.replace(old, new, 1), function)
                 print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
+                      flush=True)
+            root_anchor = self.SIBLING_ROOT_ANCHORS[relative]
+            for label, snippet in self.NAMESPACE_TAMPER_MUTANTS:
+                self.assertEqual(source.count(root_anchor), 1,
+                                 f'#1692 §9 r14 {relative} unique anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r14 {relative} {label} must be caught'):
+                    self.sibling_atomic_guards(
+                        source.replace(root_anchor, snippet + root_anchor, 1), function)
+                print(f'#1692 §9 r14 namespace-tamper mutant {relative} {label}: KILLED',
                       flush=True)
             for label, anchor in self.SIBLING_RENAME_MUTANTS.get(relative, ()):
                 self.assertIn(anchor, source, f'#1692 §9 r2 {relative} anchor: {label}')
@@ -2458,8 +2665,8 @@ self_check_controls_run | return | return problems
         # r11（DeepSeek sibling/boundary P1）：次数不够，形态也要钉死；`os` / `tempfile`
         # 同理（判据只读 `os.replace` / `tempfile.mkstemp` 的属性名，模块级 shim 能整条改道）。
         # r12（zai/DeepSeek）：`str` 与 `tempfile` 的闸门口径同上（按绑定表，不看正文拼写）。
-        # r13：`__file__` 同样按名字在运行期被读（判据读它做仓根），属性目标另由
-        # `module_attribute_shadow_problems` 堵。
+        # r13：`__file__` 同样按名字在运行期被读（判据读它做仓根）；属性 / 下标
+        # 写入面另由 `namespace_tamper_problems` 的闭集堵（r14）。
         expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os',
                             'str': None, '__file__': None}
         if self.fixture_bindings(source, 'tempfile'):
@@ -2467,9 +2674,9 @@ self_check_controls_run | return | return problems
         self.assertEqual(self.module_import_form_problems(source, expected_imports), [],
                          '#1692 §9 r11 the module names the guard reads are bound exactly '
                          'once, by the plain import form')
-        self.assertEqual(self.module_attribute_shadow_problems(source), [],
-                         '#1692 §9 r13 module scope must not re-point the names the guard '
-                         'reads (builtins.Path / builtins.str / builtins.os …)')
+        self.assertEqual(self.namespace_tamper_problems(source), [],
+                         '#1692 §9 r14 the namespaces the guard reads are read-only: no '
+                         'setattr, no attribute/item write, no module-object mutator call')
         self.assertEqual(self.mkstemp_name_problems(body), [],
                          '#1692 §9 r11 mkstemp prefix/suffix must stay relative name '
                          'fragments of the published target')
@@ -2588,8 +2795,8 @@ self_check_controls_run | return | return problems
             source, {'Path': 'from pathlib import Path', 'os': 'import os',
                      'tempfile': 'import tempfile', 'str': None, '__file__': None}), [],
             '#1903 r11 the call-site fixture binds the module names by the plain import form')
-        self.assertEqual(self.module_attribute_shadow_problems(source), [],
-                         '#1903 r13 module scope must not re-point the names the guard reads')
+        self.assertEqual(self.namespace_tamper_problems(source), [],
+                         '#1903 r14 the namespaces the guard reads are read-only')
         self.assertEqual(source.count('write_source_atomic(root, path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
         self.assertEqual(source.count('write_source_atomic(root, path, original)'), 1,
@@ -2774,7 +2981,24 @@ self_check_controls_run | return | return problems
                  'from pathlib import Path',
                  "import builtins\nfrom pathlib import Path\n\n"
                  'builtins.Path = lambda value: '
-                 "__import__('pathlib').Path('/tmp', value)")):
+                 "__import__('pathlib').Path('/tmp', value)"),
+                # r14（zai sibling P1 #1 / boundary P1 #2 + deepseek sibling P1 #1/#2）：
+                # 共享实现这一侧同样要覆盖「调用形态 / 下标目标 / 接收者反向」三种拼写，
+                # 证明闭集判据不是只在兄弟夹具那一侧接线。
+                ('atomic-publish-setattr-on-builtins',
+                 'import os',
+                 'import builtins\nimport os\n\n'
+                 'setattr(builtins, "str", lambda value: "../src")'),
+                ('atomic-publish-globals-item-assignment',
+                 "PUBLISH_DIR = '.negctl-publish'",
+                 'globals()["Path"] = lambda value: value\n'
+                 "PUBLISH_DIR = '.negctl-publish'"),
+                ('atomic-publish-reverse-receiver-attribute-write',
+                 'import os',
+                 'import os\n\nos.replace = __import__("shutil").copyfile'),
+                ('atomic-publish-module-object-mutator-call',
+                 'import os',
+                 'import os\n\nos.__dict__.update(replace=__import__("shutil").copyfile)')):
             self.assertEqual(shared.count(old), 1, f'#1692 §9 unique anchor: {label}')
             mutant = shared.replace(old, new, 1)
             with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
@@ -2844,6 +3068,14 @@ self_check_controls_run | return | return problems
                 # r13（zai sibling P1 #2）：属性赋值目标绕开 `Name` 绑定表。
                 ('fixture-str-shadowed-via-a-builtins-attribute', anchor_after_import,
                  "import builtins\nbuiltins.str = lambda value: '../src'\n"
+                 + anchor_after_import),
+                # r14（deepseek sibling P1 #2 + zai concurrency P1 #1）：调用方这侧也补
+                # 一条「下标目标」与一条「函数体里是改道」的拼写。
+                ('fixture-globals-item-assignment', anchor_after_import,
+                 'globals()["Path"] = lambda value: value\n' + anchor_after_import),
+                ('fixture-attribute-write-in-a-function-body', anchor_after_import,
+                 'import builtins\n\n\ndef _pin_namespace():\n'
+                 '    builtins.str = lambda value: "../src"\n\n\n_pin_namespace()\n'
                  + anchor_after_import)):
             self.assertEqual(fixture.count(old), 1, f'#1692 §9 unique anchor: {label}')
             with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
