@@ -708,9 +708,16 @@ def main():
         identity = baseline_identity(baseline)
         roots = ts_read_roots(args.ts_read_dir, output, baseline, args.rust_bin)
         recorded_roots = [str(root) for root in roots]
+        # r3 P1/P2: the recorder's whole protected-tree scope is evidence —
+        # batch output root, checkout root and home — so the offline validator
+        # replays the recorder's decision from the record instead of the
+        # validating process's own environment. The output root is the
+        # recorded runtime's parent by this module's layout; compare.py
+        # anchors the two before replaying the scope.
+        recorder_scope = {'output': str(output), 'root': str(ROOT), 'home': str(Path.home())}
         provenance = {'side': 'ts', 'executable': node, 'sourceHead': HEAD, 'sourcePath': str(baseline),
                       'baseline': identity, 'node': node, 'nodeIdentity': node_ident,
-                      'tsReadDirs': recorded_roots, 'opensslConfig': OPENSSL_CONFIG}
+                      'tsReadDirs': recorded_roots, 'opensslConfig': OPENSSL_CONFIG, **recorder_scope}
         runtime = output / 'runtime'
         expected_rust = rust_identity(args.rust_bin, args.rust_source) if args.rust_bin else None
         if expected_rust and (expected_rust['executable']['path'] == node['path']
@@ -772,7 +779,7 @@ def main():
                             runtime.rename(output / 'rust-mock-preflight-tree')
                         rust_provenance = {**expected_rust, 'stagedExecutable': staged, 'stagedSkills': staged_skills, 'baseline': identity,
                                            'node': node, 'nodeIdentity': node_ident, 'tsReadDirs': recorded_roots,
-                                           'opensslConfig': OPENSSL_CONFIG}
+                                           'opensslConfig': OPENSSL_CONFIG, **recorder_scope}
                         candidate = run_round(output, runtime, rust_profile, rust_probe, 'rust', rust_provenance, args.timeout,
                                               mock_profile=rust_mock_profile, mock_isolation=rust_mock)
                         summary['rustComparison'] = compare(first, candidate, expected_rust)

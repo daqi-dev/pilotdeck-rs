@@ -252,6 +252,10 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
            'provenance': {'side': 'ts', 'sourcePath': '/synthetic/baseline', 'opensslConfig': OPENSSL_CONFIG,
                           'node': {'path': '/synthetic/unit-test-only', 'sha256': '0' * 64}, 'executable': {'path': '/synthetic/unit-test-only', 'sha256': '0' * 64},
                           'nodeIdentity': dict(PINNED_NODE), 'tsReadDirs': [],
+                          # r3: the recorder's whole scope is evidence (run_round
+                          # recorder_scope); the offline validator replays it from
+                          # the record. Output is the recorded runtime's parent.
+                          'output': str(Path(runtime).parent), 'root': str(ROOT), 'home': str(Path.home()),
                           'sourceHead': HEAD, 'baseline': {'sourceHead': HEAD, 'entrySha256': '0' * 64,
                               'path': '/synthetic/baseline', 'files': {'src/fixture.ts': '0' * 64},
                               'trees': {name: '0' * 64 for name in ('src', 'dist', 'packages', 'node_modules', 'skills')}}}}
@@ -1329,10 +1333,26 @@ class ContractTests(unittest.TestCase):
 
         for why, roots_of in (('home itself', lambda run: [Path.home()]),
                               ('the evidence tree', lambda run: [left]),
+                              ('a sibling evidence subtree (rust-stage)',
+                               lambda run: [Path(run['runtime']).parent / 'rust-stage']),
+                              ('the sibling controls copy',
+                               lambda run: [Path(run['runtime']).parent / 'controls']),
+                              ('a sibling round directory',
+                               lambda run: [Path(run['runtime']).parent / 'ts-2']),
                               ('the baseline', lambda run: [run['provenance']['baseline']['path']])):
             with self.subTest(protected=why):
                 tampered('round.ts-read-dirs-protected', protected_roots(roots_of),
                          stays_clean=('round.profile-binding', 'round.probe-profile'))
+        # r3 P1: the sibling subtrees above are what the recorder protects via
+        # the whole batch output root — the replayed scope is the recorded one,
+        # so its own fields are evidence too. The output root is anchored to the
+        # recorded runtime and cannot be slid aside; a dropped or rewritten
+        # scope spelling must fail closed.
+        tampered('round.recorder-scope',
+                 lambda run: run['provenance'].__setitem__('output', '/synthetic/elsewhere'))
+        for key in ('output', 'root', 'home'):
+            with self.subTest(dropped=key):
+                tampered('round.recorder-scope', lambda run, key=key: run['provenance'].pop(key))
         # Consistent but different roots on one side only: not a PASS pair.
         shutil.rmtree(left)
         shutil.copytree(pristine, left)
@@ -1363,6 +1383,109 @@ class ContractTests(unittest.TestCase):
         result = compare(source, target, expected)
         self.assertEqual({row['rule'] for row in result['failures']},
                          {'round.ts-read-dirs-protected', 'round.ts-read-dirs'}, result)
+
+    def test_ts_round_ts_read_dirs_covering_the_candidate_fail_offline(self):
+        # r3 P2 (DS sibling#2): the r2 P1 fix threads compare's --rust-bin into
+        # load_round so a TS round's replay also protects the candidate
+        # directory. The rust-side half is pinned above; this is the missing
+        # TS-left half — without the candidate in the TS round's protected
+        # trees, the left round's round.ts-read-dirs-protected cannot fire and
+        # this test goes red.
+        source, target = self.root / 'source', self.root / 'target'
+        synthetic_round(source, self.root / 'fixed-runtime')
+        shutil.copytree(source, target)
+        expected = as_rust(target)
+        run = json.loads((source / 'round.json').read_text())
+        # Single mutation on the TS side: the declared roots alone. The TS
+        # profile carries the roots, so every binding (round level and the
+        # per-case digests) is re-derived from them and stays internally
+        # consistent — the candidate tree is the only guard that can fail.
+        run['provenance']['tsReadDirs'] = [expected['executable']['path']]
+        mock_ids = {s['id'] for s in SCENARIOS if s.get('mockGateway') is True}
+        bind_policy(run)
+        if 'mockIsolation' in run:
+            bind_mock_policy(run)
+        save(source / 'round.json', run)
+        for scenario in SCENARIOS:
+            row_path = source / 'cases' / scenario['id'] / 'record.json'
+            row = json.loads(row_path.read_text())
+            binding = run['mockIsolation'] if scenario['id'] in mock_ids else run['isolation']
+            row['profileSha256'] = binding['profileSha256']
+            save(row_path, row)
+        result = compare(source, target, expected)
+        rules = {(row.get('side'), row['rule']) for row in result['failures']}
+        self.assertIn(('left', 'round.ts-read-dirs-protected'), rules,
+                      'the TS round replay must protect the --rust-bin candidate parent')
+
+    def test_mock_profile_bindings_replay_recorded_roots(self):
+        # r3 P2 (DS sibling#3): with non-empty recorded tsReadDirs the mock
+        # base and probe profiles must be re-derived from them. Every legacy
+        # fixture uses empty roots, where dropping the roots while re-deriving
+        # produces identical bytes — these single mutations pin both mock
+        # digests while the base round.profile-binding stays green.
+        cases = [{'id': 'mock-only', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 1,
+                  'stdout': 'mock summary\n', 'stderr': 'mock error\n', 'mockGateway': True},
+                 {'id': 'plain', 'argv': [], 'stdinHex': '', 'token': False, 'exit': 1,
+                  'stdout': 'plain summary\n', 'stderr': 'plain error\n'}]
+        root = '/PDRS-NODE-DEPS/libuv-1.52.1/lib'
+        with patch('compare.SCENARIOS', cases), patch.object(sys.modules[__name__], 'SCENARIOS', cases):
+            reference, left = self.root / 'reference', self.root / 'left'
+
+            def rebind(path, roots=(root,)):
+                run = json.loads((path / 'round.json').read_text())
+                run['provenance']['tsReadDirs'] = list(roots)
+                bind_policy(run)
+                bind_mock_policy(run)
+                save(path / 'round.json', run)
+                for scenario in cases:
+                    row = json.loads((path / 'cases' / scenario['id'] / 'record.json').read_text())
+                    binding = run['mockIsolation'] if scenario.get('mockGateway') else run['isolation']
+                    row['profileSha256'] = binding['profileSha256']
+                    save(path / 'cases' / scenario['id'] / 'record.json', row)
+                return run
+
+            synthetic_round(reference, self.root / 'fixed-runtime')
+            rebind(reference)
+            # Honest baseline first: the rebinding with non-empty roots is a
+            # complete, valid round before any mutation.
+            self.assertEqual(compare(reference, reference)['status'], 'PASS')
+
+            def tampered(rule, change):
+                shutil.rmtree(left, ignore_errors=True)
+                shutil.copytree(reference, left)
+                run = json.loads((left / 'round.json').read_text())
+                change(run)
+                save(left / 'round.json', run)
+                result = compare(left, reference)
+                rules = [row['rule'] for row in result['failures']]
+                self.assertEqual(result['status'], 'FAIL')
+                self.assertIn(rule, rules)
+                self.assertNotIn('round.profile-binding', rules,
+                                 'the base binding must stay green: the mutation is single')
+
+            def mock_policy_without_roots(run):
+                p = run['provenance']
+                text = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']),
+                                       p['executable']['path'], 'ts', mock_gateway=True)
+                run['mockIsolation']['profileText'] = text
+                run['mockIsolation']['profileSha256'] = hashlib.sha256(text.encode()).hexdigest()
+                # Keep the per-case sandbox-binding green so the mock digest
+                # family is the only thing that differs from the honest round.
+                for scenario in cases:
+                    if scenario.get('mockGateway'):
+                        row_path = left / 'cases' / scenario['id'] / 'record.json'
+                        row = json.loads(row_path.read_text())
+                        row['profileSha256'] = run['mockIsolation']['profileSha256']
+                        save(row_path, row)
+
+            def mock_probe_without_roots(run):
+                p = run['provenance']
+                run['mockIsolation']['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
+                    Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts',
+                    mock_gateway=True).encode()).hexdigest()
+
+            tampered('round.mock-profile-binding', mock_policy_without_roots)
+            tampered('round.mock-probe-profile', mock_probe_without_roots)
 
     def test_rust_stage_copies_binary_and_skills_and_keeps_baseline_unreadable(self):
         baseline, output = self.root / 'baseline', self.root / 'out'
@@ -3211,6 +3334,12 @@ class ContractTests(unittest.TestCase):
         provenance = product.call_args[0][5]
         self.assertEqual(provenance['tsReadDirs'], [str(declared)])
         self.assertEqual(provenance['nodeIdentity'], dict(PINNED_NODE))
+        # r3: the recorder's whole scope is evidence — batch output root,
+        # checkout root and home reach the provenance the offline validator
+        # replays (round.recorder-scope).
+        self.assertEqual(provenance['output'], str(output))
+        self.assertEqual(provenance['root'], str(ROOT))
+        self.assertEqual(provenance['home'], str(Path.home()))
         text = (output / 'ts.sb').read_text()
         self.assertIn(f'(subpath "{declared}")', text,
                       'ts.sb must carry the declared dependency root')
