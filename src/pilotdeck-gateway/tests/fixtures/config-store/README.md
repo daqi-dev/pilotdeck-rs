@@ -57,11 +57,14 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   对象的选取（存在则监视自身、否则监视父目录、父目录也不存在则不监视）与基线
   一致，非 `NotFound` 的启动 stat 失败除外（保留该路径待首拍重探，#1792 r1）；
   同样的失败落在**父目录**的 stat 上时（配置文件缺失、走 `dirname` 回退），基线
-  `existsSync` 对 stat 错误返回 false、仍会 `watch(dirname)`（Node v22.22.0 实测
-  EACCES 下 `existsSync` 为 false），Rust 则保留父目录待首拍重探——探测持续失败
-  期间父目录内的其它变更不报，为已登记差异（#1987 A3 只登记不改语义，测试
+  `existsSync` 对 stat 错误返回 false（Node v22.22.0 实测 EACCES 下为 false），于是
+  仍 `watch(dirname)`；但该父目录不可读时 `watch()` 抛 EACCES，被基线的空 `catch`
+  吞掉——**这条路径在基线上根本没有监视器**（只剩手动 reload），不会「监视上一级
+  目录」。Rust 则保留父目录待首拍重探、探测恢复后上报期间错过的变更——这是
+  **fixture 内登记、待差异账本收录**的差异（`specs/gateway-parity/` 现无 #1987/A3
+  条目；#1987 A3 只登记不改语义，测试
   `startup_parent_probe_failure_watches_the_parent_dir` 钉住现行为并注明对齐 TS
-  时应变红）。
+  时恢复断言应变红）。
   本原件的 watch 场景写入间隔 30 ms，加一个轮询周期仍远小于 250 ms 去抖，结论不受
   下列差异影响。
 - 与 `fs.watch` 不全等的三处（不加 crate 时无法消除，已用单测钉住现行为）：
