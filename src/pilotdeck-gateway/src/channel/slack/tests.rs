@@ -690,6 +690,14 @@ fn case_deps(record: &Arc<SyncMutex<Record>>) -> ChannelStartDeps {
     }
 }
 
+/// The replay and the `#[ignore]` regeneration share the host-global
+/// 18183–18198 port segment (the generator's per-case rotation); this lock
+/// serializes the two tests within one binary. It is a tokio mutex because
+/// the replay holds it across its awaits (clippy `await_holding_lock`
+/// rejects a `std::sync` guard there).
+static FIXTURE_PORT_SEGMENT: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 /// The generator's per-case port rotation is host-global; a port held by
 /// anything else means the replay would measure the holder, not the channel.
 async fn ensure_replay_port_free(port: u16) {
@@ -878,6 +886,11 @@ async fn replay(case: &Value) -> Value {
 
 #[tokio::test]
 async fn channel_matches_real_ts() {
+    // The generator's per-case port rotation is host-global, and the
+    // `#[ignore]` regeneration test runs the same generator: serialize the
+    // two so one binary can run both (`--include-ignored`) without either
+    // side measuring the other's listener.
+    let _port_segment = FIXTURE_PORT_SEGMENT.lock().await;
     let oracle = oracle();
     for case in cases(&oracle) {
         let name = case["name"].as_str().expect("#1344 case name").to_owned();
@@ -891,9 +904,10 @@ async fn channel_matches_real_ts() {
     }
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "regenerates from the real TS baseline; set PDRS_BASELINE and the pinned Node v22.22.0 runtime"]
-fn channel_slack_fixture_regenerates_identically() {
+async fn channel_slack_fixture_regenerates_identically() {
+    let _port_segment = FIXTURE_PORT_SEGMENT.lock().await;
     crate::test_baseline::regenerates_identically("channel-slack");
 }
 
