@@ -495,10 +495,21 @@ impl SessionOwner {
         let always_on = JsString::from("always-on/");
         let cron = JsString::from("cron:");
         state.records.iter().any(|(key, record)| {
-            !key.units().starts_with(always_on.units())
-                && !key.units().starts_with(cron.units())
-                && record.context.project_key.as_ref() == Some(project)
-                && self.0.turns.admission.has_active_turn(key)
+            // #996: the admission conjuncts' control switches
+            // (session-owner-hooks/schemata.py). Off — the original conjuncts.
+            let not_always_on =
+                crate::mutants::on("always-on") || !key.units().starts_with(always_on.units());
+            let not_cron = crate::mutants::on("cron") || !key.units().starts_with(cron.units());
+            let in_project = crate::mutants::on("project")
+                || record.context.project_key.as_ref() == Some(project);
+            let active_turn = if crate::mutants::on("no-active") {
+                false
+            } else if crate::mutants::on("no-admission") {
+                true
+            } else {
+                self.0.turns.admission.has_active_turn(key)
+            };
+            not_always_on && not_cron && in_project && active_turn
         })
     }
 
@@ -984,40 +995,124 @@ impl SessionOwner {
             EvictionReason::DirtyRecreate => "dirty_recreate",
             EvictionReason::Shutdown => "shutdown",
         };
-        let result = record
-            .handle
-            .dispose(format!("session_{label}").into())
-            .await;
-        self.emit(key, reason);
-        if reason == EvictionReason::Idle
-            && let Some(callback) = &self.0.options.on_session_idle_evict
-        {
+        // #996: early-callback — the dispose future stays unpolled until after
+        // the idle hook (the old mutation moved the `.await` to the end), so
+        // the hook observes the snapshot before the disposal finished.
+        let mut pending = record.handle.dispose(format!("session_{label}").into());
+        let result = if crate::mutants::on("early-callback") {
+            None
+        } else {
+            Some(pending.as_mut().await)
+        };
+        // #996: early-snapshot — the emit moves after the idle hook.
+        let emit_early = !crate::mutants::on("early-snapshot");
+        if emit_early {
+            self.emit(key, reason);
+        }
+        // #996: disabled-eager — the old mutation snapshotted eagerly when no
+        // idle callback was configured.
+        if crate::mutants::on("disabled-eager") && self.0.options.on_session_idle_evict.is_none() {
+            record.handle.snapshot();
+        }
+        // #996: the idle gate's control switches. Off — idle only.
+        let idle_evict = if crate::mutants::on("no-hook") {
+            false
+        } else if crate::mutants::on("all-reasons") {
+            true
+        } else if crate::mutants::on("dispose-error") {
+            reason == EvictionReason::Idle && result.as_ref().is_some_and(|result| result.is_ok())
+        } else {
+            reason == EvictionReason::Idle
+        };
+        if idle_evict && let Some(callback) = &self.0.options.on_session_idle_evict {
             // TS catches a failed snapshot and still emits the other fields.
-            let message_count = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let counted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let snapshot = record.handle.snapshot();
-                match snapshot.as_object()?.get_property("messages")? {
-                    JsValue::Array(messages) => Some(JsValue::Number(messages.len() as f64)),
-                    JsValue::String(text) => Some(JsValue::Number(text.units().len() as f64)),
-                    other => other
-                        .as_object()?
-                        .get_property("length")
-                        .filter(|v| !v.is_undefined())
-                        .cloned(),
+                // #996: inherited-messages reads the own entries only, not the
+                // prototype chain.
+                let messages = if crate::mutants::on("inherited-messages") {
+                    snapshot.get("messages")?
+                } else {
+                    snapshot.as_object()?.get_property("messages")?
+                };
+                match messages {
+                    // #996: array-length counts one extra message.
+                    JsValue::Array(messages) => Some(JsValue::Number(
+                        (messages.len() + usize::from(crate::mutants::on("array-length"))) as f64,
+                    )),
+                    // #996: utf16-length counts UTF-8 bytes, not UTF-16 units.
+                    JsValue::String(text) => {
+                        Some(JsValue::Number(if crate::mutants::on("utf16-length") {
+                            text.to_utf8().unwrap().len() as f64
+                        } else {
+                            text.units().len() as f64
+                        }))
+                    }
+                    other => {
+                        // #996: inherited-length reads the own entries only.
+                        let length = if crate::mutants::on("inherited-length") {
+                            other.get("length")
+                        } else {
+                            other.as_object()?.get_property("length")
+                        };
+                        // #996: undefined drops the defined filter.
+                        let length = if crate::mutants::on("undefined") {
+                            length
+                        } else {
+                            length.filter(|v| !v.is_undefined())
+                        };
+                        // #996: object-length maps every survivor to 0.0.
+                        if crate::mutants::on("object-length") {
+                            length.map(|_| JsValue::Number(0.0))
+                        } else {
+                            length.cloned()
+                        }
+                    }
                 }
-            }))
-            .ok()
-            .flatten();
+            }));
+            // #996: snapshot-panic propagates the snapshot panic instead of
+            // swallowing it (the old `.expect`); missing-count substitutes 0.0
+            // for a failed snapshot.
+            let message_count = if crate::mutants::on("snapshot-panic") {
+                counted.expect("snapshot failed")
+            } else {
+                counted
+                    .ok()
+                    .flatten()
+                    .or_else(|| crate::mutants::on("missing-count").then(|| JsValue::Number(0.0)))
+            };
             callback(
                 key,
                 &SessionEvictionSnapshot {
                     session_key: key.clone(),
-                    last_used_at: record.last_used,
-                    context: record.context,
+                    // #996: timestamp reports now() instead of the record's
+                    // last_used.
+                    last_used_at: if crate::mutants::on("timestamp") {
+                        (self.0.options.now_ms)()
+                    } else {
+                        record.last_used
+                    },
+                    // #996: context drops the record's allowed_tools.
+                    context: if crate::mutants::on("context") {
+                        SessionContext {
+                            allowed_tools: None,
+                            ..record.context
+                        }
+                    } else {
+                        record.context
+                    },
                     message_count,
                 },
             );
         }
-        result
+        // #996: early-snapshot emits after the idle hook instead.
+        if !emit_early {
+            self.emit(key, reason);
+        }
+        match result {
+            Some(result) => result,
+            None => pending.await,
+        }
     }
 
     fn emit(&self, key: &JsString, reason: EvictionReason) {

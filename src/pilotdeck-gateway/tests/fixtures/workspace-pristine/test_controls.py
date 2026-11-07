@@ -993,9 +993,8 @@ class RunnerTargets(unittest.TestCase):
         self.check_runner('spill-isolation/negative_controls.py', 'env', ['{out}'],
                           '#1166 spill-isolation runner shares the admissible target')
 
-    def test_session_owner_hooks_target_admission(self):
-        self.check_runner('session-owner-hooks/negative.py', 'env', ['{out}'],
-                          '#1166 session-owner-hooks runner shares the admissible target')
+    # #996: test_session_owner_hooks_target_admission was deleted with its
+    # runner (compile-time switches in session-owner-hooks/schemata.py now).
 
     def test_hooks_output_target_admission(self):
         self.check_runner('hooks-output/negative.py', 'env',
