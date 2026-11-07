@@ -86,12 +86,13 @@ mutations = [
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
     # #1632 P2-1 / #1476 / #1313 r1: the wire-up mutation points are the three
-    # interaction registry entries, three always-on per-method messages, two
-    # describe capabilities, the always-on family registration, the explicit
-    # HTTP store entry, the always-on envelope code and one advertised
-    # always-on capability. Four were covered above, so the nine below cover
-    # the rest. Each row names the assertion message the product test already
-    # prints, so the kill is attributable to that one assertion.
+    # interaction registry entries, three always-on per-method messages, the
+    # abort arm's sessionKey read, two describe capabilities, the always-on
+    # family registration, the explicit HTTP store entry, the always-on
+    # envelope code and one advertised always-on capability. Four were covered
+    # above, so the ten below cover the rest. Each row names the assertion
+    # message the product test already prints, so the kill is attributable to
+    # that one assertion.
     ('registry-drops-elicitation-respond',
      'native_process/methods/interaction.rs',
      '    "elicitation_respond",\n',
@@ -120,7 +121,7 @@ mutations = [
      '                    not_configured_error("Always-On rerun is not configured on this gateway."),',
      '                    not_configured_error("Always-On apply is not configured on this gateway."),',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
-     '#1313 always_on_rerun message'),
+     '#1313 always_on_rerun_plan message'),
     ('always-on-apply-copies-abort-message',
      'native_process/methods/always_on.rs',
      '                    not_configured_error("Always-On apply is not configured on this gateway."),',
@@ -135,6 +136,16 @@ mutations = [
     # advertises one method no control backs, which is the cheapest false
     # capability claim (`assert_ts_capability_subset` only bounds the set from
     # above, so an over-claim has to be killed here).
+    # #1313 r1-fix1 (DS/MM boundary P2): only the abort arm reads
+    # `input.sessionKey`; the nullish-params test is otherwise driven by no
+    # mutation. Replacing the read with an empty object drops the boundary
+    # TypeError, and the test's expect_err panic is the kill.
+    ('always-on-abort-skips-the-input-read',
+     'native_process/methods/always_on.rs',
+     '                    let session_key = super::input_property(&params, "sessionKey")?;',
+     '                    let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
+     'native_process::methods::always_on::tests::always_on_abort_nullish_params_hit_the_session_key_read',
+     '#1313 abort nullish answers the TypeError'),
     ('always-on-envelope-code-rewritten',
      'native_process/methods/always_on.rs',
      '        ("code", "not_configured".into()),',
