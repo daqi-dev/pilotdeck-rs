@@ -339,6 +339,29 @@ fn zone_resolver_cache_parses_each_zone_once() {
     );
 }
 
+/// #2181: the cache key is the folded zone. The zoneinfo parse is
+/// case-insensitive (like ICU), so case variants of one zone must share the
+/// memoized parse instead of each becoming its own permanent map entry —
+/// an unfoldable key space would let a caller shape unbounded memory by
+/// submitting case variants of one valid zone.
+#[test]
+fn zone_resolver_cache_folds_case_variants_into_one_entry() {
+    let cache = CronZoneResolverCache::new();
+    let first = cache.resolver("Asia/Tokyo");
+    let second = cache.resolver("aSIA/tOKYO");
+    for (label, result) in [("first probe", &first), ("case variant", &second)] {
+        assert!(
+            result.is_ok(),
+            "#2181 case fold: {label} must resolve like the canonical spelling"
+        );
+    }
+    assert_eq!(
+        cache.parse_count(),
+        1,
+        "#2181 case fold: a case variant must reuse the folded entry, not re-parse or hold its own"
+    );
+}
+
 /// #2181: a zone that fails to resolve is **not** memoized — the second
 /// call re-probes the zoneinfo tree, so a failure caused by the environment
 /// (an ICU-valid legacy alias this host tree lacks, tzdata installed after
