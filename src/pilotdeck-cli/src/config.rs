@@ -4,22 +4,19 @@ use crate::paths::Env;
 use std::path::Path;
 
 pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
-    // applyProjectBinding precedes the first fatal check in TS. The gateway's
-    // read-only binding support does not implement the CLI's StaffDeck flow.
-    if env.get("STAFFDECK_PROJECT_BINDING_ENABLED") == Some(std::ffi::OsStr::new("true")) {
-        return Err(Failure::Todo(
-            "StaffDeck project binding (applyProjectBinding)",
-        ));
-    }
-    pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some("."))
-        .map(|_| ())
-        .map_err(|error| {
-            if error.requires_host {
-                Failure::Todo("config requiring JavaScript host support")
-            } else {
-                Failure::Error(String::from_utf16_lossy(error.message.units()))
-            }
-        })
+    #[cfg(unix)]
+    let loaded =
+        pilotdeck_gateway::config::load_project_bounded(pilot_home, cwd, &env.strings(), Some("."));
+    #[cfg(not(unix))]
+    let loaded =
+        pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some("."));
+    loaded.map(|_| ()).map_err(|error| {
+        if error.requires_host {
+            Failure::Todo("config requiring JavaScript host support")
+        } else {
+            Failure::Error(String::from_utf16_lossy(error.message.units()))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -283,16 +280,21 @@ mod tests {
     }
 
     #[test]
-    fn project_binding_runs_before_the_first_fatal_like_ts() {
+    fn project_binding_enabled_reaches_the_real_loader_fatals() {
         let binding = Some(("STAFFDECK_PROJECT_BINDING_ENABLED", "true"));
-        for (name, yaml) in [
-            ("binding-agent", "schemaVersion: 1\n"),
-            ("binding-yaml", "a: [\n"),
+        for (name, yaml, expected) in [
+            (
+                "binding-agent",
+                "schemaVersion: 1\n",
+                "Config must contain an agent section.",
+            ),
+            (
+                "binding-yaml",
+                "a: [\n",
+                "Failed to parse default config YAML.",
+            ),
         ] {
-            assert_eq!(
-                run(name, yaml, binding),
-                "TODO StaffDeck project binding (applyProjectBinding)"
-            );
+            assert_eq!(run(name, yaml, binding), expected);
         }
         assert_eq!(
             run(
@@ -348,4 +350,6 @@ mod tests {
             "TODO config requiring JavaScript host support"
         );
     }
+    #[cfg(unix)]
+    include!("config_binding_tests.rs");
 }

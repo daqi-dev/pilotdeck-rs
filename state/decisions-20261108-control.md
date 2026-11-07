@@ -36,3 +36,15 @@
 - serve token安全增量：独审确认native原token无界同步重开可被换成FIFO。共享A文件有其他持有人，**AI代批，待人复核**采用CLI限定快照：复用既有O_NONBLOCK普通文件/64KiB读器，再以0700目录/0600匿名inode、CLOEXEC及/dev/fd交给native真实消费，原路径不再由native重开。unlink先于写secret；启动前重开正控后seek回0。仅Unix且/dev/fd可用，故障明确失败；原UTF8/CRLF/空token规则保持，不声称A全局已修、同UID/root不可读或跨写者事务。正常/失败清理由真实测试和实际serve流验证，SIGKILL可能只残空目录，不留命名token副本。
 
 - 快照写阶段护栏：runtime与既有SIGXFSZ ignore安装先于快照write，实际`ulimit -f 0`辅助子测试核明确错误、原token字节与无该进程临时目录残留。参数parse仍在runtime/快照前，非法参数不启动宿主或落盘。
+
+## 2026-11-08 · CLI 只读 binding 与 opt-in 有界配置加载
+
+- 卡在哪：CLI把精确true的binding直接拦TODO，但Gateway已有只读runtime apply；直接接通又暴露共享NativeFiles对store/SOP/lock等同步无界打开/读取，FIFO可挂起。
+- 谁受影响：默认CLI配置预检、供新CLI/TUI选用的bounded snapshot；旧Gateway API与NativeFiles、StaffDeck provisioning/认证/实际module调用不改。
+- 所有权与依据：本轮2026-11-08只读扫描59登记worktree，CLI config.rs/Gateway config/mod.rs/new bounded.rs无未提交占用，HEAD↔origin/main接口无diff；协调者明确授权本Sol树持有mod.rs两行注册+新模块，不以未登记者不可绝对证明为空而停工。候选基底869bf7f42；开发中不换A源，后由协调者串行集成当前main。
+- 能否撤回：可以，无数据格式迁移或绑定写入；普通配置继续既有inner/错误次序，资源拒绝时原件不转换、不保存。
+- 动不动尺子/意向：不改冻结装置/旧金样；真实TS正常金样先采，8MiB/32MiB为明确新安全边界，不伪称TS已有预算。差异D2-CLI-CONFIG-READ-BOUNDS-001未批准、无冻结豁免。
+- 选项与后果：只预检路径不能阻止换FIFO或增长；改共用读器会扩大A共同作者和旧语义；新Files wrapper复用inner，在实际fd读处限额且首fault后停止所有后续源IO可限定影响范围。
+- 建议与决定：**AI代批，待人复核**采用Unix默认CLI opt-in load_project_bounded及供新入口用的load_snapshot_bounded；普通IO照旧，typed资源拒绝精确返回。非Unix默认CLI保留原load_project，不能把Unix保证变成其他平台普通配置的新前置；新bounded API自身非Unixunsupported，未验Windows、不宣称整crate可编译或平台已支持。
+- 原则与断言：配置读取拒绝不可吞为空或TODO；预算累计包括部分/探测字节，不减计、不重置，fault后read/stat/entries不delegate、process_alive不查。真实FIFO/稀疏超限/32MiB累计IO、snapshot普通/超限、30新TS+14旧frozen与有界真实CLI mock逐项验证。
+- 边界：CLI check只预检并丢弃Config，远端实际module由远端Gateway决定；本地fallback、StaffDeck远程实效和A8仍未完成。这里只限文件读字节/特殊文件，不宣称所有解析内存、故障FS内核IO可中断或跨写者事务；最终mbp2原始日志与源码hash据实登记，未运行不报通过。

@@ -1,0 +1,587 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sources": {
+    "src/pilot/config/loadPilotConfig.ts": "0d666bd5dec52b805be7066b7538d54919bd601b43286bdf9acf4a1354581d6e",
+    "src/pilot/staffdeck/projectBinding.ts": "845bcf26546ff25901ce31aa93a588cd0971a639fe3af05cb8109f2e53fceca2"
+  },
+  "cases": [
+    {
+      "id": "missing-store",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "empty-store",
+      "store": "",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "malformed-store",
+      "store": "{bad",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "null-store",
+      "store": "null",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "code": null,
+        "message": "Cannot read properties of null (reading 'version')"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "wrong-version",
+      "store": "{\"version\":2,\"installationId\":\"fixture\",\"projects\":[]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "wrong-projects",
+      "store": "{\"version\":1,\"installationId\":\"fixture\",\"projects\":{}}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "null-project-row",
+      "store": "{\"version\":1,\"installationId\":\"fixture\",\"projects\":[null]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "code": null,
+        "message": "Cannot read properties of null (reading 'projectRoot')"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "project-mismatch",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>/other\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "pending",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"pending\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "failed",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"failed\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "tenant-mismatch",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"other\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "origin-mismatch",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://other.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "bound-missing-sops",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":true,\"implementationId\":\"staffdeck.knowledge\",\"contract\":\"staffdeck.knowledge/v1\",\"transport\":\"module-http-v2\",\"endpoint\":\"https://staffdeck.invalid\",\"manifestPath\":\"/api/v1/knowledge-module/module-manifest\",\"callPath\":\"/api/v1/agents/agent%20%2F%E4%B8%AD/knowledge-module/v2/module/call\",\"methods\":[\"query\"],\"agentId\":\"agent /中\",\"credentialEnv\":\"STAFFDECK_SOP_MANAGEMENT_API_KEY\"}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "bound-valid-sops",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "sops": "sops:\n  - id: fixture-sop\n",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"sop\":{\"provider\":\"staffdeck\",\"endpoint\":\"https://staffdeck.invalid/runtime\",\"definitionsPath\":\"<root>/home/staffdeck/fixture-binding/sops.json\",\"defaultSopId\":\"fixture-sop\",\"stateRoot\":\"<root>/home/staffdeck/fixture-binding/state\",\"timeoutMs\":123,\"discoveryEndpoint\":\"https://staffdeck.invalid/api/v1\",\"discoveryAgentId\":\"agent /中\",\"discoveryApiKey\":\"mock-management-only\",\"discoveryTimeoutMs\":456},\"knowledge\":{\"enabled\":true,\"implementationId\":\"staffdeck.knowledge\",\"contract\":\"staffdeck.knowledge/v1\",\"transport\":\"module-http-v2\",\"endpoint\":\"https://staffdeck.invalid\",\"manifestPath\":\"/api/v1/knowledge-module/module-manifest\",\"callPath\":\"/api/v1/agents/agent%20%2F%E4%B8%AD/knowledge-module/v2/module/call\",\"methods\":[\"query\"],\"agentId\":\"agent /中\",\"credentialEnv\":\"STAFFDECK_SOP_MANAGEMENT_API_KEY\"}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "bound-legacy-sop-id",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "sops": "sops:\n  - skill_id: legacy-sop\n",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"sop\":{\"provider\":\"staffdeck\",\"endpoint\":\"https://staffdeck.invalid/runtime\",\"definitionsPath\":\"<root>/home/staffdeck/fixture-binding/sops.json\",\"defaultSopId\":\"legacy-sop\",\"stateRoot\":\"<root>/home/staffdeck/fixture-binding/state\",\"timeoutMs\":123,\"discoveryEndpoint\":\"https://staffdeck.invalid/api/v1\",\"discoveryAgentId\":\"agent /中\",\"discoveryApiKey\":\"mock-management-only\",\"discoveryTimeoutMs\":456},\"knowledge\":{\"enabled\":true,\"implementationId\":\"staffdeck.knowledge\",\"contract\":\"staffdeck.knowledge/v1\",\"transport\":\"module-http-v2\",\"endpoint\":\"https://staffdeck.invalid\",\"manifestPath\":\"/api/v1/knowledge-module/module-manifest\",\"callPath\":\"/api/v1/agents/agent%20%2F%E4%B8%AD/knowledge-module/v2/module/call\",\"methods\":[\"query\"],\"agentId\":\"agent /中\",\"credentialEnv\":\"STAFFDECK_SOP_MANAGEMENT_API_KEY\"}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "bound-empty-default",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "sops": "sops:\n  - id: \"\"\n",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":true,\"implementationId\":\"staffdeck.knowledge\",\"contract\":\"staffdeck.knowledge/v1\",\"transport\":\"module-http-v2\",\"endpoint\":\"https://staffdeck.invalid\",\"manifestPath\":\"/api/v1/knowledge-module/module-manifest\",\"callPath\":\"/api/v1/agents/agent%20%2F%E4%B8%AD/knowledge-module/v2/module/call\",\"methods\":[\"query\"],\"agentId\":\"agent /中\",\"credentialEnv\":\"STAFFDECK_SOP_MANAGEMENT_API_KEY\"}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "bound-malformed-sops",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "sops": "{bad",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "YAMLParseError",
+        "code": "MISSING_CHAR",
+        "message": "Flow map must end with a } at line 1, column 5:\n\n{bad\n    ^\n"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "binding-live",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"binding\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\",\"runtimeReady\":true}]}",
+      "lock": "alive",
+      "sops": "sops:\n  - id: fixture-sop\n",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"sop\":{\"provider\":\"staffdeck\",\"endpoint\":\"https://staffdeck.invalid/runtime\",\"definitionsPath\":\"<root>/home/staffdeck/fixture-binding/sops.json\",\"defaultSopId\":\"fixture-sop\",\"stateRoot\":\"<root>/home/staffdeck/fixture-binding/state\",\"timeoutMs\":123,\"discoveryEndpoint\":\"https://staffdeck.invalid/api/v1\",\"discoveryAgentId\":\"agent /中\",\"discoveryApiKey\":\"mock-management-only\",\"discoveryTimeoutMs\":456},\"knowledge\":{\"enabled\":true,\"implementationId\":\"staffdeck.knowledge\",\"contract\":\"staffdeck.knowledge/v1\",\"transport\":\"module-http-v2\",\"endpoint\":\"https://staffdeck.invalid\",\"manifestPath\":\"/api/v1/knowledge-module/module-manifest\",\"callPath\":\"/api/v1/agents/agent%20%2F%E4%B8%AD/knowledge-module/v2/module/call\",\"methods\":[\"query\"],\"agentId\":\"agent /中\",\"credentialEnv\":\"STAFFDECK_SOP_MANAGEMENT_API_KEY\"}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "binding-dead",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"binding\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\",\"runtimeReady\":true}]}",
+      "lock": "dead",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "binding-unready",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"binding\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\",\"runtimeReady\":false}]}",
+      "lock": "alive",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "binding-no-lock",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"binding\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\",\"runtimeReady\":true}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "binding-malformed-lock",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"binding\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\",\"runtimeReady\":true}]}",
+      "lock": "not-a-pid",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": true,
+        "modulesJson": "{\"knowledge\":{\"enabled\":false}}"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "number-binding-id",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":4,\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "code": "ERR_INVALID_ARG_TYPE",
+        "message": "The \"path\" argument must be of type string. Received type number (4)"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "null-binding-id",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":null,\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"agent /中\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "code": "ERR_INVALID_ARG_TYPE",
+        "message": "The \"path\" argument must be of type string. Received null"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "surrogate-agent-uri",
+      "store": "{\"version\":1,\"installationId\":\"fixture-installation\",\"projects\":[{\"projectRoot\":\"<project>\",\"bindingId\":\"fixture-binding\",\"agentName\":\"fixture\",\"origin\":\"https://staffdeck.invalid\",\"tenantId\":\"fixture-tenant\",\"agentId\":\"\\ud800\",\"status\":\"bound\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+      "yaml": "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: https://model.invalid/v1\n      apiKey: mock-only\n      models: {mock: {}}\nmodules:\n  knowledge: {enabled: true}\n  sop: {enabled: true, timeoutMs: 123, discoveryTimeoutMs: 456}\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "URIError",
+        "code": null,
+        "message": "URI malformed"
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "store-before-agent-fatal",
+      "yaml": "schemaVersion: 1\n",
+      "store": "{bad",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "store-before-yaml-fatal",
+      "yaml": "a: [\n",
+      "store": "{bad",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "Error",
+        "code": "PROJECT_BINDING_STORE_INVALID",
+        "message": "StaffDeck binding storage is invalid."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "yaml-fatal-without-store",
+      "yaml": "a: [\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_YAML_INVALID",
+        "message": "Failed to parse default config YAML."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "agent-fatal-without-store",
+      "yaml": "schemaVersion: 1\n",
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "CONFIG_AGENT_MISSING",
+        "message": "Config must contain an agent section."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    },
+    {
+      "id": "host-required-remains-explicit",
+      "yaml": "schemaVersion: 1\nagent: {model: constructor/m}\nmodel: {}\n",
+      "nativeTodo": true,
+      "env": {
+        "STAFFDECK_PROJECT_BINDING_ENABLED": "true",
+        "STAFFDECK_COPY_TENANT_ID": "fixture-tenant",
+        "STAFFDECK_FORMAL_API_ORIGIN": "https://staffdeck.invalid/",
+        "STAFFDECK_SOP_RUNTIME_ORIGIN": "https://staffdeck.invalid/runtime",
+        "STAFFDECK_SOP_MANAGEMENT_API_KEY": "mock-management-only"
+      },
+      "result": {
+        "ok": false,
+        "name": "PilotConfigError",
+        "code": "MODEL_MISSING_PROVIDER",
+        "message": "Model config must contain at least one provider."
+      },
+      "manifestUnchanged": true,
+      "network": 0
+    }
+  ]
+}

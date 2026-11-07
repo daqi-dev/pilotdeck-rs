@@ -4769,3 +4769,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · TUI工具交互与上游整合（Codex，仅本机）
 
 工具焦点/展开、短输出和有界长行viewer已实现；独审修复异步读取串会话与Esc未清焦点，mbp2严格clippy、22库测试及实际工具PTY通过，另7项关键回归通过。1MiB+1文件明确拒绝、FIFO及时回退、resize与退出恢复已实测；原始失败和最终源码/bin绑定保留主仓 `_tmp/20261108-cli-tui/tools-r5-evidence/`。此前基础TUI还通过真实native Gateway/真实Rust sidecar/fake provider完整流与transcript、退出清理；分支已接origin/main=7605b17d5并通过受影响宿主/control回归，刚fetch的6c18d6fa8尚待整合。继续帮助设置页、绑定候选与SDK资源边界；本轮仍仅本机提交、Rust全mbp2，native权限/history/local fallback、完整CLI及真人实效均未标完成。
+
+### 2026-11-08 · CLI只读binding与有界配置（Codex/Sol，仅本机）
+
+移除默认CLI对StaffDeck runtime binding的无条件TODO，复用Gateway只读loader，新增Unix opt-in有界facade（8MiB单文件/32MiB累计），保留旧Gateway API与非UnixCLI分流。mbp2 r3严格clippy、9配置单测含30真实TS新格及14旧格、3有界IO父测试（辅助子进程逐格实际调用）、错误退出与独占18789真实remote分支测试全PASS；不访问真实StaffDeck，CLI预检不把modules传给远端。初轮home拓扑与bundled-skills测试环境错误已修，原失败/最终日志和10文件源码/bin指纹在主仓 `_tmp/20261108-cli-binding/r3-evidence/`；TS原件归档 `_tmp/20261108-control-cli/binding-worker/`。新D2差异待人复核、无冻结豁免；下一步协调者接TUI bounded snapshot并整合main，Sol转SDK token安全读。未标完整CLI/A8/真人实效，无GitHub写入与本机Rust构建。
