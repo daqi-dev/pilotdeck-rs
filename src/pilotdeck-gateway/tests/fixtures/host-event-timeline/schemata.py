@@ -91,6 +91,12 @@ GUARDED = [
     LIVE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_timeline_tests.rs',
+    # #2228 zai r4 P2 (fixed in-round, same class as the turn-gates P1): the
+    # bound replay test executes the shared baseline module —
+    # host_timeline_tests.rs:14-15 golden() is crate::test_baseline::oracle,
+    # and :425 regenerates_identically("host-event-timeline") runs through it
+    # too — the same input the five sibling fixtures already register.
+    ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the live/timeline modules the bindings
     # resolve through, and runtime/mod.rs declares turn itself, capping the

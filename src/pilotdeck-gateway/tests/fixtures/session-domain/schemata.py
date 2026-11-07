@@ -75,6 +75,12 @@ switches = [
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
+    # #2228 DS r4 P2 / zai r4 P2 (independent hit, fixed in-round): the
+    # declarator of the switch-site file — storage/mod.rs declares
+    # `mod session_domain`, capping the chain at the same declarator depth the
+    # seven turn fixtures registered in r4; the switch-site file and lib.rs are
+    # both already guarded without this middle link.
+    ROOT / 'src/pilotdeck-gateway/src/storage/mod.rs',
     DOMAIN,
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',

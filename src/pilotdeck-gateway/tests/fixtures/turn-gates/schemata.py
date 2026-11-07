@@ -86,6 +86,18 @@ GUARDED = [
     # either during a run must be caught by the source guard.
     FIXTURES / 'turn-gates/oracle.json',
     FIXTURES / 'turn-gates/peer.py',
+    # #2228 DS r4 P1: the gates-consumer-exists binding reads
+    # turn-runner/oracle.json (runner_tests.rs:859 include_str!, and RUNNER_TESTS
+    # above is already guarded without its input), so a concurrent edit during a
+    # run must be caught by the source guard.
+    FIXTURES / 'turn-runner/oracle.json',
+    # #2228 zai r4 P1: every bound gates test executes the shared baseline
+    # module — gates_tests.rs:36/:421 matrix()/gate_cases! both start with
+    # crate::test_baseline::oracle, and runner_tests.rs:17 `use crate::
+    # test_baseline as baseline` — the same input the five sibling fixtures
+    # (session-domain / host-factory / turn-start-notices / turn-runner-tail /
+    # turn-prompt-hooks) already register.
+    ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the live/runner/host_factory modules the
     # bindings resolve through (live.rs:14 `use super::runner::{...}` goes via
