@@ -89,9 +89,15 @@ mutations = [
      'if false && result == Ordering::Equal && self.options.strength() == Strength::Identical {',
      PREFIX + 'preserving_identical_strength_keeps_normalization_and_ignorables',
      '#132 identical retains primary ignorables'),
+    # The default spelling keeps fr-CA's repair under a Latin script tag; this
+    # mutation drops that widening, so `fr-Latn-CA` falls back to generic `fr`.
+    # The 14-locale oracle compares the *explicit* spelling and is blind to
+    # this, so the control binds the dedicated default-spelling test.
     ('french-script-fallback-lost', PROJECT,
-     '&& locale.id.script.is_none()',
-     '&& true', PAIRS, '#132 comparator raw weights'),
+     'script.is_none_or(|script| script.to_string() == "Latn")',
+     'script.is_none_or(|_| false)',
+     'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
+     '#132 fr_Latn_CA default keeps fr-CA\'s backward secondary'),
     # Paired mutations for the three boundaries this task retires plus the
     # ownership handoff: each one reinstates the pre-#132 behaviour and must
     # turn its bound test red.
@@ -141,7 +147,11 @@ mutations = [
      '        }\n'
      '        descriptors.sort_by(|left, right| {',
      'runtime::snapshot::tests::dispatch_answers_the_collation_case_locally',
-     '#132 unpaired-surrogate collation answers locally, never forwards'),
+     # The reinstated refusal is a *local* error object (`Invalid` renders
+     # through `project_error` with `requires_host: false`), so the dispatch
+     # assertion still sees `Response`; the test dies on the payload check.
+     # Bind that message, not the forward guard above it.
+     '#132 collation case answers with a list, not an error'),
     ('archive-local-method-lost', DISPATCH,
      '    "native_archive_manifest",\n', '',
      'pairing::tests::archive_lone_surrogate_ties_never_reach_upstream',

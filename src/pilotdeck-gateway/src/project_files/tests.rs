@@ -856,6 +856,38 @@ fn node_round3_locale_fallback_and_latin1_case_mapping() {
 }
 
 #[test]
+fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
+    // Measured on v22.22.0 / ICU 78.2
+    // (`src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`): under
+    // `LANG=fr_Latn_CA.UTF-8` the process default reports
+    // `resolvedOptions().locale == "fr-Latn-CA"` and still orders like `fr-CA`
+    // (`coté > côte`), while `new Intl.Collator("fr-Latn-CA")` orders like
+    // generic `fr` (`coté < côte`). `node_collator` models the first spelling
+    // because every product call site resolves its locale through
+    // `node_locale`; `node_explicit_collator` keeps the second for harnesses
+    // that feed literal locale tags.
+    let tagged: Locale = "fr-Latn-CA".parse().unwrap();
+    let plain: Locale = "fr-CA".parse().unwrap();
+    let default = node_collator(&tagged).unwrap();
+    assert_eq!(
+        default.compare("coté", "côte"),
+        std::cmp::Ordering::Greater,
+        "#132 fr_Latn_CA default keeps fr-CA's backward secondary"
+    );
+    assert_eq!(
+        default.compare("coté", "côte"),
+        node_collator(&plain).unwrap().compare("coté", "côte"),
+        "#132 the script tag does not change the default spelling"
+    );
+    let explicit = node_explicit_collator(&tagged).unwrap();
+    assert_eq!(
+        explicit.compare("coté", "côte"),
+        std::cmp::Ordering::Less,
+        "#132 explicit fr-Latn-CA opts out of fr-CA's backward secondary"
+    );
+}
+
+#[test]
 fn node_round3_base64_uses_utf16_low_bytes() {
     let probes = round3()["base64Probe"].as_array().unwrap().clone();
     // Real Node outcomes must cover the alphabet swap and '=' termination.

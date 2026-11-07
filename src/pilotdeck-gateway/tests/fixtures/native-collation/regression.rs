@@ -152,7 +152,7 @@ fn native_comparator_matches_node_all_pairs() {
     assert_eq!(keys.len(), 61, "#132 comparator key coverage");
     assert_eq!(
         keys.iter()
-            .map(|key| encode(key))
+            .map(encode)
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         keys.len(),
@@ -163,9 +163,14 @@ fn native_comparator_matches_node_all_pairs() {
     let mut failures = Vec::new();
     for row in rows {
         let locale = text(field(row, "locale"));
-        let collator =
-            crate::project_files::node_collator(&locale.parse().expect("#132 locale syntax"))
-                .expect("#132 locale data");
+        // The gold was generated with `new Intl.Collator(<locale>)`, so this
+        // harness must use the explicit spelling: `fr-Latn-CA` deliberately
+        // opts out of fr-CA's backward secondary here, unlike the process
+        // default that `node_collator` models.
+        let collator = crate::project_files::node_explicit_collator(
+            &locale.parse().expect("#132 locale syntax"),
+        )
+        .expect("#132 locale data");
         let signs = array(field(row, "signs"));
         assert_eq!(signs.len(), keys.len(), "#132 comparator matrix rows");
         for (i, a) in keys.iter().enumerate() {

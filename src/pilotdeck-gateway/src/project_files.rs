@@ -674,15 +674,48 @@ fn node_dirent_name(name: &std::ffi::CStr) -> String {
 // Generated ICU 78.2 / CLDR 48 collation data uses the pinned Node oracle's
 // Unihan root, with matching tailorings. Unsupported collation extensions
 // retain Node's fallback to the language default, then root.
+//
+// Two spellings of the same locale do not collate alike in Node, and the
+// difference is measured, not stylistic (v22.22.0 / ICU 78.2,
+// `src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`):
+//
+// * the **process default** (`localeCompare` with no locale argument, plain
+//   `Intl.Collator()`) reports `resolvedOptions().locale == "fr-Latn-CA"`
+//   under `LANG=fr_Latn_CA.UTF-8` yet still orders like `fr-CA`
+//   (`coté > côte`), so a Latin script tag does **not** opt out;
+// * an **explicit** `new Intl.Collator("fr-Latn-CA")` orders like generic
+//   `fr` (`coté < côte`), the value recorded in
+//   `tests/fixtures/native-collation/oracle.json`.
+//
+// `node_collator` follows the default spelling: every product call site gets
+// its locale from `node_locale` (or a config default), which is the situation
+// `localeCompare` with no argument models. `node_explicit_collator` keeps the
+// oracle's spelling for harnesses that feed literal locale tags.
 pub(crate) fn node_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
+    build_node_collator(locale, true)
+}
+
+#[cfg(test)]
+pub(crate) fn node_explicit_collator(locale: &Locale) -> Result<CollatorBorrowed<'static>> {
+    build_node_collator(locale, false)
+}
+
+fn build_node_collator(
+    locale: &Locale,
+    process_default: bool,
+) -> Result<CollatorBorrowed<'static>> {
     let mut preferences: CollatorPreferences = locale.clone().into();
     let create = |preferences: CollatorPreferences| {
         Collator::try_new(preferences, Default::default()).map(|collator| {
             // The pinned baked metadata omits fr-CA's backward-secondary bit.
             // Restore the Node/ICU78 default; explicit collations (e.g. emoji)
             // retain their own metadata. See native-collation/oracle.json.
+            let latin_or_none = |script: Option<icu_locale_core::subtags::Script>| {
+                script.is_none_or(|script| script.to_string() == "Latn")
+            };
             if locale.id.language.as_str() == "fr"
-                && locale.id.script.is_none()
+                && (process_default && latin_or_none(locale.id.script)
+                    || !process_default && locale.id.script.is_none())
                 && locale
                     .id
                     .region
