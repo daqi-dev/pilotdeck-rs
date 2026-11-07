@@ -51,7 +51,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 
 **两处阶段语义必须先钉死**（后续每格都依赖）：
 
-1. **S2 的「停接纳」只停 TCP，不停既有连接。** `closing=true` 与 `activeFeishu=undefined` 在 `closeServer()` 入口同步生效（`B/src/cli/pilotdeckServer.ts:236-237`），channel 层闸门自此拒新；但 Node `server.close()` 只拒新 TCP，**既有 WS 连接不主动关、请求继续分发**（`B/src/gateway/server/GatewayWsConnection.ts:95-257` 无任何 shutdown 闸门）。
+1. **S2 的「停接纳」分两层、两个时点。** `closing=true` 与 `activeFeishu=undefined` 在 `closeServer()` 入口同步生效（`B/src/cli/pilotdeckServer.ts:236-237`），channel 层闸门自此拒新；但 **TCP 停接纳发生在 S2 末的 `closeGatewayServer()`**（`B/src/cli/pilotdeckServer.ts:244`，即 Node `server.close()`）——S2 入口到该调用之间（channel 停机可无限挂起）**新 WS/HTTP 连接仍被接纳**（§4.2 closing 窗口、§4.4）。`server.close()` 之后只拒新 TCP，**既有 WS 连接不主动关、请求继续分发**（`B/src/gateway/server/GatewayWsConnection.ts:95-257` 无任何 shutdown 闸门）。
 2. **S2 会无限期阻塞在 `server.close()` 上。** 只要有活着的 WS 连接（含关闭窗口内新建立的，见 P7），`close()` 永不 resolve，**无超时**。S3/S4 在真实组合里因此到不了——这是本矩阵最重要的一条基线事实（§4.1）。
 
 ## 三、事件轴（E）—— 入口
@@ -62,11 +62,12 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 | E2 | HTTP：public-approvals / public-host / `/health` / `/auth/local-token` / `/feishu/webhook` / `/api/web/*`（Bearer）/ static / 404 | `B/src/gateway/server/GatewayServer.ts:88-135`（顺序即回退链） |
 | E3 | cron：tick 触发、`runTaskNow`、`createTask` 等管理方法 | scheduler `B/src/cron/runtime/CronRuntime.ts:166-194`；管理方法**无 started 闸门** `B/src/cron/runtime/CronManager.ts:113-176` |
 | E4 | channel：启动完成竞态、hot-start、reconcile、cron result delivery、feishu webhook | closing 闸门与竞态处理 `B/src/cli/pilotdeckServer.ts:93-119`；`stopRunningChannel` `:121-152`；`hotStartChannel`/`reconcileChannels`/`deliverCronResult` `:298-310` |
-| E5 | background：新任务提交、输出读取、stop、dispose drain | **唯一显式接纳闸门** `B/src/task/runtime/BackgroundTaskRuntime.ts:240-242`；dispose `:377-449` |
+| E5 | background：新任务提交、输出读取、stop、dispose drain | 运行时自有接纳闸门（draining/disposed 拒新任务）`B/src/task/runtime/BackgroundTaskRuntime.ts:240-242`；dispose `:377-449`。channel 层另有 closing 闸门（E4）、gateway 域 stop-new 闸门（S4 行） |
 
 ## 四、主矩阵：E × S 逐格
 
 > 每格：**TS 实际行为**（实测）+ 原始输出摘录（`_tmp/20261026-issue-1353/raw/`）+ 源码行号。t1（稳态到达）与 t2（阶段进行中）折进各列。
+> **行集约定**：各表只列到「行为发生最后一次变化」的阶段为止；未单列的格分两类，不是「未测」——S3/S4 在真实组合不可达（D3，P2c 仅 stub 可达）、S5 为进程退出（§5.3），行为沿用表内最后一行。
 
 ### 4.1 E1 WS × S
 
@@ -74,8 +75,8 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 |---|---|---|
 | S0 | hello `hello_ok`（protocolVersion 1.2）；request 正常应答 | P1：`[ws@S0/describe_server] {"type":"response","id":"probe-1","ok":true,...}` |
 | S1（drain 中） | **无闸门**：新 WS 可连、`hello_ok`、请求照常。listener 未动 | P2a：`[ws@S1/hello] {"type":"hello_ok",...}`、`[ws@S1/describe_server] {"ok":true,...}` |
-| S2 后（listener 已关） | **新 TCP 被拒**（ECONNREFUSED）；**既有 WS 的 request 与 hello 均继续被服务**——服务端从不主动发 close 帧 | P2a：`[tcp@after-close/refused] true`、`[ws@after-close/existing-describe] {"ok":true,...}`、`[ws@after-close/existing-hello] {"type":"hello_ok",...}`；P6 进程级复核：SIGTERM 同轮 `{"kind":"existing-ws","ok":true}` |
-| S2 的阻塞效应 | 有活 WS ⇒ `close()` 不 settle（**无超时**）；客户端断开后 1ms 内放行，flush 9ms 后进入。**S3/S4 在真实组合里不可达** | P2a：`[closeServer-blocked-by-ws] {"flushEnteredWhileWsOpen":false}` → `[flush-after-client-close] {"flushEnteredMs":9,"stepOrder":["automation.stop:enter","closeServer:enter","flush:enter"]}`；P2b 对照：无连接 settle / 一条 WS 2000ms 不 settle、客户端关闭后 1ms resolve / 空闲 keep-alive settle |
+| closeGatewayServer() 后（S2 末，listener 已关） | **新 TCP 被拒**（ECONNREFUSED）；**既有 WS 的 request 与 hello 均继续被服务**——服务端从不主动发 close 帧 | P2a：`[tcp@after-close/refused] true`、`[ws@after-close/existing-describe] {"ok":true,...}`、`[ws@after-close/existing-hello] {"type":"hello_ok",...}`；P6 进程级复核：SIGTERM 同轮 `{"kind":"existing-ws","ok":true}` |
+| S2 的阻塞效应 | 有活 WS ⇒ `close()` 不 settle（**无超时**）；客户端断开后 1ms 内放行，flush 9ms 后进入。**有活 WS 时 S3/S4 在真实组合里不可达** | P2a：`[closeServer-blocked-by-ws] {"flushEnteredWhileWsOpen":false}` → `[flush-after-client-close] {"flushEnteredMs":9,"stepOrder":["automation.stop:enter","closeServer:enter","flush:enter"]}`；P2b 对照：无连接 settle / 一条 WS 2000ms 不 settle、客户端关闭后 1ms resolve / 空闲 keep-alive settle |
 | S3/S4（仅 stub 可达） | flush 与 gateway dispose **之后**，既有 WS 的 request 与 hello 仍被分发（连接层无闸门、`InProcessGateway.dispose` 也不设后续调用闸门 `B/src/gateway/client/InProcessGateway.ts:2061-2065`） | P2c：`[ws@S3/describe] {"ok":true,...}`、dispose 后 describe 调用照进 fake gateway 的账本 |
 | S5（进程退出） | 内核断开既有连接；未退出前一切照旧（P3 hang 格） | P6：`[ws-final] {"closed":false,...}`（15s 仍无 close 帧）直到 SIGKILL |
 
@@ -87,7 +88,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 |---|---|---|
 | S0 | `/health` 200；`/api/web/*` 无 token 401、带 token 200；static 命中；未知路径 404 | P1：`[http@S0/health] {"ok":true,"status":200,...}`、`[http@S0/api-web-401] {"ok":true,"status":401,...}`、`[http@S0/api-web-authed] {"ok":true,"status":200,"body":"[]"}` |
 | S1（drain 中） | 与 S0 完全一致（listener 未动，路由无闸门） | P2a：`[http@S1/health] {"ok":true,"status":200,...}` |
-| S2 后 | 新连接 ECONNREFUSED；**空闲 keep-alive socket 被 `server.close()` 主动关闭**，复用报 ECONNRESET/ECONNREFUSED；SIGTERM 同轮的 keep-alive 在途请求得到 socket hang up | P2a：`[ka@after-close/reuse] {"ok":false,"error":"ECONNREFUSED..."}`；P6：`{"kind":"keepalive-http","ok":false,"error":"ECONNRESET: socket hang up"}`、`{"kind":"new-http","ok":false,"error":"TypeError: fetch failed"}` |
+| closeGatewayServer() 后（S2 末，TCP 已拒新） | 新连接 ECONNREFUSED；**空闲 keep-alive socket 被 `server.close()` 主动关闭**，复用报 ECONNREFUSED（连接已关）；SIGTERM 同轮的 keep-alive 在途请求得到 socket hang up（ECONNRESET）——两态不同因，分别断言 | P2a：`[ka@after-close/reuse] {"ok":false,"error":"ECONNREFUSED..."}`；P6：`{"kind":"keepalive-http","ok":false,"error":"ECONNRESET: socket hang up"}`、`{"kind":"new-http","ok":false,"error":"TypeError: fetch failed"}` |
 | S2 的 closing 窗口（channel 停机挂起、listener 未到 close） | `/health` 仍 200 | P7：`[closing-window/health] {"ok":true,"status":200,...}` |
 | S5 | 端口在进程存活期间即已释放（listener 已关），见 §5.3 | P6：`[port-after-exit] {"refused":true,...}`（注意时序：listener 释放 ≠ 进程退出） |
 
@@ -114,7 +115,7 @@ related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must
 | 阶段 | TS 实际行为 | 证据 |
 |---|---|---|
 | S0 | `start` → running；`getOutput` 增量可读；单任务 `stop` 正常 | P5：`[S0/start] {"taskId":"...","status":"running"}`、`[S0/stubborn-output] {"slice":"{\"content\":\"stubborn-start\\n\",...}"}` |
-| dispose 进行中（draining，S1–S2 等价） | **唯一显式接纳闸门**：新任务抛 `Background task runtime is draining; refusing a new task.`；**输出在 drain 期间照常可读**；TERM 免疫任务把窗口拉满 5s grace 后 SIGKILL 兜底（实测 dispose ~4.7s） | P5：`[during-dispose/start] {"admitted":false,"error":"Background task runtime is draining; refusing a new task."}`、`[during-dispose/getOutput]`（同上可读）、`[dispose-resolved] {"ok":true,"ms":4705,...}`。源码 `B/src/task/runtime/BackgroundTaskRuntime.ts:240-242`（gate）、grace 兜底 `:377-449` |
+| dispose 进行中（S4 · `disposeGateway()` 内） | **运行时自有接纳闸门**（唯一以任务运行时状态 draining/disposed 拒绝的入口；channel 层 closing 闸门见 §4.4、TCP 停接纳见 §二）：新任务抛 `Background task runtime is draining; refusing a new task.`；**输出在 drain 期间照常可读**；TERM 免疫任务把窗口拉满 5s grace 后 SIGKILL 兜底（实测 `dispose()` 发起到 resolve ≈5.0s：探针在 dispose 后 300ms 才起 t0，`ms:4705` 是尾段）。`draining` 态只在 S4 出现——S1–S3 阶段无 background 动作（dispose 由 `disposeGateway` 调起，非 closeServer） | P5：`[during-dispose/start] {"admitted":false,"error":"Background task runtime is draining; refusing a new task."}`、`[during-dispose/getOutput]`（同上可读）、`[dispose-resolved] {"ok":true,"ms":4705,...}`（`S0/stubborn-output` 08:11:41.129 → `dispose-resolved` 08:11:46.135，全程 ≈5.0s）。源码 `B/src/task/runtime/BackgroundTaskRuntime.ts:240-242`（gate）、grace 兜底 `:377-449`、dispose 由 `B/src/cli/LocalGatewayLifecycleBundle.ts:30-77` 调起 |
 | dispose 后 | 新任务抛 `... is disposed; refusing a new task.`；任务终态 `cancelled`+`interrupted:true`；`list()` 残留记录 | P5：`[after-dispose/start] {"admitted":false,"error":"Background task runtime is disposed; refusing a new task."}`、`[after-dispose/task2] {"status":"cancelled","interrupted":true}`、`[after-dispose/list] {"count":3}` |
 
 ## 五、时机专项
@@ -138,9 +139,9 @@ P6 实测（真实进程）：
 | 注入 | TS 实际行为 | 证据 |
 |---|---|---|
 | `automation.stop` reject（fail） | **其余步骤照走**（close-server-enter → flush-enter → dispose-enter → telemetry-shutdown 全打印），`stop()` 聚合抛出，但 `shutdownAndExit` 的 `.finally(() => exit(0))` 先到——**退出码 0**。计划阶段曾预测 unhandledRejection 会把码升为 1，实测不成立：`process.exit` 同步执行，unhandledRejection 事件没有机会再触发 | P3：`[fail/exit] {"exitCode":0,"signal":null,"ms":400}`、`[fail/child-stdout]`（五步标记齐全，`child-exit code=0`）。机制在 `B/src/cli/shutdownCoordinator.ts:10-13` + `B/src/cli/pilotdeck.ts:277-280` |
-| `automation.stop` never-resolve（hang） | **无超时**：进程永不退出（15s+ 观察窗内 exitCode 恒 null），**listener 保持开放、`/health` 200、新 WS hello+describe 照常**——旧 owner 完整可服务 | P3：`[hang/health-after-2s] {"ok":true,"status":200,...}`、`[hang/ws-after-2s] {"helloType":"hello_ok","respOk":true}`、`[hang/still-alive] {"exitCode":null,"signal":null}` |
+| `automation.stop` never-resolve（hang） | **无超时**：SIGTERM 后 2s 仍存活，**listener 保持开放、`/health` 200、新 WS hello+describe 照常**——旧 owner 完整可服务（观察窗即驱动脚本的 2s，随后 SIGKILL 收尸；「无超时」的依据是源码无超时逻辑 `B/src/cli/shutdownCoordinator.ts:3-19` + Node `server.close()` 无超时参数，而非长时间观察——P6 有 WS 客户端场景另行实测 15s 窗口 exitCode 恒 null，见 §5.3） | P3：`[hang/health-after-2s] {"ok":true,"status":200,...}`、`[hang/ws-after-2s] {"helloType":"hello_ok","respOk":true}`、`[hang/still-alive] {"exitCode":null,"signal":null}`（2s 时点；`p3_driver.mjs` SIGTERM 后 2000ms 即 SIGKILL）；P2b 空闲对照同为 2000ms 观察窗（`settledAfterHoldMs:false` 只证明 2000ms 内未 settle） |
 | cron abort 失败 | 被吞，`stop()` 仍成功（§4.3） | P4 |
-| background 任务 TERM 免疫 | 5s grace 后 SIGKILL 兜底，dispose 必然收敛（§4.5） | P5 |
+| background 任务 TERM 免疫 | 5s grace 后 SIGKILL 兜底；dispose 收敛（实测 ≈5.0s，§4.5）——但「必然收敛」只对 running 任务且 output/snapshot 写入不挂起成立：`whenStartsDrained()` 无超时、SIGKILL 后 `await done` 与 flush 无二次超时（A11 注；start/存储写挂起格待 #2251 实测） | P5 |
 
 **登记：drain 失败在 TS 基线里不阻断切换、不改退出码；drain 挂起无超时且旧 owner 持续可服务。** 目标序「drain 失败必须停切换且旧 owner 仍可服务」两条基线都不满足（断言表 A2/A3）。
 
@@ -160,26 +161,27 @@ P6 实测（真实进程）：
 
 | # | 断言 | Rust 期望 | TS 基线实际 | 差异 |
 |---|---|---|---|---|
-| A1 | 停接纳对新入口原子生效 | S2 进入时新 WS/HTTP 连接被拒，既有行为与 §5.1 一致 | 一致（ECONNREFUSED / ECONNRESET） | — |
+| A1 | 停接纳对新入口原子生效 | 停接纳点（channel 闸门 + TCP listener）同点生效：此后新 WS/HTTP 连接被拒，既有行为与 §5.1 一致 | **差异**：channel 层闸门自 S2 入口生效，TCP 停接纳在 S2 末 `closeGatewayServer()`——closing 窗口内（S2 入口→该调用）新 WS/HTTP 仍被接纳（§4.2 closing 窗口 `/health` 200、§4.4 closing 窗口新 WS `hello_ok`） | **D10** |
 | A2 | drain 失败必须停切换 | drain 步骤失败 ⇒ 不进入 flush/停 owner，进程保留可服务性并报错 | 失败被吞，后续步骤照走，退出码 0 | **D1** |
-| A3 | drain 挂起有界 | drain 超时 ⇒ 记录、放弃等待、按既定序继续或失败，不允许无限期卡死 | 无超时；挂起时旧 owner 持续可服务（唯一「可用性保留」来源是没退出） | **D2** |
-| A4 | 停 owner 不被客户端绑架 | 切换序不得等待「最后一个 WS 客户端自愿离开」；应有 close 帧与超时 | `server.close()` 无限期等既有 WS，无 close 帧，S3/S4 不可达 | **D3** |
+| A3 | drain 挂起有界 | drain 超时 ⇒ 记录并**停切换**、保持旧 owner 可服务，**不得带着在飞入口进 flush/dispose**（与 A2/A10 同一失败面；不设「放弃等待后继续」分支）。超时值与终止在飞入口的手段（取消/abort 在飞 run）由主实现轮次决策卡钉死 | 无超时；挂起时旧 owner 持续可服务（唯一「可用性保留」来源是没退出） | **D2** |
+| A4 | 停 owner 不被客户端绑架 | 切换序不得等待「最后一个 WS 客户端自愿离开」；应有 close 帧与超时——close 帧 code/reason 与超时值由主实现轮次决策卡钉死，超时起算点 = 停接纳点（A1），覆盖 close 帧发送与等待全程 | `server.close()` 无限期等既有 WS，无 close 帧，S3/S4 不可达 | **D3** |
 | A5 | 既有 WS 在停 owner 前收到显式 close | drain 边界通知连接（close code/reason），之后不再分发 | 从不主动 close；flush 与 dispose 之后 request 仍被分发（P2c） | **D4** |
 | A6 | cron：stop 即拒绝管理面 | stop 后 `createTask`/`runTaskNow` 显式报错 | 无闸门；`runTaskNow` 返回 `started:true` 静默不触发 | **D5** |
 | A7 | cron abort 失败可观测 | abort 失败计入失败面（至少记日志/上报） | `.catch(() => undefined)` 全吞 | **D6** |
 | A8 | 旧进程退出前不放开新 owner | 端口/所有权在旧进程（含后台 writer）完全退出前不交给新 owner | listener 先于进程释放；同端口双 owner 并存，旧进程仍服务既有 WS | **D7** |
 | A9 | 新握手前置条件 | 新 owner 只在旧 owner drain+flush+退出完成后接受握手 | TS 无此概念（新进程可立即接管） | **D8** |
-| A10 | flush 前无在飞入口 | flush 与 dispose 只在全部入口 drain 完成后发生 | flush 被既有 WS 无限押后；dispose 后仍有入口活着（P2c） | 与 D3/D4 同根 |
-| A11 | background 闸门等价 | draining/disposed 拒新任务、drain 期间输出可读、grace+SIGKILL 兜底 | **一致**（`Background task runtime is ...; refusing a new task.`） | — |
+| A10 | flush 前无在飞入口 | flush 与 dispose 只在全部入口 drain 完成后发生（含 join channel 层全部在飞 stop/operation，`closing=true` 后失败的 stop 不得把 handle 回填为「仍在运行」） | flush 被既有 WS 无限押后；dispose 后仍有入口活着（P2c）。另有**源码推导、未实测**的例外：`closeServer()` 只等快照时的 handle——并发在飞的 channel stop 不被 join、失败 stop 在 `closing=true` 后仍回填 handle（`B/src/cli/pilotdeckServer.ts:121-152`；待 #2251 补探针登记） | 与 D3/D4 同根 |
+| A11 | background 闸门等价 | draining/disposed 拒新任务、drain 期间输出可读、grace+SIGKILL 兜底；grace 到期杀**任务进程组/整棵进程树**（POSIX `kill(-pid)`、Windows `taskkill /T /F`）并验证后代零残留；「SIGKILL 后 dispose 收敛」以任务 running 且 output/snapshot 写不挂起为前提（`whenStartsDrained` 无超时、`await done`/flush 无二次超时——是否加界由主实现轮决策） | 基线按进程组杀（`B/src/tool/execution-world/DetachedShellPort.ts:128-162`）、`done` 只绑直接子进程 exit；闸门文案**一致**（`Background task runtime is ...; refusing a new task.`）。P5 未测任务派生子进程的后代残留与 start/存储写挂起格（待 #2251） | — |
 | A12 | channel closing 闸门等价 | closing 后 hot-start/reconcile 报 `channel server is closing`、`deliverCronResult` false、启动完成竞态立即 stop | **一致**（含 webhook 退化到 static 回退的怪相——Rust 侧建议改为显式 503，见 D9） | D9（低优） |
 | A13 | 无客户端 SIGTERM 干净退出 | 退出码 0、遥测 snapshot、端口释放 | 一致（~125ms） | — |
-| A14 | keep-alive 语义 | 停接纳后空闲 keep-alive 被关、在途复用报 reset | 一致（ECONNRESET/ECONNREFUSED） | — |
+| A14 | keep-alive 语义 | 停接纳后空闲 keep-alive socket 被关；**关闭后复用**报连接已关（ECONNREFUSED），**SIGTERM 同轮在途请求**报 socket hang up（ECONNRESET）——两态分别断言，不写成同一格 | 一致（P2a after-close 复用 ECONNREFUSED；P6 在途 ECONNRESET） | — |
 
-差异清单汇总：**D1** drain 失败被吞且退出码 0；**D2** drain 无超时；**D3** `server.close()` 被既有 WS 无限阻塞、S3/S4 不可达；**D4** 从不主动发 WS close 帧、dispose 后仍分发；**D5** cron 管理面 stop 后无闸门且静默不触发；**D6** cron abort 失败全吞；**D7** 双 owner 并存（listener 先于进程释放，旧进程仍服务）；**D8** 新握手无前置；**D9** closing 期 webhook 退化 static 200 无显式信号。其中 D3/D4/D7/D8 是切换序的结构性冲突，主实现轮次须先定方案再落测试。
+差异清单汇总：**D1** drain 失败被吞且退出码 0；**D2** drain 无超时；**D3** `server.close()` 被既有 WS 无限阻塞、S3/S4 不可达；**D4** 从不主动发 WS close 帧、dispose 后仍分发；**D5** cron 管理面 stop 后无闸门且静默不触发；**D6** cron abort 失败全吞；**D7** 双 owner 并存（listener 先于进程释放，旧进程仍服务）；**D8** 新握手无前置；**D9** closing 期 webhook 退化 static 200 无显式信号；**D10** 停接纳非原子——channel 闸门在 S2 入口、TCP 停接纳在 S2 末，closing 窗口内新 WS/HTTP 仍被接纳。其中 D3/D4/D7/D8/D10 是切换序的结构性冲突，主实现轮次须先定方案再落测试。
 
 ## 七、本页边界
 
 - 全部结论固定于 Node v22.22.0 + 基线 `cc7c4e65` 的 dist 构建；`server.close()`/keep-alive 语义是 Node 版本敏感的。
 - S3/S4 的入口行为（P2c）靠 stub `closeServer` 保连接取得——真实组合到不了该状态（D3），测试只能各自单独构造，不能在同一条真实停机流里同时观察 D3 与 D4。
 - 探针的假 Gateway / 假 channel 只替换「请求最终去向」，不替换连接层、路由层、闸门逻辑本身；那些层全部真实。
+- **源码推导、未实测的格**（A10/§5.2 已标注，待 #2251 补探针）：①「hot-reload stop 在飞时 SIGTERM」与「channel stop 失败」两格——`closeServer()` 只等快照时的 `runningHandles`，失败 stop 在 `closing=true` 后仍回填 handle（`B/src/cli/pilotdeckServer.ts:121-152`）；②P5 background 未覆盖「任务派生子进程的后代残留」（基线按进程组杀，`done` 只绑直接子进程）与「start 未落定/快照写挂起」两格（`whenStartsDrained`、`await done` 均无超时）。
 - 本页只登记事实与断言方向，不替主实现轮次做方案决策（D3/D4/D7/D8 的解法留给后续决策卡）。
