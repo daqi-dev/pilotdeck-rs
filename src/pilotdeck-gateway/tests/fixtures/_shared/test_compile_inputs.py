@@ -393,7 +393,7 @@ class Manifest(unittest.TestCase):
         self.workspace('const A: &str = include_str!("../specs/x.json");')
         destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-lost-'))
         self.roots.append(destination)
-        original, control._copy_input = control._copy_input, lambda path, target: None
+        original, control._copy_input = control._copy_input, lambda path, target, root_identity=None: None
         try:
             with self.assertRaisesRegex(RuntimeError, 'missing from the copy'):
                 control.source_copy(destination)
@@ -452,8 +452,8 @@ class Manifest(unittest.TestCase):
         original = control._copy_input
         victim = root / 'src/b.rs'
 
-        def vanishing(path, target):
-            original(path, target)
+        def vanishing(path, target, root_identity=None):
+            original(path, target, root_identity)
             if path == Path('src/a.rs'):
                 victim.unlink()
 
@@ -481,8 +481,8 @@ class Manifest(unittest.TestCase):
         self.roots.append(destination)
         original = control._copy_input
 
-        def rewriting(path, target):
-            original(path, target)
+        def rewriting(path, target, root_identity=None):
+            original(path, target, root_identity)
             if path == Path('src/a.rs'):
                 (root / 'src/a.rs').write_text('pub const A: u8 = 1;\n', encoding='utf-8')
                 (root / 'src/b.rs').unlink()
@@ -532,8 +532,8 @@ class Manifest(unittest.TestCase):
         self.roots.append(destination)
         original = control._copy_input
 
-        def rewriting(path, target):
-            original(path, target)
+        def rewriting(path, target, root_identity=None):
+            original(path, target, root_identity)
             if path == Path('src/a.rs'):
                 (root / 'frag/mod.rs').write_text('pub const F: u8 = 2;\n', encoding='utf-8')
 
@@ -554,8 +554,8 @@ class Manifest(unittest.TestCase):
         self.roots.append(destination)
         original = control._copy_input
 
-        def adding(path, target):
-            original(path, target)
+        def adding(path, target, root_identity=None):
+            original(path, target, root_identity)
             if path == Path('src/a.rs'):
                 (root / 'src/c.rs').write_text('pub const C: u8 = 2;\n', encoding='utf-8')
                 subprocess.check_call(['git', 'add', '-A'], cwd=root)
@@ -607,8 +607,8 @@ class Manifest(unittest.TestCase):
         self.roots.append(destination)
         original = control._copy_input
 
-        def rewriting(path, target):
-            original(path, target)
+        def rewriting(path, target, root_identity=None):
+            original(path, target, root_identity)
             if path == Path('specs/ledger.json'):
                 (root / 'specs/ledger.json').write_text('{"moved": 1}\n', encoding='utf-8')
 
@@ -937,6 +937,73 @@ class Manifest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'not a regular file'):
             control._copy_input(Path('specs/x.json'), destination / 'x.json')
         self.assertFalse((destination / 'x.json').exists())
+
+    def test_a_replaced_repository_root_is_refused(self):
+        # `_open_input` walks under the root, so the root itself is the one
+        # level that walk cannot check -- replacing the whole checkout between
+        # the scan and the copy would otherwise deliver the impostor's bytes
+        # (#1570 r21 codex P0). The identity is taken before anything is read
+        # and every later open of the root must land on the same directory.
+        root = self.workspace('mod a;\n')
+        identity = control._repository_identity()
+        moved = root.with_name(root.name + '-moved')
+        root.rename(moved)
+        self.roots.append(moved)
+        root.mkdir()
+        (root / 'src').mkdir()
+        (root / 'src' / 'a.rs').write_text('SECRET\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-root-swap-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'repository root changed'):
+            control._copy_input(Path('src/a.rs'), destination / 'a.rs', identity)
+        self.assertFalse((destination / 'a.rs').exists())
+
+    def test_a_repository_root_swap_to_a_link_is_refused(self):
+        # The same replacement when the old path becomes a symlink: the root is
+        # opened `O_NOFOLLOW`, so this refuses one step earlier than the
+        # identity comparison (#1570 r21 codex P0).
+        root = self.workspace('mod a;\n')
+        identity = control._repository_identity()
+        foreign = Path(tempfile.mkdtemp(prefix='pdrs-1570-root-link-'))
+        self.roots.append(foreign)
+        (foreign / 'a.rs').write_text('SECRET\n', encoding='utf-8')
+        moved = root.with_name(root.name + '-moved')
+        root.rename(moved)
+        self.roots.append(moved)
+        os.symlink(foreign, root)
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-root-link-copy-'))
+        self.roots.append(destination)
+        with self.assertRaisesRegex(RuntimeError, 'became a symlink'):
+            control._copy_input(Path('src/a.rs'), destination / 'a.rs', identity)
+        self.assertFalse((destination / 'a.rs').exists())
+
+    def test_a_last_component_swap_cannot_reach_outside_bytes(self):
+        # The gap the r20 fix left: every *parent* level was checked, so only
+        # removing the final `O_NOFOLLOW` kept the suite green (#1570 r21
+        # codex). The swap happens after the pre-checks have passed, so the
+        # refusal has to come from the open that reads the bytes.
+        root = self.workspace('mod new;\n', extra={'src/new.rs': 'pub const N: u8 = 1;\n'})
+        outside = Path(tempfile.mkdtemp(prefix='pdrs-1570-last-outside-'))
+        self.roots.append(outside)
+        (outside / 'secret').write_text('SECRET\n', encoding='utf-8')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-last-swap-'))
+        self.roots.append(destination)
+        victim = root / 'src' / 'new.rs'
+        victim.unlink()
+        os.symlink(outside / 'secret', victim)
+        with self.assertRaisesRegex(RuntimeError, 'became a symlink'):
+            control._copy_input(Path('src/new.rs'), destination / 'new.rs')
+        self.assertFalse((destination / 'new.rs').exists())
+
+    def test_the_final_digest_does_not_reopen_a_fifo(self):
+        # `read_bytes()` on the source in the last loop follows links and
+        # blocks forever on a FIFO, so the digest has to come from one checked
+        # descriptor (#1570 r21 codex P0).
+        root = self.workspace('mod a;\n')
+        (root / 'src' / 'a.rs').unlink()
+        os.mkfifo(root / 'src' / 'a.rs')
+        with self.assertRaisesRegex(RuntimeError, 'not a regular file any more'):
+            control._source_digest(Path('src/a.rs'), control._repository_identity())
 
     def test_an_ignored_source_input_is_refused(self):
         # The copy list is `git ls-files` plus the untracked files git does
