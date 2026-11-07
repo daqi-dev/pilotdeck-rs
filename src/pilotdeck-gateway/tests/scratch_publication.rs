@@ -1513,6 +1513,23 @@ impl Drop for StrangerGuard {
 #[cfg(target_os = "linux")]
 static SUBREAPER_ADOPTIONS: Mutex<Option<(Option<Pid>, usize)>> = Mutex::new(None);
 
+/// #1409 r3 review (concurrency P1): the zombie-leader probe parks a
+/// descendant in exactly the state the return-boundary scan must fail closed
+/// on — a zombie leader, a live thread group, and `/proc/<tgid>/fd` answering
+/// EACCES for the whole settle window. A scan running on another libtest
+/// thread inside that window classifies the probe's child as `Related` and
+/// fails, which would turn an unrelated healthy test red. The probe and every
+/// scan take this lock, so the poison state and a scan never overlap.
+///
+/// The probe is the only long holder — its own boot and pacing plus one
+/// settle window, a few hundred milliseconds — so the cost to other scans is
+/// one wait of that length, inside the `RETURN_GRACE` the publication callers
+/// allow. Like the subreaper lease above, the lock is deliberately not a
+/// mutation target: a mutant that drops it is only observable as a rare
+/// interleaving, not as a deterministic failure.
+#[cfg(target_os = "linux")]
+static SCAN_WINDOW: Mutex<()> = Mutex::new(());
+
 /// Become a child subreaper (Linux): orphaned descendants — the stranger,
 /// whose parent helper dies before it does — are reparented to this process
 /// instead of PID 1, so the test is their reaper (#1155 r3 review P2-2).
@@ -1687,6 +1704,13 @@ fn link_failure_is_a_release(fd: &Path, error: &io::Error, sources: &mut BlindSo
 fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
     #[cfg(target_os = "linux")]
     {
+        // #1409 r3 review (concurrency P1): a test that parks a live
+        // descendant with unreadable descriptors holds this lock; see
+        // [`SCAN_WINDOW`]. A poisoned mutex only means that test panicked
+        // mid-probe, which must not cascade into unrelated scans.
+        let _scan_window = SCAN_WINDOW
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // #1409: the positive self-check comes first. A scan that cannot see
         // a write end this process holds itself — on hidepid, gVisor, or a
         // container that hides pipes from /proc — must fail, never pass on
@@ -1806,9 +1830,17 @@ impl BlindSource {
 /// N × `BLIND_SOURCE_SETTLE` inside a scan whose duration the callers bound,
 /// and the enumeration would classify the same pid twice (once per failed
 /// descriptor, once when `fds_of` reports the source). A memo cannot grow
-/// stale in a way that loosens the scan: a source never becomes live again
-/// (`Terminal`/`Vanished` are final, `Unrelated` cannot become a descendant),
-/// and a cached `Related` is the fail-closed verdict.
+/// stale in a way that loosens the scan: under the assumptions of one scan —
+/// no new holder of the pipe can appear, the same pid-reuse caveat
+/// [`descended_from_this_process`] already carries — a source never becomes
+/// live again (`Terminal`/`Vanished` are final, `Unrelated` cannot become a
+/// descendant), and a cached `Related` is the fail-closed verdict.
+///
+/// It is a per-scan, single-threaded cache (r3 review, concurrency P2): one
+/// instance lives on the scan's stack and is never shared or reused, so its
+/// unbounded key set is bounded by the number of pids in `/proc` at that
+/// moment. A first lookup for a holder that needs the settle blocks for up to
+/// `BLIND_SOURCE_SETTLE`; later lookups of the same pid are a hash probe.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct BlindSources {
@@ -2232,9 +2264,17 @@ fn a_zombie_leader_alone_does_not_close_its_groups_descriptors() {
 /// clean verdict over a leak. The probe is the established `python3` kind:
 /// the leader leaves through a real `pthread_exit()` while a second thread
 /// keeps the group alive.
+///
+/// r3 review (concurrency P1): the probe deliberately holds a descendant in
+/// the state every scan must fail closed on, for about one settle window.
+/// [`SCAN_WINDOW`] keeps a concurrent scan out of that window — otherwise this
+/// test would make unrelated healthy tests flake.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_live_group_behind_a_zombie_leader_is_not_terminal() {
+    let _scan_window = SCAN_WINDOW
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     const PROBE: &str = r#"
 import ctypes, os, threading, time
 read_end, write_end = os.pipe()
@@ -2305,6 +2345,21 @@ os.waitpid(pid, 0)
         "#1409 a zombie leader with a live group has not released its descriptors"
     );
     drop(kill_on_drop);
+    // Wait for the group to be gone before dropping the window: releasing it
+    // while the group is still dying would hand a concurrent scan a source
+    // that settles into `Terminal` only after its own deadline. The wait also
+    // proves the guard's kill landed. The probe's own `waitpid` reaps the
+    // child as soon as it dies, so "gone from /proc" is the usual exit — a
+    // vanished entry cannot be a source at all.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::metadata(format!("/proc/{hero}")).is_ok() && !thread_group_is_dead(&hero) {
+        assert!(
+            Instant::now() < deadline,
+            "#1409 the probe's thread group must die by the guard's kill"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    drop(_scan_window);
     let _ = probe.wait().expect("#1409 reap the zombie-leader probe");
 }
 
