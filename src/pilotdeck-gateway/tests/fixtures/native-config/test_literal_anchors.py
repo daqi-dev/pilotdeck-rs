@@ -2,8 +2,9 @@
 # anchor-selfcheck: unsupported unit tests of the fixture's own literal-anchor guard; no product source mutation table
 """#2065: red-side tests for the fixture's own literal-anchor guard.
 
-`--check` refuses a run whose literal anchor could never match, but a guard with
-no red side is itself unverified (same contract as `session-assembly-1316
+`check_literal_anchors` refuses a run whose literal anchor is verbatim source
+text yet unregistered, or a pin no row asserts; a guard with no red side is
+itself unverified (same contract as `session-assembly-1316
 --self-check-controls`: every guard must be shown to turn red). Each case below
 breaks exactly one invariant of `check_literal_anchors` and demands the matching
 refusal; the first case runs the real `--check` and pins its output counts.
@@ -14,6 +15,7 @@ Run from the repo root:
 """
 import dataclasses
 import importlib.util
+import os
 import subprocess
 import sys
 import unittest
@@ -29,9 +31,9 @@ ROWS = [nc.Case(*row) for row in nc.mutations]
 BAD_ROW = 'permission-mode-gate-removed'
 
 
-def check(cases=None, pins=None):
-    """Run the guard with optional mutated rows / pinned table."""
-    nc.check_literal_anchors(ROWS if cases is None else cases, pins)
+def check(cases=None, pins=None, bound_rows=None):
+    """Run the guard with optional mutated rows / pinned table / binding rows."""
+    nc.check_literal_anchors(ROWS if cases is None else cases, pins, bound_rows)
 
 
 def replace_row(field, value, mutation=BAD_ROW):
@@ -40,10 +42,11 @@ def replace_row(field, value, mutation=BAD_ROW):
 
 
 class LiteralAnchorGuard(unittest.TestCase):
-    def assertRefused(self, needle, *args, **kwargs):
+    def assertRefused(self, *needles, **kwargs):
         with self.assertRaises(SystemExit) as caught:
-            check(*args, **kwargs)
-        self.assertIn(needle, str(caught.exception))
+            check(**kwargs)
+        for needle in needles:
+            self.assertIn(needle, str(caught.exception))
 
     def test_check_passes_and_reports_both_counts(self):
         done = subprocess.run(
@@ -56,8 +59,9 @@ class LiteralAnchorGuard(unittest.TestCase):
     def test_rejects_the_regression(self):
         # The exact #2065 shape: the row goes back to the invented suffix while
         # the table keeps the source-verbatim prefix.
-        self.assertRefused('unbound to any row', replace_row(
-            'assertion', '#1457 set_permission_mode rejects unknown mode'))
+        self.assertRefused('unbound to any row',
+                           cases=replace_row('assertion',
+                                             '#1457 set_permission_mode rejects unknown mode'))
 
     def test_rejects_pin_missing_from_source(self):
         pins = [(nc.CONFIG, '#1457 message nobody wrote')] + nc.LITERAL_ANCHORS[1:]
@@ -84,14 +88,44 @@ class LiteralAnchorGuard(unittest.TestCase):
         # for one copy must not vouch for the other.
         pins = [pin for pin in nc.LITERAL_ANCHORS
                 if pin != (nc.SESSION_DIR, '#1457 the transcript still loads')]
-        with self.assertRaises(SystemExit) as caught:
-            check(pins=pins)
-        self.assertIn('unpinned literal anchor', str(caught.exception))
-        self.assertIn('session_dir.rs', str(caught.exception))
+        self.assertRefused('unpinned literal anchor', 'session_dir.rs', pins=pins)
 
     def test_rejects_row_outside_the_scanned_set(self):
         self.assertRefused('outside SOURCE_TEXTS',
-                           replace_row('path', HERE.with_name('README.md')))
+                           cases=replace_row('path', HERE.with_name('README.md')))
+
+    def test_subset_is_bound_against_the_full_table(self):
+        # A targeted rerun validates a few rows but still owns the whole table:
+        # judging the subset alone would refuse every other pin as unbound.
+        check(cases=[ROWS[0]], bound_rows=ROWS)
+        self.assertRefused('unbound to any row', cases=[ROWS[0]])
+
+    def test_main_binds_a_targeted_run_to_the_whole_table(self):
+        seen = {}
+        real = nc.check_literal_anchors
+
+        def spy(cases, pins=None, bound_rows=None):
+            seen['cases'] = list(cases)
+            seen['bound'] = list(bound_rows or ())
+            raise SystemExit('stop before cargo')
+
+        saved_argv = sys.argv
+        saved_target = os.environ.get('CARGO_TARGET_DIR')
+        nc.check_literal_anchors = spy
+        try:
+            sys.argv = ['negative_controls.py', '/tmp/never-created', BAD_ROW]
+            os.environ['CARGO_TARGET_DIR'] = '/tmp/never-target'
+            with self.assertRaises(SystemExit):
+                nc.main()
+        finally:
+            nc.check_literal_anchors = real
+            sys.argv = saved_argv
+            if saved_target is None:
+                os.environ.pop('CARGO_TARGET_DIR', None)
+            else:
+                os.environ['CARGO_TARGET_DIR'] = saved_target
+        self.assertEqual([case.mutation for case in seen['cases']], [BAD_ROW])
+        self.assertEqual(len(seen['bound']), len(ROWS))
 
 
 if __name__ == '__main__':
