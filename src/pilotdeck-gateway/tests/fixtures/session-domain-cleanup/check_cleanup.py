@@ -6371,7 +6371,7 @@ def _event_position(event):
 
 
 def _binding_event_at(events, position, loops=(), anywhere=False,
-                      positions=()):
+                      positions=(), call_only=False):
     """The binding event *events* put in force, or ``None`` (round 14).
 
     Events are ``(line, col, helper, conditional, loops, certain)``.  A use
@@ -6389,6 +6389,14 @@ def _binding_event_at(events, position, loops=(), anywhere=False,
     saw a write binding, that is the answer.  Without a call site the round-14
     rule stands (the last unconditional binding decides), which is what keeps
     an unconditional non-write import after the write import clean.
+
+    #1953 fix-r1 round 23 (codex r22 P1-2): *call_only* says every call site
+    of the function is known and none of them read a write binding, so the
+    answer is "not a write helper" instead of falling back to the binding at
+    the end of the module.  ``import safe as bi`` before the definition plus a
+    later ``import builtins as bi`` used to read the *later* import even when
+    every call ran before it (false FAIL); the write-helper table keeps the
+    round-14 fallback because missing a write is the worse error there.
     """
     if anywhere and positions:
         writes = []
@@ -6403,6 +6411,8 @@ def _binding_event_at(events, position, loops=(), anywhere=False,
                 writes.append(item)
         if writes:
             return min(writes, key=_event_position)
+        if call_only:
+            return None
     if anywhere:
         unconditional = [item for item in events if item[3] is False]
         if not unconditional:
@@ -6561,6 +6571,56 @@ def _resolve_assignment_helpers(events, pending):
             return
 
 
+def _import_alias_position(alias, node):
+    """The position of one ``import`` alias, not of its statement (r23).
+
+    #1953 fix-r1 round 23 (codex r22 P1-1): every name in one ``import``
+    statement used to share the statement's position, so ``import builtins as
+    bi, os as bi`` recorded both bindings at the same spot; the shadow mirror
+    (``_mirror_builtins_shadows``) keys on the position, could not tell the
+    two apart, and dropped the later ``os`` binding -- a harmless
+    ``bi.getattr`` then read as the builtin factory (false FAIL).  ``ast.alias``
+    carries its own column, which keeps the aliases apart in source order.
+    """
+    line = getattr(alias, 'lineno', None)
+    col = getattr(alias, 'col_offset', None)
+    if line is None or col is None:
+        return (node.lineno, node.col_offset)
+    return (line, col)
+
+
+def _resolve_builtins_module_copies(events, copies):
+    """Keep ``bi = bi`` reading as the module at its own position (r23).
+
+    #1953 fix-r1 round 23 (GLM boundary r22 P1-2): the r22 mirror marks every
+    later binding of a ``builtins`` alias spelling as a shadow, so the no-op
+    ``import builtins as bi; bi = bi`` lost the module reading and the write
+    behind ``bi.getattr`` disappeared.  A right side that names the module in
+    force at the assignment keeps the reading at that position.
+
+    *copies* holds ``(name, position, conditional, loops, value)`` for every
+    module-scope (or function-scope) assignment that bound *name*.
+    """
+    for name, position, conditional, loops, value in copies:
+        items = events.builtins_modules.get(name)
+        if not items or not isinstance(value, ast.Name):
+            continue
+        source = events.builtins_modules.get(value.id)
+        if not source:
+            continue
+        earlier = [item for item in source
+                   if _event_position(item) < position
+                   or (loops and set(item[4]) & set(loops))]
+        chosen = _binding_event_at(earlier, position, loops)
+        if chosen is None or chosen[2] is None:
+            continue
+        if (position[0], position[1]) in {(item[0], item[1])
+                                         for item in items}:
+            continue
+        items.append((position[0], position[1], True, conditional, loops,
+                      False))
+
+
 def _mirror_builtins_shadows(events):
     """Give every other binding of a ``builtins`` alias its own event (r22).
 
@@ -6592,12 +6652,15 @@ def _module_binding_events(tree):
     events = _ModuleEvents()
     marks = _flow_marks(tree.body)
     pending = []
+    module_copies = []
 
-    def add(name, node, helper, certain=True):
+    def add(name, node, helper, certain=True, position=None):
         conditional, loops = marks.get(id(node), (True, ()))
+        if position is None:
+            position = (node.lineno, node.col_offset)
         items = events.setdefault(name, [])
         items.append(
-            (node.lineno, node.col_offset, helper, conditional, loops,
+            (position[0], position[1], helper, conditional, loops,
              certain))
         return items
 
@@ -6611,14 +6674,15 @@ def _module_binding_events(tree):
                 helper = (alias.name if builtins_import
                           and alias.name in _IMPORTED_HELPER_NAMES
                           else None)
-                add(name, node, helper)
+                position = _import_alias_position(alias, node)
+                add(name, node, helper, position=position)
                 if isinstance(node, ast.Import) and alias.name == 'builtins':
                     # #1953 fix-r1 round 22 (codex r21 P0-1): ``import
                     # builtins as bi`` -- the alias names the module, and
                     # ``bi.getattr`` is the builtin factory.
                     conditional, loops = marks.get(id(node), (True, ()))
                     events.builtins_modules.setdefault(name, []).append(
-                        (node.lineno, node.col_offset, True, conditional,
+                        (position[0], position[1], True, conditional,
                          loops, True))
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                ast.ClassDef)):
@@ -6631,17 +6695,24 @@ def _module_binding_events(tree):
                     pending.append((items, len(items) - 1,
                                     (node.lineno, node.col_offset),
                                     items[-1][4], value))
+                    module_copies.append(
+                        (name, (node.lineno, node.col_offset), items[-1][3],
+                         items[-1][4], value))
         elif isinstance(node, ast.NamedExpr):
             for name in _target_names(node.target):
                 items = add(name, node, None, False)
                 pending.append((items, len(items) - 1,
                                 (node.lineno, node.col_offset),
                                 items[-1][4], node.value))
+                module_copies.append(
+                    (name, (node.lineno, node.col_offset), items[-1][3],
+                     items[-1][4], node.value))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
                 add(name, node, None, False)
                 items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
     _resolve_assignment_helpers(events, pending)
+    _resolve_builtins_module_copies(events, module_copies)
     _mirror_builtins_shadows(events)
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
@@ -6693,6 +6764,7 @@ def _imported_write_aliases(function, outer_imports=None):
     marks = _flow_marks(body)
 
     pending = []
+    module_copies = []
 
     def add(name, position, helper, conditional=False, loops=(), certain=True):
         items = events.setdefault(name, [])
@@ -6724,8 +6796,12 @@ def _imported_write_aliases(function, outer_imports=None):
     # are (round 13), so the alias rides along with the same resolution.
     for name, items in (getattr(outer_imports, 'builtins_modules', None)
                         or {}).items():
+        # #1953 fix-r1 round 23 (codex r22 P1-2): when every call site is
+        # known and none of them ran after the module import, the alias is
+        # not the module inside this function (see ``_binding_event_at``).
         chosen = _binding_event_at(items, None, anywhere=True,
-                                   positions=positions)
+                                   positions=positions,
+                                   call_only=bool(positions))
         if chosen is not None:
             events.builtins_modules.setdefault(name, []).append(
                 (-2, -2, chosen[2], False, (), True))
@@ -6740,7 +6816,8 @@ def _imported_write_aliases(function, outer_imports=None):
             builtins_import = getattr(node, 'module', None) == 'builtins'
             for alias in node.names:
                 name = alias.asname or alias.name.split('.')[0]
-                add(name, (node.lineno, node.col_offset),
+                position = _import_alias_position(alias, node)
+                add(name, position,
                     alias.name if builtins_import
                     and alias.name in _IMPORTED_HELPER_NAMES else None,
                     conditional, loops)
@@ -6749,7 +6826,7 @@ def _imported_write_aliases(function, outer_imports=None):
                     # record the module scope keeps, for a function-local
                     # ``import builtins as bi``.
                     events.builtins_modules.setdefault(name, []).append(
-                        (node.lineno, node.col_offset, True, conditional,
+                        (position[0], position[1], True, conditional,
                          loops, True))
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -6765,6 +6842,9 @@ def _imported_write_aliases(function, outer_imports=None):
                     pending.append((items, len(items) - 1,
                                     (node.lineno, node.col_offset), loops,
                                     value))
+                    module_copies.append(
+                        (name, (node.lineno, node.col_offset), conditional,
+                         loops, value))
         elif isinstance(node, ast.NamedExpr):
             for name in _target_names(node.target):
                 items = add(name, (node.lineno, node.col_offset), None,
@@ -6772,6 +6852,9 @@ def _imported_write_aliases(function, outer_imports=None):
                 pending.append((items, len(items) - 1,
                                 (node.lineno, node.col_offset), loops,
                                 node.value))
+                module_copies.append(
+                    (name, (node.lineno, node.col_offset), conditional,
+                     loops, node.value))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
                 add(name, (node.lineno, node.col_offset), None,
@@ -6779,6 +6862,7 @@ def _imported_write_aliases(function, outer_imports=None):
     # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
     # spelling a write helper.
     _resolve_assignment_helpers(events, pending)
+    _resolve_builtins_module_copies(events, module_copies)
     _mirror_builtins_shadows(events)
     return events
 
@@ -11252,6 +11336,51 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 22)')
+    # Round 23 (codex r22 P1-1 / P1-2, GLM boundary r22 P1-2): two aliases of
+    # one ``import`` statement are two bindings, a builtins import after every
+    # call does not reach the calls, and ``bi = bi`` keeps the module reading;
+    # the subscript twin of the module reading is pinned here as well.
+    for _label, _source, _want in (
+            ("a harmless second alias of the same import statement",
+             "import builtins as _bi29, os as _bi29\n"
+             "def main(report):\n"
+             "    _f = _bi29.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False),
+            ("a builtins alias imported after every call of the function",
+             "import json as _bi30\n"
+             "def main(report):\n"
+             "    _f = _bi30.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi30\n", False),
+            ("a self-assigned builtins module alias",
+             "import builtins as _bi31\n"
+             "_bi31 = _bi31\n"
+             "def main(report):\n"
+             "    _f = _bi31.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a subscript write through a copied builtins module name",
+             "def main(report):\n"
+             "    _bi32 = __builtins__\n"
+             "    _bi32['setattr'](report, 'status', 'PASS')\n", True),
+            ("a subscript write through a certainly replaced module name",
+             "def main(report):\n"
+             "    _bi33 = __builtins__\n"
+             "    _bi33 = other\n"
+             "    _bi33['setattr'](report, 'status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = next(_node for _node in _tree.body
+                         if isinstance(_node, (ast.FunctionDef,
+                                               ast.AsyncFunctionDef)))
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 23)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
