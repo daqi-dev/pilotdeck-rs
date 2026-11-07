@@ -12,7 +12,7 @@ ICU 78.2 icuexportdata 和 CLDR JSON 48.0.0 生成标准 baked 数据，使用
 测试恢复为本地响应逐字节断言；既有 JSON 原件未改，没有登记豁免。
 108 条 CJK 请求全部本地逐字节一致；内存配对通道也重放全部 108 条原始请求，
 客户端收到原件字节、上游保持静默，包含非最小 126/127 帧长度。
-config 的2,728条load诊断继续核对，wire中2,711条本地、17条孤立surrogate排序当时走精确宿主边界；#132 已把 catalog/session 与 archive / transcript / workspace snapshot 五处排序改为本地 `compare_utf16_preserving_surrogates`，其余仍用普通 `compare_utf16` 的排序点登记在 #132 的跟进单（前置于 A8 退役 TS gateway），因此这 17 条不能一律当作已原生化；project-files原件继续通过。
+config 的2,728条load诊断继续核对，wire中2,711条本地、17条孤立surrogate排序当时走精确宿主边界；#132 已把 catalog/session 与 archive / transcript / workspace snapshot 五处排序改为本地 `compare_utf16_preserving_surrogates`，其余仍用普通 `compare_utf16` 的排序点登记在跟进单 **#2131**（`skills/`、`runtime/tools/registry.rs`、`runtime/plugins/contributions.rs`、`runtime/context/cache.rs`、`runtime/model/stats.rs` 等，前置于 A8 退役 TS gateway），因此这 17 条不能一律当作已原生化；project-files原件继续通过。
 合法Unicode/CJK的108条全部本地；非良构UTF16不属于scalar扫描覆盖，不宣称全输入原生化。
 
 全量扫描扩为 71,712 个码位（含未分配位置）和 19 个混合字符串，覆盖

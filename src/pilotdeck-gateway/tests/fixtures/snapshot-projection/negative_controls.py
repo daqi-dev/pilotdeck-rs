@@ -56,7 +56,7 @@ mutations = [
         "    pub fn requires_host(&self) -> bool {\n        self.requires_host\n    }",
         "    pub fn requires_host(&self) -> bool {\n        false\n    }",
         "lib",
-        "runtime::snapshot::tests::requires_host_covers_both_boundary_shapes",
+        "runtime::snapshot::tests::requires_host_covers_the_errno_boundary_shape",
         "#888 errno shape forwards",
     ),
     (

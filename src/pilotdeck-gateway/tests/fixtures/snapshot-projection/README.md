@@ -119,11 +119,13 @@ cmp "$out/oracle.json" src/pilotdeck-gateway/tests/fixtures/snapshot-projection/
 - #322-1：mkdtemp 十次 `EEXIST` 后返回 `NODE_IO_REQUIRED`（空消息 +
   `requires_host`），不再手写 `EEXIST: ... mkdtemp '<template>'`；确定性后缀
   注入单测覆盖该不可达分支。
-- #322-2：`requires_host()` 文档与测试同时钉住 `NODE_IO_REQUIRED` 与
-  `JS_HOST_REQUIRED` 两种形状；普通投影错误不置位。
+- #322-2：`requires_host()` 文档与测试钉住 `NODE_IO_REQUIRED` 形状；普通投影
+  错误不置位。#132 退役原生排序边界时删掉了 storage provider 的
+  `JS_HOST_REQUIRED` 形状，该变体与 `requires_host` 预检一并移除，因此
+  snapshot 投影只剩 errno 一种宿主形状。
 - 回放之外另有单测覆盖 gateway 包装层挡住/放行的分支：省略 `projectKey` 走
   `fallbackProjectRoot`（只经投影入口）、空 `sessionKey` 不过滤、provider 缺失
-  先于 project 解析、校验先于 capability、未知方法保持转发、HostRequired 经
+  先于 project 解析、校验先于 capability、未知方法保持转发、errno 形状经
   `dispatch` 返回 `Forward`；以及孤立代理项 snapshotId 的原始 UTF-16 比较、
   mkdtemp 前的 `path.join` 词法规范化、native resolver 的相对标记与 slug 回退。
 

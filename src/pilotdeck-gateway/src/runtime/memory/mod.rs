@@ -109,8 +109,9 @@ impl MemoryProviderError {
         }
     }
     /// Host boundary for a registry/provider input the native port cannot
-    /// represent. Same shape as `runtime/snapshot.rs`: `JS_HOST_REQUIRED`,
-    /// empty message, `requires_host`.
+    /// represent: `JS_HOST_REQUIRED`, empty message, `requires_host`. This was
+    /// the same shape as `runtime/snapshot.rs` until #132 deleted that
+    /// projection; the memory provider still owns its own boundary.
     pub fn host_required() -> Self {
         Self {
             name: "Error".into(),
