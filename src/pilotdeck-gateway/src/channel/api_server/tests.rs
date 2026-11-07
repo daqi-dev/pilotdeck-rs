@@ -65,6 +65,7 @@ fn recorded_body(text: &str) -> Vec<u8> {
     let count = count.parse::<usize>().unwrap_or_else(|error| {
         panic!("#1333 request placeholder {text:?} does not expand to a byte count: {error}")
     });
+    assert_replay_budget_covers_the_cap();
     assert!(
         count <= REPLAY_BODY_BUDGET,
         "#1333 request placeholder {text:?} is beyond the replay budget"
@@ -76,10 +77,31 @@ fn recorded_body(text: &str) -> Vec<u8> {
 /// largest placeholder the oracle legitimately records is the over-cap probing
 /// body, `MAX_REQUEST_BYTES + 1`; anything past that is a fixture bug, so it is
 /// refused *before* `vec![b'x'; count]` can abort the whole test binary on
-/// allocation instead of failing one assertion. It is derived from the product
-/// cap on purpose: a fixture that stops tracking the cap is the drift this
-/// guard exists to catch.
-const REPLAY_BODY_BUDGET: usize = MAX_REQUEST_BYTES + 1;
+/// allocation instead of failing one assertion.
+///
+/// #1759 E: a **literal**, not `MAX_REQUEST_BYTES + 1`. Derived, the budget
+/// moved with the `body-limit` negative control, which rewrites the cap in
+/// `mod.rs` to `10_000_000`: the budget then became `10_000_001`, so
+/// `recorded_body_refuses_an_unbounded_count` (`<9000000 bytes>`) stopped
+/// panicking — the mutation that raises the cap switched off the very guard it
+/// exists to be caught by. Pinned to the recorded over-cap length instead and
+/// tied to the cap by `assert_replay_budget_covers_the_cap`, so raising the
+/// product cap fails by name rather than silently narrowing the budget.
+const REPLAY_BODY_BUDGET: usize = 1_000_001;
+
+/// #1759 E: the tie the literal above gives up. `REPLAY_BODY_BUDGET` must not
+/// track `MAX_REQUEST_BYTES` (see its doc comment), so the relationship is
+/// asserted instead of derived: a product cap raised past the budget is a
+/// named failure, not a guard that quietly stops guarding.
+fn assert_replay_budget_covers_the_cap() {
+    let floor = MAX_REQUEST_BYTES + 1;
+    assert!(
+        floor <= REPLAY_BODY_BUDGET,
+        "#1759 the product cap floor is {floor} bytes but `REPLAY_BODY_BUDGET` is only \
+         {REPLAY_BODY_BUDGET}: the replay budget must cover `MAX_REQUEST_BYTES + 1`, otherwise \
+         `recorded_body_refuses_an_unbounded_count` stops guarding anything"
+    );
+}
 
 /// Pin each boundary cell's *expanded* body to the cap it exists to probe
 /// (#1606 r2). The placeholder's syntax was already fail-closed, but its count
@@ -89,6 +111,9 @@ const REPLAY_BODY_BUDGET: usize = MAX_REQUEST_BYTES + 1;
 /// count — would leave every one of them green while proving nothing. Each
 /// boundary cell must therefore replay the length it claims to test.
 fn assert_boundary_body_len(id: &str, case: &Value) {
+    // #1759 E: before the drift comparison, so a raised product cap is reported
+    // as a raised cap instead of being misattributed to a broken fixture.
+    assert_replay_budget_covers_the_cap();
     let expected = match id {
         "body-limit-exact" => MAX_REQUEST_BYTES,
         _ if id.starts_with("oversized-") => MAX_REQUEST_BYTES + 1,
@@ -160,6 +185,30 @@ fn recorded_body_expands_the_length_placeholder() {
     // Anything that is not the placeholder syntax is the body verbatim.
     assert_eq!(recorded_body("{}"), b"{}");
     assert_eq!(recorded_body(""), b"");
+}
+
+/// #1759 E: `oversized_body_closes_without_response` builds its body from the
+/// literal `1_000_001` on purpose — the `body-limit` negative control rewrites
+/// the cap in `mod.rs` and would otherwise move the body along with it, letting
+/// the mutant survive. That independence is only honest while the literal
+/// really is `MAX_REQUEST_BYTES + 1`, and nothing used to tie the two: a
+/// legitimate cap change turned that test red and looked like a replay
+/// regression. Pin the tie here, in a test the `body-limit` row does not
+/// target, so the failure names the cap instead. `assert_boundary_body_len`
+/// carries the same number into the oracle, whose `oversized-*` placeholders
+/// record `<1000001 bytes>`.
+#[test]
+fn product_cap_is_pinned_to_the_oversized_body_literal() {
+    assert_eq!(
+        MAX_REQUEST_BYTES + 1,
+        1_000_001,
+        "#1759 `MAX_REQUEST_BYTES` moved away from the literal the oversized test and the \
+         oracle were recorded against; re-record the fixture and update both ends together"
+    );
+    // The other half of the tie. `recorded_body_refuses_an_unbounded_count`
+    // pins the ceiling (`<9000000 bytes>` must still be refused); this pins the
+    // floor, so the budget cannot be lowered under the cap either.
+    assert_replay_budget_covers_the_cap();
 }
 
 #[test]

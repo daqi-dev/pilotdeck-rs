@@ -155,7 +155,14 @@ silently degrade a cell into "some short body":
   written down as a clean zero-byte close.
 - `body-limit-exact` must expand to exactly `MAX_REQUEST_BYTES` and
   `oversized-*` to exactly `MAX_REQUEST_BYTES + 1`, asserted on every replay:
-  the cap and the fixture must not drift apart.
+  the cap and the fixture must not drift apart. The replay's allocation ceiling
+  (`REPLAY_BODY_BUDGET`) is a **literal** `1_000_001`, deliberately not
+  `MAX_REQUEST_BYTES + 1`: derived, it moved with the `body-limit` negative
+  control, which rewrites the cap in `mod.rs` to `10_000_000` — the budget rose
+  with it and `<9000000 bytes>` stopped being refused, so the mutant switched
+  off the guard it exists to trip. The tie is asserted instead (and pinned by a
+  test the `body-limit` row does not target), so raising the product cap fails
+  by name rather than narrowing the budget.
 - `body-read-timeout` records the declared `content-length` and a
   `stalledAfter` count that must be smaller — a cell that actually completed
   its body would exercise nothing. The replay also pins the TS answer itself
@@ -172,14 +179,13 @@ silently degrade a cell into "some short body":
   body it sends, so the two cannot disagree.
 
 One coupling to keep in mind when adding a negative control: the replay budget
-(`REPLAY_BODY_BUDGET`) is derived from `MAX_REQUEST_BYTES` on purpose, so a
-mutation that *raises* the cap also raises the budget past
-`recorded_body_refuses_an_unbounded_count`'s literal (`<9000000 bytes>`). That
-guard would stop panicking under such a mutant. It is harmless today because
-api-server controls run one named test each through
-`negative_suite.run_cases`; a move to the matrix runner (which requires the
-positive suite to stay green) needs the literal re-derived or the mutant
-excluded.
+(`REPLAY_BODY_BUDGET`) is a **literal** `1_000_001`, not `MAX_REQUEST_BYTES + 1`
+(#1759 E). Derived, a mutation that *raised* the cap also raised the budget past
+`recorded_body_refuses_an_unbounded_count`'s literal (`<9000000 bytes>`), so that
+guard stopped panicking under exactly the mutant it exists to catch — and the
+only red left was `assert_boundary_body_len` reporting it as fixture drift. The
+tie is asserted instead (`assert_replay_budget_covers_the_cap`), so raising the
+cap fails by name, and the `replay-budget-vs-cap` row pins that.
 
 ## Known gaps
 

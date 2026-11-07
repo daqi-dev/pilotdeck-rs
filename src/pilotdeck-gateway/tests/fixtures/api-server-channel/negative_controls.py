@@ -131,6 +131,21 @@ mutations = [
         "#1333 oversized body closes with zero bytes",
     ),
     (
+        # #1759 E: raise the cap by one so `MAX_REQUEST_BYTES + 1` (1000002)
+        # exceeds the literal `REPLAY_BODY_BUDGET` (1000001). While the budget
+        # was derived from the cap this mutation was invisible to the replay:
+        # the budget tracked the cap, so `recorded_body_refuses_an_unbounded_count`
+        # silently stopped guarding anything and the only red was
+        # `assert_boundary_body_len` calling it "fixture drift". The tie is now
+        # asserted, so a moved product cap has to be reported by name.
+        "replay-budget-vs-cap",
+        MOD,
+        "1_000_000",
+        "1_000_001",
+        REPLAY,
+        "#1759 the product cap floor is 1000002 bytes but `REPLAY_BODY_BUDGET` is only 1000001",
+    ),
+    (
         "body-limit-exact",
         SERVER,
         "if out.len() + data.len() > MAX_REQUEST_BYTES {",
