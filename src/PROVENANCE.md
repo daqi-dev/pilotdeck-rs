@@ -435,3 +435,31 @@ SHA-256：`9997a5b93555b8d603abc904df9a668eea8be8e43d81762f5c8b602e0e68a491`。
 本仓自写生成器和 gateway 代码仍按 AGPL-3.0-only 分发；分发整体时一并保留
 Unicode notices 与 AGPL 对应源代码。兼容说明依据许可条文的条件，未声称
 Unicode 数据改为 AGPL 授权。
+
+## #1265：pilotdeck-regex-proto 与 rquickjs 0.14.0（2026-11-07）
+
+人批 #1264 选 C 的原型 crate（不接生产）：`pilotdeck-regex-proto` 以
+非默认 feature `regex-proto` 独占启用 `rquickjs`，默认 workspace 构建
+不解析、不下载、不编译 rquickjs（`cargo build --workspace` 全程零
+rquickjs 编译行；`cargo tree -p pilotdeck-regex-proto` 默认无任何依赖）。
+crates.io 源码依赖，精确钉死，无补丁需求故不 vendor（对照 `serde_json`
+/`ryu-js` 先例；vendor 仅用于需源码补丁的依赖，见上文「#132」段）。
+红线核对：rquickjs-sys 构建只从 crates.io 包内捆绑的 QuickJS-NG 0.16.2
+C 源码（`quickjs.c` / `libregexp.c` / `libunicode.c` / `dtoa.c`）经 cc
+从源码编译，不下载预编译二进制。
+
+`src/Cargo.lock` 登记（registry checksum 即 crates.io 包 sha256）：
+
+| 包 | 版本 | checksum (sha256) | 许可证 |
+|---|---|---|---|
+| rquickjs | 0.14.0 | `a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e` | MIT |
+| rquickjs-core | 0.14.0 | `6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24` | MIT |
+| rquickjs-sys | 0.14.0 | `cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423` | MIT（捆绑 QuickJS-NG 0.16.2，上游 MIT） |
+| relative-path | 2.0.3 | `38540a682c6e9bca04a8bca9e5ec5a6ba168dfbb04c9998fe517a9befb92eb68` | MIT OR Apache-2.0 |
+| hashbrown（rquickjs-core 传递） | 0.17.1 | `ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a` | MIT OR Apache-2.0 |
+| allocator-api2 / equivalent / foldhash | 0.2.21 / 1.0.3 / 0.2.0 | 见 `src/Cargo.lock` | MIT OR Apache-2.0 |
+
+hashbrown 0.16.1 / allocator-api2 等其余同名条目属既有 workspace 依赖，
+非本单新增。`scripts/smoke/probe` 独立 workspace 不依赖本 crate，
+锁文件经 `cargo metadata --offline` 核对无变化。验收记录见
+`_tmp/20261107-issue-1265/RESULT.md`（任务书指定证据目录）。

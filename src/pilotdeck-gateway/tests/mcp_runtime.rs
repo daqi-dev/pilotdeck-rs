@@ -2053,6 +2053,34 @@ fn output_schema_generator_reproduces_the_committed_oracle_twice() {
     }
 }
 
+/// #1265: the regress oracle (108 cases, from WIP `2c2e4f87`) is also
+/// generated from the real SDK; two fresh runs must reproduce the committed
+/// bytes. Its generator is plain ESM TypeScript, so no tsx loader is needed.
+#[test]
+#[ignore = "requires fixed TS baseline and Node; run with PDRS_BASELINE"]
+fn regress_oracle_generator_reproduces_the_committed_oracle_twice() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
+    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/output-schema/generate-regress.mts");
+    let committed = include_str!("fixtures/output-schema/regress-oracle.json");
+    for run in 0..2 {
+        let scratch = Scratch::new("regress-oracle-generate");
+        let status = baseline::node_command()
+            .env("PDRS_BASELINE", &baseline)
+            .arg(&generator)
+            .arg(scratch.path())
+            .status()
+            .expect("run node");
+        assert!(status.success(), "generator run {run} failed");
+        let generated =
+            std::fs::read_to_string(scratch.path().join("regress-oracle.json")).unwrap();
+        assert!(
+            generated == committed,
+            "generator run {run} differs from the committed oracle"
+        );
+    }
+}
+
 // #394: Tokio accepts spawn on a shut-down Handle and cancels the task.
 // A dropped lease may arrive on a plain thread after its original executor dies.
 #[test]
