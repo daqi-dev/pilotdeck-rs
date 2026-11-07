@@ -49,30 +49,30 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 - `session_dir` 族 `sessionKey` 的**门位置/形状**（本条新登记，未批准）：TS 基线在 **IPG 层**对这五个方法都没有 `?.trim()` 门（`InProcessGateway.ts:2026`、`:2049`、`:2229`、`:2211`、`:2220`），**但端到端必须逐方法分开说**：
   - `renameSession` / `tagSession` / `deleteSession`：IPG 只是转发（`this.options.renameSession(input)` `InProcessGateway.ts:2211-2218`、`this.options.tagSession(input)` `:2220-2227`、`await this.options.deleteSession(input)` `:2229-2239`；`deleteSession` 之前还先试 `deleteEphemeralSession` 钩子，`:2230` —— 空白键在该钩子里命中与否本探针**未测**）。转发到的 CLI provider 门**不是链上第一步**：`resolveProjectKey(input.projectKey ?? fallbackProjectRoot)` 先跑（`createLocalGateway.ts:1117` / `:1130` / `:1143`），**只有项目能解析时**才轮到 `if (!input.sessionKey?.trim()) throw new DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`:1118` / `:1131` / `:1144`，与 `ledger.json:4111` / `:4335` / `:4406` 同锚）。注意 `??` 是 **nullish 回退**，不是「必须是字符串」：`projectKey` 缺失 / `undefined` / `null` 都会换成 `fallbackProjectRoot` 再解析。
 
-    所以「同码同报文」不能概括成「projectKey 是能解析的字符串」一条，必须按**两个字段的取值**分。下表**只覆盖 `sessionKey` 缺键 / `null` / `undefined` / 空白**——这四种在 TS 侧都短路到同一个 `INVALID_SESSION_KEY` 领域错误（探针 sessionKey 分节前三行 + `blank '  '` 行），Rust 侧都归 `TrimGuard::Missing`；非 nullish 的非字符串 `sessionKey` 正交，另列在表后。Rust 侧这一族在任何 `projectKey` 取值下都**先**跑 `require_session_key`（定义在 `session_dir.rs:73-80`；调用点 delete `:231-232`、rename/tag `:300` / `:308`，都在 `resolve_project` 之前），故这一路径上的基准答案恒为 `INVALID_SESSION_KEY` / `sessionKey is required.`（该门序**没有请求级用例钉住**，只有 guard 级用例与正控 —— 见文末 #2090）：
+    所以「同码同报文」不能概括成「projectKey 是能解析的字符串」一条，必须按**两个字段的取值**分。下表**只覆盖 `sessionKey` 缺键 / `null` / `undefined` / 空白**——这四种在 TS 侧都短路到同一个 `INVALID_SESSION_KEY` 领域错误（探针 sessionKey 分节前三行 + `blank '  '` 行），Rust 侧都归 `TrimGuard::Missing`；非 nullish 的非字符串 `sessionKey` 正交，另列在表后。Rust 侧这一族先跑 `require_session_key`（定义在 `session_dir.rs:73-80`；**五个**调用点：resume `:179`、close `:214`、delete `:231-232`、rename/tag `:300` / `:308`，都在各自的 `resolve_project` 之前），故这一路径上的基准答案恒为 `INVALID_SESSION_KEY` / `sessionKey is required.`。请求级用例只有 resume 一条（`resume_session_rejects_blank_session_key`，`session_dir.rs:848-862`）；delete/rename/tag 与「门序」组合都没有请求级用例（见文末 #2090）：
 
     | `projectKey` | TS 在 sessionKey 门之前发生什么 | 首错是否与 Rust 相同 |
     |---|---|---|
-    | 缺失 / `undefined` / `null` | 按上文的 nullish 回退换成 `fallbackProjectRoot` 再解析；回退项目**能解析时**照常到达 sessionKey 门 | **相同**（回退项目恒可解析属读码推断，**未实测**；`fallbackProjectRoot` 本身可选（`:336` `fallbackProjectRoot?: string`），为 `undefined` 时 `resolve(undefined)` 先抛 `TypeError`，则不同） |
+    | 缺失 / `undefined` / `null` | 按上文的 nullish 回退换成 `fallbackProjectRoot` 再解析；回退项目**能解析时**照常到达 sessionKey 门 | **相同**（回退项目恒可解析属读码推断，**未实测**；`fallbackProjectRoot` 在启动配置里已归一化成必填字符串——`LocalGatewayBootConfig.ts:28` 声明为 `string`、`:52` `input.fallbackProjectRoot ?? projectRoot`——所以真实调用链上不会出现 `undefined`） |
     | 能解析的字符串（`generalProjectKey` 或已注册项目） | 到达 sessionKey 门 | 相同（`deleteSession` 例外：它先试 `deleteEphemeralSession` 钩子，钩子命中时根本到不了门——本探针**未测**，见上） |
     | 字符串但解析不了（未注册的应用内路径） | 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`） | 不同 |
     | 非 nullish 的非字符串（如数字 `7`） | `resolve(projectKey)`（`projectRegistry.ts:42`）由 Node 参数校验先抛 `TypeError` / `ERR_INVALID_ARG_TYPE`（实测报文 `The "paths[0]" argument must be of type string. Received type number (7)`） | 不同 |
-    | 空串 `""`（不是「空白串」；真·空白 projectKey 如 `" "` 经 `resolve(" ")` 得 `cwd + "/ "`，几乎必然落「解析不了」行） | `""` 不是 nullish，`resolve("")` = **cwd**（实测 `/Users/da/ws/pilotdeck-rs`）；cwd 命中 `generalProjectKey` 或已注册项目时到达 sessionKey 门（相同），否则 `PROJECT_NOT_FOUND`（不同）。**两种分支本探针都未测** | **按解析结果分支，未实测** |
+    | 空串 `""`（不是「空白串」；真·空白 projectKey 如 `" "` 经 `resolve(" ")` 得 `cwd + "/ "`，实测 `/Users/da/ws/pilotdeck-rs/ `，几乎必然落「解析不了」行） | `""` 不是 nullish，`resolve("")` = **cwd**（实测 `/Users/da/ws/pilotdeck-rs`）；cwd 命中 `generalProjectKey` 或已注册项目时到达 sessionKey 门（相同），否则 `PROJECT_NOT_FOUND`（不同）。**两种分支本探针都未测** | **按解析结果分支，未实测** |
 
-    **非 nullish 的非字符串 `sessionKey`（与上表正交，单列）**：`null` / `undefined` / 缺键**不属于这一类**——Rust 的 `trim_guard` 把它们归 `TrimGuard::Missing`（`methods/mod.rs:168-171`），答的仍是 `INVALID_SESSION_KEY` / `sessionKey is required.`；TS 的可选链同样短路到领域错误，**与上表里同名的 projectKey 行结论一致**。真正不同的是非 nullish 的非字符串（如数字 `7`）：Rust 走 `NotAString`，答 `gateway_request_failed` + `input.sessionKey?.trim is not a function`（`methods/mod.rs:175-177`；本 PR 用例 `a_non_string_session_key_throws_the_optional_chain_type_error` 在 `session_dir.rs:882-890` 断言了这两个值）。
+    **非 nullish 的非字符串 `sessionKey`（单列）**：`null` / `undefined` / 缺键**不属于这一类**——Rust 的 `trim_guard` 把它们归 `TrimGuard::Missing`（`methods/mod.rs:144`），答的仍是 `INVALID_SESSION_KEY` / `sessionKey is required.`；TS 的可选链同样短路到领域错误，与上表 `sessionKey` 那一维同结论。真正不同的是非 nullish 的非字符串（如数字 `7`）：Rust 走 `NotAString`，答 `gateway_request_failed` + `input.sessionKey?.trim is not a function`（`methods/mod.rs:175-177`；本 PR 用例 `a_non_string_session_key_throws_the_optional_chain_type_error` 在 `session_dir.rs:882-890` 断言了这两个值）。
 
-    **分层说，别把两层混成一层**：TS 在 **provider 层**抛的是真 `TypeError`（探针 sessionKey 分节 `number 7` 行——直接调方法，不经传输层）。过了同一条 WebSocket 边界，`GatewayWsConnection.ts:245-253` 会把非 `DialogGatewayError`、也没有 structured code 的异常统一改写成 `code: "gateway_request_failed"` + 原 `message`；只有 `DialogGatewayError` / 带 structured code 的异常才保留 `error.code`（`:219-224`）。所以**在传输边界上两侧是同一个形状**：`gateway_request_failed` + 同一条报文。差别只在 provider 层：TS 内部是 `TypeError` 实例，Rust 是普通 `RequestError`。跨边界端到端等价属**读码推断，未实测**。
+    **分层说，别把两层混成一层**：TS 在 **provider 层**抛的是真 `TypeError`（探针 `number 7` 行——探针跑的是**照录的门表达式副本**，不是直接调用基线 provider 方法，所以它只证明该表达式的抛错形状，不证明 provider 调用链一定走到这里）。过了同一条 WebSocket 边界，`GatewayWsConnection.ts:245-255` 会把裸 `TypeError` 改写成 `code: "gateway_request_failed"` + 原 `message`；能保留 `error.code` 的是更早的三个分支——`SkillValidationError`（`:194-208`）、`SkillManagerError`（`:209-222`）、`DialogGatewayError` / 带 structured code（`:223-243`）。所以**对这条裸 TypeError 而言，传输边界上两侧同形状**：`gateway_request_failed` + 同一条报文（同一兜底语义在 `ledger.json:2147` / `:2420` / `:2552` 一族已有登记）。差别只在 provider 层：TS 内部是 `TypeError` 实例，Rust 是普通 `RequestError`。跨边界端到端等价属**读码推断，未实测**。
 
     `resume` / `close` 不在这条路径上，见下两条。
 
-    **`params` 整体为 `null` / `undefined`（本条新登记，Node v22.22.0 实测）**：两侧读的键名不同。TS 在 `delete/rename/tag` 上先求值 `input.projectKey`（`createLocalGateway.ts:1117` 的实参），报 `TypeError: Cannot read properties of null (reading 'projectKey')`；Rust 的 `require_session_key` 先跑，`input_property`（`methods/mod.rs:121-126`）读的是 `sessionKey`，报 `…(reading 'sessionKey')`（`session_dir.rs:892-903` 的用例钉的是这道守卫本身）。两端到边界上都是 `gateway_request_failed`，但**报文的键名不同**，不能算进「同形状」。`session_dir.rs:892-893` 的注释只描述守门自身的形状，不是 TS 端到端首错的断言。
+    **`params` 整体为 `null` / `undefined`（本条新登记，按方法分开）**：**rename / tag** 上 TS 先求值 `input.projectKey`（`createLocalGateway.ts:1130` / `:1117` 的实参），报 `TypeError: Cannot read properties of null (reading 'projectKey')`（表达式级实测，见机器判据）；Rust 的 `require_session_key` 先跑，`input_property`（`methods/mod.rs:121-126`）读 `sessionKey`，报 `…(reading 'sessionKey')`（`session_dir.rs:892-903` 钉的是这道守卫本身），**两侧键名不同**。**delete 不同**：IPG 先调 `deleteEphemeralSession` 钩子（`InProcessGateway.ts:2230`），`createLocalGateway.ts:1417` 的实现是 `(input) => registry.deleteEphemeralSession(input.sessionKey)`——`input` 为 `null` 时它先读 `input.sessionKey`，所以首错键名**与 Rust 相同**（这是**读码推断，未实测**；端到端未经探针覆盖）。`session_dir.rs:892-893` 的注释只描述守门自身的形状，不是 TS 端到端首错的断言。
 
     与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
-  - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。
-  - `closeSession`：`router.close(input.sessionKey)` 之后还执行 `interactionCoordinator.closeSession` / `permissionModes.clear` / `dialogProjectKeys.delete`（`:2049-2054`），整条链**没有任何 `INVALID_SESSION_KEY` 拒绝、也没有 `trim`**；非字符串 `sessionKey` 会原样传给 router，行为本探针**未测**。
+  - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。Rust 侧相反：`session_resume`（`session_dir.rs:179`）先跑 `require_session_key`，空白 / 缺键答 `INVALID_SESSION_KEY`（请求级用例 `resume_session_rejects_blank_session_key`，`:848-862`）。
+  - `closeSession`：`router.close(input.sessionKey)` 之后还执行 `interactionCoordinator.closeSession` / `permissionModes.clear` / `dialogProjectKeys.delete`（`:2049-2054`），整条链**没有任何 `INVALID_SESSION_KEY` 拒绝、也没有 `trim`**；非字符串 `sessionKey` 会原样传给 router，行为本探针**未测**。Rust 侧 `session_close`（`session_dir.rs:214`）同样先跑 `require_session_key`，空白 / 缺键答 `INVALID_SESSION_KEY`。
   - **非字符串的可选链 TypeError 只对「确实走到门」的路径成立**（delete/rename/tag 的 provider 门，且 `projectKey` 能解析）：`resume` 不校验、`close` 只透传，这**两个方法**上两侧不同形状，不能概括成「五个方法同形状」。
 
-  **-R2:28 没有登记这条**——它登记的是「非字符串的错误形状与 TS 的 TypeError 不一致，待 #1457 装配回调时定夺」，不是门的位置差异。这条差异属 #1455 遗留、非 #1604 引入，已开 **#2090**（前置于 #1457 与 #1604 关单）。**门序本身也没有请求级用例**：本 PR 只加了 guard 级用例（`session_dir.rs:882-890`），delete/rename/tag 上「空白 sessionKey + 不可解析 projectKey → `INVALID_SESSION_KEY` 先于 `CAPABILITY_UNAVAILABLE`」这一组合无人钉住；已并入 **#2090** 的范围（同样前置于 #1604 关单）。U+0085 一侧的翻转在 **gateway 的 `trim_guard` / `require_text` 这一层没有用例钉住**（BOM 一侧有）；`pilotdeck-cli` 的 `paths.rs:189-192` 钉的是它**自己那份** `js_trim` 拷贝，不穿透本门。已开跟进单 **#2097**，前置于 #1604 关单。
+  **-R2:28 没有登记这条**——它登记的是「非字符串的错误形状与 TS 的 TypeError 不一致，待 #1457 装配回调时定夺」，不是门的位置差异。这条差异属 #1455 遗留、非 #1604 引入，已开 **#2090**（前置于 #1457 与 #1604 关单）。**门序本身也没有请求级用例**：本 PR 只加了 guard 级用例（`session_dir.rs:882-890`），请求级只有 resume 那一条（`:848-862`）；delete/rename/tag 上「空白 sessionKey + 不可解析 projectKey → `INVALID_SESSION_KEY` 先于 `CAPABILITY_UNAVAILABLE`」这一组合无人钉住，已并入 **#2090** 的范围（同样前置于 #1604 关单）。U+0085 一侧的翻转在 **gateway 的 `trim_guard` / `require_text` 这一层没有用例钉住**（BOM 一侧有）；`pilotdeck-cli` 的 `paths.rs:189-192` 钉的是它**自己那份** `js_trim` 拷贝，不穿透本门。已开跟进单 **#2097**，前置于 #1604 关单。
 - `session_dir` 族其余 `projectKey` 读点（`resolve_project` / `session_new`）仍是旧形状 → **#2068**。
 - 上面那条 `projectKey` 孤立代理项的残留差异要「对齐还是接受」需要人批 → **#2083**（决策单，前置于 #1604 关单）。
 
@@ -106,10 +106,11 @@ node v22.22.0 icu 78.2
 ["path.resolve(projectKey)","RETURN","/Users/da/ws/pilotdeck-rs/\ud800"]
 $ node -e 'const nel="\u0085", bom="\ufeff"; console.log(JSON.stringify({nel_blank: nel.trim()==="", bom_blank: bom.trim()==="", node: process.version}))'
 {"nel_blank":false,"bom_blank":true,"node":"v22.22.0"}
-$ node -e 'const p=require("node:path"); for (const v of [7,null,"","/nope/x"]) { try { console.log(JSON.stringify([String(v),"RETURN",p.resolve(v)])) } catch(e) { console.log(JSON.stringify([String(v),"THROW",e.name,e.code,e.message])) } }'   # \u4e3b\u4ed3\u6839\u76ee\u5f55
+$ node -e 'const p=require("node:path"); for (const v of [7,null,""," ","/nope/x"]) { try { console.log(JSON.stringify([String(v),"RETURN",p.resolve(v)])) } catch(e) { console.log(JSON.stringify([String(v),"THROW",e.name,e.code,e.message])) } }'   # \u4e3b\u4ed3\u6839\u76ee\u5f55
 ["7","THROW","TypeError","ERR_INVALID_ARG_TYPE","The \"paths[0]\" argument must be of type string. Received type number (7)"]
 ["null","THROW","TypeError","ERR_INVALID_ARG_TYPE","The \"paths[0]\" argument must be of type string. Received null"]
 ["","RETURN","/Users/da/ws/pilotdeck-rs"]
+[" ","RETURN","/Users/da/ws/pilotdeck-rs/ "]
 ["/nope/x","RETURN","/nope/x"]
 $ ssh mbp2 'mkdir -p /tmp/pdrs-nel && cat > /tmp/pdrs-nel/n.rs <<"EOF"
 fn main() {
@@ -139,16 +140,24 @@ $ sed -n '882,890p' src/pilotdeck-gateway/src/native_process/methods/session_dir
 （a_non_string_session_key_throws_the_optional_chain_type_error：断言 `gateway_request_failed` + `input.sessionKey?.trim is not a function`）
 $ sed -n '219,253p' resources/PilotDeck/src/gateway/server/GatewayWsConnection.ts
 （`:219` `error instanceof DialogGatewayError || hasStructuredErrorCode(error)` 分支保留 `error.code`；`:245-253` 兜底 `code: "gateway_request_failed"` + `error.message`）
+$ grep -n "fallbackProjectRoot" resources/PilotDeck/src/cli/LocalGatewayBootConfig.ts
+16:  fallbackProjectRoot?: string;
+28:  fallbackProjectRoot: string;
+52:    fallbackProjectRoot: input.fallbackProjectRoot ?? projectRoot,
+$ sed -n '2230p' resources/PilotDeck/src/gateway/client/InProcessGateway.ts; sed -n '1417p' resources/PilotDeck/src/cli/createLocalGateway.ts
+    if (this.options.deleteEphemeralSession && await this.options.deleteEphemeralSession(input)) {
+    deleteEphemeralSession: (input) => registry.deleteEphemeralSession(input.sessionKey),
 $ sed -n '230,232p;300,308p' src/pilotdeck-gateway/src/native_process/methods/session_dir.rs
 （delete：`require_session_key` → `resolve_project`；rename/tag：`require_session_key` → active-turn 检查 → `resolve_project`）
-$ node -e 'const gate=(input)=>{ const pk = input.projectKey ?? "/fb"; return pk; }; try { gate(null) } catch(e) { console.log(JSON.stringify(["null", e.name, e.message])) } const g2=(params)=>{ if (!params.sessionKey?.trim()) throw new Error("x") }; try { g2(null) } catch(e) { console.log(JSON.stringify(["null-sessionKey-gate", e.name, e.message])) }'
+$ node -e 'const gate=(input)=>{ const pk = input.projectKey ?? "/fb"; return pk; }; try { gate(null) } catch(e) { console.log(JSON.stringify(["null", e.name, e.message])) } const g2=(params)=>{ if (!params.sessionKey?.trim()) throw new Error("x") }; try { g2(null) } catch(e) { console.log(JSON.stringify(["null-sessionKey-gate", e.name, e.message])) } const g3=(input)=>input.sessionKey?.trim(); try { g3(null) } catch(e) { console.log(JSON.stringify(["delete-hook-shape", e.name, e.message])) }'
 ["null","TypeError","Cannot read properties of null (reading 'projectKey')"]
 ["null-sessionKey-gate","TypeError","Cannot read properties of null (reading 'sessionKey')"]
+["delete-hook-shape","TypeError","Cannot read properties of null (reading 'sessionKey')"]
 $ python3 -I scripts/gateway-parity/check_frozen.py --base origin/main
 {"status": "PASS", "failures": [], "entries": 30}
 ```
 
-`params=null` 那一行走的是 `projectKey` 门（报文 `(reading 'projectKey')`），只是探针把它排在 `== sessionKey ==` 分节末尾；sessionKey 门的 `params=null` 形状是 `(reading 'sessionKey')`，本轮未单独出图，`-R7:30` 的「同形状」只覆盖缺键 / `null` / 空白 / U+FEFF / 非字符串 / 孤立代理项六项，不含这一项。
+`params=null` 那一行走的是 `projectKey` 门（报文 `(reading 'projectKey')`），只是探针把它排在 `== sessionKey ==` 分节末尾；sessionKey 门与 delete 钩子形状的 `params=null` 见上面 `node -e` 段的 `null-sessionKey-gate` / `delete-hook-shape` 两行，都是**表达式级**实测（照录表达式，不是端到端）。`-R7:30` 的「同形状」只覆盖缺键 / `null` / 空白 / U+FEFF / 非字符串 / 孤立代理项六项，不含 `params=null`。
 
 探针的 **stderr 另有两行** `ExperimentalWarning: Transform Types is an experimental feature…`（`--experimental-transform-types` 自带），与判据无关，上面只转录 stdout。探针脚本 `probe.mjs` 的 BOM 用例已从裸字面量改成 `"\uFEFF"` 转义（输出逐字节不变，实测 diff 为空），避免不可见字符在文件被改写时静默退化。脚本在 `_tmp/`，不属本 PR 补丁。
 
