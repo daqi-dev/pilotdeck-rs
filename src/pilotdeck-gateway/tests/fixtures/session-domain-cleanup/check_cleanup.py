@@ -6469,6 +6469,13 @@ class _ModuleEvents(dict):
         # #1953 fix-r1 round 24: names the module also reads as a value, so
         # the recorded call sites are not the whole story for them.
         self.value_uses = None
+        # #1953 fix-r1 round 25 (codex r24 P0-2): the module can reach a
+        # function without ever naming it -- ``globals()['main']`` -- so the
+        # call list is not exhaustive at all there.
+        self.open_calls = False
+        # #1953 fix-r1 round 25 (codex r24 P0-2): ``name -> [call sites]`` for
+        # module-level aliases (``saved = main; saved(...)``).
+        self.alias_calls = {}
         # #1953 fix-r1 round 22 (codex r21 P0-1): ``name -> [event]`` for the
         # names this scope binds to the ``builtins`` module itself
         # (``import builtins as bi``).  The marker rides in the helper slot of
@@ -6509,6 +6516,11 @@ def _module_call_positions(tree, direct=None):
     return found
 
 
+#: Module-scope calls that can reach a name without spelling it (round 25).
+_OPEN_CALL_HEADS = frozenset(
+    {'globals', 'locals', 'vars', 'eval', 'exec', '__import__', 'getattr'})
+
+
 def _module_value_uses(tree):
     """Names the module reads somewhere other than as a direct call (round 24).
 
@@ -6519,14 +6531,79 @@ def _module_value_uses(tree):
     registered before a later ``import builtins as bi`` -- runs at a time the
     static call list does not describe, so the answer falls back to the
     round-14 rule there (a real write keeps being a write).
+
+    #1953 fix-r1 round 25 (codex r24 P1): only a *load* reads the function
+    object.  ``main = None`` stores over the name and never hands the function
+    out, so counting every ``ast.Name`` turned a clean module into a reported
+    write.
     """
     direct = set()
     _module_call_positions(tree, direct)
     uses = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and id(node) not in direct:
+        if (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                and id(node) not in direct):
             uses.add(node.id)
     return uses
+
+
+def _module_alias_calls(tree, calls):
+    """``func -> [call sites]`` for module-level ``alias = func`` hand-offs.
+
+    #1953 fix-r1 round 25 (codex r24 P0-2): ``saved = main; import builtins as
+    bi; saved(report)`` runs ``main`` after the later import without ever
+    calling the name ``main``, so the direct call list missed the time the
+    module reading was in force.  Only plain module-level ``alias = name``
+    assignments are followed (one hop per alias, repeated to a fixpoint); a
+    dynamic lookup is covered by :func:`_module_open_calls` instead.
+    """
+    aliases = {}
+    for level, node in _walk_scoped(tree):
+        if level is not None:
+            continue
+        if not isinstance(node, ast.Assign) or not isinstance(
+                node.value, ast.Name):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                aliases.setdefault(node.value.id, set()).add(target.id)
+    found = {}
+    changed = True
+    while changed:
+        changed = False
+        for target, names in aliases.items():
+            extra = set(names)
+            for name in list(names):
+                extra |= aliases.get(name, set())
+            if extra != names:
+                aliases[target] = extra
+                changed = True
+    for target, names in aliases.items():
+        extra = []
+        for name in names:
+            extra.extend(calls.get(name, ()))
+        if extra:
+            found[target] = list(calls.get(target, ())) + extra
+    return found
+
+
+def _module_open_calls(tree):
+    """True when the module can call a name it never spells (round 25).
+
+    #1953 fix-r1 round 25 (codex r24 P0-2): ``globals()['main'](report)`` runs
+    ``main`` at a time the recorded call sites do not describe, yet it produces
+    no ``ast.Name('main')``.  Any module-scope dynamic lookup or namespace call
+    makes the call list non-exhaustive, so ``call_only`` has to stay off.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in _OPEN_CALL_HEADS:
+                return True
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in (
+                'globals', 'locals', 'vars'):
+            return True
+    return False
 
 
 def _module_outer_def(tree):
@@ -6645,14 +6722,25 @@ def _resolve_builtins_module_copies(events, copies):
         # reads whatever the right-hand name holds *now*.  ``bi = Safe`` in
         # between took the module reading away, and the mirror that records
         # that shadow runs after this pass, so it cannot answer here.
+        # #1953 fix-r1 round 25 (codex r24 P0-1): an earlier binding does not
+        # override a later *conditional* module import -- ``if flag: import
+        # builtins as bi`` still leaves the module reading in force when the
+        # branch ran, so only a binding that comes after the last reachable
+        # module binding can rule it out.
         module_positions = {(item[0], item[1]) for item in source}
         prior = [item for item in events.get(value.id, ())
                  if item[3] is False
                  and (_event_position(item) < position
                       or (loops and set(item[4]) & set(loops)))]
-        if prior and _event_position(
-                max(prior, key=_event_position)) not in module_positions:
-            continue
+        reachable = [item for item in source
+                     if _event_position(item) < position
+                     or (loops and set(item[4]) & set(loops))]
+        if prior and reachable:
+            last_prior = max(prior, key=_event_position)
+            last_module = max(reachable, key=_event_position)
+            if (_event_position(last_prior) > _event_position(last_module)
+                    and _event_position(last_prior) not in module_positions):
+                continue
         earlier = [item for item in source
                    if _event_position(item) < position
                    or (loops and set(item[4]) & set(loops))]
@@ -6762,6 +6850,8 @@ def _module_binding_events(tree):
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
     events.value_uses = _module_value_uses(tree)
+    events.open_calls = _module_open_calls(tree)
+    events.alias_calls = _module_alias_calls(tree, events.calls)
     return events
 
 
@@ -6831,13 +6921,17 @@ def _imported_write_aliases(function, outer_imports=None):
     calls = getattr(outer_imports, 'calls', None) or {}
     outer_def = getattr(outer_imports, 'outer_def', None) or {}
     func_name = outer_def.get(id(function), getattr(function, 'name', None))
-    positions = calls.get(func_name, ())
+    alias_calls = getattr(outer_imports, 'alias_calls', None) or {}
+    positions = list(calls.get(func_name, ())) + list(
+        alias_calls.get(func_name, ())) if func_name is not None else []
     # #1953 fix-r1 round 24 (self-check of codex r22 P1-2): the call list only
     # describes the module-scope calls; a name the module also reads as a value
     # can run at a time the list does not cover, so ``call_only`` stays off.
     value_uses = getattr(outer_imports, 'value_uses', None)
+    open_calls = bool(getattr(outer_imports, 'open_calls', False))
     call_only = (bool(positions) and func_name is not None
-                 and value_uses is not None and func_name not in value_uses)
+                 and value_uses is not None and func_name not in value_uses
+                 and not open_calls)
     for name, items in (outer_imports or {}).items():
         chosen = _binding_event_at(items, None, anywhere=True,
                                    positions=positions)
@@ -11489,6 +11583,73 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 24)')
+    # Round 25 (codex r24 P0-1 / P0-2 / P1): a conditional module import keeps
+    # the module reading for a later copy, an escaped function is callable
+    # through its module-level alias, a dynamic lookup opens the call graph,
+    # and only a *load* counts as handing the function out.
+    for _label, _source, _want in (
+            ("a conditionally imported builtins alias before a self-assigned copy",
+             "import json as _bi50\n"
+             "if object():\n"
+             "    import builtins as _bi50\n"
+             "_bi50 = _bi50\n"
+             "def main(report):\n"
+             "    _f = _bi50.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", True),
+            ("a builtins alias reached through a module-level alias call",
+             "class Safe:\n"
+             "    @staticmethod\n"
+             "    def getattr(obj, name):\n"
+             "        return lambda *a, **k: None\n"
+             "_bi51 = Safe\n"
+             "def main(report):\n"
+             "    _f = _bi51.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "saved = main\n"
+             "import builtins as _bi51\n"
+             "saved(object())\n"
+             "_bi51 = Safe\n", True),
+            ("a builtins alias reached through globals()",
+             "import json as _bi52\n"
+             "def main(report):\n"
+             "    _f = _bi52.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi52\n"
+             "globals()['main'](object())\n", True),
+            ("a module name stored over but never read",
+             "import json as _bi53\n"
+             "def main(report):\n"
+             "    _f = _bi53.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "main = None\n"
+             "import builtins as _bi53\n", False),
+            ("a builtins alias copied after a certain replacement",
+             "import builtins as _bi54\n"
+             "class Safe:\n"
+             "    @staticmethod\n"
+             "    def getattr(obj, name):\n"
+             "        return lambda *a, **k: None\n"
+             "_bi54 = Safe\n"
+             "_bi54 = _bi54\n"
+             "def main(report):\n"
+             "    _f = _bi54.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = next(_node for _node in _tree.body
+                         if isinstance(_node, (ast.FunctionDef,
+                                               ast.AsyncFunctionDef)))
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 25)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
