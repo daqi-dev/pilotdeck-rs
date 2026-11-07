@@ -1946,6 +1946,14 @@ def _expr_kinds(node, kinds):
             # graph records it so ``f = md.__setattr__; f('common', <stub>)``
             # withdraws the receiver instead of dropping the write (codex
             # sibling r31 P0-2).
+            # #1953 fix-r1 round 16 (codex r15 P0-1/P0-4): the receiver stays
+            # in the kind.  The call of such a name is the *bound* spelling --
+            # ``f('common', <stub>)`` writes ``md`` -- and the untagged kind
+            # made ``_write_call_target`` read it as the unbound builtin, whose
+            # first argument is the target: the literal ``'common'`` named no
+            # receiver and the write vanished.
+            if isinstance(node.value, ast.Name):
+                return frozenset({'fn:write-handle:' + node.value.id})
             return frozenset({'fn:write-handle'})
         return frozenset()
     if isinstance(node, ast.Subscript):
@@ -2165,6 +2173,16 @@ def _write_call_target(func, kinds, depth=0):
         for candidate in _MANAGED_WRITE_ATTRS:
             if 'fn:' + candidate in kinds.get(func.id, ()):
                 return _managed_write_kind(candidate), None, ()
+        # #1953 fix-r1 round 16 (codex r15 P0-1/P0-4): a *bound* handle names
+        # the receiver it was taken from -- ``_f = md.__setattr__`` /
+        # ``_f = getattr(md, '__setattr__')`` then ``_f('common', <stub>)``
+        # writes ``md``, not the literal key.  Read as the unbound spelling the
+        # call named no receiver and the write disappeared.
+        handle_kinds = kinds.get(func.id, ())
+        for kind in sorted(handle_kinds):
+            if kind.startswith('fn:write-handle:') and 'fn:partial' not in handle_kinds:
+                return 'setitem', ast.Name(id=kind.split(':', 2)[2],
+                                           ctx=ast.Load()), ()
         # #1953 fix-r1 (codex r1b P1): a name the kinds table only knows as
         # *some* write handle (a comprehension target bound to
         # ``operator.setitem``, ``h = getattr(md, <name>)``) is the unbound
@@ -2176,7 +2194,6 @@ def _write_call_target(func, kinds, depth=0):
         # ``h(md, 'common', <stub>)`` spelling kept no named target at all.
         # A ``partial`` pre-binds its leading arguments, so that shape stays
         # undecoded here and keeps failing closed.
-        handle_kinds = kinds.get(func.id, ())
         if 'fn:write-handle' in handle_kinds and 'fn:partial' not in handle_kinds:
             return 'setitem', None, ()
         return None
@@ -3601,7 +3618,16 @@ def _assignment_effect(statement, tracked, scope_bound):
     aliases = set()
     fresh = set()
     copies = set()
-    for name, item in pairs:
+    # #1953 fix-r1 round 16 (codex r15 P0-1): a duplicated target is written
+    # twice and the *last* element decides.  ``_f, _f = None, _h`` aliases the
+    # handle even though the earlier element is fresh; the one-pass version put
+    # the name in both sets and the caller's ``live -= fresh`` dropped it.
+    last_write = {}
+    for index, (name, _item) in enumerate(pairs):
+        last_write[name] = index
+    for index, (name, item) in enumerate(pairs):
+        if last_write[name] != index:
+            continue
         if isinstance(item, ast.Name):
             if item.id in tracked:
                 aliases.add(name)
@@ -4622,12 +4648,51 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not isinstance(func, ast.Name) or func.id in _WRITE_HELPERS:
             return False
         found = kinds.get(func.id, ())
-        return ('fn:write-handle' in found
+        # #1953 fix-r1 round 16: a *bound* handle keeps its receiver in the
+        # kind (``fn:write-handle:<name>``); without the prefix test the
+        # flow guard below skipped it, so ``_h = getattr(md, '__setattr__')``
+        # followed by ``_h = lambda *a: None; _h('common', <stub>)`` withdrew
+        # the receiver again (the round-15 codex r14 P1 false FAIL).
+        return (any(kind == 'fn:write-handle'
+                    or kind.startswith('fn:write-handle:') for kind in found)
                 or any('fn:' + name in found for name in _MANAGED_WRITE_ATTRS))
 
     import_events = {}
     flow_marks = {}
     module_calls = []
+
+    def _freshly_rebound(name, scope, use):
+        """True when the binding *name* holds at *use* is a provably fresh value.
+
+        #1953 fix-r1 round 16: the round-15 flat scan drops an alias once a
+        later assignment certainly replaces it (``_f = _h`` then ``_f =
+        lambda *a: None``); the call-site guard here still asked
+        ``_resolved_write_helper``, which fails closed on *every* reachable
+        binding and so kept the write.  With the bound-handle kinds carrying
+        their receiver (round 16) that turned ``_h = getattr(md, '__setattr__');
+        _h = lambda *a: None; _h('common', <stub>)`` red -- the round-15 codex
+        r14 P1 false FAIL, reintroduced.  Only a single, positionally latest
+        binding counts, and a back-edge binding keeps the answer ambiguous
+        (fail-closed).
+        """
+        bindings = scoped_bindings.get(scope)
+        if bindings is None:
+            return False
+        values = _bindings_at(bindings, name, use)
+        if not values:
+            return False
+        limit = (getattr(use, 'lineno', 0), getattr(use, 'col_offset', -1))
+        placed = [(line, getattr(value, 'col_offset', -1), value)
+                  for line, value in values]
+        if any((line, col) > limit for line, col, _value in placed):
+            # A loop back edge (or two arms) reaches a binding written after
+            # the use; "the last one" is not a static fact there.
+            return False
+        latest = max((line, col) for line, col, _value in placed)
+        last = [value for line, col, value in placed if (line, col) == latest]
+        if len(last) != 1:
+            return False
+        return _fresh_value(last[0])
 
     def _module_calls():
         if not module_calls:
@@ -4760,6 +4825,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     def collect(node, scope, loops):
         written = _setattr_arguments(node, kinds)
+        if (written is not None and isinstance(node.func, ast.Name)
+                and _freshly_rebound(node.func.id, scope, node)):
+            written = None
         if written is not None and _generic_handle(node.func):
             bindings = scoped_bindings.get(scope)
             if bindings is not None and _resolved_write_helper(
@@ -5884,8 +5952,13 @@ def _binding_event_at(events, position, loops=(), anywhere=False,
     """
     if anywhere and positions:
         writes = []
-        for _call in positions:
-            item = _binding_event_at(events, _call, loops)
+        for entry in positions:
+            if (isinstance(entry, tuple) and len(entry) == 2
+                    and isinstance(entry[0], tuple)):
+                _call, _call_loops = entry
+            else:
+                _call, _call_loops = entry, ()
+            item = _binding_event_at(events, _call, _call_loops)
             if item is not None and item[2] is not None:
                 writes.append(item)
         if writes:
@@ -5946,23 +6019,33 @@ class _ModuleEvents(dict):
 
 
 def _module_call_positions(tree):
-    """``name -> [(line, col)]`` for calls written at module scope (r15).
+    """``name -> [((line, col), loops)]`` for calls at module scope (r15).
 
-    Decorators, defaults and annotations are not modelled: a call there is
-    rare in the audited tree and the ruler prefers the round-14 fallback over
-    guessing.  A call inside an ``if`` still counts -- fail-closed.
+    A call inside an ``if`` still counts -- fail-closed.
+
+    #1953 fix-r1 round 16 (codex r15 P0-2 / P0-3): each position carries the
+    loops it sits in (a call in a loop body is re-run with the bindings the
+    body wrote *after* it), and a definition header is scanned even though its
+    body is not -- ``def g(x=f())`` calls ``f`` at definition time, in this
+    scope, which is exactly the kind of call that ran before a later rebinding.
     """
     found = {}
-    stack = list(tree.body)
+    stack = [(child, ()) for child in reversed(tree.body)]
     while stack:
-        node = stack.pop()
+        node, loops = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                              ast.ClassDef, ast.Lambda)):
+            header = _definition_header(node)
+            stack.extend((item, loops) for item in reversed(header))
             continue
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             found.setdefault(node.func.id, []).append(
-                (node.lineno, node.col_offset))
-        stack.extend(ast.iter_child_nodes(node))
+                ((node.lineno, node.col_offset), loops))
+        inner = loops
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            inner = loops + (id(node),)
+        for child in reversed(list(ast.iter_child_nodes(node))):
+            stack.append((child, inner))
     return found
 
 
@@ -5993,8 +6076,12 @@ def _helper_from_value(value, events, position, loops=()):
     """
     if not isinstance(value, ast.Name):
         return None
+    # #1953 fix-r1 round 16 (codex r15 P0-4): a binding written *after* the
+    # assignment but on the same loop's back edge is in force when the loop
+    # re-runs, so it may not be filtered out by position alone.
     earlier = [item for item in events.get(value.id, ())
-               if _event_position(item) < position]
+               if _event_position(item) < position
+               or (loops and set(item[4]) & set(loops))]
     chosen = _binding_event_at(earlier, position, loops)
     if chosen is not None:
         return chosen[2]
@@ -6101,10 +6188,20 @@ def _imported_write_aliases(function, outer_imports=None):
     the builtin under another spelling.
     """
     events = {}
-    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                 ast.Lambda)):
+    if isinstance(function, ast.Module):
+        # #1953 fix-r1 round 16 (codex r15 P0-4): the module scope is a binding
+        # scope like any other.  ``from builtins import setattr as _w`` at
+        # module level left no event, so ``_x = _w`` resolved to nothing and
+        # ``_x(md, 'common', <stub>)`` -- a loop back edge makes the later
+        # import reachable at the call -- dropped the write.
+        body = list(function.body)
+        parameters = ()
+    elif isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef,
+                               ast.Lambda)):
+        body = [function.body] if isinstance(function, ast.Lambda) else function.body
+        parameters = _argument_names(function.args)
+    else:
         return events
-    body = [function.body] if isinstance(function, ast.Lambda) else function.body
     marks = _flow_marks(body)
 
     pending = []
@@ -6134,7 +6231,7 @@ def _imported_write_aliases(function, outer_imports=None):
                                    positions=positions)
         if chosen is not None:
             add(name, (-2, -2), chosen[2])
-    for name in _argument_names(function.args):
+    for name in parameters:
         # A parameter shadows at every position.
         add(name, (-1, -1), None)
     for scope, node in _walk_scoped(function):
@@ -10033,6 +10130,51 @@ def aggregation_audit():
             _1953_rel, frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test withdrew '
                         'on a copy that is certainly overwritten (round 15)')
+    # Round 16 (codex r15 P0-1 / P0-2 / P0-3 / P0-4): a bound write handle
+    # keeps its receiver through the alias graph, a duplicated unpack target is
+    # decided by its last element, and the module call sites of a definition
+    # header and of a loop back edge are read at the call.
+    for _label, _source, _want in (
+            ("a duplicated unpack target that ends on the handle",
+             "def _w26_use():\n"
+             "    _w26 = getattr(md, '__setattr__')\n"
+             "    _w26f, _w26f = None, _w26\n"
+             "    _w26f('common', object())\n", True),
+            ("a module call site on a loop back edge",
+             "from builtins import print as _w27\n"
+             "def _w27_use():\n"
+             "    _w27(md, 'common', object())\n"
+             "for _w27_x in (0, 1):\n"
+             "    _w27_use()\n"
+             "    from builtins import setattr as _w27\n", True),
+            ("a call in a definition header default",
+             "from builtins import setattr as _w28\n"
+             "def _w28_use():\n"
+             "    _w28(md, 'common', object())\n"
+             "def _w28_h(_x=_w28_use()):\n"
+             "    pass\n"
+             "from builtins import print as _w28\n", True),
+            ("an assignment on a loop back edge",
+             "from builtins import print as _w29\n"
+             "for _w29_x in (0, 1):\n"
+             "    _w29a = _w29\n"
+             "    _w29a(md, 'common', object())\n"
+             "    from builtins import setattr as _w29\n", True),
+            ("a bound handle that is certainly overwritten",
+             "def _w30_use():\n"
+             "    _w30 = getattr(md, '__setattr__')\n"
+             "    _w30 = lambda *a: None\n"
+             "    _w30('common', object())\n", False)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                           frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 16)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (
