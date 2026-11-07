@@ -1,0 +1,597 @@
+//! #1353 A8.5-pr2 machine tests: the matrix §二 order and §四 failure
+//! semantics over injected faces, so A2/A3/A8/A9/A10 are deterministic. The
+//! production wiring has its own tests (`native_process/switch_wiring_tests`);
+//! A13's clean process exit is `tests/switch_e2e.rs`.
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+
+use pilotdeck_protocol::JsString;
+
+use crate::runtime::cron::{
+    CronActiveRun, CronAgentGateway, CronError, CronManager, CronManagerConfig, CronManagerOptions,
+};
+use crate::switch::{
+    BoundedTimeout, Phase, StepFailure, SwitchError, SwitchFaces, SwitchMachine, SwitchTimeouts,
+    TIMEOUT_CAP_MS,
+};
+use crate::test_scratch::Scratch;
+use crate::{negative_assert, negative_assert_eq};
+
+fn bound(ms: u64) -> BoundedTimeout {
+    BoundedTimeout::from_millis(ms).expect("test bound is inside the DC-1 predicate")
+}
+
+fn uniform(ms: u64) -> SwitchTimeouts {
+    SwitchTimeouts::uniform(bound(ms))
+}
+
+/// Faces that record every call and answer from a script: the listed names
+/// reject with `failure` or hang, the rest succeed.
+#[derive(Clone)]
+struct Scripted {
+    calls: Arc<Mutex<Vec<&'static str>>>,
+    fail: Vec<&'static str>,
+    hang: Vec<&'static str>,
+    failure: StepFailure,
+}
+
+impl Scripted {
+    fn new() -> Self {
+        Self {
+            calls: Arc::default(),
+            fail: Vec::new(),
+            hang: Vec::new(),
+            failure: StepFailure::step("probe: face rejected"),
+        }
+    }
+    fn failing(mut self, face: &'static str) -> Self {
+        self.fail.push(face);
+        self
+    }
+    fn hanging(mut self, face: &'static str) -> Self {
+        self.hang.push(face);
+        self
+    }
+    fn with_failure(mut self, failure: StepFailure) -> Self {
+        self.failure = failure;
+        self
+    }
+    fn calls(&self) -> Vec<&'static str> {
+        self.calls.lock().unwrap().clone()
+    }
+    fn face(&self, name: &'static str) -> crate::switch::FaceFuture {
+        self.calls.lock().unwrap().push(name);
+        if self.fail.contains(&name) {
+            let failure = self.failure.clone();
+            return Box::pin(std::future::ready(Err(failure)));
+        }
+        if self.hang.contains(&name) {
+            return Box::pin(std::future::pending());
+        }
+        Box::pin(std::future::ready(Ok(())))
+    }
+}
+
+impl SwitchFaces for Scripted {
+    fn stop_automation(&self) -> crate::switch::FaceFuture {
+        self.face("stop_automation")
+    }
+    fn stop_accepting(&self) -> crate::switch::FaceFuture {
+        self.face("stop_accepting")
+    }
+    fn flush(&self) -> crate::switch::FaceFuture {
+        self.face("flush")
+    }
+    fn stop_owner(&self) -> crate::switch::FaceFuture {
+        self.face("stop_owner")
+    }
+    fn recover(&self) -> crate::switch::FaceFuture {
+        self.face("recover")
+    }
+}
+
+/// #1353 A2: the drain-reject path. The matrix's third §三 r3 branch — the
+/// stop chain itself rejecting — is the same failure face (probe
+/// P-A3-STOPREJ scenario B).
+#[tokio::test]
+async fn drain_rejection_halts_the_switch() {
+    let faces = Scripted::new().failing("stop_automation");
+    let machine = SwitchMachine::new(faces.clone(), uniform(2_000));
+    let phase = machine.phase();
+    let result = machine.run().await;
+    // The negative-control anchor (`switch-halt-continues` deletes the halt
+    // branch): the receipt-emitting assertion must be the first one the
+    // mutant can reach, so the halt check leads.
+    negative_assert!(
+        matches!(result, Err(SwitchError::Drain(StepFailure::Step(message)))
+            if message == "probe: face rejected"),
+        "#1353 A2: a rejecting face halts the switch with its own failure"
+    );
+    negative_assert_eq!(
+        faces.calls(),
+        vec!["stop_automation"],
+        "#1353 A2: no later face runs after a rejection"
+    );
+    assert_eq!(*phase.borrow(), Phase::Halted);
+}
+
+/// #1353 A2 aggregate form: two stop-chain failures surface as one
+/// aggregate, the `stopGeneration` shape (probe scenario C).
+#[tokio::test]
+async fn two_rejections_aggregate_like_stop_generation() {
+    let failure = StepFailure::aggregate(
+        "Project automation provider cleanup failed.",
+        vec![
+            "probe: cron stop rejected".into(),
+            "probe: alwaysOn stop rejected".into(),
+        ],
+    );
+    let faces = Scripted::new()
+        .failing("stop_automation")
+        .with_failure(failure);
+    let result = SwitchMachine::new(faces.clone(), uniform(2_000))
+        .run()
+        .await;
+    match result {
+        Err(SwitchError::Drain(StepFailure::Aggregate { message, errors })) => {
+            assert_eq!(message, "Project automation provider cleanup failed.");
+            assert_eq!(errors.len(), 2, "#1353 both causes stay in the aggregate");
+        }
+        other => panic!("#1353 aggregate failure must stay aggregated, got {other:?}"),
+    }
+    assert_eq!(
+        faces.calls(),
+        vec!["stop_automation"],
+        "#1353 A2: the aggregate halt also stops the switch"
+    );
+    let rendered = SwitchError::Drain(StepFailure::aggregate(
+        "Project automation provider cleanup failed.",
+        vec!["one".into(), "two".into()],
+    ))
+    .to_string();
+    assert_eq!(
+        rendered,
+        "switch halted: AggregateError: Project automation provider cleanup failed. (one; two)",
+        "#1353 the aggregate keeps every message in the rendered error"
+    );
+}
+
+/// #1353 A2 + A10: an entry-face rejection never reaches flush or the owner
+/// stop — the flush precondition is the drain itself.
+#[tokio::test]
+async fn entry_rejection_never_flushes() {
+    let faces = Scripted::new().failing("stop_accepting");
+    let result = SwitchMachine::new(faces.clone(), uniform(2_000))
+        .run()
+        .await;
+    assert!(matches!(result, Err(SwitchError::Drain(_))));
+    assert_eq!(
+        faces.calls(),
+        vec!["stop_automation", "stop_accepting"],
+        "#1353 A10: flush stays unreachable while entries failed to drain"
+    );
+}
+
+/// #1353 A3: a hung face times out and halts — no "give up waiting and
+/// continue" branch exists.
+#[tokio::test]
+async fn hung_automation_face_times_out() {
+    let faces = Scripted::new().hanging("stop_automation");
+    let result = SwitchMachine::new(faces.clone(), uniform(100)).run().await;
+    match result {
+        Err(SwitchError::Timeout { phase, bound }) => {
+            assert_eq!(phase, Phase::StopAutomation);
+            assert_eq!(bound, Duration::from_millis(100));
+        }
+        other => panic!("#1353 A3: a hung face must time out, got {other:?}"),
+    }
+    assert_eq!(
+        faces.calls(),
+        vec!["stop_automation"],
+        "#1353 A3: no later face runs after a timeout"
+    );
+}
+
+/// #1353 A3 + A10: a hung entry drain blocks flush for the whole bound, and
+/// the timeout keeps the machine out of flush.
+#[tokio::test]
+async fn hung_entry_drain_never_flushes() {
+    let faces = Scripted::new().hanging("stop_accepting");
+    let result = SwitchMachine::new(faces.clone(), uniform(100)).run().await;
+    assert!(matches!(result, Err(SwitchError::Timeout { .. })));
+    assert_eq!(
+        faces.calls(),
+        vec!["stop_automation", "stop_accepting"],
+        "#1353 A10: a hung drain keeps flush unreachable"
+    );
+}
+
+/// #1353 the completing order and its terminal phases.
+#[tokio::test]
+async fn completing_sequence_runs_every_face_and_switches() {
+    let faces = Scripted::new();
+    let machine = SwitchMachine::new(faces.clone(), uniform(2_000));
+    let phase = machine.phase();
+    let gate = machine.gate();
+    machine
+        .run()
+        .await
+        .expect("#1353 scripted faces all succeed");
+    assert_eq!(
+        faces.calls(),
+        vec![
+            "stop_automation",
+            "stop_accepting",
+            "flush",
+            "stop_owner",
+            "recover"
+        ],
+        "#1353 the matrix §二 order"
+    );
+    assert_eq!(*phase.borrow(), Phase::Switched);
+    assert!(gate.is_open(), "#1353 a completed switch opened the gate");
+}
+
+/// A stop-owner face that signals once it is running, then finishes.
+struct SlowOwner {
+    entered: Arc<tokio::sync::Notify>,
+}
+
+impl SwitchFaces for SlowOwner {
+    fn stop_automation(&self) -> crate::switch::FaceFuture {
+        Box::pin(std::future::ready(Ok(())))
+    }
+    fn stop_accepting(&self) -> crate::switch::FaceFuture {
+        Box::pin(std::future::ready(Ok(())))
+    }
+    fn flush(&self) -> crate::switch::FaceFuture {
+        Box::pin(std::future::ready(Ok(())))
+    }
+    fn stop_owner(&self) -> crate::switch::FaceFuture {
+        let entered = self.entered.clone();
+        Box::pin(async move {
+            entered.notify_one();
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            Ok(())
+        })
+    }
+    fn recover(&self) -> crate::switch::FaceFuture {
+        Box::pin(std::future::ready(Ok(())))
+    }
+}
+
+/// #1353 A8: the new-owner gate stays closed while the old owner (its
+/// background writers included) is still stopping, and opens only after the
+/// whole sequence completed.
+#[tokio::test]
+async fn gate_stays_closed_until_the_owner_stopped() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let faces = SlowOwner {
+        entered: entered.clone(),
+    };
+    let machine = SwitchMachine::new(faces, uniform(2_000));
+    let gate = machine.gate();
+    let done = tokio::spawn(machine.run());
+    entered.notified().await;
+    negative_assert!(
+        !gate.is_open(),
+        "#1353 A8: the gate is closed while stop_owner is still running"
+    );
+    done.await
+        .expect("#1353 machine task")
+        .expect("#1353 scripted switch completes");
+    assert!(
+        gate.is_open(),
+        "#1353 A8: the gate opens after the owner stopped"
+    );
+}
+
+/// #1353 A9: the new handshake waits on the gate — nothing observes it open
+/// before the old owner fully completed.
+#[tokio::test]
+async fn new_handshake_waits_for_the_gate() {
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let faces = SlowOwner {
+        entered: entered.clone(),
+    };
+    let machine = SwitchMachine::new(faces, uniform(2_000));
+    let gate = machine.gate();
+    let observed = Arc::new(AtomicBool::new(false));
+    let waiter = {
+        let gate = gate.clone();
+        let observed = observed.clone();
+        tokio::spawn(async move {
+            gate.wait_open().await;
+            observed.store(true, Ordering::SeqCst);
+        })
+    };
+    let done = tokio::spawn(machine.run());
+    entered.notified().await;
+    // Yield a full scheduling round: a wait_open that resolved early must
+    // have run by now.
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !observed.load(Ordering::SeqCst),
+        "#1353 A9: wait_open is still pending while the owner is stopping"
+    );
+    done.await
+        .expect("#1353 machine task")
+        .expect("#1353 scripted switch completes");
+    tokio::time::timeout(Duration::from_secs(2), waiter)
+        .await
+        .expect("#1353 wait_open resolves once the gate opened")
+        .expect("#1353 waiter task");
+    assert!(observed.load(Ordering::SeqCst));
+}
+
+/// #1353 A8: a halted switch never opens the gate.
+#[tokio::test]
+async fn halted_switch_keeps_the_gate_closed() {
+    let faces = Scripted::new().failing("stop_accepting");
+    let machine = SwitchMachine::new(faces, uniform(2_000));
+    let gate = machine.gate();
+    let result = machine.run().await;
+    assert!(result.is_err());
+    assert!(
+        !gate.is_open(),
+        "#1353 A8: a halted switch keeps the gate closed"
+    );
+}
+
+/// #1353 DC-1: the shared predicate — positive, finite, capped. The
+/// "positive and finite" clause without the cap would pass `u64::MAX`
+/// milliseconds and `1e300` (matrix A3 row: an uncapped predicate judges
+/// actually-unbounded values as bounded).
+#[test]
+fn bounded_timeout_predicate_rejects_unbounded_values() {
+    for rejected in [
+        0.0f64,
+        -1.0f64,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        u64::MAX as f64,
+        1e300f64,
+        (TIMEOUT_CAP_MS + 1) as f64,
+    ] {
+        // The negative-control anchor (`switch-unbounded-timeout` deletes the
+        // cap clause): the receipt-emitting form, so the uncapped spellings
+        // cannot pass as bounded.
+        negative_assert!(
+            BoundedTimeout::from_millis_f64(rejected).is_err(),
+            "#1353 DC-1: the f64 spelling rejects the uncapped value"
+        );
+    }
+    for accepted in [1.0f64, 5000.0f64, TIMEOUT_CAP_MS as f64] {
+        assert!(
+            BoundedTimeout::from_millis_f64(accepted).is_ok(),
+            "#1353 DC-1: {accepted} must be accepted"
+        );
+    }
+    // The integer spelling routes through the same predicate: the overflowed
+    // and zero values are the same rejections.
+    for rejected in [0u64, TIMEOUT_CAP_MS + 1, u64::MAX] {
+        assert!(
+            BoundedTimeout::from_millis(rejected).is_err(),
+            "#1353 DC-1: {rejected} must be rejected"
+        );
+    }
+    for accepted in [1u64, 5000, TIMEOUT_CAP_MS] {
+        assert!(
+            BoundedTimeout::from_millis(accepted).is_ok(),
+            "#1353 DC-1: {accepted} must be accepted"
+        );
+    }
+    // first: the overflowed float spelling is the same rejection.
+    assert!(BoundedTimeout::from_millis(u64::MAX).is_err());
+}
+
+/// #1353 DC-1: the production bounds stay inside the shared cap even with
+/// the internal-budget slack, and the slack makes the machine bound a
+/// backstop rather than a racing copy of the face's own deadline.
+#[test]
+fn production_timeouts_keep_the_shared_cap() {
+    let timeouts = SwitchTimeouts::production(Duration::from_millis(TIMEOUT_CAP_MS));
+    for bound in [
+        timeouts.automation,
+        timeouts.entries,
+        timeouts.flush,
+        timeouts.owner,
+        timeouts.handshake,
+    ] {
+        assert!(bound.duration() <= Duration::from_millis(TIMEOUT_CAP_MS));
+    }
+    let timeouts = SwitchTimeouts::production(Duration::from_millis(5_000));
+    assert_eq!(
+        timeouts.entries.duration(),
+        Duration::from_millis(15_000),
+        "#1353 the entries backstop exceeds the internal drain budget"
+    );
+    assert_eq!(
+        timeouts.automation.duration(),
+        Duration::from_millis(5_000),
+        "#1353 the automation bound matches the drain budget"
+    );
+}
+
+// ------------------------------------------------------------ the cron face
+
+/// A gateway whose abort always rejects — the failure `CronManager::stop`
+/// swallows (A7).
+struct RejectingGateway;
+
+impl CronAgentGateway for RejectingGateway {
+    fn submit_turn(&self, _input: &crate::runtime::cron::CronTurnSubmit) -> Result<(), CronError> {
+        Ok(())
+    }
+    fn abort_turn(
+        &self,
+        _session_key: &JsString,
+        _run_id: Option<&JsString>,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        Err(CronError::error("probe: abortTurn rejected"))
+    }
+    fn close_session(
+        &self,
+        _session_key: &JsString,
+        _reason: Option<&JsString>,
+    ) -> Result<(), CronError> {
+        Ok(())
+    }
+}
+
+fn cron_manager(scratch: &Scratch) -> CronManager {
+    let home = scratch.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    CronManager::new(CronManagerOptions {
+        config: CronManagerConfig::default(),
+        pilot_home: home.to_string_lossy().into_owned(),
+        session_overrides: None,
+        now: None,
+        uuid: None,
+        logger: None,
+    })
+    .expect("#1353 test cron manager constructs")
+}
+
+/// Seeds one project's cron store so a runtime can load for it.
+fn seed_cron_project(scratch: &Scratch) -> crate::runtime::cron::CronPaths {
+    std::fs::create_dir_all(scratch.path().join("home")).unwrap();
+    let paths = crate::runtime::cron::resolve_cron_paths(
+        &scratch.path().join("home").to_string_lossy(),
+        "/proj",
+    )
+    .expect("#1353 test cron paths resolve");
+    std::fs::create_dir_all(&paths.project_dir).unwrap();
+    std::fs::write(&paths.tasks_file, "{\"schemaVersion\":1,\"tasks\":[]}").unwrap();
+    paths
+}
+
+/// Loads the seeded project's runtime through `createTask`'s `ensureRuntime`
+/// (the manager-test precedent: a create on an unstarted manager loads the
+/// runtime without starting its scheduler).
+fn load_cron_runtime(manager: &CronManager) {
+    let input = pilotdeck_protocol::parse_json(
+        r#"{
+            "projectKey": "/proj",
+            "message": "m1",
+            "sessionKey": "origin-session",
+            "channelKey": "origin-channel",
+            "mode": "default",
+            "schedule": {"type": "once", "runAt": "2027-01-01T00:00:00.000Z"}
+        }"#,
+    )
+    .expect("#1353 test task input parses");
+    manager
+        .create_task(&input)
+        .expect("#1353 test task loads the runtime");
+}
+
+/// #1353 A6/A7: the S1 cron face closes the management face, stops the
+/// manager exactly once, and keeps the abort rejections its stop swallowed
+/// observable.
+#[tokio::test]
+async fn cron_stop_face_gates_management_and_reports_abort_failures() {
+    let scratch = Scratch::new("switch-cron-s1");
+    seed_cron_project(&scratch);
+    let manager = Arc::new(cron_manager(&scratch));
+    let recording = crate::switch::RecordingCronGateway::wrap(Arc::new(RejectingGateway));
+    let failures = recording.failures();
+    manager
+        .bind_agent_gateway(Arc::new(recording))
+        .expect("#1353 test gateway binds");
+    load_cron_runtime(&manager);
+    let runtime = manager
+        .loaded_runtime("/proj")
+        .expect("#1353 the create loaded the runtime");
+    runtime.register_active_run(CronActiveRun {
+        run_id: JsString::from("run-1"),
+        task_id: JsString::from("task-1"),
+        session_key: JsString::from("cron:task-1"),
+        schedule_type: JsString::from("once"),
+        stop_requested: false,
+    });
+    let handle = Arc::new(crate::switch::CronStopHandle::new(
+        manager.clone(),
+        failures,
+    ));
+    assert!(
+        !crate::switch::cron_management_closed(Some(&manager)),
+        "#1353 the management face is open before the switch"
+    );
+    handle
+        .stop_face()
+        .await
+        .expect("#1353 A7: swallowed abort rejections are not fatal, like the baseline");
+    assert!(
+        crate::switch::cron_management_closed(Some(&manager)),
+        "#1353 A6: the S1 face closed the cron management gate"
+    );
+    assert!(handle.is_stopped(), "#1353 the manager stopped");
+    let recorded = handle.abort_failures();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "#1353 A7: the swallowed rejection is recorded"
+    );
+    assert!(
+        recorded[0].contains("run-1") && recorded[0].contains("probe: abortTurn rejected"),
+        "#1353 A7: the record names the run and the rejection, got {}",
+        recorded[0]
+    );
+    // The teardown's second stop observes the first instead of repeating it:
+    // a second abort round would double the record.
+    handle
+        .stop_once()
+        .expect("#1353 the idempotent second stop observes the first");
+    assert_eq!(
+        handle.abort_failures().len(),
+        1,
+        "#1353 the second stop did not abort again"
+    );
+}
+
+/// #1353 A2: a cron stop rejection is a drain failure — the S1 face surfaces
+/// the manager's error instead of swallowing it. The rejection is real: the
+/// runtime's `stop` re-reads the task store (manager.rs `stop` →
+/// `list_tasks`), so an unreadable file fails the chain.
+#[tokio::test]
+async fn cron_stop_face_surfaces_manager_rejection() {
+    let scratch = Scratch::new("switch-cron-s2");
+    let paths = seed_cron_project(&scratch);
+    let manager = Arc::new(cron_manager(&scratch));
+    load_cron_runtime(&manager);
+    // The store's read is tolerant of malformed JSON (the TS parse is), so
+    // the real stop-path rejection is an I/O failure: the tasks file itself
+    // becomes unreadable (`EISDIR`).
+    std::fs::remove_file(&paths.tasks_file).unwrap();
+    std::fs::create_dir(&paths.tasks_file).unwrap();
+    assert!(
+        !crate::switch::cron_management_closed(Some(&manager)),
+        "#1353 the management face is open before the switch"
+    );
+    let handle = Arc::new(crate::switch::CronStopHandle::new(
+        manager.clone(),
+        crate::switch::AbortRecord::default(),
+    ));
+    match handle.stop_face().await {
+        Err(StepFailure::Step(message)) => assert!(
+            message.starts_with("cron stop failed:"),
+            "#1353 A2: the manager's own error surfaces, got {message}"
+        ),
+        other => panic!("#1353 A2: the store failure must reject the face, got {other:?}"),
+    }
+    // The idempotence flag is set even by a failed stop: the machine already
+    // reported it, the teardown must not silently retry and "succeed".
+    handle
+        .stop_once()
+        .expect("#1353 the failed stop is still observed as done");
+}

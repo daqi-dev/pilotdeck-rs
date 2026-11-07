@@ -244,6 +244,104 @@ async fn unconfigured_assembly_keeps_the_six_names_gated() {
         .expect("#1326 host shutdown");
 }
 
+/// #1353 A6: once the switch machine's S1 has stopped the cron manager, the
+/// six management methods answer an explicit SWITCH_IN_PROGRESS rejection
+/// through the routing seam instead of operating on the stopped manager (the
+/// TS baseline keeps serving them, D5 — a registered Rust difference,
+/// specs/gateway-parity/diffs/). The production entry hands out the shared
+/// stop handle; the S1 face over that handle closes the management gate
+/// before the stop, so a call racing the stop observes the gate, not a
+/// half-stopped manager.
+#[tokio::test]
+async fn a_stopped_manager_rejects_the_six_management_methods() {
+    let (scratch, requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1353 fixture setup");
+    let options = requests.options.clone();
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1353 dispose unused fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1353 shutdown unused fixture owner");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CRON_CONFIG).expect("#1353 cron config");
+    let (host, _webhook, switch_handles) =
+        crate::native_process::assembly::start_with_webhook(options.clone(), env)
+            .await
+            .expect("#1353 assembly start");
+    let handle = switch_handles
+        .cron
+        .expect("#1353 the configured manager has a stop handle");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(
+            json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string(),
+        )
+        .await
+        .expect("#1353 hello");
+    let project = options.project.to_string_lossy().into_owned();
+    // The same manager serves the management face before the switch.
+    connection
+        .receive(
+            json!({"type":"request","id":"before","method":"cron_list","params":{"projectKey": project}}).to_string(),
+        )
+        .await
+        .expect("#1353 route before frame");
+    let before = text
+        .0
+        .lock()
+        .expect("#1353 frames lock")
+        .iter()
+        .find(|frame| frame["id"] == "before")
+        .expect("#1353 before response frame")
+        .clone();
+    negative_assert_eq!(
+        before["ok"],
+        true,
+        "#1353 the manager serves before the stop"
+    );
+    // S1: the shared handle's face — gate first, stop once.
+    handle
+        .stop_face()
+        .await
+        .expect("#1353 the S1 face stops the manager");
+    connection
+        .receive(
+            json!({"type":"request","id":"after","method":"cron_list","params":{"projectKey": project}}).to_string(),
+        )
+        .await
+        .expect("#1353 route after frame");
+    let after = text
+        .0
+        .lock()
+        .expect("#1353 frames lock")
+        .iter()
+        .find(|frame| frame["id"] == "after")
+        .expect("#1353 after response frame")
+        .clone();
+    negative_assert_eq!(after["ok"], false, "#1353 the stopped manager rejects");
+    negative_assert_eq!(
+        after["error"]["code"],
+        "SWITCH_IN_PROGRESS",
+        "#1353 A6: the rejection names the switch"
+    );
+    negative_assert_eq!(
+        after["error"]["message"],
+        "switch in progress: cron management is closed",
+        "#1353 A6: the rejection message crosses verbatim"
+    );
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("#1353 host shutdown observes the earlier stop");
+    drop(scratch);
+}
+
 /// The cleanup order PilotDeckServerShutdownBundle.ts:33-37 fixes: automation
 /// (cron) stops before closeServer (channels), and both precede the session
 /// and project disposal.
