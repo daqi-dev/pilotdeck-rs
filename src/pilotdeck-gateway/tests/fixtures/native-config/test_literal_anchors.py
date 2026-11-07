@@ -75,6 +75,15 @@ class LiteralAnchorGuard(unittest.TestCase):
         pins = [(nc.CONFIG, '#1457 set_permission_mode rejects {label}')] + nc.LITERAL_ANCHORS[1:]
         self.assertRefused('unbound to any row', pins=pins)
 
+    def test_rejects_unbound_pin_inside_mod_rs(self):
+        # #2244: `methods/mod.rs` (the shared trim guard the two #1604 rows
+        # mutate) is in the scanned set, so a verbatim pin on it is refused as
+        # unbound -- had the registration been missing, this same pin would be
+        # refused as `outside SOURCE_TEXTS` and every run would die on the
+        # row-side gate instead.
+        pins = [(nc.METHODS_MOD, 'fn trim_guard')] + nc.LITERAL_ANCHORS
+        self.assertRefused('unbound to any row', pins=pins)
+
     def test_rejects_unpinned_literal_anchor(self):
         pins = [pin for pin in nc.LITERAL_ANCHORS if pin[1] != '#1457 exact mtime applies']
         self.assertRefused('unpinned literal anchor', pins=pins)

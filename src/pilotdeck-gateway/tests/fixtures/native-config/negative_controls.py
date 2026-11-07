@@ -349,8 +349,8 @@ mutations = [
 # template, so it is not refused here -- the run finds it as an INVALID.
 #
 # The table pins every anchor that is verbatim in the scanned files: 36 of the
-# 41 rows (31 distinct strings, 32 entries -- `the transcript still loads` is
-# registered once per file), the remaining five rows ride a `{...}` template and
+# 42 rows (31 distinct strings, 32 entries -- `the transcript still loads` is
+# registered once per file), the remaining six rows ride a `{...}` template and
 # cannot be pinned. Row and entry counts differ on purpose: rows vs. distinct
 # strings vs. (string, file) pairs are three different numbers. Pinning is the
 # point: when a message is reworded, `--check` fails here instead of surfacing as
@@ -403,13 +403,15 @@ LITERAL_ANCHORS = [
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
 ]
 
-# Where an assertion can live: the mutated sources, the read-side files the
+# Where an assertion can live: the mutated sources (including `mod.rs`, whose
+# shared trim guard the two #1604 rows mutate -- leaving it out is the exact
+# #2244 shape: the row-side gate refuses every run), the read-side files the
 # #1864 rows assert on, and the test files those rows bind to (the #1860 row
 # mutates `factory.rs` but asserts on a message in `factory_tests.rs`). A pin may
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
-SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS, REVIEW_TESTS,
-                FACTORY, FACTORY_TESTS)
+SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS)
 
 
 def _assertions(case):
