@@ -5295,6 +5295,20 @@ MUTATIONS = [
      "                        _ga = dict\n"
      "                    _f = _ga(report, '__setattr__')\n"
      "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 23 (GLM boundary r22 P1-2): ``bi = bi`` is a run-time
+    # no-op, so the module reading has to survive it.
+    ('calibrate-status-builtins-alias-self-assign', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    import builtins as _bi\n"
+     "                    _bi = _bi\n"
+     "                    _f = _bi.getattr(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 23 (GLM sibling r22 P2-3): the subscript spelling of
+    # a module name copied from ``__builtins__`` is the same status write.
+    ('calibrate-status-builtins-subscript-copy', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _bi = __builtins__\n"
+     "                    _bi['setattr'](report, 'status', 'PASS')\n"),
     # #1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): the copy
     # of a container that still carries handles stays a handle container when
     # it reaches the loop under a third name.
@@ -6586,6 +6600,20 @@ def calibrate_status_factory_import_conditional_overwrite(rows):
         rows, "inline status/exit assignment _f('status', 'PASS')")
 
 
+def calibrate_status_builtins_alias_self_assign(rows):
+    """#1953 fix-r1 round 23 (GLM boundary r22 P1-2): ``bi = bi`` keeps the
+    module reading the import put in force."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_builtins_subscript_copy(rows):
+    """#1953 fix-r1 round 23 (GLM sibling r22 P2-3): the subscript spelling of
+    a module name copied from ``__builtins__`` writes the same slot."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _bi['setattr'](report, 'status', 'PASS')")
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7465,6 +7493,12 @@ JUDGES = {
         'aggregation-audit',
         calibrate_status_factory_import_conditional_overwrite,
         False, ()),
+    'calibrate-status-builtins-alias-self-assign': (
+        'aggregation-audit',
+        calibrate_status_builtins_alias_self_assign, False, ()),
+    'calibrate-status-builtins-subscript-copy': (
+        'aggregation-audit',
+        calibrate_status_builtins_subscript_copy, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

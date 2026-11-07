@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 329 mutants:
+`JUDGES`, keyed by the same names. The current table has 331 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -497,7 +497,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-alias-of-container-copy`,
 `calibrate-status-builtins-module-alias`,
 `calibrate-status-factory-import-after-assignment`,
-`calibrate-status-factory-import-conditional-overwrite`.
+`calibrate-status-factory-import-conditional-overwrite`,
+`calibrate-status-builtins-alias-self-assign`,
+`calibrate-status-builtins-subscript-copy`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1574,4 +1576,16 @@ never learned the module's own import alias.
 | **An assignment of another value precedes the factory import**: `ga = print; from builtins import getattr as ga; f = ga(...)`. | `calibrate-status-factory-import-after-assignment`; self-test `round 22: a status write through an assignment before the factory import` |
 | **A conditional overwrite does not erase the factory import**: `from builtins import getattr as ga; if flag: ga = dict`. | `calibrate-status-factory-import-conditional-overwrite`; self-test `round 22: a status write through a conditionally overwritten factory import` |
 | **A certain overwrite still ends the spelling** (false FAIL guard): `from builtins import getattr as ga; ga = print`, and `import builtins as bi; bi = other`. | self-tests `round 22: a status write through a certainly overwritten factory import`, `... certainly replaced builtins module alias` |
-| **A certain overwrite ends the `builtins[...]` table reading** (false FAIL guard, GLM sibling r21 P1-1). | `_name_resolves_to_builtins` now reads `_values_in_force`; measured in the round-22 probe |
+| **A certain overwrite ends the `builtins[...]` table reading** (false FAIL guard, GLM sibling r21 P1-1). | `_name_resolves_to_builtins` now reads `_values_in_force`; self-tests `round 23: a subscript write through a copied builtins module name` (true) and `... a certainly replaced module name` (false), mutant `calibrate-status-builtins-subscript-copy` |
+
+### Closed by `fix-r1` round 23 (codex r22 two P1s / GLM r22 one P0 and one P1)
+
+Round 22 gave every binding of a `builtins` alias its own event, but
+keyed the events by the statement position, let the module-end binding
+reach calls that ran before the import, and shadowed the no-op `bi = bi`.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A harmless second alias of one import statement** (false FAIL guard): `import builtins as bi, os as bi; f = bi.getattr(...)`. | self-test `round 23: a harmless second alias of the same import statement`; each alias keeps its own column |
+| **A builtins alias imported after every call** (false FAIL guard): `import json as bi; def main(): bi.getattr(...)`; `main(...)`; `import builtins as bi`. | self-test `round 23: a builtins alias imported after every call of the function`; `_binding_event_at(call_only=True)` |
+| **A self-assigned module alias keeps the module reading**: `import builtins as bi; bi = bi; f = bi.getattr(...)`. | `calibrate-status-builtins-alias-self-assign`; self-test `round 23: a self-assigned builtins module alias` |
