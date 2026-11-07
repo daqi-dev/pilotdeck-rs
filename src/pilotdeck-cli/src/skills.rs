@@ -204,7 +204,7 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
             .parse()
             .unwrap_or_else(|_| "en-US".parse().expect("locale literal")),
     };
-    let mut preferences: CollatorPreferences = locale.into();
+    let mut preferences: CollatorPreferences = locale.clone().into();
     let create = |preferences: CollatorPreferences| {
         Collator::try_new(preferences, Default::default()).map(|collator| {
             // Same measured Node/ICU 78.2 gap as gateway `node_collator`: the
