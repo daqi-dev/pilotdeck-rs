@@ -705,7 +705,13 @@ async fn production_host_management_and_restart() {
         capabilities.sort_unstable();
         let expected = expected_capabilities(true);
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
-        assert_ts_capability_subset(&expected);
+        // No `assert_ts_capability_subset` here on purpose: this table runs in
+        // the default (snapshots-enabled) state, and exact equality above is
+        // strictly stronger than any subset check. Comparing a
+        // snapshots-enabled table against the two disabled contracts would
+        // false-FAIL the day TS legitimately drops names from them (#1761
+        // paired state to state for exactly this reason). The #1352 derived
+        // expectation makes the enabled-state subset check a tautology anyway.
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
@@ -1176,15 +1182,17 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
     expected
 }
 
-/// #1761/#1352: the TS config states a wire table must be legal in.
-/// `oracle.json` carries `contract` / `contract.emptyStorage` /
-/// `contract.missingStorage`.
+/// #1761/#1352: a **snapshots-disabled** table must be legal in both disabled
+/// TS config states (`contract.emptyStorage` / `contract.missingStorage`).
 ///
-/// Since #1352 the expected table is *derived* from `contract`, so checking it
-/// against `contract` again could never fail — the meaningful direction is the
-/// two disabled contracts, which the derivation never reads (#1761 already
-/// required every table to stay legal there). This replaced the old
-/// `include_disabled_states` flag, whose `false` branch became that tautology.
+/// Only the disabled-table call sites use this. They are not tautological: the
+/// expectation is derived from `contract`, the recorded arrays compared against
+/// are the two disabled ones. The enabled-table sites skip it — exact equality
+/// there is strictly stronger, and comparing an enabled table against a
+/// disabled contract would false-FAIL if TS ever legally diverged the three
+/// arrays (#1761 paired state to state for that reason). #1352 removed the old
+/// `include_disabled_states` flag because its `false` branch compared the
+/// derived expectation against `contract` itself, which can never fail.
 fn assert_ts_capability_subset(expected: &[&str]) {
     for state in ["emptyStorage", "missingStorage"] {
         let ts_capabilities = oracle_capabilities(state);
@@ -1757,7 +1765,8 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         expected,
         "#1323 --storage-root CLI path advertises snapshot-enabled capabilities"
     );
-    assert_ts_capability_subset(&expected);
+    // See the note at the other snapshots-enabled call site: exact equality is
+    // the whole guard here, and the disabled contracts are not this state.
     host.shutdown(options.drain_budget)
         .await
         .expect("#1323 host shutdown");
