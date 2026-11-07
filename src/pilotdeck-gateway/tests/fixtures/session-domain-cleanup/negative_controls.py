@@ -4458,6 +4458,7 @@ MUTATIONS = [
       "if False:\n"
       "    _n = '__setattr__'\n"
       "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    print = _sink\n"
       "    for _h in _hs:\n"
       "        pass\n"
       "    _g = lambda: print(_h)\n"
