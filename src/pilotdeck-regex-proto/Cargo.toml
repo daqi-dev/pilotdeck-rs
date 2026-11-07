@@ -1,0 +1,25 @@
+[package]
+name = "pilotdeck-regex-proto"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# #1265 (human decision #1264 选 C): the only door to the rquickjs engine.
+# Never default, so `cargo build/test/clippy --workspace` resolves, downloads
+# and compiles no rquickjs at all; the engine builds only on request.
+regex-proto = ["dep:rquickjs"]
+
+[lints]
+workspace = true
+
+[dependencies]
+rquickjs = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The oracle stores lone-surrogate subjects as raw `\uD800` JSON escapes;
+# the protocol parser hands them over as exact UTF-16 units (`JsString::units`).
+pilotdeck-protocol.workspace = true
