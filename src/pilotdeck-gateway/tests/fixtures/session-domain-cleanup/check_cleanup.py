@@ -6674,7 +6674,8 @@ def _contains_dynamic_lookup(value, heads, bindings=None):
     return False
 
 
-def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False):
+def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False,
+                             seen=(), dead=()):
     """True when *name* may hold a dynamically looked-up object at *position*.
 
     #1953 fix-r1 round 27 (codex r26 P0-3): ``f = globals()['main']`` puts the
@@ -6693,9 +6694,26 @@ def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False):
     # itself and carried no dynamic mark.  A self-copy hands the earlier value
     # over unchanged, so resolve it strictly before itself -- the same rule
     # :func:`_module_alias_sources` uses.
+    #
+    # #1953 fix-r1 round 31 (codex r29 P0-1; GLM r29 sibling P1-1 /
+    # concurrency P1-1 / boundary P1-1): the self-copy recursion carried no
+    # visited set.  A self-copy inside a loop re-entered itself through the
+    # loop back-edge clause -- that clause ignores *strict* on purpose -- and
+    # the whole audit died with ``RecursionError`` (false FAIL).  The twin
+    # :func:`_module_alias_sources` already guards on ``(name, position,
+    # strict)``; this recursion now does too.
+    #
+    # #1953 fix-r1 round 31 (GLM r29 boundary P1-2): a carrier bound inside a
+    # statically dead branch never runs, so it must not decide a live
+    # self-copy either (``if False: held = globals()['main']; held = held;
+    # held(r)`` reported a write).
+    key = (name, position, strict)
+    if key in seen:
+        return False
     entries = [item for item in bindings.get(name, ())
-               if (item[0] < position if strict else item[0] <= position)
-               or (loops and item[3] and set(item[3]) & set(loops))]
+               if ((item[0] < position if strict else item[0] <= position)
+                   or (loops and item[3] and set(item[3]) & set(loops)))
+               and not (dead and _dead_shadowed(item[0], position, dead))]
     if not entries:
         return False
     chosen_index = -1
@@ -6709,7 +6727,8 @@ def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False):
         if item[4]:
             return True
         if item[2] == name and _dynamic_result_in_force(
-                bindings, name, item[0], loops, strict=True):
+                bindings, name, item[0], loops, strict=True,
+                seen=seen + (key,), dead=dead):
             return True
     return False
 
@@ -6946,6 +6965,11 @@ def _module_open_calls(tree):
     # in as a head spelling (``lookup = globals; lookup = print; held =
     # lookup()`` is not a carrier).
     bindings = _module_alias_bindings(tree)
+    # #1953 fix-r1 round 31 (GLM r29 boundary P1-2): the carrier resolution
+    # needs the dead spans as well -- a binding inside ``if False:`` is not
+    # in force at a live call, and following it through a self-copy reported
+    # a write that never happens.
+    dead = _dead_line_ranges(tree)
     names = _module_definition_names(tree)
     carriers = {name for name, items in bindings.items()
                 if any(item[4] for item in items)}
@@ -6966,7 +6990,7 @@ def _module_open_calls(tree):
                 if name in _OPEN_CALL_HEADS:
                     sites.append((position, loops))
                 elif name in carriers and _dynamic_result_in_force(
-                        bindings, name, position, loops):
+                        bindings, name, position, loops, dead=dead):
                     sites.append((position, loops))
                 elif name in aliases:
                     # #1953 fix-r1 round 28 (GLM sibling r26 P2-3): resolve the
@@ -12463,6 +12487,15 @@ def aggregation_audit():
              "main(object())\n"
              "_saved95: object\n"
              "import builtins as _bi95\n", False),
+            ("a dead function-local import does not decide a live copy",
+             "import json as _bi96\n"
+             "def main(report):\n"
+             "    if False:\n"
+             "        import builtins as _bi96\n"
+             "    _bi96 = _bi96\n"
+             "    _f = _bi96.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", False),
             ("an attribute-form head carries a looked-up function",
              "import json as _bi97\n"
              "def main(report):\n"
@@ -12481,15 +12514,29 @@ def aggregation_audit():
              "import builtins as _bi98\n"
              "_a98(object())\n"
              "_bi98 = object()\n", True),
-            ("a dead function-local import does not decide a live copy",
-             "import json as _bi96\n"
+            ("a self-copy inside a loop is resolved once",
+             "import json as _bi99\n"
              "def main(report):\n"
-             "    if False:\n"
-             "        import builtins as _bi96\n"
-             "    _bi96 = _bi96\n"
-             "    _f = _bi96.getattr(report, '__setattr__')\n"
+             "    _f = _bi99.getattr(report, '__setattr__')\n"
              "    _f('status', 'PASS')\n"
-             "main(object())\n", False),
+             "_held99 = globals()['main']\n"
+             "_held99 = lambda x: None\n"
+             "for _i99 in (0,):\n"
+             "    _held99 = _held99\n"
+             "    _held99(object())\n"
+             "import builtins as _bi99\n"
+             "_bi99 = object()\n", False),
+            ("a dead carrier does not decide a live self-copy",
+             "import json as _bi100\n"
+             "def main(report):\n"
+             "    _f = _bi100.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "if False:\n"
+             "    _held100 = globals()['main']\n"
+             "_held100 = _held100\n"
+             "import builtins as _bi100\n"
+             "_held100(object())\n"
+             "_bi100 = object()\n", False),
             ("a builtins import inside a statically dead branch",
              "import json as _bi65\n"
              "def main(report):\n"
@@ -12511,7 +12558,7 @@ def aggregation_audit():
             failures.append(
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
-                + _label + ' (round 26)')
+                + _label + ' (self-test)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
