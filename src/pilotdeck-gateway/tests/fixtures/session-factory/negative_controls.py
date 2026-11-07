@@ -21,6 +21,8 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # pristine guard: the session-switch-pristine-removed reverse negative in
 # negative-restore/test_restore.py reverts to it and must execute, not crash.
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 from negative_suite import bind_module_file, classify, declares_test, invalidate_completed, passed
 from _negative_common import mutate
 
@@ -478,16 +480,17 @@ args = arguments if compile_only else [mode, *arguments]
 if not args:
     raise SystemExit(USAGE)
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-    raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
+if missing_target() or not env.get('PDRS_BASELINE'):
+    refuse('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
+refuse_unusable_target()
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
 for switch in compile_switches.values():
     env.pop(switch, None)
-names = set(args[1:])
-if names - {row_name(c) for c in cases}:
-    raise SystemExit('unknown mutation')
-chosen = [c for c in cases if not names or row_name(c) in names]
-out = Path(args[0]); out.mkdir(parents=True, exist_ok=False)
+try:
+    chosen = select(cases, args[1:], name=row_name, always=())
+except ValueError as error:
+    refuse(str(error))
+out = claim_dir(args[0])
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib']
 
 def run(label, test, compile=False):
