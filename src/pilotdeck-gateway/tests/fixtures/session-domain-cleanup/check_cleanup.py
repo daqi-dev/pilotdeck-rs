@@ -4590,20 +4590,31 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 return handle_containers[(level, name)]
         return None
 
-    def _value_carries(value, scope):
+    def _value_carries(value, scope, seen=None):
         """True when *value* still hands write handles on (#1953 r19).
 
         The same question the container fixpoint above registers by
         (``_container_handle_roots`` / a tracked callee / a tracked alias / a
         relay comprehension), asked of the binding in force at a copy point.
+
+        #1953 fix-r1 round 21 (GLM boundary r19 P2-5 / sibling r19 P1-2): the
+        callee and alias branches read the per-name *history* table, so a chain
+        that had certainly replaced the handles one hop upstream still read as
+        carried (``m = [...]; m = [lambda]; z = list(m); w = list(z)`` failed a
+        clean file).  They now ask :func:`_carries_at` at the hop's own point;
+        the visited set stops a copy cycle.
         """
+        seen = set() if seen is None else seen
+        if id(value) in seen:
+            return False
+        seen.add(id(value))
         if _container_handle_roots(value, kinds, simple):
             return True
         called = _container_callee(value)
-        if called is not None and _carried_container(called, scope) is not None:
+        if called is not None and _carries_at(called, scope, value, seen):
             return True
         if (isinstance(value, ast.Name)
-                and _carried_container(value.id, scope) is not None):
+                and _carries_at(value.id, scope, value, seen)):
             return True
         if isinstance(value, (ast.ListComp, ast.SetComp, ast.DictComp,
                               ast.GeneratorExp)):
@@ -4630,7 +4641,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 return True
         return False
 
-    def _carries_at(name, scope, use):
+    def _carries_at(name, scope, use, seen=None):
         """True when *name* still carries handles at *use* (#1953 r19).
 
         ``handle_containers`` is a per-name history: once ``hs`` held handles
@@ -4670,7 +4681,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
                  getattr(last[0], 'col_offset', -1))
         if _touched_between(name, scope, start, limit):
             return True
-        return _value_carries(last[0], scope)
+        return _value_carries(last[0], scope, seen)
 
     def _copies_carried_container(value, scope):
         """True when *value* is a copy of a container that carries handles.
@@ -4753,6 +4764,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
             # Round 18 (codex r17 P0-1): a constructor copy of a tracked
             # container keeps the handles, so it does not end the relay.
             return False
+        if not allow_container and isinstance(last[0], ast.Name):
+            # #1953 fix-r1 round 21 (GLM sibling r19 P1-2): ``wc = list(w);
+            # wx = wc`` -- the history table still lists ``wc`` as a handle
+            # container, but the copy it holds was made after ``w`` was
+            # certainly replaced by fresh values.  Ask ``_carries_at`` at the
+            # alias's own point instead of reading the history; an ambiguous
+            # or still-carrying binding keeps the carried answer.
+            if _carried_container(last[0].id, scope) is not None:
+                return not _carries_at(last[0].id, scope, last[0])
         return _fresh_value(last[0], _bound_names(scope))
 
     def _handle_receivers(name, scope, use):
@@ -6496,6 +6516,11 @@ def _helper_from_value(value, events, position, loops=()):
         return chosen[2]
     if value.id in _MANAGED_WRITE_ATTRS or value.id in _WRITE_HELPERS:
         return value.id
+    # #1953 fix-r1 round 21 (GLM boundary r19 P0-1): ``ga = getattr`` at module
+    # level is a factory alias like any other, and an unrecorded helper left
+    # the imported spelling unresolved inside the function that used it.
+    if value.id in _FACTORY_SPELLINGS:
+        return value.id
     return None
 
 
@@ -6552,7 +6577,8 @@ def _module_binding_events(tree):
                 name = alias.asname or alias.name.split('.')[0]
                 helper = (alias.name if builtins_import
                           and (alias.name in _WRITE_HELPERS
-                               or alias.name in _MANAGED_WRITE_ATTRS)
+                               or alias.name in _MANAGED_WRITE_ATTRS
+                               or alias.name in _FACTORY_SPELLINGS)
                           else None)
                 add(name, node, helper)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -6653,7 +6679,8 @@ def _imported_write_aliases(function, outer_imports=None):
                 name = alias.asname or alias.name.split('.')[0]
                 add(name, (node.lineno, node.col_offset),
                     alias.name if builtins_import
-                    and alias.name in _WRITE_HELPERS else None,
+                    and (alias.name in _WRITE_HELPERS
+                         or alias.name in _FACTORY_SPELLINGS) else None,
                     conditional, loops)
             continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
@@ -7914,6 +7941,15 @@ def _unproven_expansion(call, bindings, module=None, rel=None):
 
 _WRITE_HELPERS = ('setattr', 'setitem', 'setdefault', 'update')
 
+# #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): ``getattr``
+# is not a write helper by itself, but the alias tables have to record it like
+# one.  ``from builtins import getattr as _ga`` leaves no assignment binding,
+# so the import event was stored with a ``None`` helper and both the callee
+# split and the by-name handle test read ``_ga`` as an unknown name -- a status
+# write behind an imported factory stayed green.  Same for a module-level
+# ``ga = getattr`` merged into the function's event table.
+_FACTORY_SPELLINGS = ('getattr',)
+
 
 def _bindings_at(bindings, name, node=None):
     """The bindings of *name* a use at *node* can see (#892 r34/r35).
@@ -8277,9 +8313,19 @@ def _getattr_spelling(node, bindings, seen=None):
         values = (_values_in_force(bindings, node.id, node)
                   if bindings is not None else [])
         if not values:
-            # Round 20: a local ``getattr`` shadows the builtin; parameters
-            # and assignments land in the table, so an empty set is the
-            # builtin itself.
+            # #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1):
+            # an import alias (``from builtins import getattr as _ga``) or a
+            # module-level ``ga = getattr`` leaves no assignment binding in the
+            # function's table; the event table records the spelling in force.
+            events = (getattr(bindings, 'imported', None) or {}).get(node.id, ())
+            if events:
+                loops = tuple(id(item) for item in
+                              getattr(bindings, 'loops_of', {}).get(node, ()))
+                chosen = _binding_event_at(
+                    events, (getattr(node, 'lineno', -1),
+                             getattr(node, 'col_offset', -1)), loops)
+                if chosen is not None:
+                    return chosen[2] == 'getattr'
             return node.id == 'getattr'
         return any(_getattr_spelling(value, bindings, seen)
                    for value in values)
@@ -11005,6 +11051,35 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 20)')
+    # Round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): the getattr factory
+    # reaches the call through an import alias or a module-level alias too.
+    for _label, _source, _want in (
+            ("a status write through an imported getattr factory",
+             "def main(report):\n"
+             "    from builtins import getattr as _ga21\n"
+             "    _f = _ga21(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a module-level getattr alias",
+             "ga21 = getattr\n"
+             "def main(report):\n"
+             "    _f = ga21(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through an imported factory that is not getattr",
+             "def main(report):\n"
+             "    from builtins import dict as _ga22\n"
+             "    _f = _ga22(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = _tree.body[-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 21)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
@@ -11118,6 +11193,43 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 20)')
+    # Round 21 (GLM sibling r19 P1-2): a container spelling that once carried
+    # handles is not a handle container forever -- the copy or the alias in
+    # force decides, hop by hop.
+    for _label, _source, _want in (
+            ("a handle container copied then aliased by a fresh name",
+             "def _w54_use():\n"
+             "    _w54 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w54 = [lambda *a: None]\n"
+             "    _w54c = list(_w54)\n"
+             "    _w54x = _w54c\n"
+             "    for _w54h in _w54x:\n"
+             "        _w54h('common', object())\n", False),
+            ("a handle container replaced and copied twice",
+             "def _w55_use():\n"
+             "    _w55 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w55 = [lambda *a: None]\n"
+             "    _w55c = list(_w55)\n"
+             "    _w55d = list(_w55c)\n"
+             "    for _w55h in _w55d:\n"
+             "        _w55h('common', object())\n", False),
+            ("a handle container still carrying when aliased",
+             "def _w56_use():\n"
+             "    _w56 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w56c = list(_w56)\n"
+             "    _w56x = _w56c\n"
+             "    for _w56h in _w56x:\n"
+             "        _w56h('common', object())\n", True)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                            frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 21)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (

@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 324 mutants:
+`JUDGES`, keyed by the same names. The current table has 326 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -492,7 +492,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-status-getattr-alias-callee`,
 `calibrate-for-target-nested-container-copy`,
 `calibrate-status-alias-copied-before-overwrite`,
-`calibrate-for-target-container-filled-after-rebind`.
+`calibrate-for-target-container-filled-after-rebind`,
+`calibrate-status-imported-getattr-factory`,
+`calibrate-for-target-alias-of-container-copy`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1540,3 +1542,19 @@ list and then filled in place was judged by the empty list alone.
 | **A `getattr` attribute on another object writes nothing** (false FAIL guard): `other.getattr(report, '__setitem__')`. | self-test `round 20: a status write through a getattr on another object` |
 | **A shadowed `getattr` name writes nothing** (false FAIL guard): `getattr = lambda ...` in the function. | self-test `round 20: a status write through a shadowed getattr name` |
 | **A container emptied before the copy no longer carries** (false FAIL guard). | self-tests `round 20: a handle container emptied and copied`, `... certainly replaced and copied` |
+
+### Closed by `fix-r1` round 21 (GLM r19 one P0 / one P1 / two false FAILs)
+
+Round 20 resolved every hop at its own assignment but still asked the
+*per-name history* for container hops, so a chain that had certainly replaced
+the handles one hop upstream read as carried; the `getattr` factory was also
+only recognised as the bare builtin name, not an import alias or a
+module-level alias.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The factory reaches the call through an import alias**: `from builtins import getattr as ga; f = ga(report, '__setattr__'); f('status', 'PASS')`. | `calibrate-status-imported-getattr-factory`; self-test `round 21: a status write through an imported getattr factory` |
+| **The factory is a module-level alias**: `ga = getattr` at module level, used inside `main`. | self-test `round 21: a status write through a module-level getattr alias` |
+| **An imported factory that is not `getattr` writes nothing** (false FAIL guard): `from builtins import dict as ga`. | self-test `round 21: a status write through an imported factory that is not getattr` |
+| **A copy of a replaced container is fresh, and stays fresh through a name alias**: `hs = [...]; hs = [lambda *a: None]; c = list(hs); x = c; for h in x: h('common', ...)`. | self-tests `round 21: a handle container copied then aliased by a fresh name`, `... replaced and copied twice` |
+| **Aliasing a copy that still carries keeps the handles** (false PASS guard). | `calibrate-for-target-alias-of-container-copy`; self-test `round 21: a handle container still carrying when aliased` |

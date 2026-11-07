@@ -5265,6 +5265,35 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): the
+    # handle factory reaches the call through an import alias, so the status
+    # write must still be seen.
+    ('calibrate-status-imported-getattr-factory', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    from builtins import getattr as _ga\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): the copy
+    # of a container that still carries handles stays a handle container when
+    # it reaches the loop under a third name.
+    ('calibrate-for-target-alias-of-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc2 = list(_nc)\n"
+      "        _nc3 = _nc2\n"
+      "        for _h in _nc3:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6498,6 +6527,22 @@ def calibrate_for_target_container_filled_after_rebind(rows):
         'flagged, passed=False')
 
 
+def calibrate_status_imported_getattr_factory(rows):
+    """#1953 fix-r1 round 21 (GLM boundary r19 P0-1 / sibling r19 P1-1): the
+    handle factory is ``getattr`` even when it is imported under another name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_alias_of_container_copy(rows):
+    """#1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): aliasing
+    a copy of a container that still carries handles does not make it fresh."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-alias-of-container-copy '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7360,6 +7405,12 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-container-filled-after-rebind': (
         'aggregation-audit', calibrate_for_target_container_filled_after_rebind,
+        False, ()),
+    'calibrate-status-imported-getattr-factory': (
+        'aggregation-audit', calibrate_status_imported_getattr_factory,
+        False, ()),
+    'calibrate-for-target-alias-of-container-copy': (
+        'aggregation-audit', calibrate_for_target_alias_of_container_copy,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
