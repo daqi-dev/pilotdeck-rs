@@ -123,8 +123,8 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/config-store/negative_controls.p
   钉住被审树，stdout 会打 `NON-HEAD BASELINE` 提醒这不是宿主证据。守卫同时比对
   worktree 与 index（`git diff --cached`，范围不止 `src`/`.cargo`/`rust-toolchain*` 被扫描区域，
   还包括 scanner 字面输入集——`src` 外也有），而 `stash create` 只快照 worktree——落在其中、未
-  commit 的改动要先 `git add` 暂存，否则全行报 `source baseline mismatch`；两者都不碰的改动
-  （如 `state/`）不暂存也通过。字面输入清单与冷、暖 scanner target 下该逃生口的可用条件
+  commit 的改动要先 `git add` 暂存，否则全行报 `source baseline mismatch`；比对范围之外的改动
+  （如 `state/`）不参与该比对。字面输入集口径与冷、暖 scanner target 下该逃生口的可用条件
   统一见 `_negkit/README.md` 的「现状（#2106 实测）」段。
 - 产物：每行 `-positive` / `-negative` / `-restored` 日志与 `summary.json`
   （`controls[]` + `counts`），全 `KILLED` 退出码 0。
