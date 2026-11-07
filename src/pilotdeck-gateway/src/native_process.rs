@@ -41,6 +41,13 @@ mod switch_wiring;
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod tools;
+// #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind
+// the turn registry — public so the integration test drives the production
+// composition path (`tests/sdk_mcp_session_tools.rs`).
+pub use tools::{
+    SessionMcpRelease, SessionMcpTools, SessionMcpToolsOptions, enabled_session_mcp_servers,
+    session_mcp_tools,
+};
 
 /// Start the real serial host, bind WS, then drain on either supported signal.
 /// The listener never starts an upstream gateway/helper.

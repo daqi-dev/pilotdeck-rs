@@ -856,7 +856,10 @@ pub(super) fn required_trimmed(
     }
 }
 
-fn js_truthy(value: &JsValue) -> bool {
+/// JS truthiness. `pub(crate)` so the #1433 wiring layer can apply the same
+/// `server.enabled` filter `getSdkMcpServers` uses
+/// (ProjectRuntimeRegistry.ts:322-325) instead of growing another copy.
+pub(crate) fn js_truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(value) => *value,

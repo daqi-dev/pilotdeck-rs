@@ -13,6 +13,18 @@ use crate::{
     runtime::{
         hooks::Cancellation,
         interaction::GatewayInteractionCoordinator,
+        mcp::{
+            bridge::{
+                CreateToolDefinitionsOptions, McpBridgeTool,
+                create_mcp_tool_definitions_from_runtime,
+            },
+            protocol::McpStatus,
+            registry::{
+                McpDiagnosticSink, ProjectMcpRuntimeLease, ProjectMcpRuntimeProvider,
+                SessionMcpRuntimeRegistration, SessionMcpRuntimeRegistry,
+            },
+            sdk::SdkMcpConfig,
+        },
         permission::{self, DefaultPermissionContextOptions, PermissionContext, PermissionTool},
         project::{
             RuntimeError, RuntimeProfile, RuntimeProfileOverrides,
@@ -57,6 +69,10 @@ pub struct SessionTools {
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
     lsp: Arc<super::families::DefaultLsp>,
+    /// #1433: the session's composed MCP tools, registered into every turn's
+    /// tool registry after the LSP entry (composed once at prepare, like
+    /// `SessionMcpRuntimeBundle.compose`).
+    mcp: SessionMcpTools,
     /// #1864 (b): re-read on every turn, like InProcessGateway.ts:1443 —
     /// the host-side permission context follows the stored selection so the
     /// same turn never runs one mode for the sidecar and another for native
@@ -71,6 +87,7 @@ impl SessionTools {
         config: JsObject,
         interactions: Arc<GatewayInteractionCoordinator>,
         lsp: Arc<super::families::DefaultLsp>,
+        mcp: SessionMcpTools,
     ) -> Result<Self, RuntimeError> {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
@@ -85,6 +102,7 @@ impl SessionTools {
             config,
             interactions,
             lsp,
+            mcp,
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
             permission_mode_source: None,
         })
@@ -130,6 +148,7 @@ impl SessionTools {
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
+            &self.mcp,
         );
         let execution = Arc::new(ToolRuntime::new(
             tools,
@@ -463,6 +482,7 @@ pub(super) fn native_tools(
     allowed: Option<Vec<JsString>>,
     denied: Option<Vec<JsString>>,
     lsp: Arc<super::families::DefaultLsp>,
+    mcp: &SessionMcpTools,
 ) -> ToolRegistry {
     let tools = ToolRegistry::new(
         None,
@@ -484,5 +504,872 @@ pub(super) fn native_tools(
     tools
         .register(Arc::new(LspTool::new(lsp)))
         .expect("native LSP name is unique");
+    // #1433: the session's MCP tools join the same registry (and therefore
+    // the same allowed/denied policy and permission layer) after the local
+    // entries.
+    mcp.register(&tools);
     tools
+}
+
+// ---------------------------------------------------------------------------
+// #1433: session MCP tools in the turn composition
+// ---------------------------------------------------------------------------
+
+/// `getSdkMcpServers(sessionKey)` (ProjectRuntimeRegistry.ts:322-325): the
+/// session's enabled servers as a `name -> config` map. The disabled entries
+/// and the `{ config, enabled }` projection stay behind the read, so the
+/// composition below only ever sees what a turn may use.
+pub fn enabled_session_mcp_servers(mcp_config: &SdkMcpConfig, session_key: &JsString) -> JsObject {
+    let mut servers = JsObject::new();
+    for (name, value) in mcp_config.session_mcp_servers(&JsValue::String(session_key.clone())) {
+        let enabled = value.get("enabled").cloned().unwrap_or(JsValue::Undefined);
+        if !crate::runtime::mcp::sdk::js_truthy(&enabled) {
+            continue;
+        }
+        servers.insert(
+            name,
+            value.get("config").cloned().unwrap_or(JsValue::Undefined),
+        );
+    }
+    servers
+}
+
+/// #1433 (`SessionMcpRuntimeBundle.compose`, the tool half): one session's
+/// composed MCP tool set. `shared` holds the shared-runtime lease's tools —
+/// registration keeps existing names; `per_session` holds the dedicated
+/// runtime's tools — registration replaces same-name entries
+/// (SessionMcpRuntimeBundle.ts:61-64, 138-144).
+#[derive(Default)]
+pub struct SessionMcpTools {
+    shared: Vec<Arc<McpBridgeTool>>,
+    per_session: Vec<Arc<McpBridgeTool>>,
+}
+
+impl SessionMcpTools {
+    /// The empty composition: no session servers, nothing registered.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn shared(&self) -> &[Arc<McpBridgeTool>] {
+        &self.shared
+    }
+
+    pub fn per_session(&self) -> &[Arc<McpBridgeTool>] {
+        &self.per_session
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shared.is_empty() && self.per_session.is_empty()
+    }
+
+    /// The registration tail of `compose`: shared-lease tools keep existing
+    /// names, per-session tools replace them.
+    pub fn register(&self, tools: &ToolRegistry) {
+        for tool in &self.shared {
+            let name = tool.spec().wire_name.clone();
+            if !tools.has(&name) {
+                tools
+                    .register(tool.clone())
+                    .expect("#1433 shared session MCP tool name is unique");
+            }
+        }
+        for tool in &self.per_session {
+            let name = tool.spec().wire_name.clone();
+            if tools.has(&name) {
+                tools
+                    .replace(tool.clone())
+                    .expect("#1433 per-session MCP tool replaces its own name");
+            } else {
+                tools
+                    .register(tool.clone())
+                    .expect("#1433 per-session MCP tool name is unique");
+            }
+        }
+    }
+}
+
+/// #1433 (`GatewaySessionResourceLeaseBundle`, the release half): the
+/// close-time obligations of one composed session — the per-session runtime
+/// registration first, then the shared-runtime lease (the reverse of the
+/// composition order).
+#[derive(Default)]
+pub struct SessionMcpRelease {
+    per_session: Option<SessionMcpRuntimeRegistration>,
+    shared: Option<ProjectMcpRuntimeLease>,
+}
+impl SessionMcpRelease {
+    /// Release both obligations. The first failure still releases the second,
+    /// and both failures surface together.
+    pub async fn release(self) -> Result<(), RuntimeError> {
+        let mut failures = Vec::new();
+        if let Some(registration) = self.per_session
+            && let Err(error) = registration.dispose().await
+        {
+            failures.push(error);
+        }
+        if let Some(lease) = self.shared
+            && let Err(error) = lease.release().await
+        {
+            failures.push(error);
+        }
+        match failures.len() {
+            0 => Ok(()),
+            1 => Err(failures
+                .pop()
+                .expect("#1433 exactly one MCP release failure")),
+            _ => Err(RuntimeError {
+                message: format!(
+                    "Failed to release session MCP resources: {}",
+                    failures
+                        .iter()
+                        .map(|error| error.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+                causes: failures,
+                js_error: None,
+            }),
+        }
+    }
+}
+
+/// #1433: inputs of [`session_mcp_tools`] (`SessionMcpRuntimeBundleOptions`).
+pub struct SessionMcpToolsOptions<'a> {
+    /// The SDK-owned session server table (`set_mcp_servers` commits here).
+    pub mcp_config: &'a SdkMcpConfig,
+    pub provider: &'a ProjectMcpRuntimeProvider,
+    /// The session factory's per-session registry; gateway disposal drains
+    /// it (`ProjectSessionFactory.mcp`).
+    pub per_session_runtimes: &'a SessionMcpRuntimeRegistry,
+    pub session_key: &'a JsString,
+    /// `runtime.snapshot.config.gateway.maxPerSessionMcpInstances ?? 5`.
+    pub max_per_session_instances: usize,
+    /// `onDiagnostic`; production writes to stderr.
+    pub on_diagnostic: Option<McpDiagnosticSink>,
+}
+
+/// #1433: `SessionMcpRuntimeBundle.compose()` — build one session's MCP tool
+/// set from the enabled session server table. This is the production read
+/// face of `SdkMcpConfig::session_mcp_servers` (#1433): shared servers lease
+/// the project runtime (`acquireSharedRuntime`), per-session stdio servers
+/// start a dedicated runtime under the session registry. Per-session start
+/// failures degrade to diagnostics (the session keeps the shared tools); only
+/// a non-active provider or registry fails the caller.
+pub async fn session_mcp_tools(
+    options: SessionMcpToolsOptions<'_>,
+) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
+    let session_key = String::from_utf16_lossy(options.session_key.units());
+    let servers = enabled_session_mcp_servers(options.mcp_config, options.session_key);
+    let diagnostic = |message: String, error: Option<RuntimeError>| {
+        if let Some(sink) = &options.on_diagnostic {
+            sink(message, error);
+        }
+    };
+    // `compose()` acquires the shared runtime before anything per-session;
+    // the lease travels with the release half whatever happens next.
+    let shared_lease = options.provider.acquire_shared_runtime(&servers).await?;
+    let tools = SessionMcpTools {
+        shared: shared_lease.tools().to_vec(),
+        per_session: Vec::new(),
+    };
+    let mut release = SessionMcpRelease {
+        per_session: None,
+        shared: Some(shared_lease),
+    };
+    let Some(specs) = options.provider.per_session_server_specs(&servers, false)? else {
+        return Ok((tools, release));
+    };
+    if options.per_session_runtimes.size() >= options.max_per_session_instances {
+        diagnostic(
+            format!(
+                "Per-session MCP limit reached ({}). Session {session_key} will not start: {}.",
+                options.max_per_session_instances,
+                specs
+                    .iter()
+                    .map(|spec| spec.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+            None,
+        );
+        return Ok((tools, release));
+    }
+    let runtime = options.provider.create_runtime(specs);
+    // Registration precedes the start (SessionMcpRuntimeBundle.ts:119-125):
+    // even a failed start is disposed at close, never leaked.
+    let registration = options
+        .per_session_runtimes
+        .register(&session_key, runtime.clone())?;
+    release.per_session = Some(registration);
+    match runtime.start().await {
+        Ok(statuses) => {
+            for status in statuses {
+                if status.status == McpStatus::Error {
+                    diagnostic(
+                        format!(
+                            "{} (server={}, session={session_key}): {}",
+                            if status.server_id == "funasr" {
+                                "ASR unavailable"
+                            } else {
+                                "Per-session MCP unavailable"
+                            },
+                            status.server_id,
+                            status.error.as_deref().unwrap_or("unknown error"),
+                        ),
+                        None,
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            diagnostic(
+                format!("Per-session MCP startup failed for {session_key}"),
+                Some(error),
+            );
+            return Ok((tools, release));
+        }
+    }
+    match create_mcp_tool_definitions_from_runtime(runtime, CreateToolDefinitionsOptions::default())
+        .await
+    {
+        Ok(per_session) => Ok((
+            SessionMcpTools {
+                per_session,
+                ..tools
+            },
+            release,
+        )),
+        Err(error) => {
+            diagnostic(
+                format!("Per-session MCP startup failed for {session_key}"),
+                Some(error),
+            );
+            Ok((tools, release))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::mcp::{
+        client::{McpCallOptions, McpClientError, McpToolCallResult},
+        protocol::{McpServerSpec, McpToolSpec},
+        registry::{BuiltinMcpPaths, ProjectMcpRuntimeProviderOptions},
+        runtime::{McpClientStatusEntry, McpFuture, McpRuntimePort, McpRuntimeServerInfo},
+        sdk::{
+            SdkMcpConfigOptions, SdkMcpEnvironment, SdkMcpError, SdkMcpFuture, SdkMcpProject,
+            SdkMcpProjectResolver, SdkMcpSessionPlugins, SystemEnvironment,
+        },
+    };
+
+    fn wire_name(tool: &McpBridgeTool) -> String {
+        String::from_utf16_lossy(tool.spec().wire_name.units())
+    }
+
+    // ── SdkMcpConfig harness (the sdk_mcp.rs external-test shape, in-crate)
+
+    struct EmptyProject;
+    impl SdkMcpProject for EmptyProject {
+        fn project_root(&self) -> JsString {
+            "/pdrs-fixture/project".into()
+        }
+        fn refresh<'a>(&'a self) -> SdkMcpFuture<'a, Result<(), SdkMcpError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn snapshot<'a>(
+            &'a self,
+        ) -> SdkMcpFuture<'a, Vec<Arc<crate::runtime::plugins::LoadedPlugin>>> {
+            Box::pin(async { Vec::new() })
+        }
+    }
+    struct StaticResolver;
+    impl SdkMcpProjectResolver for StaticResolver {
+        fn resolve<'a>(
+            &'a self,
+            _: Option<&'a JsString>,
+        ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
+            let project: Arc<dyn SdkMcpProject> = Arc::new(EmptyProject);
+            Box::pin(async { Ok(project) })
+        }
+    }
+    struct NoPlugins;
+    impl SdkMcpSessionPlugins for NoPlugins {
+        fn plugins(&self, _: &JsValue) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
+            Vec::new()
+        }
+    }
+    struct FixtureEnvironment;
+    impl SdkMcpEnvironment for FixtureEnvironment {
+        fn env(&self, _: &JsString) -> Option<JsString> {
+            None
+        }
+        fn home(&self) -> JsString {
+            "/pdrs-fixture/home".into()
+        }
+    }
+
+    fn test_config() -> Arc<SdkMcpConfig> {
+        Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
+            resolver: Arc::new(StaticResolver),
+            close_session: Arc::new(|_, _| Box::pin(async { Ok(()) })),
+            session_plugins: Arc::new(NoPlugins),
+            permission_rule_sets: Arc::new(
+                crate::config::permission::GatewaySessionPermissionRuleSetRegistry::new(),
+            ),
+            environment: Arc::new(FixtureEnvironment),
+            projects: crate::runtime::sdk_session::SdkSessionProjects::shared(),
+        }))
+    }
+
+    /// `setMcpServersForSdk` input: `(name, per_session)` stdio servers.
+    fn set_input(session_key: &str, servers: &[(&str, bool)]) -> JsValue {
+        let mut map = JsObject::new();
+        for (name, per_session) in servers {
+            let mut config = JsObject::new();
+            config.insert("type".into(), JsValue::String("stdio".into()));
+            config.insert("command".into(), JsValue::String("node".into()));
+            if *per_session {
+                config.insert("perSession".into(), JsValue::Bool(true));
+            }
+            map.insert((*name).into(), JsValue::Object(config));
+        }
+        let mut input = JsObject::new();
+        input.insert("sessionKey".into(), JsValue::String(session_key.into()));
+        input.insert("servers".into(), JsValue::Object(map));
+        JsValue::Object(input)
+    }
+
+    fn toggle_input(session_key: &str, server_name: &str, enabled: bool) -> JsValue {
+        let mut input = JsObject::new();
+        input.insert("sessionKey".into(), JsValue::String(session_key.into()));
+        input.insert("serverName".into(), JsValue::String(server_name.into()));
+        input.insert("enabled".into(), JsValue::Bool(enabled));
+        JsValue::Object(input)
+    }
+
+    // ── provider fake (`create_runtime` seam, like the TS bundle's factory)
+
+    struct FakeMcpRuntime {
+        label: &'static str,
+        tools: Vec<McpToolSpec>,
+        start_fails: bool,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+    impl crate::runtime::mcp::runtime::SessionMcpRuntime for FakeMcpRuntime {
+        fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
+            let events = self.events.clone();
+            let label = self.label;
+            Box::pin(async move {
+                events
+                    .lock()
+                    .expect("#1433 events lock")
+                    .push(format!("stop:{label}"));
+                Ok(())
+            })
+        }
+    }
+    impl McpRuntimePort for FakeMcpRuntime {
+        fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
+            if self.start_fails {
+                return Box::pin(async { Err(RuntimeError::new("injected start failure")) });
+            }
+            let statuses = self
+                .tools
+                .iter()
+                .map(|tool| McpClientStatusEntry {
+                    server_id: String::from_utf16_lossy(tool.server_id.units()),
+                    status: McpStatus::Ready,
+                    error: None,
+                })
+                .collect();
+            Box::pin(async { Ok(statuses) })
+        }
+        fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
+            let tools = self.tools.clone();
+            Box::pin(async { Ok(tools) })
+        }
+        fn server_info(&self, _: &str) -> Option<McpRuntimeServerInfo> {
+            Some(McpRuntimeServerInfo {
+                transport: "stdio",
+                cwd: None,
+            })
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a JsString,
+            _: &'a JsValue,
+            _: McpCallOptions,
+        ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
+            Box::pin(async {
+                Err(McpClientError::new(
+                    "fake",
+                    None,
+                    "the fake runtime does not call tools",
+                ))
+            })
+        }
+    }
+
+    fn fake_provider(
+        events: Arc<Mutex<Vec<String>>>,
+        start_fails: bool,
+    ) -> Arc<ProjectMcpRuntimeProvider> {
+        let create_runtime = Arc::new(move |specs: Vec<McpServerSpec>| {
+            let per_session = specs.iter().any(|spec| {
+                matches!(
+                    spec.transport,
+                    crate::runtime::mcp::protocol::McpTransportSpec::Stdio {
+                        per_session: true,
+                        ..
+                    }
+                )
+            });
+            let runtime: Arc<dyn McpRuntimePort> = Arc::new(FakeMcpRuntime {
+                label: if per_session { "per-session" } else { "shared" },
+                tools: specs
+                    .iter()
+                    .map(|spec| McpToolSpec {
+                        server_id: spec.id.as_str().into(),
+                        tool_name: "echo".into(),
+                        wire_name: format!("mcp__{}__echo", spec.id).into(),
+                        description: "fake echo".into(),
+                        input_schema: pilotdeck_protocol::parse_json("{}")
+                            .expect("#1433 fake tool schema"),
+                        annotations: None,
+                        meta: None,
+                    })
+                    .collect(),
+                start_fails,
+                events: events.clone(),
+            });
+            runtime
+        });
+        Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(create_runtime),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ))
+    }
+
+    async fn compose(
+        config: &Arc<SdkMcpConfig>,
+        provider: &Arc<ProjectMcpRuntimeProvider>,
+        runtimes: &SessionMcpRuntimeRegistry,
+        session_key: &str,
+        max_per_session_instances: usize,
+        on_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink>,
+    ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
+        session_mcp_tools(SessionMcpToolsOptions {
+            mcp_config: config,
+            provider,
+            per_session_runtimes: runtimes,
+            session_key: &JsString::from(session_key),
+            max_per_session_instances,
+            on_diagnostic,
+        })
+        .await
+    }
+
+    /// `getSdkMcpServers` (#1433): only enabled entries, projected to their
+    /// configs, in insertion order.
+    #[tokio::test]
+    async fn enabled_session_mcp_servers_projects_only_enabled_configs() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("a", false), ("b", false)]))
+            .await
+            .expect("#1433 fixture servers commit");
+        config
+            .toggle_mcp_server(&toggle_input("s", "b", false))
+            .await
+            .expect("#1433 fixture server b disabled");
+        let servers = enabled_session_mcp_servers(&config, &"s".into());
+        let projected = pilotdeck_protocol::stringify_json(&JsValue::Object(servers))
+            .expect("#1433 servers serialize")
+            .expect("#1433 servers are not undefined");
+        crate::negative_assert_eq!(
+            projected,
+            r#"{"a":{"type":"stdio","command":"node"}}"#,
+            "#1433 enabled session servers project to their configs"
+        );
+    }
+
+    /// `SessionMcpRuntimeBundle.compose` (#1433): shared servers lease the
+    /// project runtime, per-session stdio servers start under the session
+    /// registry, and the release disposes the registration.
+    #[tokio::test]
+    async fn session_mcp_tools_composes_shared_and_per_session_tools() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input(
+                "s",
+                &[("shared-echo", false), ("private-echo", true)],
+            ))
+            .await
+            .expect("#1433 fixture servers commit");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(&config, &provider, &runtimes, "s", 5, None).await,
+            "#1433 composition succeeds",
+        );
+        crate::negative_assert!(
+            tools
+                .shared()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__shared-echo__echo"),
+            "#1433 shared session server tool composed"
+        );
+        crate::negative_assert!(
+            tools
+                .per_session()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__private-echo__echo"),
+            "#1433 per-session server tool composed"
+        );
+        crate::negative_assert_eq!(runtimes.size(), 1, "#1433 per-session runtime registered");
+        release.release().await.expect("#1433 composition release");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            0,
+            "#1433 per-session runtime disposed on release"
+        );
+    }
+
+    /// `GatewaySessionResourceLeaseBundle` (#1433): the per-session runtime
+    /// stops before the shared lease on release.
+    #[tokio::test]
+    async fn session_mcp_release_stops_per_session_before_shared() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input(
+                "s",
+                &[("shared-echo", false), ("private-echo", true)],
+            ))
+            .await
+            .expect("#1433 fixture servers commit");
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let provider = fake_provider(events.clone(), false);
+        let (_, release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &SessionMcpRuntimeRegistry::new(),
+                "s",
+                5,
+                None,
+            )
+            .await,
+            "#1433 composition succeeds",
+        );
+        release.release().await.expect("#1433 composition release");
+        crate::negative_assert_eq!(
+            events.lock().expect("#1433 events lock").clone(),
+            vec!["stop:per-session".to_owned(), "stop:shared".to_owned()],
+            "#1433 release order: per-session MCP before shared MCP"
+        );
+    }
+
+    /// `compose` (#1433): a disabled server never reaches the composition.
+    #[tokio::test]
+    async fn session_mcp_tools_skips_disabled_servers() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("a", true)]))
+            .await
+            .expect("#1433 fixture servers commit");
+        config
+            .toggle_mcp_server(&toggle_input("s", "a", false))
+            .await
+            .expect("#1433 fixture server disabled");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &SessionMcpRuntimeRegistry::new(),
+                "s",
+                5,
+                None,
+            )
+            .await,
+            "#1433 composition succeeds",
+        );
+        crate::negative_assert!(
+            tools.is_empty(),
+            "#1433 a disabled session server composes no tools"
+        );
+        release.release().await.expect("#1433 composition release");
+    }
+
+    /// `compose` (#1433): the per-session limit degrades to a diagnostic and
+    /// keeps the shared tools; no runtime is registered past the limit.
+    #[tokio::test]
+    async fn session_mcp_tools_respects_the_per_session_limit() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input(
+                "s",
+                &[("shared-echo", false), ("private-echo", true)],
+            ))
+            .await
+            .expect("#1433 fixture servers commit");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        runtimes
+            .register(
+                "other",
+                Arc::new(FakeMcpRuntime {
+                    label: "per-session",
+                    tools: Vec::new(),
+                    start_fails: false,
+                    events: Arc::new(Mutex::new(Vec::new())),
+                }),
+            )
+            .expect("#1433 pre-existing per-session runtime");
+        let diagnostics: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = diagnostics.clone();
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &runtimes,
+                "s",
+                1,
+                Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
+                    sink.lock().expect("#1433 diagnostics lock").push(message);
+                })),
+            )
+            .await,
+            "#1433 composition succeeds",
+        );
+        crate::negative_assert!(
+            tools
+                .shared()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__shared-echo__echo"),
+            "#1433 the limit keeps the shared tools"
+        );
+        crate::negative_assert!(
+            tools.per_session().is_empty(),
+            "#1433 the limit skips the per-session server"
+        );
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            1,
+            "#1433 the limit registers no per-session runtime"
+        );
+        crate::negative_assert!(
+            diagnostics
+                .lock()
+                .expect("#1433 diagnostics lock")
+                .iter()
+                .any(|message| message.starts_with(
+                    "Per-session MCP limit reached (1). Session s will not start: private-echo."
+                )),
+            "#1433 the limit reports the TS diagnostic"
+        );
+        release.release().await.expect("#1433 composition release");
+    }
+
+    /// `compose` (#1433): a per-session start failure degrades to a
+    /// diagnostic; the registration is still released at close, never leaked.
+    #[tokio::test]
+    async fn session_mcp_tools_degrades_per_session_start_failures() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("private-echo", true)]))
+            .await
+            .expect("#1433 fixture servers commit");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), true);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let diagnostics: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = diagnostics.clone();
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &runtimes,
+                "s",
+                5,
+                Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
+                    sink.lock().expect("#1433 diagnostics lock").push(message);
+                })),
+            )
+            .await,
+            "#1433 composition survives the start failure",
+        );
+        crate::negative_assert!(
+            tools.is_empty(),
+            "#1433 a failed per-session start composes no tools"
+        );
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            1,
+            "#1433 the failed start keeps its registration for close"
+        );
+        crate::negative_assert!(
+            diagnostics
+                .lock()
+                .expect("#1433 diagnostics lock")
+                .iter()
+                .any(|message| message == "Per-session MCP startup failed for s"),
+            "#1433 the start failure reports the TS diagnostic"
+        );
+        release.release().await.expect("#1433 composition release");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            0,
+            "#1433 the failed start is disposed on release"
+        );
+    }
+
+    /// `SessionTools::turn` (#1433): the composed MCP tools reach the turn's
+    /// tool registry through `native_tools`, next to the builtins and LSP,
+    /// under the same allowed/denied policy.
+    #[tokio::test]
+    async fn native_turn_registry_carries_the_session_mcp_tools() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("a", true)]))
+            .await
+            .expect("#1433 fixture servers commit");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &SessionMcpRuntimeRegistry::new(),
+                "s",
+                5,
+                None,
+            )
+            .await,
+            "#1433 composition succeeds",
+        );
+        let name: JsString = "mcp__a__echo".into();
+        let registry = native_tools(
+            None,
+            None,
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &tools,
+        );
+        crate::negative_assert!(
+            registry.has(&name),
+            "#1433 the turn registry carries the session MCP tool"
+        );
+        crate::negative_assert!(
+            registry.has(&"read_file".into()),
+            "#1433 the turn registry keeps the read-only builtins"
+        );
+        let restricted = native_tools(
+            Some(vec![name.clone()]),
+            None,
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &tools,
+        );
+        let listed = restricted
+            .list()
+            .expect("#1433 restricted tool catalog")
+            .len();
+        crate::negative_assert_eq!(
+            listed,
+            1,
+            "#1433 the allowlist admits only the session MCP tool"
+        );
+        crate::negative_assert!(
+            restricted.has(&name),
+            "#1433 the allowlist admits the session MCP tool"
+        );
+        let denied = native_tools(
+            None,
+            Some(vec![name]),
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &tools,
+        );
+        crate::negative_assert!(
+            !denied.has(&"mcp__a__echo".into()),
+            "#1433 the denylist excludes the session MCP tool"
+        );
+        crate::negative_assert!(
+            denied.has(&"read_file".into()),
+            "#1433 the denylist keeps the unrelated builtins"
+        );
+        release.release().await.expect("#1433 composition release");
+    }
+
+    fn bridge_tool(wire_name: &str) -> Arc<McpBridgeTool> {
+        Arc::new(McpBridgeTool::new(
+            McpToolSpec {
+                server_id: "a".into(),
+                tool_name: "t".into(),
+                wire_name: wire_name.into(),
+                description: "fixture".into(),
+                input_schema: pilotdeck_protocol::parse_json("{}").expect("#1433 fake tool schema"),
+                annotations: None,
+                meta: None,
+            },
+            Arc::new(FakeMcpRuntime {
+                label: "per-session",
+                tools: Vec::new(),
+                start_fails: false,
+                events: Arc::new(Mutex::new(Vec::new())),
+            }),
+            CreateToolDefinitionsOptions::default(),
+        ))
+    }
+
+    /// The registration tail (#1433): shared-lease tools keep existing names,
+    /// per-session tools replace them (SessionMcpRuntimeBundle.ts:61-64,
+    /// 138-144). `kind: "mcp"` marks a bridge tool; read_file carries
+    /// `kind: "filesystem"`, so the field separates the two even though both
+    /// definitions also set `maxResultBytes`.
+    #[test]
+    fn register_keeps_shared_names_and_replaces_per_session_names() {
+        let base = native_tools(
+            None,
+            None,
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &SessionMcpTools::empty(),
+        );
+        let is_mcp = |name: &str| {
+            base.get(&name.into())
+                .expect("#1433 fixture tool present")
+                .fields()
+                .get("kind")
+                .and_then(pilotdeck_protocol::JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("mcp"))
+        };
+        crate::negative_assert!(
+            !is_mcp("read_file"),
+            "#1433 the fixture starts on the builtin read tool"
+        );
+        SessionMcpTools {
+            shared: vec![bridge_tool("read_file")],
+            per_session: Vec::new(),
+        }
+        .register(&base);
+        crate::negative_assert!(
+            !is_mcp("read_file"),
+            "#1433 a shared session MCP tool keeps the existing builtin name"
+        );
+        SessionMcpTools {
+            shared: Vec::new(),
+            per_session: vec![bridge_tool("read_file")],
+        }
+        .register(&base);
+        crate::negative_assert!(
+            is_mcp("read_file"),
+            "#1433 a per-session MCP tool replaces the same-name builtin"
+        );
+    }
 }

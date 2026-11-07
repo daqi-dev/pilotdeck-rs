@@ -35,6 +35,7 @@ fn production_turn_ports_share_cancellation() {
         JsObject::new(),
         Arc::default(),
         Arc::default(),
+        tools::SessionMcpTools::empty(),
     )
     .expect("#1071 production session tools");
     let signal = Cancellation::new();
@@ -113,6 +114,7 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         config,
         Arc::default(),
         Arc::default(),
+        tools::SessionMcpTools::empty(),
     )
     .expect("#1864 admission session tools")
     .with_permission_mode_source(Arc::new({
@@ -198,6 +200,7 @@ fn session_tools_admission_mode_follows_the_store_each_turn() {
         guarded,
         Arc::default(),
         Arc::default(),
+        tools::SessionMcpTools::empty(),
     )
     .expect("#1864 guarded session tools")
     .with_permission_mode_source(Arc::new({
