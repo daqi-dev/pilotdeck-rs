@@ -1234,6 +1234,58 @@ fn upload_lease_link_never_pins_a_symlink_source() {
     }
 }
 
+/// #1889 (review concurrency#1, measured 2026-11-07
+/// `_tmp/20261107-issue-1887/lease-open-probe/`): the identity term and the
+/// content term must read one descriptor, not one path twice. Once the entry
+/// has been linked, swapping it for a symlink to a byte-identical copy would
+/// satisfy a follow-the-path content term while the approved inode is gone,
+/// and swapping it for a FIFO would make a plain open wait for a writer that
+/// never comes. Both are refused at the descriptor.
+#[cfg(unix)]
+#[test]
+fn upload_lease_link_of_a_swapped_entry_is_not_read_through_the_path() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let approved_bytes = b"approved-bytes-0123456789";
+    let orig = project.join("approved.bin");
+    fs::write(&orig, approved_bytes).unwrap();
+    let mut approved = File::open(&orig).unwrap();
+    let sha = hash_file(&mut approved).unwrap();
+    let dest = project.join("entry");
+    fs::hard_link(&orig, &dest).unwrap();
+    let want = attachment_identity(&fs::symlink_metadata(&dest).unwrap()).unwrap();
+
+    // 1. Symlink to a byte-identical copy: the bytes match, the object does not.
+    let copy = project.join("copy.bin");
+    fs::write(&copy, approved_bytes).unwrap();
+    fs::remove_file(&dest).unwrap();
+    std::os::unix::fs::symlink(&copy, &dest).unwrap();
+    assert!(
+        !lease_link_matches(&dest, Some(want), &sha),
+        "#1889 a symlink swapped into the lease entry must never be followed"
+    );
+
+    // 2. FIFO: the open must return instead of waiting for a writer.
+    fs::remove_file(&dest).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(&dest)
+        .status()
+        .expect("#1889 probe could not run mkfifo");
+    assert!(made.success(), "#1889 probe could not create the FIFO entry");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let path = dest.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(lease_link_matches(&path, Some(want), &sha));
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(matched) => assert!(
+            !matched,
+            "#1889 a FIFO swapped into the lease entry must never be accepted"
+        ),
+        Err(_) => panic!("#1889 a FIFO entry must never make the lease acquire wait"),
+    }
+}
+
 /// #1887: the read side of the shared "home" question. A `.tmp` swapped for a
 /// link to another subtree of the same project keeps the canonical spelling
 /// inside the project, so a canonical-containment check alone would accept the

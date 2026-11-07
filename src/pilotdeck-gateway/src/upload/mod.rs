@@ -1478,28 +1478,53 @@ fn attachment_identity(_metadata: &fs::Metadata) -> Option<AttachmentIdentity> {
 /// #1494: the lease hard link must pin the inode the integrity check
 /// approved, not whatever the source path names after that check.
 ///
-/// The check must look at what actually got linked, so it uses
-/// `symlink_metadata`: `std::fs::hard_link` does not follow a symlink source on
-/// any shipping Unix — it goes through `linkat(..., 0)` on macOS as well as on
-/// Linux — so a source swapped for a link puts the *link* into the lease.
-/// `metadata` would follow it and compare the target's identity — exactly the
-/// alibi the swap needs (review deepseek boundary#1). Measured on macOS
-/// 2026-11-06: after `fs::hard_link(link, dest)`, `fs::symlink_metadata(dest)`
-/// reports a symlink; Python's `os.link` is the one that follows.
+/// The check must look at what actually got linked: `std::fs::hard_link` does
+/// not follow a symlink source on any shipping Unix — it goes through
+/// `linkat(..., 0)` on macOS as well as on Linux — so a source swapped for a
+/// link puts the *link* into the lease. Measured on macOS 2026-11-06: after
+/// `fs::hard_link(link, dest)`, `fs::symlink_metadata(dest)` reports a
+/// symlink; Python's `os.link` is the one that follows.
+///
+/// #1889 (review concurrency#1): the identity term and the content term must
+/// read *one* object. A path stat followed by a reopen of the same spelling
+/// leaves a window between them, and the reopen resolves whatever is there by
+/// then. Measured 2026-11-07
+/// (`_tmp/20261107-issue-1887/lease-open-probe/`): a FIFO swapped into the
+/// entry made a plain `File::open` never return, and a symlink to `/dev/zero`
+/// read past 64 MiB without reaching EOF. Both terms therefore run on the one
+/// descriptor `open_lease_entry` returns.
 #[cfg(unix)]
 fn lease_link_matches(
     destination: &Path,
     expected: Option<AttachmentIdentity>,
     expected_sha256: &str,
 ) -> bool {
-    match (fs::symlink_metadata(destination), expected) {
-        (Ok(linked), Some(want)) => {
-            linked.file_type().is_file()
-                && attachment_identity(&linked) == Some(want)
-                && lease_link_content_matches(destination, expected_sha256)
-        }
-        _ => false,
-    }
+    let (Some(mut file), Some(want)) = (open_lease_entry(destination), expected) else {
+        return false;
+    };
+    let Ok(listed) = file.metadata() else {
+        return false;
+    };
+    listed.file_type().is_file()
+        && attachment_identity(&listed) == Some(want)
+        && lease_link_content_matches(&mut file, expected_sha256)
+}
+
+/// The lease entry is opened once, without following a link and without
+/// waiting for a writer: a symlink swapped into the entry is refused at open
+/// (`O_NOFOLLOW`), a FIFO swapped into it returns at once instead of blocking
+/// the acquire for a writer that never comes (`O_NONBLOCK`), and the type
+/// check on the descriptor refuses both. `O_NONBLOCK` is a no-op on the
+/// regular file this is meant to be. Residual: `open` resolves the path once;
+/// the identity and content terms do not resolve it again.
+#[cfg(unix)]
+fn open_lease_entry(destination: &Path) -> Option<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = fs::OpenOptions::new();
+    options
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    options.open(destination).ok()
 }
 
 #[cfg(not(unix))]
@@ -1508,9 +1533,13 @@ fn lease_link_matches(
     _expected: Option<AttachmentIdentity>,
     expected_sha256: &str,
 ) -> bool {
-    // The identity term has no cross-platform answer (see above); the content
-    // term does, so it applies here too rather than being skipped with it.
-    lease_link_content_matches(destination, expected_sha256)
+    // The identity term has no cross-platform answer (see above), and the
+    // `O_NOFOLLOW` open is Unix-only; the content term applies here too
+    // rather than being skipped with it.
+    match File::open(destination) {
+        Ok(mut file) => lease_link_content_matches(&mut file, expected_sha256),
+        Err(_) => false,
+    }
 }
 
 /// #1889: `(dev, inode)` is not an identity on every filesystem. Measured
@@ -1525,18 +1554,15 @@ fn lease_link_matches(
 /// The auxiliary identity is therefore the content digest `verified` already
 /// bound to the opened handle: it compared the handle's bytes with the
 /// record's `sha256`, and this re-reads the entry the link actually created
-/// and compares the same digest. An inode-reusing replacement — and, for free,
-/// an in-place rewrite that keeps the inode — no longer matches. Cost is one
-/// extra sequential read of the attachment per lease.
-fn lease_link_content_matches(destination: &Path, expected_sha256: &str) -> bool {
+/// through the same descriptor the identity term fstat'ed, and compares the
+/// same digest. An inode-reusing replacement — and, for free, an in-place
+/// rewrite that keeps the inode — no longer matches. Cost is one extra
+/// sequential read of the attachment per lease.
+fn lease_link_content_matches(file: &mut File, expected_sha256: &str) -> bool {
     if expected_sha256.is_empty() {
         return false;
     }
-    match File::open(destination) {
-        Ok(mut file) => hash_file(&mut file).is_ok_and(|digest| digest == expected_sha256),
-        // Unreadable is never a match.
-        Err(_) => false,
-    }
+    hash_file(file).is_ok_and(|digest| digest == expected_sha256)
 }
 
 fn hash_file(file: &mut File) -> Result<String> {
