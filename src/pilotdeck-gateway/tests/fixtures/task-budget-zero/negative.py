@@ -42,7 +42,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (mutating_sources, run_owned, wait_for_slot,
                                write_source_atomic)
-from negative_selection import refuse
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/storage/task_budget.rs'
@@ -145,22 +146,20 @@ if mode.startswith('-'):
 # (same hardening as the mode dispatch above), so a misspelled control name
 # must not silently run zero mutants and exit 0.
 target = os.environ.get('CARGO_TARGET_DIR')
-if not target:
+if missing_target():
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 names = [case[0] for case in cases]
 if len(names) != len(set(names)):
     refuse('duplicate control name')
-selected = arguments
-unknown = set(selected) - set(names)
-if unknown:
-    refuse(f'unknown controls: {sorted(unknown)}')
-if selected:
-    cases = [case for case in cases if case[0] in selected]
+try:
+    cases = select(cases, arguments, always=())
+except ValueError as error:
+    refuse(str(error))
 if not cases:
     refuse('no controls selected')
 
-out = Path(mode).resolve()
-out.mkdir(parents=True, exist_ok=False)
+refuse_unusable_target()
+out = claim_dir(mode)
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
 results = []

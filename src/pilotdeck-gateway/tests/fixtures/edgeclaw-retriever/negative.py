@@ -35,7 +35,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_selection import refuse
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 
 root = Path(__file__).resolve().parents[5]
 retriever = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/retriever.rs'
@@ -243,21 +244,20 @@ if mode.startswith('-'):
     raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
 # Judgment checks are explicit exits, not asserts: python3 -O strips asserts
 # (same hardening as the mode dispatch above), so a misspelled control name
-# must not silently run zero mutants and exit 0.
-selected = arguments
-unknown = set(selected) - set(names)
-if unknown:
-    refuse(f'unknown controls: {sorted(unknown)}')
-if selected:
-    cases = [case for case in cases if case[0] in selected]
+# must not silently run zero mutants and exit 0. select() also refuses a
+# repeated name (`a a` for `a b`) instead of folding it into a green run.
+try:
+    cases = select(all_cases, arguments, always=())
+except ValueError as error:
+    refuse(str(error))
 if not cases:
     refuse('no controls selected')
 
-out = Path(mode).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
-if not target:
+if missing_target():
     refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
-out.mkdir(parents=True, exist_ok=True)
+refuse_unusable_target()
+out = claim_dir(mode)
 paths = sorted({case[1] for case in cases})
 
 env = dict(os.environ)
