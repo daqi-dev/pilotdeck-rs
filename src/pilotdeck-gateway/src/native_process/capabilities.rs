@@ -186,9 +186,24 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
 /// tree and so adding one without deleting its line fails a test.
 #[allow(dead_code)] // read by the capability tests only
 pub(super) const OUT_OF_SCOPE: &[(&str, &str)] = &[
-    ("always_on_apply", "not this issue: rescoped by #1313"),
-    ("always_on_abort", "not this issue: rescoped by #1313"),
-    ("always_on_rerun_plan", "not this issue: rescoped by #1313"),
+    // #1313 r1: the three wire methods are routed (methods/always_on.rs) but
+    // no always-on control is bound in this process — TS lists the names only
+    // with `options.alwaysOnControl` (InProcessGateway.ts:2123-2126), so the
+    // honest advertisement here is none. The control port and the runtime it
+    // fronts land in #2294, which moves these rows into the table with a real
+    // provider probe (the `cron` pattern).
+    (
+        "always_on_apply",
+        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
+    ),
+    (
+        "always_on_abort",
+        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
+    ),
+    (
+        "always_on_rerun_plan",
+        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
+    ),
     (
         "manager_browsers",
         "not this issue: the TS CLI only passes the callback through (cli/createLocalGateway.ts:1270) and nothing in the baseline tree calls it, so the baseline never advertises it either",
