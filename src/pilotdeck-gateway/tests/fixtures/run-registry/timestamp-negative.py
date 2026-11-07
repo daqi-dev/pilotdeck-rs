@@ -118,6 +118,19 @@ def mutate(text, scope, edits):
     return text
 
 
+def probe_slot(script, **_kwargs):
+    """The no-op cargo gate injected as negative_suite.wait_for_slot (#1147).
+
+    This runner compiles nothing: every probe is a node run and occupies no
+    cargo slot, so run_cases' per-run gate wait would spend up to 18 x 900 s
+    of budget inside scratch's 1800 s deadline while holding the tree lock,
+    for a gate this process can never contend. The gate itself is untouched;
+    only this runner's view of it is a no-op, and run_cases still writes the
+    (empty) transcript into <label>.slots.log.
+    """
+    return subprocess.CompletedProcess([], 0, '', '')
+
+
 class ProbeFactory:
     """The node command factory injected as negative_suite.run_owned (#1147).
 
@@ -164,10 +177,24 @@ def main():
     if len(sys.argv) != 2:
         raise SystemExit('usage: timestamp-negative.py NEW_OUTPUT_DIR | --check-anchors')
     env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-        raise SystemExit('caller must supply CARGO_TARGET_DIR and PDRS_BASELINE')
+    # #1666/#1734: a missing or blank caller target is "never started" (2),
+    # not "ran and did not pass" (1). `SystemExit('...')` would exit 1;
+    # count-negative's shared environment() refuses the same way.
+    if not (env.get('CARGO_TARGET_DIR') or '').strip() \
+            or not (env.get('PDRS_BASELINE') or '').strip():
+        print('INVALID: caller must supply CARGO_TARGET_DIR and PDRS_BASELINE',
+              file=sys.stderr, flush=True)
+        return 2
     out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    try:
+        out.mkdir(parents=True, exist_ok=False)
+    except OSError as error:
+        # Same canon: an evidence directory that cannot be created (already
+        # taken, EACCES, ENOSPC, a non-directory in the path) means "never
+        # started"; nothing was measured.
+        print(f'INVALID: cannot create output directory {out}: {error}',
+              file=sys.stderr, flush=True)
+        return 2
 
     fixture_root = Path(__file__).resolve().parents[1]
     base_guarded = [source, probe, Path(__file__).resolve(),
@@ -182,6 +209,22 @@ def main():
     # unwinds through run_cases' #1076 handling and every mutating_sources'
     # shielded restore, the tree is verified against HEAD, and run_owned's
     # group kill reaps the session-own cargo/node children.
+    try:
+        return _guarded_body(env, out, base_guarded)
+    except SystemExit as error:
+        if error.code is None or isinstance(error.code, int):
+            raise
+        # A signal that lands outside run_cases' own #1076 handling (closure
+        # discovery, a guard's entry checks) still unwinds through every
+        # shielded restore, but the raw SystemExit carries scratch's string
+        # message and would exit 1. A cancellation is "never verified" and
+        # must exit 2 (#1076).
+        raise SystemExit(2) from error
+
+
+def _guarded_body(env, out, base_guarded):
+    # No `as root`: the guarded window and run_cases take the repository
+    # root (module-level `root`), not scratch's temporary directory.
     with scratch('run-registry-timestamp', deadline=1800):
         # Discover imports only after the entry, probe, runner and this
         # script's judge inputs are checked under the tree lock, then keep
@@ -196,12 +239,14 @@ def main():
                 # module globals at call time, so the node command factory and
                 # probe judges are injected here without touching the
                 # M6-exclusive shared suite (#1147 P2-3; test_negative_suite's
-                # cancellation tests patch the same attributes).
+                # cancellation tests patch the same attributes). wait_for_slot
+                # gets the no-op probe_slot for the same reason (#1147 r1).
                 saved = (negative_suite.run_owned, negative_suite.passed,
-                         negative_suite.classify)
+                         negative_suite.classify, negative_suite.wait_for_slot)
                 negative_suite.run_owned = ProbeFactory(out)
                 negative_suite.passed = probe_passed
                 negative_suite.classify = probe_classify
+                negative_suite.wait_for_slot = probe_slot
                 try:
                     # The timeout is the node probe window; a .mts mutant's
                     # compilation proof is the node run itself (a syntax error
@@ -211,8 +256,8 @@ def main():
                     return run_cases(root, [Case(*row) for row in mutations],
                                      out, env, mutate, timeout=150, script=__file__)
                 finally:
-                    negative_suite.run_owned, negative_suite.passed, \
-                        negative_suite.classify = saved
+                    (negative_suite.run_owned, negative_suite.passed,
+                     negative_suite.classify, negative_suite.wait_for_slot) = saved
 
 
 if __name__ == '__main__':
