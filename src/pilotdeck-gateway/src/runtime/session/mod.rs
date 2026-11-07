@@ -7,6 +7,7 @@ pub mod factory;
 mod handle;
 #[cfg(unix)]
 pub mod kernel;
+pub(crate) mod kernel_config;
 #[cfg(unix)]
 pub(crate) mod kernel_projection;
 #[cfg(unix)]

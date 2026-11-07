@@ -548,6 +548,106 @@ async fn start_assembly(
                     stored_thinking.as_ref(),
                     stored_style_content.as_deref(),
                 );
+                // Preserve actual configured ports before the Kernel whitelist.
+                // Merely having an optional family installed is not activation.
+                let kernel_pricing = staged
+                    .resource(Resource::Router)
+                    .and_then(|resource| {
+                        resource
+                            .as_any()
+                            .downcast_ref::<crate::runtime::project::model::RouterResources>()
+                            .map(|router| router.router.config().stats.model_pricing.clone())
+                    })
+                    .flatten()
+                    .map(|pricing| {
+                        JsValue::Array(
+                            pricing
+                                .iter()
+                                .map(|(key, rate)| {
+                                    crate::metadata::object([
+                                        ("key", JsValue::from(key)),
+                                        (
+                                            "input",
+                                            rate.input
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                        (
+                                            "output",
+                                            rate.output
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                        (
+                                            "cacheRead",
+                                            rate.cache_read
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                    ])
+                                })
+                                .collect(),
+                        )
+                    });
+                let memory_active = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("memory"))
+                    .and_then(|memory| memory.get("enabled"))
+                    == Some(&JsValue::Bool(true));
+                let instruction = crate::runtime::context::InstructionDiscovery::new(
+                    options.project.clone(),
+                    options.project.clone(),
+                    options.home.clone(),
+                    env.get("PILOTDECK_MANAGED_CONFIG")
+                        .filter(|path| !path.is_empty())
+                        .map(PathBuf::from),
+                );
+                let plugins = staged
+                    .resource(Resource::PluginRuntime)
+                    .and_then(|resource| {
+                        resource
+                            .as_any()
+                            .downcast_ref::<PluginResources>()
+                            .map(|plugins| plugins.runtime.clone())
+                    });
+                // Run only after this session's immutable owner selects Kernel;
+                // a legacy preparation never executes or refreshes these ports.
+                let kernel_port_preflight: crate::runtime::refresh::BoxFuture<
+                    crate::runtime::project::RuntimeResult,
+                > = Box::pin(async move {
+                    if memory_active {
+                        return Err(crate::runtime::session::kernel_config::unavailable(
+                            "resolved product memory resolver",
+                        ));
+                    }
+                    let layers = tokio::task::spawn_blocking(move || instruction.discover())
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?
+                        .map_err(RuntimeError::new)?;
+                    if !layers.is_empty() {
+                        return Err(crate::runtime::session::kernel_config::unavailable(
+                            "discovered PILOTDECK.md/rules instructions",
+                        ));
+                    }
+                    if let Some(plugins) = plugins {
+                        let plugins = plugins
+                            .refresh()
+                            .await
+                            .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        if plugins.iter().any(|plugin| {
+                            !plugin.commands.is_empty()
+                                || !plugin.skills.is_empty()
+                                || plugin.hooks_config.is_some()
+                                || plugin.mcp_servers.is_some()
+                                || plugin.lsp_servers.is_some()
+                        }) {
+                            return Err(crate::runtime::session::kernel_config::unavailable(
+                                "active product plugin contributions",
+                            ));
+                        }
+                    }
+                    Ok(())
+                });
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
@@ -611,11 +711,17 @@ async fn start_assembly(
                                 &options.project,
                             )?
                         {
+                            let mut kernel_config = config.clone();
+                            kernel_config.insert(
+                                "modelPricingEntries".into(),
+                                kernel_pricing.unwrap_or(JsValue::Undefined),
+                            );
                             return Ok(Box::new(
                                 factory
+                                    .with_port_preflight(kernel_port_preflight)
                                     .with_interactions(interactions.clone())
                                     .with_turn_preferences(
-                                        config.clone(),
+                                        kernel_config,
                                         permission_source.clone(),
                                     ),
                             ));

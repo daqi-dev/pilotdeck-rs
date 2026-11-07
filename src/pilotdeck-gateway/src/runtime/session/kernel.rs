@@ -43,8 +43,8 @@ fn text(value: &JsString) -> Result<String, RuntimeError> {
 
 /// Every persisted field participates in reopening: mode changes never switch an
 /// existing session, and canonical project identity prevents cross-project aliases.
-#[derive(Clone)]
 pub struct KernelBackendFactory {
+    preflight: Option<BoxFuture<crate::runtime::project::RuntimeResult>>,
     pub socket: PathBuf,
     pub loop_version: String,
     pub owner_path: PathBuf,
@@ -59,6 +59,13 @@ pub enum BackendOwner {
     Kernel(KernelBackendFactory),
 }
 impl KernelBackendFactory {
+    pub fn with_port_preflight(
+        mut self,
+        preflight: BoxFuture<crate::runtime::project::RuntimeResult>,
+    ) -> Self {
+        self.preflight = Some(preflight);
+        self
+    }
     pub fn with_turn_preferences(
         mut self,
         config: JsObject,
@@ -100,6 +107,7 @@ impl KernelBackendFactory {
             return match saved["backend"].as_str() {
                 Some("legacy") => Ok(BackendOwner::Legacy),
                 Some("kernel") => Ok(BackendOwner::Kernel(Self {
+                    preflight: None,
                     socket: PathBuf::from(
                         saved["socket"]
                             .as_str()
@@ -147,6 +155,7 @@ impl KernelBackendFactory {
             .cloned()
             .unwrap_or_default();
         Ok(BackendOwner::Kernel(Self {
+            preflight: None,
             socket,
             loop_version,
             owner_path,
@@ -307,6 +316,7 @@ struct State {
     run: Option<String>,
     call: Option<String>,
     call_run: Option<String>,
+    input: Option<Value>,
     status: String,
     cursor: u64,
     waits: BTreeMap<String, String>,
@@ -339,6 +349,7 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
             )
             .await?;
         state.call = Some(call.into());
+        state.input = Some(view["invocation"]["payload"].clone());
         state.call_run = view["invocation"]["correlation_id"]
             .as_str()
             .map(str::to_string);
@@ -392,7 +403,41 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
     }
     Ok(state)
 }
+fn with_index(mut history: Value, facts: &State) -> Value {
+    history["kernelIndex"] = match (
+        facts.call.as_ref(),
+        facts.call_run.as_ref(),
+        facts.input.as_ref(),
+    ) {
+        (Some(call), Some(run), Some(input))
+            if input["type"] == "text" && input["text"].is_string() =>
+        {
+            json!({"executionId":call,"runId":run,"status":facts.status,"prompt":input["text"],"active":facts.run.is_some()})
+        }
+        _ => Value::Null,
+    };
+    history
+}
+#[derive(Default)]
+struct NativePortCheck {
+    pending: Option<BoxFuture<crate::runtime::project::RuntimeResult>>,
+    result: Option<crate::runtime::project::RuntimeResult>,
+}
+impl NativePortCheck {
+    async fn check(&mut self) -> crate::runtime::project::RuntimeResult {
+        if let Some(pending) = self.pending.take() {
+            // Cancellation cannot consume the check and turn a later retry
+            // into permission to bypass it. Reprepare explicitly if interrupted.
+            self.result = Some(Err(super::kernel_config::unavailable(
+                "interrupted product port preflight",
+            )));
+            self.result = Some(pending.await);
+        }
+        self.result.clone().unwrap_or(Ok(()))
+    }
+}
 struct KernelSession {
+    port_check: Arc<tokio::sync::Mutex<NativePortCheck>>,
     projection: Option<Arc<super::kernel_projection::KernelProjection>>,
     rpc: Arc<tokio::sync::Mutex<Rpc>>,
     kernel_id: String,
@@ -404,9 +449,29 @@ struct KernelSession {
     agent_config: JsObject,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
+impl KernelSession {
+    fn turn_permission_mode(&self, options: &Value) -> Result<JsString, RuntimeError> {
+        let requested = options.get("mode").filter(|value| !value.is_null());
+        if requested.is_some_and(|value| {
+            !matches!(
+                value.as_str(),
+                Some("default" | "plan" | "bypassPermissions")
+            )
+        }) {
+            return Err(error("Native per-turn mode is invalid."));
+        }
+        Ok(crate::runtime::permission::effective_permission_mode(
+            &self.agent_config,
+            requested
+                .and_then(Value::as_str)
+                .map(JsString::from)
+                .or_else(|| Some(self.permission_mode())),
+        ))
+    }
+}
 impl SessionBackendFactory for KernelBackendFactory {
     fn build(
-        self: Box<Self>,
+        mut self: Box<Self>,
         context: BackendContext,
     ) -> BoxFuture<Result<Box<dyn SessionBackend>, RuntimeError>> {
         Box::pin(async move {
@@ -489,7 +554,7 @@ impl SessionBackendFactory for KernelBackendFactory {
                     json!({"session_id":kernel_id,"context_ref":context_ref}),
                 )
                 .await?;
-            projection.sync(&history)?;
+            projection.sync(&with_index(history, &recovered))?;
 
             let rpc = Arc::new(tokio::sync::Mutex::new(rpc));
             let state = Arc::new(Mutex::new(recovered));
@@ -523,6 +588,10 @@ impl SessionBackendFactory for KernelBackendFactory {
                 }
             });
             Ok(Box::new(KernelSession {
+                port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck {
+                    pending: self.preflight.take(),
+                    result: None,
+                })),
                 projection: Some(projection),
                 rpc,
                 kernel_id,
@@ -576,7 +645,23 @@ impl LiveSession for KernelSession {
             ));
         }
 
+        super::kernel_config::preflight(&payload)?;
+        super::kernel_config::preflight(&options)?;
+        for container in [
+            &payload,
+            &payload["agent"],
+            &payload["contextOverride"],
+            &options,
+            &options["agent"],
+        ] {
+            if container.get("modelPricingEntries").is_some() {
+                return Err(super::kernel_config::unavailable(
+                    "browser modelPricingEntries override; pricing is owned by the leased product router",
+                ));
+            }
+        }
         let config = json_value(&JsValue::Object(self.agent_config.clone()))?;
+        super::kernel_config::preflight(&config)?;
         let mut agent = serde_json::Map::new();
         for key in [
             "systemPrompt",
@@ -587,6 +672,7 @@ impl LiveSession for KernelSession {
             "toolChoice",
             "maxContextMessages",
             "jsonSelfCorrect",
+            "modelPricingEntries",
         ] {
             if let Some(value) = config.get(key) {
                 agent.insert(key.into(), value.clone());
@@ -594,13 +680,19 @@ impl LiveSession for KernelSession {
         }
         agent.insert(
             "permissionMode".into(),
-            json!(text(&self.permission_mode())?),
+            json!(text(&self.turn_permission_mode(&options)?)?),
         );
         payload["agent"] = Value::Object(agent);
-        for key in ["runMode", "allowPlanModeTools"] {
+        for key in ["runMode", "allowPlanModeTools", "basePermissionMode"] {
             if let Some(value) = options.get(key) {
                 payload[key] = value.clone();
             }
+        }
+        if payload
+            .get("basePermissionMode")
+            .is_some_and(|value| !matches!(value.as_str(), Some("default" | "bypassPermissions")))
+        {
+            return Err(error("Native basePermissionMode is invalid."));
         }
         let mut state = self.state.lock().unwrap();
         if state.disposed || state.run.is_some() {
@@ -612,6 +704,7 @@ impl LiveSession for KernelSession {
         state.attached = true;
         self.started.store(false, Ordering::SeqCst);
         Ok(Box::new(KernelTurn {
+            port_check: self.port_check.clone(),
             rpc: self.rpc.clone(),
             kernel_id: self.kernel_id.clone(),
             session: self.session.clone(),
@@ -678,7 +771,7 @@ impl LiveSession for KernelSession {
                                 json!({"session_id":kernel_id,"context_ref":context_ref}),
                             )
                             .await?;
-                        projection.sync(&history)?;
+                        projection.sync(&with_index(history, &facts))?;
                     }
                     let attached = state.lock().unwrap().attached;
                     let value = json!({"backend":"kernel","kernelSessionId":kernel_id,"executionId":facts.call,"runId":facts.call_run,"cursor":facts.cursor,"execution":current,"status":facts.status,"journal":journal,"attached":attached});
@@ -703,8 +796,10 @@ impl LiveSession for KernelSession {
                             json!({"session_id":kernel_id,"context_ref":context_ref}),
                         )
                         .await?;
+                    let facts = recover(&mut *rpc.lock().await, &kernel_id).await?;
+                    let indexed = with_index(history.clone(), &facts);
                     if let Some(projection) = &projection {
-                        projection.sync(&history)?;
+                        projection.sync(&indexed)?;
                     }
                     let mut display = history["history"].clone();
                     if display.as_array().is_some_and(|messages| {
@@ -736,6 +831,17 @@ impl LiveSession for KernelSession {
                             &display, &journal, &roots,
                         );
                     }
+                    let created = String::from_utf16_lossy(
+                        pilotdeck_transport::server::ExecutionClock::now_iso(
+                            &pilotdeck_transport::system_clock::SystemExecutionClock,
+                        )
+                        .units(),
+                    );
+                    display = super::kernel_projection::with_active_input(
+                        &display,
+                        &indexed["kernelIndex"],
+                        &created,
+                    );
                     let mut result = super::kernel_projection::web_messages(
                         &display,
                         &text(&session)?,
@@ -951,6 +1057,7 @@ impl LiveSession for KernelSession {
     }
 }
 struct KernelTurn {
+    port_check: Arc<tokio::sync::Mutex<NativePortCheck>>,
     projection: Option<Arc<super::kernel_projection::KernelProjection>>,
     context_ref: String,
     rpc: Arc<tokio::sync::Mutex<Rpc>>,
@@ -978,6 +1085,7 @@ impl LiveTurn for KernelTurn {
                     return Ok(None);
                 }
                 if let Some(input) = self.input.take() {
+                    self.port_check.lock().await.check().await?;
                     let original = recover(&mut *self.rpc.lock().await, &self.kernel_id).await?;
                     if original.run.as_deref().is_some_and(|run| run != self.run) {
                         let mut state = self.state.lock().unwrap();
@@ -998,6 +1106,19 @@ impl LiveTurn for KernelTurn {
                         let mut state = self.state.lock().unwrap();
                         state.call = Some(call.clone());
                         state.call_run = Some(self.run.clone());
+                    }
+                    if let Some(projection) = &self.projection {
+                        // Publish the accepted input's directory hint now,
+                        // before a user can refresh a pending approval page.
+                        let mut rpc = self.rpc.lock().await;
+                        let facts = recover(&mut rpc, &self.kernel_id).await?;
+                        let history = rpc
+                            .call(
+                                "execution.history.snapshot",
+                                json!({"session_id":self.kernel_id,"context_ref":self.context_ref}),
+                            )
+                            .await?;
+                        projection.sync(&with_index(history, &facts))?;
                     }
                     // A duplicate idempotency key observes its original journal
                     // range; it never starts a replacement provider execution.
@@ -1230,6 +1351,7 @@ mod tests {
     }
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
                 socket,
@@ -1630,6 +1752,7 @@ mod recovery_contract_tests {
     use tokio::net::UnixListener;
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
                 socket,
@@ -1774,6 +1897,44 @@ mod recovery_contract_tests {
         std::fs::remove_file(socket).unwrap();
     }
     #[tokio::test]
+    async fn kernel_configured_port_failure_remains_rejected_without_replay_or_blocking_reads() {
+        let mut check = NativePortCheck {
+            pending: Some(Box::pin(async {
+                Err(super::super::kernel_config::unavailable("fixture"))
+            })),
+            result: None,
+        };
+        assert!(check.check().await.is_err());
+        assert!(check.check().await.is_err());
+        let mut interrupted = NativePortCheck {
+            pending: Some(Box::pin(std::future::pending())),
+            result: None,
+        };
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(1), interrupted.check())
+                .await
+                .is_err()
+        );
+        assert!(interrupted.check().await.is_err());
+        let mut session = session(std::env::temp_dir().join("no-effect.sock"));
+        session.agent_config = js(&json!({"managedPermissions":{"defaultMode":"default"}}))
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            session
+                .turn_permission_mode(&json!({"mode":"bypassPermissions"}))
+                .unwrap(),
+            JsString::from("default")
+        );
+        assert!(
+            session
+                .turn_permission_mode(&json!({"mode":"bad"}))
+                .is_err()
+        );
+    }
+    #[tokio::test]
     async fn native_turn_preferences_reach_wire_without_overriding_kernel_model_route() {
         let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
         let listener = UnixListener::bind(&socket).unwrap();
@@ -1792,7 +1953,13 @@ mod recovery_contract_tests {
                     "execution.events" if !accepted => json!([]),
                     "execution.input" => {
                         let agent = &req["params"]["input"]["agent"];
-                        assert_eq!(agent["permissionMode"], "bypassPermissions");
+                        assert_eq!(agent["permissionMode"], "plan");
+                        assert_eq!(
+                            req["params"]["input"]["basePermissionMode"],
+                            "bypassPermissions"
+                        );
+                        assert_eq!(agent["modelPricingEntries"][0]["key"], "z-first");
+                        assert_eq!(agent["modelPricingEntries"][1]["key"], "a-second");
                         assert_eq!(
                             agent["thinking"],
                             json!({"enabled":true,"budgetTokens":1024})
@@ -1823,12 +1990,12 @@ mod recovery_contract_tests {
             }
         });
         let mut session = session(socket.clone());
-        session.agent_config=js(&json!({"provider":"must-not-override","model":"must-not-override","thinking":{"enabled":true,"budgetTokens":1024},"appendSystemPrompt":"write concise answers"})).unwrap().as_object().unwrap().clone();
+        session.agent_config=js(&json!({"provider":"must-not-override","model":"must-not-override","thinking":{"enabled":true,"budgetTokens":1024},"appendSystemPrompt":"write concise answers","modelPricingEntries":[{"key":"z-first","input":1},{"key":"a-second","input":2}]})).unwrap().as_object().unwrap().clone();
         session.permission_mode_source = Some(Arc::new(|| Some("bypassPermissions".into())));
         let mut turn = session
             .submit(
                 js(&json!({"type":"text","text":"hello"})).unwrap(),
-                js(&json!({"turnId":"run","runMode":"plan"})).unwrap(),
+                js(&json!({"turnId":"run","runMode":"plan","mode":"plan","basePermissionMode":"bypassPermissions"})).unwrap(),
             )
             .unwrap();
         while turn.next().await.unwrap().is_some() {}

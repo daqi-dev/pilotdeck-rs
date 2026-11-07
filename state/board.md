@@ -4584,3 +4584,7 @@ Gateway 重启后没有 attached pump 时，active snapshot 现从原 root execu
 ### 2026-11-08 实际重启 lease / CLI SIGINT / UI timeline 接续（lane C）
 
 真实重启报 LeaseBusy 的原因是同 holder 的 acquire 也不重入；现只读 build/history/active 不拿执行 lease，effect 前查公开 lease_status，同原 node 活跃租约续权威 epoch，inactive 才 acquire，foreign holder 拒绝且仍可观察。CLI 原 native resume 返回显式 backend/abortSemantics；仅该分支在 abort ACK 后继续等原 stream，实际 result_unknown 输出既有 recovery JSON，legacy SDK 信号路径不改。真实 UI 一条 assistant 视觉消失另定位到 sessionTimeline 优先 timeline.turnId 并覆盖外层 root；live/history/replay 派生 timeline 现统一产品 root，原 Source canonical、block ID/order/revision 保持。gateway focused 16/16，CLI 信号组 12/12 + 原有独占端口测试 1 ignored；真实重启/CLI/原 UI 仍由总集成重试。
+
+### 2026-11-08 待审批会话索引与实际 turn 配置（lane C）
+
+Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接受回执后立即从原 root invocation/state 生成独立 fingerprint 的 metadata-only index，直接目录扫描也能发现会话；不写消息/turn_result 冒充完成。history API 的未 capture 用户输入只作为带原 root ID 的 source live 展示行，分页先合并再切片；冷重连 stream 从 journal 重建。配置侧 actual leased router pricing 按原枚举顺序传 agent.modelPricingEntries；仅 native prepare 保留验证后的 mode/basePermissionMode，managed 默认仍优先。已配置但未装配的 memory/instructions/plugin/cache 端口在 effect 前拒绝，readonly 继续可用，缺失/null/false/empty pricing 继续允许，异步检查取消不能绕过下一次检查。focused kernel 20/20 通过；增加即时 index 调用后最后 cargo check 通过，真实 UI pending Allow/reload 由总集成继续。

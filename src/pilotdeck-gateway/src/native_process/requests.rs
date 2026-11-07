@@ -547,17 +547,31 @@ impl GatewayRequests for Requests {
                         }
                         value = projection;
                     } else if method == "read_session_messages" {
+                        let native = handle
+                            .backend_request("active_turn_snapshot".into(), params.clone())
+                            .await
+                            .map_err(|error| RequestError::new(error.message))?
+                            .ok_or_else(|| {
+                                RequestError::new("Native active state is unavailable.")
+                            })?;
+                        let stream = if native.get("attached") == Some(&JsValue::Bool(true)) {
+                            self.coordinator
+                                .snapshot(
+                                    &crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(
+                                        session.clone(),
+                                    ),
+                                )
+                                .to_json()
+                        } else {
+                            crate::runtime::session::kernel_replay::snapshot(
+                                &native,
+                                &String::from_utf16_lossy(session.units()),
+                                &self.options.home,
+                            )
+                            .map_err(|error| RequestError::new(error.message))?
+                        };
                         if let JsValue::Object(ref mut history) = value {
-                            history.insert(
-                                "stream".into(),
-                                self.coordinator
-                                    .snapshot(
-                                        &crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(
-                                            session.clone(),
-                                        ),
-                                    )
-                                    .to_json(),
-                            );
+                            history.insert("stream".into(), stream);
                         }
                     }
                     return Ok(value);

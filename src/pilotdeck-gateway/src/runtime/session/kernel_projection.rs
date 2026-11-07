@@ -63,6 +63,7 @@ impl KernelProjection {
             _ => return Err(error("history must be canonical messages")),
         };
         let sha = digest(&json!(history));
+        let index_sha = digest(&snapshot["kernelIndex"]);
         let start = self.recorder.writer().snapshot_state().sequence;
         let read = crate::storage::read_transcript(self.recorder.writer().path()).map_err(error)?;
         let previous = read
@@ -86,7 +87,9 @@ impl KernelProjection {
                 if previous["sha256"] != sha {
                     return Err(error("same Kernel revision has different history"));
                 }
-                return Ok(());
+                if previous["indexSha256"] == index_sha {
+                    return Ok(());
+                }
             }
         }
         let prior = self.projection.snapshot().map_err(error)?;
@@ -94,8 +97,9 @@ impl KernelProjection {
         metadata
             .as_object_mut()
             .ok_or_else(|| error("invalid UI metadata"))?;
-        let marker = json!({"kernelSessionId":self.kernel,"contextRef":self.context,"revision":revision,"sha256":sha});
+        let marker = json!({"kernelSessionId":self.kernel,"contextRef":self.context,"revision":revision,"sha256":sha,"indexSha256":index_sha});
         metadata["kernelProjection"] = marker.clone();
+        metadata["kernelExecution"] = snapshot["kernelIndex"].clone();
         let prompts = history
             .iter()
             .filter(|message| message["role"] == "user" && message["metadata"]["synthetic"] != true)
@@ -108,6 +112,15 @@ impl KernelProjection {
         }
         if let Some(last) = prompts.last() {
             metadata["lastPrompt"] = json!(last);
+        }
+        if let Some(prompt) = snapshot["kernelIndex"]["prompt"]
+            .as_str()
+            .filter(|prompt| !prompt.trim().is_empty())
+        {
+            metadata["lastPrompt"] = json!(prompt);
+            if metadata["firstPrompt"].is_null() {
+                metadata["firstPrompt"] = json!(prompt);
+            }
         }
 
         let created = read
@@ -278,6 +291,25 @@ pub(crate) fn reconcile_identity(history: &Value, journal: &Value, roots: &[Valu
     json!(messages)
 }
 
+pub(crate) fn with_active_input(history: &Value, index: &Value, created: &str) -> Value {
+    let mut messages = history.as_array().cloned().unwrap_or_default();
+    if index["active"] == true {
+        if let (Some(run), Some(prompt), Some(call)) = (
+            index["runId"].as_str(),
+            index["prompt"].as_str(),
+            index["executionId"].as_str(),
+        ) {
+            if !messages
+                .iter()
+                .any(|message| message["role"] == "user" && message["metadata"]["turnId"] == run)
+            {
+                messages.push(json!({"role":"user","content":[{"type":"text","text":prompt}],"metadata":{"turnId":run,"createdAt":created,"kernelMessageId":format!("kernel-active-input:{call}"),"kernelPending":true,"executionId":call}}));
+            }
+        }
+    }
+    json!(messages)
+}
+
 /// The retained UI consumes WebMessage rows, not canonical model messages.
 /// IDs are content-based and stable across cache deletion/reconstruction.
 pub(crate) fn web_messages(
@@ -304,6 +336,11 @@ pub(crate) fn web_messages(
             let mut row = json!({"id":format!("{id}:{part}"),"sessionKey":session,"createdAt":created,"provider":"pilotdeck","role":role,"source":"history","sequence":rows.len()+1});
             if let Some(project) = project {
                 row["projectKey"] = json!(project);
+            }
+            if message["metadata"]["kernelPending"] == true {
+                row["source"] = json!("live");
+                row["payload"] =
+                    json!({"acceptedBy":"kernel","executionId":message["metadata"]["executionId"]});
             }
             if let Some(run) = message["metadata"]["turnId"].as_str() {
                 row["turnId"] = json!(run);
@@ -438,6 +475,79 @@ mod tests {
         let rows = web_messages(&annotated, "s", None, &json!({}));
         assert_eq!(rows["messages"][0]["id"], "native:call:0:0");
         assert_eq!(rows["messages"][0]["createdAt"], "2026-11-08T01:39:00.000Z");
+    }
+    #[test]
+    fn kernel_pending_index_is_discoverable_without_committed_messages_or_fake_terminal() {
+        use crate::runtime::manager::{
+            SessionCatalogListInput, SessionCatalogPort, TranscriptSessionCatalog,
+        };
+        use crate::storage::{JsonlTranscriptStore, TranscriptKey};
+        let root = std::env::temp_dir().join(format!("pd-pending-index-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("pending.jsonl");
+        std::fs::write(
+            root.join("pending.jsonl.backend.json"),
+            json!({"backend":"kernel","kernel_session_id":"kernel"}).to_string(),
+        )
+        .unwrap();
+        let recorder = Arc::new(Recorder::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            TranscriptKey {
+                project_root: root.clone(),
+                pilot_home: root.clone(),
+                session_id: "pending".into(),
+                transcript_path: path.clone(),
+            },
+        ));
+        let cache = KernelProjection::new(
+            recorder,
+            Arc::new(SessionProjection::default()),
+            "pending".into(),
+            "kernel".into(),
+            "default".into(),
+        );
+        cache.sync(&json!({"revision":0,"history":[]})).unwrap();
+        cache.sync(&json!({"revision":0,"history":[],"kernelIndex":{"executionId":"original-call","runId":"original-run","status":"needs_human","prompt":"pending original question","active":true}})).unwrap();
+        let read = crate::storage::read_transcript(&path).unwrap();
+        assert_eq!(read.entries.len(), 1);
+        assert_eq!(
+            read.entries[0].get("type"),
+            Some(&JsValue::from("session_metadata"))
+        );
+        assert!(
+            super::super::factory::project(&read.entries)
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        let index = json!({"active":true,"runId":"original-run","executionId":"original-call","prompt":"pending original question"});
+        let display = with_active_input(&json!([]), &index, "2026-11-08T00:00:00Z");
+        let page = web_messages(&display, "pending", None, &json!({"limit":1}));
+        assert_eq!(page["messages"][0]["source"], "live");
+        assert_eq!(page["messages"][0]["turnId"], "original-run");
+        assert_eq!(page["total"], 1);
+        assert_eq!(
+            with_active_input(&display, &index, "later")
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let dir = root.clone();
+        let catalog =
+            TranscriptSessionCatalog::new(Arc::new(crate::storage::AsyncTranscriptAdapter::new(
+                Arc::new(JsonlTranscriptStore::new()),
+                Arc::new(move |_| dir.clone()),
+            )));
+        let listed = catalog
+            .list(&SessionCatalogListInput::new(root.clone(), root.clone()))
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].get("summary"),
+            Some(&JsValue::from("pending original question"))
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn kernel_ui_cache_is_atomic_idempotent_rebuildable_and_has_no_execution_outcomes() {

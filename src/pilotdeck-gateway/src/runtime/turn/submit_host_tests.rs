@@ -47,6 +47,7 @@ struct Fake {
     refresh_failure: bool,
     prepare_failure: bool,
     model_selection_failure: bool,
+    model_selection: Option<JsValue>,
     workspace_id: Option<JsString>,
     workspace_error: bool,
     snapshots_required: bool,
@@ -63,6 +64,7 @@ impl Default for Fake {
             refresh_failure: false,
             prepare_failure: false,
             model_selection_failure: false,
+            model_selection: None,
             workspace_id: None,
             workspace_error: false,
             snapshots_required: false,
@@ -177,7 +179,10 @@ impl SubmitHostServices for Fake {
                 "injected selection failure",
             ))
         } else {
-            Ok(object([("source", "default".into())]))
+            Ok(self
+                .model_selection
+                .clone()
+                .unwrap_or_else(|| object([("source", "default".into())])))
         }))
     }
     fn record_failure<'a>(
@@ -276,6 +281,41 @@ fn run() -> RunRef {
         session_key: "s".into(),
         project_key: None,
         run_id: "r".into(),
+    }
+}
+
+#[tokio::test]
+async fn kernel_submit_host_keeps_validated_ui_modes_without_changing_legacy_options() {
+    for native in [true, false] {
+        let fake = Arc::new(Fake {
+            model_selection: Some(object([(
+                "source",
+                if native { "kernel_assembly" } else { "default" }.into(),
+            )])),
+            ..Default::default()
+        });
+        let host = make_host(&fake);
+        let input = fake.input(&[
+            ("mode", "plan".into()),
+            ("basePermissionMode", "bypassPermissions".into()),
+        ]);
+        let prepared = host.prepare(&input, &run()).await.unwrap();
+        assert_eq!(
+            prepared.options.get("mode").cloned(),
+            if native {
+                Some(JsValue::from("plan"))
+            } else {
+                None
+            }
+        );
+        assert_eq!(
+            prepared.options.get("basePermissionMode").cloned(),
+            if native {
+                Some(JsValue::from("bypassPermissions"))
+            } else {
+                None
+            }
+        );
     }
 }
 

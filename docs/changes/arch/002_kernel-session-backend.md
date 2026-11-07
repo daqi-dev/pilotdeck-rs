@@ -52,3 +52,7 @@ Gateway restart active view 在没有本地 attached pump 时从 Kernel root jou
 UI history/live 对齐使用原始 root correlation 和模型 block identity：WebMessage 保留 blockId/timeline，读取 provider-authored display metadata.turnId/createdAt/kernelMessageId。旧 canonical 缺注释时，只按 journal 唯一 root block 锚点以及该 root 的精确输入组合补 UI identity，不按全局文本去重；内部模型 timeline.turnId 不改。缺失历史时间的旧记录不能据此推断执行时间，新 provider 注释保存原 turn 创建时间。
 
 Reopen 仅观察时不申请 lease；execution input/respond/import 才从公开 lease_status 读实际 holder/epoch，保存的同 node 活跃 lease 用 renew，inactive lease 才 acquire，foreign holder 不被接管。native resume 的 additive backend/abortSemantics 使 CLI 取消 ACK 后继续观察原 turn；legacy resume 响应/SDK 信号行为不变。UI 派生 timeline.turnId 与外层产品 root 保持一致，避免 retained sessionTimeline 把 canonical 内部 turn 当产品 turn；原 Kernel canonical timeline 不修改。
+
+未 capture 的原生 turn 也有可重建目录索引：原 Kernel accepted root 的 prompt/run/state 以独立 index hash 更新 session_metadata，revision/hash 仍只描述 committed history。接受回执后立即更新，因此 retained UI 的直接目录读取可发现 needs_human 会话。未 capture 用户文本在 history API 中显式 source live，未进入 canonicalMessages/导出；冷读同步原 journal active stream。
+
+实际 native turn 读取 leased router.stats.modelPricing，经 ordered entries 端口保留 JS 枚举/substring 定价顺序，None 保持 bootstrap 默认，显式 empty 保持 empty。每 turn mode/basePermissionMode 通过 native prepare，managed 配置保持原优先级。现 profile 未安装产品 memory resolver、InstructionDiscovery 与 plugin contributions；检测到实际启用/发现内容时只拒绝 effect，readonly 不被阻断。没有配置的 null/false 等不被泛化成拒绝，legacy 不执行这个检查；不以此声称这些产品端口已完成迁移。
