@@ -131,6 +131,17 @@ GUARDED = [
     FIXTURES / 'live-write-order/oracle.json',
     SRC / 'live_tail_tests.rs',
     FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
+    # #2228 r10 (DS r9 sibling/boundary + MM r9 sibling P1, both families):
+    # FACTORY_TESTS (registered above) bakes three more inputs into the same
+    # --lib binary — host_factory_tests.rs:462/:561/:613 bake
+    # host-factory/oracle.json, :802 bakes tool-budget-cwd/oracle.json and
+    # :1494 bakes host-manifest/oracle.json (same three the r9 round added for
+    # this carrier in host-factory/schemata.py and tool-budget-cwd/schemata.py;
+    # turn-gates was missed). Concurrent edits to any of them must be caught
+    # by the source guard.
+    FIXTURES / 'host-factory/oracle.json',
+    FIXTURES / 'tool-budget-cwd/oracle.json',
+    FIXTURES / 'host-manifest/oracle.json',
     # #2228 zai r4 P1: every bound gates test executes the shared baseline
     # module — gates_tests.rs:36/:421 matrix()/gate_cases! both start with
     # crate::test_baseline::oracle, and runner_tests.rs:17 `use crate::

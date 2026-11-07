@@ -116,11 +116,25 @@ GUARDED = [
     # guard. Faces of these newly registered carriers (e.g. gates_tests.rs
     # under live_stream_tests.rs) stay out — they are registered by the
     # fixtures whose bound rows execute them, and the mechanical closure of
-    # the whole compiled chain is the #2241 consolidation target.
+    # the whole compiled chain is the #2241 consolidation target. r9 (DS r8
+    # P1, in-diff): native-metadata-cwd / native-process / live-e2e register
+    # only baseline.mts of the judge closure — their gap is tracked in
+    # #2346, not a precedent to copy.
     FIXTURES / 'turn-runner/oracle.json',
     SRC / 'live_stream_tests.rs',
     SRC / 'live_tail_tests.rs',
     FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
+    # #2228 r10 (MM r9 sibling P1#2 + DS r9 concurrency P2, both families):
+    # live_stream_tests.rs (registered above) bakes four more oracles into the
+    # same --lib binary — live-recording/oracle.json (:3653/:3958),
+    # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
+    # and live-write-order/oracle.json (:4816). Same carrier, same set as
+    # host-event-timeline/turn-gates got in r9 — concurrent edits must be
+    # caught by the source guard.
+    FIXTURES / 'live-recording/oracle.json',
+    FIXTURES / 'live-history/oracle.json',
+    FIXTURES / 'sidecar-payload/oracle.json',
+    FIXTURES / 'live-write-order/oracle.json',
     # #2228 DS r3 P1: the row bindings bake turn-start-notices/oracle.json
     # into the binary (include_str! via runner_notice_tests.rs), the
     # notices-regeneration binding runs turn-start-notices/generate.mts
