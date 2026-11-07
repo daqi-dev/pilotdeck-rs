@@ -1191,10 +1191,15 @@ impl CronRuntime {
         Ok(JsValue::Object(out))
     }
 
-    /// `runTaskNow` (CronRuntime.ts:388-403). The `runAt` timestamp is the
-    /// REAL wall clock (`new Date()`, not the injected `now`) — the TS quirk
-    /// is preserved, which is why this method's success cell cannot be a
-    /// byte-identical gold replay.
+    /// `runTaskNow` (CronRuntime.ts:388-403). TS stamps the one-time task it
+    /// creates with `new Date()` here and `Date.now()` again inside
+    /// `createTask`; #2047 reads the injected clock once and hands the same
+    /// instant to both, so a millisecond tick between the two reads can no
+    /// longer turn a valid run-now into the "One-time Cron tasks must be
+    /// scheduled in the future." rejection. The production clock is
+    /// `store::now_millis` (assembly leaves `CronManagerOptions::now` unset),
+    /// i.e. the same wall clock TS reads; tests pin it. The success cell stays
+    /// byte-exact because its result carries no timestamp.
     pub fn run_task_now(&self, input: &JsValue) -> Result<JsValue, CronError> {
         let tasks = self.store.list_tasks()?;
         let task_id = property(input, "taskId")?;

@@ -1714,6 +1714,7 @@ async fn run_case(case: &Value) -> Value {
             .unwrap_or(false)
             .then(|| WebhookSessionMapper::new(Arc::new(|| JsString::from(FIXED_UUID)))),
         now: None,
+        accepted: None,
         request_timeout: None,
     });
     let deps = ChannelStartDeps {
@@ -2147,6 +2148,7 @@ async fn empty_text_request_is_not_a_delivery() {
         mapper: None,
         now: None,
         request_timeout: None,
+        accepted: None,
     });
     channel
         .start(ChannelStartDeps {
@@ -2222,6 +2224,7 @@ fn rate_ctx(limit: f64) -> Arc<Ctx> {
         max_body_bytes: 1024.0,
         request_timeout: DEFAULT_REQUEST_TIMEOUT,
         now: Arc::new(|| 0.0),
+        accepted: None,
         mapper: Mutex::new(WebhookSessionMapper::new(
             WebhookSessionMapper::random_uuid(),
         )),
@@ -2513,10 +2516,19 @@ async fn stop_does_not_cancel_an_in_flight_turn() {
 async fn shutdown_with_partial_body_finishes_at_request_timeout() {
     let gateway = Arc::new(MockGateway::from_scripts(&[]));
     let recorder = Recorder::default();
+    // #2047: `stop()` breaks the accept loop and drops the listener, so a
+    // connection still sitting in the kernel backlog is reset instead of
+    // answered — under a loaded runner the accept loop can lag, and the RST
+    // then eats the 408 this test is about. A fixed sleep is not a timeout;
+    // wait until the loop reports it took *this* connection out of the
+    // backlog before asking for a stop.
+    let accepted = Arc::new(tokio::sync::Notify::new());
+    let notify = accepted.clone();
     let channel = WebhookChannel::new(WebhookChannelOptions {
         port: Some(0.0),
         routes: Some(insecure_routes()),
         request_timeout: Some(Duration::from_millis(200)),
+        accepted: Some(Arc::new(move || notify.notify_one())),
         ..Default::default()
     });
     channel
@@ -2541,7 +2553,9 @@ async fn shutdown_with_partial_body_finishes_at_request_timeout() {
         )
         .await
         .expect("#1334 send the partial body");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    timeout(DEADLINE, accepted.notified())
+        .await
+        .expect("#2047 the accept loop takes the stalled-body connection before stop()");
     let stopping = tokio::spawn(async move { channel.stop_with_reason(Some("drain")).await });
     let mut response = Vec::new();
     timeout(DEADLINE, stream.read_to_end(&mut response))
