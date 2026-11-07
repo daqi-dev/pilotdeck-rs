@@ -54,7 +54,7 @@ mutations = [
     ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
     ('capability-invented-always_on_apply', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
-     'Capability { name: "commands_list", methods: &[], wired: compiled_in }' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
+     'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
     ('capability-snapshot_list', CAPABILITIES, 'name: "snapshot_list"',
      'name: "unwired_snapshot_list"', HOST, '#1231 exact wired capability set'),
     ('capability-snapshot_get', CAPABILITIES, 'name: "snapshot_get"',
@@ -136,7 +136,7 @@ mutations.append(('snapshot-restore-file-empty', STORAGE, 'write_file(Path::new(
 # fix-r2: exact wired set and independently disabled missing/empty roots.
 mutations.append(('capability-duplicate-upload_create', CAPABILITIES,
      'Capability { name: "upload_create", methods: &[], wired: compiled_in }',
-     'Capability { name: "upload_create", methods: &[], wired: compiled_in }' + '\n    ' + 'Capability { name: "upload_create", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'))
+     'Capability { name: "upload_create", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "upload_create", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'))
 # #1440: rename-to-unwired controls for the upload_* family, matching the
 # snapshot_*/manager_* family rows above.
 mutations.append(('capability-upload_create', CAPABILITIES, 'name: "upload_create"',
@@ -151,7 +151,7 @@ mutations.append(('capability-upload_cancel', CAPABILITIES, 'name: "upload_cance
      'name: "unwired_upload_cancel"', HOST, '#1231 exact wired capability set'))
 mutations.append(('capability-duplicate-run_get', CAPABILITIES,
      'Capability { name: "run_get", methods: &[], wired: runs }',
-     'Capability { name: "run_get", methods: &[], wired: runs }' + '\n    ' + 'Capability { name: "run_get", methods: &[], wired: runs }', HOST, '#1231 exact wired capability set'))
+     'Capability { name: "run_get", methods: &[], wired: runs },' + '\n    ' + 'Capability { name: "run_get", methods: &[], wired: runs }', HOST, '#1231 exact wired capability set'))
 
 # #1437: describe_server advertises the two #1309 family capabilities
 # (requests.rs user_dialog_list / permission_list); an unwired duplicate
@@ -250,13 +250,13 @@ mutations.append(('submit-recorder-unwired', ASSEMBLY_SNAPSHOT, 'Ok(recorder) =>
 SETTINGS_CAPABILITIES = 'native_process::management_tests::settings_capabilities_match_served_delegates'
 mutations.append(('capability-add-reload_config', CAPABILITIES,
      'Capability { name: "resolve_settings", methods: &[], wired: compiled_in }',
-     'Capability { name: "resolve_settings", methods: &[], wired: compiled_in }' + '\n    ' + 'Capability { name: "reload_config", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_config must stay unadvertised'))
+     'Capability { name: "resolve_settings", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "reload_config", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_config must stay unadvertised'))
 # #1761 review: the guard loops over BOTH reloads, so the advertisement half
 # needs a reload_extensions mutant too; otherwise the second iteration has a
 # positive assertion with no negative control under it.
 mutations.append(('capability-add-reload_extensions', CAPABILITIES,
      'Capability { name: "resolve_settings", methods: &[], wired: compiled_in }',
-     'Capability { name: "resolve_settings", methods: &[], wired: compiled_in }' + '\n    ' + 'Capability { name: "reload_extensions", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_extensions must stay unadvertised'))
+     'Capability { name: "resolve_settings", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "reload_extensions", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_extensions must stay unadvertised'))
 mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('missing-storage-advertised', CAPABILITIES,
