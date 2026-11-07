@@ -42,9 +42,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.22.0
+      # #2017-A：下方聚合门控守卫自 r6 起按 PyYAML 解析后的完整标量判（job 级 /
+      # 聚合 step 级 `if:` / `needs:`），解析器版本钉死 6.0.3，与
+      # retirement-outcome-parity 装置同一登记。显式用 venv 解释器跑本步，不影响
+      # 本 job 其它步骤的 `python3`。
+      - name: 安装钉死 PyYAML（#2017-A）
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyyaml-pinned"
+          "$RUNNER_TEMP/pyyaml-pinned/bin/pip" install --disable-pip-version-check pyyaml==6.0.3
       - name: CI 聚合门控与各 job 的 Node 前置守卫
         working-directory: src/pilotdeck-gateway/tests
-        run: python3 -m unittest -v test_metadata_io_driver.EnvironmentControls
+        run: '"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v test_metadata_io_driver.EnvironmentControls'
       - name: metadata observer generation 正负控（自有文件）
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
@@ -199,6 +207,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死
+      # 6.0.3（装置 README 登记）。`python3 -I` 不读 user site，但 venv 的 site-packages
+      # 属解释器自身配置、`-I` 下仍可见（本机实测）；GITHUB_PATH 让后续闸门步的
+      # `python3` 落在这个 venv 上，self_check 里另有版本 fail-closed 断言。
+      - name: 安装钉死 PyYAML（#2017-A）
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyyaml-pinned"
+          "$RUNNER_TEMP/pyyaml-pinned/bin/pip" install --disable-pip-version-check pyyaml==6.0.3
+          echo "$RUNNER_TEMP/pyyaml-pinned/bin" >> "$GITHUB_PATH"
       # ① 金样可复现：emit 从入库夹具复算，必须与已提交 ts-oracle.json 逐字节相同。
       #    不一致 = 夹具或金样有一个被改过而另一个没跟上（或有人手改金样）。
       - name: emit 复算与金样逐字节比对
