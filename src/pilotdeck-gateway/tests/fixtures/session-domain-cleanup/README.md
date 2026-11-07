@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 317 mutants:
+`JUDGES`, keyed by the same names. The current table has 320 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -485,7 +485,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-assignment-back-edge`,
 `calibrate-for-target-handle-conditional-overwrite`,
 `calibrate-for-target-scoped-handle-receiver`,
-`calibrate-for-target-shadowed-constructor`.
+`calibrate-for-target-shadowed-constructor`,
+`calibrate-for-target-handle-container-copy`,
+`calibrate-status-bound-handle-alias-chain`,
+`calibrate-status-three-arg-handle-live`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1456,7 +1459,7 @@ sub-object of the shared module, which the audit does not treat as a write to
 `md` itself — the same boundary as the direct spelling `md.inner.__setattr__(…)`
 (sibling r16 P2-4, registered as a known boundary; r17 leaves it unchanged).
 
-### Closed by `fix-r1` round 17 (codex r16 three P0 / boundary r16 two P0)
+### Closed by `fix-r1` round 17 (codex r16 four P0 / boundary r16 two P0)
 
 Round 16 asked "is this name still the handle?" of the single positionally
 latest binding, with the receiver tags pooled per file.  Three shapes answered
@@ -1473,4 +1476,23 @@ yes while a real write still happened, and two clean shapes answered no.
 
 The same family, one round later: the three mutants above are green at round
 16 and red at round 17 (probe `if` / sibling-scope / shadowed-constructor:
-`withdrawn=[]` before, `['md']` after).
+`withdrawn=[]` before, `['md']` after).  Codex r16 P0-3 and P0-4 are one fix
+(the receiver tags resolved per scope), so three mutants close four reports.
+
+### Closed by `fix-r1` round 18 (codex r17 two P0 / one P1, GLM sibling r17 P2)
+
+Round 17 still read a container *copy* as a fresh value, decoded only a
+directly bound status handle, and ran the freshness guard on two-argument
+calls alone.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A constructor copy of a handle container still hands the handles over**: `h = [getattr(md, k) for k in (n,)]; h = list(h); for f in h: f('common', ...)` keeps the write live. | `calibrate-for-target-handle-container-copy` |
+| **The status write survives a name-to-name hand-over**: `g = getattr(report, '__setattr__'); f = g; f('status', 'PASS')` (also the single-hop and attribute spellings) is the same write. | `calibrate-status-bound-handle-alias-chain` |
+| **A three-argument alias that still holds `setattr` is not cleared** (false FAIL guard): only a certain fresh overwrite ends it; `h = setattr; h(report, 'status', 'PASS')` is still flagged. | `calibrate-status-three-arg-handle-live` |
+| **A constructor copy of an ordinary list stays fresh** (false FAIL guard): `xs = [1, 2]; xs = list(xs); for x in xs: print(x)` writes nothing. | matrix case `R2-container-copy-clean` |
+| **An overwritten three-argument alias writes nothing** (false FAIL guard): `h = setattr; h = lambda *a: None; h(report, 'status', 'PASS')`. | matrix case `R4-three-arg-alias-clean` |
+
+The three mutants are green at round 17 and red at round 18; the two clean
+shapes are red at round 17 and green at round 18 (see the round-18 matrix in
+the PR).
