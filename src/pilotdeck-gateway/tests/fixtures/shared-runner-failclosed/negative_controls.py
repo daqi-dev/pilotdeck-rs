@@ -369,8 +369,8 @@ MUTANT_ROWS = [
     (
         'audit-binding-string-literal-kept',
         SUITE,
-        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"')",
-        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"\\Z')",
+        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"\\Z')",
         'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
         '#2064 a string literal must not satisfy the fn form',
     ),
@@ -397,6 +397,27 @@ MUTANT_ROWS = [
         "                        break",
         'test_negative_suite.AuditBindingTests.test_declares_test_unterminated_literal_is_refused',
         '#2064 an unterminated literal must fail closed',
+    ),
+    (
+        # #2064 r11: the C-string prefixes. Dropping ``cr|c`` re-opens the
+        # raw C string hole: the inner quote closes a bogus plain string and
+        # the carried fn text returns to the code view.
+        'audit-binding-c-string-prefix-allowed',
+        SUITE,
+        "_STRING_START = re.compile(r'(?:cr|c|br|rb|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"')",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a raw C string literal must not satisfy the fn form',
+    ),
+    (
+        # #2064 r11: the escape char bodies. Reverting to the pattern that
+        # cannot close '\u{…}' / '\xNN' leaks their quotes into the code view.
+        'audit-binding-char-escape-allowed',
+        SUITE,
+        '_CHAR_START = re.compile(r"b?\'(?:\\\\u\\{[0-9A-Fa-f_]+\\}|\\\\x[0-9A-Fa-f]{2}|\\\\.|[^\\\\\'])\'")',
+        '_CHAR_START = re.compile(r"b?\'(?:\\\\.|[^\\\\\'])\'")',
+        'test_negative_suite.AuditBindingTests.test_rust_code_only_blanks_escape_char_literals',
+        '#2064 an escaped char literal must be blanked whole',
     ),
 ]
 
