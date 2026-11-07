@@ -1061,6 +1061,7 @@ dependencies = [
  "pilotdeck-budget",
  "pilotdeck-child-signals",
  "pilotdeck-context",
+ "pilotdeck-model-anthropic",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-transport",
@@ -1080,6 +1081,14 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots 1.0.9",
+]
+
+[[package]]
+name = "pilotdeck-model-anthropic"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
+ "regex",
 ]
 
 [[package]]

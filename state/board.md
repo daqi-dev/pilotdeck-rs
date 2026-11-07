@@ -4624,3 +4624,7 @@ target revision>0 时只尝试完全相同的原 import key/body：Core pristine
 ### 2026-11-08 Kernel 工具范围不静默放宽（lane C）
 
 原 submit 的 allowedTools/disallowedTools 经 SessionContext 到 legacy SessionTools native_tools 过滤器；Kernel branch 先返回，曾丢这项安全收窄。B 确认现 native catalog 保留实际 Kernel 名称/child 固定名，没有 legacy PD 名称映射，不可猜 web_fetch→web.fetch。现 public workspace preflight、backend payload/options 及 resolved SessionContext lazy effect preflight 都明确拒绝配置的 allowedTools（包括 [] deny-all）或非空/非法 disallowedTools；absent/null 和空 denied 列表无约束，readonly metadata 仍能读，legacy owner 原过滤器不变。未把 outer limits.allowed_tools 猜转产品名字，也不将本 gate 当能力已迁完。focused kernel 33/33 PASS，新增真实 UDS listener 证明 configured JSON/内部 context scope 没有 RPC 连接/execution.input/started，metadata getter 仍可用。C Cargo0，提交供 candidate4 冻结；其他上游入口继续按原矩阵未复验/未安装记录，不宣称 M4 全通过。
+
+### 2026-11-08 原 Anthropic 协议独立包（lane B）
+
+本批 T06：独立 pilotdeck-model-anthropic 提取并被旧 gateway 薄封装复用（request/thinking/blocks/headers/SSE normalization/jsonrepair）；generic JS coercion 移入 protocol，budget/gateway 复用。原 model 测试 230 PASS/6 ignored，后续 headers 抽取后 provider 23 PASS/1 ignored；独立库及 protocol/budget tests、all-target clippy PASS。integration 独立 external ModelSession provider 无 gateway/Kernel 私有依赖，命名 env credential 注入、精确 endpoint allowlist、拒绝 redirect、逐请求 connection abort+join。隔离 Anthropic HTTP 8 组 PASS；真实 Kernel651 + 原 PD loop + 独立 Anthropic HTTP model→实际 web.fetch→model PASS（2 model、1 effect、实际原 tool ID/result 保真，evidence/kernel-model-tool-06）。未读个人 key/未调用收费模型。既有 01–04 失败证据保留，尚未宣称 proxy/retry/动态 provider 插件等未配置端口已接齐。

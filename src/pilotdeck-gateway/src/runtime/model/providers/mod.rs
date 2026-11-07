@@ -20,45 +20,7 @@ fn units(value: &JsValue) -> Vec<u16> {
     crate::js_value::to_string_units(value).unwrap_or_default()
 }
 
-/// UTF-16 JSON text as a Rust string for `parse_json`. A lone surrogate is
-/// only legal inside a JSON string, where `\uXXXX` denotes the same unit; one
-/// that would follow an escaping backslash stays invalid (U+FFFD), and
-/// anywhere else both forms are a syntax error, as in `JSON.parse`. Shared by
-/// the Anthropic and OpenAI tool-argument parsers (pr5).
-pub(crate) fn json_text(units: &[u16]) -> String {
-    let mut out = String::with_capacity(units.len());
-    let mut backslashes = 0usize;
-    for item in char::decode_utf16(units.iter().copied()) {
-        match item {
-            Ok(c) => {
-                out.push(c);
-                backslashes = if c == '\\' { backslashes + 1 } else { 0 };
-            }
-            Err(error) => {
-                if backslashes % 2 == 1 {
-                    out.push('\u{FFFD}');
-                } else {
-                    out.push_str(&format!("\\u{:04x}", error.unpaired_surrogate()));
-                }
-                backslashes = 0;
-            }
-        }
-    }
-    out
-}
-
-/// `JSON.parse(text)`, else `JSON.parse(jsonrepair(text))`, as every stream
-/// normalizer parses tool-call arguments (anthropic, openai, openai-responses).
-/// The bool is `wasRepaired`; `None` when both parses fail. Callers handle
-/// their own empty-buffer default first.
-pub(crate) fn parse_tool_arguments(units: &[u16]) -> Option<(JsValue, bool)> {
-    let parse = |units: &[u16]| pilotdeck_protocol::parse_json(&json_text(units)).ok();
-    if let Some(input) = parse(units) {
-        return Some((input, false));
-    }
-    let repaired = crate::runtime::model::jsonrepair::jsonrepair(units).ok()?;
-    parse(&repaired).map(|input| (input, true))
-}
+pub(crate) use pilotdeck_model_anthropic::parse_tool_arguments;
 
 fn message(parts: &[(&str, Option<&JsValue>)]) -> JsString {
     let mut out = Vec::new();
@@ -402,64 +364,7 @@ pub(crate) fn final_body(body: &JsValue, provider: &JsValue) -> JsValue {
 
 /// `buildProviderHeaders(provider, body)`, in record insertion order. The
 /// transport combines case-insensitive duplicates like `new Headers(record)`.
-pub(crate) fn provider_headers(provider: &JsValue, body: &JsValue) -> Vec<(JsString, JsValue)> {
-    let mut headers = JsObject::new();
-    headers.insert("content-type".into(), "application/json".into());
-    if let Some(custom) = field(provider, "headers").as_object() {
-        for (name, value) in custom.own_entries() {
-            headers.insert(name.clone(), value.clone());
-        }
-    }
-    let key = String::from_utf16_lossy(&units(field(provider, "apiKey")));
-    let key = crate::metadata::js_trim(&key);
-    if is(field(provider, "protocol"), "anthropic") {
-        headers.insert("x-api-key".into(), key.into());
-        if !present(
-            headers
-                .get("anthropic-version")
-                .unwrap_or(&JsValue::Undefined),
-        ) {
-            headers.insert("anthropic-version".into(), "2023-06-01".into());
-        }
-        if is(field(provider, "speedMapping"), "anthropic_speed")
-            && is(field(body, "speed"), "fast")
-        {
-            append_anthropic_beta(&mut headers, "fast-mode-2026-02-01");
-        }
-    } else if !present(headers.get("authorization").unwrap_or(&JsValue::Undefined)) {
-        headers.insert(
-            "authorization".into(),
-            format!("Bearer {key}").as_str().into(),
-        );
-    }
-    headers
-        .own_entries()
-        .into_iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect()
-}
-
-fn append_anthropic_beta(headers: &mut JsObject, beta: &str) {
-    let key = headers
-        .own_entries()
-        .into_iter()
-        .map(|(k, _)| k.clone())
-        .find(|k| String::from_utf16_lossy(k.units()).to_lowercase() == "anthropic-beta")
-        .unwrap_or_else(|| "anthropic-beta".into());
-    let current = headers
-        .get_key(&key)
-        .map(|v| String::from_utf16_lossy(&units(v)))
-        .unwrap_or_default();
-    let mut values: Vec<String> = current
-        .split(',')
-        .map(|v| crate::metadata::js_trim(v).to_string())
-        .filter(|v| !v.is_empty())
-        .collect();
-    if !values.iter().any(|v| v == beta) {
-        values.push(beta.to_string());
-    }
-    headers.insert(key, values.join(", ").as_str().into());
-}
+pub(crate) use pilotdeck_model_anthropic::headers::provider_headers;
 
 /// `buildProviderChatEndpointCandidates` for the ported protocols.
 pub(crate) fn chat_endpoint_candidates(provider: &JsValue) -> Vec<String> {

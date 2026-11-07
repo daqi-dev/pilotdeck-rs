@@ -6,6 +6,7 @@ members = [
     "pilotdeck-agent",
     "pilotdeck-budget",
     "pilotdeck-context",
+    "pilotdeck-model-anthropic",
     "pilotdeck-transport",
     "pilotdeck-protocol",
     "pilotdeck-module2-host",

@@ -25,10 +25,6 @@ macro_rules! pattern {
     };
 }
 
-pattern!(
-    retry_after_message,
-    r"(?:try again|retry)\s+in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|milliseconds?|s|seconds?|minutes?|m)(?-u:\b)"
-);
 pattern!(prompt_too_long_anthropic, r"prompt is too long");
 pattern!(
     prompt_too_long_openai,
@@ -98,24 +94,7 @@ pub(crate) fn is_premature_stream_close(message: &str) -> bool {
 }
 
 /// `parseRetryAfterFromMessage`.
-pub(crate) fn retry_after_from_message(message: &str) -> Option<f64> {
-    let lowered = lower(message);
-    let captures = retry_after_message().captures(&lowered)?;
-    let value: f64 = captures[1].parse().ok()?;
-    if !value.is_finite() || value <= 0.0 {
-        return None;
-    }
-    let unit = &captures[2];
-    if unit == "ms" || unit.starts_with("millisecond") {
-        Some(js_round(value))
-    } else if unit == "s" || unit.starts_with("second") {
-        Some(js_round(value * 1000.0))
-    } else if unit == "m" || unit.starts_with("minute") {
-        Some(js_round(value * 60_000.0))
-    } else {
-        None
-    }
-}
+pub(crate) use pilotdeck_model_anthropic::retry_after_from_message;
 
 /// `parseRetryAfterHeader` (protocol/errors.ts). Delta-seconds follow JS
 /// `Number`; every other value goes through the full Node22 `Date.parse`
