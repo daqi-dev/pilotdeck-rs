@@ -22,8 +22,9 @@ pub use run_registry::{
 pub(crate) use run_registry::FILE_LOCK_TIMEOUT;
 pub use transcript_adapter::{
     AdapterError, AdapterResult, AsyncTranscriptAdapter, Clock, JsonlTranscriptStore, ProjectKey,
-    SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle, TranscriptKey,
-    TranscriptStore, TranscriptWriter, sanitize_session_id,
+    SessionStorage, SessionStorageInput, StoreResult, StoredSession, SubagentHandle,
+    SubagentReferences, TranscriptKey, TranscriptStore, TranscriptWriter,
+    project_subagent_references, sanitize_session_id,
 };
 
 pub(crate) use transcript::{

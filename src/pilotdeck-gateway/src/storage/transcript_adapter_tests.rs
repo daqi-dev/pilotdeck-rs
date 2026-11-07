@@ -1132,3 +1132,161 @@ fn jsonl_store_control_boundary_without_boundary_throws_like_ts_and_appends_noth
         "{\"type\":\"session_metadata\",\"n\":1}\n{\"type\":\"control_boundary\",\"boundary\":\"x\"}\n"
     );
 }
+
+// ---- #2042 subagent-references projection ----------------------------------
+const SESSION_FACTORY: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/session-factory"
+);
+/// The `subagentReferences` rows of the session-factory oracle, behind the same
+/// `test_baseline::oracle` provenance check every other golden replay uses.
+fn subagent_reference_rows() -> Vec<serde_json::Value> {
+    let text = fs::read_to_string(format!("{SESSION_FACTORY}/oracle.json")).unwrap();
+    crate::test_baseline::oracle(&text);
+    let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    parsed["subagentReferences"]
+        .as_array()
+        .expect("#2042 subagent projection rows")
+        .clone()
+}
+fn subagent_reference_cell(name: &str) -> serde_json::Value {
+    let rows: Vec<_> = subagent_reference_rows()
+        .into_iter()
+        .filter(|row| row["name"] == name)
+        .collect();
+    assert_eq!(rows.len(), 1, "#2042 subagent cell {name}");
+    rows.into_iter().next().unwrap()
+}
+fn project_subagent_cell(row: &serde_json::Value) -> AdapterResult<SubagentReferences> {
+    let entries = js(&row["entries"].to_string());
+    let JsValue::Array(entries) = entries else {
+        panic!("#2042 subagent cell entries must be an array")
+    };
+    project_subagent_references(&entries)
+}
+/// `JSON.stringify` of a projected value, so the comparison is field by field
+/// against the recorded TS text instead of a Rust-side paraphrase.
+fn subagent_json(value: &JsValue) -> serde_json::Value {
+    serde_json::from_str(
+        &stringify_json(value)
+            .expect("#2042 subagent serialize")
+            .expect("#2042 subagent defined"),
+    )
+    .expect("#2042 subagent JSON")
+}
+/// The `Map` rows as the generator recorded them: `typeof` the key plus the key
+/// itself (omitted for `undefined`, which JSON cannot carry) and the entry.
+fn subagent_json_index(index: &[(JsValue, JsValue)]) -> serde_json::Value {
+    serde_json::Value::Array(
+        index
+            .iter()
+            .map(|(key, entry)| {
+                let mut row = serde_json::Map::new();
+                row.insert("keyType".into(), subagent_key_type(key).into());
+                if !key.is_undefined() {
+                    row.insert("key".into(), subagent_json(key));
+                }
+                row.insert("entry".into(), subagent_json(entry));
+                serde_json::Value::Object(row)
+            })
+            .collect(),
+    )
+}
+fn subagent_key_type(value: &JsValue) -> &'static str {
+    match value {
+        JsValue::Undefined => "undefined",
+        JsValue::Bool(_) => "boolean",
+        JsValue::Number(_) => "number",
+        JsValue::String(_) => "string",
+        // `typeof null === "object"`, like every object/array key.
+        JsValue::Null | JsValue::Object(_) | JsValue::Array(_) => "object",
+    }
+}
+
+#[test]
+fn subagent_projection_matches_ts() {
+    let rows = subagent_reference_rows();
+    assert_eq!(rows.len(), 14, "#2042 subagent projection denominator");
+    for row in &rows {
+        let name = row["name"].as_str().expect("#2042 subagent cell name");
+        let actual = project_subagent_cell(row);
+        let Some(expected) = row.get("error") else {
+            let actual = actual.expect("#2042 subagent projection replay");
+            assert_eq!(
+                subagent_json(&JsValue::Array(actual.started)),
+                row["started"],
+                "#2042 subagent started rows {name}"
+            );
+            assert_eq!(
+                subagent_json(&JsValue::Array(actual.completed)),
+                row["completed"],
+                "#2042 subagent completed rows {name}"
+            );
+            assert_eq!(
+                subagent_json_index(&actual.started_by_id),
+                row["startedById"],
+                "#2042 subagent startedById {name}"
+            );
+            assert_eq!(
+                subagent_json_index(&actual.completed_by_id),
+                row["completedById"],
+                "#2042 subagent completedById {name}"
+            );
+            continue;
+        };
+        let error = actual.expect_err("#2042 subagent projection rejects a nullish entry");
+        assert_eq!(
+            subagent_json(&error_outcome(&error)),
+            *expected,
+            "#2042 subagent error {name}"
+        );
+    }
+}
+
+#[test]
+fn subagent_started_rows_match_ts() {
+    for row in subagent_reference_rows() {
+        if row.get("error").is_some() {
+            continue;
+        }
+        let name = row["name"].as_str().expect("#2042 subagent cell name");
+        let actual = project_subagent_cell(&row).expect("#2042 subagent projection replay");
+        assert_eq!(
+            subagent_json(&JsValue::Array(actual.started)),
+            row["started"],
+            "#2042 subagent started rows {name}"
+        );
+    }
+}
+
+#[test]
+fn subagent_duplicate_started_rows_kept() {
+    let row = subagent_reference_cell("duplicate-started");
+    let actual = project_subagent_cell(&row).expect("#2042 subagent projection replay");
+    assert_eq!(
+        actual.started.len(),
+        2,
+        "#2042 duplicate started rows are both kept"
+    );
+    assert_eq!(
+        subagent_json(&actual.started_by_id[0].1),
+        row["startedById"][0]["entry"],
+        "#2042 duplicate started index keeps the first entry"
+    );
+}
+
+#[test]
+fn subagent_duplicate_completed_rows_kept() {
+    let row = subagent_reference_cell("duplicate-completed");
+    let actual = project_subagent_cell(&row).expect("#2042 subagent projection replay");
+    assert_eq!(
+        actual.completed.len(),
+        2,
+        "#2042 duplicate completed rows are both kept"
+    );
+    assert_eq!(
+        subagent_json(&actual.completed_by_id[0].1),
+        row["completedById"][0]["entry"],
+        "#2042 duplicate completed index keeps the last entry"
+    );
+}
