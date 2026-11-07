@@ -131,7 +131,7 @@ fn accounting_block(block: &JsValue) -> Result<Option<ContentBlock>, AccountingE
             let content = block.get("content");
             property(content, "map")?; // Nullish receivers throw before the call.
             let Some(JsValue::Array(items)) = content else {
-                return Err(AccountingError::new("content.map is not a function").into());
+                return Err(AccountingError::new("content.map is not a function"));
             };
             // TS completes map before join coerces text values. A later null
             // block must throw before an earlier text's conversion error.
@@ -210,7 +210,7 @@ pub fn flatten_result(block: &JsValue) -> Result<JsValue, AccountingError> {
     let content = block.get("content");
     property(content, "map")?; // Nullish receivers throw before the call.
     let Some(JsValue::Array(items)) = content else {
-        return Err(AccountingError::new("content.map is not a function").into());
+        return Err(AccountingError::new("content.map is not a function"));
     };
     let mapped = items
         .iter()
@@ -243,9 +243,9 @@ fn check_primitive_conversion(value: &JsValue) -> Result<(), AccountingError> {
     while let Some(frame) = frames.last_mut() {
         match frame.next() {
             Some(JsValue::Object(object)) if object.get("toString").is_some() => {
-                return Err(
-                    AccountingError::new("Cannot convert object to primitive value").into(),
-                );
+                return Err(AccountingError::new(
+                    "Cannot convert object to primitive value",
+                ));
             }
             Some(JsValue::Array(items)) => {
                 if frames.len() > crate::coercion::MAX_ARRAY_DEPTH {
@@ -262,7 +262,7 @@ fn check_primitive_conversion(value: &JsValue) -> Result<(), AccountingError> {
     Ok(())
 }
 fn conversion_error() -> AccountingError {
-    AccountingError::new(crate::coercion::StackOverflow::MESSAGE).into()
+    AccountingError::new(crate::coercion::StackOverflow::MESSAGE)
 }
 fn property<'a>(
     value: Option<&'a JsValue>,
@@ -277,8 +277,7 @@ fn property<'a>(
             };
             Err(AccountingError::new(format!(
                 "Cannot read properties of {receiver} (reading '{field}')"
-            ))
-            .into())
+            )))
         }
         Some(value) => Ok(value.get(field)),
     }
@@ -299,7 +298,7 @@ fn token_text(value: Option<&JsValue>) -> Result<JsString, AccountingError> {
     }
     match value {
         Some(JsValue::String(text)) => Ok(text.clone()),
-        _ => Err(AccountingError::new("text.substring is not a function").into()),
+        _ => Err(AccountingError::new("text.substring is not a function")),
     }
 }
 fn truthy(value: &JsValue) -> bool {
@@ -327,6 +326,6 @@ fn iterable<'a>(
                 })
                 .collect(),
         )),
-        _ => Err(AccountingError::new(format!("{name} is not iterable")).into()),
+        _ => Err(AccountingError::new(format!("{name} is not iterable"))),
     }
 }

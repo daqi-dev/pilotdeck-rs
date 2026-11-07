@@ -94,7 +94,7 @@ pub fn fallback(input: &JsValue, first_keep_ratio: f64) -> Result<JsValue, HostE
 }
 fn number(value: &JsValue) -> Result<f64, HostError> {
     pilotdeck_budget::coercion::to_number(value)
-        .map_err(|_| ModuleError::new(pilotdeck_budget::coercion::StackOverflow::MESSAGE).into())
+        .map_err(|_| ModuleError::new(pilotdeck_budget::coercion::StackOverflow::MESSAGE))
 }
 fn error_field(input: &JsValue) -> Result<&JsValue, HostError> {
     for (receiver, name) in [
@@ -109,8 +109,7 @@ fn error_field(input: &JsValue) -> Result<&JsValue, HostError> {
             };
             return Err(ModuleError::new(format!(
                 "Cannot read properties of {kind} (reading '{name}')"
-            ))
-            .into());
+            )));
         }
     }
     Ok(field(input, "error"))

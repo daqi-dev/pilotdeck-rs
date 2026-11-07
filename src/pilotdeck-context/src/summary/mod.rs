@@ -634,7 +634,7 @@ fn set(value: &mut JsValue, key: &str, child: JsValue) {
     }
 }
 fn failure(value: &str) -> HostError {
-    ModuleError::new(value).into()
+    ModuleError::new(value)
 }
 fn diagnostic(code: &str, value: JsString) -> JsValue {
     object([

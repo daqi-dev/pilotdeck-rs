@@ -64,7 +64,7 @@ impl CompactionOrchestrator {
         }
         let mut messages = match field(&fields, "messages") {
             JsValue::Array(messages) => messages.clone(),
-            _ => return Err(failure("messages is not iterable").into()),
+            _ => return Err(failure("messages is not iterable")),
         };
         if !manual {
             if let Some(micro) = &port.micro {

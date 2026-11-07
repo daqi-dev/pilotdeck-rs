@@ -76,8 +76,7 @@ fn has_tool(tools: &[pilotdeck_protocol::JsValue], name: &str) -> Result<bool, P
                     } else {
                         "null"
                     }
-                ))
-                .into());
+                )));
             }
             _ => tool.get("name").cloned().unwrap_or(JsValue::Undefined),
         };

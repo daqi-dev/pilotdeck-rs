@@ -76,8 +76,7 @@ fn tool_pair_safe_truncate(
         if cut.fract() != 0.0 {
             return Err(ProjectionError::new(
                 "Cannot read properties of undefined (reading 'content')",
-            )
-            .into());
+            ));
         }
         let mut cut = cut as usize;
         while cut < length && is_tool_result_only(&messages[cut]) {
