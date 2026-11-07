@@ -29,7 +29,7 @@ fn error(e: impl std::fmt::Display) -> RuntimeError {
 fn js(value: &Value) -> Result<JsValue, RuntimeError> {
     parse_json(&value.to_string()).map_err(error)
 }
-fn json_value(value: &JsValue) -> Result<Value, RuntimeError> {
+pub(super) fn json_value(value: &JsValue) -> Result<Value, RuntimeError> {
     serde_json::from_str(
         &stringify_json(value)
             .map_err(error)?
@@ -351,6 +351,7 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
     Ok(state)
 }
 struct KernelSession {
+    projection: Option<Arc<super::kernel_projection::KernelProjection>>,
     rpc: Arc<tokio::sync::Mutex<Rpc>>,
     kernel_id: String,
     session: String,
@@ -364,7 +365,7 @@ struct KernelSession {
 impl SessionBackendFactory for KernelBackendFactory {
     fn build(
         self: Box<Self>,
-        _context: BackendContext,
+        context: BackendContext,
     ) -> BoxFuture<Result<Box<dyn SessionBackend>, RuntimeError>> {
         Box::pin(async move {
             let mut rpc = Rpc {
@@ -440,6 +441,21 @@ impl SessionBackendFactory for KernelBackendFactory {
                 )?;
             }
             let recovered = recover(&mut rpc, &kernel_id).await?;
+            let projection = Arc::new(super::kernel_projection::KernelProjection::new(
+                context.recorder,
+                context.reload_source.projection,
+                text(&self.session)?,
+                kernel_id.clone(),
+                context_ref.clone(),
+            ));
+            let history = rpc
+                .call(
+                    "execution.history.snapshot",
+                    json!({"session_id":kernel_id,"context_ref":context_ref}),
+                )
+                .await?;
+            projection.sync(&history)?;
+
             let rpc = Arc::new(tokio::sync::Mutex::new(rpc));
             let state = Arc::new(Mutex::new(recovered));
             let weak_rpc = Arc::downgrade(&rpc);
@@ -472,6 +488,7 @@ impl SessionBackendFactory for KernelBackendFactory {
                 }
             });
             Ok(Box::new(KernelSession {
+                projection: Some(projection),
                 rpc,
                 kernel_id,
                 session: text(&self.session)?,
@@ -573,6 +590,8 @@ impl LiveSession for KernelSession {
             failure_event: false,
             accepted: false,
             interactions: self.interactions.clone(),
+            projection: self.projection.clone(),
+            context_ref: self.context_ref.clone(),
         }))
     }
     fn snapshot(&self) -> JsValue {
@@ -585,6 +604,8 @@ impl LiveSession for KernelSession {
         params: JsValue,
     ) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> {
         let rpc = self.rpc.clone();
+        let projection = self.projection.clone();
+        let config = self.agent_config.clone();
         let kernel_id = self.kernel_id.clone();
         let state = self.state.clone();
         let context_ref = self.context_ref.clone();
@@ -618,6 +639,10 @@ impl LiveSession for KernelSession {
                     }
                     value
                 }
+                "session_model_get" => {
+                    let config = json_value(&JsValue::Object(config))?;
+                    json!({"projectKey":params["projectKey"],"sessionKey":text(&session)?,"saved":{"mode":"auto"},"effective":{"provider":config["provider"],"model":config["model"],"source":"kernel_assembly"},"immutable":true})
+                }
                 "read_session_messages" | "export_session_transcript" => {
                     let history = rpc
                         .lock()
@@ -627,7 +652,19 @@ impl LiveSession for KernelSession {
                             json!({"session_id":kernel_id,"context_ref":context_ref}),
                         )
                         .await?;
-                    json!({"messages":history["history"],"revision":history["revision"],"backend":"kernel","kernelSessionId":kernel_id})
+                    if let Some(projection) = &projection {
+                        projection.sync(&history)?;
+                    }
+                    let mut result = super::kernel_projection::web_messages(
+                        &history["history"],
+                        &text(&session)?,
+                        params["projectKey"].as_str(),
+                        &params,
+                    );
+                    result["canonicalMessages"] = history["history"].clone();
+                    result["revision"] = history["revision"].clone();
+                    result["kernelSessionId"] = json!(kernel_id);
+                    result
                 }
                 "restore_session_transcript" => {
                     let transfer = &params["transcript"];
@@ -646,6 +683,17 @@ impl LiveSession for KernelSession {
                         error("Kernel session generation is unavailable for import.")
                     })?;
                     let receipt=rpc.lock().await.call("execution.history.import",json!({"session_id":kernel_id,"generation":generation,"context_ref":context_ref,"expected_revision":0,"idempotency_key":format!("pd-import:{hash}"),"history":transfer["messages"]})).await?;
+                    if let Some(projection) = &projection {
+                        let history = rpc
+                            .lock()
+                            .await
+                            .call(
+                                "execution.history.snapshot",
+                                json!({"session_id":kernel_id,"context_ref":context_ref}),
+                            )
+                            .await?;
+                        projection.sync(&history)?;
+                    }
                     json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true})
                 }
                 "run_get" | "run_reattach" | "run_events" => {
@@ -804,6 +852,8 @@ impl LiveSession for KernelSession {
     }
 }
 struct KernelTurn {
+    projection: Option<Arc<super::kernel_projection::KernelProjection>>,
+    context_ref: String,
     rpc: Arc<tokio::sync::Mutex<Rpc>>,
     kernel_id: String,
     session: String,
@@ -975,6 +1025,22 @@ impl LiveTurn for KernelTurn {
                             .reconnect_port()
                             .set_external_pending(&JsString::from(self.session.clone()), false);
                     }
+                    // The observed Kernel terminal remains authoritative even if
+                    // rebuilding its UI cache fails; never relabel it Unknown.
+                    self.done = true;
+                    self.state.lock().unwrap().attached = false;
+                    if let Some(projection) = &self.projection {
+                        let history = self
+                            .rpc
+                            .lock()
+                            .await
+                            .call(
+                                "execution.history.snapshot",
+                                json!({"session_id":self.kernel_id,"context_ref":self.context_ref}),
+                            )
+                            .await?;
+                        projection.sync(&history)?;
+                    }
                     if outcome == "failed" && !self.failure_event {
                         let original = &event["payload"]["error"];
                         let message = original["params"]["detail"]
@@ -1033,6 +1099,7 @@ mod tests {
     }
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
                 socket,
                 stream: None,
@@ -1342,6 +1409,7 @@ mod recovery_contract_tests {
     use tokio::net::UnixListener;
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
                 socket,
                 stream: None,

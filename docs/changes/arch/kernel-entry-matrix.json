@@ -692,7 +692,6 @@
       "gateway.method:rewind_files",
       "gateway.method:seed_read_state",
       "gateway.method:session_model_clear",
-      "gateway.method:session_model_get",
       "gateway.method:session_model_set",
       "gateway.method:set_mcp_permission_mode_override",
       "gateway.method:set_mcp_servers",
@@ -710,6 +709,9 @@
       "gateway.method:set_output_style",
       "gateway.method:set_permission_mode",
       "gateway.method:set_session_thinking"
+    ],
+    "native_backend_binding_candidate": [
+      "gateway.method:session_model_get"
     ]
   }
 }

@@ -122,6 +122,74 @@ impl Requests {
     /// Cursor is a base-10 integer offset string (`GatewaySessionCatalog.ts:24-25`).
     async fn session_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let project_root = resolve_project(self, params)?;
+        // A deleted JSONL file is only a missing UI cache. Discover the
+        // canonical owner records and rebuild from committed Kernel history.
+        let chat_dir =
+            crate::session_chat_dir(&self.options.home, &self.options.project, &project_root);
+        let owner_records = match std::fs::read_dir(&chat_dir) {
+            Ok(entries) => entries
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| RequestError::new(e.to_string()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => return Err(RequestError::new(e.to_string())),
+        };
+        let canonical = std::fs::canonicalize(&self.options.project)
+            .map_err(|e| RequestError::new(e.to_string()))?;
+        for entry in owner_records {
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".backend.json")
+            {
+                continue;
+            }
+            let bytes =
+                std::fs::read(entry.path()).map_err(|e| RequestError::new(e.to_string()))?;
+            let owner: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|e| RequestError::new(e.to_string()))?;
+            if owner["backend"] != "kernel" {
+                continue;
+            }
+            if owner["project"] != canonical.to_string_lossy().as_ref() {
+                return Err(RequestError::new(
+                    "Kernel session index owner project mismatch.",
+                ));
+            }
+            let key = owner["session"]
+                .as_str()
+                .ok_or_else(|| RequestError::new("Kernel index owner session is missing."))?;
+            let key = JsString::from(key);
+            let mut expected = super::super::assembly::transcript_path(&self.options, &key)
+                .as_os_str()
+                .to_os_string();
+            expected.push(".backend.json");
+            if entry.path() != std::path::PathBuf::from(expected) {
+                return Err(RequestError::new(
+                    "Kernel session index owner path collision.",
+                ));
+            }
+            let handle = self
+                .owner
+                .get_or_create(crate::runtime::session::SessionContext {
+                    session_key: key.clone(),
+                    project_key: Some(project_root.clone().into()),
+                    channel_key: "history_projection".into(),
+                    allowed_tools: None,
+                    disallowed_tools: None,
+                })
+                .await
+                .map_err(|e| RequestError::new(e.message))?;
+            handle
+                .backend_request(
+                    "read_session_messages".into(),
+                    object([
+                        ("sessionKey", JsValue::String(key)),
+                        ("projectKey", project_root.as_str().into()),
+                    ]),
+                )
+                .await
+                .map_err(|e| RequestError::new(e.message))?;
+        }
         let limit = params
             .get("limit")
             .and_then(JsValue::as_number)

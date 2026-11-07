@@ -25,7 +25,7 @@ backend 先取得原生 lease，并在存活期间续租；请求 Future 被取�
 
 ## 支持范围与真实缺口
 
-`describe_server.kernelProfile` 是当前 profile 的机器可读清单，正本是 `native_process/kernel_profile.rs`。会话模型/permission/thinking/style/MCP 动态配置、seed/rewind、旧替换/fork、旧后台任务与旧执行历史写接口在 Kernel owner 上明确拒绝；它们不会先写 PD store 再谎报 Kernel 已应用。legacy owner 不受该 profile gate 影响。`permission_list`、steer 与 run reads 会查询原 Kernel execution，run read 同时保留产品 replay 投影。
+`describe_server.kernelProfile` 是当前 profile 的机器可读清单，正本是 `native_process/kernel_profile.rs`。会话模型变更/MCP 动态配置、seed/rewind、旧替换/fork、旧后台任务与旧执行历史写接口在 Kernel owner 上明确拒绝；它们不会先写 PD store 再谎报 Kernel 已应用。legacy owner 不受该 profile gate 影响。`permission_list`、steer 与 run reads 会查询原 Kernel execution，run read 同时保留产品 replay 投影。
 
 当前 profile 的流式 live 路径仍使用既有 projector/publisher/RunRegistry；Gateway 重启后 authoritative active execution/wait/history 可以查询，但自动补齐停机期间缺失的所有 PD run frame 并恢复原客户端 sequence 尚无完整组合验收。不能把一个成功的 native text turn 当成 UI 全量恢复通过。Kernel bootstrap 的冻结模型路由、预算/context/tool 能力由 provider 及 Kernel 装配决定，PD 的 session selector 不会暗中覆盖它。
 
@@ -44,3 +44,5 @@ backend 先取得原生 lease，并在存活期间续租；请求 Future 被取�
 本 lane 自证为：gateway `cargo check`；原生 UDS 文本→原 wait permission→同 execution.respond→最终事件；连接丢失保留原 operation identity；transfer 包 hash、完整 tool pair、附件字节与拒绝 resume 元数据。真实组合 WS、CLI run、Kernel 重启、资源/进程回收与 provider 测试由总集成树补证。真人 UI/桌面实效与全入口验收尚未因这些测试关闭。
 
 当前 turn preferences 已从原产品选择器接到原生 payload.agent：permissionMode 逐 turn 取 live store，thinking / output style 在下一次 prepare 取选择后的配置；活跃 Kernel execution 上拒绝改动。模型/binding 仍由 assembly 冻结。原 UI `{mode:"auto"}` 和与装配相同 provider/model 可提交；实际 route 变更与未绑定 SDK/模型调参明确拒绝。
+
+原产品会话索引现在由 Kernel 已提交 `execution.history.snapshot` 的 revision/hash 重建：经过原 transcript writer fence 原子替换 JSONL，只有标记为 Kernel cache 的 accepted_input / durable_message / session_metadata，不生成 PD execution lifecycle 或 turn_result。相同 revision/hash 不重写，revision 回退或同 revision 不同 hash 报错；并发 UI metadata 改动按 writer sequence 拒绝覆盖。build、read、import、实际 Kernel terminal 都同步缓存，list_sessions 从 canonical owner 文件发现已删除的缓存再重建。原 UI read_session_messages 使用 WebMessage 历史 DTO，canonicalMessages 仅供显式导出。session_model_get 读冻结装配的 provider/model，选择器不会因此卡在历史加载；setter 仍拒绝真实 route 变更。此缓存链 focused 自测通过，真实 UI 完整交互由总集成继续验证。

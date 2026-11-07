@@ -599,6 +599,10 @@ async fn start_assembly(
                             let session = session.clone();
                             Arc::new(move || session_overrides.permission_mode(&session))
                         };
+                        recorders
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(session.clone(), Arc::downgrade(&binding.recorder));
                         #[cfg(unix)]
                         if let crate::runtime::session::kernel::BackendOwner::Kernel(factory) =
                             crate::runtime::session::kernel::KernelBackendFactory::select(

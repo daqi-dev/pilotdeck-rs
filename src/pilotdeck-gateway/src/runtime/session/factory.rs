@@ -501,6 +501,26 @@ impl TranscriptStore for ProjectedStore {
         }
         Ok(())
     }
+    fn replace(
+        &self,
+        key: &TranscriptKey,
+        entries: &[JsValue],
+    ) -> Option<crate::storage::StoreResult<()>> {
+        let result = self.inner.replace(key, entries)?;
+        if result.is_ok() && key == &self.key {
+            let projected = project(entries);
+            let mut current = lock(&self.projection.entries);
+            *current = entries.to_vec();
+            lock(&self.projection.completed_turns).clear();
+            if let Ok(state) = projected {
+                *lock(&self.projection.last_valid) = state;
+                self.projection.valid.store(true, Ordering::SeqCst);
+            } else {
+                self.projection.valid.store(false, Ordering::SeqCst);
+            }
+        }
+        Some(result)
+    }
     fn read(
         &self,
         key: &TranscriptKey,
@@ -1683,7 +1703,7 @@ pub fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError>
         .iter()
         .any(|s| is(kind, s))
             && !before
-            && done
+            && (done || field(entry, "kernelProjection").as_object().is_some())
         {
             let message = field(entry, "message");
             if field(field(message, "metadata"), "compactReplacement") != &JsValue::Bool(true) {

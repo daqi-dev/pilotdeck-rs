@@ -430,7 +430,8 @@ impl Requests {
                 (
                     "kernel",
                     history
-                        .get("messages")
+                        .get("canonicalMessages")
+                        .or_else(|| history.get("messages"))
                         .or_else(|| history.get("history"))
                         .cloned()
                         .unwrap_or(json!([])),

@@ -3,6 +3,7 @@
 pub const BACKEND_METHODS: &[&str] = &[
     "active_turn_snapshot",
     "read_session_messages",
+    "session_model_get",
     "permission_decide",
     "permission_list",
     "reconnect_interaction",
@@ -17,7 +18,6 @@ pub const UNSUPPORTED_SESSION_METHODS: &[&str] = &[
     "background_task_stop",
     "supported_agents",
     "elicitation_respond",
-    "session_model_get",
     "session_model_set",
     "session_model_clear",
     "seed_read_state",

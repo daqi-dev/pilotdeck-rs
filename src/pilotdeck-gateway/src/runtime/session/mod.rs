@@ -2,11 +2,13 @@
 //! Transport routing and durable acceptance are assembled by later packages.
 mod admission;
 pub mod backend;
-#[cfg(unix)]
-pub mod kernel;
 mod completion;
 pub mod factory;
 mod handle;
+#[cfg(unix)]
+pub mod kernel;
+#[cfg(unix)]
+pub(crate) mod kernel_projection;
 mod owner;
 pub(crate) mod transcript_locks;
 

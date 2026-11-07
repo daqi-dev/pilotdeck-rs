@@ -4563,3 +4563,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 Kernel 原 UI 默认选择与 turn preferences（lane C）
 
 原 UI 实测已连到真实网关，发现常规 `{mode:"auto"}` 被旧 SDK/model 总闸拒绝；现自动选择及相同 provider/model 保留 Kernel 装配路由，实际变更/未绑定调参仍明确拒绝。permission/thinking/output style 接原有配置 store 与实际 native payload.agent，活跃 Kernel root 上拒绝修改；新提交前重新查询真正活跃 execution，保留旧 Unknown 原 ID，导入用 session.get 的真实 generation。focused kernel 测试 10/10（含本轮原 UI 自动/相同模型放行与真实变更拒绝的正负例）通过。原 UI 会话索引/历史缓存仍在实现中，不将本修复记作完整 UI 验收。
+
+### 2026-11-08 Kernel 可重建产品会话索引/历史（lane C）
+
+Kernel committed history/revision 现驱动原 JSONL 的产品缓存，保留原 writer fence 及 UI metadata；cache hash 幂等、同版本改内容/版本回退明确报错、并发 metadata 不被覆盖。缓存只含用户/消息/metadata 行，无伪造 turn_result。创建/读/导入/Kernel terminal 同步，list_sessions 校验 canonical owner 与目录碰撞后可重建删除缓存；read_session_messages 转原 UI WebMessage，导出继续取 canonicalMessages。补 frozen session_model_get 使历史 UI 模型选择可读；不增加模型切换权。cargo check 已过，focused cache/原生 wire 12/12 通过（含真实 file catalog 可见与缓存删除重建）；Gateway 重启后停机期间所有 UI run frame 补齐仍在后续推进，真实 UI 由总集成验。
