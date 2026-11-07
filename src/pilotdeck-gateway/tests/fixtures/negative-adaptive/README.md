@@ -24,5 +24,7 @@
 CI 的必需 `metadata-observer` job 自动运行；其现有 `EnvironmentControls` 独立守卫该步骤及缺失负例。
 `isolation_negative.py NEW_OUTPUT_DIR [control...]` 对本轮守卫做 17 项内存变异，逐项编译并绑定完整测试名与消息，
 正控/变异/恢复日志分别留存；不写原源码，不创建 Git 副本或 target。
-信号探针等待原子发布的 ready 文件（最多 10 秒）后发 SIGTERM / SIGKILL，核真实输入不变，
+信号探针等待原子发布的 ready 文件后再发 SIGTERM / SIGKILL，核真实输入不变，
+就绪预算按子进程侧上界派生（树锁 900 s + 排槽 900 s + 冷编译 1800 s + 余量 300 s = 3900 s，
+cb8 实测冷 target 52.4 s、热 6.7–6.8 s），子进程先退出则立即报出、不等满预算；
 再用真实 HEAD 守卫重新跑一项；no-op 变异必须 SURVIVED 并退出 1，no-op 恢复必须 INVALID。
