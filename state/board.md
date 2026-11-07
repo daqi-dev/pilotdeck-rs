@@ -4749,3 +4749,7 @@ WeCom手动配置、旧凭据复用、全部平台别名/菜单3、QR生成/查�
 ### 2026-11-08 · 共享原子文件发布（Codex，仅本机）
 
 将setup已验证的原子发布原样提炼到CLI共享库atomic_file，保留setup错误文案/errno/operation/path映射；独立审查核主体机械一致，并加Unix导出条件避免扩大其他平台编译面。mbp2组合39项setup测试（含WeCom12格TS对照和真实失败写入）通过、2helper由父调用，fmt/all-targets clippy通过；不声称已跨平台编译。证据主仓 `_tmp/20261108-cli-tui/shared-atomic-*`。接着由Terra用共享JS codec及这层安全发布实现权限文件，再接实际TUI；未注册草稿保留、不算交付。
+
+### 2026-11-08 · TUI 权限文件（Codex/Terra，仅本机）
+
+权限文件现用共享JS codec保留孤立UTF16/大数真值，按TS规范化别名/去重/字段与正常输出；写入复用共享atomic，损坏JSON/8MiB超限/不支持目标明确拒绝，实际EFBIG旧deny原字节保全且临时文件清理。mbp2 9测试通过，1helper由父实际调用，fmt/alltargets clippy通过，独立审无确认P0/P1，原件主仓 `_tmp/20261108-cli-tui/`。真实TS PTY已采到远端启动/输入/三帧流，退出仍需精确确认；接下来Ratatui runner，local fallback/native权限仍受A装配接线限制。新差异未人批，未标TUI完成；update发布形态问题待用户文本偏好，独立开发继续。

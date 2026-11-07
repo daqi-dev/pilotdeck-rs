@@ -59,7 +59,7 @@ fn prepend(items: &mut Vec<JsValue>, item: JsValue) {
 }
 // JSON.stringify(value, null, 2), using the shared JS encoder for escaping,
 // number spelling, property ordering, and undefined handling.
-fn pretty(value: &JsValue) -> Result<Option<String>, pilotdeck_protocol::CodecError> {
+pub(super) fn pretty(value: &JsValue) -> Result<Option<String>, pilotdeck_protocol::CodecError> {
     let Some(raw) = stringify_json(value)? else {
         return Ok(None);
     };
