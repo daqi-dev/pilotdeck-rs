@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 331 mutants:
+`JUDGES`, keyed by the same names. The current table has 332 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -499,7 +499,8 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-status-factory-import-after-assignment`,
 `calibrate-status-factory-import-conditional-overwrite`,
 `calibrate-status-builtins-alias-self-assign`,
-`calibrate-status-builtins-subscript-copy`.
+`calibrate-status-builtins-subscript-copy`,
+`calibrate-status-builtins-callback-after-import`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1589,3 +1590,15 @@ reach calls that ran before the import, and shadowed the no-op `bi = bi`.
 | **A harmless second alias of one import statement** (false FAIL guard): `import builtins as bi, os as bi; f = bi.getattr(...)`. | self-test `round 23: a harmless second alias of the same import statement`; each alias keeps its own column |
 | **A builtins alias imported after every call** (false FAIL guard): `import json as bi; def main(): bi.getattr(...)`; `main(...)`; `import builtins as bi`. | self-test `round 23: a builtins alias imported after every call of the function`; `_binding_event_at(call_only=True)` |
 | **A self-assigned module alias keeps the module reading**: `import builtins as bi; bi = bi; f = bi.getattr(...)`. | `calibrate-status-builtins-alias-self-assign`; self-test `round 23: a self-assigned builtins module alias` |
+
+### Closed by `fix-r1` round 24 (codex r23 one P0 and one P1 / GLM boundary r23 one P0 and one P1)
+
+Round 23 trusted the module-scope call list as complete and read a
+`bi = bi` copy without looking at what happened to `bi` in between.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A function that also escapes as a value runs after the later import**: `import json as bi; def main(): ...`; `main(...)`; `_cbs.append(main)`; `import builtins as bi`; `for cb in _cbs: cb(...)`. | `calibrate-status-builtins-callback-after-import`; self-tests `round 24: a builtins alias imported after a callback registration`, `... before a nested-scope call`; `_module_value_uses` keeps `call_only` off |
+| **Direct calls only stay clean** (false FAIL guard): the round-23 shape still reads as no write. | self-test `round 24: a builtins alias imported after direct calls only` |
+| **A copy of an already replaced alias is not the module** (false FAIL guard): `import builtins as bi; bi = Safe; bi = bi; f = bi.getattr(...)`. | self-test `round 24: a self-assigned builtins alias after a certain replacement`; `_resolve_builtins_module_copies` reads `events[name]` |
+
