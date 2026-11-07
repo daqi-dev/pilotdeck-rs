@@ -1551,6 +1551,16 @@ class AuditBindingTests(unittest.TestCase):
                          '#2064 a string literal must not satisfy the fn form')
         self.assertFalse(suite.declares_test('let s = r#"fn case_a() {"#;', 'case_a'),
                          '#2064 a raw string literal must not satisfy the fn form')
+        # A char literal holding a quote must not open a string either: with
+        # the char branch gone, that quote would swallow code up to the next
+        # string's opening quote and turn it back into un-stripped code.
+        # (r3 order note: kept above the C-string carriers so the char-branch
+        # mutant dies at this bound assertion first -- the cr carrier below
+        # would otherwise die earlier as an unterminated-literal error.)
+        self.assertFalse(
+            suite.declares_test("let q = '\"'; let s = \"fn case_a() {\"; let r = '\"';",
+                               'case_a'),
+            '#2064 a quote char literal must not open a string')
         # r11: C-string prefixes. Without ``cr`` in the prefix set the inner
         # quote closes a bogus plain string and the carried ``fn`` text
         # returns to the code view, so the binding audits a carrier.
@@ -1563,13 +1573,6 @@ class AuditBindingTests(unittest.TestCase):
                          '#2064 a line comment must not satisfy the table form')
         self.assertFalse(suite.declares_test('let s = "case_a => 1";', 'case_a'),
                          '#2064 a string literal must not satisfy the table form')
-        # A char literal holding a quote must not open a string either: with
-        # the char branch gone, that quote would swallow code up to the next
-        # string's opening quote and turn it back into un-stripped code.
-        self.assertFalse(
-            suite.declares_test("let q = '\"'; let s = \"fn case_a() {\"; let r = '\"';",
-                               'case_a'),
-            '#2064 a quote char literal must not open a string')
 
     def test_rust_code_only_blanks_escape_char_literals(self):
         # #2064 r11: ``'\u{…}'`` / ``'\xNN'`` are single-char literals; the
