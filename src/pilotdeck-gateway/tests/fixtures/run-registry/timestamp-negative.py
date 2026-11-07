@@ -242,7 +242,15 @@ def _guarded_body(env, out, base_guarded):
     # resolves publish_summary through its module globals at call time - the
     # same injection point as the factory and judges below - so a local
     # wrapper buffers the call instead of reaching the disk.
-    verdict, completed, publications = 1, False, []
+    verdict, publications = 1, []
+    # #1147 r3: 'enter' is a refusal (dirty tree, busy lock) and keeps rc=1;
+    # 'body' marks the guarded window as open, 'exit' marks run_cases done
+    # with only guard close-outs remaining. body_error remembers the body's
+    # own exception so an exception raised while unwinding (a guard's
+    # restore) can be told apart from it - mirroring count-negative.py's
+    # main (#1076).
+    phase = 'enter'
+    body_error = None
 
     def deferred_publish(out_dir, rows):
         publications.append((out_dir, rows))
@@ -259,6 +267,7 @@ def _guarded_body(env, out, base_guarded):
             with mutating_sources(root, base_guarded):
                 closure = count_runner().local_import_closure(probe, root)
                 with mutating_sources(root, closure):
+                    phase = 'body'
                     # run_cases resolves run_owned/passed/classify through its
                     # module globals at call time, so the node command factory and
                     # probe judges are injected here without touching the
@@ -281,24 +290,43 @@ def _guarded_body(env, out, base_guarded):
                         # Rust here, so no cargo receipt is recorded.
                         verdict = run_cases(root, [Case(*row) for row in mutations],
                                             out, env, mutate, timeout=150, script=__file__)
-                        completed = True
+                    except BaseException as caught:
+                        body_error = caught
+                        raise
                     finally:
                         (negative_suite.run_owned, negative_suite.passed,
                          negative_suite.classify, negative_suite.wait_for_slot,
                          negative_suite.publish_summary) = saved
+                    phase = 'exit'
     except BaseException as caught:
         error = caught
-    if error is not None and completed:
-        # run_cases finished and buffered its verdict, but a guard's
-        # close-out failed afterwards: that verdict is unverified, void it
-        # before any publication reaches the disk (#1076; count-negative's
-        # main does the same on its unwind).
+    if error is not None:
+        # Any exception escaping the guarded window invalidates every
+        # buffered publication: run_cases' own cancellation path has already
+        # invalidated its rows, and appending the guard reason again is
+        # harmless. This must not depend on run_cases having returned:
+        # it buffers its rows before its trailing counts/print lines, so a
+        # signal landing in that window left a green summary on disk when
+        # the old `completed` flag gated the voiding (#1147 r3, ds r2
+        # sibling/boundary P1).
         for _out_dir, rows in publications:
             invalidate_completed(rows, f'source guard: {type(error).__name__}: {error}')
     for out_dir, rows in publications:
         publish_summary(out_dir, rows)
     if error is not None:
-        raise error
+        if isinstance(error, SystemExit):
+            # main's handler prints the carried code and normalizes to 2.
+            raise error
+        if (phase == 'exit' or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            # The guarded window closed over a body that ran (or the body's
+            # own exception was replaced while unwinding): an unverified
+            # restore or close-out failure, never a refusal - 2, mirroring
+            # count-negative's phase == 'exit' (#1076; #1147 r3 ds r2 P1).
+            print(f'INVALID: unwound with {type(error).__name__} in phase '
+                  f'{phase!r}; exiting 2', file=sys.stderr, flush=True)
+            raise SystemExit(2) from error
+        raise error  # the body's own refusal or error before any close-out: rc=1
     return verdict
 
 
