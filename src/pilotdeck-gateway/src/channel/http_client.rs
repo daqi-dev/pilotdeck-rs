@@ -52,7 +52,7 @@ impl HttpClient {
         body: &str,
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
-        self.send(method, url, content_type, None, body, timeout)
+        self.send(method, url, content_type, None, body, Some(timeout))
             .await
     }
 
@@ -67,8 +67,20 @@ impl HttpClient {
         body: &str,
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
-        self.send(method, url, content_type, Some(bearer), body, timeout)
+        self.send(method, url, content_type, Some(bearer), body, Some(timeout))
             .await
+    }
+
+    /// `fetch(url, { signal })` without `AbortSignal.timeout` — only the
+    /// caller's cancellation bounds the exchange (bluebubbles poll GET).
+    pub(crate) async fn request_unbounded(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: &str,
+    ) -> Result<HttpResponse, String> {
+        self.send(method, url, content_type, None, body, None).await
     }
 
     async fn send(
@@ -78,7 +90,7 @@ impl HttpClient {
         content_type: Option<&str>,
         bearer: Option<&str>,
         body: &str,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<HttpResponse, String> {
         let uri: hyper::Uri = url.parse().map_err(|error| format!("TypeError: {error}"))?;
         let mut builder = Request::builder().method(method).uri(uri);
@@ -111,9 +123,12 @@ impl HttpClient {
                 body,
             })
         };
-        tokio::time::timeout(timeout, exchange)
-            .await
-            .map_err(|_| "TimeoutError: The operation was aborted due to timeout".to_owned())?
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, exchange)
+                .await
+                .map_err(|_| "TimeoutError: The operation was aborted due to timeout".to_owned())?,
+            None => exchange.await,
+        }
     }
 }
 
