@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
     --all) MODE=all ;;
     --check) MODE=check ;;
     --route) MODE=route; ROUTE_KIND="${2:-}"; shift ;;
-    --board) BOARD="${2:-}"; shift ;;
+    --board) BOARD="${2:-}"; [ -n "$BOARD" ] || { echo "next-task: --board 须带非空文件路径" >&2; exit 64; }; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "next-task: 未知参数 $1" >&2; exit 64 ;;
   esac
@@ -86,6 +86,7 @@ fi
 # 第二道保险：主树 board 与 origin/main 不一致（可能落后，也可能本地草稿未推）时提示，
 # 不阻断——board 段子代理会在本地草稿上跑。git 不可用、无 origin/main、路径缺失都静默跳过。
 # origin/main 是本地引用，不 fetch 拿不到远端最新，提示只是提醒核分支。
+# 比较经 $() 吃掉两侧尾部换行：仅差尾部空行视为一致（提示性保险，不做字节级比较）。
 if [ -n "${BOARD_ROOT:-}" ] \
    && origin_board="$(git -C "$BOARD_ROOT" show "origin/main:state/board.md" 2>/dev/null)" \
    && [ "$origin_board" != "$(cat "$BOARD")" ]; then
