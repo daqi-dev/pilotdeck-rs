@@ -475,7 +475,14 @@ fn attachment_not_found(entry: &AttachEntry, path: &str, error: &std::io::Error)
 fn surrogate_path_not_found(entry: &AttachEntry, original: &JsString, cwd: &Path) -> JsString {
     let resolved = resolve_units(&cwd.to_string_lossy(), original);
     let lossy = String::from_utf16_lossy(resolved.units());
-    let prefix = match attachment_route(entry, &lossy) {
+    // #1461 fix (DS r1 boundary P2): TS composer :234-251 routes the
+    // diagnostic words on the *original* attachment path, and the resolve
+    // above can fold dot segments — `report.pdf/\uD800/..` resolves to a
+    // `.pdf` tail while the raw spelling ends in `..` and routes as File.
+    // The raw lossy spelling (the same one `is_audio_shape` reads) keeps
+    // the route on the unfixed input.
+    let raw_lossy = String::from_utf16_lossy(original.units());
+    let prefix = match attachment_route(entry, &raw_lossy) {
         AttachmentRoute::Image => "Image attachment not found: ",
         AttachmentRoute::Pdf => "PDF attachment not found: ",
         AttachmentRoute::File => "Attachment not found: ",
@@ -809,7 +816,18 @@ pub(super) fn compose_attachment_turn(
                 && !content_only
                 && !is_audio_shape(&entry.mime, &String::from_utf16_lossy(original.units()))
             {
-                diagnostics.push(surrogate_path_not_found(entry, original, project_dir));
+                // #1461 fix (DS r1 P1): Node `path.resolve(path)` with no
+                // explicit base resolves against the *process* cwd, not the
+                // project root — the TS probe's diagnostic prefix is
+                // `/tmp/pdrs-1460-probe-cwd/` while the project root is a
+                // different directory (composer-probe.out "Probe B"). Every
+                // other `resolve_units` call site passes the process cwd too
+                // (metadata.rs, task_budget, edgeclaw text). An unreadable
+                // cwd stays silent — the TS collection pass swallows its
+                // own failures with `catch {}`.
+                if let Ok(cwd) = std::env::current_dir() {
+                    diagnostics.push(surrogate_path_not_found(entry, original, &cwd));
+                }
             }
             continue;
         }
