@@ -4631,3 +4631,7 @@ target revision>0 时只尝试完全相同的原 import key/body：Core pristine
 ### 2026-11-08 常驻 Kernel restart 同网关恢复（lane C）
 
 总集成 crash/restart Kernel、保留 gateway 的真实试验定位 Scheduler mount 缺口：Rpc 新连接只 initialize，未 execution.open 原 session。现每条新连接先重新 open 原 owned Kernel ID，比较实际保存 binding/revision/protocol/permissions/已使用 feature marker，允许新全局 default 与旧 pin 并存；不匹配明确失败、不提交输入。新连接清空旧 lease 时间缓存，effect 前读实际 holder/epoch。只对 get/events/history/session observation 的 typed EOF/broken-pipe 作一次只读恢复重试；协议/权限/pin/feature/timeout 与 input/respond/import/control 不重试。新增两条真实 UDS 双连接测试：原 pin 下只读自动恢复、同 ID 换 revision 拒绝无 query/input，输入已发丢回执不重连重播。focused kernel 35/35 PASS；当前无 Cargo。另 desktop05 activequit drain 故障已定位 Kernel cancel cleanup_unknown 后仍 Running，迟到 provider PUBLISH_DENIED 才产生 Unknown；A 正修通用 retirement，C 未用 fake completion/增超时掩盖，包独立草稿保留。
+
+### 2026-11-08 接入组合：原输入消费与新候选冻结准备
+
+总集成已采纳 lane B 的 1403595be：仅 native factory 保留原 kernelSteerItems 身份；纯 Context SummaryModelPort 的新 decorator 默认不改变 legacy 输出，native 只携带来自真实摘要输入的 receipt/item ID。独立厂商协议库和 C 的常驻 Kernel 重连共同纳入下一固定构建。新消费装置在旧候选 4 上正确失败：两个同文不同 ID 均仅 claimed，未误把模型处理当 consumed。lane B 43 项 native 测试、factory 23 项及原摘要接口测试通过；Anthropic 独立链路 kernel-model-tool-07 使用干净 d559ff0/1403595 通过真实两次模型、一次工具、原 ID/结果配对。总协调者负责新组合真实 product steer/status/archive/journal 三方验证。原冻结证据、默认 legacy、上游产品缺口与真人门槛不变。
