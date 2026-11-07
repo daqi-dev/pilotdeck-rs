@@ -48,11 +48,14 @@ mutations = [
      '    "elicitation_respond",',
      'native_process::methods::tests::session_domain_reconciles_with_coverage_manifest',
      '#1316 A7 method reconnect_interaction is dispatched'),
+    # #1352: the advertised table moved out of `requests.rs` into
+    # `native_process/capabilities.rs`, so these four describe anchors follow it.
+    # Renaming a row drops the name from the advertised set exactly like
+    # deleting a literal line did.
     ('describe-drops-permission-decide',
-     'native_process/requests.rs',
-     '                            "permission_decide",\n'
-     '                            "async_hook_result",',
-     '                            "async_hook_result",',
+     'native_process/capabilities.rs',
+     'Capability { name: "permission_decide", methods: &[], wired: compiled_in },',
+     'Capability { name: "unwired_permission_decide", methods: &[], wired: compiled_in },',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
     # Dropping the registry entry sends `always_on_apply` to the
@@ -139,26 +142,22 @@ mutations = [
      'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
      '#1316 always_on_apply code'),
     ('describe-advertises-always-on-apply',
-     'native_process/requests.rs',
-     '                            "delete_session",\n'
-     '                        ]\n',
-     '                            "delete_session",\n'
-     '                            "always_on_apply",\n'
-     '                        ]\n',
+     'native_process/capabilities.rs',
+     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
+     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
+     '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
      'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
      '#1316 always_on_apply must not be advertised in describe'),
     ('describe-drops-async-hook-result',
-     'native_process/requests.rs',
-     '                            "async_hook_result",\n'
-     '                            "delete_session",\n',
-     '                            "delete_session",\n',
+     'native_process/capabilities.rs',
+     'name: "async_hook_result",',
+     'name: "unwired_async_hook_result",',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
     ('describe-drops-delete-session',
-     'native_process/requests.rs',
-     '                            "delete_session",\n'
-     '                        ]\n',
-     '                        ]\n',
+     'native_process/capabilities.rs',
+     'Capability { name: "delete_session", methods: &[], wired: compiled_in },',
+     'Capability { name: "unwired_delete_session", methods: &[], wired: compiled_in },',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
 ]
