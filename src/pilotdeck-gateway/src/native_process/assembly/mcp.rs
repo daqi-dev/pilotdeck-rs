@@ -5,6 +5,8 @@ use super::{
     SdkMcpProject, SdkMcpProjectResolver, SdkMcpSessionPlugins, SdkSessionProjects, SessionOwner,
     SystemEnvironment,
 };
+use crate::runtime::plugins::LoadedPlugin;
+use crate::runtime::project::RuntimeLease;
 use std::sync::Arc;
 
 // ── U6 MCP resolver / session-plugins for the native process (#1319) ────────
@@ -46,17 +48,37 @@ impl SdkMcpProjectResolver for NativeMcpResolver {
                 })?
                 .runtime
                 .clone();
-            let project_root = JsString::from(
-                lease
-                    .runtime()
-                    .project_root()
-                    .to_string_lossy()
-                    .into_owned(),
-            );
-            let resolved: Arc<dyn SdkMcpProject> =
-                Arc::new(PluginProjectRuntime::new(project_root, plugin_runtime));
+            let resolved: Arc<dyn SdkMcpProject> = Arc::new(LeasedMcpProject {
+                project: PluginProjectRuntime::from_generation(lease.runtime(), plugin_runtime),
+                _lease: lease,
+            });
             Ok(resolved)
         })
+    }
+}
+
+/// Keeps the resolved project generation leased for as long as the SDK MCP
+/// state machine can call `refresh` / `snapshot`. `resolve` runs before
+/// `set_mcp_servers` refreshes the plugin runtime, so releasing the lease when
+/// `resolve` returns would let an `invalidate` / `reload` retire the
+/// generation and `PluginResources::dispose` shut the runtime down under the
+/// caller (#2157; the memory route documents and fixes the same invariant).
+/// `RuntimeLease` releases exactly once on drop, so the generation stays
+/// leased until the gateway drops this handle.
+struct LeasedMcpProject {
+    project: PluginProjectRuntime,
+    _lease: RuntimeLease,
+}
+
+impl SdkMcpProject for LeasedMcpProject {
+    fn project_root(&self) -> JsString {
+        self.project.project_root()
+    }
+    fn refresh<'a>(&'a self) -> SdkMcpFuture<'a, Result<(), SdkMcpError>> {
+        self.project.refresh()
+    }
+    fn snapshot<'a>(&'a self) -> SdkMcpFuture<'a, Vec<Arc<LoadedPlugin>>> {
+        self.project.snapshot()
     }
 }
 
@@ -116,4 +138,155 @@ pub(super) fn build_mcp_gateway(
     }));
     let _ = &mcp_gateway;
     mcp_gateway
+}
+
+#[cfg(test)]
+mod tests {
+    //! #2157 device for the resolver lease: stage a real
+    //! `ProjectRuntimeRegistry` through `ProjectResourcesFactory`, resolve the
+    //! MCP project, retire the generation before the caller refreshes, and
+    //! require the refresh to keep running. The old shape (lease dropped when
+    //! `resolve` returns) lets cleanup dispose the plugin runtime and the
+    //! refresh fails with "plugin runtime is draining".
+    use super::*;
+    use crate::config::Env;
+    use crate::runtime::plugins::PluginRuntimeOptions;
+    use crate::runtime::project::{
+        Families, Family, ProjectResourcesFactory, ProjectResourcesOptions, ResourceFamilySource,
+        RuntimeProfileOverrides, RuntimeResult, StageContext, StageSink,
+    };
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, SystemTime};
+    use tokio::time::timeout;
+
+    const CONFIG: &str = "schemaVersion: 1\nagent: {model: test/mock}\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:28794/v1\n      apiKey: mock\n      models:\n        mock: {}\n";
+
+    struct Scratch(std::path::PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "pdrs-2157-mcp-{}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("#2157 clock")
+                    .as_nanos()
+            ));
+            std::fs::create_dir(&path).expect("#2157 scratch directory");
+            Self(path)
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The model, MCP, context and LSP families only have to be present so the
+    /// plugin family stages on the production path
+    /// (`ProjectResourcesFactory::stage`); they contribute nothing here.
+    struct NoopFamily(Family);
+    impl ResourceFamilySource for NoopFamily {
+        fn family(&self) -> Family {
+            self.0
+        }
+        fn stage(&self, _: &StageContext, _: &mut StageSink<'_>) -> RuntimeResult {
+            Ok(())
+        }
+    }
+
+    fn config(home: &Path) {
+        std::fs::create_dir_all(home.join(".pilotdeck")).expect("#2157 config directory");
+        std::fs::write(home.join("pilotdeck.yaml"), CONFIG).expect("#2157 config");
+    }
+
+    /// One real registry over a scratch project with the plugin family wired,
+    /// so `Resource::PluginRuntime` holds a live `PluginRuntime`.
+    fn registry(scratch: &Scratch) -> Arc<ProjectRuntimeRegistry> {
+        let root = scratch.0.join("project");
+        let home = scratch.0.join("home");
+        std::fs::create_dir(&root).expect("#2157 project directory");
+        std::fs::create_dir(&home).expect("#2157 home directory");
+        config(&home);
+        let mut env = Env::new();
+        env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
+        let factory = ProjectResourcesFactory::new(ProjectResourcesOptions {
+            pilot_home: home.clone(),
+            cwd: root.clone(),
+            env,
+            homedir: Some(home.clone()),
+            builtin_skills_root: None,
+            now: Arc::new(|| SystemTime::UNIX_EPOCH),
+            telemetry: None,
+            config_version: None,
+            runtime_profile_overrides: RuntimeProfileOverrides::default(),
+            families: Families {
+                lsp: Some(Arc::new(NoopFamily(Family::LspService))),
+                session_title: Some(Arc::new(NoopFamily(Family::SessionTitleProvider))),
+                ..Families::unwired()
+            }
+            .with_native_models()
+            .with_context_memory()
+            .with_tools_mcp()
+            .with_plugins(PluginRuntimeOptions {
+                project_root: root.clone(),
+                pilot_home: home.clone(),
+                builtin_skills_root: None,
+                builtin_plugins: Vec::new(),
+                builtin_plugins_enabled: std::collections::HashMap::new(),
+            })
+            .with_interaction(),
+        });
+        Arc::new(ProjectRuntimeRegistry::new(root, Arc::new(factory)))
+    }
+
+    /// #2157. The caller of `resolve` only refreshes *after* it returns
+    /// (`set_mcp_servers`), so the lease must travel with the resolved
+    /// project: an invalidate between the two must not dispose the plugin
+    /// runtime. The assertions run behaviour first: the refresh either still
+    /// works or names the disposed runtime, then retirement must still be
+    /// blocked, and `lease_count` is the deterministic backstop under both
+    /// timings. Removing `_lease` from `LeasedMcpProject` makes this red at
+    /// `refresh` whenever the cleanup wins the 500 ms window and at
+    /// `lease_count` in every case.
+    #[tokio::test]
+    async fn resolved_project_holds_the_generation_lease_through_refresh() {
+        let scratch = Scratch::new();
+        let project = registry(&scratch);
+        let resolver = NativeMcpResolver {
+            project: Arc::clone(&project),
+        };
+        let resolved = resolver.resolve(None).await.expect("#2157 resolve");
+        let runtime = project.resolve(None).expect("#2157 current generation");
+        // Retire the generation in the window between `resolve` and the
+        // caller's `refresh` (`set_mcp_servers`).
+        project.invalidate(None);
+        // 500 ms only bounds "cleanup had its chance": with the lease held the
+        // disposal cannot finish at any duration, and without it the
+        // deterministic `lease_count` assertion below still catches the early
+        // drop when a slow machine lets the disposal outlast this window.
+        let retired = timeout(Duration::from_millis(500), runtime.wait_disposed()).await;
+        let refreshed = resolved.refresh().await;
+        assert!(
+            refreshed.is_ok(),
+            "#2157 refresh must run on the generation the resolver leased, got {refreshed:?}"
+        );
+        assert!(
+            retired.is_err(),
+            "#2157 retirement must wait for the resolver's lease; the returned project dropped it"
+        );
+        assert_eq!(
+            runtime.lease_count(),
+            1,
+            "#2157 the resolved project must own the generation lease"
+        );
+        drop(resolved);
+        runtime
+            .wait_disposed()
+            .await
+            .expect("#2157 cleanup after the last lease");
+    }
 }
