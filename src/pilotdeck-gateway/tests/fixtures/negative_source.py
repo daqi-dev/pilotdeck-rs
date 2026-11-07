@@ -140,9 +140,9 @@ def squeeze(source):
     Literal boundaries come from a lexical scan, not quote counting: a
     character literal such as ``'"'`` used to open a string, shifting every
     later quote and letting a two-space message satisfy a one-space needle
-    (#1401 review P2 / #1989 item 4). Comments are token boundaries too; their
-    text is kept, so a needle can neither match inside a comment nor lose
-    literal content to one.
+    (#1401 review P2 / #1989 item 4). Comments are scanned too, and dropped:
+    they separate tokens but carry no code, so bytes a needle is looking for
+    cannot hide inside a commented-out assertion (#1989 item 4).
     """
     out = []
     pending_space = False
@@ -158,10 +158,11 @@ def squeeze(source):
             pending_space = True
             i += 1
             continue
+        comment = False
         if source.startswith('//', i):
-            end = _line_comment_end(source, i)
+            end, comment = _line_comment_end(source, i), True
         elif source.startswith('/*', i):
-            end = _block_comment_end(source, i)
+            end, comment = _block_comment_end(source, i), True
         else:
             end = _literal_end(source, i)
         if end is None:
@@ -169,6 +170,12 @@ def squeeze(source):
             pending_space = False
             out.append(ch)
             i += 1
+            continue
+        if comment:
+            # Dropped, but it still separates: `let x = 1; /* c */ let y = 2;`
+            # must stay two statements, not become `let x = 1;let y = 2;`.
+            pending_space = True
+            i = end
             continue
         flush(ch)
         pending_space = False
