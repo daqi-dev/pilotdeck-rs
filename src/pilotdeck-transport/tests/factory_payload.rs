@@ -1033,3 +1033,46 @@ fn retained_seed_model_and_raw_message_boundaries_are_deep_detached() {
         &arr([text("{}".into())])
     );
 }
+
+#[test]
+fn native_display_origin_is_explicit_and_original_metadata_whitelist_is_unchanged() {
+    let request=pilotdeck_protocol::parse_json(r#"{"payload":{"messages":[{"role":"user","content":[{"type":"text","text":"same"}],"metadata":{"kernelMessageId":"native-message:actual:1","turnId":"actual-root","createdAt":"actual-time","unknown":null}},{"role":"user","content":[{"type":"text","text":"same"}],"metadata":{"kernelMessageId":"native-message:actual:2","turnId":"actual-root","createdAt":"actual-time"}}]}}"#).unwrap();
+    let original = factory_payload::decode(&request, &"/explicit".into()).unwrap();
+    assert!(original.input.messages[0].value().get("metadata").is_none());
+    let native =
+        factory_payload::decode_with_native_origins(&request, &"/explicit".into()).unwrap();
+    assert_eq!(
+        native.input.messages[0]
+            .value()
+            .get("metadata")
+            .unwrap()
+            .get("kernelMessageId")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+        "native-message:actual:1"
+    );
+    assert_eq!(
+        native.input.messages[1]
+            .value()
+            .get("metadata")
+            .unwrap()
+            .get("kernelMessageId")
+            .unwrap()
+            .as_string()
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+        "native-message:actual:2"
+    );
+    assert!(
+        native.input.messages[0]
+            .value()
+            .get("metadata")
+            .unwrap()
+            .get("unknown")
+            .is_none()
+    );
+}
