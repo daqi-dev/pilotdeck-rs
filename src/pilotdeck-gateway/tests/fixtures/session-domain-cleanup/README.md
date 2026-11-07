@@ -1733,3 +1733,22 @@ Like rounds 24 to 29, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 31 (codex r29 one P0; GLM r29 three roles on the same P1, one boundary P1, two P3)
+
+Codex and three GLM roles independently hit the same hole: the round-30
+self-copy recursion carried no visited set, so a self-copy inside a loop
+re-entered itself through the loop back-edge clause -- which ignores
+`strict` on purpose -- until the audit died with `RecursionError` (false
+FAIL).  GLM boundary also found a dead-branch carrier deciding a live
+self-copy (false FAIL introduced by round 30).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A self-copy inside a loop is resolved once** (false FAIL guard): `held = globals()['main']; held = lambda: ...; for _ in (0,): held = held; held(x)`. | self-test `round 31: a self-copy inside a loop is resolved once`; `_dynamic_result_in_force` keeps a `(name, position, strict)` visited set, the guard `_module_alias_sources` already had |
+| **A dead carrier does not decide a live self-copy** (false FAIL guard): `if False: held = globals()['main']` then a live `held = held`. | self-test `round 31: a dead carrier does not decide a live self-copy`; the carrier resolution now receives `_dead_line_ranges` and drops bindings that a live query cannot reach |
+
+Like rounds 24 to 30, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
