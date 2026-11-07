@@ -61,8 +61,10 @@ def guarded_paths():
     that used to live at the call site put every golden (`source.json`,
     `oracle.json`, `capture.py`, `generate.mjs`, ...) at that risk for files no
     control ever touches. Leftover mutants stay detected without them:
-    `_assert_workspace_sources` scans the whole `src/` tree against HEAD, and
-    both `specs/` ledgers below remain targets in their own right.
+    `_assert_workspace_sources` scans the whole `src/` tree against HEAD. Of
+    the two `specs/` ledgers, only `d1_ledger` is rewritten by a control and so
+    stays here; `close_order_ledger` is read-only and proves itself against
+    HEAD in `assert_close_order_ledger_matches_head`.
     """
     return sorted({row[1] for row in mutations}, key=str)
 
@@ -263,6 +265,26 @@ mutations = [
 ]
 
 
+def assert_close_order_ledger_matches_head():
+    """#1885: this ledger is read but never mutated.
+
+    It used to sit in ``guarded``, so ``mutating_sources`` proved it equalled
+    HEAD on entry and wrote those bytes back on exit. The restore set now
+    carries only files a control rewrites, and the workspace guard covers
+    ``src/`` only, so nothing would notice an uncommitted edit moving the
+    #1382 baseline behind our back. Keep the proof, drop the write-back: the
+    frozen bytes are never put in the truncation window.
+    """
+    relative = close_order_ledger.relative_to(root).as_posix()
+    head = subprocess.run(
+        ["git", "cat-file", "blob", f"HEAD:{relative}"],
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+    )
+    if head.returncode or head.stdout != close_order_ledger.read_bytes():
+        raise RuntimeError(
+            "#1885 read-only #1382 baseline must equal HEAD: " + relative)
+
+
 def registered_unordered_close_ids():
     """#1382: read the same close-order ledger block the Rust pin reads.
 
@@ -270,6 +292,7 @@ def registered_unordered_close_ids():
     D1-SDK-WS-CLOSE-ORDER-001 registration (read-only) exactly like
     ``unordered_close_scope_equals_registration`` in signal_replay.rs.
     """
+    assert_close_order_ledger_matches_head()
     text = close_order_ledger.read_text(encoding="utf-8")
     _, _, after_start = text.partition("<!-- close-order-ids:start -->")
     block, _, _ = after_start.partition("<!-- close-order-ids:end -->")
