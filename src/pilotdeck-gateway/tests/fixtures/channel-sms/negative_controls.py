@@ -297,20 +297,27 @@ switches = [
      ['#1790 initial_prompt_pending must not survive the prompt-send panic',
       '#1790 initial_prompt_pending must not survive the initial-prompt-send cancellation']),
     # #1957: the `sign: true` reverse constraint only required an object
-    # `headers`, so `{}`, a map without the signature key, and an empty value
-    # all replayed unsigned (`mod.rs` skips the gate on an empty signature)
-    # and still matched the recorded 200 — a parity false pass. The switch
-    # restores that weaker guard; each cell is judged by its own assertion
-    # because one mutation stops the test at its first assertion.
+    # `headers`, so `{}`, a map without the signature key, an empty value, a
+    # whitespace-only value, a missing `sign` flag and a signed case with no
+    # request step all replayed unsigned (`mod.rs` skips the gate on an empty
+    # signature) and still matched the recorded 200 — a parity false pass. The
+    # switch restores that weaker guard; each cell is judged by its own
+    # assertion because one mutation stops the test at its first assertion.
     ('sms-oracle-signed-signature-header', SMS / 'tests.rs',
      ['signed_recording_rejects_empty_headers',
       'signed_recording_rejects_missing_signature_key',
       'signed_recording_rejects_blank_signature_header',
-      'signed_recording_rejects_non_boolean_sign'],
+      'signed_recording_rejects_non_boolean_sign',
+      'signed_recording_requires_sign_flag',
+      'signed_recording_rejects_whitespace_signature_header',
+      'signed_recording_requires_a_request_step'],
      ['#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
       '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
       '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
-      '#1339 #1957 case sign must be a boolean']),
+      '#1339 #1957 case sign must be a boolean',
+      '#1339 #1957 case must record a sign flag',
+      '#1339 #1957 signed case must record a non-empty X-Twilio-Signature header',
+      '#1339 #1957 signed case must replay at least one request step']),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',

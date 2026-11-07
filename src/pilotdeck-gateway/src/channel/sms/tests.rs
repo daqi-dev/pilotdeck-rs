@@ -1923,18 +1923,40 @@ fn validate_mock_recording(case: &Value) {
 /// its body shape. `effectiveHeaders` only bakes a signature when the body is a
 /// string, but a rewrite like `"abc"` -> `{repeat: "abc", count: 1}` keeps the
 /// replay bytes byte-identical, so exempting non-string bodies would reopen the
-/// same hole.
+/// same hole. A future generated case in that shape therefore fails this guard
+/// loudly instead of replaying unsigned; the generator would have to bake a
+/// signature (or refuse the shape) before such a case can be recorded.
+///
+/// The flag itself is part of the guard: `sign` must be present on any case
+/// that replays a request, must be a boolean, and a signed case must replay at
+/// least one request step — otherwise a hand edit could hide the whole check.
 fn signed_request_headers_checked(case: &Value) -> Result<(), String> {
     let name = case
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or("<unnamed>");
     // #996 switch `sms-oracle-signed-signature-header`: restores the pre-#1957
-    // guard, which only required an object `headers`.
+    // guard, which only required an object `headers` on a `sign: true` case.
     let legacy = crate::mutants::on("sms-oracle-signed-signature-header");
+    let requests: Vec<&Value> = case
+        .get("steps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|step| step.get("op").and_then(Value::as_str) == Some("request"))
+        .collect();
     let signed = match case.get("sign") {
-        None => false,
         Some(Value::Bool(flag)) => *flag,
+        // `generate.mts:1099` writes `sign: definition.sign ?? false` on every
+        // case, so a case that replays a request but carries no `sign` is a
+        // hand edit. Reading it as unsigned would drop the whole guard.
+        None if requests.is_empty() => false,
+        None => {
+            if legacy {
+                return Ok(());
+            }
+            return Err(format!("#1339 #1957 case {name} must record a sign flag"));
+        }
         // `generate.mts:1099` writes `sign: definition.sign ?? false`, so the
         // oracle only ever holds a boolean. Any other value is a hand edit
         // whose signing intent cannot be judged, so it must not skip the guard.
@@ -1950,15 +1972,17 @@ fn signed_request_headers_checked(case: &Value) -> Result<(), String> {
     if !signed {
         return Ok(());
     }
-    for step in case
-        .get("steps")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if step.get("op").and_then(Value::as_str) != Some("request") {
-            continue;
+    // A signed case that replays no request proves nothing about the signature
+    // (same zero-coverage boundary as `recorded_steps_checked`'s empty array).
+    if requests.is_empty() {
+        if legacy {
+            return Ok(());
         }
+        return Err(format!(
+            "#1339 #1957 signed case {name} must replay at least one request step"
+        ));
+    }
+    for step in requests {
         // #1879: a null `headers` is absence for an unsigned step, but for a
         // signed one it drops the baked signature, so keep it fail-closed.
         let Some(headers) = step.get("headers").and_then(Value::as_object) else {
@@ -1970,13 +1994,15 @@ fn signed_request_headers_checked(case: &Value) -> Result<(), String> {
             continue;
         }
         // Header names are case-insensitive (hyper lowercases them on the way
-        // in), and an empty value is as good as absence at the gate.
+        // in), and an empty value is as good as absence at the gate. Whitespace
+        // only counts as empty too: the HTTP parser strips optional whitespace,
+        // so `" "` reaches the gate as `""` and would skip validation.
         let signature = headers
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case("x-twilio-signature"))
             .and_then(|(_, value)| value.as_str())
             .unwrap_or_default();
-        if signature.is_empty() {
+        if signature.trim().is_empty() {
             return Err(format!(
                 "#1339 #1957 signed case {name} must record a non-empty X-Twilio-Signature header"
             ));
@@ -2040,6 +2066,50 @@ fn signed_recording_rejects_non_boolean_sign() {
 }
 
 #[test]
+fn signed_recording_requires_sign_flag() {
+    // `generate.mts:1099` writes `sign` on every case, so a case that replays a
+    // request without it is a hand edit: reading it as unsigned would skip the
+    // guard entirely (same edit family as a non-boolean `sign`).
+    crate::negative_assert!(
+        signed_request_headers_checked(&json!({
+            "name": "valid-signature",
+            "steps": [{"op": "request", "headers": {"X-Twilio-Signature": "abc"}}],
+        }))
+        .is_err(),
+        "#1339 #1957 case must record a sign flag"
+    );
+}
+
+#[test]
+fn signed_recording_rejects_whitespace_signature_header() {
+    // The HTTP parser strips optional whitespace, so `" \t "` reaches the gate
+    // as `""` and skips signature validation.
+    crate::negative_assert!(
+        signed_request_headers_checked(&json!({
+            "name": "valid-signature",
+            "sign": true,
+            "steps": [{"op": "request", "headers": {"X-Twilio-Signature": " \t "}}],
+        }))
+        .is_err(),
+        "#1339 #1957 signed case must record a non-empty X-Twilio-Signature header"
+    );
+}
+
+#[test]
+fn signed_recording_requires_a_request_step() {
+    // A signed case that replays no request proves nothing about the signature.
+    crate::negative_assert!(
+        signed_request_headers_checked(&json!({
+            "name": "valid-signature",
+            "sign": true,
+            "steps": [{"op": "stop", "reason": "done"}],
+        }))
+        .is_err(),
+        "#1339 #1957 signed case must replay at least one request step"
+    );
+}
+
+#[test]
 fn signed_recording_accepts_lowercase_signature_header() {
     assert!(
         signed_request_headers_checked(&json!({
@@ -2055,11 +2125,15 @@ fn signed_recording_accepts_lowercase_signature_header() {
 #[test]
 fn unsigned_recording_allows_null_headers() {
     // #1957 pairing control: the `sign: true` requirement must not leak onto
-    // unsigned cases, where a null `headers` is ordinary absence.
+    // unsigned cases, where a null `headers` is ordinary absence. A case that
+    // replays nothing may also omit `sign` — the flag is only required once a
+    // request step exists (`absent_recording_fields_keep_defaults` calls this
+    // helper with minimal JSON).
     for case in [
         json!({"name": "unsigned", "sign": false, "steps": [{"op": "request", "headers": null}]}),
-        json!({"name": "unsigned", "steps": [{"op": "request", "headers": null}]}),
         json!({"name": "unsigned", "sign": false, "steps": [{"op": "request"}]}),
+        json!({"name": "unsigned", "steps": [{"op": "stop", "reason": "done"}]}),
+        json!({"name": "unsigned"}),
     ] {
         assert!(
             signed_request_headers_checked(&case).is_ok(),
