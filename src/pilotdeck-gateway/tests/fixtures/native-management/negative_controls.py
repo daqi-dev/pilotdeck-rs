@@ -11,6 +11,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import refuse
 from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -512,6 +513,13 @@ def main():
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
     selected = sys.argv[2:]
+    # A repeated name is a caller-side typo (`a a` for `a b`), not a subset;
+    # folding it into a set turns a mistyped selection into a green run over a
+    # smaller scope, the same false green as an unknown name (#1734). The two
+    # sibling entrants fixed this in r6; this table is edited by the same diff.
+    repeated = sorted({name for name in selected if selected.count(name) > 1})
+    if repeated:
+        refuse('repeated mutation name: ' + ', '.join(repeated))
     if set(selected) - {case.mutation for case in selected_rows}:
         raise SystemExit('unknown mutation name')
     if selected:
