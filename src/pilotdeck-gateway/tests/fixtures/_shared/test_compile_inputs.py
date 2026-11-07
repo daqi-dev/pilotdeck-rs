@@ -1164,6 +1164,29 @@ class Manifest(unittest.TestCase):
         finally:
             control.os.fdopen = original
 
+    def test_a_read_error_on_the_scratch_copy_is_a_refusal(self):
+        # The copied-digest read runs on the control's own scratch tree, but a
+        # read error there (quota, a removed tmpfs) used to escape as a bare
+        # `OSError` and read as "ran and failed" instead of "refused to start"
+        # (#1570 r23 zai sibling P3).
+        self.workspace('include_str!("../specs/x.json");\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-copy-read-'))
+        self.roots.append(destination)
+        original = Path.read_bytes
+
+        def failing(path):
+            if destination in path.parents:
+                raise OSError(5, 'Input/output error')
+            return original(path)
+
+        Path.read_bytes = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError,
+                                        'the scratch copy could not be read back'):
+                control.source_copy(destination)
+        finally:
+            Path.read_bytes = original
+
     def test_a_git_failure_while_relisting_is_a_refusal(self):
         # Every `_tracked` call inside `source_copy` sits under a wrapper that
         # turns a git failure into a refusal: the host triage reads a bare
@@ -1186,48 +1209,58 @@ class Manifest(unittest.TestCase):
             6: 'the workspace inputs changed while the scratch copy',
         }
         original = control._tracked
+        # `check_output` raises `FileNotFoundError`, an `OSError` rather than a
+        # `SubprocessError`, when the git binary is missing or the cwd is gone;
+        # that shape escaped every wrapper until r25 (#1570 r23 zai boundary P2).
+        failures = (subprocess.CalledProcessError(128, ['git', 'ls-files']),
+                    FileNotFoundError(2, 'No such file or directory', 'git'))
         for ordinal, message in expected.items():
-            with self.subTest(git_call=ordinal):
-                self.workspace('include_str!("../specs/x.json");')
-                destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-git-fail-'))
-                self.roots.append(destination)
-                calls = []
+            for failure in failures:
+                with self.subTest(git_call=ordinal, failure=type(failure).__name__):
+                    self.workspace('include_str!("../specs/x.json");')
+                    destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-git-fail-'))
+                    self.roots.append(destination)
+                    calls = []
 
-                def failing(*directories, _ordinal=ordinal):
-                    calls.append(directories)
-                    if len(calls) == _ordinal:
-                        raise subprocess.CalledProcessError(128, ['git', 'ls-files'])
-                    return original(*directories)
+                    def failing(*directories, _ordinal=ordinal, _failure=failure):
+                        calls.append(directories)
+                        if len(calls) == _ordinal:
+                            raise _failure
+                        return original(*directories)
 
-                control._tracked = failing
-                try:
-                    with self.assertRaisesRegex(RuntimeError, message):
-                        control.source_copy(destination)
-                finally:
-                    control._tracked = original
-                self.assertEqual(len(calls), ordinal,
-                                 'the failure must land on the call this case names')
+                    control._tracked = failing
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, message):
+                            control.source_copy(destination)
+                    finally:
+                        control._tracked = original
+                    self.assertEqual(len(calls), ordinal,
+                                     'the failure must land on the call this case names')
 
     def test_a_git_failure_while_listing_untracked_sources_is_a_refusal(self):
         # The first `git ls-files src` was wrapped in r22; the `ls-files
         # --others src` one line below it was not, so it still escaped as a
         # bare `CalledProcessError` (#1570 r23 codex P2).
-        self.workspace('mod a;\n')
-        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-fail-'))
-        self.roots.append(destination)
         original = control._untracked_files
 
-        def failing(*directories):
-            raise subprocess.CalledProcessError(128, ['git', 'ls-files', '--others'])
+        for failure in (subprocess.CalledProcessError(128, ['git', 'ls-files', '--others']),
+                        FileNotFoundError(2, 'No such file or directory', 'git')):
+            with self.subTest(failure=type(failure).__name__):
+                self.workspace('mod a;\n')
+                destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-fail-'))
+                self.roots.append(destination)
 
-        control._untracked_files = failing
-        try:
-            with self.assertRaisesRegex(RuntimeError, 'cannot list the workspace inputs'):
-                control.source_copy(destination)
-        finally:
-            control._untracked_files = original
-        self.assertEqual(list(destination.rglob('*')), [],
-                         'the refusal happens before anything is copied')
+                def failing(*directories, _failure=failure):
+                    raise _failure
+
+                control._untracked_files = failing
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'cannot list the workspace inputs'):
+                        control.source_copy(destination)
+                finally:
+                    control._untracked_files = original
+                self.assertEqual(list(destination.rglob('*')), [],
+                                 'the refusal happens before anything is copied')
 
     def test_a_swap_before_the_first_scan_is_refused_by_the_scan(self):
         # `compile_inputs(root_identity=...)` has a default, so a dropped
@@ -1274,6 +1307,139 @@ class Manifest(unittest.TestCase):
         self.assertNotIn(IMPOSTOR, str(caught.exception))
         self.assertEqual(list(destination.rglob('*')), [],
                          'the scan refuses before the copy loop starts')
+
+    def impostor_checkout(self, source, extra=None):
+        """A real, committed git checkout that can take the root's place.
+
+        Real -- not a directory of loose files -- because the relists that run
+        after a swap ask git for `src/` and the derived directories; a fake one
+        would fail there instead of at the identity check the test is about.
+        """
+        root = Path(tempfile.mkdtemp(prefix='pdrs-1570-impostor-'))
+        self.roots.append(root)
+        files = {'src/a.rs': source, 'specs/x.json': IMPOSTOR}
+        files.update(extra or {})
+        for relative, text in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding='utf-8')
+        subprocess.check_call(['git', 'init', '-q'], cwd=root)
+        subprocess.check_call(['git', 'add', '-A'], cwd=root)
+        subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                               'commit', '-qm', 'x'], cwd=root)
+        return root
+
+    def swap_in(self, root, impostor):
+        moved = root.with_name(root.name + '-moved')
+        root.rename(moved)
+        self.roots.append(moved)
+        os.rename(impostor, root)
+
+    def test_a_swap_before_the_root_level_files_is_refused(self):
+        # `LICENSE` / `rust-toolchain.toml` are a separate `_copy_input` call
+        # site. Dropping its identity let the impostor's copies land in the
+        # scratch tree, and only a later stage refused -- the same message, so
+        # a message-only assertion cannot see it (#1570 r24 codex P2).
+        root = self.workspace('mod a;\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-root-level-'))
+        self.roots.append(destination)
+        impostor = self.impostor_checkout('mod a;\n',
+                                          {'LICENSE': IMPOSTOR,
+                                           'rust-toolchain.toml': IMPOSTOR})
+        original = control._copy_input
+        state = {'swapped': False}
+
+        def swap_before_the_root_level_copy(path, target, root_identity=None):
+            if not state['swapped'] and path == Path('LICENSE'):
+                state['swapped'] = True
+                self.swap_in(root, impostor)
+            return original(path, target, root_identity)
+
+        control._copy_input = swap_before_the_root_level_copy
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'repository root changed'):
+                control.source_copy(destination)
+        finally:
+            control._copy_input = original
+        self.assertTrue(state['swapped'])
+        landed = [path for path in destination.rglob('*') if path.is_file()]
+        self.assertEqual(sorted(path.relative_to(destination).as_posix() for path in landed),
+                         ['src/a.rs'],
+                         'the copy stops at the root-level files, and what landed '
+                         'came from the tree the scan read')
+        self.assertNotIn(IMPOSTOR.encode(), [path.read_bytes() for path in landed],
+                         'no impostor file may reach the scratch copy')
+
+    def test_a_swap_before_the_third_derivation_is_refused(self):
+        # The third derivation is its own `compile_inputs` call site; dropping
+        # its identity made an unbound scan fail with whatever the impostor's
+        # source says instead of the root-changed refusal (#1570 r24 codex P2).
+        root = self.workspace('mod a;\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-recheck-'))
+        self.roots.append(destination)
+        impostor = self.impostor_checkout('include_str!("MISSING INPUT");\n')
+        original = control.verify_copy
+        state = {'swapped': False}
+
+        def swap_before_the_recheck(copy_root, files):
+            if not state['swapped']:
+                state['swapped'] = True
+                self.swap_in(root, impostor)
+            return original(copy_root, files)
+
+        control.verify_copy = swap_before_the_recheck
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'repository root changed') as caught:
+                control.source_copy(destination)
+        finally:
+            control.verify_copy = original
+        self.assertTrue(state['swapped'])
+        self.assertNotIn('MISSING INPUT', str(caught.exception))
+
+    def test_a_swap_before_the_final_digest_is_refused(self):
+        # The last line of defence reads through `_source_digest`. Dropping its
+        # identity made it compare the copy against the *impostor's* bytes and
+        # fail with "does not match the working tree" -- a different message
+        # that says the tree moved, not that the root was swapped
+        # (#1570 r24 codex P2).
+        root = self.workspace('mod a;\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-digest-'))
+        self.roots.append(destination)
+        impostor = self.impostor_checkout('include_str!("MISSING INPUT");\n')
+        original = control._source_digest
+        state = {'swapped': False}
+
+        def swap_before_the_digest(path, root_identity=None):
+            if not state['swapped']:
+                state['swapped'] = True
+                self.swap_in(root, impostor)
+            return original(path, root_identity)
+
+        control._source_digest = swap_before_the_digest
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'repository root changed'):
+                control.source_copy(destination)
+        finally:
+            control._source_digest = original
+        self.assertTrue(state['swapped'])
+
+    def test_a_copy_error_is_a_refusal_not_a_traceback(self):
+        # `_copy_input` wraps its read/copy stage, but nothing pinned that:
+        # only the two readers had an `OSError` case (#1570 r23 zai sibling P2).
+        self.workspace('mod a;\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-copy-error-'))
+        self.roots.append(destination)
+        original = control.shutil.copyfileobj
+
+        def failing(*args, **kwargs):
+            raise OSError(5, 'Input/output error')
+
+        control.shutil.copyfileobj = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'cannot copy'):
+                control.source_copy(destination)
+        finally:
+            control.shutil.copyfileobj = original
 
     def test_no_control_brings_its_own_workspace_copy(self):
         # The recurrence mode of #1570 is a new control carrying its own
