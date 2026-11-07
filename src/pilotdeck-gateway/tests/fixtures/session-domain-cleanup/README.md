@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 272 mutants:
+`JUDGES`, keyed by the same names. The current table has 281 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -446,7 +446,15 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-finally-rebind`, `calibrate-for-target-closure`,
 `calibrate-for-target-shadowed-fresh`, `calibrate-for-target-with-alias`,
 `calibrate-for-target-except-alias`, `calibrate-for-target-name-iter`,
-`calibrate-comp-handle-relay-for`, `calibrate-comp-handle-relay-chain`.
+`calibrate-comp-handle-relay-for`, `calibrate-comp-handle-relay-chain`,
+`calibrate-for-target-assign-call`, `calibrate-for-target-def-default`,
+`calibrate-for-target-readonly-call-leak`,
+`calibrate-for-target-nested-param`,
+`calibrate-for-target-compare-call-leak`,
+`calibrate-for-target-outer-shadow-fresh`,
+`calibrate-for-target-outer-shadow-print`,
+`calibrate-for-target-ambiguous-literal`,
+`calibrate-for-target-comp-element-call`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1235,3 +1243,31 @@ shapes therefore close structurally rather than one spelling at a time.
 | Relay through a statically empty comprehension (false FAIL guard). | self-test `comp_relay_empty_probe` |
 | Nested definition that rebinds the name locally (false FAIL guard). | self-test `loop_local_shadow_probe` |
 | The six new escape shapes above, replayed in memory. | self-tests `loop_finally_rebind_probe`, `loop_closure_probe`, `loop_shadowed_fresh_probe`, `loop_with_alias_probe`, `loop_except_alias_probe`, `comp_relay_chain_probe` |
+
+### Closed by `fix-r1` round 9 (codex r5 five P0 / three P1, GLM r5)
+
+Round 8's block-ordered scan still modelled *where* a statement runs.  Round 9
+replaces it with one flat, source-ordered walk over the scope (plus a
+`_certain_statements` gate that only lets a provably executed statement clear a
+tracked name), and widens the use test so that every position that is not
+provably a read counts as a hand-over.  Each row below is a shape the two
+reviewers reported; the clean counterparts are pinned as in-file self-tests
+because a mutant can only prove the gate fires, never that it stays quiet.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Assignment right-hand side**: `x = [h('common', <stub>)]`. | `calibrate-for-target-assign-call` |
+| **Definition header**: `def inner(x=h('common', <stub>)): ...`. | `calibrate-for-target-def-default` |
+| **Read-only builtin, unknown callee**: `print(helper(h))`. | `calibrate-for-target-readonly-call-leak` |
+| **Nested parameter does not shield the outer name**: `def inner(): def unused(h): ...` then `h(...)`. | `calibrate-for-target-nested-param` |
+| **Comparison operand**: `if sink(h) == 0: ...`. | `calibrate-for-target-compare-call-leak` |
+| **Constructor shadowed in an enclosing scope**: module-level `object = lambda: hs[0]`, then `h = object()`. | `calibrate-for-target-outer-shadow-fresh` |
+| **Read-only builtin shadowed in an enclosing scope**: `print = sink`, then `lambda: print(h)`. | `calibrate-for-target-outer-shadow-print` |
+| **Ambiguous literal binding**: `items = (); items = (md,)`, then iterate and write. | `calibrate-for-target-ambiguous-literal` |
+| **Comprehension element** (round 8 skipped the whole comprehension): `[h('common', <stub>) for j in (md,)]`. | `calibrate-for-target-comp-element-call` |
+| Bare handle in a truth test is a read (false FAIL guard): `if h:` / `while h:`. | self-test `round 9: a bare handle in a truth test` |
+| Attribute load is a read (false FAIL guard): `name = h.__name__`. | self-test `round 9: an attribute read on the handle` |
+| Nested parameter / class-body binding really shadows (false FAIL guards). | self-tests `round 9: a parameter of a nested definition`, `round 9: a class-body binding` |
+| Parameter shadows a module-level literal (false FAIL guard). | self-test `round 9: a parameter that shadows a module-level literal` |
+| `del h` ends the name instead of using it (false FAIL guard). | self-test `round 9: a deleted loop target` |
+| Statically false comprehension filter (false FAIL guard). | self-test `round 9: a comprehension whose filter can never hold` |
