@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Five mutations of a complete real TS recording; no synthetic calibration fallback."""
+"""Six mutations of a complete real TS recording; no synthetic calibration fallback."""
 import sys
 if sys.version_info < (3, 11) or 'os' not in sys.modules:
     raise SystemExit(f'#701: os must be preloaded from CPython 3.11+ frozen modules; run with -I: python3 -I {__file__}')
@@ -78,7 +78,10 @@ def run_controls(source, output):
              ('change-stderr', 'flag-missing', 'stderr', lambda case: case['stderr'] != b'INJECTED STDERR\n'),
              ('change-exit', 'help-long', 'exit', lambda case: True),
              ('drop-disk', 'help-long', 'disk', lambda case: disk_file(case) is not None),
-             ('extra-file', 'help-long', 'disk', lambda case: disk_file(case) is not None)]
+             ('extra-file', 'help-long', 'disk', lambda case: disk_file(case) is not None),
+             # Missing command / default path (plan006 D0): a recorded round whose
+             # case directory for a scenario is gone must fail, not compare equal.
+             ('drop-case', 'empty-nontty', 'case', lambda case: True)]
     for name, preferred, surface, eligible in specs:
         scenario = select_case(cases, preferred, eligible)
         if scenario is None:
@@ -104,6 +107,11 @@ def run_controls(source, output):
             record = json.loads(read_plain(case / 'record.json'))
             record['exitCode'] = 73 if record['exitCode'] != 73 else 74
             save(case / 'record.json', record)
+        elif surface == 'case':
+            # The whole evidence directory disappears from the copy only; the
+            # source round is never touched. Comparison must reject the round
+            # (round.case-files), never fall back to the remaining scenarios.
+            shutil.rmtree(case)
         else:
             artifact = case / 'tree' / disk_file(cases[scenario])
             plain(artifact)
@@ -118,9 +126,15 @@ def run_controls(source, output):
             save(case / 'final.json', snapshot(case / 'tree'))
         result = compare(source, target)
         rules = [row['rule'] for row in result['failures']]
-        expected = f'{scenario}.oracle.{surface}'
-        pair_rule = f'{scenario}.{"exitCode" if surface == "exit" else surface}'
-        passed = result['status'] == 'FAIL' and expected in rules and pair_rule in rules
+        if surface == 'case':
+            # A dropped case never reaches the per-case oracle or the pair
+            # comparison: the round itself is incomplete.
+            expected, pair_rule = 'round.case-files', None
+            passed = result['status'] == 'FAIL' and expected in rules
+        else:
+            expected = f'{scenario}.oracle.{surface}'
+            pair_rule = f'{scenario}.{"exitCode" if surface == "exit" else surface}'
+            passed = result['status'] == 'FAIL' and expected in rules and pair_rule in rules
         save(output / (name + '.comparison.json'), result)
         results.append({'name': name, 'status': 'PASS' if passed else 'FAIL',
                         'scenario': scenario, 'passed': passed, 'expectedRule': expected,
