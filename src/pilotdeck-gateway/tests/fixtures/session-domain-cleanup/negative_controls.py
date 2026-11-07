@@ -5309,6 +5309,21 @@ MUTATIONS = [
      "                    report['status'] = overall\n",
      "                    _bi = __builtins__\n"
      "                    _bi['setattr'](report, 'status', 'PASS')\n"),
+    # #1953 fix-r1 round 24 (codex r23 P0 / GLM boundary r23 P0): a function
+    # that also escapes as a value is called after the later ``import
+    # builtins``, so the module reading of the alias is in force there.
+    ('calibrate-status-builtins-callback-after-import', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    import json as _bi\n"
+     "                    _cbs = []\n"
+     "                    def _set(report):\n"
+     "                        _f = _bi.getattr(report, '__setattr__')\n"
+     "                        _f('status', 'PASS')\n"
+     "                    _set(report)\n"
+     "                    _cbs.append(_set)\n"
+     "                    import builtins as _bi\n"
+     "                    for _cb in _cbs:\n"
+     "                        _cb(report)\n"),
     # #1953 fix-r1 round 21 (GLM sibling r19 P1-2 narrow positive): the copy
     # of a container that still carries handles stays a handle container when
     # it reaches the loop under a third name.
@@ -6614,6 +6629,14 @@ def calibrate_status_builtins_subscript_copy(rows):
         rows, "inline status/exit assignment _bi['setattr'](report, 'status', 'PASS')")
 
 
+def calibrate_status_builtins_callback_after_import(rows):
+    """#1953 fix-r1 round 24 (codex r23 P0 / GLM boundary r23 P0): the write
+    inside a function that also runs as a callback after the later
+    ``import builtins`` is still a write."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7499,6 +7522,9 @@ JUDGES = {
     'calibrate-status-builtins-subscript-copy': (
         'aggregation-audit',
         calibrate_status_builtins_subscript_copy, False, ()),
+    'calibrate-status-builtins-callback-after-import': (
+        'aggregation-audit',
+        calibrate_status_builtins_callback_after_import, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
