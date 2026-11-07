@@ -623,6 +623,88 @@ fn runner_regenerates_identically() {
     baseline::regenerates_identically("turn-runner");
 }
 
+/// #2116: this generator reached the test side only through the shared
+/// `regenerates_identically` helper (`runner_regenerates_identically` here and
+/// `stream_integrity_regenerates_identically` in live_stream_tests.rs both
+/// replay `oracle.json` bytes only). The fixture has no committed
+/// `.generation-owner`, so the marker never entered that comparison surface:
+/// a no-op marker write, a sibling fixture's identity, and (see #2116 item 2)
+/// a `wx` → `w` regression all stayed green. Follow the dedicated-generator
+/// caliber instead (`factory_generators_clean_only_owned_work` and kin):
+/// drive `generate.mts` directly, pin existence and the owner identity, and
+/// give the exclusive `wx` open its own foreign-marker cell — no fixture
+/// anywhere pre-seeded a foreign `.generation-owner` and expected EEXIST.
+/// This generator allocates no `run-*` work roots, so the marker carries no
+/// cleanup ownership here; it carries the output directory's
+/// cross-generator exclusivity (the marker is the first `wx` write, before
+/// the per-case `<name>.jsonl` files).
+#[test]
+#[ignore = "requires Node 22 and pinned TS; spawns real sidecars"]
+fn turn_runner_generator_writes_owned_marker() {
+    use std::path::PathBuf;
+    for collision in [false, true] {
+        let root =
+            std::env::temp_dir().join(format!("pdrs-2116-turn-runner-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).expect("#2116 create turn-runner marker scratch");
+        if collision {
+            fs::write(root.join(".generation-owner"), "session-factory\n")
+                .expect("#2116 seed foreign owner marker");
+        }
+        let base = PathBuf::from(
+            std::env::var_os("PDRS_BASELINE").expect("#2116 turn-runner TS baseline configured"),
+        );
+        let mut command = crate::test_baseline::node_command();
+        command
+            .arg("--disable-warning=ExperimentalWarning")
+            .arg("--import")
+            .arg(base.join("node_modules/tsx/dist/loader.mjs"))
+            .arg(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/turn-runner/generate.mts"),
+            )
+            .arg(&root);
+        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
+            &mut command,
+            "turn-runner",
+            Duration::from_secs(600),
+        )
+        .expect("#2116 bounded turn-runner marker generator");
+        let output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert!(
+            status.success() != collision,
+            "#2116 turn-runner generator succeeds only without a foreign owner marker: {output}"
+        );
+        if collision {
+            assert!(
+                output.contains("EEXIST") && output.contains(".generation-owner"),
+                "#2116 turn-runner generator fails on the exclusive owner marker open: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .expect("#2116 read foreign owner marker"),
+                "session-factory\n",
+                "#2116 failed turn-runner generation preserves the foreign owner bytes"
+            );
+        } else {
+            assert!(
+                !output.contains("EEXIST"),
+                "#2116 turn-runner generator success cell reports no collision: {output}"
+            );
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .expect("#2116 turn-runner ownership marker"),
+                "turn-runner\n",
+                "#2116 turn-runner generator writes its ownership marker"
+            );
+        }
+        fs::remove_dir_all(&root).expect("#2116 remove turn-runner marker scratch");
+    }
+}
+
 async fn advance(
     recording: &mut Recording,
     action: RecordingAction,
