@@ -1,7 +1,8 @@
-//! Shared sdk exit-harness pieces (#1044): exclusive runtime fixture, owned
-//! child with bounded stdin writers, output collection and disk snapshots.
-//! Test entry points stay in each `sdk_*_exit.rs` so libtest keeps bare names
-//! for the negative-control receipt protocol; only the bodies live here.
+//! Shared sdk exit-harness pieces (#1044, #1179): exclusive runtime fixture,
+//! owned child with bounded stdin writers, output collection and disk
+//! snapshots, serving all six `sdk_*_exit.rs` families. Test entry points
+//! stay in each `sdk_*_exit.rs` so libtest keeps bare names for the
+//! negative-control receipt protocol; only the bodies live here.
 #[path = "negative_receipt.rs"]
 mod negative_receipt;
 pub(crate) use negative_receipt::verify;

@@ -19,18 +19,19 @@ turn = root / 'src/pilotdeck-cli/src/sdk/turn.rs'
 output = root / 'src/pilotdeck-cli/src/sdk/output.rs'
 transport = root / 'src/pilotdeck-cli/src/sdk/transport.rs'
 tests = root / 'src/pilotdeck-cli/tests/sdk_run_exit.rs'
+common = root / 'src/pilotdeck-cli/tests/common/sdk_exit.rs'
 sdk = root / 'src/pilotdeck-cli/src/sdk.rs'
 validation = root / 'src/pilotdeck-cli/tests/fixtures/sdk-run-validation'
 fixture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-run'
 oracle = fixture / 'oracle.json'
 source = fixture / 'source.json'
 mutations = [
-    ('fixture-stdin-broken-pipe', tests, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1058 broken pipe must not panic'),
-    ('fixture-stdin-other-error', tests, 'Err(error) => panic!("#1058 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1058 other stdin errors must fail'),
-    ('fixture-stdin-skip-write', tests, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1058 complete stdin write'),
-    ('fixture-stdin-exit-code', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::process::ExitStatus::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve exit code'),
-    ('fixture-stdin-stdout', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve stdout'),
-    ('fixture-stdin-stderr', tests, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1058 preserve stderr'),
+    ('fixture-stdin-broken-pipe', common, 'Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}', 'Err(error) if false && error.kind() == io::ErrorKind::BrokenPipe => {}', 'fixture_stdin_broken_pipe_preserves_output', '#1075 broken pipe must not panic'),
+    ('fixture-stdin-other-error', common, 'Err(error) => panic!("#1075 fixture stdin: {error:?}"),', 'Err(_error) => {},', 'fixture_stdin_other_errors_still_fail', '#1075 other stdin errors must fail'),
+    ('fixture-stdin-skip-write', common, 'match stdin.write_all(data) {', 'match { let _ = (stdin, data); Ok::<(), io::Error>(()) } {', 'fixture_stdin_writes_all_bytes', '#1075 complete stdin write'),
+    ('fixture-stdin-exit-code', common, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.status = std::os::unix::process::ExitStatusExt::from_raw(0); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve exit code'),
+    ('fixture-stdin-stdout', common, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stdout.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stdout'),
+    ('fixture-stdin-stderr', common, 'collect_bounded(child, BOUND).await', '{ let mut output = collect_bounded(child, BOUND).await; output.stderr.clear(); output }', 'fixture_stdin_broken_pipe_preserves_output', '#1075 preserve stderr'),
     ('model-oracle-empty', validation / 'oracle.json', '  "models": [', '  "models": [],\n  "discardedModels": [', 'sdk::turn::tests::model_resolution_matches_ts_boundaries', '#1058 registered model validation rows'),
     ('sequence-oracle-empty', validation / 'oracle.json', '  "sequences": [', '  "sequences": [],\n  "discardedSequences": [', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 registered sequence validation rows'),
     ('sequence-received-format', transport, 'number_to_string(sequence)', 'sequence.to_string()', 'sdk::transport::tests::stream_sequence_matches_ts_boundaries', '#1058 stream sequence validation'),
@@ -121,6 +122,7 @@ def main():
     guarded = [*sorted((root / 'src/pilotdeck-cli/src').rglob('*.rs')),
                root / 'src/pilotdeck-cli/Cargo.toml', root / 'src/Cargo.lock', Path(__file__).resolve(),
                tests, *sorted(fixture.glob('*.*')), *sorted(validation.glob('*.*')),
+               common,
                root / 'src/pilotdeck-cli/tests/common/negative_receipt.rs',
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py']
