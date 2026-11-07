@@ -1635,7 +1635,20 @@ def _iter_literal_elements(node):
     return []
 
 
-def _bound_literal_elements(node, simple, seen=None):
+def _shadowed_parameters(scope):
+    """Parameter names of *scope* (#1953 fix-r1 round 9, codex r5 P1-8).
+
+    A module-level ``items = (md,)`` says nothing about a function whose
+    ``items`` is a parameter: ``def main(items): for m in items: ...`` iterates
+    whatever the caller passed.  The literal decoders take these names as
+    unresolvable, which is the difference between a false FAIL and the truth.
+    """
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        return set(_argument_names(scope.args))
+    return set()
+
+
+def _bound_literal_elements(node, simple, seen=None, shadowed=()):
     """Elements of a literal iterable, its wrapper, or a name bound to one.
 
     #1953 fix-r1 round 8 (GLM sibling r4 P1-1): ``items = (md,)`` followed by
@@ -1652,13 +1665,24 @@ def _bound_literal_elements(node, simple, seen=None):
     if elements:
         return elements
     if isinstance(node, ast.Name):
+        if node.id in shadowed:
+            return []
         seen = set() if seen is None else seen
         if node.id in seen:
             return []
         seen.add(node.id)
         values = simple.get(node.id) or ()
-        if len(values) == 1:
-            return _bound_literal_elements(values[0], simple, seen)
+        # Round 9 (GLM boundary r5 P2-5): two bindings of the same name used to
+        # answer "no elements", which made the loop target unbound and hid the
+        # write.  Take the union -- an ambiguous binding may hold any of them,
+        # so the conservative answer is every element of every binding.
+        elements = []
+        for value in values:
+            for element in _bound_literal_elements(
+                    value, simple, set(seen), shadowed):
+                if element not in elements:
+                    elements.append(element)
+        return elements
     return []
 
 
@@ -1702,6 +1726,7 @@ def _alias_assignments(tree):
     """``(name, value)`` pairs a plain binding gives a bare name (#892 r27)."""
     pairs = []
     simple = _simple_bindings(tree)
+    scopes = {id(node): scope for scope, node in _walk_scoped(tree)}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -1716,6 +1741,11 @@ def _alias_assignments(tree):
             # #1953 fix-r1: a comprehension target is a binding like a ``for``
             # target (``[h(md, 'common', <stub>) for h in [operator.setattr]]``),
             # and the kinds table is what the receiver rules consult.
+            #
+            # Round 9 (GLM sibling r5 P3-4): a filter that can never hold
+            # yields nothing, so the target is never bound to an element.
+            if _emptied_comprehension(node):
+                continue
             for generator in node.generators:
                 elements = (generator.iter.elts
                             if isinstance(generator.iter, (ast.List, ast.Tuple,
@@ -1737,7 +1767,8 @@ def _alias_assignments(tree):
             # #892 r32: ``for m in (md,): m.common = <stub>`` binds the loop
             # target to an element the literal iterable names (codex boundary
             # r31 P0-5).
-            elements = _bound_literal_elements(node.iter, simple)
+            elements = _bound_literal_elements(
+                node.iter, simple, shadowed=_shadowed_parameters(scopes.get(id(node))))
             for element in elements:
                 pairs.extend(_target_value_pairs(node.target, element, simple))
         elif isinstance(node, (ast.With, ast.AsyncWith)):
@@ -3147,7 +3178,8 @@ def _scoped_alias_assignments(tree):
             pairs.append((binding_scope(scope, node.target.id), node.target.id,
                           node.value, scope))
         elif isinstance(node, (ast.For, ast.AsyncFor)):
-            elements = _bound_literal_elements(node.iter, simple)
+            elements = _bound_literal_elements(
+                node.iter, simple, shadowed=_shadowed_parameters(scope))
             for element in elements:
                 for name, value in _target_value_pairs(node.target, element, simple):
                     pairs.append((binding_scope(scope, name), name, value, scope))
@@ -3214,11 +3246,6 @@ def _loop_target_used_as_handle(body, name):
     return False
 
 
-def _statically_true(node):
-    """True for a literal that is always truthy (#1953 r8, codex r4 P1)."""
-    return isinstance(node, ast.Constant) and bool(node.value)
-
-
 #: Calls that only *read* their argument.  Handing a write handle to one of
 #: them does not let it reach the receiver, so the after-loop scan stays quiet
 #: (``for _h in _hs: ...`` followed by ``print(_h)`` is a pure read).  Anything
@@ -3242,24 +3269,58 @@ def _argument_names(arguments):
     return names
 
 
+def _class_body_statements(tree):
+    """Ids of the statements executed in a class body (#1953 fix-r1 round 9).
+
+    A class body runs in its own namespace: ``class C: print = 1`` does not
+    shadow the enclosing function's ``print`` (codex r5 P1-7), so the names it
+    binds must not be read as the enclosing scope's locals.
+    """
+    ids = set()
+
+    def visit(statements):
+        for statement in statements:
+            if id(statement) in ids:
+                continue
+            ids.add(id(statement))
+            for block in _statement_blocks(statement):
+                visit(block)
+            if isinstance(statement, ast.ClassDef):
+                visit(statement.body)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            visit(node.body)
+    return ids
+
+
 def _scope_local_names(tree, owner):
     """Names bound directly in the scope *owner* (``None`` = module).
 
     Nested scopes are a different scope and stay out: a nested ``def`` is seen
     at *owner* (it binds its own name there), but its body is not.
+
+    #1953 fix-r1 round 9 (codex r5 P0-4 / P1-7): the *parameters* of a nested
+    ``def``/``lambda`` belong to that nested scope, so listing them here made
+    ``def inner(): def unused(h): pass; h('common', <stub>)`` look like a
+    shadowed name -- the closure escape walked straight through.  The owner's
+    own parameters, by contrast, really are its locals.
     """
     names = set()
+    if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        names.update(_argument_names(owner.args))
+    class_body = _class_body_statements(tree)
     for scope, node in _walk_scoped(tree):
         if scope is not owner:
             continue
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            names.add(node.name)
-            names.update(_argument_names(node.args))
-        elif isinstance(node, ast.Lambda):
-            names.update(_argument_names(node.args))
-        elif isinstance(node, ast.ClassDef):
-            names.add(node.name)
-        elif isinstance(node, ast.NamedExpr):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef, ast.Lambda)):
+            if not isinstance(node, ast.Lambda):
+                names.add(node.name)
+            continue
+        if id(node) in class_body:
+            continue
+        if isinstance(node, ast.NamedExpr):
             names.update(_target_names(node.target))
         elif isinstance(node, ast.match_case):
             names.update(_match_capture_names(node.pattern))
@@ -3269,7 +3330,7 @@ def _scope_local_names(tree, owner):
     return names
 
 
-def _nested_scope_uses(node, tracked):
+def _nested_scope_uses(node, tracked, outer_bound=()):
     """True when a nested ``def``/``lambda`` reads a tracked name it does not bind.
 
     #1953 fix-r1 round 8 (codex r4 P0-2 / GLM boundary r4 P0): r6 skipped every
@@ -3281,6 +3342,11 @@ def _nested_scope_uses(node, tracked):
 
     The body goes through the same safe-position walk as the enclosing scope,
     so ``def _inner(): print(_h)`` is still only a read.
+
+    #1953 fix-r1 round 9 (GLM boundary r5 P1-2): the read-only call table is
+    checked against *both* binding sets.  ``print = _sink`` at module level and
+    ``lambda: print(_h)`` inside a function must not treat ``print`` as the
+    builtin just because the lambda does not bind it.
     """
     if isinstance(node, ast.Lambda):
         bound = set(_argument_names(node.args))
@@ -3288,10 +3354,11 @@ def _nested_scope_uses(node, tracked):
     else:
         bound = set(_argument_names(node.args)) | _scope_local_names(node, node)
         body = node.body
+    scope_bound = set(outer_bound) | bound
     free = tracked - bound
     if not free:
         return False
-    return _statements_use(body, free, bound)
+    return _statements_use(body, free, scope_bound)
 
 
 def _statements_use(statements, tracked, scope_bound):
@@ -3319,11 +3386,14 @@ def _fresh_value(node, scope_bound=()):
     not the handle the loop just handed over (codex r3 caught the first
     version withdrawing it).
 
-    #1953 fix-r1 round 8 (codex r4 P0-3 / GLM boundary r4 P2): only when the
-    name really still is the builtin.  ``object = lambda: hs[0]; h = object()``
-    hands the handle straight back, so a spelling the scope rebinds is not
-    fresh.  Anything else -- ``getattr(md, name)`` above all -- may still be a
-    handle, so the scan keeps going.
+    #1953 fix-r1 round 8 (codex r4 P0-3): only when the name really still is
+    the builtin.  ``object = lambda: hs[0]; h = object()`` hands the handle
+    straight back, so a spelling the scope rebinds is not fresh.
+
+    Round 9 (GLM boundary r5 P1-3): the rebinding may sit in *any* enclosing
+    scope.  A module-level ``object = lambda: _hs[0]`` shadowed the builtin
+    for a loop inside a function just as well, so the caller passes the whole
+    enclosing chain (``_enclosing_bound_names``), not the innermost scope.
     """
     if isinstance(node, ast.Call):
         return (isinstance(node.func, ast.Name)
@@ -3334,29 +3404,39 @@ def _fresh_value(node, scope_bound=()):
                              ast.GeneratorExp, ast.Lambda, ast.JoinedStr))
 
 
+def _statically_true(node):
+    """True for a literal that is always truthy (#1953 r8, codex r4 P1)."""
+    return isinstance(node, ast.Constant) and bool(node.value)
+
+
 def _statically_false(node):
     """True for a literal that is always falsy (#1953 r7, codex r3 P1)."""
     return isinstance(node, ast.Constant) and not node.value
 
 
-def _alias_and_fresh(statement, tracked, scope_bound=()):
-    """``(aliases, fresh)`` a plain assignment introduces (#1953 r7).
+def _assignment_effect(statement, tracked, scope_bound):
+    """``(aliases, fresh)`` an assignment introduces (#1953 fix-r1 round 9).
 
-    ``_f = _h`` copies the handle into another name -- a use of ``_h`` that a
-    later ``_f('common', <stub>)`` writes through (GLM boundary r3 P1).  A
-    rebinding to a provably fresh value, by contrast, ends the name's life.
+    ``_f = _h`` does not hand the handle anywhere by itself -- the copy is
+    followed instead, so ``_f = _h`` + ``print(_f)`` stays a read while
+    ``_f = _h`` + ``_f('common', <stub>)`` is the write (GLM boundary r3 P1).
     Chained targets (``_f = _g = _h``) alias every leaf (GLM boundary r4 P2).
+    Only plain-name targets qualify: ``d[0] = _h`` stores the handle into a
+    container and is a hand-over, judged by the ordinary expression walk.
+
+    A target bound to a provably fresh value stops holding the handle
+    (``_h = object()``) -- but only when the value really is fresh
+    (:func:`_fresh_value`).
     """
     if isinstance(statement, ast.Assign):
         targets, value = statement.targets, statement.value
     elif isinstance(statement, ast.AnnAssign):
         targets, value = [statement.target], statement.value
-        if value is None:
-            return set(), set()
     else:
         return set(), set()
-    names = [target.id for target in targets
-             if isinstance(target, ast.Name)]
+    if value is None:
+        return set(), set()
+    names = [target.id for target in targets if isinstance(target, ast.Name)]
     if len(names) != len(targets):
         return set(), set()
     if isinstance(value, ast.Name):
@@ -3381,13 +3461,29 @@ def _handle_use(node, tracked, scope_bound, aliases, read_only=False):
     ``read_only`` is set while walking such a position, so a bare name there
     is a read (``return _h is None``) while a compound expression is still
     inspected (``_h() == 1``, ``_h[0] is None``).
+
+    #1953 fix-r1 round 9 (codex r5 P0-1/P0-2/P0-3/P1-5/P1-6):
+
+    * an assignment's right-hand side is walked *before* the alias bookkeeping,
+      so ``x = [_h('common', <stub>)]`` is the write it looks like;
+    * ``read_only`` stops at a call whose callee is not a read-only builtin --
+      ``print(helper(_h))`` hands the handle to ``helper``;
+    * a bare name in a truth test (``if _h:``) is a read, an attribute *load*
+      (``_h.__name__``) is a read of the handle, and ``del _h`` ends the name
+      instead of using it.
     """
     if isinstance(node, ast.Name):
-        if isinstance(node.ctx, ast.Store):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
             return False
         return node.id in tracked and not read_only
     if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
-        return _nested_scope_uses(node, tracked)
+        return _nested_scope_uses(node, tracked, scope_bound)
+    if isinstance(node, ast.Attribute):
+        # ``_h.common = <stub>`` writes *through* the handle; ``name =
+        # _h.__name__`` only reads the bound method (codex r5 P1-6).
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            return _handle_use(node.value, tracked, scope_bound, aliases, False)
+        return _handle_use(node.value, tracked, scope_bound, aliases, True)
     if isinstance(node, ast.NamedExpr):
         if (isinstance(node.target, ast.Name) and isinstance(node.value, ast.Name)
                 and node.value.id in tracked):
@@ -3414,71 +3510,91 @@ def _handle_use(node, tracked, scope_bound, aliases, read_only=False):
         pure = (isinstance(callee, ast.Name)
                 and callee.id in _READ_ONLY_CALLS
                 and callee.id not in scope_bound)
-        if not pure and _handle_use(callee, tracked, scope_bound, aliases):
+        # The callee position is never a read: ``print(_h())`` calls the
+        # handle.  And ``read_only`` must not survive into the arguments of a
+        # call that is not read-only -- ``print(helper(_h))`` hands the handle
+        # to ``helper`` (codex r5 P0-3 / GLM boundary r5 P0-1).
+        if _handle_use(callee, tracked, scope_bound, aliases, False):
             return True
         for argument in node.args:
-            if _handle_use(argument, tracked, scope_bound, aliases, pure or read_only):
+            if _handle_use(argument, tracked, scope_bound, aliases, pure):
                 return True
         for keyword in node.keywords:
-            if _handle_use(keyword.value, tracked, scope_bound, aliases,
-                           pure or read_only):
+            if _handle_use(keyword.value, tracked, scope_bound, aliases, pure):
                 return True
+        return False
+    if _emptied_comprehension(node):
+        # Round 9 scans a comprehension's element (r8 skipped it whole, which
+        # let ``[_h('common', <stub>) for _j in (md,)]`` through), so it has to
+        # ask the r8 question again: a statically false filter runs nothing
+        # (GLM sibling r5 P2-3).
         return False
     return any(_handle_use(child, tracked, scope_bound, aliases, read_only)
                for child in ast.iter_child_nodes(node)
                if not isinstance(child, ast.stmt))
 
 
+def _definition_header(statement):
+    """Expressions a ``def``/``class`` evaluates in the enclosing scope."""
+    header = list(getattr(statement, 'decorator_list', ()))
+    arguments = getattr(statement, 'args', None)
+    if arguments is not None:
+        header.extend(arguments.defaults)
+        header.extend(item for item in arguments.kw_defaults if item is not None)
+        for argument in (list(getattr(arguments, 'posonlyargs', ()))
+                         + list(arguments.args) + list(arguments.kwonlyargs)
+                         + [item for item in (arguments.vararg, arguments.kwarg)
+                            if item is not None]):
+            if argument.annotation is not None:
+                header.append(argument.annotation)
+    if getattr(statement, 'returns', None) is not None:
+        header.append(statement.returns)
+    header.extend(getattr(statement, 'bases', ()))
+    header.extend(keyword.value for keyword in getattr(statement, 'keywords', ()))
+    return header
+
+
 def _handle_use_in_statement(statement, tracked, scope_bound):
     """``(used, aliases, fresh)`` for one statement's own expressions."""
     aliases = set()
-    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         # ``iter_child_nodes`` would skip the body, so a nested definition that
         # closes over the loop target never reached ``_nested_scope_uses``
-        # (#1953 fix-r1 round 8, codex r4 P0-2).
-        return _nested_scope_uses(statement, tracked), set(), set()
+        # (#1953 fix-r1 round 8, codex r4 P0-2).  The header, by contrast, is
+        # evaluated right here: ``def inner(x=_h('common', <stub>))`` writes at
+        # definition time (codex r5 P0-2).
+        for item in _definition_header(statement):
+            if _handle_use(item, tracked, scope_bound, aliases):
+                return True, set(), set()
+        if isinstance(statement, ast.ClassDef):
+            return _statements_use(statement.body, tracked, scope_bound), set(), set()
+        return _nested_scope_uses(statement, tracked, scope_bound), set(), set()
+    aliases = set()
+    fresh = set()
+    skip = None
     if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-        al, fr = _alias_and_fresh(statement, tracked, scope_bound)
-        if al or fr:
-            return False, al, fr
+        # The right-hand side runs first: ``x = [_h('common', <stub>)]`` is a
+        # write even though the value is a fresh container (codex r5 P0-1).
+        # Only the pure copy ``_f = _h`` skips its own value -- the copy is
+        # followed through ``aliases`` instead.
+        aliases, fresh = _assignment_effect(statement, tracked, scope_bound)
+        if aliases:
+            skip = id(statement.value)
+    # A truth test reads the handle: ``if _h:`` / ``while _h:`` / ``assert _h``
+    # are not hand-overs (codex r5 P1-5).  Calls inside the test are still
+    # inspected -- ``read_only`` stops at a non-read-only callee.
+    truth_tests = set()
+    if isinstance(statement, (ast.If, ast.While)):
+        truth_tests.add(id(statement.test))
+    elif isinstance(statement, ast.Assert):
+        truth_tests.add(id(statement.test))
     for child in ast.iter_child_nodes(statement):
-        if isinstance(child, ast.stmt):
+        if isinstance(child, ast.stmt) or id(child) == skip:
             continue
-        if _handle_use(child, tracked, scope_bound, aliases):
+        if _handle_use(child, tracked, scope_bound, aliases,
+                       id(child) in truth_tests):
             return True, set(), set()
-    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-        al, fr = _alias_and_fresh(statement, tracked, scope_bound)
-        aliases |= al
-        return False, aliases, fr
-    return False, aliases, set()
-
-
-def _find_loop_path(statements, loop):
-    """Blocks from the scope down to *loop*, outermost first (#1953 r8)."""
-    for index, statement in enumerate(statements):
-        if statement is loop:
-            return [(statements, index)]
-        for block in _statement_blocks(statement):
-            found = _find_loop_path(block, loop)
-            if found is not None:
-                return [(statements, index)] + found
-    return None
-
-
-def _scan_block(statements, state, scope_bound):
-    """Walk *statements* in execution order, tracking handle aliases.
-
-    *state* carries ``tracked`` (names that may still hold the handle),
-    ``used`` (an escape was found) and ``resume`` (per-block first statement
-    to look at -- everything before the loop has already run).
-    """
-    start = state['resume'].get(id(statements), 0)
-    for index, statement in enumerate(statements):
-        if state['used']:
-            return
-        if index < start or statement is state['loop']:
-            continue
-        _scan_statement(statement, state, scope_bound)
+    return False, aliases, fresh
 
 
 def _statement_blocks(statement):
@@ -3500,101 +3616,61 @@ def _statement_blocks(statement):
     return []
 
 
-def _scan_expression(statement, state, scope_bound):
-    used, aliases, fresh = _handle_use_in_statement(
-        statement, state['tracked'], scope_bound)
-    if used:
-        state['used'] = True
-        return
-    state['tracked'] |= aliases
-    state['tracked'] -= fresh
+def _enclosing_bound_names(tree, owner):
+    """Names bound in *owner* or in any scope that encloses it (#1953 r9).
+
+    The read-only call table and the fresh-constructor table both ask "does
+    this spelling still mean the builtin here", and a shadow in an outer scope
+    answers it just as well as one in the innermost scope (GLM boundary r5
+    P1-2 / P1-3).
+    """
+    parents = _scope_parents(tree)
+    scopes = []
+    scope = owner
+    while True:
+        scopes.append(scope)
+        if scope is None:
+            break
+        scope = parents.get(scope)
+    names = set()
+    for scope in scopes:
+        names |= _scope_local_names(tree, scope)
+    return names
 
 
-def _scan_statement(statement, state, scope_bound):
-    """Scan one statement's own expressions, then apply its rebindings."""
-    if isinstance(statement, ast.If):
-        entry = set(state['tracked'])
-        for child in ast.iter_child_nodes(statement):
-            if isinstance(child, ast.stmt):
-                continue
-            _scan_expression_node(child, state, scope_bound)
-        if _statically_true(statement.test):
-            _scan_block(statement.body, state, scope_bound)
-            return
-        if _statically_false(statement.test):
-            _scan_block(statement.orelse, state, scope_bound)
-            return
-        # Only one branch runs, and which one is unknown: keep a name alive if
-        # either branch keeps it (``if cond: h = None`` must not end the scan).
-        _scan_block(statement.body, state, scope_bound)
-        after_body = set(state['tracked'])
-        state['tracked'] = set(entry)
-        _scan_block(statement.orelse, state, scope_bound)
-        state['tracked'] |= after_body | entry
-        return
-    if isinstance(statement, ast.Try):
-        entry = set(state['tracked'])
-        _scan_block(statement.body, state, scope_bound)
-        after_body = set(state['tracked'])
-        ends = []
-        for handler in statement.handlers:
-            # An exception may fire anywhere in the body, so a handler starts
-            # from the entry state as well (codex r4 P0-1: ``raise`` made the
-            # rebinding below it unreachable and the ``finally`` use vanished).
-            state['tracked'] = set(entry) | after_body
-            _scan_block(handler.body, state, scope_bound)
-            ends.append(set(state['tracked']))
-        state['tracked'] = set(after_body)
-        _scan_block(statement.orelse, state, scope_bound)
-        joined = set(entry) | after_body | set(state['tracked'])
-        for end in ends:
-            joined |= end
-        state['tracked'] = joined
-        _scan_block(statement.finalbody, state, scope_bound)
-        state['tracked'] |= joined
-        return
-    if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
-        entry = set(state['tracked'])
-        for child in ast.iter_child_nodes(statement):
-            if child is statement.body or child is statement.orelse:
-                continue
-            if isinstance(child, ast.stmt):
-                continue
-            _scan_expression_node(child, state, scope_bound)
-        _scan_block(statement.body, state, scope_bound)
-        _scan_block(statement.orelse, state, scope_bound)
-        # The body may run zero times.
-        state['tracked'] |= entry
-        return
-    if isinstance(statement, (ast.With, ast.AsyncWith)):
-        _scan_expression(statement, state, scope_bound)
-        _scan_block(statement.body, state, scope_bound)
-        return
-    if isinstance(statement, ast.Match):
-        entry = set(state['tracked'])
-        _scan_expression_node(statement.subject, state, scope_bound)
-        ends = []
-        for case in statement.cases:
-            state['tracked'] = set(entry)
-            _scan_block(case.body, state, scope_bound)
-            ends.append(set(state['tracked']))
-        state['tracked'] = set(entry)
-        for end in ends:
-            state['tracked'] |= end
-        return
-    _scan_expression(statement, state, scope_bound)
+def _certain_statements(tree):
+    """Ids of statements that run whenever their block is entered (#1953 r9).
+
+    Only these may end a name's life by rebinding it to a fresh value.  A
+    rebind inside ``if cond:`` may simply not happen (codex r3 P0), and one
+    after an unconditional ``raise`` never happens at all (codex r4 P0-1), so
+    the scan keeps the handle live in both cases -- fail-closed.  The escape
+    scan itself still looks at every statement: a source audit does not want a
+    write hidden behind ``if False:``, which is exactly how the negative
+    controls inject a body.
+    """
+    certain = set()
+
+    def mark(statements):
+        for statement in statements:
+            certain.add(id(statement))
+            if isinstance(statement, ast.If):
+                if _statically_true(statement.test):
+                    mark(statement.body)
+                elif _statically_false(statement.test):
+                    mark(statement.orelse)
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                mark(statement.body)
+
+    mark(getattr(tree, 'body', ()))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            mark(node.body)
+    return certain
 
 
-def _scan_expression_node(node, state, scope_bound):
-    """Scan a bare expression (an ``if`` test, a ``for`` iterable)."""
-    aliases = set()
-    if _handle_use(node, state['tracked'], scope_bound, aliases):
-        state['used'] = True
-        return
-    state['tracked'] |= aliases
-
-
-def _loop_target_used_after(tree, scope_root, loop, name, parents):
+def _loop_target_used_after(tree, scope_root, loop, name):
     """True when *name* is still used as a handle after the loop.
 
     #1953 fix-r1 round 5 (codex r3 P0): the r4 version stopped at any
@@ -3602,23 +3678,37 @@ def _loop_target_used_after(tree, scope_root, loop, name, parents):
     call went through.  #1953 fix-r1 round 7 (GLM boundary r3 P1): the handle
     also leaves through a second name (``_f = _h``) or a ``return``.
 
-    #1953 fix-r1 round 8 (codex r4): the flat "scan every later statement"
-    walk was replaced by a block-ordered walk (``_scan_block``) and the escape
-    test was inverted to a short allowlist (``_handle_use``).  The five escapes
-    codex r4 reported -- a rebinding made unreachable by ``raise``, a closure,
-    a shadowed builtin, a ``with``/exception alias, a two-level relay -- all
-    came from enumerating *bad* spellings.
+    #1953 fix-r1 round 9 (GLM concurrency r5 P0-1): round 8 asked "which
+    statements can still run" and pruned a statically false ``if`` body.  For
+    a source audit that is the wrong question -- and it made the rule blind to
+    exactly the code the negative controls inject, so five of the round-8
+    mutants SURVIVED.  Every statement of the scope *after* the loop is
+    examined in source order, and a tracked name is never dropped: a rebinding
+    may or may not run, so the handle stays live.  That is a superset of the
+    round-8 answer (fail-closed, like every other rule here) and it retires
+    the execution-order model -- ``_scan_block`` / ``_scan_statement`` /
+    ``_find_loop_path`` / ``_fresh_value`` -- that produced the round 5..8
+    regressions.
     """
-    root = getattr(scope_root, 'body', ())
-    path = _find_loop_path(root, loop)
-    resume = {}
-    for block, index in path or ():
-        resume[id(block)] = index
-    state = {'tracked': {name}, 'used': False, 'resume': resume, 'loop': loop}
-    bound = _scope_local_names(tree, scope_root if not isinstance(
-        scope_root, ast.Module) else None)
-    _scan_block(root, state, bound)
-    return state['used']
+    owner = None if isinstance(scope_root, ast.Module) else scope_root
+    scope_bound = _enclosing_bound_names(tree, owner)
+    certain = _certain_statements(tree)
+    tracked = {name}
+    end = getattr(loop, 'end_lineno', None) or loop.lineno
+    statements = [node for scope, node in _walk_scoped(tree)
+                  if scope is owner and isinstance(node, ast.stmt)]
+    statements.sort(key=lambda node: (node.lineno, node.col_offset))
+    for statement in statements:
+        if statement.lineno <= end:
+            continue
+        used, aliases, fresh = _handle_use_in_statement(
+            statement, tracked, scope_bound)
+        if used:
+            return True
+        tracked |= aliases
+        if id(statement) in certain:
+            tracked -= fresh
+    return False
 
 
 def _comprehension_uses_handle(node, name, kinds):
@@ -3762,7 +3852,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 names = set(_target_names(generator.target))
                 if not (isinstance(element, ast.Name) and element.id in names):
                     continue
-                for item in _bound_literal_elements(generator.iter, simple):
+                for item in _bound_literal_elements(
+                        generator.iter, simple,
+                        shadowed=_shadowed_parameters(scope)):
                     found |= receiver_roots(item, scope)
             return found
         return set()
@@ -3971,8 +4063,7 @@ def _receiver_attribute_writes(tree, receivers, shared):
             continue
         body = list(node.body) + list(node.orelse)
         if not _loop_target_used_as_handle(body, target.id):
-            if not _loop_target_used_after(
-                    tree, scope or tree, node, target.id, parents):
+            if not _loop_target_used_after(tree, scope or tree, node, target.id):
                 continue
         for level in _chain(scope):
             if (level, iter_name) in handle_containers:
@@ -3993,6 +4084,12 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
                                  ast.DictComp)):
             continue
+        # Round 9 (GLM sibling r5 P1-1 / boundary r5 P1-4): this is the fourth
+        # consumer of a comprehension result and the only one the round-8
+        # helper was not wired into.  ``[h('common', <stub>) for h in (md,)
+        # if False]`` never runs, so poisoning ``md`` there was a false FAIL.
+        if _emptied_comprehension(node):
+            continue
         for generator in node.generators:
             names = [name for name in _target_names(generator.target)
                      if _comprehension_uses_handle(node, name, kinds)]
@@ -4001,7 +4098,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
             if isinstance(generator.iter, (ast.List, ast.Tuple, ast.Set)):
                 elements = generator.iter.elts
             else:
-                elements = _bound_literal_elements(generator.iter, simple)
+                elements = _bound_literal_elements(
+                    generator.iter, simple,
+                    shadowed=_shadowed_parameters(scope))
             for element in elements:
                 poisoned |= (receiver_roots(element, scope)
                              | namespace_dict_roots(element, scope))
@@ -8582,6 +8681,82 @@ def aggregation_audit():
                             frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test carried '
                         'the loop target past a nested local rebinding')
+    # #1953 fix-r1 round 9 (codex r5 P0-1..P0-4, P1-5..P1-8 / GLM boundary
+    # r5 P0-1, P1-2, P1-3, P2-5): the execution-order model of round 8 was
+    # retired for a flat source-ordered scope walk.  Each probe below is one
+    # shape the two reviewers reported; the escape count and the read count
+    # are pinned separately so a future rewrite cannot quietly trade one for
+    # the other.
+    def _r9_probe(body, prelude='', signature='def main():\n'):
+        head = ("    _n = '__setattr__'\n"
+                "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+                "    for _h in _hs:\n"
+                "        pass\n")
+        return ast.parse(prelude + signature + head + body
+                         + "def reader(report):\n"
+                         "    return md.common.aggregate_status(report)[1]\n")
+
+    for _label, _body, _prelude, _signature, _want in (
+            ("an assignment whose value calls the handle",
+             "    _x = [_h('common', object())]\n", '', 'def main():\n', True),
+            ("a definition default that writes at def time",
+             "    def _inner(_x=_h('common', object())):\n"
+             "        pass\n", '', 'def main():\n', True),
+            ("a handle handed to an unknown callee in a read-only slot",
+             "    print(_helper(_h))\n", '', 'def main():\n', True),
+            ("a nested parameter that does not shadow the outer handle",
+             "    def _inner():\n"
+             "        def _unused(_h):\n"
+             "            pass\n"
+             "        _h('common', object())\n"
+             "    _inner()\n", '', 'def main():\n', True),
+            ("a handle handed to an unknown callee inside a comparison",
+             "    if _sink(_h) == 0:\n"
+             "        pass\n", '', 'def main():\n', True),
+            ("a read-only builtin shadowed in an outer scope",
+             "    _g = lambda: print(_h)\n"
+             "    _g()\n", 'print = _sink\n', 'def main():\n', True),
+            ("a constructor shadowed in an outer scope",
+             "    _h = object()\n"
+             "    _h('common', object())\n", 'object = lambda: None\n',
+             'def main():\n', True),
+            ("an ambiguous literal binding of the iterated name",
+             "    for _m in _items:\n"
+             "        _m.common = object()\n", '_items = ()\n_items = (md,)\n',
+             'def main():\n', True),
+            ("a bare handle in a truth test",
+             "    if _h:\n"
+             "        pass\n"
+             "    while _h:\n"
+             "        break\n", '', 'def main():\n', False),
+            ("an attribute read on the handle",
+             "    _name = _h.__name__\n", '', 'def main():\n', False),
+            ("a parameter of a nested definition",
+             "    def _inner(print):\n"
+             "        pass\n"
+             "    print(_h)\n", '', 'def main():\n', False),
+            ("a class-body binding",
+             "    class _C:\n"
+             "        print = 1\n"
+             "    print(_h)\n", '', 'def main():\n', False),
+            ("a deleted loop target",
+             "    del _h\n", '', 'def main():\n', False),
+            ("a parameter that shadows a module-level literal",
+             "    for _m in _items:\n"
+             "        _m.common = object()\n", '_items = (md,)\n',
+             'def main(_items):\n', False),
+            ("a comprehension whose filter can never hold",
+             "    _g = [operator.setitem(_h, 'common', object())"
+             " for _h in (md,) if False]\n", '', 'def main():\n', False),
+    ):
+        _tree = _r9_probe(_body, _prelude, _signature)
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                           frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 9)')
     if 'md' not in _withdrawn_receivers(getattribute_name_probe, _1953_rel,
                                         frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test trusted a '
