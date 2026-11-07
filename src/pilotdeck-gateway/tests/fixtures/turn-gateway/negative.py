@@ -163,9 +163,11 @@ with mutating_sources(repo, [gateway, connection, registry]) as snapshots:
         for mutant in selected:
             assert all(p.read_bytes() == data for p, data in original.items()), 'source changed outside this run'
             # #1908: the shared wait replaces the inline 300 s-sample /
-            # 1800 s-deadline loop. Same contract (bounded samples with one
-            # cold-bootstrap exemption), one shared budget above the
-            # single-sample cap instead of an equal-values dead end.
+            # 1800 s-deadline loop. The sample bounding is unchanged
+            # (one cold-bootstrap exemption), but the per-sample wait
+            # deadline narrows 1800 s -> the shared 600 s constant, which
+            # stays above the single-sample cap; exceeding it fails closed
+            # instead of retrying for 30 minutes.
             slots = wait_for_slot(repo / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             # 69 = no unified gate on this machine (CI has none): no shared quota.
             assert slots.returncode in (0, 69)
