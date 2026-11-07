@@ -49,6 +49,9 @@ fn negative_fixture_anchors_and_checker_controls() {
         // CI 里从没跑过（评审 r1 sibling#2 / concurrency#5）。
         ("_negkit/test_non_head.py", &[][..]),
         ("_negkit/negative_non_head.py", &[][..]),
+        // #1540 r3：共享件 claim_dir/select/registered 的自测此前不在任何
+        // CI 入口（评审 r3 sibling#4）；-I 下自举导入路径后可直接跑。
+        ("test_negative_selection.py", &[][..]),
         ("negative-restore/test_restore.py", &[][..]),
         (
             "negative-restore/test_restore.py",
