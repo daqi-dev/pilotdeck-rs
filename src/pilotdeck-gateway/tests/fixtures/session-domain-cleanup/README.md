@@ -1752,3 +1752,29 @@ Like rounds 24 to 30, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 32 (GLM r30 sibling P1-1 and boundary P1-1 on the same hole, boundary P1-2 a false PASS, sibling P2-1 a missing positive)
+
+Round 31 taught the carrier resolver about statically dead branches but left
+its twin `_module_alias_sources` without the filter, so a dead alias still
+decided a live hand-off (false FAIL, two roles independently).  The same dead
+alias kept the function in `_module_value_uses`, which turned `call_only` off
+and reported the clean module as a write even after the alias table was
+fixed -- the second half of the same chain.  GLM boundary also found the
+walrus callee: `(_g := held)(report)` is neither a `Name` nor an `Attribute`,
+so no branch of `_module_open_calls` saw the call and a real carrier write
+stayed green (false PASS, the direction that matters for a ruler).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A dead alias does not hand the function over** (false FAIL guard): `if False: saved = main`, then a live `saved(object())` after `import builtins as bi`. | self-test `round 32: a dead alias does not hand the function over`; `_module_alias_sources` takes the dead spans and all three call sites pass them |
+| **A dead alias is not a value use** (false FAIL guard): the same binding used to keep `main` in `_module_value_uses`, which disabled `call_only` for the whole function. | self-test `round 32: a dead alias does not hand the function over`; `_module_value_uses` drops loads that sit inside `_dead_line_ranges` |
+| **A dead open alias is not a site** (false FAIL guard): `if False: lk = globals`, then a live `lk(object())`. | self-test `round 32: a dead open alias is not a site`; the alias branch of `_module_open_calls` resolves through the dead-aware table |
+| **A walrus callee reaches the carrier** (false PASS guard): `held = globals()['main']; import builtins as bi; (_g := held)(object())`. | self-test `round 32: a walrus callee reaches the carrier`; `_module_open_calls` unwraps an `ast.NamedExpr` callee to its value |
+| **A live self-copy inside a loop keeps the carrier** (regression guard): the round-31 recursion guard must not prune the live case. | self-test `round 32: a live self-copy inside a loop keeps the carrier`; the loop call stays an open site |
+| **A live alias hand-off keeps the site** (control): `saved = main` outside any dead branch. | self-test `round 32: a live alias hand-off`; both the alias table and the value-use set keep `main` |
+
+Like rounds 24 to 31, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
