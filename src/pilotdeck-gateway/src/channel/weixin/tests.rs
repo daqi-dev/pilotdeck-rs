@@ -799,3 +799,82 @@ async fn guard_releases_the_chat_through_a_poisoned_lock() {
         "#1780 the guard releases the chat even when the lock is poisoned"
     );
 }
+
+/// Records the message text of every `submit_turn` and ends the turn at once,
+/// so a queued follow-up can run.
+#[derive(Default)]
+struct RecordingGateway {
+    submits: std::sync::Mutex<Vec<String>>,
+}
+
+impl RecordingGateway {
+    fn submits(&self) -> Vec<String> {
+        self.submits.lock().expect("#1822 submits lock").clone()
+    }
+}
+
+impl WeixinGatewayPort for RecordingGateway {
+    fn submit_turn(&self, input: JsValue) -> WeixinTurnStream {
+        let message = input
+            .get("message")
+            .and_then(JsValue::as_string)
+            .map(text_of)
+            .unwrap_or_default();
+        self.submits
+            .lock()
+            .expect("#1822 submits lock")
+            .push(message);
+        let (_sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        WeixinTurnStream {
+            receiver,
+            receipt: None,
+        }
+    }
+
+    fn abort_turn<'a>(
+        &'a self,
+        _session_key: &'a JsString,
+        _run_id: Option<&'a JsString>,
+        _reason: Option<&'a str>,
+    ) -> WeixinAbortFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// `WeixinChannel.ts:379-383` walks the whole `msgs` array synchronously
+/// (`for (const msg of msgs) void this.dispatchMessage(msg)`), and Node drains
+/// no microtask until that loop returns. An attachment message that fails
+/// without I/O (here: the declared-size guard) therefore cannot reach the
+/// session ahead of a plain-text message later in the same batch — the text
+/// one resolves first because its extraction never suspends. Starting the
+/// downloads only after the batch has been walked keeps that order instead of
+/// racing a spawned task against the loop.
+#[tokio::test]
+async fn a_later_text_message_in_the_same_batch_reaches_the_session_first() {
+    let root = Root::new();
+    let gateway = Arc::new(RecordingGateway::default());
+    let channel = channel_with_gateway(&root, gateway.clone());
+    // A file item whose declared size is past `WEIXIN_MAX_ATTACHMENT_BYTES`:
+    // `saveFromUrl` rejects it before it opens a socket.
+    let oversize = parse_json(
+        r#"{"from_user_id":"chat-1","context_token":"tok-1","message_type":1.0,
+            "item_list":[{"type":4.0,"file_item":{"file_name":"big.bin",
+              "file_size":52428801.0,"cdn_url":"http://127.0.0.1:9/big.bin"}}]}"#,
+    )
+    .expect("#1822 oversize file message json");
+    channel.start_poll_batch(vec![oversize, inbound_text_message("after")]);
+    until("both batch messages submit", || {
+        gateway.submits().len() == 2
+    })
+    .await;
+    let submits = gateway.submits();
+    crate::negative_assert_eq!(
+        submits[0],
+        "after",
+        "#1822 the later text message of a batch submits first"
+    );
+    crate::negative_assert!(
+        submits[1].starts_with("[Attachment diagnostics]\n- 微信附件处理失败："),
+        "#1822 the instantly failing attachment follows the text"
+    );
+}

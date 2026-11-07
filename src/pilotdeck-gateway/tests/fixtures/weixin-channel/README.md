@@ -172,7 +172,11 @@ listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 
 「再量一次」用的是**变换后**的字节（`save_from_url_checks_the_size_limit_after_the_transform`
 用上限 3 分别测「8 字节变换后 3 字节成功」与「2 字节变换后 6 字节被拒」）。
 消息级调度（同一 poll 批内谁先入会话）也只能读代码：`plan_incoming_items`
-把 item 归成文本 / 语音 / 诊断 / 需下载四类，只有最后一类让出到 spawned 任务。
+把 item 归成文本 / 语音 / 诊断 / 需下载四类；`start_poll_batch` 先把整批的同步前缀
+走完（文本消息在此时就完成映射与入队），再把「需下载」的那几条按批内顺序起任务
+——等价于 Node 把 `for (const msg of msgs) void dispatchMessage(msg)` 跑完才排空
+微任务队列。回归锁：`a_later_text_message_in_the_same_batch_reaches_the_session_first`
+（同批「声明大小超限的文件 + 文本」，文本必须先 submit）。
 
 负控七条（全部 KILLED）：`weixin-attachment-fallback-text` /
 `-submit-dropped` / `-diagnostics-dropped` / `-source-branch` 死在金样比对；
