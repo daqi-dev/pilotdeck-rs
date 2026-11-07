@@ -3,7 +3,10 @@
 //! generations; the session owner still serializes publication by key.
 use super::{
     HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionContext, SessionFactory,
+    backend::{BackendContext, SessionBackend, SessionBackendFactory},
 };
+#[cfg(test)]
+use crate::runtime::turn::host_factory::TurnHostFactory;
 use crate::{
     host::modules::tool_context::{HostToolCheckpoint, SeedState},
     runtime::{
@@ -14,11 +17,7 @@ use crate::{
             DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult, persistence::SessionRecording,
         },
         refresh::BoxFuture,
-        turn::{
-            host_factory::TurnHostFactory,
-            live::LiveSessionAdapter,
-            runner::tail::{SessionTail, TailConfig},
-        },
+        turn::runner::tail::{SessionTail, TailConfig},
     },
     storage::{
         Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState,
@@ -582,7 +581,7 @@ async fn release_all(mut releases: Vec<Release>) -> RuntimeResult {
 /// The prepared runtime creates the existing production host after restoration,
 /// so all session ports can bind this exact checkpoint and recorder.
 pub type HostBuilder =
-    Box<dyn FnOnce(SessionBinding) -> Result<TurnHostFactory, RuntimeError> + Send>;
+    Box<dyn FnOnce(SessionBinding) -> Result<Box<dyn SessionBackendFactory>, RuntimeError> + Send>;
 pub struct PreparedSession {
     pub resources: PreparedResources,
     pub host: HostBuilder,
@@ -1072,11 +1071,13 @@ impl ProjectSessionFactory {
                 file_state: Arc::new(move || Ok(lock(&reload_files).clone())),
             };
             Ok::<_, RuntimeError>((
-                host.into_live_session(storage.recorder.clone(), move || {
-                    lock(&projection.last_valid).messages.clone()
+                host.build(BackendContext {
+                    recorder: storage.recorder.clone(),
+                    history: Arc::new(move || lock(&projection.last_valid).messages.clone()),
+                    tail,
+                    reload_source: source.clone(),
                 })
-                .with_tail(tail)
-                .with_reload_source(source.clone()),
+                .await?,
                 checkpoint,
                 saved_files,
                 source,
@@ -1215,7 +1216,7 @@ impl Drop for PendingSession {
     }
 }
 struct OwnedSession {
-    adapter: LiveSessionAdapter,
+    adapter: Box<dyn SessionBackend>,
     reload_source: ReloadSource,
     checkpoint: HostToolCheckpoint,
     saved_files: Arc<Mutex<SeedState>>,
@@ -1242,9 +1243,19 @@ impl LiveSession for OwnedSession {
             turn,
             checkpoint: self.checkpoint.clone(),
             saved: self.saved_files.clone(),
-            started: self.adapter.reload_execution_started(),
+            started: self.adapter.execution_started(),
             finished: false,
         }))
+    }
+    fn backend_kind(&self) -> &'static str {
+        self.adapter.backend_kind()
+    }
+    fn backend_request(
+        &self,
+        method: String,
+        params: JsValue,
+    ) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> {
+        self.adapter.backend_request(method, params)
     }
     fn snapshot(&self) -> JsValue {
         self.adapter.snapshot()

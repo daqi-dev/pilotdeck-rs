@@ -591,6 +591,21 @@ async fn start_assembly(
                     resources: retained,
                     tail,
                     host: Box::new(move |binding| {
+                        #[cfg(unix)]
+                        if let crate::runtime::session::kernel::BackendOwner::Kernel(factory) =
+                            crate::runtime::session::kernel::KernelBackendFactory::select(
+                                &binding,
+                                &env,
+                                &options.project,
+                            )?
+                        {
+                            return Ok(Box::new(factory));
+                        }
+                        if options.sidecar.as_os_str().is_empty() {
+                            return Err(RuntimeError::new(
+                                "This session belongs to the legacy backend; configure --sidecar to open it.",
+                            ));
+                        }
                         recorders
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
@@ -618,25 +633,27 @@ async fn start_assembly(
                             lsp,
                         )?
                         .with_permission_mode_source(permission_source.clone());
-                        Ok(TurnHostFactory::new_with_signal(
-                            project,
-                            deployment,
-                            crate::host::Limits {
-                                close_timeout: options.drain_budget,
-                                ..Default::default()
-                            },
-                            Some("pilotdeck-agent-loop".into()),
-                            move |identity, recorder, signal| {
-                                turn_ports(&ports, identity, recorder, signal)
-                            },
-                        )
-                        .with_agent_config(config)
-                        // #1864 (b): TS re-reads the permission-mode override
-                        // on every run (InProcessGateway.ts:1443), so an
-                        // already-live session picks the change up without a
-                        // close. The source reads the same store the selector
-                        // method writes.
-                        .with_permission_mode_source(permission_source))
+                        Ok(Box::new(
+                            TurnHostFactory::new_with_signal(
+                                project,
+                                deployment,
+                                crate::host::Limits {
+                                    close_timeout: options.drain_budget,
+                                    ..Default::default()
+                                },
+                                Some("pilotdeck-agent-loop".into()),
+                                move |identity, recorder, signal| {
+                                    turn_ports(&ports, identity, recorder, signal)
+                                },
+                            )
+                            .with_agent_config(config)
+                            // #1864 (b): TS re-reads the permission-mode override
+                            // on every run (InProcessGateway.ts:1443), so an
+                            // already-live session picks the change up without a
+                            // close. The source reads the same store the selector
+                            // method writes.
+                            .with_permission_mode_source(permission_source),
+                        ))
                     }),
                 })
             })

@@ -204,7 +204,13 @@ impl Options {
             return Err("native listen requires 127.0.0.1 and a high port (or 0)".into());
         }
         let token_file = file(Path::new(take("--token-file")?), "token file")?;
-        let sidecar = file(Path::new(take("--sidecar")?), "sidecar")?;
+        let sidecar = if values.contains_key("--sidecar") {
+            file(Path::new(take("--sidecar")?), "sidecar")?
+        } else if std::env::var("PILOTDECK_SESSION_BACKEND").as_deref() == Ok("kernel") {
+            PathBuf::new()
+        } else {
+            return Err("native option --sidecar is required for legacy sessions".into());
+        };
         // #2036: `assembly` builds the child's command line from this path with
         // `to_string_lossy` (assembly.rs:398). Accepting raw bytes would launch
         // a different executable than the canonical path validated above, with

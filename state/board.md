@@ -4530,3 +4530,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 - **备忘**：mbp2 `p2sweep` 目录 24.5 GiB 归属不明（磁盘分诊 §3，末次写 11-07 08:59，纯 cargo-target）——暂留，无认领则下段处置；`pdrs-1901-target` 34.8 GiB 同列待归属确认。
 
 下一步：① 收货车道监视（#1485 / #1343 / #1631 三路收货代理 + #1344 r3 接续代理在飞，交付即核 DONE/自查 → 双谱系评审 → PR 入队，MERGED 核邮箱 + project-mark）；② #1685 / #1672（cb8）交付收货（#1685 走冻结装置特护口径）；③ #2272 等 #2208 合入后开工（同 `requests.rs` 准入段串行）；④ 合并队列监视（#2208 位 2 及后续），瓶颈=吞吐，MERGED 即核；⑤ 摸排③余量（#1543 dispatch-resume P0 接续入口、#115/#144 暂缓群复查）批次归置；⑥ 下一段 00:31 交接（就绪队列快照：**109 条（doing 98 / blocked 11）**，在飞车道 12 路：cb8 七路（#1460+#1461 / #1433 / #1432 / #1685 / #1672 / #1344 r3 / #1631 负控）+ mbp2 两路（#1265 / #1485 r3 收货）+ macmini-01 一路（#996）+ 本机收货若干；blocked 待解锁：#1367（等 #1631 释放 cb8 P3）/#2272（等 #2208 合入）/#1352 等同文件串行组）。
+
+### 2026-11-08 Kernel 产品 backend 接缝（lane C，开发中）
+
+已把 ProjectSessionFactory 的 SessionBinding 装配改为真实 SessionBackendFactory/SessionBackend；旧 TurnHostFactory 是其中一个实现。新增原生 Scheduler L-C ABI2/UDS backend，经 execution.input/events/control/respond 驱动，独立持久化 canonical project/session→Kernel ID、binding/context/revision owner，默认 legacy，新会话显式 kernel；Kernel 模式无需 sidecar 参数，旧 owner 不自动转换。`cargo check -p pilotdeck-gateway --offline` 已过。此为候选接缝，真实网关链、重连/权限/Unknown、显式导入、全产品能力清单与验收仍在推进；没有声明 678 项通过或旧循环退役。

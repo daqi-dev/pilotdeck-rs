@@ -55,6 +55,18 @@ pub trait LiveSession: Send + Sync {
             "Agent session seed read state is unavailable.",
         ))
     }
+    fn backend_kind(&self) -> &'static str {
+        "legacy"
+    }
+    /// Backend-owned operations return None only when this is the legacy backend.
+    /// Native failures remain errors; callers must not fall back to legacy state.
+    fn backend_request(
+        &self,
+        _method: String,
+        _params: JsValue,
+    ) -> crate::runtime::refresh::BoxFuture<Result<Option<JsValue>, RuntimeError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
     /// future has completed: the handle remains Draining through the project
@@ -286,6 +298,18 @@ impl LiveSessionHandle {
         if progress.state == HandleState::Active {
             progress.state = HandleState::Draining;
         }
+    }
+
+    pub fn backend_kind(&self) -> &'static str {
+        self.0.session.backend_kind()
+    }
+
+    pub fn backend_request(
+        &self,
+        method: String,
+        params: JsValue,
+    ) -> crate::runtime::refresh::BoxFuture<Result<Option<JsValue>, RuntimeError>> {
+        self.0.session.backend_request(method, params)
     }
 
     pub fn snapshot(&self) -> JsValue {
