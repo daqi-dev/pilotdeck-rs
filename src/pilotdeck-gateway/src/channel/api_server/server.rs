@@ -430,6 +430,16 @@ pub(crate) async fn handle(
     shared: Arc<ServerShared>,
     request: Request<Incoming>,
 ) -> Result<Response<crate::Body>, io::Error> {
+    // #1683: this is the same `http.createServer` surface as the webhook
+    // channel, so llhttp / `_http_server.js` reject a bad method, a non-ASCII
+    // or malformed target, an over-budget header block and an HTTP/1.1
+    // request without `Host` *before* any handler runs. The check therefore
+    // sits above `request_keep_alive` and the `Host`-based URL parse, and its
+    // rejection returns without `finish`: the bare 400/431 carry no `Date`,
+    // and the missing-Host 400 brings its own `Date` plus chunked framing.
+    if let Some(rejection) = crate::native_http::node_parser_admission(&request)? {
+        return Ok(rejection);
+    }
     let keep_alive = request_keep_alive(&request);
     let method = request.method().clone();
     let host = header_string(request.headers(), "host");

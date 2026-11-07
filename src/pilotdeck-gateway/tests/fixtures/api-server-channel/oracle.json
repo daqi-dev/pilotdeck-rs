@@ -882,6 +882,47 @@
       ]
     },
     {
+      "id": "unknown-method",
+      "options": {},
+      "requests": [
+        {
+          "method": "FROB",
+          "path": "/health"
+        }
+      ],
+      "expect": [
+        {
+          "status": 400,
+          "headers": {
+            "connection": "close"
+          },
+          "body": ""
+        }
+      ]
+    },
+    {
+      "id": "missing-host",
+      "options": {},
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "setHost": false
+        }
+      ],
+      "expect": [
+        {
+          "status": 400,
+          "headers": {
+            "connection": "close",
+            "date": "Thu, 01 Jan 1970 00:00:00 GMT",
+            "transfer-encoding": "chunked"
+          },
+          "body": ""
+        }
+      ]
+    },
+    {
       "id": "cors-exact",
       "options": {
         "corsOrigins": [

@@ -111,6 +111,45 @@ fn assert_boundary_body_len(id: &str, case: &Value) {
     );
 }
 
+/// #1683: pin the knobs of the two parser-admission cells, not just their
+/// recorded response. If the generator ever degrades `unknown-method` back to
+/// an allowed method, or drops `setHost: false` from `missing-host`, the cell
+/// would become a plain `/health` 200 control: the replay would then compare
+/// 200 == 200 and the admission gate could be removed without a red test.
+fn assert_parser_admission_cell_records_its_knob(id: &str, case: &Value) {
+    let requests = case["requests"].as_array().expect("#1333 requests");
+    let request = requests
+        .first()
+        .unwrap_or_else(|| panic!("#1333 {id}: the cell must record its request"));
+    match id {
+        "unknown-method" => {
+            let method = request["method"]
+                .as_str()
+                .unwrap_or_else(|| panic!("#1333 {id}: the request must record a method"));
+            assert_eq!(
+                method, "FROB",
+                "#1333 {id}: the cell must record a method outside Node's `http.METHODS`"
+            );
+        }
+        "missing-host" => assert_eq!(
+            request["setHost"],
+            Value::Bool(false),
+            "#1333 {id}: the cell must record `setHost: false`, or the replay sends a Host \
+             header and the request is admitted"
+        ),
+        other => panic!("#1333 {other}: not a parser-admission cell"),
+    }
+    let expected = case["expect"]
+        .as_array()
+        .and_then(|expect| expect.first())
+        .unwrap_or_else(|| panic!("#1333 {id}: the cell must record its response"));
+    assert_eq!(
+        expected["status"].as_u64(),
+        Some(400),
+        "#1333 {id}: both parser rejections are a bare 400, got {expected}"
+    );
+}
+
 #[test]
 fn recorded_body_expands_the_length_placeholder() {
     assert_eq!(recorded_body("<5 bytes>"), b"xxxxx");
@@ -375,6 +414,11 @@ struct ReqSpec {
     headers: Vec<(String, String)>,
     body: Vec<u8>,
     keep_alive: bool,
+    /// #1683: `false` when the oracle recorded a request sent with Node's
+    /// `http.request` `setHost: false`, i.e. the HTTP/1.1 request llhttp's
+    /// server parser rejects for a missing `Host`. The replay omits the same
+    /// header; sending one would turn the cell into a plain 200 control.
+    set_host: bool,
 }
 
 impl ReqSpec {
@@ -428,12 +472,21 @@ impl ReqSpec {
         let path = value["path"]
             .as_str()
             .unwrap_or_else(|| panic!("#1333 request is missing a string `path`: {value}"));
+        // #1683: absence is the normal request (a `Host` is written), so only
+        // a recorded boolean may suppress it. Anything else is fixture drift
+        // that would otherwise replay a differently-framed request.
+        let set_host = match value.get("setHost") {
+            None => true,
+            Some(Value::Bool(set_host)) => *set_host,
+            Some(other) => panic!("#1333 request `setHost` must be a boolean, found {other:?}"),
+        };
         Self {
             method: method.to_owned(),
             path: path.to_owned(),
             headers,
             body,
             keep_alive,
+            set_host,
         }
     }
 
@@ -444,6 +497,7 @@ impl ReqSpec {
             headers: vec![("x-hermes-session-id".to_owned(), chat.to_owned())],
             body: body.as_bytes().to_vec(),
             keep_alive: false,
+            set_host: true,
         }
     }
 
@@ -454,6 +508,7 @@ impl ReqSpec {
             headers: Vec::new(),
             body: Vec::new(),
             keep_alive: false,
+            set_host: true,
         }
     }
 }
@@ -539,10 +594,12 @@ async fn exchange_inner(addr: std::net::SocketAddr, spec: &ReqSpec) -> RawRespon
             };
         }
     };
-    let mut request = format!(
-        "{} {} HTTP/1.1\r\nHost: {}\r\n",
-        spec.method, spec.path, addr
-    );
+    let mut request = format!("{} {} HTTP/1.1\r\n", spec.method, spec.path);
+    // #1683: the missing-Host cell was recorded with `setHost: false`; writing
+    // the default `Host:` here would replay a different (admitted) request.
+    if spec.set_host {
+        request.push_str(&format!("Host: {addr}\r\n"));
+    }
     let mut has_length = false;
     for (name, value) in &spec.headers {
         if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
@@ -656,6 +713,17 @@ fn mask_text(text: &str) -> String {
 fn actual_headers(response: &RawResponse) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for (name, value) in &response.headers {
+        // #1683: hyper adds `content-length: 0` to the parser-level bare 400
+        // where Node writes no length at all — the same registered transport
+        // diff the native-http and webhook lanes already normalize
+        // (A8.4-NATIVE-HTTP-001, extended to this lane by
+        // A8.3-API-SERVER-005). Only the transport shape is masked; the
+        // replay's raw-byte pin (`parser_rejections_keep_the_registered_
+        // transport_shape`) asserts the line is actually there, so this
+        // normalization cannot hide a missing response.
+        if name == "content-length" && value == "0" {
+            continue;
+        }
         out.insert(
             name.clone(),
             if name == "date" {
@@ -1341,6 +1409,8 @@ async fn replays_real_ts_api_server_cells() {
         ids,
         [
             "method-dispatch",
+            "unknown-method",
+            "missing-host",
             "cors-exact",
             "cors-star",
             "auth",
@@ -1362,6 +1432,11 @@ async fn replays_real_ts_api_server_cells() {
         let id = case["id"].as_str().expect("#1333 case id");
         // Runs for the boundary cells only; a no-op everywhere else.
         assert_boundary_body_len(id, case);
+        // #1683: the two parser-admission cells must keep the knobs that make
+        // them rejections (FROB / `setHost: false`), not drift into controls.
+        if id == "unknown-method" || id == "missing-host" {
+            assert_parser_admission_cell_records_its_knob(id, case);
+        }
         // #1606 r3: `compare_response` walks `expect` by request index, so a
         // cell that records *more* responses than requests would leave the
         // surplus never compared — a TS surface silently skipped while the
@@ -1496,6 +1571,87 @@ async fn replays_real_ts_api_server_cells() {
             .await
             .expect("#1333 channel stop");
     }
+}
+
+/// #1683: the replay normalization drops `content-length: 0` (registered
+/// transport diff), so the raw bytes have to be pinned separately or a lane
+/// that stopped emitting the rejection entirely could still compare green on
+/// some other 400. Both requests are the oracle's own knobs, sent through the
+/// same `ReqSpec`/`exchange` path the replay uses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn parser_rejections_keep_the_registered_transport_shape() {
+    let started = start(options(&json!({ "options": {} }), None), None).await;
+    let bad_method = exchange(
+        started.addr,
+        &ReqSpec {
+            method: "FROB".to_owned(),
+            path: "/health".to_owned(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            keep_alive: false,
+            set_host: true,
+        },
+    )
+    .await;
+    assert_eq!(bad_method.status, Some(400), "#1683 FROB is a parser 400");
+    assert_eq!(bad_method.body, b"", "#1683 the bare 400 has no body bytes");
+    assert!(
+        !bad_method.headers.contains_key("date"),
+        "#1683 the bare 400 carries no Date, got {:?}",
+        bad_method.headers
+    );
+    assert_eq!(
+        bad_method.headers.get("connection").map(String::as_str),
+        Some("close"),
+        "#1683 the bare 400 closes the connection"
+    );
+    assert_eq!(
+        bad_method.headers.get("content-length").map(String::as_str),
+        Some("0"),
+        "#1683 pin the registered hyper `content-length: 0` the replay normalizes away"
+    );
+
+    let missing_host = exchange(
+        started.addr,
+        &ReqSpec {
+            method: "GET".to_owned(),
+            path: "/health".to_owned(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            keep_alive: false,
+            set_host: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        missing_host.status,
+        Some(400),
+        "#1683 HTTP/1.1 without Host is a parser 400"
+    );
+    assert_eq!(
+        missing_host.body,
+        b"",
+        "#1683 the missing-Host 400 has an empty body"
+    );
+    assert!(
+        missing_host.headers.contains_key("date"),
+        "#1683 the missing-Host 400 carries a Date, got {:?}",
+        missing_host.headers
+    );
+    assert_eq!(
+        missing_host
+            .headers
+            .get("transfer-encoding")
+            .map(String::as_str),
+        Some("chunked"),
+        "#1683 the missing-Host 400 is chunked (empty chunk terminator)"
+    );
+    assert_eq!(
+        missing_host.headers.get("connection").map(String::as_str),
+        Some("close"),
+        "#1683 the missing-Host 400 closes the connection"
+    );
+    started.handle.stop("pin-done").await.expect("#1333 stop");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1961,6 +2117,7 @@ async fn oversized_body_closes_without_response() {
             headers: Vec::new(),
             body: body.into_bytes(),
             keep_alive: false,
+            set_host: true,
         },
     )
     .await;
@@ -2004,6 +2161,7 @@ async fn body_at_the_exact_limit_is_read_then_rejected_as_json() {
             headers: Vec::new(),
             body: body.into_bytes(),
             keep_alive: false,
+            set_host: true,
         },
     )
     .await;

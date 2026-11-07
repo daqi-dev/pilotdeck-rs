@@ -206,6 +206,22 @@ mutations = [
         BUFFERED_SUBMIT_ERR,
         "#1737 a rejected buffered submit answers 500",
     ),
+    (
+        # #1683: disconnect the shared parser-level admission from this lane.
+        # `FROB /health` and the Host-less HTTP/1.1 request then fall through
+        # to the `/health` route and answer 200, so the recorded 400 cells go
+        # red. The anchor is the whole call site, not a mutant switch: the
+        # gate must be *wired here*, and a lane that silently drops the call
+        # is exactly the #1683 defect.
+        "api-server-parser-admission",
+        SERVER,
+        "    if let Some(rejection) = crate::native_http::node_parser_admission(&request)? {\n"
+        "        return Ok(rejection);\n"
+        "    }\n",
+        "    // mutant: parser admission disconnected\n",
+        REPLAY,
+        "#1333 unknown-method request 0: status differs",
+    ),
 ]
 
 def mutate(text, scope, replacements):
