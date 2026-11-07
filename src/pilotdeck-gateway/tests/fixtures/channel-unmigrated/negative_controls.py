@@ -155,6 +155,41 @@ MUTATIONS = [
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "sms"];',
      'loader_keys_partition_rejected_and_silent_subset',
      '#1853 bundle keys stay outside the loader table'),
+    # M16 (#1853 r2 r3 review, two families hit the same cell): the loader
+    # table loses the native-mount key `slack` — the covering cell only
+    # iterates the loader table, so only the native group's membership closure
+    # catches it.
+    ('native-mount-loses-loader-key', source / 'loader.rs',
+     '    "slack",\n    "matrix",',
+     '    "matrix",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 native-mount key is a loader-table key'),
+    # M17 (#1853 r2 r3 review): a silent key is duplicated into the native
+    # group — behavior cells cannot catch a key in both pinned groups, so the
+    # disjointness assertion is the only kill.
+    ('native-gains-silent-sms', source / 'tests.rs',
+     'const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];',
+     'const NATIVE_MOUNT_KEYS: [&str; 2] = ["slack", "sms"];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 silent-subset key is not a native-mount key'),
+    # M18 (#1853 r2 r3 review): the module subset whitelist loses a silent
+    # key; the silent-group reverse closure must kill it.
+    ('subset-whitelist-loses-silent-sms', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",\n    "feishu",\n'
+     '    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n'
+     '    "bluebubbles",\n    "slack",\n];',
+     'const SUBSET_CHANNEL_KEYS: [&str; 7] = [\n    "weixin",\n    "feishu",\n'
+     '    "apiServer",\n    "webhook",\n    "wecomCallback",\n'
+     '    "bluebubbles",\n    "slack",\n];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every silent-subset key is in the module subset whitelist'),
+    # M19 (#1853 r2 r3 review): the module subset whitelist gains a key in
+    # none of the three groups; the subset reverse closure must kill it.
+    ('subset-whitelist-gains-foreign-key', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",',
+     'const SUBSET_CHANNEL_KEYS: [&str; 9] = [\n    "probe1853",\n    "weixin",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every module subset key is silent-subset, bundle, or native-mount'),
 ]
 
 
