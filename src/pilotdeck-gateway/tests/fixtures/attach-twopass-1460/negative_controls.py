@@ -8,13 +8,16 @@ after restoration. Source bytes must equal HEAD; no alternate baseline exists.
 The two #1460 registration rows pin the split itself — the collection pass
 must still register a direct-content attachment (dropping the registration
 gate, or un-skipping the resolver projection, both turn the golden test
-red). The three silent-failure rows pin the other half of the split: a
-content-produced attachment keeps every path failure silent like the audio
-skip (unresolved, the P2 internal error, and the lone-surrogate diagnostic).
-The three #1461 rows pin the two spellings — the outer diagnostic keeps the
-lone surrogate through the TS-equivalent resolve while only the fs error
-spelling is lossy, and the diagnostics note carries the raw UTF-16 (not a
-replacement character) into the block text.
+red). The four silent-failure rows pin the other half of the split: a
+content-produced attachment keeps every pinned path failure silent like the
+audio skip (unresolved, the P2 internal error, the lone-surrogate
+diagnostic, and the open failure — the arms with a bound test; the deeper
+gates share the same `no_resolver` continue). The four #1461 rows pin the
+two spellings — the outer diagnostic keeps the lone surrogate through the
+TS-equivalent resolve while only the fs error spelling is lossy, the route
+words follow the raw spelling rather than the resolved tail, and the
+diagnostics note carries the raw UTF-16 (not a replacement character) into
+the block text.
 """
 import argparse
 import hashlib
@@ -35,11 +38,15 @@ from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 GOLDEN = 'native_process::services_tests::direct_content_with_channel_key_path_is_registered'
 SILENT = 'native_process::services_tests::direct_content_with_an_invalid_channel_key_path_stays_silent'
 ELOOP = 'native_process::services_tests::direct_content_with_an_eloop_path_stays_silent'
+UNOPENABLE = 'native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent'
 SURROGATE = 'native_process::services_tests::lone_surrogate_path_becomes_not_found_diagnostic'
+FOLDED = 'native_process::services_tests::folded_surrogate_path_routes_the_diagnostic_on_the_raw_spelling'
 GOLDEN_BLOCKS = '#1460 direct content with a channelKey path must keep message, image and note blocks'
 SILENT_BLOCKS = '#1460 content attachments with invalid paths must keep message and image blocks only'
 ELOOP_TURN = '#1460 an ELOOP path on a content attachment must not fail the turn'
+UNOPENABLE_QUIET = '#1460 an unopenable path on a content attachment must not diagnose'
 SURROGATE_SPELLING = '#1461 the not-found diagnostic must keep the surrogate outer and the lossy inner spelling'
+FOLDED_ROUTE = '#1461 the not-found words route on the raw spelling, not the resolved tail'
 
 mutations = [
     # #1460: the registration collection is a pass of its own — restoring the
@@ -100,6 +107,23 @@ mutations = [
      '''            if let Some(original) = &entry.invalid_path
                 && !is_audio_shape(&entry.mime, &String::from_utf16_lossy(original.units()))''',
      SILENT, SILENT_BLOCKS),
+    # #1460: the open failure is one of the content-skip's silent arms —
+    # restoring the audio-only shape there turns the EACCES open of a
+    # chmod-000 lease file into a not-found diagnostic.
+    ('content-open-failure-diagnosed', SERVICES,
+     '''        let mut file = match File::open(&resolved) {
+            Ok(file) => file,
+            Err(error) => {
+                if no_resolver {
+                    continue;
+                }''',
+     '''        let mut file = match File::open(&resolved) {
+            Ok(file) => file,
+            Err(error) => {
+                if audio {
+                    continue;
+                }''',
+     UNOPENABLE, UNOPENABLE_QUIET),
     # #1461: the outer path keeps the lone surrogate and the resolve prefix —
     # spelling it lossily restores the pre-#1461 single-replacement shape.
     ('surrogate-outer-lossy-restored', SERVICES,
@@ -119,6 +143,14 @@ mutations = [
      '            ("text", JsValue::String(JsString::from_utf16(units))),',
      '            ("text", JsValue::from(String::from_utf16_lossy(&units).as_str())),',
      SURROGATE, SURROGATE_SPELLING),
+    # #1461: the route words follow the raw spelling — routing on the
+    # resolved form folds `report.pdf/\uD800/..` into a `.pdf` tail and
+    # says "PDF attachment not found" where the composer's raw spelling
+    # ends in `..` and must stay the file request.
+    ('surrogate-route-on-resolved', SERVICES,
+     '    let prefix = match attachment_route(entry, &raw_lossy) {',
+     '    let prefix = match attachment_route(entry, &lossy) {',
+     FOLDED, FOLDED_ROUTE),
 ]
 
 

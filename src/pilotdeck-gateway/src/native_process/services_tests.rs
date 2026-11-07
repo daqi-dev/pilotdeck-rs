@@ -10,9 +10,12 @@
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
 //! message, #1459/#1464 the lease-root/lease-path softening), the #1460
 //! two-pass split (a direct-content attachment with a channelKey path is
-//! still registered; its path failures stay silent like the audio skip),
+//! still registered; its path failures stay silent like the audio skip —
+//! including the open failure of an unopenable lease file),
 //! the #1461 lone-surrogate fidelity (the outer diagnostic keeps the
-//! surrogate and the resolve prefix, only the fs error spelling is lossy),
+//! surrogate and the resolve prefix, only the fs error spelling is lossy,
+//! and the route words follow the raw spelling rather than the resolved
+//! tail),
 //! and the #1320 fix-r1 F2/F3 settings-composition tests (the production
 //! stack binds no notification server; the settings store anchors at
 //! PILOT_HOME).
@@ -597,12 +600,17 @@ fn lone_surrogate_path_becomes_not_found_diagnostic() {
         .expect("#1321 a lone-surrogate path composes the turn");
     let blocks = content_blocks(&result);
     // The expected diagnostic in UTF-16 code units, so the lone surrogate
-    // itself is pinned: `path.resolve("<project>/\u{D800}")` for the outer
-    // path, and the U+FFFD spelling only inside the ENOENT message.
-    let outer: Vec<u16> = scratch
-        .0
+    // itself is pinned: `path.resolve("<cwd>/\u{D800}")` for the outer path
+    // — the *process* cwd, which TS `path.resolve` uses as the base
+    // (composer-probe.out "Probe B": the prefix is `/tmp/pdrs-1460-probe-cwd/`
+    // while the project root is a different directory; the scratch project
+    // root here differs from the test process cwd the same way, so a
+    // project-root base would fail this expectation) — and the U+FFFD
+    // spelling only inside the ENOENT message.
+    let outer: Vec<u16> = std::env::current_dir()
+        .expect("#1461 process cwd readable")
         .to_str()
-        .expect("#1461 scratch UTF-8")
+        .expect("#1461 cwd UTF-8")
         .encode_utf16()
         .chain([u16::from(b'/'), 0xD800])
         .collect();
@@ -2315,6 +2323,99 @@ fn direct_content_with_an_eloop_path_stays_silent() {
     negative_assert!(
         result.get("allowedReadFiles").is_none(),
         "#1460 an ELOOP path on a content attachment must not register allowedReadFiles"
+    );
+}
+
+#[test]
+fn folded_surrogate_path_routes_the_diagnostic_on_the_raw_spelling() {
+    let scratch = Scratch::new();
+    // DS r1 boundary P2: composer :234-251 routes the not-found words on the
+    // *original* attachment path. `report.pdf/\uD800/..` resolves to a
+    // `.pdf` tail, so routing on the resolved form would say "PDF
+    // attachment not found"; the raw spelling ends in `..` and routes as
+    // File — "Attachment not found" — while the resolved outer path (with
+    // its process-cwd prefix) is what the diagnostic carries.
+    let raw: Vec<u16> = "report.pdf/"
+        .encode_utf16()
+        .chain([0xD800])
+        .chain("/..".encode_utf16())
+        .collect();
+    let mut fields = JsObject::new();
+    fields.insert("path".into(), JsValue::String(JsString::from_utf16(raw)));
+    fields.insert("mimeType".into(), JsValue::from("text/plain"));
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[JsValue::Object(fields)])
+        .expect("#1461 a folded surrogate path composes the turn");
+    let blocks = content_blocks(&result);
+    let outer: Vec<u16> = std::env::current_dir()
+        .expect("#1461 process cwd readable")
+        .to_str()
+        .expect("#1461 cwd UTF-8")
+        .encode_utf16()
+        .chain("/report.pdf".encode_utf16())
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 the not-found words route on the raw spelling, not the resolved tail"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_content_with_an_unopenable_path_stays_silent() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    // DS r1 boundary P2: the open failure is one of the twelve silent
+    // points — a chmod-000 lease file still stats fine (the approved-stat
+    // and identity data are all readable without the open) but the open
+    // itself fails EACCES, and a content-produced attachment must stay as
+    // silent as the audio skip there.
+    let path = scratch.lease("secret.png");
+    std::fs::write(&path, b"AB").expect("#1460 lease fixture");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+        .expect("#1460 chmod fixture");
+    // A privileged runner ignores the mode bits; the case cannot be built
+    // (same shape as the #2138 unreadable-stat skip).
+    if std::fs::read(&path).is_ok() {
+        eprintln!("#1460 skipping: this test must not run as root, mode-000 is readable");
+        return;
+    }
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(&scratch.0, &message("hello"), &[entry]),
+        "#1460 an unopenable path on a content attachment must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an unopenable path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        blocks.len() == 2,
+        "#1460 an unopenable content attachment must keep message and image blocks only"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an unopenable path on a content attachment must not register allowedReadFiles"
     );
 }
 
