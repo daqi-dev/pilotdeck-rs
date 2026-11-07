@@ -50,8 +50,9 @@ listener removal；`wire` 只随 `actual.json` 落盘记录、**不参与比较*
 （`tests/common/signal_replay.rs`）、不动金样（`source.json` /
 `oracle.json`）、不动产品代码；`comparison.json` 的 `acceptedDifferences`
 清单（`signal_replay.rs:1200-1202`）按 #2165 裁定**不更新、不含本条**，
-不得把它当作已批差异全集。两格在 96 格验收命令下继续 FAIL 属本条登记的
-预期结果，红格数 2 / 绿格数 94 即符合。
+不得把它当作已批差异全集。两格在 96 格验收下继续 FAIL 属本条登记的预期
+结果，判据见「机器判据」：失败恰为这 2 格、且两格失败面均为 stdout 单面，
+只数红格不算数。
 #2165 已核：该差异不是 #1260 引入（#1260 分支与 `origin/main` 的
 merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"]`
 完全相同）。若未来把 `recovery.runId` 归一化（改比较器语义），须按冻结
@@ -59,22 +60,21 @@ merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"
 
 ## 机器判据
 
-已登记的 96 格验收命令（必须恰好执行 96 个测试；0 个测试不构成验收；
-命令正本：`src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放
-与产品负控」节）：`cargo test --offline --manifest-path src/Cargo.toml -p
-pilotdeck-cli --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_
---test-threads=1`。**前置：整批须独占 28999 mock 端口车道**——批内只有
-进程内 `SERIAL` 互斥（`signal_replay.rs:34`、`run` 的 try_lock 循环
-`signal_replay.rs:1110`），跨进程无互斥；与同机任何
-绑定 `127.0.0.1:28999` 的既有套件（`sdk_run_exit.rs` / `sdk_format_exit.rs` /
-`sdk_sessions_list_exit.rs` 等）串行执行（宿主按 `mkdir /tmp/pdrs-parity.lock`
-目录租约排队），批期间不得并行任何绑 28999 的套件，否则
-`TcpListener::bind` EADDRINUSE panic 会多出红格且失败面不是 stdout 单面，
-本条的「红格数 2」不可复现。#1260 修复后全量实跑：`test result: FAILED. 94 passed;
-2 failed; 0 ignored; 0 measured; 118 filtered out`，失败恰为本条两格、
-surface 均为 `["stdout"]`；原始 `test result` 行与逐格输出见
-`_tmp/20261107-issue-1260/matrix/matrix.stdout`（mbp2，HEAD `d98cafa18`，
-dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。本条为登记件，无新增
+验收命令与全部运行前置的**正本**是
+`src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放与产品
+负控」节的登记命令块（必须恰好执行 96 个测试，0 个测试不构成验收；
+含 `scripts/cargo-slots.sh`、`PDRS_SIGNAL_RESULTS` 绝对证据路径、整批独占
+28999 mock 端口车道与 `/tmp/pdrs-parity.lock` 目录租约的跨套件串行前置）；
+本条不再内联命令副本，以免与正本漂移。**判据钉身份与失败面，不只钉数量**：
+失败恰为 `run--unknown-cleanup` / `resume--unknown-cleanup` 两格，两格
+`differing surfaces` 均仅 `["stdout"]`，其余 94 格 `ok`——若失败面含
+stderr / abort / connections 等其它面，即超出本条范围、须另开条目。#1260
+修复后全量实跑：`test result: FAILED. 94 passed; 2 failed; 0 ignored;
+0 measured; 118 filtered out`，失败恰为本条两格、surface 均为
+`["stdout"]`；原始 `test result` 行、逐格输出与实跑 HEAD 见
+`_tmp/20261107-issue-1260/matrix/`（mbp2，HEAD
+`14393b5f715a64f721b4ffd1d962db02c89d2daa`、dirty 0，见该目录
+`HEADER.txt`；持 `/tmp/pdrs-parity.lock` 目录租约）。本条为登记件，无新增
 机器判据；本地金样守卫 `signal_oracle_matches_recorded_source_and_local_files`
 与 `approved_stderr_match_domain_is_exact` 继续钉住其余严格比较范围。
 

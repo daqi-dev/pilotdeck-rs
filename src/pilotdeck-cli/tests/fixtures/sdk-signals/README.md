@@ -140,7 +140,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 无意外差异；原始结果见 `_tmp/20261026-issue-1252/fix-r2/matrix-final-summary.json`。
 **#1260 修复后实跑全部 96 格：94 PASS / 2 FAIL**，失败只剩上面两格动态 runId 的 stdout，
 16 格关闭顺序全部 `ok`；原始 `test result` 行与逐格输出见 `_tmp/20261107-issue-1260/matrix/`
-（mbp2，HEAD `d98cafa18`，dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。同一 16 格在修复前后
+（mbp2，HEAD `14393b5f715a64f721b4ffd1d962db02c89d2daa`，dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。同一 16 格在修复前后
 各重复十轮：修复前 160/160 以 `differing surfaces: ["connection closures"]` 失败，修复后 160/160 `ok`
 （`_tmp/20261107-issue-1260/pre/` 与 `post-repeat/`）。
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
@@ -161,6 +161,12 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
 保留精确 `PilotDeckError: <msg>` 行；比较器测试的 hooks 投影直接来自 TS hooks，不以错误文字推导。
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
+
+整批执行须独占 28999 mock 端口车道：批内只有进程内 `SERIAL` 互斥（`signal_replay.rs:34`），
+跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的套件（`sdk_run_exit.rs` /
+`sdk_format_exit.rs` / `sdk_sessions_list_exit.rs` 等）须串行——宿主按
+`mkdir /tmp/pdrs-parity.lock` 目录租约排队，批期间不得并行任何绑 28999 的套件；
+否则 `TcpListener::bind` EADDRINUSE panic 会多出红格且失败面不再是 stdout 单面。
 
 ```sh
 scripts/cargo-slots.sh
