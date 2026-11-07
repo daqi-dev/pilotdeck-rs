@@ -26,6 +26,15 @@ use tokio::{
 fn error(e: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::new(e.to_string())
 }
+fn transport_error(e: impl std::fmt::Display) -> RuntimeError {
+    let message = e.to_string();
+    error(&message).with_js_error(crate::runtime::project::RuntimeJsError {
+        name: "KernelTransportError".into(),
+        code: Some("KERNEL_TRANSPORT_LOST".into()),
+        message: message.into(),
+        requires_host: false,
+    })
+}
 fn js(value: &Value) -> Result<JsValue, RuntimeError> {
     parse_json(&value.to_string()).map_err(error)
 }
@@ -184,7 +193,41 @@ fn write_owner(path: &std::path::Path, owner: &Value) -> RuntimeResult {
     }
     Ok(())
 }
+#[derive(Clone)]
+struct RpcOwner {
+    session: String,
+    binding: String,
+    revision: Value,
+    protocol: Value,
+    permissions: Value,
+    features: Vec<Value>,
+}
+impl RpcOwner {
+    fn validate(&self, opened: &Value) -> Result<(), RuntimeError> {
+        if !opened["input_controller_ref"].is_null()
+            || opened["default_loop_ref"] != self.binding
+            || opened["loop_revision"] != self.revision
+            || opened["protocol"] != self.protocol
+            || (self.permissions.is_object() && opened["loop_permissions"] != self.permissions)
+        {
+            return Err(error(
+                "Kernel reconnected session does not match its persisted binding/revision/protocol/permissions owner.",
+            ));
+        }
+        if self.features.iter().any(|feature| {
+            !opened["features"]
+                .as_array()
+                .is_some_and(|features| features.contains(feature))
+        }) {
+            return Err(error(
+                "Kernel reconnected host omitted an already-used session capability.",
+            ));
+        }
+        Ok(())
+    }
+}
 struct Rpc {
+    owner: Option<RpcOwner>,
     socket: PathBuf,
     stream: Option<BufReader<UnixStream>>,
     next: u64,
@@ -193,9 +236,29 @@ struct Rpc {
 }
 impl Rpc {
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
-        self.call_guarded(method, params, None)
-            .await?
-            .ok_or_else(|| error("Kernel RPC omitted its reply."))
+        let connected = self.stream.is_some();
+        let result = self.call_guarded(method, params.clone(), None).await;
+        let observation = matches!(
+            method,
+            "execution.get"
+                | "execution.events"
+                | "execution.history.snapshot"
+                | "execution.history.archive"
+                | "session.get"
+                | "session.lease_status"
+        );
+        let transport_lost = result.as_ref().err().is_some_and(|error| {
+            error.causes.iter().any(|cause| {
+                cause.js_error().and_then(|error| error.code.as_deref())
+                    == Some("KERNEL_TRANSPORT_LOST")
+            })
+        });
+        let result = if connected && self.owner.is_some() && observation && transport_lost {
+            self.call_guarded(method, params, None).await
+        } else {
+            result
+        };
+        result?.ok_or_else(|| error("Kernel RPC omitted its reply."))
     }
     async fn call_guarded(
         &mut self,
@@ -209,6 +272,14 @@ impl Rpc {
                 self.stream=Some(BufReader::new(UnixStream::connect(&self.socket).await.map_err(error)?));
                 phase="initialize".into();
                 self.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":self.node})).await?;
+                if let Some(owner)=self.owner.clone() {
+                    phase="execution.open:restore_owned_session".into();
+                    let opened=self.exchange("execution.open",json!({"session_id":owner.session})).await?;
+                    owner.validate(&opened)?;
+                    // A new resident process must supply its actual lease state;
+                    // an old local timestamp is never evidence of its authority.
+                    self.lease=None;
+                }
             }
             if matches!(method,"execution.input"|"execution.respond"|"execution.history.import") {
                 let session=params["session_id"].as_str().ok_or_else(||error("Effect session identity is missing."))?.to_string();
@@ -246,12 +317,15 @@ impl Rpc {
         }
         result.map_err(|cause| {
             let message = format!("Kernel RPC {phase} failed: {}", cause.message);
-            error(message.clone()).with_js_error(crate::runtime::project::RuntimeJsError {
-                name: "KernelBackendError".into(),
-                code: Some("KERNEL_EXECUTION_UNAVAILABLE".into()),
-                message: message.into(),
-                requires_host: false,
-            })
+            let mut failure =
+                error(message.clone()).with_js_error(crate::runtime::project::RuntimeJsError {
+                    name: "KernelBackendError".into(),
+                    code: Some("KERNEL_EXECUTION_UNAVAILABLE".into()),
+                    message: message.into(),
+                    requires_host: false,
+                });
+            failure.causes.push(cause);
+            failure
         })
     }
     async fn exchange(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
@@ -268,17 +342,22 @@ impl Rpc {
             .get_mut()
             .write_all(format!("{request}\n").as_bytes())
             .await
-            .map_err(error)?;
+            .map_err(transport_error)?;
         loop {
             let mut bytes = Vec::new();
             let n = (&mut stream)
                 .take(16 * 1024 * 1024)
                 .read_until(b'\n', &mut bytes)
                 .await
-                .map_err(error)?;
-            if n == 0 || bytes.last() != Some(&b'\n') {
+                .map_err(transport_error)?;
+            if n == 0 {
+                return Err(transport_error(
+                    "Kernel connection ended; execution outcome is unknown.",
+                ));
+            }
+            if bytes.last() != Some(&b'\n') {
                 return Err(error(
-                    "Kernel connection ended or frame exceeded 16 MiB; execution outcome is unknown.",
+                    "Kernel frame exceeded 16 MiB; execution outcome is unknown.",
                 ));
             }
             let reply: Value = serde_json::from_slice(&bytes).map_err(error)?;
@@ -693,6 +772,7 @@ impl SessionBackendFactory for KernelBackendFactory {
     ) -> BoxFuture<Result<Box<dyn SessionBackend>, RuntimeError>> {
         Box::pin(async move {
             let mut rpc = Rpc {
+                owner: None,
                 socket: self.socket.clone(),
                 stream: None,
                 next: 0,
@@ -730,6 +810,9 @@ impl SessionBackendFactory for KernelBackendFactory {
             let binding = opened["default_loop_ref"]
                 .as_str()
                 .ok_or_else(|| error("Kernel did not expose its default binding."))?;
+            if opened["loop_revision"].as_str().is_none() {
+                return Err(error("Kernel did not expose the immutable loop revision."));
+            }
             if !self.loop_version.is_empty() && opened["loop_revision"] != self.loop_version {
                 return Err(error(
                     "Kernel loop revision does not match this session's pinned owner.",
@@ -757,6 +840,25 @@ impl SessionBackendFactory for KernelBackendFactory {
                     &json!({"schema":1,"backend":"kernel","project":self.project,"session":text(&self.session)?,"socket":self.socket,"loop_version":opened["loop_revision"],"kernel_session_id":kernel_id,"binding":binding,"context_ref":context_ref,"node_id":rpc.node}),
                 )?;
             }
+            rpc.owner = Some(RpcOwner {
+                session: kernel_id.clone(),
+                binding: binding.into(),
+                revision: opened["loop_revision"].clone(),
+                protocol: opened["protocol"].clone(),
+                permissions: opened["loop_permissions"].clone(),
+                features: opened["features"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|feature| {
+                        matches!(
+                            feature.as_str(),
+                            Some("scheduler.input-limits.v1" | "scheduler.history-archive.v1")
+                        )
+                    })
+                    .cloned()
+                    .collect(),
+            });
             let recovered = recover(&mut rpc, &kernel_id).await?;
             let projection = Arc::new(super::kernel_projection::KernelProjection::new(
                 context.recorder,
@@ -1678,6 +1780,7 @@ mod tests {
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
+                owner: None,
                 socket,
                 stream: None,
                 next: 0,
@@ -2239,6 +2342,7 @@ mod abi2_wire_tests {
                 seen
             });
             let mut rpc = Rpc {
+                owner: None,
                 socket: socket.clone(),
                 stream: None,
                 next: 0,
@@ -2313,6 +2417,7 @@ mod abi2_wire_tests {
             }
         });
         let mut rpc = Rpc {
+            owner: None,
             socket: socket.clone(),
             stream: None,
             next: 0,
@@ -2366,6 +2471,7 @@ mod abi2_wire_tests {
             }
         });
         let mut rpc = Rpc {
+            owner: None,
             socket: socket.clone(),
             stream: None,
             next: 0,
@@ -2405,6 +2511,7 @@ mod recovery_contract_tests {
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
+                owner: None,
                 socket,
                 stream: None,
                 next: 0,
@@ -2863,6 +2970,7 @@ mod archive_wire_tests {
             assert_eq!(pages, 4);
         });
         let mut rpc = Rpc {
+            owner: None,
             socket,
             stream: None,
             next: 0,
@@ -2920,5 +3028,165 @@ mod archive_wire_tests {
         drop(rpc);
         task.await.unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resident_restart_tests {
+    use super::*;
+    use tokio::net::UnixListener;
+    fn opened(revision: &str) -> Value {
+        json!({"protocol":"agentcpm-scheduler/1","input_controller_ref":null,"default_loop_ref":"saved-loop","loop_revision":revision,"loop_permissions":{"resources":["read"],"invoke":[]},"features":["scheduler.input-limits.v1","scheduler.history-archive.v1"]})
+    }
+    fn rpc(socket: PathBuf) -> Rpc {
+        let open = opened("saved-v1");
+        Rpc {
+            socket,
+            stream: None,
+            next: 0,
+            node: "saved-owner-node".into(),
+            lease: None,
+            owner: Some(RpcOwner {
+                session: "saved-session".into(),
+                binding: "saved-loop".into(),
+                revision: open["loop_revision"].clone(),
+                protocol: open["protocol"].clone(),
+                permissions: open["loop_permissions"].clone(),
+                features: open["features"].as_array().unwrap().clone(),
+            }),
+        }
+    }
+    async fn request(stream: &mut BufReader<UnixStream>) -> Value {
+        let mut line = String::new();
+        stream.read_line(&mut line).await.unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+    async fn reply(stream: &mut BufReader<UnixStream>, request: &Value, result: Value) {
+        stream
+            .get_mut()
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({"jsonrpc":"2.0","id":request["id"],"result":result})
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    }
+    #[tokio::test]
+    async fn kernel_resident_restart_reopens_original_pin_before_readonly_retry_and_refuses_changed_revision()
+     {
+        for changed in [false, true] {
+            let socket =
+                std::path::PathBuf::from("/tmp").join(format!("pdr-{}.sock", uuid::Uuid::new_v4()));
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = tokio::spawn(async move {
+                for connection in 0..2 {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut stream = BufReader::new(stream);
+                    let init = request(&mut stream).await;
+                    assert_eq!(init["method"], "initialize");
+                    assert_eq!(init["params"]["node_id"], "saved-owner-node");
+                    reply(&mut stream,&init,json!({"server_capabilities":{"scheduler":{"default_loop_ref":"new-global-default"}}})).await;
+                    let open = request(&mut stream).await;
+                    assert_eq!(open["method"], "execution.open");
+                    assert_eq!(open["params"]["session_id"], "saved-session");
+                    reply(
+                        &mut stream,
+                        &open,
+                        opened(if connection == 1 && changed {
+                            "changed-same-id-v2"
+                        } else {
+                            "saved-v1"
+                        }),
+                    )
+                    .await;
+                    if connection == 1 && changed {
+                        let mut line = String::new();
+                        assert_eq!(
+                            stream.read_line(&mut line).await.unwrap(),
+                            0,
+                            "pin refusal must not query or submit against another revision"
+                        );
+                        continue;
+                    }
+                    let read = request(&mut stream).await;
+                    assert_eq!(read["method"], "execution.history.snapshot");
+                    reply(&mut stream, &read, json!({"revision":3,"history":[]})).await;
+                    // Dropping this first connection models a resident restart.
+                }
+            });
+            let mut rpc = rpc(socket.clone());
+            let params = json!({"session_id":"saved-session","context_ref":"default"});
+            assert_eq!(
+                rpc.call("execution.history.snapshot", params.clone())
+                    .await
+                    .unwrap()["revision"],
+                3
+            );
+            rpc.lease = Some(("saved-session".into(), 9, std::time::Instant::now()));
+            let restored = rpc.call("execution.history.snapshot", params).await;
+            if changed {
+                assert!(
+                    restored
+                        .unwrap_err()
+                        .message
+                        .contains("persisted binding/revision")
+                );
+            } else {
+                assert_eq!(restored.unwrap()["revision"], 3);
+                assert!(rpc.lease.is_none());
+            }
+            drop(rpc);
+            server.await.unwrap();
+            std::fs::remove_file(socket).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn kernel_resident_restart_never_retries_an_effect_after_a_lost_reply() {
+        let socket =
+            std::path::PathBuf::from("/tmp").join(format!("pde-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for method in ["initialize", "execution.open", "execution.history.snapshot"] {
+                let req = request(&mut stream).await;
+                assert_eq!(req["method"], method);
+                reply(
+                    &mut stream,
+                    &req,
+                    match method {
+                        "execution.open" => opened("saved-v1"),
+                        "execution.history.snapshot" => json!({"revision":0,"history":[]}),
+                        _ => json!({}),
+                    },
+                )
+                .await;
+            }
+            let input = request(&mut stream).await;
+            assert_eq!(input["method"], "execution.input");
+            assert_eq!(input["params"]["idempotency_key"], "original-operation");
+            drop(stream);
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(30), listener.accept())
+                    .await
+                    .is_err(),
+                "effect must not reconnect/replay automatically"
+            );
+        });
+        let mut rpc = rpc(socket.clone());
+        rpc.call(
+            "execution.history.snapshot",
+            json!({"session_id":"saved-session","context_ref":"default"}),
+        )
+        .await
+        .unwrap();
+        rpc.lease = Some(("saved-session".into(), 9, std::time::Instant::now()));
+        assert!(rpc.call("execution.input",json!({"session_id":"saved-session","idempotency_key":"original-operation","input":{"type":"text","text":"one request"}})).await.is_err());
+        drop(rpc);
+        server.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
     }
 }
