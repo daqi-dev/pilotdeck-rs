@@ -107,8 +107,8 @@ silently degrade a cell into "some short body":
   `<1_000_000 bytes>` is a fixture bug and panics the replay instead of being
   sent verbatim; so is a signed `<+5 bytes>` (which `usize::from_str` would
   otherwise accept).
-- `N` is capped at `MAX_REQUEST_BYTES + 1`; a larger count is refused before
-  allocation.
+- `N` is capped at `REPLAY_BODY_BUDGET`, the literal `1_000_001` that is also
+  the recorded over-cap length; a larger count is refused before allocation.
 - A `body` field that is present but not a string panics; an absent one means
   no body (GET/HEAD cells). A header value that is not a string panics too, and
   so does a `headers` that is present but not an object (only an absent one
@@ -160,9 +160,9 @@ silently degrade a cell into "some short body":
   `MAX_REQUEST_BYTES + 1`: derived, it moved with the `body-limit` negative
   control, which rewrites the cap in `mod.rs` to `10_000_000` — the budget rose
   with it and `<9000000 bytes>` stopped being refused, so the mutant switched
-  off the guard it exists to trip. The tie is asserted instead (and pinned by a
-  test the `body-limit` row does not target), so raising the product cap fails
-  by name rather than narrowing the budget.
+  off the guard it exists to trip. The tie is asserted instead — at both ends,
+  by a test the `body-limit` row does not target — so raising the product cap
+  fails by name, and the literal budget cannot drift wider unnoticed either.
 - `body-read-timeout` records the declared `content-length` and a
   `stalledAfter` count that must be smaller — a cell that actually completed
   its body would exercise nothing. The replay also pins the TS answer itself
@@ -184,8 +184,9 @@ One coupling to keep in mind when adding a negative control: the replay budget
 `recorded_body_refuses_an_unbounded_count`'s literal (`<9000000 bytes>`), so that
 guard stopped panicking under exactly the mutant it exists to catch — and the
 only red left was `assert_boundary_body_len` reporting it as fixture drift. The
-tie is asserted instead (`assert_replay_budget_covers_the_cap`), so raising the
-cap fails by name, and the `replay-budget-vs-cap` row pins that.
+tie is asserted instead (`assert_replay_budget_covers_the_cap`, plus the
+`REPLAY_BODY_BUDGET == 1_000_001` pin in a test the row does not target), so
+raising the cap fails by name, and the `replay-budget-vs-cap` row pins that.
 
 ## Known gaps
 
