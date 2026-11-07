@@ -5149,11 +5149,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
         pending = []
 
-        def add(name, node, helper, certain):
+        def add(name, node, helper, certain, position=None):
             conditional, loops = marks.get(id(node), (True, ()))
+            if position is None:
+                position = (node.lineno, node.col_offset)
             items = events.setdefault(name, [])
             items.append(
-                (node.lineno, node.col_offset, helper, conditional, loops,
+                (position[0], position[1], helper, conditional, loops,
                  certain))
             return items
 
@@ -5197,8 +5199,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
                                     (node.lineno, node.col_offset),
                                     items[-1][4], node.value))
             elif isinstance(node, ast.match_case):
+                # #1953 fix-r1 round 34 (GLM r33 sibling P1-1): round 33 fixed
+                # the two binding walks but not this third one, reached on the
+                # receiver path (``_withdrawn_receivers`` ->
+                # ``_receiver_attribute_writes`` -> ``_write_import_at`` ->
+                # ``_scope_import_events``).  A case has no position, so
+                # ``add`` was reading ``node.lineno`` off it and the audit died
+                # with ``AttributeError`` -- the same crash, one walk further.
                 for name in _match_capture_names(node.pattern):
-                    add(name, node, None, False)
+                    add(name, node, None, False,
+                        position=_match_case_position(node))
         # Round 15 (codex r14 P0-2 / P0-3): an assignment whose right side
         # spells a write helper keeps the spelling one on this side too.
         _resolve_assignment_helpers(events, pending)
@@ -6529,6 +6539,22 @@ class _ModuleEvents(dict):
         self.builtins_modules = {}
 
 
+def _callee_expr(node):
+    """The expression a ``Call`` runs, with a walrus callee unwrapped (r34).
+
+    #1953 fix-r1 round 34 (codex r33 P0-2 / GLM r33 boundary P1-2 and P3-3):
+    round 32 unwrapped ``(_g := held)(report)`` in ``_module_open_calls``
+    only, so the twin tables still read the raw ``NamedExpr`` -- the shape was
+    a carrier site but never a plain call site and never an attribute call
+    site.  Every caller takes this one reading, and the loop unwraps nested
+    walrus down to the expression that actually runs.
+    """
+    func = node.func
+    while isinstance(func, ast.NamedExpr):
+        func = func.value
+    return func
+
+
 def _module_call_positions(tree, direct=None):
     """``name -> [((line, col), loops)]`` for calls at module scope (r15).
 
@@ -6549,11 +6575,18 @@ def _module_call_positions(tree, direct=None):
             header = _definition_header(node)
             stack.extend((item, loops) for item in reversed(header))
             continue
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            found.setdefault(node.func.id, []).append(
-                ((node.lineno, node.col_offset), loops))
-            if direct is not None:
-                direct.add(id(node.func))
+        if isinstance(node, ast.Call):
+            # #1953 fix-r1 round 34 (GLM r33 sibling P2-3): ``saved = main;
+            # (_g := saved)(report)`` calls ``saved`` -- the alias table needs
+            # the site to hand ``main`` over.  The walrus target itself is a
+            # hand-off too, so the source name stays a value use (``direct``
+            # only ever holds a callee that is a bare ``Name``).
+            func = _callee_expr(node)
+            if isinstance(func, ast.Name):
+                found.setdefault(func.id, []).append(
+                    ((node.lineno, node.col_offset), loops))
+                if direct is not None and node.func is func:
+                    direct.add(id(func))
         inner = loops
         if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
             inner = loops + (id(node),)
@@ -6594,18 +6627,36 @@ def _module_value_uses(tree):
     main`` kept ``main`` in this set, ``call_only`` fell back to the
     anywhere-rule and a clean module was still reported as a write -- the same
     false FAIL the alias table just lost on the other half of the chain.
+
+    #1953 fix-r1 round 34 (codex r33 P0-1): round 32 dropped *every* load in a
+    dead span, so ``if False: register(main)`` stopped counting as a value use
+    and ``call_only`` came back on -- a false PASS.  The dead code is still
+    analysed on purpose (the negative controls inject their mutants inside
+    ``if False:``), so only the hand-off the alias table already resolves
+    through its own dead filter is dropped here: the source of a plain-name
+    binding (``if False: _saved = main``).  A dead *escape* is not a binding
+    and stays a value use.
     """
     direct = set()
     _module_call_positions(tree, direct)
     dead = _dead_line_ranges(tree)
+    dead_alias_loads = set()
+    if dead:
+        for node in ast.walk(tree):
+            if not _alias_pairs(node):
+                continue
+            position = (node.lineno, node.col_offset)
+            if not any(span[0] <= position <= span[1] for span in dead):
+                continue
+            for inner in ast.walk(node.value):
+                if (isinstance(inner, ast.Name)
+                        and isinstance(inner.ctx, ast.Load)):
+                    dead_alias_loads.add(id(inner))
     uses = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-                and id(node) not in direct):
-            if dead:
-                position = (node.lineno, node.col_offset)
-                if any(span[0] <= position <= span[1] for span in dead):
-                    continue
+                and id(node) not in direct
+                and id(node) not in dead_alias_loads):
             uses.add(node.id)
     return uses
 
@@ -6696,7 +6747,10 @@ def _contains_dynamic_lookup(value, heads, bindings=None, dead=()):
     for node in ast.walk(value):
         if not isinstance(node, ast.Call):
             continue
-        func = node.func
+        # #1953 fix-r1 round 34 (GLM r33 sibling P2-2): the value side has the
+        # same walrus callee -- ``f = (_g := globals)()['main']`` is a carrier,
+        # and reading the raw ``NamedExpr`` dropped it (false PASS direction).
+        func = _callee_expr(node)
         if isinstance(func, ast.Name):
             if func.id in heads:
                 return True
@@ -6970,8 +7024,14 @@ def _spelled_callee(node, names):
     session_domain as sd; sd.main(report)`` and
     ``getattr(sd, 'main')(report)`` reach ``main`` without a bare ``Name``
     call, so the recorded call list is not the whole story for it.
+
+    #1953 fix-r1 round 34 (codex r33 P0-2 / GLM r33 boundary P1-2): a walrus
+    callee -- ``(_g := sd.main)(report)``, ``(_g := getattr(sd, 'main'))(
+    report)`` -- arrived here as a ``NamedExpr``, so the attribute call site
+    never entered ``attr_calls`` and ``call_only`` answered "not a write" for
+    a later import (false PASS).
     """
-    func = node.func
+    func = _callee_expr(node)
     if isinstance(func, ast.Attribute) and func.attr in names:
         return func.attr
     if isinstance(func, ast.Call):
@@ -7037,8 +7097,9 @@ def _module_open_calls(tree):
             # Attribute, so every branch below missed it and the call never
             # became a site (false PASS for a carrier fetched before a later
             # import).  The assigned value is what runs.
-            func = (node.func.value if isinstance(node.func, ast.NamedExpr)
-                    else node.func)
+            # #1953 fix-r1 round 34: the same reading now lives in
+            # ``_callee_expr`` and is shared with the twin call tables.
+            func = _callee_expr(node)
             if isinstance(func, ast.Name):
                 name = func.id
                 if name in _OPEN_CALL_HEADS:
@@ -12656,7 +12717,11 @@ def aggregation_audit():
         _m32_base + "_held = globals()['main']\n"
         "import builtins as _bi\n"
         "(_g := _held)(object())\n")
-    if not _module_open_calls(_m32_walrus)[0]:
+    # #1953 fix-r1 round 34 (GLM r33 boundary P1-1): the round-32 assertion
+    # was a tautology -- ``globals()`` alone is already a head call and a
+    # site, so ``[0]`` was never empty even with the walrus branch deleted.
+    # The fixture has exactly two sites, and the count is what pins the shape.
+    if len(_module_open_calls(_m32_walrus)[0]) < 2:
         failures.append('#1953 aggregation-audit: detector self-test lost the '
                         'walrus callee site (round 32)')
     _m32_loop = ast.parse(
@@ -12693,6 +12758,64 @@ def aggregation_audit():
         if '_cap' not in _m33_events or '_cap2' not in _m33_bindings:
             failures.append('#1953 aggregation-audit: detector self-test lost a '
                             'match capture (round 33)')
+    # #1953 fix-r1 round 34 (codex r33 P0-1 / P0-2, GLM r33 sibling P1-1 /
+    # P2-2 / P2-3 / boundary P1-1 / P1-2): round 32 dropped every dead load
+    # from the value-use set, one dead escape came back as a false PASS, and
+    # the walrus reading reached only one of the three call tables; round 33
+    # fixed two of the three ``match_case`` walks.  These are the shapes the
+    # reviewer probes named, asserted on the module detectors themselves.
+    _m34_dead_escape = ast.parse(
+        _m32_base + "if False:\n"
+        "    _register(main)\n")
+    if 'main' not in _module_value_uses(_m34_dead_escape):
+        failures.append('#1953 aggregation-audit: detector self-test dropped a '
+                        'dead escape as a value use (round 34)')
+    _m34_walrus_attr = ast.parse(
+        _m32_base + "import session_domain as sd\n"
+        "import builtins as _bi\n"
+        "(_g := sd.main)(object())\n")
+    if 'main' not in _module_open_calls(_m34_walrus_attr)[1]:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'walrus attribute call (round 34)')
+    _m34_walrus_getattr = ast.parse(
+        _m32_base + "import session_domain as sd\n"
+        "import builtins as _bi\n"
+        "(_g := getattr(sd, 'main'))(object())\n")
+    if 'main' not in _module_open_calls(_m34_walrus_getattr)[1]:
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'walrus getattr call (round 34)')
+    _m34_walrus_plain = ast.parse(
+        _m32_base + "_saved = main\n"
+        "import builtins as _bi\n"
+        "(_g := _saved)(object())\n")
+    if not _module_binding_events(_m34_walrus_plain).alias_calls.get('main'):
+        failures.append('#1953 aggregation-audit: detector self-test lost the '
+                        'walrus plain call (round 34)')
+    _m34_receiver = ast.parse(
+        "from builtins import setattr as _sa34\n"
+        "def _m34r(report):\n"
+        "    match report:\n"
+        "        case _cap9:\n"
+        "            _cap9 = _cap9\n"
+        "    _sa34(md, 'common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    try:
+        _m34_withdrawn = _withdrawn_receivers(_m34_receiver)
+    except AttributeError:
+        failures.append('#1953 aggregation-audit: detector self-test crashed on '
+                        'a match capture in the receiver walk (round 34)')
+    else:
+        if 'md' not in _m34_withdrawn:
+            failures.append('#1953 aggregation-audit: detector self-test lost a '
+                            'receiver withdrawn through a match (round 34)')
+    _m34_wildcard = ast.parse(
+        "import operator\n"
+        "match operator.setitem:\n"
+        "    case _:\n"
+        "        pass\n")
+    if '_' in _module_binding_events(_m34_wildcard):
+        failures.append('#1953 aggregation-audit: detector self-test bound a '
+                        'wildcard case (round 34)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
