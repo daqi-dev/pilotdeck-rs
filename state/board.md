@@ -4569,3 +4569,6 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 Kernel committed history/revision 现驱动原 JSONL 的产品缓存，保留原 writer fence 及 UI metadata；cache hash 幂等、同版本改内容/版本回退明确报错、并发 metadata 不被覆盖。缓存只含用户/消息/metadata 行，无伪造 turn_result。创建/读/导入/Kernel terminal 同步，list_sessions 校验 canonical owner 与目录碰撞后可重建删除缓存；read_session_messages 转原 UI WebMessage，导出继续取 canonicalMessages。补 frozen session_model_get 使历史 UI 模型选择可读；不增加模型切换权。cargo check 已过，focused cache/原生 wire 12/12 通过（含真实 file catalog 可见与缓存删除重建）；Gateway 重启后停机期间所有 UI run frame 补齐仍在后续推进，真实 UI 由总集成验。
 
 
+### 2026-11-08 原 UI 历史模型 readiness 修复（lane C）
+
+真实 UI 的 Send disabled 根因已由隔离 HTTP 读验证：models catalog 仅有 openai/default，router.autoAvailable=false，而 Kernel session_model_get 返回 saved auto，前端按不存在的 router/auto 禁止发送。现 frozen getter 返回同一实际 provider/model 的具体选择；不改变 Kernel 路由或活跃状态 fence。补无 RPC 的 getter 正例，focused 原生 tests 14/14 通过（含工作树中的下一批 restart replay）；真实 UI 重试由总集成完成。

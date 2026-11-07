@@ -641,7 +641,7 @@ impl LiveSession for KernelSession {
                 }
                 "session_model_get" => {
                     let config = json_value(&JsValue::Object(config))?;
-                    json!({"projectKey":params["projectKey"],"sessionKey":text(&session)?,"saved":{"mode":"auto"},"effective":{"provider":config["provider"],"model":config["model"],"source":"kernel_assembly"},"immutable":true})
+                    json!({"projectKey":params["projectKey"],"sessionKey":text(&session)?,"saved":{"mode":"model","provider":config["provider"],"model":config["model"]},"effective":{"provider":config["provider"],"model":config["model"],"source":"kernel_assembly"},"immutable":true})
                 }
                 "read_session_messages" | "export_session_transcript" => {
                     let history = rpc
@@ -1426,6 +1426,28 @@ mod recovery_contract_tests {
             agent_config: JsObject::new(),
             permission_mode_source: None,
         }
+    }
+    #[tokio::test]
+    async fn kernel_frozen_model_read_names_available_route_when_auto_is_unavailable() {
+        let mut session = session(std::env::temp_dir().join("unused-kernel-model-read.sock"));
+        session
+            .agent_config
+            .insert("provider".into(), "fixture".into());
+        session.agent_config.insert("model".into(), "fixed".into());
+        let value = session
+            .backend_request(
+                "session_model_get".into(),
+                js(&json!({"projectKey":"/p"})).unwrap(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let value = json_value(&value).unwrap();
+        assert_eq!(
+            value["saved"],
+            json!({"mode":"model","provider":"fixture","model":"fixed"})
+        );
+        assert_eq!(value["effective"]["source"], "kernel_assembly");
     }
     #[tokio::test]
     async fn import_reads_and_sends_original_session_generation_not_lease_epoch() {
