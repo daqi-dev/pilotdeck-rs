@@ -976,20 +976,6 @@ fn url_with_path_resolves_against_the_origin() {
 }
 
 #[test]
-fn poll_get_is_bounded_by_the_undici_default_timeout() {
-    // Node v22.22.0 global fetch (undici) settles a hanging exchange after
-    // its default headersTimeout/bodyTimeout (measured 301,257 ms,
-    // `_tmp/20261107-issue-1343-r2/harvest/arbitration/`), so the poll GET
-    // is not unbounded even though the TS call passes no
-    // AbortSignal.timeout.
-    assert_eq!(
-        crate::channel::http_client::UNDICI_DEFAULT_TIMEOUT,
-        std::time::Duration::from_secs(300),
-        "#1343 the no-signal poll GET stays bounded at the undici default"
-    );
-}
-
-#[test]
 fn normalize_base_url_strips_trailing_slashes() {
     assert_eq!(normalize_base_url("http://h:1///"), "http://h:1");
     assert_eq!(normalize_base_url("http://h:1"), "http://h:1");

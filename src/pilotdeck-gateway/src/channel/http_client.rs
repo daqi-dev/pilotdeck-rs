@@ -17,9 +17,11 @@ use hyper_util::{
 pub(crate) type OutboundClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
 
 /// Node v22.22.0 global fetch (undici) settles a hanging exchange after its
-/// default 300 s `headersTimeout`/`bodyTimeout` (`TypeError: fetch failed`,
-/// cause `HeadersTimeoutError`); a `fetch(url, { signal })` with no
-/// `AbortSignal.timeout` is therefore bounded at this deadline, not unbounded.
+/// default ~300 s `headersTimeout` (`TypeError: fetch failed`, cause
+/// `HeadersTimeoutError`; measured 301,257 ms in
+/// `_tmp/20261107-issue-1343-r2/harvest/arbitration/`); a `fetch(url,
+/// { signal })` with no `AbortSignal.timeout` is therefore bounded at this
+/// deadline, not unbounded.
 pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Clone)]
@@ -195,12 +197,28 @@ mod tests {
     // measured 301,257 ms). `request_unbounded` must keep that deadline
     // wired: a server that accepts and stays silent settles with the
     // ordinary fetch-failure text instead of hanging the exchange (and with
-    // it every subsequent 2.5 s tick). Paused time advances straight to
-    // the 300 s deadline, so this costs milliseconds of wall clock; the
-    // outer 400 s bound only fires for the unbounded mutant and turns the
-    // hang into a named assertion.
+    // it every subsequent 2.5 s tick). Real loopback I/O does not share
+    // Tokio's virtual clock, so a runnable keeper task holds the paused
+    // clock back (`host/tests.rs` `ManualClock` precedent) until the
+    // server's receipt proves the request bytes actually walked the
+    // socket; only then may Tokio auto-advance, straight to the 300 s
+    // deadline — the wall-clock cost stays in the milliseconds. The outer
+    // 400 s bound only fires for the unbounded mutant and turns the hang
+    // into a named assertion. The elapsed pin closes the call-site blind
+    // spot of the `unbounded-timeout-dropped` negative control (any
+    // deadline drift inside (300 s, 400 s) settles the outcome assertion
+    // but not the elapsed one), and the folded constant pin keeps the
+    // value at the measured undici default.
     #[tokio::test(start_paused = true)]
     async fn request_unbounded_settles_a_silent_server_at_the_undici_default() {
+        // Folded value pin (was the constant-only test in
+        // channel/bluebubbles/tests.rs): the undici default, measured
+        // 301,257 ms in `_tmp/20261107-issue-1343-r2/harvest/arbitration/`.
+        crate::negative_assert_eq!(
+            UNDICI_DEFAULT_TIMEOUT,
+            Duration::from_secs(300),
+            "#1343 the no-signal poll GET stays bounded at the undici default"
+        );
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .await
             .expect("#1343 silent server bind");
@@ -208,29 +226,58 @@ mod tests {
             .local_addr()
             .expect("#1343 silent server addr")
             .port();
+        let (receipt_tx, receipt_rx) = tokio::sync::oneshot::channel::<()>();
+        let clock_held = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let keeper = {
+            let clock_held = clock_held.clone();
+            tokio::spawn(async move {
+                while clock_held.load(std::sync::atomic::Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+            })
+        };
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("#1343 silent accept");
-            // Drain the request; never answer.
+            // Signal once the request head arrived; drain the rest and
+            // never answer.
             let mut sink = [0u8; 512];
+            let mut receipt_tx = Some(receipt_tx);
             loop {
                 match stream.read(&mut sink).await {
                     Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+                    Ok(_) => {
+                        if let Some(tx) = receipt_tx.take() {
+                            let _ = tx.send(());
+                        }
+                    }
                 }
             }
         });
         let client = HttpClient::new();
-        let bounded = tokio::time::timeout(
-            Duration::from_secs(400),
-            client.request_unbounded(
-                "GET",
-                &format!("http://127.0.0.1:{port}/api/v1/message"),
-                None,
-                "",
-            ),
-        )
-        .await;
+        let started = tokio::time::Instant::now();
+        let request = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_secs(400),
+                client.request_unbounded(
+                    "GET",
+                    &format!("http://127.0.0.1:{port}/api/v1/message"),
+                    None,
+                    "",
+                ),
+            )
+            .await
+        });
+        // Real I/O first (the keeper holds the clock), the receipt before
+        // any verdict: without it a paused-clock auto-advance could settle
+        // the timeout before the request ever left the client.
+        receipt_rx
+            .await
+            .expect("#1343 the silent server saw the request");
+        clock_held.store(false, std::sync::atomic::Ordering::SeqCst);
+        let bounded = request.await.expect("#1343 poll GET task");
+        let elapsed = started.elapsed();
         server.abort();
+        keeper.abort();
         let outcome = match bounded {
             Ok(result) => result,
             Err(_) => Err("__never_settled__".to_owned()),
@@ -239,6 +286,11 @@ mod tests {
             outcome.err(),
             Some("TypeError: fetch failed".to_owned()),
             "#1343 a silent server settles the no-signal poll GET at the undici default"
+        );
+        crate::negative_assert_eq!(
+            elapsed,
+            UNDICI_DEFAULT_TIMEOUT,
+            "#1343 the settle deadline is the undici default, not a later bound"
         );
     }
 }
