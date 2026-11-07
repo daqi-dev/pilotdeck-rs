@@ -1105,66 +1105,73 @@ async fn empty_storage_environment_disables_snapshots() {
     assert_storage_disabled(Some(""), "emptyStorage").await;
 }
 
+/// The parsed `oracle.json`. Held in a `OnceLock` so the capability names it
+/// carries can be handed out as `&'static str`, which keeps
+/// [`expected_capabilities`] and [`assert_ts_capability_subset`] on the plain
+/// sorted-`Vec<&str>` comparison they already use.
+fn oracle_json() -> &'static Value {
+    static PARSED: std::sync::OnceLock<Value> = std::sync::OnceLock::new();
+    PARSED.get_or_init(|| {
+        serde_json::from_str(ORACLE).expect("#1231 TS capability oracle is parseable")
+    })
+}
+
+/// The capability names the recorded TS baseline advertises in one fixture
+/// config state (`contract`, `contract.emptyStorage`, `contract.missingStorage`).
+fn oracle_capabilities(state: &str) -> &'static [Value] {
+    let contract = &oracle_json()["contract"];
+    let node = if state == "contract" {
+        contract
+    } else {
+        &contract[state]
+    };
+    node["capabilities"]
+        .as_array()
+        .unwrap_or_else(|| panic!("#1231 TS capability array missing at contract.{state}"))
+}
+
+/// Providers the management fixture leaves unbound, so their names are absent
+/// from every live advertisement here even though the TS fixture configures
+/// them: `setup()` builds the `MemoryGateway` without a projection
+/// (`MemoryGateway::is_enabled()` is false). The memory pair is exercised by
+/// `memory_management_request_disabled_gateway_returns_unavailable`, so
+/// filtering it here does not remove the only assertion covering it.
+const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
+
 /// The exact capability set `describe_server` must advertise (#1231).
 ///
-/// The four call sites differ only in whether snapshot storage is wired, so
-/// they share one list: adding or removing a wired capability must not have to
-/// be repeated four times, where a missed copy would be a false FAIL (#1632
-/// item 7, from the MiniMax simplify role). Expectations must stay byte-equal
-/// to the TS baseline; this only removes the duplication.
+/// Derived from what the TS baseline actually recorded rather than from a
+/// second hand-kept list (#1352): `oracle.json` is the baseline's own
+/// `describe_server` output for the three fixture config states, all three
+/// carrying the same 50 names. The Rust set is
+///
+///   recorded − `capabilities::NOT_ADVERTISED` − providers this fixture does
+///   not bind (memory pair, and the snapshot triplet without `--storage-root`)
+///
+/// so the only way to omit a name the baseline records is to declare it, with
+/// its reason, in one of those two lists — and a name the table invents or
+/// misspells fails here. See `capability_table_covers_every_recorded_name` for
+/// the same invariant stated over the table itself rather than over a live host.
 fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
-    let mut expected = vec![
-        "run_get",
-        "run_events",
-        "run_reattach",
-        "project_files_list",
-        "project_file_read",
-        "model_catalog_list",
-        "session_model_get",
-        // #1457: the seven session-config methods are wired for real.
-        "session_model_set",
-        "session_model_clear",
-        "set_permission_mode",
-        "set_session_thinking",
-        "output_styles_list",
-        "set_output_style",
-        "seed_read_state",
-        "supported_agents",
-        "manager_sessions",
-        "commands_list",
-        "usage_snapshot",
-        "model_usage_snapshot",
-        "mcp_server_status",
-        "rewind_files",
-        #[cfg(unix)]
-        "background_task_stop",
-        #[cfg(unix)]
-        "background_tasks",
-        "set_mcp_servers",
-        "mcp_server_reconnect",
-        "mcp_server_toggle",
-        "set_mcp_permission_mode_override",
-        // TS advertises both in every config state (oracle.json:2801-2802,
-        // 2855-2856, 2956-2957); user_dialog_list runtime availability is
-        // still gated on the bus being connected (#1445 on_change staging).
-        "user_dialog_list",
-        "permission_list",
-        "upload_create",
-        "upload_get",
-        "upload_part",
-        "upload_complete",
-        "upload_cancel",
-        // #1316: served for real and TS-advertised (oracle.json).
-        "permission_decide",
-        "async_hook_result",
-        "delete_session",
-        // #1320: served for real (the native settings stack's only
-        // delegated settings method).
-        "resolve_settings",
-    ];
-    if with_snapshots {
-        expected.extend(["snapshot_list", "snapshot_get", "snapshot_restore"]);
-    }
+    let mut expected: Vec<&'static str> = oracle_capabilities("contract")
+        .iter()
+        .map(|value| value.as_str().expect("#1231 TS capability string"))
+        .filter(|name| {
+            !super::capabilities::NOT_ADVERTISED
+                .iter()
+                .any(|(declared, _)| declared == name)
+        })
+        .filter(|name| !PROVIDERS_UNBOUND_IN_FIXTURE.contains(name))
+        .filter(|name| {
+            with_snapshots
+                || !matches!(*name, "snapshot_list" | "snapshot_get" | "snapshot_restore")
+        })
+        // `tools::METHODS` registers the two background names only on unix, and
+        // the table drops a name whose method is missing; the expectation has to
+        // follow, or the exact-set test would demand a name the registry cannot
+        // route on Windows.
+        .filter(|name| cfg!(unix) || !matches!(*name, "background_task_stop" | "background_tasks"))
+        .collect();
     expected.sort_unstable();
     expected
 }
@@ -1178,24 +1185,85 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
 /// snapshots-disabled table is the minimal set, so it must be legal in every
 /// state — that direction only tightens the guard.
 fn assert_ts_capability_subset(expected: &[&str], include_disabled_states: bool) {
-    let oracle: Value = serde_json::from_str(ORACLE).expect("#1231 TS capability oracle");
-    let contract = &oracle["contract"];
-    let mut states = vec![("contract", contract)];
+    let mut states = vec!["contract"];
     if include_disabled_states {
-        states.push(("contract.emptyStorage", &contract["emptyStorage"]));
-        states.push(("contract.missingStorage", &contract["missingStorage"]));
+        states.push("emptyStorage");
+        states.push("missingStorage");
     }
-    for (label, state) in states {
-        let ts_capabilities = state["capabilities"]
-            .as_array()
-            .unwrap_or_else(|| panic!("#1231 TS capability array missing at {label}"));
+    for state in states {
+        let ts_capabilities = oracle_capabilities(state);
         negative_assert!(
             expected
                 .iter()
                 .all(|capability| ts_capabilities.contains(&json!(capability))),
-            "#1231 wired capabilities are TS subset ({label})"
+            "#1231 wired capabilities are TS subset (contract.{state})"
         );
     }
+}
+
+/// #1352: `hello_ok.serverInfo` and the `describe_server` result must be the
+/// same value. The connection already builds one from the other
+/// (`runtime/connection/mod.rs:189` — `describe_server()` is awaited once and
+/// inserted as `serverInfo`), so this test fails the moment someone composes a
+/// second list for the hello path and the two advertisements drift apart.
+#[tokio::test]
+async fn hello_reports_the_same_capabilities_as_describe_server() {
+    let (_scratch, requests) = setup();
+    let options = requests.options.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1352 dispose unused test registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1352 shutdown unused test owner");
+    let host = assembly::start(options.clone(), requests.env.clone())
+        .await
+        .expect("#1352 native host boot");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string())
+        .await
+        .expect("#1352 hello");
+    let server_info = {
+        let frames = text.0.lock().expect("#1352 hello frames");
+        frames
+            .iter()
+            .find(|frame| frame["type"] == "hello_ok")
+            .expect("#1352 hello_ok frame")["serverInfo"]
+            .clone()
+    };
+    connection
+        .receive(json!({"type":"request","id":"describe","method":"describe_server"}).to_string())
+        .await
+        .expect("#1352 describe request");
+    let described = {
+        let frames = text.0.lock().expect("#1352 describe frames");
+        let response = frames
+            .iter()
+            .find(|frame| frame["id"] == "describe")
+            .expect("#1352 describe response");
+        negative_assert_eq!(response["ok"], true, "#1352 describe success");
+        response["result"].clone()
+    };
+    negative_assert_eq!(
+        server_info,
+        described,
+        "#1352 hello_ok.serverInfo equals the describe_server result"
+    );
+    negative_assert!(
+        server_info["capabilities"]
+            .as_array()
+            .is_some_and(|names| !names.is_empty()),
+        "#1352 hello_ok carries a non-empty capability array"
+    );
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("#1352 native host shutdown");
 }
 
 /// #1869 item 3: the advertised half used to assert only "not
