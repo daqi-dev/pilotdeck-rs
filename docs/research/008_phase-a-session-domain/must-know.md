@@ -5,7 +5,7 @@ date: 2026-10-14
 title: 阶段 A 深水区：会话域的最小完整迁移单元
 tags: [phase-a, session, interaction, sidecar]
 status: 源码调研完成；运行验证与决策闸门待后续 issue
-related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/gap, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/four-cell-matrix, plan/005_phase-a-session-domain]
+related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/gap, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/four-cell-matrix, research/012_phase-a-switch-matrix, plan/005_phase-a-session-domain]
 ---
 
 # 008 · 必须先知道的事

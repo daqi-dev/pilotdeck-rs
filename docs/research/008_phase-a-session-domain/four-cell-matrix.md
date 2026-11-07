@@ -5,7 +5,7 @@ date: 2026-11-06
 title: A7.2-pr6b 四格矩阵一次性账本（#590）
 tags: [phase-a, session-domain, four-cell, native-witness, parity]
 status: 一次性账本已记录；四格分别报告，无后续四格回归闸门
-related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/gap, research/009_a19-host-expectations/decision, experiments/exp006-gateway-parity-ruler, plan/005_phase-a-session-domain]
+related: [research/005_phase-a-gateway, research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/decision, research/008_phase-a-session-domain/gap, research/009_a19-host-expectations/decision, research/012_phase-a-switch-matrix, experiments/exp006-gateway-parity-ruler, plan/005_phase-a-session-domain]
 ---
 
 # 四格矩阵一次性账本（#590 / A7.2-pr6b）
