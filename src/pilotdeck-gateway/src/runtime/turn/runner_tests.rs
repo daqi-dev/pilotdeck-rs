@@ -721,6 +721,9 @@ fn turn_runner_generator_writes_owned_marker() {
                 "#2116 turn-runner generator writes its ownership marker"
             );
         }
+        // #2116 r3: keep the success-path removability check explicit; the
+        // Drop guard above only covers the panic paths (DS r2 P2).
+        fs::remove_dir_all(&root).expect("#2116 remove turn-runner marker scratch");
     }
 }
 
