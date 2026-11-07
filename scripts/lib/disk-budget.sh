@@ -77,7 +77,9 @@ pdrs_disk_used_kib() {
 
 pdrs_disk_main_root() { # $1=起点目录；输出「该量的仓根」
   # 「量哪个根」是策略，不是调用方的私事：从 linked worktree 里跑时量自己那棵（没有 _build/_tmp）
-  # 会恒判 ok，闸门静默失效。策略放这里，pdrs-loop.sh / new-tree.sh / 直接执行块都调它。
+  # 会恒判 ok，闸门静默失效。策略放这里，pdrs-loop.sh / new-tree.sh / 直接执行块都调它；
+  # next-task.sh / pdrs-loop.sh 的 board 读取也调它定位主树（2026-11-08 人令修，
+  # 与磁盘闸同一策略，防 worktree 里读到陈旧 READY）。
   # 非 git 树（隔离测试 fixture）原样返回；解析不出主仓根、或主仓是裸仓（没有工作区）→ 返回 2（fail-closed）。
   local d=${1:-$PWD} start out first
   start=$d   # 不能写进上一条 local：local 会先把 $d 展开再赋值，set -u 下直接 unbound

@@ -87,8 +87,10 @@ mkdir "$LAUNCH_DIR"
 LEDGER="$RUN_DIR/ledger-v2.tsv"
 [ -f "$LEDGER" ] || printf 'iter\tstart\tref\tupdated\tstatus\texit\tupdated_after\tlaunch\tboard_changed\n' > "$LEDGER"
 
-board_sum() { cksum < "$ROOT/state/board.md" | cut -d' ' -f1; }
-board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$ROOT/state/board.md" | head -1; }
+# board 也固定读主树（2026-11-08 人令修，与磁盘闸同一 DISK_ROOT 策略）：从 worktree 里起循环时
+# $ROOT 是该树，读它的 board 会拿树基点上的陈旧 READY 判推进；next-task.sh 已自带同样的定位。
+board_sum() { cksum < "$DISK_ROOT/state/board.md" | cut -d' ' -f1; }
+board_updated() { sed -n 's/^updated: \([0-9-]* [0-9:]*\).*/\1/p' "$DISK_ROOT/state/board.md" | head -1; }
 # 所有历史账本（按日期；同日先 v1 再 v2）末尾连续几行的 (ref, updated) 等于当前、且该迭代 board 没变 = 连续未推进次数（error/timeout 但 board 已变也不计）。
 # 跨启动、跨日、v1→v2 都持续计数（有意为之：人不改 board 就重起，不会白得新机会）。
 stale_count() {

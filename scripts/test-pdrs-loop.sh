@@ -178,6 +178,58 @@ rc=$?
 set -e
 check "⑬f 主仓根解析失败：exit 1、消息含无法确定主仓根" '[ "$rc" = 1 ] && grep -q "无法确定主仓根" "$T/out.log"'
 
+# ⑭ next-task 定位主工作树（2026-11-08 人令修）：$0 相对路径解析到 linked worktree 的 scripts/ 时，
+#    必须改读主树的 board 并 stderr 提示——树基点上的陈旧 READY 曾污染派单（00:5x 事故：wt-1344
+#    报出 6 张早已拍板的待人单）。git 仓库 + 真 linked worktree 复现；无 .git fixture 由上面 ①–⑬ 覆盖。
+G="$BASE/nt fixture"
+mkdir -p "$G/root/scripts/lib" "$G/root/state"
+cp "$SRC/next-task.sh" "$G/root/scripts/"
+cp "$SRC/lib/disk-budget.sh" "$G/root/scripts/lib/"
+gboard() {  # $1 = 队首 ref
+  { echo '# test board'; echo; echo '<!-- READY:BEGIN -->'
+    echo "updated: 2026-11-08 01:00 · by test"
+    echo "- $1 | docs | ready | ⑭条目"; echo '<!-- READY:END -->'; echo; echo '> ## 历史段'; } > "$G/root/state/board.md"
+}
+gboard t1
+git -c init.defaultBranch=main -C "$G/root" init -q
+git -C "$G/root" add -A
+git -C "$G/root" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm x
+git -C "$G/root" worktree add "$G/wt" >"$G/wt-add.log" 2>&1
+gboard t2   # 主树改队首：wt 里仍是 t1，读错树必回 t1，读主树才回 t2
+set +e
+out="$(bash "$G/wt/scripts/next-task.sh" 2>"$G/err")"; rc=$?
+set -e
+check "⑭ worktree 里跑：rc 0、读主树 board（队首 t2）、stderr 提示改读主树" \
+  '[ "$rc" = 0 ] && [ "$(printf "%s" "$out" | cut -f1)" = t2 ] && grep -q "非主工作树" "$G/err" && grep -qF "$(cd "$G/root" && pwd -P)/state/board.md" "$G/err"'
+# ⑭b 主树 board 与 origin/main 不一致 → 提示不阻断；一致（负控）→ 不提示
+git clone -q --bare "$G/root" "$G/origin.git"
+git -C "$G/root" remote add origin "$G/origin.git"
+git -C "$G/root" fetch -q origin
+set +e
+bash "$G/root/scripts/next-task.sh" >"$G/out2" 2>"$G/err2"; rc=$?
+set -e
+check "⑭b board 落后 origin/main 场景（本地 t2 未推、origin 是 t1）：rc 0 且 stderr 提示核分支" \
+  '[ "$rc" = 0 ] && [ "$(cut -f1 "$G/out2")" = t2 ] && grep -q "origin/main 不一致" "$G/err2"'
+git -C "$G/root" add -A
+git -C "$G/root" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm t2
+rm -rf "$G/origin.git"
+git clone -q --bare "$G/root" "$G/origin.git"
+git -C "$G/root" fetch -q origin
+# 负控自证比较输入真实取到：origin/main 引用在、且其 board 与工作区一致（否则「无提示」可能只是
+# git show 静默失败，负控假绿——评审 r1 P2）。git clone/fetch 失败由 set -e 兜底中止。
+git -C "$G/root" show origin/main:state/board.md >"$G/origin-board3"
+set +e
+bash "$G/root/scripts/next-task.sh" >"$G/out3" 2>"$G/err3"; rc=$?
+set -e
+check "⑭b 负控 board 与 origin/main 一致：rc 0、队首 t2、无两条提示" \
+  '[ "$rc" = 0 ] && cmp -s "$G/origin-board3" "$G/root/state/board.md" && [ "$(cut -f1 "$G/out3")" = t2 ] && ! grep -q "origin/main 不一致" "$G/err3" && ! grep -q "非主工作树" "$G/err3"'
+# ⑭c --board 显式指定：整段跳过定位与两条提示
+set +e
+bash "$G/wt/scripts/next-task.sh" --board "$G/root/state/board.md" >"$G/out4" 2>"$G/err4"; rc=$?
+set -e
+check "⑭c --board 显式指定：rc 0、读指定文件、无定位/一致性提示" \
+  '[ "$rc" = 0 ] && [ "$(cut -f1 "$G/out4")" = t2 ] && ! grep -q "非主工作树" "$G/err4" && ! grep -q "origin/main 不一致" "$G/err4"'
+
 check "锁已释放" '[ ! -e "$T/lock" ]'
 echo "test-pdrs-loop: $([ "$fails" = 0 ] && echo OK || echo "$fails FAIL")"
 [ "$fails" = 0 ]
