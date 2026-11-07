@@ -255,15 +255,18 @@ struct EngineInner {
 /// thread. If a workspace member ever enables rquickjs's `parallel`
 /// feature (Cargo feature unification would turn every `Arc<EngineInner>`
 /// into a shareable handle without touching this crate), these doctests
-/// stop failing to compile and surface the change.
+/// stop failing to compile and surface the change. They run only under
+/// `--features regex-proto` (CI has no network for rquickjs); the
+/// `regex-proto-budget` negative-control fixture runs them before its
+/// first mutation.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// use pilotdeck_regex_proto::RegexEngine;
 /// fn is_send<T: Send>() {}
 /// is_send::<RegexEngine>();
 /// ```
 ///
-/// ```compile_fail
+/// ```compile_fail,E0277
 /// use pilotdeck_regex_proto::RegexEngine;
 /// fn is_sync<T: Sync>() {}
 /// is_sync::<RegexEngine>();
@@ -399,6 +402,14 @@ impl RegexEngine {
                 "pattern belongs to another engine".to_owned(),
             ));
         }
+        // A zero (or exhausted-to-zero) allowance refuses to start at all.
+        // The handler-side check only fires on a poll (~every 10 000 steps),
+        // so without this entry check a sub-granularity subject would run to
+        // a verdict untracked; with it, `MatchBudget::new(0)` is a hard
+        // refusal regardless of subject size.
+        if budget.remaining_polls <= 0 {
+            return Err(MatchError::Interrupted);
+        }
         self.inner.interrupted.store(false, Ordering::SeqCst);
         self.inner
             .remaining_polls
@@ -423,18 +434,19 @@ impl RegexEngine {
         // Write the consumed polls back so the budget spans the whole request.
         let remaining = self.inner.remaining_polls.load(Ordering::SeqCst);
         budget.remaining_polls = remaining.max(0);
+        // Disarm on *both* return paths: an allowance spent down to (or past)
+        // zero must not stay armed against later JS entries that run outside
+        // any request budget (pattern drops, cache probes) — their next poll
+        // would see `previous <= 0` and interrupt them (the cache-size probe
+        // would panic on its `.expect`, a pattern drop would silently leak
+        // its JS cache entry). The next request's entry stores are the reload,
+        // which `fresh_budget_does_not_inherit_previous_exhaustion` pins.
+        self.inner.remaining_polls.store(i64::MAX, Ordering::SeqCst);
         // Fail closed: once the handler decided to interrupt, the verdict is
         // Interrupted even if a value also made it out of the engine.
         if self.inner.interrupted.load(Ordering::SeqCst) {
             return Err(MatchError::Interrupted);
         }
-        // Disarm on the completed path: an allowance spent down to exactly
-        // zero must not stay armed against later JS entries that run outside
-        // any request budget (pattern drops, cache probes) — their next poll
-        // would see `previous <= 0` and interrupt them. An interrupted return
-        // keeps the next request's entry stores above as its reset, which
-        // `fresh_budget_does_not_inherit_previous_exhaustion` pins.
-        self.inner.remaining_polls.store(i64::MAX, Ordering::SeqCst);
         outcome
     }
 }

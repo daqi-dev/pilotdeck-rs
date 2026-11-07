@@ -75,6 +75,46 @@ fn reuse_after_interrupt_serves_later_requests() {
     );
 }
 
+/// After a request exhausts and is interrupted, the JS entries that run
+/// outside any request budget must stay safe: the spent allowance is
+/// disarmed on both return paths, so a poll inside the cache-size probe or
+/// a pattern's release call never sees a spent budget (the probe would
+/// panic on its `.expect`, a release failure would silently leak the JS
+/// cache entry).
+#[test]
+fn probes_and_pattern_drops_stay_safe_after_an_interrupt() {
+    let engine = engine();
+    let pattern = compile(&engine, "^(a+)+(?=!)$", "");
+    let doom = units(&format!("{}!", "a".repeat(18)));
+
+    let mut tiny = MatchBudget::new(1);
+    assert_eq!(
+        engine.exec(&pattern, &doom, &mut tiny),
+        Err(MatchError::Interrupted),
+        "#1265 the request must exhaust first"
+    );
+
+    // The probe answers instead of panicking, and drops still release.
+    let extra = compile(&engine, "^b+$", "u");
+    assert_eq!(
+        engine.cached_pattern_count(),
+        2,
+        "#1265 two patterns cached"
+    );
+    drop(extra);
+    assert_eq!(
+        engine.cached_pattern_count(),
+        1,
+        "#1265 the drop after an interrupt still releases its cache entry"
+    );
+    drop(pattern);
+    assert_eq!(
+        engine.cached_pattern_count(),
+        0,
+        "#1265 the interrupted request's pattern drops cleanly"
+    );
+}
+
 /// Node measurement (s4-probe.log): without flags `re.exec`/`re.test` are
 /// stateless; with `g` the *same RegExp object* consumes `lastIndex` across
 /// calls (`g-exec-3-null`, `g-test-3 false`), while a fresh object restarts at
