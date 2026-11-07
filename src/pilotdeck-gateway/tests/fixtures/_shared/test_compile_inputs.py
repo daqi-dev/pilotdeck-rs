@@ -1017,6 +1017,42 @@ class Manifest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'would not carry'):
             control.compile_inputs()
 
+    def test_an_ignored_external_input_is_refused(self):
+        # The other half of the question: a derived input outside `src/` has
+        # no `ls-files` listing to look in, so `_copyable` asks
+        # `git check-ignore` per path. Both branches must give the same
+        # answer about the same file (#1570 r21 zai sibling P2 / boundary P2).
+        root = self.workspace('const X: &str = include_str!("../specs/private.json");\n')
+        (root / '.gitignore').write_text('specs/private.json\n', encoding='utf-8')
+        (root / 'specs' / 'private.json').write_text('{}\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, 'would not carry'):
+            control.compile_inputs()
+
+    def test_a_source_swapped_for_a_fifo_does_not_block_the_scan(self):
+        # The scan used to `read_bytes()` every source; a source swapped for
+        # a FIFO between the listing (`is_file()` says yes) and the read
+        # would hang the control (#1570 r21 zai sibling P2). The read goes
+        # through one checked descriptor, so the swap refuses instead.
+        root = self.workspace('mod a;\n')
+        original = control._read_input
+        state = {'swapped': False}
+
+        def swap(path, root_identity=None):
+            if not state['swapped']:
+                state['swapped'] = True
+                victim = control.REPO / path
+                victim.unlink()
+                os.mkfifo(victim)
+            return original(path, root_identity)
+
+        control._read_input = swap
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'not a regular file'):
+                control.compile_inputs()
+        finally:
+            control._read_input = original
+            assert root.exists()
+
     def test_no_control_brings_its_own_workspace_copy(self):
         # The recurrence mode of #1570 is a new control carrying its own
         # `copytree(src)` inventory -- three suites had one. Enumerate the
