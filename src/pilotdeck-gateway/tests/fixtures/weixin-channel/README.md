@@ -168,12 +168,17 @@ listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 
 视频与缺 URL 的诊断段、以及 `media.full_url` + AES 解密的 `source` 分支。
 落盘顺序（声明大小闸 → 取件 → transform → 再量一次 → mime 归一 → mkdir 0700
 → 文件名 → 越界检查 → 写 0600 → `stat`）只有 mock transport 能驱动，由
-`src/pilotdeck-gateway/src/channel/im_attachment/tests.rs` 的聚焦格钉住。
+`src/pilotdeck-gateway/src/channel/im_attachment/tests.rs` 的聚焦格钉住：其中
+「再量一次」用的是**变换后**的字节（`save_from_url_checks_the_size_limit_after_the_transform`
+用上限 3 分别测「8 字节变换后 3 字节成功」与「2 字节变换后 6 字节被拒」）。
+消息级调度（同一 poll 批内谁先入会话）也只能读代码：`plan_incoming_items`
+把 item 归成文本 / 语音 / 诊断 / 需下载四类，只有最后一类让出到 spawned 任务。
 
-负控六条（全部 KILLED）：`weixin-attachment-fallback-text` /
+负控七条（全部 KILLED）：`weixin-attachment-fallback-text` /
 `-submit-dropped` / `-diagnostics-dropped` / `-source-branch` 死在金样比对；
-`im-attachment-declared-size-guard-dropped` / `-image-sniff-dropped` 死在
-`#1822` 聚焦格的 `negative_assert*` 收据上。
+`im-attachment-declared-size-guard-dropped` / `-image-sniff-dropped` /
+`-post-transform-guard-dropped` 死在 `#1822` 聚焦格的 `negative_assert*`
+收据上。
 
 ## 确定性
 
