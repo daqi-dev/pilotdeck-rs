@@ -1440,10 +1440,11 @@ try {
     );
   }
 
-  // R19 host boundary: ICU4X folds every unpaired surrogate to U+FFFD, while
-  // Node keeps distinct weights. Record the real TS order so the Rust test can
-  // prove it rejects the comparison instead of silently ordering it another
-  // way (the review's A="\ud800", B="\ufffd" case is the first pair).
+  // R19 host boundary retired by #132: ICU4X's plain `compare_utf16` folds every
+  // unpaired surrogate to U+FFFD, while Node keeps distinct implicit weights.
+  // Record the real TS order so the Rust test can replay it through
+  // `compare_utf16_preserving_surrogates` and compare for equality (the
+  // review's A="\ud800", B="\ufffd" case is the first pair).
   const surrogateSortRoot = join(scratch, 'surrogate-sort-root');
   const surrogateSortBase = join(surrogateSortRoot, 'workspaces/w/sessions/s/snapshots');
   const surrogateSortValues = [

@@ -98,6 +98,14 @@ mutations = [
      'script.is_none_or(|_| false)',
      'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
      '#132 fr_Latn_CA default keeps fr-CA\'s backward secondary'),
+    # The opposite direction: widening the Latin test to every script would
+    # repair `fr-Cyrl-CA`, which Node's default collator does not (measured
+    # row `fr_Cyrl_CA.UTF-8` in `pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`).
+    ('french-script-widened', PROJECT,
+     'script.is_none_or(|script| script.to_string() == "Latn")',
+     'script.is_none_or(|_| true)',
+     'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
+     '#132 a non-Latin script does not get fr-CA\'s backward secondary'),
     # Paired mutation for the explicit spelling: dropping its script condition
     # makes `new Intl.Collator("fr-Latn-CA")` take the fr-CA repair, which the
     # oracle records as generic `fr` (sign -1 for `coté` vs `côte`).
@@ -125,7 +133,7 @@ mutations = [
      '    }\n'
      '    if entries.len() > 1 {\n        let locale = node_locale(',
      'native_archive::tests::archive_lone_surrogate_ties_answer_natively_with_ts_bytes',
-     'unexpected forward ties-lone-native_archive_manifest'),
+     'unexpected forward "ties-lone-native_archive_manifest"'),
     ('transcript-host-remains', TRANSCRIPT,
      '    let collator = if ties.is_empty() {\n        None\n    } else {\n        Some(',
      '    let collator = if ties.is_empty() {\n        None\n    } else {\n'
@@ -174,7 +182,9 @@ mutations = [
      '    "model_catalog_list",\n    "session_model_get",',
      '    "session_model_get",',
      PREFIX + 'matrix_pairing_has_zero_business_upstream',
-     'matrix_pairing_has_zero_business_upstream/en_US.UTF-8'),
+     # The wrapper spawns the worker in a child process, so its panic names the
+     # child: `...matrix_pairing_worker/en_US.UTF-8: expected one passed test`.
+     'matrix_pairing_worker/en_US.UTF-8'),
     ('oracle-commit-corrupt', ORACLE,
      '"sourceCommit":"cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"',
      '"sourceCommit":"0000000000000000000000000000000000000000"',

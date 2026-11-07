@@ -226,7 +226,9 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
             // `resolvedOptions().locale == "fr-Latn-CA"` yet orders like `fr-CA`
             // (`coté > côte`), while an explicit `new Intl.Collator("fr-Latn-CA")`
             // orders like generic `fr`. So the script tag on CA does not opt out
-            // here; a non-Latin script tag is untested and left alone, and an
+            // here, while a non-Latin script tag does: measured row
+            // `fr_Cyrl_CA.UTF-8` in `../tests/fixtures/skills-fr-ca-probe.json`
+            // resolves `fr-Cyrl-CA` and orders `coté < côte` (no repair). An
             // explicit collation keeps its own metadata.
             if locale.id.language.as_str() == "fr"
                 && locale
