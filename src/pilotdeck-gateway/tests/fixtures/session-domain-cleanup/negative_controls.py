@@ -4204,7 +4204,144 @@ MUTATIONS = [
      "def load_session_domain():\n"
      "    spec = importlib.util.spec_from_file_location('session_domain', "
      "SESSION_DOMAIN)"),
+    ('calibrate-for-target-finally-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    try:\n"
+     "        for _h in _hs:\n"
+     "            pass\n"
+     "        raise RuntimeError()\n"
+     "        _h = None\n"
+     "    finally:\n"
+     "        _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-closure', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    def _inner():\n"
+     "        _h('common', object())\n"
+     "    _inner()\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-shadowed-fresh', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    object = lambda: _hs[0]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    _h = object()\n"
+     "    _h('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-with-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    import contextlib as _cl\n"
+     "    with _cl.nullcontext(_h) as _f:\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-except-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    for _h in _hs:\n"
+     "        pass\n"
+     "    try:\n"
+     "        raise Exception(_h)\n"
+     "    except Exception as _e:\n"
+     "        _f = _e.args[0]\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-for-target-name-iter', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _items = (_hs[0],)\n"
+     "    for _h in _items:\n"
+     "        pass\n"
+     "    _f = _h\n"
+     "    _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay-for', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    for _f in _g:\n"
+     "        _f('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
+    ('calibrate-comp-handle-relay-chain', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     "if False:\n"
+     "    _n = '__setattr__'\n"
+     "    _hs = [getattr(md, k) for k in (_n,)]\n"
+     "    _g = [_h for _h in _hs]\n"
+     "    _j = [_f for _f in _g]\n"
+     "    _j[0]('common', object())\n"
+     "\n"
+     "\n"
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)"),
 ]
+
 
 def calibrate_dict_namespace_update(rows):
     """#892 fix-r28: ``md.__dict__.update(common=<stub>)`` writes the mapping."""
@@ -4962,6 +5099,69 @@ def calibrate_comp_handle_relay(rows):
         'passed=False')
 
 
+def calibrate_for_target_finally_rebind(rows):
+    """#1953 fix-r1 r8: a rebind after ``raise`` never runs; the finally call does."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-finally-rebind flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_closure(rows):
+    """#1953 fix-r1 r8: a nested definition closes over the loop target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-closure flagged, passed=False')
+
+
+def calibrate_for_target_shadowed_fresh(rows):
+    """#1953 fix-r1 r8: a rebound builtin name hands the handle back."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-shadowed-fresh flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_with_alias(rows):
+    """#1953 fix-r1 r8: the loop target handed to a ``with`` binding."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-with-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_except_alias(rows):
+    """#1953 fix-r1 r8: the loop target round-tripped through an exception."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-except-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_name_iter(rows):
+    """#1953 fix-r1 r8: a for statement over a name-bound literal."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-name-iter flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay_for(rows):
+    """#1953 fix-r1 r8: a relayed handle container iterated by ``for``."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay-for flagged, '
+        'passed=False')
+
+
+def calibrate_comp_handle_relay_chain(rows):
+    """#1953 fix-r1 r8: a handle container relayed through two comprehensions."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-comp-handle-relay-chain flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -5672,6 +5872,22 @@ JUDGES = {
         'aggregation-audit', calibrate_starred_const_subscript, False, ()),
     'calibrate-comp-handle-relay': (
         'aggregation-audit', calibrate_comp_handle_relay, False, ()),
+    'calibrate-for-target-finally-rebind': (
+        'aggregation-audit', calibrate_for_target_finally_rebind, False, ()),
+    'calibrate-for-target-closure': (
+        'aggregation-audit', calibrate_for_target_closure, False, ()),
+    'calibrate-for-target-shadowed-fresh': (
+        'aggregation-audit', calibrate_for_target_shadowed_fresh, False, ()),
+    'calibrate-for-target-with-alias': (
+        'aggregation-audit', calibrate_for_target_with_alias, False, ()),
+    'calibrate-for-target-except-alias': (
+        'aggregation-audit', calibrate_for_target_except_alias, False, ()),
+    'calibrate-for-target-name-iter': (
+        'aggregation-audit', calibrate_for_target_name_iter, False, ()),
+    'calibrate-comp-handle-relay-for': (
+        'aggregation-audit', calibrate_comp_handle_relay_for, False, ()),
+    'calibrate-comp-handle-relay-chain': (
+        'aggregation-audit', calibrate_comp_handle_relay_chain, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
