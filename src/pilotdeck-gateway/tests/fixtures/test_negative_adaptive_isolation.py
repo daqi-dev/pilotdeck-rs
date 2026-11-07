@@ -37,10 +37,12 @@ sys.path.insert(0, str(HERE))
 #
 #   interpreter startup     LOCK_READY_SECONDS, the same 120 s this file gives
 #                           the --hold-lock probe for exactly this.
-#   (2 + N) bootstrap gits  verified_inputs() before the lock: rev-parse,
-#                           ls-tree, then one `git show` per verified input
-#                           (negative_controls.py:62-64, :181-184), each with
-#                           the runner's own 30 s timeout.
+#   (2 + 2N) bootstrap gits verified_inputs() before the lock: rev-parse,
+#                           ls-tree, one `git show` per input *inside*
+#                           input_paths() to parse its imports, and a second
+#                           `git show` per input for the verified byte snapshot
+#                           (negative_controls.py:62-64, :67-108, :181-184),
+#                           each with the runner's own 30 s timeout.
 #   lock_timeout            mutating_sources' default (negative_process.py:872);
 #                           the child raises its own TimeoutError at that bound
 #                           and exits, so the assertion reports rc + stderr
@@ -56,8 +58,8 @@ sys.path.insert(0, str(HERE))
 # N and B are measured at run time from the same bootstrap and the same scanner
 # the child uses, and the whole sum is computed while the HEAD guard still holds
 # the tree lock, so no sibling can move the inputs between the measurement and
-# the spawn. On cb8 N=5 and B=3 today, so the budget is 120 + 210 + 900 + 2580 =
-# 3810 s against a measured 6.7-6.8 s warm path: it only expires when a step
+# the spawn. On cb8 N=5 and B=3 today, so the budget is 120 + 360 + 900 + 2580 =
+# 3960 s against a measured 6.7-6.8 s warm path: it only expires when a step
 # sits near its own watchdog, not when the path is merely slow -- and a child
 # that hangs *inside* a watched step raises its own error and exits, which the
 # parent reports immediately, so the ceiling is not the usual cost of a failure.
@@ -76,7 +78,8 @@ LOCK_READY_SECONDS = 120
 # Bootstrap watchdog outside the shared executor: negative_controls.py:64 runs
 # each pre-lock git call with timeout=30.
 BOOTSTRAP_GIT_SECONDS = 30
-BOOTSTRAP_GIT_CALLS_OVERHEAD = 2
+BOOTSTRAP_GIT_CALLS_OVERHEAD = 2   # rev-parse + ls-tree
+BOOTSTRAP_SHOW_PASSES = 2          # input_paths() import scan + verified snapshot
 # Post-lock watchdog enumeration: the counts are structural facts of
 # negative_process.mutating_sources (:904-909), the durations come from it.
 AREA_CHECKS_PER_RUN = 2
@@ -155,7 +158,11 @@ def hold_ready_seconds(runner):
         raise RuntimeError('mutating_sources no longer carries a lock_timeout default; '
                            're-derive the #2127 ready budget')
     commit = runner.git_bytes('rev-parse', 'HEAD').decode().strip()
-    bootstrap = (BOOTSTRAP_GIT_CALLS_OVERHEAD + len(runner.input_paths(commit))) * BOOTSTRAP_GIT_SECONDS
+    # input_paths() reads every input once to parse its imports; verified_inputs()
+    # then reads the same inputs again as the byte snapshot it re-checks.
+    inputs = len(runner.input_paths(commit))
+    bootstrap = (BOOTSTRAP_GIT_CALLS_OVERHEAD
+                 + BOOTSTRAP_SHOW_PASSES * inputs) * BOOTSTRAP_GIT_SECONDS
     literals = api._workspace_literal_inputs(runner.root, commit)
     batches = len(list(api._pathspec_batches(literals)))
     git_calls = (AREA_CHECKS_PER_RUN + batches) * GIT_CALLS_PER_AREA_CHECK + OTHER_GIT_CALLS
