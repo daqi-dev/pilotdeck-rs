@@ -98,18 +98,18 @@ python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
 - `ROOT / 'src/pilotdeck-gateway/src/sms/mod.rs'`——整串在一个字符串里，键天然字面存在，无需登记。
 - `SMS = ROOT / 'src/pilotdeck-gateway/src/sms'` 再 `SMS / 'mod.rs'`——文件里只有 `mod.rs`，键 `sms/mod.rs` 不出现，**必须登记**。目录来自常量、文件名裸写的拼接都算，`.json` / `.mts` / `.mjs` 等夹具文件同理（发现循环对 `fixtures/**` 的任何改动都生成键）。
 
-约定：这类表在模块级写一个 `DISCOVERY_ANCHORS` 元组，逐条列出它依赖的键，值与 `neg-for-diff.sh` 推导出的键**逐字节相同**；没有裸文件名拼接的表写 `DISCOVERY_ANCHORS = ()`（空元组是断言，不是省略）。`test_negative_discovery_anchors.py` 的 `TABLES` 是登记清单，闸门对每张表做四件事：
+约定：这类表在模块级写一个 `DISCOVERY_ANCHORS` 元组，逐条列出它依赖的键，值与 `neg-for-diff.sh` 推导出的键**逐字节相同**；没有裸文件名拼接的表写 `DISCOVERY_ANCHORS = ()`（空元组是断言，不是省略）。`test_negative_discovery_anchors.py` 的 `TABLES` 是登记清单，闸门对每张表做这几件事：
 
-1. 静态解析该表的路径表达式（`ROOT` / `__file__` / 模块常量、文件内只赋值一次的别名、`/`、`Path(...)`、`.parent`、`.parents[n]`、`.resolve()`、`.joinpath()`、`.with_name()`、`.with_suffix()`，以及 `Path(base, 'mod.rs')` / `base.joinpath('mod.rs')` / `'x.json'.format(...)` 这类同样藏目录的调用写法），算出全部裸文件名拼接键，要求与 `DISCOVERY_ANCHORS` **集合相等**（漏登记报 `missing anchor: …`，多登记报 `stale anchor: …`）。
+1. 静态解析该表的路径表达式（`ROOT` / `__file__` / 模块常量、文件内只赋值一次的别名、`/`、`Path(...)`、`.parent`、`.parents[n]`、`.resolve()`、`.joinpath()`、`.with_name()`、`.with_suffix()`，以及 `Path(base, 'mod.rs')` / `base.joinpath('mod.rs')` 这类同样藏目录的调用写法），算出全部裸文件名拼接键，要求与 `DISCOVERY_ANCHORS` **集合相等**（漏登记报 `missing anchor: …`，多登记报 `stale anchor: …`）。
 2. 每个锚点必须字面出现在该表文本里——否则 `git grep -F` 同样找不到，登记了也不生效。
-3. 以仓库根为起点、但静态解析不出来的表达式（如 `ROOT / PICK['dir'] / 'x.rs'`、`for name in tracked` 这类非字面量的推导源、函数内重绑定过的模块级名字）**失败关闭**，不静默跳过；字符串 `+` 拼接与 f-string 拼出的路径不在解析族的，同样按未覆盖形状报错（改写为 `/` 拼接）。证据输出目录一类运行期拼接（`out / 'summary.json'`）不以仓库根为起点，不算发现键，无需登记。
-4. 表 import 的共享夹具助手也算依赖：发现循环把 `fixtures/negative_suite.py` 的改动键成 `fixtures/negative_suite.py`，只 import 不会让这个字面串出现在表文本里，因此每个 `negative_*` 助手 import 都要求对应锚点。
+3. 以仓库根为起点、但静态解析不出来的表达式（如 `ROOT / PICK['dir'] / 'x.rs'`、`for name in tracked` 这类非字面量的推导源、函数内重绑定过的模块级名字）**失败关闭**，不静默跳过；字符串 `+`、f-string、`os.path.join`、`%`、`.format()` 拼出的路径不在解析族的，同样按未覆盖形状报错（改写为 `/` 拼接）。证据输出目录一类运行期拼接（`out / 'summary.json'`）不以仓库根为起点，不算发现键，无需登记。
+4. 表 import 的共享模块也算依赖：发现循环把 `fixtures/negative_suite.py` 的改动键成 `fixtures/negative_suite.py`、把 `fixtures/_shared/mutant_switch.py` 键成 `_shared/mutant_switch.py`，只 import 不会让这些字面串出现在表文本里，因此每个 `negative_*` 助手（`SHARED_HELPERS`）与 `_shared` / `_negkit` 下的库模块 import 都要求对应锚点。
 5. `DISCOVERY_ANCHORS` 只能赋值一次；重复赋值直接失败。
 6. 全目录不漏：每张 `*negative*.py` 要么在 `TABLES`，要么在 `KNOWN_BLIND` 登记（写理由），要么根本不需要锚点——**新出现的盲表、以及只含解析不出形状的表，都会把闸门变红**，不会静默漏过。`KNOWN_BLIND` 是修复清单不是豁免：条目只能靠「补锚点并移进 `TABLES`」删除，表被删/被修好却留着条目也会变红；条目里的条数（`N keys` / `N unresolvable`）每次运行重算，表里新增一条裸文件名行同样变红。
 
 判别力由负控自证（改坏任一处必须变红，已实测）：逐条删掉单个锚点、给表注入一条新的裸文件名行、`TABLES` 清空、`DISCOVERY_ANCHORS` 重复赋值、字符串拼接形状、不支持的调用形状、被函数重绑定的模块常量、新盲表/新不可解表未登记。只删锚点必须报 `missing anchor: <被删的键>`，不是别的键。
 
-**跟进清单（尚未登记，别再扩大）**：本闸门当前只登记 #2133 点名的 4 张表（`channel-sms` / `memory-gateway` / `snapshot-projection` / `metadata-process-cwd`，共 24 条键）。按同一解析器扫全部 `fixtures/**/*negative*.py`，本提交上还有 **123 张表 / 352 条键**存在字面缺失，其中 **12 张表**另有解析器跟不下去的路径形状（`os.path.join`、`Path(command[-1]) / …`、非字面量推导源等），逐表登记在 `test_negative_discovery_anchors.py` 的 `KNOWN_BLIND`（每条的条数由 `test_known_blind_counts_match_the_scan` 复算），逐表清单在 #2141；把某张表加进 `TABLES`，闸门就会逐条报出它欠的锚点与多余锚点，据此补齐。`schemata.py` 这类不带 `negative` 字样的表不在 `neg-for-diff.sh` 的 glob 内，属于发现脚本本身的边界，不靠本闸门解决；`neg-for-diff.sh` 在仓外（`pdrs-ops`），键规则的正本在那边，本闸门是它的复算副本，宿主改规则时两边需同时核对。
+**跟进清单（尚未登记，别再扩大）**：本闸门当前只登记 #2133 点名的 4 张表（`channel-sms` / `memory-gateway` / `snapshot-projection` / `metadata-process-cwd`，共 25 条键）。按同一解析器扫全部 `fixtures/**/*negative*.py`，本提交上还有 **123 张表 / 352 条键**存在字面缺失，其中 **12 张表**另有解析器跟不下去的路径形状（`os.path.join`、`Path(command[-1]) / …`、非字面量推导源等），逐表登记在 `test_negative_discovery_anchors.py` 的 `KNOWN_BLIND`（每条的条数由 `test_known_blind_counts_match_the_scan` 复算），逐表清单在 #2141；把某张表加进 `TABLES`，闸门就会逐条报出它欠的锚点与多余锚点，据此补齐。`schemata.py` 这类不带 `negative` 字样的表不在 `neg-for-diff.sh` 的 glob 内，属于发现脚本本身的边界，不靠本闸门解决；`neg-for-diff.sh` 在仓外（`pdrs-ops`），键规则的正本在那边，本闸门是它的复算副本，宿主改规则时两边需同时核对。
 
 ## 共享输入扫描器（#1166 fix-r4）
 
