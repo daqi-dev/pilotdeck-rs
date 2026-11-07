@@ -74,6 +74,15 @@ jobs:
       - name: 共享执行器隔离与候选正控回归（#994）
         shell: bash
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
+      # #2133：宿主负控清单由 neg-for-diff.sh 按 diff 推导，它用字面串
+      # `目录/文件名` 去 fixtures 里 `git grep -F`。表里写成「常量 / 裸文件名」
+      # 时这个字面串根本不在文件里 → 改产品文件时该表不进负控 → 假 PASS。
+      # 本步逐表复算裸文件名拼接的键，断言每张表声明的 ANCHORS 与之完全一致且
+      # 每个键确实字面出现在该表文本中；同时用「删掉一条锚点」和「注入一条新行」
+      # 两个负控自证判别力。纯静态，不需要 cargo。
+      - name: 网关负控发现锚点自检（#2133）
+        working-directory: src/pilotdeck-gateway/tests/fixtures
+        run: python3 -B -m unittest -v test_literal_anchors
       # #1666 / #1734：负控脚本的守卫不得依赖 assert —— `python3 -O` /
       # `PYTHONOPTIMIZE=1` 会把 assert 整条剥离，靠 assert 的守卫在优化解释器下静默
       # 放行（未知变异名 → `0/0 killed`、rc=0）。这两个自测在加与不加 `-O` 的解释器下
