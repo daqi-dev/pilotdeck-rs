@@ -123,6 +123,12 @@ def observation_needles():
          'silence case'),
         ('assert!(!advertised, "read error: {collected:?}");',
          'read error case'),
+        # The verdict alone would stay green with the evidence dropped: both
+        # error and budget cases keep the bytes they read, and deleting the
+        # evidence assertion is invisible to the other branches.
+        ('assert!(collected.ends_with(b"127.0.0.1:4321"), "read error keeps '
+         'the bytes read before it: {collected:?}");',
+         'read error keeps the bytes read before it'),
         ('assert!(!advertised, "budget: {} bytes", collected.len());',
          'total budget case'),
         # The injections themselves, not just their verdicts: without the
