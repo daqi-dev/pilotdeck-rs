@@ -73,6 +73,11 @@ type RequestSpec = {
   // (first-wins `done`, socket-level byte counting from #1606 fix-r8) must not
   // have a second copy that a later fix forgets to update.
   sendBytes?: number;
+  // #1683: Node's `http.request` always adds a `Host` header unless told not
+  // to. `setHost: false` is the client-side knob that produces the HTTP/1.1
+  // request llhttp's server parser rejects with its missing-Host 400; the
+  // recorded request keeps the flag so the Rust replay omits the same header.
+  setHost?: boolean;
 };
 
 function send(port: number, spec: RequestSpec): Promise<any> {
@@ -118,6 +123,7 @@ function send(port: number, spec: RequestSpec): Promise<any> {
         path: spec.path ?? '/',
         headers,
         agent: false,
+        ...(spec.setHost === false ? { setHost: false } : {}),
       },
       (response) => {
         status = response.statusCode;
@@ -224,6 +230,15 @@ await surfaceCase('method-dispatch', {}, [
   { method: 'GET', path: '//elsewhere/health' },
   { method: 'GET', path: '/%68ealth' },
   { method: 'GET', path: '/nope' },
+]);
+
+// 1b. #1683 parser-level admission. Both are rejected by llhttp /
+// `_http_server.js` before the request handler runs, so `/health` must not
+// answer 200 on either. `FROB` is outside Node's `http.METHODS`; `setHost:
+// false` removes the header `http.request` would otherwise add.
+await surfaceCase('unknown-method', {}, [{ method: 'FROB', path: '/health' }]);
+await surfaceCase('missing-host', {}, [
+  { method: 'GET', path: '/health', setHost: false },
 ]);
 
 // 2/3. CORS preflight and simple responses, exact allow-list and `*`.

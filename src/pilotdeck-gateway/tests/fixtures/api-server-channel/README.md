@@ -55,6 +55,8 @@ To keep the oracle deterministic the generator masks only nondeterminism:
 | id | surface |
 | --- | --- |
 | `method-dispatch` | `GET`/`HEAD /health`, `GET /v1/models`, unknown path `404`, wrong method `404`, `OPTIONS *`, `//elsewhere/health` raw target |
+| `unknown-method` | `FROB /health` (outside Node's `http.METHODS`): llhttp's bare `400`, no `Date`, zero body bytes |
+| `missing-host` | HTTP/1.1 `GET /health` sent with `setHost: false` (no `Host` header): Node's `400` with `Date` and a chunked empty body |
 | `cors-exact` | exact `Origin` match: `Allow-Origin`, `Allow-Methods`, `Allow-Headers`, `Vary: Origin` |
 | `cors-star` | configured `*`: literal `*` wins; `Vary` absent |
 | `auth` | no key configured (open), missing/wrong bearer `401`, correct bearer passes auth |
@@ -78,6 +80,23 @@ shape) and otherwise compares status, headers, and body for every cell. A record
 `<N bytes>` is replayed as `N` repeated `x` bytes — the oracle stores the
 request length instead of the filler. `submit_inputs_match_real_ts` compares
 the exact `submitTurn` inputs recorded by the TS generator.
+
+The two parser-admission cells (#1683) carry a knob the generator uses and the
+replay must reproduce:
+
+- `unknown-method` records `method: "FROB"`, a token outside Node's
+  `http.METHODS`, so llhttp rejects it before routing. `assert_parser_admission_
+  cell_records_its_knob` pins the method; if the cell degraded to `GET`, the
+  replay would compare `200 == 200` and the gate could be removed unnoticed.
+- `missing-host` records `setHost: false`, Node `http.request`'s option that
+  suppresses the automatic `Host` header. The replay's `ReqSpec` reads it
+  fail-closed (only absent or a boolean is accepted) and omits the `Host:` line
+  it otherwise writes; sending one turns the cell into an admitted `200`.
+- The bare 400's `content-length: 0` is hyper's transport shape where Node
+  sends no length. The replay masks that line (A8.4-NATIVE-HTTP-001, extended to
+  this lane by A8.3-API-SERVER-005), and
+  `parser_rejections_keep_the_registered_transport_shape` pins the raw bytes so
+  the masking cannot hide a missing rejection.
 
 The placeholder is a fixture protocol with a fail-closed reader
 (`channel::api_server::tests::recorded_body`), so a generator change cannot
@@ -186,7 +205,13 @@ excluded.
 what is covered (health / models routing, auth bypass, CORS `Vary`, SSE
 `[DONE]`, session header, visible-failure name, gateway status, active-chat
 guard, body limit, body-limit boundary, body-read timeout, request-timeout 408
-shape, default port). Each row requires the
+shape, default port, parser-level admission). Each row requires the
 positive control to pass and the named `#1333` assertion to fail. It must run
 after this change is committed (the shared guard compares against `HEAD`); see
 the script header for the exact command.
+
+The `api-server-parser-admission` row replaces the whole
+`native_http::node_parser_admission` call site with a no-op: `FROB /health` and
+the Host-less request then fall through to the `/health` route and answer `200`,
+so the recorded `400` cells go red. That is the #1683 defect itself, which is
+why the negative control mutates the wiring rather than a mutant switch.
