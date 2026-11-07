@@ -1601,3 +1601,22 @@ Round 23 trusted the module-scope call list as complete and read a
 | **Direct calls only stay clean** (false FAIL guard): the round-23 shape still reads as no write. | self-test `round 24: a builtins alias imported after direct calls only` |
 | **A copy of an already replaced alias is not the module** (false FAIL guard): `import builtins as bi; bi = Safe; bi = bi; f = bi.getattr(...)`. | self-test `round 24: a self-assigned builtins alias after a certain replacement`; `_resolve_builtins_module_copies` reads `events[name]` |
 
+### Closed by `fix-r1` round 25 (codex r24 two P0s and one P1)
+
+Round 24 treated "the module calls this function somewhere" as "the call
+list is complete", and counted a plain store of the function name as
+handing the function out.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A conditional module import still leaves the module reading in force**: `import json as bi; if flag: import builtins as bi; bi = bi; f = bi.getattr(...)`. | self-test `round 25: a conditionally imported builtins alias before a self-assigned copy`; `_resolve_builtins_module_copies` only lets a binding past the last *reachable* module binding take the reading away |
+| **The function is reached through a module-level alias**: `saved = main; import builtins as bi; saved(...)`. | self-test `round 25: a builtins alias reached through a module-level alias call`; `_module_alias_calls` relays the call sites |
+| **The function is reached through `globals()`**: `globals()['main'](...)` produces no `ast.Name`, so the call list is not exhaustive. | self-test `round 25: a builtins alias reached through globals()`; `_module_open_calls` turns `call_only` off |
+| **A name stored over but never read hands nothing out** (false FAIL guard): `main(...); main = None; import builtins as bi`. | self-test `round 25: a module name stored over but never read`; `_module_value_uses` counts `ast.Load` only |
+| **A copy after a certain replacement is not the module** (false FAIL guard): round-24 shape kept green. | self-test `round 25: a builtins alias copied after a certain replacement` |
+
+No table mutant: like round 24, these shapes need a module-scope trigger
+plus a write inside a function, which one `(old, new)` replacement cannot
+express. The end-to-end repro and the per-shape detector probes are in the
+PR body (#1953).
+
