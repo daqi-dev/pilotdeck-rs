@@ -272,6 +272,81 @@ fn non_utf8_project_path_is_refused() {
     );
 }
 
+/// #2036: the probe twin of `tests/workspace_snapshot.rs` and
+/// `runtime::cron::tests`. Only `EILSEQ` — what APFS/HFS+ returns for these
+/// bytes, measured on darwin 25.6 for `open(O_CREAT)`/`mkdir`/`create_dir_all`
+/// alike (os error 92) — means "this filesystem can never host the case, skip".
+/// Any other error is our scratch's fault and panics rather than silently
+/// dropping the only coverage of the raw `--home` / `--sidecar` rejection.
+#[cfg(unix)]
+fn non_utf8_names_writable(dir: &Path) -> bool {
+    use std::os::unix::ffi::OsStringExt;
+    let probe = dir.join(OsString::from_vec(b"probe-\xff".to_vec()));
+    let outcome = std::fs::write(&probe, b"");
+    let _ = std::fs::remove_file(&probe);
+    match outcome {
+        Ok(()) => true,
+        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => false,
+        Err(error) => panic!(
+            "#2036 probing {} failed for a reason other than the file name: {error}",
+            probe.display()
+        ),
+    }
+}
+
+/// #2036: a non-UTF-8 `--home` / `--sidecar` is refused at parse, exactly like
+/// `--project` (#1431) and `--storage-root` (#1323).
+///
+/// Unlike `--project`, these two are canonicalised before they enter `Options`,
+/// so the case has to exist on disk to reach the rejection; the probe above
+/// turns "this filesystem cannot hold raw names" into an explicit skip.
+#[cfg(unix)]
+#[test]
+fn non_utf8_home_and_sidecar_are_refused() {
+    use std::os::unix::ffi::OsStringExt;
+    let scratch = Scratch::new();
+    if !non_utf8_names_writable(&scratch.0) {
+        return;
+    }
+    // Control: the same arguments with UTF-8 spellings parse, so the rejection
+    // below is about the bytes and not an unrelated option.
+    Options::parse(scratch.args()).expect("#2036 UTF-8 control parses");
+
+    let raw_home = scratch.0.join(OsString::from_vec(b"home-\xff".to_vec()));
+    std::fs::create_dir_all(&raw_home).expect("#2036 raw home directory");
+    let mut args = scratch.args();
+    args[1] = raw_home.clone().into_os_string();
+    let error = Options::parse(args).err().map(|error| error.to_string());
+    negative_assert_eq!(
+        error.as_deref(),
+        Some("home is not UTF-8"),
+        "#2036 non-UTF-8 --home must be rejected"
+    );
+
+    let raw_sidecar = scratch.0.join(OsString::from_vec(b"sidecar-\xff".to_vec()));
+    std::fs::write(&raw_sidecar, "fixture").expect("#2036 raw sidecar file");
+    let mut args = scratch.args();
+    args[9] = raw_sidecar.clone().into_os_string();
+    let error = Options::parse(args).err().map(|error| error.to_string());
+    negative_assert_eq!(
+        error.as_deref(),
+        Some("sidecar is not UTF-8"),
+        "#2036 non-UTF-8 --sidecar must be rejected"
+    );
+
+    // Both fields validated in one parse: the invariant the whole change buys.
+    // With the raw spellings refused, every `Options` that exists has a UTF-8
+    // home, so `environment()`'s lossy `HOME` is the identity of the raw path
+    // children and gateway both use.
+    let options = Options::parse(scratch.args()).expect("#2036 UTF-8 options");
+    let env = options.environment(Env::new());
+    negative_assert_eq!(
+        env.get("HOME").map(String::as_str),
+        options.home.to_str(),
+        "#2036 accepted home is UTF-8, so HOME is the raw path"
+    );
+}
+
 #[tokio::test]
 async fn default_lsp_matches_ts() {
     let service = families::DefaultLsp::default();

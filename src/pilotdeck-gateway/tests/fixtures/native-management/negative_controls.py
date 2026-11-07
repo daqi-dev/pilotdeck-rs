@@ -195,9 +195,12 @@ mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(mov
 # non-UTF-8 `--project` used to take; `snapshot-list-resolver-bypassed` proves the
 # management route really resolves the workspace id through `SnapshotProjects`
 # (the marker branch), which is what makes the submit-captured snapshot visible.
+# #2036 moved the `--project` rejection into the shared `utf8_argument` helper,
+# so the anchor follows the call site; dropping the call reopens the
+# unreachable-workspace path exactly as before.
 mutations.append(('non-utf8-project-accepted', ENTRY,
-                  '        if project.to_str().is_none() {\n            return Err("project is not UTF-8".into());\n        }',
-                  '        if false {\n            return Err("project is not UTF-8".into());\n        }',
+                  '        utf8_argument(project.as_os_str(), "project")?;',
+                  '        let _ = project.as_os_str();',
                   'native_process::tests::non_utf8_project_path_is_refused',
                   '#1431 non-UTF-8 --project must be rejected'))
 mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
@@ -220,11 +223,34 @@ mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
 # direct test (`storage_root_non_utf8_is_hard_parse_error`) but no paired
 # mutation, so deleting the check was only caught by an ordinary test — the same
 # "assertion without a mutation" gap this PR closed for `--project`. The mutant
-# makes `to_str()` fall back instead of failing, so `Options::parse` returns Ok
-# and the test dies on its own `expect_err` message.
+# makes the UTF-8 check fall back instead of failing, so `Options::parse`
+# returns Ok and the test dies on its own `expect_err` message. (#2036 moved the
+# check into `utf8_argument`, so the anchor follows the call.)
 mutations.append(('storage-root-nonutf8-accepted', ENTRY,
-                  '                .map(|v| v.to_str().ok_or("storage root is not UTF-8"))',
-                  '                .map(|v| v.to_str().or(Some("lost")).ok_or("storage root is not UTF-8"))',
+                  '                .map(|v| utf8_argument(v, "storage root"))',
+                  '                .map(|v| utf8_argument(v, "storage root").or(Ok("lost")))',
+                  'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
+                  '#1323 non-UTF-8 --storage-root must be rejected'))
+
+# #2036: `--home` and `--sidecar` now share `utf8_argument` with `--project` /
+# `--storage-root`. Each call site needs its own paired mutation (deleting the
+# call accepts the raw bytes and `Options` then hands children a lossy spelling
+# of a different directory), plus one mutant that bypasses the helper at a call
+# site entirely — the lossy fallback compiles and is exactly the old bug, so it
+# proves the helper is what does the work there.
+mutations.append(('home-non-utf8-accepted', ENTRY,
+                  '        utf8_argument(home.as_os_str(), "home")?;',
+                  '        let _ = home.as_os_str();',
+                  'native_process::tests::non_utf8_home_and_sidecar_are_refused',
+                  '#2036 non-UTF-8 --home must be rejected'))
+mutations.append(('sidecar-non-utf8-accepted', ENTRY,
+                  '        utf8_argument(sidecar.as_os_str(), "sidecar")?;',
+                  '        let _ = sidecar.as_os_str();',
+                  'native_process::tests::non_utf8_home_and_sidecar_are_refused',
+                  '#2036 non-UTF-8 --sidecar must be rejected'))
+mutations.append(('argv-utf8-helper-bypassed', ENTRY,
+                  '                .map(|v| utf8_argument(v, "storage root"))\n                .transpose()?\n                .map(str::to_owned),',
+                  '                .map(|v| v.to_string_lossy().into_owned()),',
                   'native_process::management_tests::storage_root_non_utf8_is_hard_parse_error',
                   '#1323 non-UTF-8 --storage-root must be rejected'))
 
@@ -261,7 +287,7 @@ mutations.append(('legacy-project-id-trim-omitted', METADATA,
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 90
+EXPECTED_TOTAL = 93
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -350,6 +376,9 @@ EXPECTED_NAMES = (
     'snapshot-get-resolver-bypassed',
     'snapshot-restore-resolver-bypassed',
     'storage-root-nonutf8-accepted',
+    'home-non-utf8-accepted',
+    'sidecar-non-utf8-accepted',
+    'argv-utf8-helper-bypassed',
     'project-storage-id-marker-bypassed',
     'project-storage-id-legacy-slug-omitted',
     'legacy-project-id-trim-omitted',
