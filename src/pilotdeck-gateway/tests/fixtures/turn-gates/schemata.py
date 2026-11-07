@@ -115,6 +115,22 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/forward_tests.rs',
     FIXTURES / 'host-event-pump/oracle.json',
     FIXTURES / 'host-event-timeline/oracle.json',
+    # #2228 r9 (DS r8 boundary P1 class + MM r8 sibling/concurrency P2, both
+    # families): the already-registered carriers bake further inputs into the
+    # same --lib binary — gates_tests.rs:753 bakes pump-order-cases/oracle.json;
+    # live_stream_tests.rs bakes live-recording/oracle.json (:3653/:3958),
+    # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
+    # and live-write-order/oracle.json (:4816), and live.rs:2612 assembles
+    # live_tail_tests.rs via `#[path]`; live.rs:2143 bakes live-e2e/
+    # terminal-boundaries/oracle.json. Concurrent edits to any of them must be
+    # caught by the source guard.
+    FIXTURES / 'pump-order-cases/oracle.json',
+    FIXTURES / 'live-recording/oracle.json',
+    FIXTURES / 'live-history/oracle.json',
+    FIXTURES / 'sidecar-payload/oracle.json',
+    FIXTURES / 'live-write-order/oracle.json',
+    SRC / 'live_tail_tests.rs',
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     # #2228 zai r4 P1: every bound gates test executes the shared baseline
     # module — gates_tests.rs:36/:421 matrix()/gate_cases! both start with
     # crate::test_baseline::oracle, and runner_tests.rs:17 `use crate::
