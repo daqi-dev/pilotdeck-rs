@@ -298,6 +298,62 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     );
 }
 
+/// #2073 P0 (second half): a drain whose task is dropped mid-write must not
+/// leave an in-flight entry that wedges the key. The dropped drain restores
+/// the state it claimed, and the waiter that was subscribed to it starts a
+/// fresh drain instead of reporting a success that never wrote (pre-fix the
+/// entry stayed forever and every later `save`/`flush` waited on it).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
+    let root = Root::new();
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+    let key = js("weixin");
+    let file = root.path().join("weixin.state.json");
+    persistence.save(&key, state_with_value(5.0));
+
+    // The first flush parks inside the drain, holding the claimed state.
+    let gate = persistence.park_next_drain();
+    let first = tokio::spawn({
+        let persistence = persistence.clone();
+        async move { persistence.flush().await }
+    });
+    gate.entered.notified().await;
+
+    // A second flush joins the in-flight entry instead of starting its own.
+    let second = tokio::spawn({
+        let persistence = persistence.clone();
+        async move { persistence.flush().await }
+    });
+    for _ in 0..2_000 {
+        if persistence.in_flight_waiters(&key) == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    assert_eq!(
+        persistence.in_flight_waiters(&key),
+        1,
+        "#2073 the second flush must wait on the in-flight drain"
+    );
+
+    // Drop the drainer mid-write; the waiter must recover, not wedge.
+    first.abort();
+    assert!(
+        first.await.expect_err("#2073 first flush aborted").is_cancelled(),
+        "#2073 the parked drain must be cancelled, not completed"
+    );
+    let second = tokio::time::timeout(std::time::Duration::from_secs(5), second)
+        .await
+        .expect("#2073 the waiting flush must not hang on an abandoned entry")
+        .expect("#2073 second flush join");
+    second.expect("#2073 the retry writes");
+    assert_eq!(
+        std::fs::read_to_string(&file).ok().as_deref(),
+        Some("{\n  \"v\": 5\n}"),
+        "#2073 the claimed state must not be lost with the dropped drain"
+    );
+}
+
 #[test]
 fn recoverable_poll_error_matches_ts_substrings() {
     for detail in [
