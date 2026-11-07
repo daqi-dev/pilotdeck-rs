@@ -173,10 +173,18 @@ const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
 /// durable write" stopped being observable.
 const STEER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Derived rather than a second literal plus a guard: an `as_secs()`-style
-/// check truncates sub-second values, so `TIMEOUT = 1500 ms` with a 2 s window
-/// would still have passed while sitting below the 2× bound.
+/// check truncates sub-second values, so `TIMEOUT = 1500 ms` with a 5 s window
+/// would still have passed while sitting below the 5× bound.
+///
+/// Five times, not two (#2054 review r2). The only term this test can pin is
+/// `close_timeout`; what follows it is the child's kill + reap, whose cost a
+/// loaded host can stretch by an unknown amount, and the mutant's durable write
+/// must land inside the window for the case to stay KILLED. Measured on a quiet
+/// host the write arrives at ~1.02 s and the abort -> mailbox-close chain takes
+/// ~12 ms, so 5 s leaves ~4 s of slack where 2 s left ~1 s. The extra ~3 s per
+/// run is paid by the three executions of this case and absorbed by the suite.
 const STEER_CLOSE_WINDOW: Duration =
-    Duration::from_nanos(2 * STEER_CLOSE_TIMEOUT.as_nanos() as u64);
+    Duration::from_nanos(5 * STEER_CLOSE_TIMEOUT.as_nanos() as u64);
 const STEER_CLOSE_STEP: Duration = Duration::from_millis(5);
 
 async fn bounded_liveness<T>(future: impl Future<Output = T>) -> T {
@@ -1796,10 +1804,14 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                         let started = tokio::time::Instant::now();
                         let mut early_result = None;
                         let mut early_event = false;
+                        let mut mailbox_close = None;
                         loop {
                             if turn_result_written() {
                                 early_result = Some(started.elapsed());
                                 break;
+                            }
+                            if mailbox_close.is_none() && !actual.open_for_test() {
+                                mailbox_close = Some(started.elapsed());
                             }
                             let elapsed = started.elapsed();
                             if elapsed >= STEER_CLOSE_WINDOW {
@@ -1824,16 +1836,22 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                                 break;
                             }
                         }
-                        if let Some(seen) = early_result {
-                            // The negative-control receipt is keyed on the
-                            // exact assertion string below, so the timing
-                            // evidence goes to the captured output instead of
-                            // changing the message.
-                            eprintln!(
-                                "#2054 turn_result landed {:?} into a {:?} window (close_timeout {:?})",
-                                seen, STEER_CLOSE_WINDOW, STEER_CLOSE_TIMEOUT
-                            );
-                        }
+                        // #2054 review r2: print the outcome on the green path
+                        // too. The negative-control receipt is keyed on the
+                        // exact assertion string below, so the timing evidence
+                        // goes to the captured output instead of changing the
+                        // message — but it has to be there whether the window
+                        // caught something or not, otherwise a window that
+                        // expired before the product ever reached the write
+                        // looks the same as a window that covered it.
+                        eprintln!(
+                            "#2054 steer-close window {:?} (close_timeout {:?}): turn_result={:?} early_event={} mailbox_closed_at={:?}",
+                            STEER_CLOSE_WINDOW,
+                            STEER_CLOSE_TIMEOUT,
+                            early_result,
+                            early_event,
+                            mailbox_close
+                        );
                         crate::negative_assert!(
                             early_result.is_none(),
                             "#743 turn_result waits durable steer close"
