@@ -151,6 +151,7 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
+该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
@@ -180,7 +181,7 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
   python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 76 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`），新增 31 个精确名单项变异，以及
+产品及比较边界负控固定 77 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`）、1 个 #1260 穷尽性变异 `stable-order-pin-broadened`（放宽 16 格形状谓词，绑定比较器用例的集合相等断言），新增 31 个精确名单项变异，以及
 范围扩大、未登记条目、非数组放行三个边界变异。每个名单项独立绑定
 `signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics`
 与含完整格名的 `#1252 unordered close swap must pass: <ID>` 消息；其余完整绑定见脚本。
@@ -191,7 +192,7 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
 
-`--check-anchors` 与兼容入口 `--check` 共用同一份 76 项目录校验。#1252 修复轮只调整下列绑定：
+`--check-anchors` 与兼容入口 `--check` 共用同一份 77 项目录校验。#1252 修复轮只调整下列绑定：
 
 | 变异体 | 完整测试名 | 专属失败消息 |
 |---|---|---|

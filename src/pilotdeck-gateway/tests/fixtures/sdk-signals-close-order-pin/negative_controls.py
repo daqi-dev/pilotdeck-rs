@@ -74,7 +74,7 @@ nonzero. The table itself is registered by EXPECTED_TOTAL (#1506): a
 zero or negative denominator, and an empty, short, or duplicated table, are
 refused before any control runs, and a run that records no result row exits
 nonzero before it publishes any evidence. A run that cannot reach or keep
-the source lock — the #1145 full runner holds it for its whole 76-case run —
+the source lock — the #1145 full runner holds it for its whole case list —
 gives up after a short probe rather than the 900 s default, and an abort of
 any kind (busy lock, failed restore, Ctrl-C) still writes the summary, with
 every recorded KILLED row revoked and every unrun control marked INVALID
@@ -347,7 +347,7 @@ def run_check(label):
     return result
 
 
-# #1508: the sibling #1145 runner wraps its whole 76-case run — each case may
+# #1508: the sibling #1145 runner wraps its whole case list — each case may
 # start a compile — in one `.negative-source.lock`, so the 900 s default here
 # was spent entirely waiting for it and then raised a bare TimeoutError with
 # no evidence at all. Probe with a short bound and name the holder instead.
@@ -481,7 +481,7 @@ except BaseException as error:
     if isinstance(error, TimeoutError) and "source lock busy" in str(error):
         aborted += (
             "; the other holder is most likely the #1145 sdk-signals runner"
-            " (it keeps .negative-source.lock for its whole 76-case run) —"
+            " (it keeps .negative-source.lock for its whole case list) —"
             " rerun this pin after it finishes"
         )
     # A run that could not restore and verify the tree invalidates every row it

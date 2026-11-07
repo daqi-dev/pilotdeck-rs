@@ -2126,8 +2126,7 @@ mod comparison_tests {
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1260 stable order original JSON");
-        let registered_ids = registered_unordered_close_ids();
-        let registered: BTreeSet<&str> = registered_ids.iter().map(String::as_str).collect();
+        let registered: BTreeSet<String> = registered_unordered_close_ids().into_iter().collect();
         let cells: [(&str, u64); 16] = [
             ("run--query-hello-hold-sigint", 1006),
             ("run--query-hello-hold-sigterm", 1006),
@@ -2152,7 +2151,7 @@ mod comparison_tests {
         // control (1) 1005 second" shape must occur for exactly these 16 IDs.
         // Without this the list could silently lose a cell (or a new same-shape
         // cell could appear) while every per-cell assertion still passes.
-        let measured: BTreeSet<String> = source["captures"]
+        let measured: BTreeSet<&str> = source["captures"]
             .as_array()
             .expect("#1260 stable order captures")
             .iter()
@@ -2164,17 +2163,11 @@ mod comparison_tests {
                     && closes[1]["connection"].as_u64() == Some(1)
                     && closes[1]["code"].as_u64() == Some(1005)
             })
-            .map(|row| {
-                row["input"]["id"]
-                    .as_str()
-                    .expect("#1260 stable cell id")
-                    .to_owned()
-            })
+            .map(|row| row["input"]["id"].as_str().expect("#1260 stable cell id"))
             .collect();
-        let expected: BTreeSet<String> = unique.iter().map(|id| (*id).to_owned()).collect();
         assert_eq!(
-            measured, expected,
-            "#1260 query-before-control shape is exactly the measured stable set"
+            measured, unique,
+            "#1145 query-before-control shape is exactly the measured stable set"
         );
         for (id, query_code) in cells {
             assert!(

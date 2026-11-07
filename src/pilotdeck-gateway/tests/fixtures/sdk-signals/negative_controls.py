@@ -3,7 +3,7 @@
 
 --check remains a compatibility alias for --check-anchors.
 
-The catalog has exactly 76 controls. Each selected control runs its named
+The catalog has exactly 77 controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -46,7 +46,7 @@ skills_tests = root / "src/pilotdeck-cli/src/skills.rs"
 migrate_tests = root / "src/pilotdeck-cli/src/skills_migrate.rs"
 wrapper_source = root / "src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py"
 
-EXPECTED_TOTAL = 76
+EXPECTED_TOTAL = 77
 # #1382: per-ID unordered-close controls are pinned to the registered
 # close-order ledger IDs. These three whole-scope boundary controls are not
 # one-per-ID rows, so they are excluded from that pin; a future boundary
@@ -181,6 +181,19 @@ mutations = [
         "            }",
         "signal_cases::run_query_hello_hold_sigint",
         "#1145 run--query-hello-hold-sigint four surfaces, abort count, listeners and connections match TS",
+    ),
+    (
+        # #1260 r1: the 16-cell list is also pinned exhaustively against all
+        # 96 captures. Broadening the shape predicate to accept any second
+        # close code makes the measured set 25 cells, so the set equality has
+        # to fail -- proving the exhaustiveness assertion is live rather than
+        # decorative.
+        "stable-order-pin-broadened",
+        replay,
+        '                    && closes[1]["code"].as_u64() == Some(1005)',
+        '                    && closes[1]["code"].as_u64() != Some(0)',
+        "signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order",
+        "#1145 query-before-control shape is exactly the measured stable set",
     ),
     ('abort-stale-run-id', output, 'self.run_id = run_id.clone();', 'self.run_id = "requested-run".into();', 'product::sdk::turn::tests::abort_uses_consumed_run_id_without_utf16_loss', '#1145 abort uses latest lossless runId'),
     ('consumer-error-retains-query', output, 'return Err(EventError::Consumer(Failure::Error(\n                "event.type.includes is not a function".into(),', 'return Err(EventError::Iterator(Failure::Error(\n                "event.type.includes is not a function".into(),', 'product::sdk::turn::tests::output_failure_preserves_iterator_vs_consumer_lifetime', '#1145 event error matches TS iterator or consumer lifetime'),
