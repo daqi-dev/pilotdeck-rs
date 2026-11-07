@@ -4715,3 +4715,7 @@ READY 本段改动：**删 5 行 + 新增 5 行 + 改 9 行（113 条：doing 10
 ### 2026-11-08 · gateway setup 首片（Codex，本地提交）
 
 公共配置层、平台菜单和Feishu/Lark手动配置已原生实现；Sol候选经独立审查修复配置转义损坏、失败读取覆盖和非mapping假成功，并限制敏感跨来源重定向。mbp2当前19测试PASS、1辅助子测试由父进程实际调用；fmt/clippy通过；8项PTY原字节/退出/终端属性/无落盘比较在普通TERM与dumb通过，新版固定来源脚本复放也通过。证据主仓 `_tmp/20261108-issue-124-setup/`。仅本机提交、不推GitHub；已实证直接写入在EFBIG下会截断旧文件，下一片立即改原子保存，其后实现WeCom/Weixin，当前不标setup/D2/D3完成。真人体验与真实平台登录未验。
+
+### 2026-11-08 · CLI 组合验证与下一片（Codex，仅本机）
+
+cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100单测PASS（4既有/辅助ignored），all-targets clippy及cron真实子进程回归通过；健康探测抽为共享实现，并修复嵌套main集成测试的模块路径。继续由Terra实现默认远端channel、Sol实现配置原子保存；本地host核心与#1959在途清理改动重叠，暂不并发改该共享点，转独立CLI流能力。测试与原始证据在主仓 `_tmp/20261108-control-cli/`；所有提交仅本机、Rust仅mbp2，不标完整CLI或阶段完成。

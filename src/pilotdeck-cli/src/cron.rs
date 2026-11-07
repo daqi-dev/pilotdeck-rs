@@ -1,5 +1,5 @@
 //! The legacy cron CLI uses the local server discovery path, not SDK options.
-use crate::sdk::transport::{close_socket, websocket_config};
+use super::sdk::transport::{close_socket, websocket_config};
 use crate::{
     Failure,
     paths::{self, Env},
@@ -9,7 +9,7 @@ use futures_util::{SinkExt, StreamExt};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use serde_json::{Map, Value, json};
 use std::{path::Path, time::Duration};
-use tokio::time::{Instant, timeout, timeout_at};
+use tokio::time::{Instant, timeout_at};
 use tokio_tungstenite::{connect_async_with_config, tungstenite::Message};
 
 const UNAVAILABLE: &str = "pilotdeck cron requires a running pilotdeck server.";
@@ -22,49 +22,8 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
     runtime.block_on(run_async(argv, env, cwd))
 }
 
-async fn healthy() -> bool {
-    timeout(Duration::from_millis(200), async {
-        // Use the same HTTP/TLS stack already in the Gateway, including redirects.
-        let connector = hyper_rustls::HttpsConnectorBuilder::new()
-            .with_webpki_roots()
-            .https_or_http()
-            .enable_http1()
-            .build();
-        let client: hyper_util::client::legacy::Client<_, http_body_util::Empty<bytes::Bytes>> =
-            hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-                .build(connector);
-        let mut url = url::Url::parse("http://127.0.0.1:18789/health").ok()?;
-        for redirects in 0..=20 {
-            let uri = url.as_str().parse::<hyper::Uri>().ok()?;
-            let response = client.get(uri).await.ok()?;
-            let status = response.status();
-            if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
-                if redirects == 20 {
-                    return None;
-                }
-                let location = response
-                    .headers()
-                    .get(hyper::header::LOCATION)?
-                    .to_str()
-                    .ok()?;
-                url = url.join(location).ok()?;
-                if !matches!(url.scheme(), "http" | "https") {
-                    return None;
-                }
-                continue;
-            }
-            return Some(status.is_success());
-        }
-        None
-    })
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(false)
-}
-
 async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    if !healthy().await {
+    if !super::gateway_probe::healthy().await {
         stderr_line(UNAVAILABLE);
         return Ok(1);
     }

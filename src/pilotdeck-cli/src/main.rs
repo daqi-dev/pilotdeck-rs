@@ -2,6 +2,7 @@
 mod chat_search;
 mod config;
 mod cron;
+mod gateway_probe;
 mod gateway_setup;
 pub(crate) mod paths;
 pub(crate) mod sdk;
