@@ -98,21 +98,26 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 `turn-submit/negative.py` 保留 57 个变异和 `baseline`，`failure-guard/negative.py` 保留 22 个变异和 `baseline-pure/baseline-submit`。两者支持 `--check`；运行参数仍为 `output [case ...]`，抽样总带正控，重复/未知选择拒绝。旧判分器不再参与迁后 runner：`_negkit/submit.py` 只复用 `negative_process` 的 HEAD 源码守卫和进程所有权工具，不复用旧判分和摘要发布。未提交的产品改动不能用 `PDRS_NEGATIVE_BASELINE` 或其他 git 对象放行。
 
 > **现状（#2106 实测）**：`negative_process` 共享 runner 入口（如 `config-store`、`turn-runner` 等）的
-> `PDRS_NEGATIVE_BASELINE` 候选基线逃生口在**冷 scanner target 上不可用**（`_ensure_workspace_scanner`
-> 解析出的 `CARGO_TARGET_DIR`，默认 `<tree>/_build/cargo-target`）：冷 target 上 bootstrap scanner
-> 前按字面 `HEAD` 校验 `src`/`.cargo`/`rust-toolchain*`，非 HEAD 候选即使已通过外层 `mutating_sources`
-> 的基线区域断言，也在这里被 `SourceBaselineError` 拒绝（rc=1，fail-closed，不产生假 PASS）。
-> 暖 target（scanner 已预建）上，候选 diff 完全落在 scanner 身份 5 文件之外时逃生口可用；
-> 候选只要触碰 `src/Cargo.toml`、`src/Cargo.lock`、`src/pilotdeck-gateway/Cargo.toml`、
-> `src/pilotdeck-gateway/tests/common/source_inputs.rs`、
-> `src/pilotdeck-gateway/examples/workspace_inputs.rs` 任一个（依赖升级是最常见形态），暖 target 也会
-> 在 `_assert_product_pristine` 的 scanner 身份比对处被 `SourceBaselineError` 拒绝——即冷、暖 target
-> 都不可用（冷挂在 bootstrap 字面 `HEAD` 校验，暖挂在身份失配）。候选 diff 完全落在被扫描区域之外
-> 时，冷、暖 target 均不受影响（收货复核实测：暖 target 上触碰 `src/Cargo.toml` 的候选被拒，仅改
-> 本 README 的候选 ENTER-OK，原始记录在 `_tmp/20261108-harvest-2106-r1/`）。另两项边界：候选改动
-> 落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——`_assert_input_areas` 的
-> `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖 target 上都会被外层
-> 基线断言拒绝；区域外候选（如只改 `scripts/`、`state/`、`specs/`）不暂存也通过。
+> `PDRS_NEGATIVE_BASELINE` 候选基线逃生口按 scanner target 冷暖分两态（`_ensure_workspace_scanner`
+> 解析出的 `CARGO_TARGET_DIR`，默认 `<tree>/_build/cargo-target`；拒绝一律是 `SourceBaselineError`，
+> rc=1，fail-closed，不产生假 PASS）：
+>
+> - **冷 target（scanner 未预建）**：bootstrap 前按字面 `HEAD` 校验 `src`/`.cargo`/`rust-toolchain*`，
+>   候选 diff 只要有任何一处落在这些区域内即被拒（非 HEAD 候选即使已通过外层 `mutating_sources`
+>   的基线区域断言也过不去这一关）；候选 diff 完全在区域外（只改 `scripts/`、`state/`、`specs/` 等）
+>   时不受影响。
+> - **暖 target（scanner 已预建且未过期，即建后 HEAD 未移动）**：候选 diff 不触碰 scanner 身份 5 文件
+>   （`src/Cargo.toml`、`src/Cargo.lock`、`src/pilotdeck-gateway/Cargo.toml`、
+>   `src/pilotdeck-gateway/tests/common/source_inputs.rs`、
+>   `src/pilotdeck-gateway/examples/workspace_inputs.rs`，依赖升级是最常见形态）时可用；触碰任一个
+>   会在 `_assert_product_pristine` 的 scanner 身份比对处被拒。scanner 已过期（建后 HEAD 移动过）时
+>   以同一条身份失配消息拒绝所有候选——包括 diff 在 5 文件之外的——须重建 scanner 后再试。
+>
+> 另一项边界：候选改动落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——
+> `_assert_input_areas` 的 `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖
+> target 上都会被外层基线断言拒绝；区域外候选不暂存也通过。收货复核实测（均为暖 target、README
+> 改动已 `git add`——本 README 在 `src/` 内：触碰 `src/Cargo.toml` 的候选被拒，仅改本 README 的候选
+> ENTER-OK；原始记录在 `_tmp/20261108-harvest-2106-r1/`）。
 > `_negkit/submit.py` 本身仍然禁用该变量（本目录政策不变）。终局口径未定（放宽 bootstrap
 > 校验，或把 `PDRS_NEGATIVE_BASELINE` 限定为暖 target 专用并文档化），登记在 #2106。
 
