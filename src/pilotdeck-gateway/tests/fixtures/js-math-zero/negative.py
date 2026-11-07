@@ -362,7 +362,14 @@ refuse_unusable_target()
 out = claim_dir(mode)
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
-paths = list(dict.fromkeys(case[1] for case in run_rows))
+# #1908 r6 (DS r5 四角色同撞 P1): paths must keep the FULL frozen table's
+# file set, not run_rows' subset. check_anchors() below iterates the whole
+# frozen `cases` table, so a subset run would KeyError on the first
+# unselected case's file (a traceback exit 1 that reads like "ran, not
+# green", with an empty claimed evidence dir). Snapshot set = anchor-check
+# set = the full table, same domain contract as edgeclaw-retriever:261;
+# only the mutation loop below runs the selected rows.
+paths = list(dict.fromkeys(case[1] for case in cases))
 results = []
 
 
