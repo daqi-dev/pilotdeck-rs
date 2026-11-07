@@ -24,3 +24,7 @@
 ## 默认 CLI 远端 channel 的首片
 
 **AI 代批，待人复核**：按真实TS未知argv/逐行输入/相同session/旧渲染和seq-final消费实现独立channel，保持SDK的既有合同。成功/确定错误后有界关闭socket，修复实际观察到的终态挂起；等待stdin期间持续处理WS心跳，输出失败停止后续turn。资源预算沿共享128MiB配置，两个新独立差异文件均未批准、不作冻结豁免。范围仅远端channel；TS完整boot、本地host与EPIPE的Node栈文本尚未对齐，阶段未完成。原则是共享领域核心、分清入口合同；真实TS金样和子进程ping/flush/断管/多行测试保护该原则。
+
+## SDK model 缺 project 的本地终态
+
+**AI 代批，待人复核**：真实 TS 四格证明缺 project 在 control/query 会话请求后才报错，正常错误输出后留下 query 挂起。保留原请求顺序、错误文本、空 prompt/resume ID 优先级，仅为这个内部 typed 本地校验错误增加终态清理；远端同文本错误及信号路径保持既有行为。可撤回，不改数据格式或冻结尺子；新差异 `D1-SDK-MODEL-PROJECT-EXIT-001` 未人批、无验收豁免。原则：错误分类必须依据来源，不能凭错误文本扩大生命周期修复范围；真实子进程负例覆盖远端同文错误和空白 project。

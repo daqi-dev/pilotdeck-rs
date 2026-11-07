@@ -1,0 +1,302 @@
+[
+  {
+    "id": "run",
+    "argv": [
+      "run",
+      "fixture prompt",
+      "--model",
+      "fixture/model"
+    ],
+    "exitBeforeCleanup": null,
+    "openConnections": 1,
+    "stdout": "",
+    "stderr": "projectKey is required when options.model is set.\n",
+    "wire": [
+      {
+        "seq": 0,
+        "kind": "connection",
+        "connection": 1
+      },
+      {
+        "seq": 1,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "sdk",
+          "clientVersion": "pilotdeck-cli",
+          "token": "fixture-token-no-project"
+        }
+      },
+      {
+        "seq": 2,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "request",
+          "id": "6fdf6192-caa1-4251-80c6-c109d2ce7b6a",
+          "method": "new_session",
+          "params": {
+            "channelKey": "cli"
+          }
+        }
+      },
+      {
+        "seq": 3,
+        "kind": "connection",
+        "connection": 2
+      },
+      {
+        "seq": 4,
+        "kind": "receive",
+        "connection": 2,
+        "frame": {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "sdk",
+          "clientVersion": "pilotdeck-cli",
+          "token": "fixture-token-no-project"
+        }
+      },
+      {
+        "seq": 5,
+        "kind": "receive",
+        "connection": 2,
+        "frame": {
+          "type": "request",
+          "id": "2aea27db-e523-48bc-bf8a-1da67baeb6aa",
+          "method": "resume_session",
+          "params": {
+            "sessionKey": "fixture-session"
+          }
+        }
+      },
+      {
+        "seq": 6,
+        "kind": "close",
+        "connection": 1,
+        "code": 1005,
+        "reason": ""
+      }
+    ],
+    "cleanup": {
+      "childPid": 35704,
+      "close": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "remainingSockets": 0,
+      "listenerClosed": true
+    }
+  },
+  {
+    "id": "resume",
+    "argv": [
+      "resume",
+      "fixture-session",
+      "fixture prompt",
+      "--model",
+      "fixture/model"
+    ],
+    "exitBeforeCleanup": null,
+    "openConnections": 1,
+    "stdout": "",
+    "stderr": "projectKey is required when options.model is set.\n",
+    "wire": [
+      {
+        "seq": 0,
+        "kind": "connection",
+        "connection": 1
+      },
+      {
+        "seq": 1,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "sdk",
+          "clientVersion": "pilotdeck-cli",
+          "token": "fixture-token-no-project"
+        }
+      },
+      {
+        "seq": 2,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "request",
+          "id": "c80a434c-f523-4c19-b590-4730a8001e0f",
+          "method": "resume_session",
+          "params": {
+            "sessionKey": "fixture-session"
+          }
+        }
+      },
+      {
+        "seq": 3,
+        "kind": "connection",
+        "connection": 2
+      },
+      {
+        "seq": 4,
+        "kind": "receive",
+        "connection": 2,
+        "frame": {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "sdk",
+          "clientVersion": "pilotdeck-cli",
+          "token": "fixture-token-no-project"
+        }
+      },
+      {
+        "seq": 5,
+        "kind": "receive",
+        "connection": 2,
+        "frame": {
+          "type": "request",
+          "id": "563b35a9-5720-4dca-8e79-e2eea2f6e464",
+          "method": "resume_session",
+          "params": {
+            "sessionKey": "fixture-session"
+          }
+        }
+      },
+      {
+        "seq": 6,
+        "kind": "close",
+        "connection": 1,
+        "code": 1005,
+        "reason": ""
+      }
+    ],
+    "cleanup": {
+      "childPid": 35710,
+      "close": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "remainingSockets": 0,
+      "listenerClosed": true
+    }
+  },
+  {
+    "id": "run-empty-prompt",
+    "argv": [
+      "run",
+      "--model",
+      "fixture/model"
+    ],
+    "exitBeforeCleanup": {
+      "code": 1,
+      "signal": null
+    },
+    "openConnections": 0,
+    "stdout": "",
+    "stderr": "A prompt is required, or provide it through stdin.\n",
+    "wire": [
+      {
+        "seq": 0,
+        "kind": "connection",
+        "connection": 1
+      },
+      {
+        "seq": 1,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "sdk",
+          "clientVersion": "pilotdeck-cli",
+          "token": "fixture-token-no-project"
+        }
+      },
+      {
+        "seq": 2,
+        "kind": "receive",
+        "connection": 1,
+        "frame": {
+          "type": "request",
+          "id": "f79f83d9-ec30-43d2-948b-ad9bab1b4d3a",
+          "method": "new_session",
+          "params": {
+            "channelKey": "cli"
+          }
+        }
+      },
+      {
+        "seq": 3,
+        "kind": "close",
+        "connection": 1,
+        "code": 1005,
+        "reason": ""
+      },
+      {
+        "seq": 4,
+        "kind": "exit",
+        "code": 1,
+        "signal": null
+      }
+    ],
+    "cleanup": {
+      "childPid": 35717,
+      "close": {
+        "code": 1,
+        "signal": null
+      },
+      "exit": {
+        "code": 1,
+        "signal": null
+      },
+      "remainingSockets": 0,
+      "listenerClosed": true
+    }
+  },
+  {
+    "id": "resume-missing-id",
+    "argv": [
+      "resume",
+      "--model",
+      "fixture/model"
+    ],
+    "exitBeforeCleanup": {
+      "code": 1,
+      "signal": null
+    },
+    "openConnections": 0,
+    "stdout": "",
+    "stderr": "Usage: pilotdeck resume <session-id> <prompt>\n",
+    "wire": [
+      {
+        "seq": 0,
+        "kind": "exit",
+        "code": 1,
+        "signal": null
+      }
+    ],
+    "cleanup": {
+      "childPid": 35742,
+      "close": {
+        "code": 1,
+        "signal": null
+      },
+      "exit": {
+        "code": 1,
+        "signal": null
+      },
+      "remainingSockets": 0,
+      "listenerClosed": true
+    }
+  }
+]

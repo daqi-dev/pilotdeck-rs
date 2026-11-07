@@ -4730,3 +4730,7 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · 新机器流式入口（Codex，仅本机）
 
 `pilotdeck-control stream`已实现单轮文本JSONL、严格连续seq、final闭合、结构化失败与有限输出；109旧bin+3新bin单测、cron/旧control/默认channel/3stream集成全PASS，4既有/父调用helper ignored，mbp2 fmt/all-targets clippy通过。真实native Gateway+真实Rust sidecar+假OpenAI SSE验证完成输出、run_get、transcript、另一连接请求取消和provider关闭（r8），两个独立审查收敛到本片无可确认P0/P1。原件与120项源码绑定在主仓 `_tmp/20261108-control-cli/`，取消探针明确等待CLI实际delta后才发abort，避免把provider已发当成CLI已交付。仍无恢复/detach/持久前端服务，localhost共享核心受#1959持有人并发约束；继续WeCom/Weixin与TUI产品片。只在本机提交、Rust全部mbp2，未标完整CLI或A8验收。
+
+### 2026-11-08 · SDK model/project 校验补齐（Codex，仅本机）
+
+移除SDK model缺project的TODO，按真实TS双连接请求顺序输出原错误，并对本地终态释放query/control；远端同文错误保留原生命周期。mbp2新真实子进程测试含四个TS格、空串/空白project、远端同文与SIGINT/SIGTERM交叉通过；preflight/run与信号普通回归、all-targets clippy通过（信号冻结96格未重跑，不能报全量P08）。旧“应报TODO”测试被更强真实对照测试替代；原始首轮失败与最终记录保留主仓 `_tmp/20261108-cli-sdk-gaps/`，差异仍AI代批待人复核。继续TUI实际连接/权限和WeCom/Weixin；提交仅本机，完整CLI与阶段均未标完成。

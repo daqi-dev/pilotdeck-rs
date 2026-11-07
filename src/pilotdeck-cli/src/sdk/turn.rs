@@ -19,13 +19,6 @@ pub(super) fn run(
     connection: &Connection,
     resume: Option<&str>,
 ) -> Result<u8, Failure> {
-    if read_value(argv, "--model").is_some() && read_value(argv, "--project").is_none() {
-        // The TS query leaks its socket after this validation error. Keep the
-        // exceptional lifecycle explicitly unimplemented until P06/P08.
-        return Err(Failure::Todo(
-            "pilotdeck run model without project (#123 P06/P08)",
-        ));
-    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -87,6 +80,7 @@ async fn run_connected(
         }
     };
     let mut query = None;
+    let mut local_validation = None;
     let initialized = signals
         .during(async {
             query = Some(Transport::open(connection, true).await?);
@@ -94,7 +88,15 @@ async fn run_connected(
                 .as_mut()
                 .expect("#1145 opened query retains its transport owner");
             query.hello(connection, "pilotdeck-cli").await?;
-            initialize_turn(query, argv, &session, &prompt, project).await
+            initialize_turn(
+                query,
+                argv,
+                &session,
+                &prompt,
+                project,
+                &mut local_validation,
+            )
+            .await
         })
         .await;
     let outcome = match initialized {
@@ -109,6 +111,14 @@ async fn run_connected(
                 &mut signals,
             )
             .await
+        }
+        Err(error)
+            if signals.count() == 0
+                && local_validation == Some(LocalValidation::ModelNeedsProject) =>
+        {
+            // Only this local validation has an explicit terminal cleanup fix.
+            // A remote error with identical text must retain its old lifecycle.
+            QueryOutcome::Closed(error)
         }
         Err(error) if signals.count() == 0 && query.is_some() => QueryOutcome::Retain(error),
         Err(error) => QueryOutcome::InitializationFailed(error),
@@ -200,6 +210,11 @@ enum QueryOutcome {
     FatalAbort(Failure),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalValidation {
+    ModelNeedsProject,
+}
+
 struct InitializedTurn {
     request_id: String,
     run_id: String,
@@ -227,11 +242,18 @@ async fn initialize_turn(
     session: &str,
     prompt: &str,
     project: Option<&str>,
+    local_validation: &mut Option<LocalValidation>,
 ) -> Result<InitializedTurn, Failure> {
     query
         .request("resume_session", json!({"sessionKey": session}))
         .await?;
     let model = match read_value(argv, "--model") {
+        Some(_) if project.is_none() => {
+            *local_validation = Some(LocalValidation::ModelNeedsProject);
+            return Err(Failure::Error(
+                "projectKey is required when options.model is set.".into(),
+            ));
+        }
         Some(model) => Some(resolve_model(query, project, model).await?),
         None => None,
     };
