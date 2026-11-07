@@ -9,7 +9,9 @@ Two entries in this directory read product sources before any verdict:
   ``refuse`` guard, so an unreadable file (EACCES / ENOENT) used to escape
   as an uncaught ``OSError`` with exit 1 -- the host triage table reads that
   as "ran and did not come out green", an investigation of a run that never
-  began. It is now wrapped in ``except OSError -> refuse()``.
+  began. It is now wrapped in ``except (OSError, ValueError) -> refuse()``:
+  a non-UTF-8 source raises ``UnicodeDecodeError``, which is a ``ValueError``
+  and would otherwise still land on exit 1.
 * ``negative_private.py`` already wraps its ``catalog`` re-read in
   ``except (OSError, ValueError, RuntimeError) -> refuse()``, but no case
   ever exercised the ``OSError`` branch. Its ``--catalog`` early exit sat
@@ -21,10 +23,12 @@ source-level edit -- the same shape an accidental path edit would take --
 inside a ``python3 -O`` subprocess, because the whole point of these guards
 is that they do not depend on ``assert``. ENOENT is injected by pointing at
 a path that does not exist; EACCES by pointing at a mode-000 temporary file
-(the scripts' repo-root join keeps an absolute path absolute). Both must
-refuse: exit 2, ``INVALID`` on stderr, and no evidence directory left
-behind. Two unedited positive controls prove the harness reaches the real
-startup guards. Nothing here needs cargo, a committed tree or a mutation.
+(the scripts' repo-root join keeps an absolute path absolute); an undecodable
+source by pointing at a file holding invalid UTF-8. Each must refuse: exit 2,
+``INVALID`` on stderr, and (where the case receives an evidence path) no
+evidence directory left behind. Two unedited positive controls prove the
+harness reaches the real startup guards. Nothing here needs cargo, a committed
+tree or a mutation.
 
 Run from the fixtures root: ``python3 -m unittest network-timing/test_negative_controls.py``.
 """
@@ -103,6 +107,10 @@ class UnreadableSourceRefusal(unittest.TestCase):
             unreadable = Path(base) / 'unreadable-1922.rs'
             unreadable.write_text('static NEGCTL_1922: u8 = 0;\n', encoding='utf-8')
             os.chmod(unreadable, 0)
+            # Not valid UTF-8: `read_text()` raises UnicodeDecodeError, a
+            # ValueError rather than an OSError (review r2 boundary P2).
+            undecodable = Path(base) / 'undecodable-1922.rs'
+            undecodable.write_bytes(b'static NEGCTL_1922: u8 = 0;\n\xff\xfe\n')
             spec = dict(script=str(script), out=str(out), names=list(names),
                        edit=edit)
             if argv is not None:
@@ -110,7 +118,8 @@ class UnreadableSourceRefusal(unittest.TestCase):
             if target:
                 spec['target'] = str(Path(base) / 'cargo-target')
             if edit is not None:
-                spec['edit'] = [edit[0], edit[1].format(unreadable=str(unreadable))]
+                spec['edit'] = [edit[0], edit[1].format(unreadable=str(unreadable),
+                                                        undecodable=str(undecodable))]
             result = subprocess.run(
                 [sys.executable, '-O', str(Path(__file__).resolve()), DRIVE_FLAG,
                  json.dumps(spec)],
@@ -123,7 +132,7 @@ class UnreadableSourceRefusal(unittest.TestCase):
         self.assertTrue(lines != [], '#1922 the -O driver printed no verdict')
         return lines[-1]
 
-    def assertRefused(self, result, left_behind, needle):
+    def assertRefused(self, result, left_behind, needle, *, claimed_path=True):
         last = self.verdict(result)
         self.assertTrue(last == 'VERDICT 2',
                         f'#1922 an unreadable bound source must refuse (rc=2), got {last!r}; '
@@ -132,8 +141,9 @@ class UnreadableSourceRefusal(unittest.TestCase):
                       '#1922 the refusal must be labelled INVALID on stderr')
         self.assertIn(needle, result.stderr,
                       '#1922 the refusal must name the unreadable source')
-        self.assertFalse(left_behind,
-                         '#1922 a refusal before the run must not create the evidence directory')
+        if claimed_path:
+            self.assertFalse(left_behind,
+                             '#1922 a refusal before the run must not create the evidence directory')
 
     def test_controls_module_read_enoent_is_refused(self):
         # #1922 item 3: the module-level re-read of network_timing.rs.
@@ -145,6 +155,18 @@ class UnreadableSourceRefusal(unittest.TestCase):
             names=[UNKNOWN])
         self.assertRefused(result, left_behind, 'No such file or directory')
 
+    def test_controls_module_read_undecodable_is_refused(self):
+        # Review r2 boundary P2: UnicodeDecodeError is a ValueError, so the
+        # OSError-only guard left a corrupt source on exit 1.
+        result, left_behind = self.drive(
+            CONTROLS_SCRIPT,
+            edit=(CONTROLS_READ,
+                  "test_source = (root / '{undecodable}').read_text()"),
+            names=[UNKNOWN])
+        self.assertRefused(result, left_behind, "codec can't decode")
+
+    @unittest.skipIf(os.geteuid() == 0,
+                     '#1922 root reads a mode-000 file, so EACCES cannot be staged')
     def test_controls_module_read_eacces_is_refused(self):
         result, left_behind = self.drive(
             CONTROLS_SCRIPT,
@@ -163,6 +185,8 @@ class UnreadableSourceRefusal(unittest.TestCase):
             names=[], target=True)
         self.assertRefused(result, left_behind, 'No such file or directory')
 
+    @unittest.skipIf(os.geteuid() == 0,
+                     '#1922 root reads a mode-000 file, so EACCES cannot be staged')
     def test_private_catalog_eacces_is_refused(self):
         result, left_behind = self.drive(
             PRIVATE_SCRIPT,
@@ -180,7 +204,13 @@ class UnreadableSourceRefusal(unittest.TestCase):
             edit=(PRIVATE_NETWORK,
                   "network = 'src/pilotdeck-gateway/src/runtime/no-such-1922.rs'"),
             argv=['--catalog'])
-        self.assertRefused(result, left_behind, 'No such file or directory')
+        # `--catalog` never receives `out`, so "no evidence directory" is not
+        # observable here (review r2 simplify P2); what is observable is that a
+        # refusal prints no partial catalog.
+        self.assertRefused(result, left_behind, 'No such file or directory',
+                           claimed_path=False)
+        self.assertEqual(result.stdout.strip(), self.verdict(result),
+                         '#1922 a refused catalog must not print a partial catalog')
 
     def test_controls_without_target_still_refuses_first_guard(self):
         # Positive control for the harness: unedited, the module-level read

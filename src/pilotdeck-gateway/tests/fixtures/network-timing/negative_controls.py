@@ -209,13 +209,15 @@ failure_anchors = {
 }
 
 
-# #1922: an unreadable bound source (EACCES / ENOENT) is "never started" (2),
-# not a failed run (1). This read sits at module level, before any refuse guard,
-# so an uncaught OSError used to land on exit 1 with a traceback -- the same
-# shape `negative_private.py` already refuses through its startup try/except.
+# #1922: an unreadable or undecodable bound source (EACCES / ENOENT /
+# non-UTF-8) is "never started" (2), not a failed run (1). This read sits at
+# module level, before any refuse guard, so an uncaught OSError used to land on
+# exit 1 with a traceback. `UnicodeDecodeError` is a `ValueError`, not an
+# `OSError`, so a corrupt source needs the second name in the tuple -- the same
+# pair `negative_private.py` refuses through its startup try/except.
 try:
     test_source = (root / 'src/pilotdeck-gateway/tests/network_timing.rs').read_text()
-except OSError as error:
+except (OSError, ValueError) as error:
     refuse(str(error))
 expected_passes = len(re.findall(r'^#\[(?:tokio::)?test(?:\([^\n]*\))?\]', test_source, re.M)) - len(re.findall(r'^#\[ignore(?: = [^\n]*)?\]', test_source, re.M))
 

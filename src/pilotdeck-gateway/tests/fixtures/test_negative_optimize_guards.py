@@ -170,6 +170,10 @@ SCANNED_EXTRA = (
     'negative_suite.py',
     'negative_panic.py',
     'negative_scope.py',
+    # Review r2 sibling P2: two more shared executors guard anchors, execution
+    # and restoration with `raise`. Both are at zero assert statements today.
+    '_shared/regeneration-negative.py',
+    '_shared/negative_sqlite_header.py',
 )
 _CLEANUP = []
 
