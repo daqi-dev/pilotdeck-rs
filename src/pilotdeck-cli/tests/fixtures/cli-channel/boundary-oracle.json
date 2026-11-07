@@ -1,0 +1,148 @@
+{
+  "source": "PilotDeck cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85, Node 22.22.0; fake remote gateway; request UUID and cwd substituted",
+  "cases": {
+    "bare-cr-eof": {
+      "argv": [],
+      "stdin": "one\rtwo\r\nthree",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "one",
+            "canPrompt": false
+          }
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "two",
+            "canPrompt": false
+          }
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "three",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "A\nA\nA\n",
+      "native_exit": null,
+      "closed_before_cleanup": false,
+      "stderr_contains": null
+    },
+    "final-only": {
+      "argv": [
+        "go"
+      ],
+      "stdin": "",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "go",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "",
+      "native_exit": null,
+      "closed_before_cleanup": false,
+      "stderr_contains": null
+    },
+    "disconnect": {
+      "argv": [
+        "go"
+      ],
+      "stdin": "",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "go",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "",
+      "native_exit": null,
+      "closed_before_cleanup": true,
+      "stderr_contains": "Gateway WebSocket closed."
+    },
+    "broken-stdout": {
+      "argv": [
+        "go"
+      ],
+      "stdin": "",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "go",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "",
+      "native_exit": {
+        "code": 1,
+        "signal": null
+      },
+      "closed_before_cleanup": true,
+      "stderr_contains": "Error: write EPIPE"
+    }
+  }
+}

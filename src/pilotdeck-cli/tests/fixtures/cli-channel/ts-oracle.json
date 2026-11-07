@@ -1,0 +1,95 @@
+{
+  "source": "PilotDeck cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85, Node 22.22.0; fake remote gateway; request UUID and cwd substituted",
+  "cases": {
+    "argv": {
+      "argv": [
+        "hello",
+        "--strange",
+        " world "
+      ],
+      "stdin": "",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "hello --strange  world",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "A[thinking] h\n[tool:read] started p\n[tool:t] ok yes\n[permission] read requires approval (r)\n\n[structured_output] {\"x\":1}\n\n[mode] plan\n\n[error:E] bad\n",
+      "stderr": "fatal: not a git repository (or any of the parent directories): .git\nfatal: not a git repository (or any of the parent directories): .git\n",
+      "native_exit": null,
+      "closed_before_cleanup": false
+    },
+    "lines": {
+      "argv": [],
+      "stdin": "  first  \r\n\nsecond\n",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "first",
+            "canPrompt": false
+          }
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "submit_turn",
+          "params": {
+            "sessionKey": "cli:project=<cwd>:default",
+            "channelKey": "cli",
+            "message": "second",
+            "canPrompt": false
+          }
+        }
+      ],
+      "stdout": "A[thinking] h\n[tool:read] started p\n[tool:t] ok yes\n[permission] read requires approval (r)\n\n[structured_output] {\"x\":1}\n\n[mode] plan\n\n[error:E] bad\n\nA[thinking] h\n[tool:read] started p\n[tool:t] ok yes\n[permission] read requires approval (r)\n\n[structured_output] {\"x\":1}\n\n[mode] plan\n\n[error:E] bad\n\n",
+      "stderr": "fatal: not a git repository (or any of the parent directories): .git\nfatal: not a git repository (or any of the parent directories): .git\n",
+      "native_exit": null,
+      "closed_before_cleanup": false
+    },
+    "whitespace": {
+      "argv": [
+        "  "
+      ],
+      "stdin": "   \n",
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "channel-fake-token"
+        }
+      ],
+      "stdout": "",
+      "stderr": "fatal: not a git repository (or any of the parent directories): .git\nfatal: not a git repository (or any of the parent directories): .git\n",
+      "native_exit": null,
+      "closed_before_cleanup": false
+    }
+  }
+}

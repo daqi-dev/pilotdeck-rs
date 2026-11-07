@@ -1,5 +1,6 @@
 //! `pilotdeck` entry. Dispatch order follows src/cli/pilotdeck.ts main().
 mod chat_search;
+mod cli_channel;
 mod config;
 mod cron;
 mod gateway_probe;
@@ -174,12 +175,12 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             }
             Err(Failure::Todo("pilotdeck tui"))
         }
-        _ => run_local_cli_channel(env, cwd),
+        _ => run_local_cli_channel(argv, env, cwd),
     }
 }
 
 /// createLocalGateway() up to its first observable effects, then CliChannel.
-fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
+fn run_local_cli_channel(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let pilot_home = paths::pilot_home(env, cwd)?;
     // Node's import.meta.url is the realpath of the entry module; match it so a
     // symlinked launcher still probes beside the real install root.
@@ -196,9 +197,7 @@ fn run_local_cli_channel(env: &Env, cwd: &Path) -> Result<u8, Failure> {
         stderr_line(&warning);
     }
     config::check(env, cwd, &pilot_home)?;
-    Err(Failure::Todo(
-        "local Gateway and CliChannel for a valid config",
-    ))
+    cli_channel::run(argv, env, cwd)
 }
 
 #[cfg(test)]

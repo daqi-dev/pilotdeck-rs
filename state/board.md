@@ -4719,3 +4719,7 @@ READY 本段改动：**删 5 行 + 新增 5 行 + 改 9 行（113 条：doing 10
 ### 2026-11-08 · CLI 组合验证与下一片（Codex，仅本机）
 
 cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100单测PASS（4既有/辅助ignored），all-targets clippy及cron真实子进程回归通过；健康探测抽为共享实现，并修复嵌套main集成测试的模块路径。继续由Terra实现默认远端channel、Sol实现配置原子保存；本地host核心与#1959在途清理改动重叠，暂不并发改该共享点，转独立CLI流能力。测试与原始证据在主仓 `_tmp/20261108-control-cli/`；所有提交仅本机、Rust仅mbp2，不标完整CLI或阶段完成。
+
+### 2026-11-08 · 默认 CLI 远端片（Codex，仅本机）
+
+未知argv拼提示词、stdin逐行同session与完整旧renderer已实现；mbp2真实TS重采三格和四项边界金样可复现，Rust子进程覆盖乱序seq/final不yield、空闲stdin心跳、delta在final前flush、CR/CRLF/EOF、断管及终态退出，全PASS；all-targets clippy通过。终态关闭和资源预算独立差异均待人复核；完整本地boot/fallback与EPIPE栈文本未完成，证据主仓 `_tmp/20261108-cli-channel/`，不标完整CLI。新机器stream真实native/sidecar/假provider已通过输出、落盘和跨连接取消，仍在收尾边界与本地提交；Sol继续WeCom/Weixin。
