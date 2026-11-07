@@ -479,12 +479,103 @@ def _rebound_elsewhere(tree):
     once, the *other* binding decides its value at that site, so substituting the
     assignment there keys a directory the runtime never uses — a wrong key, or a
     spurious failure.
+
+    ``REPO: Path = ROOT / 'x'`` is not one of those forms: the annotation binds
+    the name at import time exactly like ``REPO = ROOT / 'x'``, so it is resolved
+    like one. An annotated binding *inside a function* still shadows a module
+    constant of the same name through ``_function_scoped_names``.
     """
     names = set()
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             names |= _bound_names(node)
     return names
+
+
+def _unpacked_bindings(target, value):
+    """``(name, value)`` pairs for one assignment target and its expression.
+
+    ``A, B = ROOT / 'sms', ROOT / 'mms'`` binds each name to its own expression,
+    which a table listing several directories on one line relies on. Returns
+    None when the pairing is not literal and element-wise (a starred target, a
+    length mismatch, a non-tuple value): the caller then reports the names
+    instead of guessing a directory.
+    """
+    if isinstance(target, ast.Name):
+        return [(target.id, value)]
+    if not isinstance(target, (ast.Tuple, ast.List)):
+        return None
+    if (not isinstance(value, (ast.Tuple, ast.List))
+            or len(value.elts) != len(target.elts)):
+        return None
+    pairs = []
+    for element_target, element_value in zip(target.elts, value.elts):
+        if isinstance(element_target, ast.Starred):
+            return None
+        nested = _unpacked_bindings(element_target, element_value)
+        if nested is None:
+            return None
+        pairs.extend(nested)
+    return pairs
+
+
+def _assignment_pairs(statement):
+    """``(pairs, unfollowable)`` for one assignment statement.
+
+    ``REPO: Path = ROOT / 'x'`` binds at import time exactly like
+    ``REPO = ROOT / 'x'``; leaving the annotated form out of the constant table
+    made its uses neither keyed nor reported. ``unfollowable`` carries the
+    ``(name, value)`` pairs whose target/value shapes do not pair up, so the
+    caller can report their uses rather than drop them.
+    """
+    if isinstance(statement, ast.Assign):
+        targets, value = statement.targets, statement.value
+    elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+        targets, value = [statement.target], statement.value
+    else:
+        return [], []
+    pairs, unfollowable = [], []
+    for target in targets:
+        mapped = _unpacked_bindings(target, value)
+        if mapped is None:
+            names = set()
+            _bind_names(target, names)
+            unfollowable.extend((name, value) for name in sorted(names))
+        else:
+            pairs.extend(mapped)
+    return pairs, unfollowable
+
+
+def _module_level_pairs(tree):
+    """``(pairs, unfollowable)`` for every module-level assignment.
+
+    Conditional blocks count, function and class bodies do not: ``if flag: A =
+    ...`` runs at import time and rebinds the global just like a top-level line,
+    while a name inside a function is local to that scope.
+
+    Loop bodies do not count either. ``for row in cases: count = ...`` rebinds
+    the name on every iteration with a value that depends on the row, so it is
+    no more a constant than a function local — substituting it globally keys
+    (or reports) a directory the code may never build, and hides the one it
+    does. The same walk feeds ``_duplicated_module_names``, so a loop body also
+    cannot make an unrelated top-level constant look ambiguous.
+    """
+    pairs, unfollowable = [], []
+
+    def visit(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.Lambda, ast.ClassDef, ast.For,
+                                  ast.AsyncFor, ast.While)):
+                continue
+            if isinstance(child, (ast.Assign, ast.AnnAssign)):
+                child_pairs, child_unfollowable = _assignment_pairs(child)
+                pairs.extend(child_pairs)
+                unfollowable.extend(child_unfollowable)
+            visit(child)
+
+    visit(tree)
+    return pairs, unfollowable
 
 
 def _module_level_assignments(tree):
@@ -496,22 +587,9 @@ def _module_level_assignments(tree):
     value they shadow is already handled by ``_function_scoped_names``.
     """
     values = {}
-
-    def visit(node):
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                  ast.Lambda, ast.ClassDef)):
-                continue
-            if isinstance(child, ast.Assign):
-                names = set()
-                for target in child.targets:
-                    _bind_names(target, names)
-                written = ast.dump(child.value)
-                for name in names:
-                    values.setdefault(name, []).append(written)
-            visit(child)
-
-    visit(tree)
+    pairs, _ = _module_level_pairs(tree)
+    for name, value in pairs:
+        values.setdefault(name, []).append(ast.dump(value))
     return values
 
 
@@ -533,20 +611,18 @@ def _constants(tree):
     target, ...).
     """
     constants = {}
-    for statement in tree.body:
-        if isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    constants[target.id] = statement.value
-    module_level = set(constants)
+    module_pairs, _ = _module_level_pairs(tree)
+    for name, value in module_pairs:
+        constants[name] = value        # last one wins, exactly as at runtime
+    module_level = {name for name, _ in module_pairs}
     counts = {}
     assignments = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    counts[target.id] = counts.get(target.id, 0) + 1
-                    assignments.append((target.id, node.value))
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            pairs, _ = _assignment_pairs(node)
+            for name, value in pairs:
+                counts[name] = counts.get(name, 0) + 1
+                assignments.append((name, value))
     rebound = _rebound_elsewhere(tree)
     for name, value in assignments:
         if name not in constants and counts[name] == 1 and name not in rebound:
@@ -582,13 +658,26 @@ def _shadowed_names(tree):
     """
     module_level = set()
     for statement in tree.body:
-        if isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    module_level.add(target.id)
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            pairs, _ = _assignment_pairs(statement)
+            module_level.update(name for name, _ in pairs)
     return ((_function_scoped_names(tree) | _rebound_elsewhere(tree)
              | _duplicated_module_names(tree))
             & module_level)
+
+
+def _unfollowable_module_names(tree, constants):
+    """Module-level names bound by a shape this scanner cannot pair up.
+
+    ``A, *rest = ROOT / 'a', ROOT / 'b'`` binds names the scanner cannot follow.
+    Dropping them silently is the hole this guard exists to close, so their uses
+    are reported like any other ambiguous module-level name — but only when the
+    value really mentions the repository root, so an ordinary ``a, b = 1, 2``
+    stays quiet.
+    """
+    _, unfollowable = _module_level_pairs(tree)
+    return {name for name, value in unfollowable
+            if _is_repo_rooted(value, constants)}
 
 
 def _function_scoped_names(tree):
@@ -1360,7 +1449,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     self_path = (FIXTURES_FROM_ROOT + tuple(table.split('/')) if root == FIXTURES
                  else tuple(table.split('/')))
     constants = _constants(tree)
-    shadowed = _shadowed_names(tree)
+    unfollowable = _unfollowable_module_names(tree, constants)
+    shadowed = _shadowed_names(tree) | unfollowable
     aliases = _module_aliases(tree)
     repository_returns = _repo_returning_functions(tree, constants)
     tainted = _repository_parameters(tree, constants, repository_returns)
@@ -1395,6 +1485,14 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if name in reported_ambiguous:
             return
         reported_ambiguous.add(name)
+        if name in unfollowable:
+            # ``A, *rest = ROOT / 'a', ROOT / 'b'``: the names cannot be paired
+            # with their values, so the directory behind this use is unknown.
+            # Saying so is more useful than calling it a rebinding.
+            problems.append('unsupported unpacking of a repository path (this '
+                            f'scanner cannot pair the name with a value): '
+                            f'{name}: {expression}')
+            return
         problems.append('ambiguous module-level name rebound elsewhere: '
                         f'{name}: {expression}')
 
@@ -1524,6 +1622,15 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                             and '/' in following.value):
                         joined = True
                         break
+                    # ``f'{SMS}{SEP}mod.rs'``: the separator is interpolated, so
+                    # the fragment that follows the directory is a formatted
+                    # value rather than a literal. It is still a path build when
+                    # that value resolves to a string carrying a slash.
+                    if isinstance(following, ast.FormattedValue):
+                        piece = _string_value(following.value, constants)
+                        if piece is not None and '/' in piece:
+                            joined = True
+                            break
             if joined and repo_rooted(node):
                 problems.append('unsupported f-string path of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
@@ -1807,6 +1914,18 @@ def sweep(root=FIXTURES):
     return blind, unresolvable
 
 
+def _unbacked_register_rows(blind, unresolvable, register=None):
+    """``KNOWN_BLIND`` rows the scan no longer flags, in register order.
+
+    A row is backed when the table still hides a key or still carries a shape
+    the scanner cannot follow. Once the table is fixed both go away and the row
+    has to go with them, so this returning anything is the register drifting.
+    """
+    register = KNOWN_BLIND if register is None else register
+    return [rel for rel in sorted(register)
+            if rel not in blind and rel not in unresolvable]
+
+
 class DiscoveryAnchorTests(unittest.TestCase):
     def test_the_registry_is_not_empty(self):
         """An empty or gutted TABLES list must not turn every check vacuous."""
@@ -1944,22 +2063,25 @@ class DiscoveryAnchorTests(unittest.TestCase):
                                          r'(?: \+ \d+ unresolvable)?$',
                                  f'{rel}: KNOWN_BLIND needs the measured counts')
 
-    def test_every_blind_table_really_hides_a_key(self):
-        """A blind entry must name a table that actually lacks one of its keys.
+    def test_every_register_entry_still_names_a_blind_table(self):
+        """A register row must still describe a table the scan flags.
 
-        ``neg-for-diff.sh`` schedules a table by grepping for the literal key, so
-        a table whose every computed key already occurs in its own text is not
-        blind at all: the entry is either stale (the table was fixed — register
-        it in ``TABLES``) or the register is drifting.
+        ``sweep`` drops every key that already occurs in the table's own text
+        before registering it, so the earlier form of this test ("at least one
+        key is missing from the text") was true by construction — a claim of
+        discrimination it did not have. Membership is the falsifiable half: once
+        a table is fixed all its keys appear in its text and it leaves both
+        registers, so the row has to go with it.
         """
-        blind, _ = sweep()
-        for rel, keys in sorted(blind.items()):
-            text = (FIXTURES / rel).read_text(encoding='utf-8')
-            with self.subTest(table=rel):
-                self.assertTrue(
-                    [key for key in keys if key not in text],
-                    f'{rel}: every computed key already appears in the table text; '
-                    'drop the KNOWN_BLIND entry or register anchors in TABLES')
+        blind, unresolvable = sweep()
+        self.assertEqual(_unbacked_register_rows(blind, unresolvable), [])
+
+    def test_the_register_membership_check_is_falsifiable(self):
+        """A made-up row must come back as an unbacked row, not be swallowed."""
+        blind, unresolvable = sweep()
+        rows = _unbacked_register_rows(
+            blind, unresolvable, {'example/negative_controls.py': '1 key'})
+        self.assertEqual(rows, ['example/negative_controls.py'])
 
     def test_known_blind_counts_match_the_scan(self):
         """The register's numbers are part of it: a stale count hides new keys.
@@ -2913,6 +3035,121 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         problems = violations(synthetic, 'example/negative_controls.py')
         self.assertTrue(any('unresolvable' in problem for problem in problems), problems)
+
+    def test_an_annotated_module_constant_is_resolved(self):
+        """``SMS: Path = ROOT / '...'`` binds at import time like a plain ``=``.
+
+        The annotation is a type note, not a different kind of binding: leaving
+        the form out of the constant table made every use of it neither keyed nor
+        reported, so an annotated directory could hide a bare file name with
+        nothing turning red.
+        """
+        missing = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS: Path = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [SMS / 'mod.rs']\n"
+        )
+        problems = violations(missing, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: sms/mod.rs' in problem
+                            for problem in problems), problems)
+        anchored = missing.replace("DISCOVERY_ANCHORS = ()",
+                                   "DISCOVERY_ANCHORS = ('sms/mod.rs',)")
+        self.assertEqual(violations(anchored, 'example/negative_controls.py'), [])
+
+    def test_element_wise_unpacking_binds_each_name(self):
+        """``A, B = ROOT / 'x', ROOT / 'y'`` pairs each name with its own value.
+
+        A table that lists several directories on one line carried no key at all
+        before: the target was a tuple, so neither name entered the constant
+        table and both joins were invisible.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS, MMS = ROOT / 'src/example/sms', ROOT / 'src/example/mms'\n"
+            "DISCOVERY_ANCHORS = ('sms/mod.rs', 'mms/mod.rs')\n"
+            "rows = [SMS / 'mod.rs', MMS / 'mod.rs']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+        dropped = synthetic.replace(
+            "('sms/mod.rs', 'mms/mod.rs')", '()')
+        problems = violations(dropped, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: sms/mod.rs' in problem
+                            for problem in problems), problems)
+        self.assertTrue(any('missing anchor: mms/mod.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_starred_module_unpacking_fails_closed(self):
+        """``A, *rest = ROOT / 'x', ROOT / 'y'`` cannot be paired up.
+
+        The lengths differ, so which value a name holds is not knowable
+        statically. Dropping the names silently is the hole; reporting them is
+        the answer, and an ordinary ``a, b = 1, 2`` unpacking stays quiet.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS, *REST = ROOT / 'src/example/sms', ROOT / 'src/example/mms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [SMS / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unsupported unpacking of a repository path' in problem
+                            for problem in problems), problems)
+        plain = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "COUNT, *REST = 1, 2, 3\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [(COUNT, REST)]\n"
+        )
+        self.assertEqual(violations(plain, 'example/negative_controls.py'), [])
+
+    def test_an_interpolated_separator_in_an_f_string_fails_closed(self):
+        """``f'{SMS}{SEP}mod.rs'`` hides the slash behind a module constant.
+
+        The fragment after the directory is a formatted value rather than a
+        literal, so the rule that catches ``f'{SMS}/mod.rs'`` skipped it whole:
+        no key, no report.
+        """
+        shapes = {
+            'separator constant': "SEP = '/'\nrows = [f'{SMS}{SEP}mod.rs']\n",
+            'fragment constant': "MOD = '/mod.rs'\nrows = [f'{SMS}{MOD}']\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/example/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('unsupported f-string path' in problem
+                                    for problem in problems), problems)
+
+    def test_a_loop_body_assignment_is_not_a_module_constant(self):
+        """``for row in rows: count = ...`` rebinds per iteration, not per import.
+
+        Treating a loop-body target as a module constant substitutes a value the
+        rest of the file never sees: a display counter then reads as a repository
+        path and the table fails on a f-string that builds nothing.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "cases = []\n"
+            "with open('log') as log:\n"
+            "    for row in log:\n"
+            "        count = SMS.read_text().count(row)\n"
+            "print('\\n'.join(f'{name}: {count} matches' for name, count in cases))\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_a_package_initialiser_is_parsed_for_its_own_imports(self):
         """``import pkg`` runs ``pkg/__init__.py``; what it imports is a key too."""
