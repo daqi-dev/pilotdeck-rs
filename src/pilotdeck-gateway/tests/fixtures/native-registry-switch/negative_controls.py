@@ -144,7 +144,11 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [ASSEMBLY, REQUESTS, RUNS_METHODS, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
+    # #1352: CAPABILITIES is mutated by `registry-capabilities-ungated`, so it
+    # must be inside the guarded window too — `originals[path]` is keyed by this
+    # list, and a missing entry raises KeyError in the per-mutant `finally` and
+    # takes the whole fixture down instead of failing one row.
+    guarded = [ASSEMBLY, CAPABILITIES, REQUESTS, RUNS_METHODS, TESTS, PROCESS_TEST, PROCESS, Path(__file__).resolve(),
                FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
