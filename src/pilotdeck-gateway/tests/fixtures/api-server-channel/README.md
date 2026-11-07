@@ -85,9 +85,10 @@ The two parser-admission cells (#1683) carry a knob the generator uses and the
 replay must reproduce:
 
 - `unknown-method` records `method: "FROB"`, a token outside Node's
-  `http.METHODS`, so llhttp rejects it before routing. `assert_parser_admission_
-  cell_records_its_knob` pins the method; if the cell degraded to `GET`, the
-  replay would compare `200 == 200` and the gate could be removed unnoticed.
+  `http.METHODS`, so llhttp rejects it before routing.
+  `assert_parser_admission_cell_records_its_knob` pins the method; if the cell
+  degraded to `GET`, the replay would compare `200 == 200` and the gate could be
+  removed unnoticed.
 - `missing-host` records `setHost: false`, Node `http.request`'s option that
   suppresses the automatic `Host` header. The replay's `ReqSpec` reads it
   fail-closed (only absent or a boolean is accepted) and omits the `Host:` line
