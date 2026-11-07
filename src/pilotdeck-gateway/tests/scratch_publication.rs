@@ -48,6 +48,9 @@ use rustix::process::{Pid, Signal};
 use std::os::unix::process::CommandExt;
 
 #[cfg(target_os = "linux")]
+use std::collections::HashMap;
+
+#[cfg(target_os = "linux")]
 use std::os::fd::AsFd;
 
 #[cfg(target_os = "linux")]
@@ -1582,7 +1585,12 @@ fn group_exists(group: Pid) -> bool {
 /// unreadable link is one only when its holder is gone or already dead,
 /// and an fd that still resolves to the pipe keeps the scan fail-closed.
 #[cfg(target_os = "linux")]
-fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Error> {
+fn fdinfo_unreadable(
+    error: io::Error,
+    fd: &Path,
+    wanted: &str,
+    sources: &mut BlindSources,
+) -> Option<io::Error> {
     match fs::read_link(fd) {
         Ok(target) if target.to_string_lossy() == wanted => Some(io::Error::other(format!(
             "#1155 reading the fdinfo of {}: {error}",
@@ -1591,7 +1599,7 @@ fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Er
         Ok(_) => None,
         // #1409: only a link that is gone proves the release — the same rule
         // the enumeration reads by ([`link_failure_is_a_release`]).
-        Err(link) if link_failure_is_a_release(fd, &link) => None,
+        Err(link) if link_failure_is_a_release(fd, &link, sources) => None,
         Err(link) => Some(io::Error::other(format!(
             "#1155 reading the fdinfo of {}: {error}; re-reading the fd itself: {link}",
             fd.display()
@@ -1599,14 +1607,21 @@ fn fdinfo_unreadable(error: io::Error, fd: &Path, wanted: &str) -> Option<io::Er
     }
 }
 
+/// #1409: whether a `/proc` entry name is a pid — the same test the scan uses
+/// on the directory listing, kept in one place so the two cannot diverge.
+#[cfg(target_os = "linux")]
+fn is_pid_name(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// #1409: the process behind a `/proc/<pid>/fd/<n>` path, or `None` when the
 /// path does not name a numeric pid (`/proc/self/…`, a synthetic test path) —
 /// an unknown holder, which the callers treat as still holding.
 #[cfg(target_os = "linux")]
-fn holder_of(fd: &Path) -> Option<String> {
+fn holder_of(fd: &Path) -> Option<&str> {
     let rest = fd.to_str()?.strip_prefix("/proc/")?;
     let pid = rest.split('/').next()?;
-    (!pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit())).then(|| pid.to_owned())
+    is_pid_name(pid).then_some(pid)
 }
 
 /// #1409: whether a failed `read_link` on a descriptor path proves the fd is
@@ -1618,15 +1633,12 @@ fn holder_of(fd: &Path) -> Option<String> {
 /// `read_link` sites in this file — the enumeration, the fdinfo re-check and
 /// the grace re-check — go through this one rule so they cannot drift apart.
 #[cfg(target_os = "linux")]
-fn link_failure_is_a_release(fd: &Path, error: &io::Error) -> bool {
+fn link_failure_is_a_release(fd: &Path, error: &io::Error, sources: &mut BlindSources) -> bool {
     if error.kind() == io::ErrorKind::NotFound {
         return true;
     }
     match holder_of(fd) {
-        Some(pid) => matches!(
-            blind_source(&pid),
-            BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated
-        ),
+        Some(pid) => sources.of(pid).holds_nothing(),
         None => false,
     }
 }
@@ -1659,12 +1671,14 @@ fn link_failure_is_a_release(fd: &Path, error: &io::Error) -> bool {
 /// primitives, so a `/proc` that hides pipes makes the scan fail instead
 /// of passing on nothing. An fd of the pipe whose fdinfo cannot
 /// be read, or whose flags line cannot be parsed, is an unknown rather
-/// than a read end: the release is proven only by the fd itself being gone
-/// — re-read after a failed fdinfo read, whatever errno the dying task
-/// reported (ENOENT, ESRCH, EACCES alike; #1155 fix-r2b review boundary
-/// P2 / concurrency P3) — so an fd that still resolves to the pipe fails
-/// the scan instead of guessing the fd harmless (#1155 fix-r1 review,
-/// opus P2). The pipe is identified by its inode —
+/// than a read end: the release is proven by the fd itself, re-read after the
+/// failed fdinfo read, and the re-read follows [`link_failure_is_a_release`]
+/// (#1409) — `ENOENT`, or an unreadable link whose holder is gone or whose
+/// thread group is dead; every other errno leaves a descriptor the scan
+/// cannot see, and an fd that still resolves to the pipe fails the scan
+/// instead of guessing the fd harmless (#1155 fix-r1 review, opus P2; the
+/// pre-#1409 rule that any errno on the re-read proved the release is gone).
+/// The pipe is identified by its inode —
 /// both ends share it and no live pipe reuses it — and a write end by its
 /// fdinfo access mode (`O_WRONLY`/`O_RDWR`, the low two flag bits); a read
 /// end (mode `0`) is the stranger, and passes. `/proc` is Linux: elsewhere
@@ -1685,6 +1699,8 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
         // single process: "saw nothing" is not evidence of "nothing there".
         let mut readable = 0usize;
         let mut skipped = 0usize;
+        // #1409: one classification per holder per scan — see [`BlindSources`].
+        let mut sources = BlindSources::default();
         let processes = fs::read_dir("/proc").map_err(|error| {
             io::Error::other(format!(
                 "#1155 reading /proc for the return-boundary scan: {error}"
@@ -1694,10 +1710,10 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
             let process = process
                 .map_err(|error| io::Error::other(format!("#1155 reading /proc: {error}")))?;
             let pid = process.file_name().to_string_lossy().into_owned();
-            if !pid.bytes().all(|byte| byte.is_ascii_digit()) {
+            if !is_pid_name(&pid) {
                 continue;
             }
-            match fds_of(&pid, &wanted) {
+            match fds_of(&pid, &wanted, &mut sources) {
                 Ok(held) => {
                     readable += 1;
                     for (fd, access) in held {
@@ -1713,13 +1729,16 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
                 // descendant of this process — may be passed over; anything
                 // else is an unknown the scan fails closed on, because a
                 // hidden descriptor of a descendant is exactly where a
-                // leaked write end would be.
-                Err(error) => match blind_source(&pid) {
-                    BlindSource::Related => return Err(error),
-                    BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated => {
+                // leaked write end would be. The skip set lives in
+                // [`BlindSource::holds_nothing`], the same predicate the link
+                // rule ends in, so the two cannot drift apart.
+                Err(error) => {
+                    if sources.of(&pid).holds_nothing() {
                         skipped += 1;
+                    } else {
+                        return Err(error);
                     }
-                },
+                }
             }
         }
         if readable == 0 {
@@ -1733,7 +1752,12 @@ fn assert_no_write_end_survives_the_return(pipe: u64) -> io::Result<()> {
         // nothing new can acquire the descriptor, while a pre-exec fork of
         // this process loses its inherited copy at the exec already
         // underway.
-        retain_through_grace(&mut candidates, &wanted, TRANSIENT_WRITE_END_GRACE);
+        retain_through_grace(
+            &mut candidates,
+            &wanted,
+            TRANSIENT_WRITE_END_GRACE,
+            &mut sources,
+        );
         if let Some(fd) = candidates.first() {
             return Err(io::Error::other(format!(
                 "#1155 a write end of the publication pipe ({fd}) survived the return"
@@ -1763,6 +1787,43 @@ enum BlindSource {
     Unrelated,
     /// This process, a descendant, or a task whose relation cannot be read.
     Related,
+}
+
+impl BlindSource {
+    /// #1409: whether a source can hold a descriptor of the scanned pipe at
+    /// all. This is the one place the skip set is written — the enumeration
+    /// and [`link_failure_is_a_release`] both end here, so a new variant or a
+    /// narrowed set cannot silently apply on one side only.
+    fn holds_nothing(self) -> bool {
+        matches!(self, Self::Vanished | Self::Terminal | Self::Unrelated)
+    }
+}
+
+/// #1409 r2 review (concurrency P2 / efficiency P3): one classification per
+/// holder per scan. [`blind_source`] may spend the whole settle window on a
+/// single holder, and a scan meets the same holder once per descriptor and
+/// once per grace round — without this, one hidden holder would cost
+/// N × `BLIND_SOURCE_SETTLE` inside a scan whose duration the callers bound,
+/// and the enumeration would classify the same pid twice (once per failed
+/// descriptor, once when `fds_of` reports the source). A memo cannot grow
+/// stale in a way that loosens the scan: a source never becomes live again
+/// (`Terminal`/`Vanished` are final, `Unrelated` cannot become a descendant),
+/// and a cached `Related` is the fail-closed verdict.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct BlindSources {
+    seen: HashMap<String, BlindSource>,
+}
+
+#[cfg(target_os = "linux")]
+impl BlindSources {
+    /// The classification of `pid`, decided once per scan.
+    fn of(&mut self, pid: &str) -> BlindSource {
+        *self
+            .seen
+            .entry(pid.to_owned())
+            .or_insert_with(|| blind_source(pid))
+    }
 }
 
 /// #1409: the state and parent fields of `/proc/<pid>/stat`. Everything is
@@ -1807,6 +1868,36 @@ fn descended_from_this_process(pid: &str) -> bool {
     true
 }
 
+/// #1409: whether a `Z`/`X` state means the whole *thread group* is dead, and
+/// with it the group's descriptor table. A thread-group leader can be a
+/// zombie while its group lives on (`pthread_exit` in the leader): the
+/// surviving threads share the fd table, so a descriptor is still open, and
+/// `/proc/<tgid>/fd` answers EACCES in exactly that state — the very read the
+/// scan classifies (cb8 6.17, `_tmp/20261107-issue-1409/
+/// zombie-leader-probe3.log`: leader `Z`, worker `S`, fd directory EACCES,
+/// and a non-blocking read of the pipe's read end EAGAIN — a write end is
+/// still open). So a zombie leader alone proves nothing; only a group whose
+/// every task is `Z`/`X` has closed its descriptors. Anything unreadable is
+/// *not* dead, so the caller keeps treating the source as live.
+#[cfg(target_os = "linux")]
+fn thread_group_is_dead(pid: &str) -> bool {
+    let Ok(tasks) = fs::read_dir(format!("/proc/{pid}/task")) else {
+        return false;
+    };
+    let mut seen = 0usize;
+    for task in tasks {
+        let Ok(task) = task else { return false };
+        let Ok(stat) = fs::read_to_string(task.path().join("stat")) else {
+            return false;
+        };
+        if !matches!(stat_fields(&stat), Some(('Z' | 'X', _))) {
+            return false;
+        }
+        seen += 1;
+    }
+    seen != 0
+}
+
 /// #1409: classify a source whose `/proc` reads failed, for the scan's
 /// "may this be skipped" decision.
 #[cfg(target_os = "linux")]
@@ -1821,7 +1912,9 @@ fn blind_source(pid: &str) -> BlindSource {
     let Some((state, _)) = stat_fields(&stat) else {
         return BlindSource::Related;
     };
-    if state == 'Z' || state == 'X' {
+    // A zombie leader with a live group has not released its descriptors, so
+    // "terminal" is the whole group being dead, not one task reporting `Z`.
+    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
         return BlindSource::Terminal;
     }
     if descended_from_this_process(pid) {
@@ -1835,23 +1928,26 @@ fn blind_source(pid: &str) -> BlindSource {
 /// its unreadable descriptors count as hidden while alive. `exit_files()`
 /// runs before `exit_notify()` marks the task a zombie, and in that window
 /// the fd directory already fails (cb8 6.17 answers EACCES — measured, see
-/// `_tmp/20261107-issue-1409/exit-window-probe.log`) while `/proc/<pid>/stat`
-/// still says `R`. Failing on that first read would turn a healthy run red;
-/// failing only after the source settles keeps a live descendant with hidden
-/// descriptors a hard failure.
+/// `_tmp/20261107-issue-1409/exit-window-probe-3000.log`) while
+/// `/proc/<pid>/stat` still says `R`. Failing on that first read would turn a
+/// healthy run red; failing only after the source settles keeps a live
+/// descendant with hidden descriptors a hard failure.
 #[cfg(target_os = "linux")]
 const BLIND_SOURCE_SETTLE: Duration = Duration::from_millis(50);
 
 /// #1409: re-read a related source's state until it either proves terminal —
-/// a zombie, a dead task, or gone — or the settle window runs out, in which
-/// case it is still an unknown and the scan fails closed on it.
+/// a dead thread group, a dead task, or gone — or the settle window runs out,
+/// in which case it is still an unknown and the scan fails closed on it. A
+/// zombie leader alone is not terminal: see [`thread_group_is_dead`].
 #[cfg(target_os = "linux")]
 fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
     let deadline = Instant::now() + BLIND_SOURCE_SETTLE;
     loop {
         match fs::read_to_string(format!("/proc/{pid}/stat")) {
             Ok(stat) => match stat_fields(&stat) {
-                Some(('Z' | 'X', _)) => return BlindSource::Terminal,
+                Some(('Z' | 'X', _)) if thread_group_is_dead(pid) => {
+                    return BlindSource::Terminal;
+                }
                 Some(_) => {}
                 None => return BlindSource::Related,
             },
@@ -1869,11 +1965,11 @@ fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
 
 /// #1409: the descriptors of `pid` that resolve to `wanted`, with their
 /// fdinfo access mode. Every failed read is reported — the caller decides
-/// whether its *source* can be passed over — except an fd whose link
-/// vanished between the enumeration and the read, which is a release and
-/// holds nothing.
+/// whether its *source* can be passed over — except a link whose failure
+/// proves the fd released ([`link_failure_is_a_release`]): `ENOENT`, or any
+/// other errno behind a holder that is gone or whose thread group is dead.
 #[cfg(target_os = "linux")]
-fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
+fn fds_of(pid: &str, wanted: &str, sources: &mut BlindSources) -> io::Result<Vec<(String, u32)>> {
     let mut held = Vec::new();
     let descriptors = fs::read_dir(format!("/proc/{pid}/fd")).map_err(|error| {
         io::Error::other(format!("#1409 reading the descriptors of {pid}: {error}"))
@@ -1890,7 +1986,9 @@ fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
             // the read is a release. Any other errno (EACCES from a setuid
             // exec or an LSM, EIO) leaves a descriptor the scan cannot see
             // — the source decides, and a related one fails the scan closed.
-            Err(error) if link_failure_is_a_release(&descriptor.path(), &error) => continue,
+            Err(error) if link_failure_is_a_release(&descriptor.path(), &error, sources) => {
+                continue;
+            }
             Err(error) => {
                 return Err(io::Error::other(format!(
                     "#1409 reading the descriptor {} of {pid}: {error}",
@@ -1905,10 +2003,12 @@ fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
         let fdinfo = match fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", number)) {
             Ok(fdinfo) => fdinfo,
             // #1155 fix-r2b review (boundary P2 / concurrency P3): the
-            // release is proven by the fd itself being gone, re-read here —
-            // see [`fdinfo_unreadable`].
+            // release is proven by the fd itself, re-read here under the
+            // same [`link_failure_is_a_release`] rule as every other link
+            // read in this file — see [`fdinfo_unreadable`].
             Err(error) => {
-                if let Some(failure) = fdinfo_unreadable(error, &descriptor.path(), wanted) {
+                if let Some(failure) = fdinfo_unreadable(error, &descriptor.path(), wanted, sources)
+                {
                     return Err(failure);
                 }
                 continue;
@@ -1952,7 +2052,7 @@ fn a_write_end_this_process_holds_is_visible() -> io::Result<()> {
         .st_ino;
     let wanted = format!("pipe:[{inode}]");
     let mine = process::id().to_string();
-    if fds_of(&mine, &wanted)?
+    if fds_of(&mine, &wanted, &mut BlindSources::default())?
         .iter()
         .any(|(_, access)| access & 0o3 != 0)
     {
@@ -1969,9 +2069,16 @@ fn a_write_end_this_process_holds_is_visible() -> io::Result<()> {
 /// makes an fd disappear for good, while a pre-exec fork of this process
 /// loses its inherited copy at the exec already underway — so the re-check
 /// evicts every candidate whose fd no longer resolves to the pipe, and keeps
-/// every one that does, until the grace runs out.
+/// every one that does or that it cannot read behind a live holder (the same
+/// [`link_failure_is_a_release`] rule the enumeration reads by), until the
+/// grace runs out.
 #[cfg(target_os = "linux")]
-fn retain_through_grace(candidates: &mut Vec<String>, wanted: &str, grace: Duration) {
+fn retain_through_grace(
+    candidates: &mut Vec<String>,
+    wanted: &str,
+    grace: Duration,
+    sources: &mut BlindSources,
+) {
     let deadline = Instant::now() + grace;
     while !candidates.is_empty() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(25));
@@ -1981,7 +2088,7 @@ fn retain_through_grace(candidates: &mut Vec<String>, wanted: &str, grace: Durat
             // is gone or already dead — the same rule as the enumeration, so
             // a descriptor hidden mid-grace stays a survivor instead of
             // being quietly dropped from the verdict.
-            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error, sources),
         });
     }
 }
@@ -2002,8 +2109,13 @@ fn an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd() {
         .expect("#1155 read the fdinfo probe descriptor's target")
         .to_string_lossy()
         .into_owned();
-    let unknown = fdinfo_unreadable(esrch(), Path::new(&fd), &wanted)
-        .expect("#1155 an unreadable fdinfo behind a live fd must fail the scan closed");
+    let unknown = fdinfo_unreadable(
+        esrch(),
+        Path::new(&fd),
+        &wanted,
+        &mut BlindSources::default(),
+    )
+    .expect("#1155 an unreadable fdinfo behind a live fd must fail the scan closed");
     assert!(
         unknown.to_string().contains("#1155 reading the fdinfo"),
         "#1155 the fail-closed error must name the fdinfo read: {unknown}"
@@ -2012,7 +2124,7 @@ fn an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd() {
     // cannot be shown to exist, so its unreadable fdinfo is a release.
     let gone = Path::new("/proc/self/fd/1048576");
     assert!(
-        fdinfo_unreadable(esrch(), gone, &wanted).is_none(),
+        fdinfo_unreadable(esrch(), gone, &wanted, &mut BlindSources::default()).is_none(),
         "#1155 an fd that is gone must prove the release of its unreadable fdinfo"
     );
 }
@@ -2074,6 +2186,128 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
     );
 }
 
+/// #1409 r2 review (concurrency): a `Z` state is the leader's, not the
+/// group's. A killed task with no live thread left reports `Z` for its only
+/// task and has really closed its descriptors, while this running process has
+/// not — the two directions `thread_group_is_dead` must tell apart.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_zombie_leader_alone_does_not_close_its_groups_descriptors() {
+    let mine = process::id().to_string();
+    assert!(
+        !thread_group_is_dead(&mine),
+        "#1409 this process is running, so its thread group is not dead"
+    );
+    let mut child = process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#1409 spawn the zombie probe");
+    let pid = child.id().to_string();
+    child.kill().expect("#1409 kill the zombie probe");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#1409 the killed probe must become a zombie, not stay {stat:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        thread_group_is_dead(&pid),
+        "#1409 a zombie with no live task left has closed its descriptors"
+    );
+    let _ = child.wait();
+}
+
+/// #1409 r2 review (concurrency): a zombie thread-group leader whose group
+/// still has a live thread has *not* released the group's descriptors. The
+/// kernel reports `Z` for the leader, answers EACCES on the group's fd
+/// directory, and the surviving thread's write end is still open (cb8 6.17,
+/// `_tmp/20261107-issue-1409/zombie-leader-probe3.log`), so classifying `Z`
+/// as terminal would skip exactly the source that still holds the pipe — a
+/// clean verdict over a leak. The probe is the established `python3` kind:
+/// the leader leaves through a real `pthread_exit()` while a second thread
+/// keeps the group alive.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_live_group_behind_a_zombie_leader_is_not_terminal() {
+    const PROBE: &str = r#"
+import ctypes, os, threading, time
+read_end, write_end = os.pipe()
+pid = os.fork()
+if pid == 0:
+    def hold():
+        os.write(write_end, b"x")
+        time.sleep(30)
+    threading.Thread(target=hold, daemon=False).start()
+    time.sleep(0.2)
+    ctypes.CDLL("libc.so.6", use_errno=True).pthread_exit(None)
+    os._exit(9)
+os.close(write_end)
+print(pid, flush=True)
+os.waitpid(pid, 0)
+"#;
+    // Kill the probe's child on the way out, so neither the panic path nor a
+    // passing run leaves a stray sleeper behind.
+    struct KillOnDrop(Pid);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = rustix::process::kill_process(self.0, Signal::KILL);
+        }
+    }
+
+    let mut probe = process::Command::new("python3")
+        .arg("-I")
+        .arg("-c")
+        .arg(PROBE)
+        .stdout(process::Stdio::piped())
+        .spawn()
+        .expect("#1409 spawn the zombie-leader probe");
+    let mut pid_line = String::new();
+    {
+        use std::io::BufRead;
+        let mut stdout = io::BufReader::new(
+            probe
+                .stdout
+                .take()
+                .expect("#1409 take the zombie-leader probe's stdout"),
+        );
+        stdout
+            .read_line(&mut pid_line)
+            .expect("#1409 read the zombie-leader probe's child pid");
+    }
+    let hero = pid_line.trim().to_owned();
+    let hero_raw: i32 = hero
+        .parse()
+        .expect("#1409 the zombie-leader probe must print a numeric child pid");
+    let kill_on_drop = KillOnDrop(
+        Pid::from_raw(hero_raw).expect("#1409 the probe's child pid must be a valid pid"),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let stat = fs::read_to_string(format!("/proc/{hero}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#1409 the probe's leader must become a zombie, not stay {stat:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        blind_source(&hero),
+        BlindSource::Related,
+        "#1409 a zombie leader with a live group has not released its descriptors"
+    );
+    drop(kill_on_drop);
+    let _ = probe.wait().expect("#1409 reap the zombie-leader probe");
+}
+
 /// #1409: the one rule the three `read_link` sites share, pinned on its own —
 /// `ENOENT` proves the release, any other errno leaves a descriptor the scan
 /// cannot see, and only the source settles it: this process and a path with
@@ -2084,19 +2318,31 @@ fn an_unreadable_link_is_a_release_only_when_its_holder_is_gone() {
     let eacces = io::Error::from_raw_os_error(13);
     let mine = format!("/proc/{}/fd/0", process::id());
     assert!(
-        !link_failure_is_a_release(Path::new(&mine), &eacces),
+        !link_failure_is_a_release(Path::new(&mine), &eacces, &mut BlindSources::default()),
         "#1409 an unreadable link of this process must never count as a release"
     );
     assert!(
-        !link_failure_is_a_release(Path::new("/proc/self/fd/0"), &eacces),
+        !link_failure_is_a_release(
+            Path::new("/proc/self/fd/0"),
+            &eacces,
+            &mut BlindSources::default()
+        ),
         "#1409 a path with no numeric pid has an unknown holder, not a release"
     );
     assert!(
-        link_failure_is_a_release(Path::new(&mine), &io::Error::from(io::ErrorKind::NotFound)),
+        link_failure_is_a_release(
+            Path::new(&mine),
+            &io::Error::from(io::ErrorKind::NotFound),
+            &mut BlindSources::default()
+        ),
         "#1409 a link that is gone is a release whatever its holder is"
     );
     assert!(
-        link_failure_is_a_release(Path::new("/proc/2147483647/fd/0"), &eacces),
+        link_failure_is_a_release(
+            Path::new("/proc/2147483647/fd/0"),
+            &eacces,
+            &mut BlindSources::default()
+        ),
         "#1409 an unreadable link behind a holder that does not exist is a release"
     );
 }
@@ -2128,7 +2374,12 @@ fn a_candidate_that_no_longer_resolves_is_evicted_by_the_grace() {
     let live = format!("/proc/self/fd/{}", writer.as_raw_fd());
     let gone = "/proc/self/fd/1048576".to_owned();
     let mut candidates = vec![live.clone(), gone];
-    retain_through_grace(&mut candidates, &wanted, Duration::from_millis(200));
+    retain_through_grace(
+        &mut candidates,
+        &wanted,
+        Duration::from_millis(200),
+        &mut BlindSources::default(),
+    );
     assert_eq!(
         candidates,
         vec![live],
