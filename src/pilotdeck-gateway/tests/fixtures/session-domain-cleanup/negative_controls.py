@@ -5116,6 +5116,63 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 17 (codex r16 P0-1 / P0-2 / P0-3, boundary r16 P0-2):
+    # the round-16 fix decided "is this name still the handle?" from the
+    # positionally latest binding alone.  A conditional overwrite, a same-named
+    # binding in a sibling function, and a constructor shadowed in the same
+    # scope each hid a real write.  One row per spelling, injected into the
+    # ruler's own source like the round-16 rows above.
+    ('calibrate-for-target-handle-conditional-overwrite', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _cb_use(flag):\n"
+      "        _cb = getattr(md, '__setattr__')\n"
+      "        if flag:\n"
+      "            _cb = lambda *a: None\n"
+      "        _cb('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-scoped-handle-receiver', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _sr_decoy():\n"
+      "        _sr = getattr(SESSION_DOMAIN, '__setattr__')\n"
+      "    def _sr_use():\n"
+      "        _sr = getattr(md, '__setattr__')\n"
+      "        _sr('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-shadowed-constructor', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _sc_use():\n"
+      "        _sc = getattr(md, '__setattr__')\n"
+      "        object = lambda: _sc\n"
+      "        _sc = object()\n"
+      "        _sc('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6269,6 +6326,30 @@ def calibrate_for_target_assignment_back_edge(rows):
         'flagged, passed=False')
 
 
+def calibrate_for_target_handle_conditional_overwrite(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-handle-conditional-overwrite."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-handle-conditional-overwrite '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_scoped_handle_receiver(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-scoped-handle-receiver."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-scoped-handle-receiver '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_shadowed_constructor(rows):
+    """#1953 fix-r1 round 17: calibrate-for-target-shadowed-constructor."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-shadowed-constructor '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7101,6 +7182,15 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-assignment-back-edge': (
         'aggregation-audit', calibrate_for_target_assignment_back_edge,
+        False, ()),
+    'calibrate-for-target-handle-conditional-overwrite': (
+        'aggregation-audit', calibrate_for_target_handle_conditional_overwrite,
+        False, ()),
+    'calibrate-for-target-scoped-handle-receiver': (
+        'aggregation-audit', calibrate_for_target_scoped_handle_receiver,
+        False, ()),
+    'calibrate-for-target-shadowed-constructor': (
+        'aggregation-audit', calibrate_for_target_shadowed_constructor,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
