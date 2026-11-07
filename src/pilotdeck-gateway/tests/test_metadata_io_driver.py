@@ -1001,6 +1001,18 @@ class EnvironmentControls(unittest.TestCase):
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
              "    tmp=path.parent / f'.negctl-{path.name}.tmp'"),
+            # r6（zai sibling P1）：保留正确的派生行当诱饵，另起一个名字直接
+            # 指向目标旁边再发布 —— 只钉「出现过 tmp = PUBLISH_DIR / …」时全绿。
+            ('published-temp-swapped-to-a-decoy',
+             '        os.replace(tmp, path)',
+             "        staging = path.parent / f'.negctl-{path.name}.tmp'\n"
+             '        os.replace(staging, path)'),
+            # r6（DeepSeek boundary P2）：把常量真值改掉、再用一条注释保留旧文本 ——
+            # 文本计数与 AST 绑定数都还是 1，只有读 AST 字面量才判得出来。
+            ('scratch-constant-retargeted-behind-a-comment',
+             "PUBLISH_DIR = root / '.negctl-publish'",
+             "# PUBLISH_DIR = root / '.negctl-publish'\n"
+             "PUBLISH_DIR = root / 'src' / '.negctl-publish'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1073,28 +1085,131 @@ class EnvironmentControls(unittest.TestCase):
                     names.append(value.args[0].id)
         return names
 
+    @staticmethod
+    def bound_expressions(body):
+        """`body` 里所有 `名字 = 表达式` / `名字: T = 表达式` / 海象 → `[(名字, 表达式节点)]`。
+
+        解包形态按下标对齐取值（`fd, tmp = mkstemp(...)` 里 `tmp` 是第二个元素）。
+        """
+        pairs = []
+
+        def bind_target(target, value):
+            if isinstance(target, ast.Name):
+                pairs.append((target.id, value))
+            elif isinstance(target, (ast.Tuple, ast.List)):
+                paired = (isinstance(value, (ast.Tuple, ast.List))
+                          and len(value.elts) == len(target.elts))
+                for index, element in enumerate(target.elts):
+                    bind_target(element, value.elts[index] if paired else value)
+            elif isinstance(target, ast.Starred):
+                bind_target(target.value, value)
+
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    bind_target(target, node.value)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                bind_target(node.target, node.value)
+            elif isinstance(node, ast.NamedExpr):
+                bind_target(node.target, node.value)
+        return pairs
+
+    @staticmethod
+    def names_in(node):
+        return {sub.id for sub in ast.walk(node) if isinstance(sub, ast.Name)}
+
+    def binding_source(self, body, name):
+        """`name` 唯一那处绑定的右侧表达式源码；不唯一或缺失则返回空串。"""
+        values = [value for bound, value in self.bound_expressions(body) if bound == name]
+        return ast.unparse(values[0]) if len(values) == 1 else ''
+
+    @staticmethod
+    def module_constant(source, name):
+        """模块顶层 `name = <字面量>` → `(None, 值)`；`name = <X> / <字面量>` → `(X 源码, 值)`。
+
+        r6（DeepSeek boundary P2）：常量值本身不能只靠「整行文本出现一次」判 ——
+        把真行改成 `PUBLISH_DIR = 'src/.negctl-publish'`、再补一条**注释**
+        `# PUBLISH_DIR = '.negctl-publish'`，文本计数与 AST 绑定数都还是 1，钉子全绿。
+        这里直接读赋值右侧的 AST 字面量，注释骗不过。
+        """
+        for node in ast.parse(source).body:
+            if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == name):
+                continue
+            value = node.value
+            if isinstance(value, ast.Constant):
+                return None, value.value
+            if isinstance(value, ast.BinOp) and isinstance(value.right, ast.Constant):
+                return ast.unparse(value.left), value.right.value
+        return None, None
+
+    def derives_from_root(self, body, name, root_constant, seen=None):
+        """`name` 的派生链能否走到 `root_constant`（换名、多跳、mkstemp 都算）。
+
+        r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的「按名字查表」
+        仍然只认 `tmp` / `scratch` 两个拼写、且 `if bound:` 把零次命中当通过。
+        改成从**被发布的名字**出发沿绑定链回溯：每一跳都必须恰好绑一次，链尾必须
+        出现仓根常量。诱饵变量（保留旧派生行、另起一个名字直接指向 `path.parent`）、
+        整体改名、多跳中转都在同一条判据下判红。
+        """
+        seen = set() if seen is None else seen
+        if name in seen:
+            return False
+        seen.add(name)
+        values = [value for bound, value in self.bound_expressions(body) if bound == name]
+        if len(values) != 1:
+            return False
+        value = values[0]
+        if root_constant in self.names_in(value):
+            return True
+        return any(self.derives_from_root(body, candidate, root_constant, seen)
+                   for candidate in sorted(self.names_in(value)))
+
+    def temp_derivation_problems(self, body, root_constant='PUBLISH_DIR'):
+        """被 `os.replace()` 发布的那个名字，派生链必须走到仓根 scratch。"""
+        published = self.published_temp_names(body)
+        if len(published) != 1:
+            return [f'os.replace() must publish exactly one variable, got {published}']
+        values = [value for bound, value in self.bound_expressions(body)
+                  if bound == published[0]]
+        if len(values) != 1:
+            return [f'{published[0]} must be bound exactly once, got {len(values)}']
+        if not self.derives_from_root(body, published[0], root_constant):
+            return [f'{published[0]} must derive from {root_constant} through its bindings, '
+                    f'got: {ast.unparse(values[0])[:160]}']
+        return []
+
     def sibling_atomic_guards(self, source, function):
         """#1692 §9 r2/r3：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
         body = self.sibling_atomic_body(source, function)
         self.assertRegex(source, r"PUBLISH_DIR = (?:ROOT|root) / ['\"]\.negctl-publish['\"]",
                          '#1692 §9 r2 the scratch dir is the ignored root namespace, '
                          'not a directory inside the scanned src area')
+        # r6（DeepSeek boundary P2）：上面这条是文本搜索，注释能伪造命中。值从 AST 读。
+        base, value = self.module_constant(source, 'PUBLISH_DIR')
+        self.assertIn(base, ('ROOT', 'root'),
+                      '#1692 §9 r2 the scratch dir is derived from the repository root, '
+                      f'got: {base} / {value!r}')
+        self.assertEqual(value, '.negctl-publish',
+                         '#1692 §9 r2 the scratch dir is the ignored root namespace')
         # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
         # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
-        # 钉「临时路径由仓根 scratch 派生」本身。
-        self.assertRegex(body, r"(?:tmp = (?:PUBLISH_DIR|scratch) /"
-                               r"|mkstemp\(dir=str\((?:PUBLISH_DIR|scratch)\))",
-                         '#1692 §9 r2 the temp path must be DERIVED from the root '
-                         'scratch dir, not merely mention it')
-        self.assertNotIn('tmp = path.parent', body,
-                         '#1692 §9 r2 a temp beside the target reintroduces the '
-                         'untracked-build-input lockout inside src/')
-        if 'scratch' in body:
-            # 仓内目标走仓根 scratch（不在任何被扫区）；仓外侧车（状态目录）留在
-            # 目标同目录，否则跨卷 `os.replace` 抛 EXDEV（r3 两家评审）。
-            self.assertRegex(body, r'scratch = PUBLISH_DIR if path\.is_relative_to\(ROOT\)'
-                                   r' else path\.parent',
-                             '#1692 §9 r2 the scratch dir follows the target')
+        # r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的派生判据还是
+        # 「出现过」型正则 + 硬编码 `tmp` 名，且 `for … in mkstemp_scratch_names(body)`
+        # 在空列表时整段静默跳过。改成从**被 `os.replace()` 发布的那个名字**出发沿
+        # 绑定链回溯到仓根常量：每一跳必须恰好绑一次，链尾必须出现 `PUBLISH_DIR`。
+        # 诱饵变量、整体改名、多跳中转都由这一条判。
+        self.assertEqual(self.temp_derivation_problems(body), [],
+                         f'#1692 §9 r2 {function}() the published temp must DERIVE from the '
+                         'root scratch dir, not merely mention it')
+        for scratch_variable in self.mkstemp_scratch_names(body):
+            # 跨卷例外仍要钉（r3 两家评审）：仓外目标留在同目录，否则 `os.replace` 抛 EXDEV。
+            self.assertRegex(
+                self.binding_source(body, scratch_variable),
+                r'^PUBLISH_DIR if path\.is_relative_to\(ROOT\) else path\.parent$',
+                '#1692 §9 r2 the mkstemp scratch dir follows the target only outside '
+                'the tree')
         # r3（zai sibling P1）：上面全是「出现过」型钉子 —— 先正确派生、之后再补一句
         # `tmp = ROOT / 'src' / …` 或 `scratch = path.parent`，每条都照绿，而落盘走的是后者，
         # 残留回到被扫的 `src/`。派生变量与常量都只准绑一次。
@@ -1817,15 +1932,21 @@ self_check_controls_run | return | return problems
         ——断言作用域因此从「夹具源码」扩到「被变异源的全部写入点」。
         """
         body = self.write_source_atomic_body(source)
+        # r6（DeepSeek sibling P1）：r5 只在同族夹具那侧把「临时变量名」改成从
+        # `os.replace()` 的 AST 实参读，共享实现这里仍把字面量 `temporary` 当判据 ——
+        # 换个变量名再重绑就绕开了。这里同样从 AST 取真正被发布的名字。
+        self.assertEqual(self.temp_derivation_problems(body), [],
+                         '#1692 §9 the published temp must derive from the root scratch dir')
+        published = self.published_temp_names(body)[0]
         self.assertIn("open('wb')", body,
                       '#1692 §9 the publish writes the bytes to a temp file first')
         self.assertIn('os.fsync(stream.fileno())', body,
                       '#1692 §9 the bytes are flushed to disk before the rename')
-        self.assertIn('os.replace(temporary, path)', body,
+        self.assertIn(f'os.replace({published}, path)', body,
                       '#1692 §9 the publish is ONE rename, never a truncating write')
         self.assertLess(body.index('os.fsync(stream.fileno())'), body.index('os.replace('),
                         '#1692 §9 the rename happens only after the fsync')
-        self.assertIn('temporary.unlink(missing_ok=True)', body,
+        self.assertIn(f'{published}.unlink(missing_ok=True)', body,
                       '#1692 §9 a failed publish leaves no temp behind')
         # 权限位也是钉子（r1 评审 GLM boundary P3）：`os.replace` 发布的是**临时文件**的
         # inode 与它自己的 mode（0666 & ~umask），源文件的 mode 会被丢掉。`core.filemode=true`
@@ -1833,9 +1954,9 @@ self_check_controls_run | return | return problems
         # preflight 同样整棵拒跑。先 chmod 再 rename，且 mode 取自源文件。
         self.assertIn('mode = path.stat().st_mode & 0o7777', body,
                       '#1692 §9 the published mode is taken from the source file')
-        self.assertIn('os.chmod(temporary, mode)', body,
+        self.assertIn(f'os.chmod({published}, mode)', body,
                       '#1692 §9 the temp gets the source mode before the rename')
-        self.assertLess(body.index('os.chmod(temporary, mode)'), body.index('os.replace('),
+        self.assertLess(body.index(f'os.chmod({published}, mode)'), body.index('os.replace('),
                         '#1692 §9 the chmod happens before the publish, not after it')
         # 落点也是钉子（#1843 r1 MiniMax boundary P1）：SIGKILL 不执行 `finally`，
         # 所以「临时文件总会被删」恰好在唯一要紧的那条路径上是假的。放在被变异源旁边
@@ -1864,6 +1985,13 @@ self_check_controls_run | return | return problems
         self.assertEqual(self.body_binding_count(source, scratch_constant), 1,
                          '#1692 §9 the publish scratch constant is bound exactly once: '
                          + scratch_constant)
+        # r6（DeepSeek boundary P2）：绑定次数对了，值还得对 —— 注释能伪造文本匹配。
+        base, value = self.module_constant(source, scratch_constant)
+        self.assertIsNone(base,
+                          '#1692 §9 the publish scratch constant is a plain literal at the '
+                          f'module top level, got: {base} / {value!r}')
+        self.assertEqual(value, '.negctl-publish',
+                         '#1692 §9 the publish scratch dir is the ignored root namespace')
         self.assertIn(f'{scratch_name} = Path(root) / {scratch_constant}', body,
                       '#1692 §9 the scratch dir is derived from the repo ROOT, not from the '
                       'mutated file: a residue beside a `src/` file is an untracked build '
@@ -1877,10 +2005,11 @@ self_check_controls_run | return | return problems
         # `temporary` 才是 `open()` / `os.replace()` 真正用的变量，只钉 `publish`
         # 时在它后面补一句 `temporary = path.parent / …` 仍全绿。
         # r4（zai boundary P2 / DeepSeek boundary P1）：计数走 AST，注解赋值、
-        # 元组解包、无空格拼写都在内。
-        self.assertEqual(self.body_binding_count(body, 'temporary'), 1,
-                         '#1692 §9 the temp path is bound exactly once')
-        self.assertIn(f"{scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
+        # 元组解包、无空格拼写都在内。r6：名字本身也从 AST 取（见上方
+        # `temp_derivation_problems`），不再写死 `temporary`。
+        self.assertEqual(self.body_binding_count(body, published), 1,
+                         f'#1692 §9 the temp path is bound exactly once: {published}')
+        self.assertIn(f"{published} = {scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
                       '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
         self.assertIn(f'{scratch_name}.mkdir(parents=True, exist_ok=True)', body,
                       '#1692 §9 the scratch dir exists before the first publish')
@@ -1998,6 +2127,17 @@ self_check_controls_run | return | return problems
                  "PUBLISH_DIR = '.negctl-publish'",
                  "PUBLISH_DIR = '.negctl-publish'\n"
                  "PUBLISH_DIR: str = 'src/.negctl-publish'"),
+                # r6（DeepSeek sibling P1）：共享实现里「被发布的是哪个名字」也走 AST ——
+                # 保留 `temporary` 的正确派生当诱饵，另起 `decoy` 指向目标旁边再发布。
+                ('atomic-publish-temp-swapped-to-a-decoy',
+                 '        os.replace(temporary, path)',
+                 "        decoy = path.parent / f'.negctl-{path.name}.tmp'\n"
+                 '        os.replace(decoy, path)'),
+                # r6（DeepSeek boundary P2）：常量真值改掉 + 注释保留旧文本。
+                ('atomic-publish-scratch-constant-retargeted-behind-a-comment',
+                 "PUBLISH_DIR = '.negctl-publish'",
+                 "# PUBLISH_DIR = '.negctl-publish'\n"
+                 "PUBLISH_DIR = 'src/.negctl-publish'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
