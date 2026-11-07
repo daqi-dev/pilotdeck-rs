@@ -308,7 +308,7 @@ impl Requests {
         // leave the transcript unloadable.
         let fence_path =
             transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);
-        let write_fence = transcript_locks::acquire(&fence_path).await;
+        let write_fence = transcript_locks::acquire(&fence_path).await?;
         // #1457 fix-r2: a loaded session owns the transcript writer (and the
         // writer lease) with an in-memory sequence, so the metadata entry goes
         // *through* its recorder. Closing it first retired an idle session the
@@ -477,7 +477,7 @@ impl Requests {
             &self.options.project,
             &session_key,
         );
-        let write_fence = transcript_locks::acquire(&fence_path).await;
+        let write_fence = transcript_locks::acquire(&fence_path).await?;
         let live_recorder = super::super::assembly::live_recorder(&self.recorders, &session_key);
         let recorders = self.recorders.clone();
         if let Some((_owner, recorder)) = live_recorder {

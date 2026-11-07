@@ -975,7 +975,11 @@ impl ProjectSessionFactory {
             // of this block, i.e. past publication. (mutant:
             // transcript-hydrate-fence-removed)
             let fence_path = storage.recorder.writer().path().to_owned();
-            let _write_fence = super::transcript_locks::acquire(&fence_path).await;
+            let _write_fence = super::transcript_locks::acquire(&fence_path)
+                .await
+                .map_err(|error| {
+                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))
+                })?;
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {

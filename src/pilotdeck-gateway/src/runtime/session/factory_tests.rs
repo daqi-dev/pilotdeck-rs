@@ -1855,20 +1855,26 @@ async fn hydration_holds_the_transcript_fence_until_the_recorder_is_published() 
     bounded(name, h.gate.entered()).await;
 
     // A metadata request's first step: take the fence for the same transcript.
+    // Resolve the key here and hand it over so the waiter reaches the mutex
+    // itself; resolving inside the waiter would make "still running after
+    // 250 ms" true on a slow path lookup alone, i.e. a dropped guard would
+    // survive the assertion below.
     let acquired = Arc::new(AtomicUsize::new(0));
     let (started, started_rx) = tokio::sync::oneshot::channel();
     let transcript = h.root.join("session-745.jsonl");
+    let fence_key = std::fs::canonicalize(&transcript).expect("#1860 canonical transcript");
     let mut waiter = tokio::spawn({
         let acquired = acquired.clone();
         async move {
             let _ = started.send(());
-            let _fence = crate::runtime::session::transcript_locks::acquire(&transcript).await;
+            let _fence = crate::runtime::session::transcript_locks::acquire_key(fence_key).await;
             acquired.store(1, Ordering::SeqCst);
         }
     });
     bounded(name, started_rx)
         .await
         .expect("#1860 waiter started");
+    tokio::task::yield_now().await;
     let blocked = tokio::time::timeout(Duration::from_millis(250), &mut waiter).await;
     crate::negative_assert!(
         blocked.is_err(),

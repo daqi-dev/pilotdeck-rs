@@ -138,14 +138,14 @@ mutations = [
     # puts two fresh writers back on the same tail, so the concurrent case must
     # see a duplicate `sequence` and a transcript the next restore() rejects.
     ('transcript-fence-removed-config', CONFIG,
-     '        let write_fence = transcript_locks::acquire(&fence_path).await;',
+     '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
     ('transcript-fence-removed-rename', SESSION_DIR,
      '        let fence_path =\n'
      '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
-     '        let write_fence = transcript_locks::acquire(&fence_path).await;',
+     '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
      '        let fence_path =\n'
      '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
      '        let write_fence = ();',
@@ -180,8 +180,16 @@ mutations = [
     # exactly the pre-fix shape, and the bound test's waiter then gets the
     # fence while the hydrate is still parked.
     ('transcript-hydrate-fence-removed', FACTORY,
-     '            let _write_fence = super::transcript_locks::acquire(&fence_path).await;',
-     '            let _write_fence = super::transcript_locks::acquire(&fence_path).await;\n'
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n'
+     '                .await\n'
+     '                .map_err(|error| {\n'
+     '                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n'
+     '                })?;',
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path)\n'
+     '                .await\n'
+     '                .map_err(|error| {\n'
+     '                    RuntimeError::new(String::from_utf16_lossy(error.message.units()))\n'
+     '                })?;\n'
      '            drop(_write_fence);',
      FT + 'hydration_holds_the_transcript_fence_until_the_recorder_is_published',
      '#1860 hydrate holds the transcript fence until the recorder is published'),

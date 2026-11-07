@@ -40,6 +40,7 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use pilotdeck_protocol::JsString;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
+use crate::runtime::connection::RequestError;
 use crate::runtime::session::factory::WriterLease;
 
 /// Weak entries only: a fence lives as long as some request is holding or
@@ -71,12 +72,14 @@ pub(crate) fn session_transcript_path(
 /// `LedgerLock::acquire`), so a metadata request and the hydrating session can
 /// never fence two names of one file.
 ///
-/// Resolution failure falls back to the supplied spelling: it only happens when
-/// the path cannot be created or inspected, which makes the append itself fail,
-/// and a fallback can therefore add serialization but never remove it.
-fn fence_key(transcript_path: &Path) -> PathBuf {
+/// A resolution failure is an error, not a fallback to the supplied spelling:
+/// keying on the raw path would let one file be fenced under two names (an
+/// unresolved spelling now, the canonical one once the path appears), which is
+/// the double-writer this fence exists to prevent. Callers surface the error;
+/// a path that cannot be resolved is one the append could not open either.
+fn fence_key(transcript_path: &Path) -> Result<PathBuf, RequestError> {
     crate::storage::canonical_transcript_path(transcript_path)
-        .unwrap_or_else(|_| transcript_path.to_path_buf())
+        .map_err(|error| RequestError::new(format!("Session transcript cannot be fenced: {error}")))
 }
 
 /// The session writer lease for a transcript no session owns right now.
@@ -104,13 +107,25 @@ pub(crate) fn writer_busy_error() -> crate::runtime::connection::RequestError {
 /// Hold the returned guard across the whole read-modify-write of one transcript
 /// file. Two writers for the same file run one after the other; a writer for
 /// any other transcript is unaffected.
-pub(crate) async fn acquire(transcript_path: &Path) -> OwnedMutexGuard<()> {
+pub(crate) async fn acquire(transcript_path: &Path) -> Result<OwnedMutexGuard<()>, RequestError> {
     // Canonicalization touches the filesystem (it creates the chat directory and
     // resolves a symlinked leaf), so it stays off the async worker.
     let supplied = transcript_path.to_path_buf();
     let key = tokio::task::spawn_blocking(move || fence_key(&supplied))
         .await
-        .unwrap_or_else(|_| transcript_path.to_path_buf());
+        .map_err(|error| {
+            RequestError::new(format!("Session transcript fence task failed: {error}"))
+        })??;
+    Ok(acquire_key(key).await)
+}
+
+/// Take the fence for an already-resolved key.
+///
+/// Split out from [`acquire`] so a waiter can be placed *at* the fence without
+/// first spending an unbounded amount of time resolving the path: a test that
+/// only checks "the waiter has not finished yet" would otherwise pass on a slow
+/// resolution alone and let a dropped guard survive.
+pub(crate) async fn acquire_key(key: PathBuf) -> OwnedMutexGuard<()> {
     let lock = {
         let mut locks = LOCKS.lock().unwrap_or_else(|error| error.into_inner());
         locks.retain(|_, entry| entry.strong_count() > 0);
@@ -142,19 +157,22 @@ mod tests {
     async fn one_fence_serializes_and_other_transcripts_do_not() {
         let root = scratch("serialize");
         let path = root.join("session-1.jsonl");
-        let first = acquire(&path).await;
+        let first = acquire(&path).await.expect("#1860 first fence");
         let other_root = root.clone();
         let second = tokio::spawn(async move {
-            let _guard = acquire(&other_root.join("session-1.jsonl")).await;
+            let _guard = acquire(&other_root.join("session-1.jsonl"))
+                .await
+                .expect("#1860 second fence");
             true
         });
         // The second acquirer must still be waiting while the first holds it.
         tokio::task::yield_now().await;
         assert!(!second.is_finished(), "same file must not run concurrently");
-        let other = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            acquire(&root.join("session-2.jsonl")),
-        )
+        let other = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            acquire(&root.join("session-2.jsonl"))
+                .await
+                .expect("#1860 other fence")
+        })
         .await;
         assert!(other.is_ok(), "a different transcript must not be blocked");
         drop(first);
@@ -169,9 +187,11 @@ mod tests {
     async fn released_fence_is_immediately_reusable() {
         let root = scratch("reuse");
         let path = root.join("ephemeral.jsonl");
-        drop(acquire(&path).await);
-        let again =
-            tokio::time::timeout(std::time::Duration::from_millis(250), acquire(&path)).await;
+        drop(acquire(&path).await.expect("#1860 first acquire"));
+        let again = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            acquire(&path).await.expect("#1860 second acquire")
+        })
+        .await;
         assert!(again.is_ok(), "a released fence must not stay locked");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -191,18 +211,24 @@ mod tests {
         let alias = root.join("alias.jsonl");
         std::os::unix::fs::symlink(&real, &alias).expect("#1860 symlink");
         assert_eq!(
-            fence_key(&real),
-            fence_key(&alias),
+            fence_key(&real).expect("#1860 real key"),
+            fence_key(&alias).expect("#1860 alias key"),
             "a symlinked leaf is the same transcript"
         );
         assert_eq!(
             fence_key(&real),
-            fence_key(&dir.join(".").join("session-1.jsonl")),
+            fence_key(&dir.join(".").join("session-1.jsonl")).expect("#1860 dot key"),
             "a `.` component is the same transcript"
+        );
+        assert_eq!(
+            fence_key(&real),
+            fence_key(&dir.join("..").join("project").join("session-1.jsonl"))
+                .expect("#1860 dotdot key"),
+            "a `..` round trip is the same transcript"
         );
         assert_ne!(
             fence_key(&real),
-            fence_key(&dir.join("session-2.jsonl")),
+            fence_key(&dir.join("session-2.jsonl")).expect("#1860 other key"),
             "distinct transcripts must stay distinct fences"
         );
         let _ = std::fs::remove_dir_all(root);
@@ -225,6 +251,11 @@ mod tests {
             file,
             session_transcript_path(home, Path::new("/project/."), &"a/b".into()),
             "a trailing `/.` is the same chat directory"
+        );
+        assert_eq!(
+            file,
+            session_transcript_path(home, Path::new("/project/../project"), &"a/b".into()),
+            "a `..` round trip is the same chat directory"
         );
         assert_ne!(
             file,
