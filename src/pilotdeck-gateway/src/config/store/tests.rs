@@ -1040,6 +1040,14 @@ fn restored_mtime_rewrite_still_reads_the_content() {
         .modified()
         .expect("#1739 initial mtime");
     let mut watched = WatchedPath::new(path.clone()).expect("#1739 file watched");
+    // #1987 A2: the startup sample commits no metadata shortcut, so without a
+    // quiet tick first this test's single sample re-reads the content
+    // unconditionally — the ctime mutant would survive. One quiet tick
+    // commits the shortcut, which is what this test is about.
+    assert!(
+        !watched.changed(),
+        "#1739 the first re-sample of an unchanged file is quiet"
+    );
     let before = content_reads(&path);
     // Same length as BASE ("deterministic" -> "deterministix"), mtime restored.
     root.write(&BASE.replace("deterministic", "deterministix"));
