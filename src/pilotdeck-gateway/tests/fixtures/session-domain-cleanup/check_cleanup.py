@@ -6674,7 +6674,7 @@ def _contains_dynamic_lookup(value, heads, bindings=None):
     return False
 
 
-def _dynamic_result_in_force(bindings, name, position, loops=()):
+def _dynamic_result_in_force(bindings, name, position, loops=(), strict=False):
     """True when *name* may hold a dynamically looked-up object at *position*.
 
     #1953 fix-r1 round 27 (codex r26 P0-3): ``f = globals()['main']`` puts the
@@ -6688,18 +6688,30 @@ def _dynamic_result_in_force(bindings, name, position, loops=()):
     binding entries carry the order (and the same certainty rule
     :func:`_module_alias_sources` uses), so the value is resolved at the call.
     """
+    # 1953 fix-r1 round 30 (codex r28 P0-2): ``held = globals()['main']; held =
+    # held; import builtins as bi; held(r)`` writes, but the last binding names
+    # itself and carried no dynamic mark.  A self-copy hands the earlier value
+    # over unchanged, so resolve it strictly before itself -- the same rule
+    # :func:`_module_alias_sources` uses.
     entries = [item for item in bindings.get(name, ())
-               if item[0] <= position
+               if (item[0] < position if strict else item[0] <= position)
                or (loops and item[3] and set(item[3]) & set(loops))]
     if not entries:
         return False
     chosen_index = -1
     for index, item in enumerate(entries):
-        if not item[1] and item[0] <= position:
+        if not item[1] and (item[0] < position if strict
+                            else item[0] <= position):
             chosen_index = index
     in_force = [item for index, item in enumerate(entries)
                 if index == chosen_index or (item[1] and index > chosen_index)]
-    return any(item[4] for item in in_force)
+    for item in in_force:
+        if item[4]:
+            return True
+        if item[2] == name and _dynamic_result_in_force(
+                bindings, name, item[0], loops, strict=True):
+            return True
+    return False
 
 
 def _module_alias_bindings(tree, dynamic_heads=None):
@@ -6732,6 +6744,11 @@ def _module_alias_bindings(tree, dynamic_heads=None):
         if level is not None or not isinstance(
                 node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
             continue
+        if node.value is None:
+            # 1953 fix-r1 round 30 (codex r28 P1): a bare annotation (``x: int``)
+            # binds nothing at run time and has no right side to inspect; walking
+            # ``None`` raised and took the whole audit down (false FAIL).
+            continue
         conditional, loops = marks.get(id(node), (True, ()))
         pairs = dict(_alias_pairs(node))
         dynamic = _contains_dynamic_lookup(node.value, heads)
@@ -6740,10 +6757,11 @@ def _module_alias_bindings(tree, dynamic_heads=None):
         for target in targets:
             for name in _target_names(target):
                 items = bindings.setdefault(name, [])
-                items.append(((node.lineno, node.col_offset), conditional,
-                              pairs.get(name), loops, dynamic))
+                entry = ((node.lineno, node.col_offset), conditional,
+                         pairs.get(name), loops, dynamic)
+                items.append(entry)
                 if not dynamic:
-                    late.append((items, len(items) - 1, node.value))
+                    late.append((items, entry, node.value))
     # The binding table is filled in walk order, which is not source order, and
     # :func:`_module_alias_sources` reads the entries in list order -- sort
     # before the late pass or ``a = globals; a = print`` resolves backwards.
@@ -6753,9 +6771,16 @@ def _module_alias_bindings(tree, dynamic_heads=None):
     # *alias* of a head (``held = lookup()``) is resolved once every binding is
     # collected -- resolving while the table is still half-built would miss an
     # alias bound further down the module.
-    for items, index, value in late:
+    # 1953 fix-r1 round 30 (codex r28 P0-1): the late pass used to keep the
+    # list index of the entry, and the sort above moves entries around -- a
+    # conditional binding inside an ``if`` could carry the mark meant for one
+    # written after the call (false PASS).  Keep the entry object and find it
+    # again by identity after the sort.
+    for items, entry, value in late:
         if _contains_dynamic_lookup(value, heads, bindings):
-            items[index] = items[index][:4] + (True,)
+            index = next(index for index, item in enumerate(items)
+                         if item is entry)
+            items[index] = entry[:4] + (True,)
     return bindings
 
 
@@ -7481,7 +7506,11 @@ def _imported_write_aliases(function, outer_imports=None):
     # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
     # spelling a write helper.
     _resolve_assignment_helpers(events, pending)
-    _resolve_builtins_module_copies(events, module_copies)
+    # 1953 fix-r1 round 30 (GLM sibling r28 P1-1): the module-side twin already
+    # passes the dead spans; without them a function-local
+    # ``if False: import builtins as bi`` decided the copy and a live
+    # ``bi = bi`` was read as the builtins module (false FAIL).
+    _resolve_builtins_module_copies(events, module_copies, dead_ranges)
     _mirror_builtins_shadows(events)
     return events
 
@@ -12403,6 +12432,64 @@ def aggregation_audit():
              "_held92 = _lookup92()\n"
              "import builtins as _bi92\n"
              "_held92(object())\n", False),
+            ("a carrier marked inside a conditional is not the later rebind",
+             "import json as _bi93\n"
+             "def main(report):\n"
+             "    _f = _bi93.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_lookup93 = globals\n"
+             "if True:\n"
+             "    _held93 = _lookup93()['main']\n"
+             "    import builtins as _bi93\n"
+             "    _held93(object())\n"
+             "_held93 = lambda x: None\n"
+             "_bi93 = object()\n", True),
+            ("a carrier self-copy keeps the looked-up value",
+             "import json as _bi94\n"
+             "def main(report):\n"
+             "    _f = _bi94.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_held94 = globals()['main']\n"
+             "_held94 = _held94\n"
+             "import builtins as _bi94\n"
+             "_held94(object())\n", True),
+            ("a bare annotation binds nothing",
+             "import json as _bi95\n"
+             "def main(report):\n"
+             "    _f = _bi95.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_saved95: object\n"
+             "import builtins as _bi95\n", False),
+            ("an attribute-form head carries a looked-up function",
+             "import json as _bi97\n"
+             "def main(report):\n"
+             "    _f = _bi97.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "_held97 = _bi97.vars()['main']\n"
+             "import builtins as _bi97\n"
+             "_held97(object())\n", True),
+            ("a value-side Starred still pairs the prefix element",
+             "import json as _bi98\n"
+             "def main(report):\n"
+             "    _f = _bi98.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "_a98, _b98 = main, *[print]\n"
+             "import builtins as _bi98\n"
+             "_a98(object())\n"
+             "_bi98 = object()\n", True),
+            ("a dead function-local import does not decide a live copy",
+             "import json as _bi96\n"
+             "def main(report):\n"
+             "    if False:\n"
+             "        import builtins as _bi96\n"
+             "    _bi96 = _bi96\n"
+             "    _f = _bi96.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n", False),
             ("a builtins import inside a statically dead branch",
              "import json as _bi65\n"
              "def main(report):\n"
