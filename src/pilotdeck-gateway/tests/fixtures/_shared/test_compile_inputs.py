@@ -24,6 +24,9 @@ from _shared import negative_control as control
 
 SPEC = {'specs/x.json': '{}'}
 EXTERNAL = (('specs',), ('specs/x.json',))
+# Bytes no real workspace input ever holds: a swap test greps for them to prove
+# the impostor tree left nothing behind.
+IMPOSTOR = '{"impostor": true}\n'
 
 
 class Manifest(unittest.TestCase):
@@ -1103,7 +1106,11 @@ class Manifest(unittest.TestCase):
             (root / 'src' / 'a.rs').write_text('include_str!("OUTSIDE SECRET");\n',
                                                encoding='utf-8')
             (root / 'specs').mkdir()
-            (root / 'specs' / 'x.json').write_text('{}\n', encoding='utf-8')
+            # Deliberately different bytes from the real `specs/x.json`: with
+            # the copy-loop identity dropped, the impostor's bytes land in the
+            # scratch directory before a later stage refuses, and the refusal
+            # message alone would not show it (#1570 r23 codex P2).
+            (root / 'specs' / 'x.json').write_text(IMPOSTOR, encoding='utf-8')
             subprocess.check_call(['git', 'init', '-q'], cwd=root)
             subprocess.check_call(['git', 'add', '-A'], cwd=root)
             subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
@@ -1116,6 +1123,12 @@ class Manifest(unittest.TestCase):
         finally:
             control._copy_input = original
         self.assertTrue(state['swapped'])
+        landed = [path.relative_to(destination).as_posix()
+                  for path in destination.rglob('*') if path.is_file()]
+        self.assertEqual(landed, ['src/a.rs'],
+                         'the scratch copy must hold exactly what was copied before the '
+                         'swap; nothing from the impostor tree may land in it')
+        self.assertNotIn(IMPOSTOR, (destination / 'src' / 'a.rs').read_text(encoding='utf-8'))
 
     def test_a_read_error_is_a_refusal_not_a_traceback(self):
         # The single-descriptor readers wrapped the open but not the read, so
@@ -1195,7 +1208,74 @@ class Manifest(unittest.TestCase):
                 self.assertEqual(len(calls), ordinal,
                                  'the failure must land on the call this case names')
 
+    def test_a_git_failure_while_listing_untracked_sources_is_a_refusal(self):
+        # The first `git ls-files src` was wrapped in r22; the `ls-files
+        # --others src` one line below it was not, so it still escaped as a
+        # bare `CalledProcessError` (#1570 r23 codex P2).
+        self.workspace('mod a;\n')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-untracked-fail-'))
+        self.roots.append(destination)
+        original = control._untracked_files
 
+        def failing(*directories):
+            raise subprocess.CalledProcessError(128, ['git', 'ls-files', '--others'])
+
+        control._untracked_files = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'cannot list the workspace inputs'):
+                control.source_copy(destination)
+        finally:
+            control._untracked_files = original
+        self.assertEqual(list(destination.rglob('*')), [],
+                         'the refusal happens before anything is copied')
+
+    def test_a_swap_before_the_first_scan_is_refused_by_the_scan(self):
+        # `compile_inputs(root_identity=...)` has a default, so a dropped
+        # argument is silent (#1570 r23 codex P2). Swap the checkout between
+        # taking the identity and the first scan: the scan itself must refuse.
+        # The impostor names an include that does not exist, so an unbound scan
+        # fails with *that* message instead of the root-changed one -- a
+        # black-box difference, not an assertion about call arguments.
+        root = self.workspace('include_str!("../specs/x.json");')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-scan-wiring-'))
+        self.roots.append(destination)
+        impostor = Path(tempfile.mkdtemp(prefix='pdrs-1570-scan-impostor-'))
+        self.roots.append(impostor)
+        (impostor / 'src').mkdir(parents=True)
+        (impostor / 'src' / 'a.rs').write_text('include_str!("MISSING INPUT");\n',
+                                               encoding='utf-8')
+        (impostor / 'specs').mkdir()
+        (impostor / 'specs' / 'x.json').write_text(IMPOSTOR, encoding='utf-8')
+        subprocess.check_call(['git', 'init', '-q'], cwd=impostor)
+        subprocess.check_call(['git', 'add', '-A'], cwd=impostor)
+        subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                               'commit', '-qm', 'x'], cwd=impostor)
+        original = control._repository_identity
+        state = {'swapped': False}
+
+        def swap_before_the_scan():
+            value = original()
+            if not state['swapped']:
+                state['swapped'] = True
+                moved = root.with_name(root.name + '-moved')
+                root.rename(moved)
+                self.roots.append(moved)
+                os.rename(impostor, root)
+            return value
+
+        control._repository_identity = swap_before_the_scan
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'repository root changed') as caught:
+                control.source_copy(destination)
+        finally:
+            control._repository_identity = original
+        self.assertTrue(state['swapped'])
+        self.assertNotIn('MISSING INPUT', str(caught.exception))
+        self.assertNotIn(IMPOSTOR, str(caught.exception))
+        self.assertEqual(list(destination.rglob('*')), [],
+                         'the scan refuses before the copy loop starts')
+
+    def test_no_control_brings_its_own_workspace_copy(self):
         # The recurrence mode of #1570 is a new control carrying its own
         # `copytree(src)` inventory -- three suites had one. Enumerate the
         # fixture tree instead of naming the suites that were fixed, so the

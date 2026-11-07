@@ -1129,6 +1129,9 @@ def source_copy(root):
     # mutation reads INVALID (#1570 r18 codex P1).
     try:
         tracked = _tracked('src')
+        # The untracked half is a git call too: a failure here used to escape
+        # the same way `_tracked` did, one line lower (#1570 r23 codex P2).
+        untracked_src = _untracked_files('src')
     except subprocess.SubprocessError as error:
         # A git failure before anything is copied leaves a bare traceback,
         # which the host triage reads as "ran and failed" instead of "refused
@@ -1137,7 +1140,7 @@ def source_copy(root):
         # (#1570 r22 boundary/concurrency P3).
         raise RuntimeError(f'cannot list the workspace inputs ({error}); '
                            'refusing to run the control') from error
-    sources = tracked + [path for path in _untracked_files('src')
+    sources = tracked + [path for path in untracked_src
                          if path not in set(tracked)]
     # sha256 of every file the scan read, filled by the scan itself: comparing
     # the copy against these bytes is what proves the derivation and the copy
