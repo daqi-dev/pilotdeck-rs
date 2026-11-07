@@ -443,6 +443,10 @@ impl Mock {
         *self.armed.lock().expect("#1343 armed mutex") = Some(record);
         *self.scripted_polls.lock().expect("#1343 poll script") = Self::scripted(case, "polls");
         *self.scripted_sends.lock().expect("#1343 send script") = Self::scripted(case, "sends");
+        // A strays entry from a previous case (a poll that the server task
+        // only processed after that case's own stray check) would otherwise
+        // be charged to the next case and fail it (review r1 P2 arbitration).
+        self.strays.lock().expect("#1343 stray mutex").clear();
     }
 
     fn disarm(&self) {
@@ -709,6 +713,13 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
             other => panic!("#1343 unknown op {other}"),
         }
     }
+    // The case's `stop` aborts an in-flight poll mid-exchange, but the
+    // request bytes may already sit in the loopback socket; process them
+    // while the case is still armed (they land in its own record) instead of
+    // letting the server task see them after `disarm` and charge the
+    // next-late stray to this case (review r1 P2 arbitration: three lanes
+    // flagged the disarm/strays race as a false-FAIL window).
+    tokio::time::sleep(SETTLE).await;
     mock.disarm();
 
     // Every scripted slot must have been served; polls beyond the scripted
@@ -917,6 +928,44 @@ fn url_with_path_resolves_against_the_origin() {
         "http://h/api/v1/message",
         "#1343 scheme and host are lowercased"
     );
+    // WHATWG special-scheme tolerances, each measured on Node v22.22.0
+    // (review r1 P1 arbitration): missing slashes and an empty port still
+    // give a working origin, IDNA punycodes the host, an IPv6 literal keeps
+    // its brackets.
+    for (base, origin) in [
+        ("http:/h", "http://h"),
+        ("http:h", "http://h"),
+        ("http://h:", "http://h"),
+        ("https://host:443", "https://host"),
+        (
+            "http://bücher.example:8080",
+            "http://xn--bcher-kva.example:8080",
+        ),
+        ("http://[::1]:8080", "http://[::1]:8080"),
+    ] {
+        assert_eq!(
+            url_with_path(base, "/api/v1/message").unwrap(),
+            format!("{origin}/api/v1/message"),
+            "#1343 {base:?} resolves like the Node reference"
+        );
+    }
+    // Node v22.22.0 `fetch` refuses a URL that still carries credentials
+    // (TypeError: Request cannot be constructed from a URL that includes
+    // credentials) and rejects a non-http(s) scheme (TypeError: fetch
+    // failed, cause: unknown scheme) — both are 实测, and both keep the same
+    // `poll error` log shape as every other parse failure.
+    assert_eq!(
+        url_with_path("http://user:pass@h", "/api/v1/message").unwrap_err(),
+        "Request cannot be constructed from a URL that includes credentials",
+        "#1343 credentials in the URL are the fetch TypeError"
+    );
+    for base in ["ftp:/h", "myapp://h"] {
+        assert_eq!(
+            url_with_path(base, "/api/v1/message").unwrap_err(),
+            "fetch failed",
+            "#1343 {base:?} is the TS fetch unknown-scheme failure"
+        );
+    }
     for base in ["not a url", "http://", "://x"] {
         assert_eq!(
             url_with_path(base, "/api/v1/message").unwrap_err(),
@@ -924,6 +973,20 @@ fn url_with_path_resolves_against_the_origin() {
             "#1343 {base:?} is the TS TypeError: Invalid URL"
         );
     }
+}
+
+#[test]
+fn poll_get_is_bounded_by_the_undici_default_timeout() {
+    // Node v22.22.0 global fetch (undici) settles a hanging exchange after
+    // its default headersTimeout/bodyTimeout (measured 301,257 ms,
+    // `_tmp/20261107-issue-1343-r2/harvest/arbitration/`), so the poll GET
+    // is not unbounded even though the TS call passes no
+    // AbortSignal.timeout.
+    assert_eq!(
+        crate::channel::http_client::UNDICI_DEFAULT_TIMEOUT,
+        std::time::Duration::from_secs(300),
+        "#1343 the no-signal poll GET stays bounded at the undici default"
+    );
 }
 
 #[test]

@@ -16,6 +16,12 @@ use hyper_util::{
 
 pub(crate) type OutboundClient = Client<hyper_rustls::HttpsConnector<HttpConnector>, Full<Bytes>>;
 
+/// Node v22.22.0 global fetch (undici) settles a hanging exchange after its
+/// default 300 s `headersTimeout`/`bodyTimeout` (`TypeError: fetch failed`,
+/// cause `HeadersTimeoutError`); a `fetch(url, { signal })` with no
+/// `AbortSignal.timeout` is therefore bounded at this deadline, not unbounded.
+pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
 #[derive(Clone)]
 pub(crate) struct HttpClient {
     client: OutboundClient,
@@ -71,8 +77,15 @@ impl HttpClient {
             .await
     }
 
-    /// `fetch(url, { signal })` without `AbortSignal.timeout` — only the
-    /// caller's cancellation bounds the exchange (bluebubbles poll GET).
+    /// `fetch(url, { signal })` without `AbortSignal.timeout`: no per-call
+    /// deadline, but the exchange is still bounded — Node v22.22.0 global
+    /// fetch is undici under the hood, whose default `headersTimeout`/
+    /// `bodyTimeout` settle a hanging exchange after ~300 s
+    /// (`TypeError: fetch failed`, cause `HeadersTimeoutError`; measured
+    /// 301,257 ms in `_tmp/20261107-issue-1343-r2/harvest/arbitration/`).
+    /// The bluebubbles poll GET re-polls every 2.5 s, so without this bound
+    /// a server that accepts and stays silent accumulates one hung exchange
+    /// per tick with no recovery, where the TS process settles each one.
     pub(crate) async fn request_unbounded(
         &self,
         method: &str,
@@ -80,7 +93,15 @@ impl HttpClient {
         content_type: Option<&str>,
         body: &str,
     ) -> Result<HttpResponse, String> {
-        self.send(method, url, content_type, None, body, None).await
+        self.send(
+            method,
+            url,
+            content_type,
+            None,
+            body,
+            Some(UNDICI_DEFAULT_TIMEOUT),
+        )
+        .await
     }
 
     async fn send(

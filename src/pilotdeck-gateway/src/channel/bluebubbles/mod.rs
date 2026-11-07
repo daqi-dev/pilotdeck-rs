@@ -97,41 +97,29 @@ fn normalize_base_url(url: &str) -> &str {
 
 /// `new URL(path, base)` for the two fixed absolute paths: the reference
 /// resolves against the base's origin, so a base path or query is replaced
-/// from the root. The host is lowercased and an explicit default port is
-/// dropped, the two WHATWG normalizations a realistic `serverUrl` hits; a
-/// base without `scheme://authority` is the TS `TypeError: Invalid URL`.
+/// from the root. The `url` crate is WHATWG-compliant, so the parse follows
+/// the TS reference exactly: special schemes tolerate missing slashes
+/// (`http:/h`, `http:h`), an empty port is dropped, the host is
+/// IDNA-normalized and lowercased, an explicit default port disappears, and
+/// a base that does not parse is the TS `TypeError: Invalid URL`. A userinfo
+/// component survives `new URL` into the request URL and Node v22.22.0
+/// `fetch` refuses it outright (`TypeError: Request cannot be constructed
+/// from a URL that includes credentials`, Node 实测); a non-http(s) scheme is
+/// `TypeError: fetch failed` with cause `unknown scheme` (same 实测) — both
+/// carry the same `poll error` / `send failed` log shape the caller gives
+/// every other parse failure.
 fn url_with_path(server_url: &str, path: &str) -> Result<String, String> {
-    let (scheme, rest) = server_url
-        .split_once("://")
-        .ok_or_else(|| "Invalid URL".to_owned())?;
-    if scheme.is_empty()
-        || !scheme
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-    {
-        return Err("Invalid URL".to_owned());
+    let base = url::Url::parse(server_url).map_err(|_| "Invalid URL".to_owned())?;
+    if !base.username().is_empty() || base.password().is_some() {
+        return Err(
+            "Request cannot be constructed from a URL that includes credentials".to_owned(),
+        );
     }
-    let scheme = scheme.to_ascii_lowercase();
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    if authority.is_empty() {
-        return Err("Invalid URL".to_owned());
+    let scheme = base.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err("fetch failed".to_owned());
     }
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() => {
-            (host, Some(port))
-        }
-        _ => (authority, None),
-    };
-    let host = host.to_ascii_lowercase();
-    let default_port = matches!(
-        (scheme.as_str(), port),
-        ("http", Some("80")) | ("https", Some("443"))
-    );
-    let origin = match port {
-        Some(port) if !default_port => format!("{scheme}://{host}:{port}"),
-        _ => format!("{scheme}://{host}"),
-    };
-    Ok(format!("{origin}{path}"))
+    Ok(format!("{}{}", base.origin().ascii_serialization(), path))
 }
 
 /// The `URLSearchParams` serializer (`application/x-www-form-urlencoded`):
