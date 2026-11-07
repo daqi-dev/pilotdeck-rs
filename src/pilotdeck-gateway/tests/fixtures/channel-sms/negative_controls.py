@@ -39,6 +39,9 @@ DISCOVERY_ANCHORS = (
     'sms/elicitation.rs', 'sms/permission.rs', 'sms/sender.rs', 'sms/tests.rs',
     'channel-sms/oracle.json', 'channel-sms/generate.mts', 'channel-sms/README.md',
     'fixtures/negative_process.py', 'fixtures/negative_suite.py',
+    'fixtures/negative_panic.py', 'fixtures/negative_selection.py',
+    'fixtures/pending_reanchor.py', 'fixtures/anchor_selfcheck.py',
+    'fixtures/negative_scope.py',
     '_shared/mutant_switch.py',
 )
 switches = [

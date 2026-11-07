@@ -131,35 +131,41 @@ TABLES = (
 # 243 tables (215 blind, 2 with unresolvable shapes, 26 in both), 670 keys: 341
 # bare-filename joins and 329 shared-helper imports.
 KNOWN_BLIND = {
-    'agent-event-projector/negative.py': '3 keys',
+    '_negkit/negative_compare_verdicts.py': '1 key',
+    '_negkit/negative_contract.py': '4 keys',
+    '_negkit/negative_submit_migration.py': '10 keys',
+    '_shared/negative_control.py': '4 keys',
+    '_shared/negative_sqlite_header.py': '6 keys',
+    '_shared/regeneration-negative.py': '6 keys',
+    'agent-event-projector/negative.py': '5 keys',
     'anchor-marker/negative_controls.py': '3 keys',
-    'api-server-channel/negative_controls.py': '2 keys',
-    'api-web/negative_controls.py': '5 keys',
-    'attach-followups-a/negative_controls.py': '2 keys',
-    'background-create-gate/negative_controls.py': '2 keys',
-    'background-output/negative.py': '2 keys',
-    'background-panic/negative_controls.py': '3 keys',
-    'background-persist-progress/negative_controls.py': '2 keys',
-    'background-persist-restart/negative_controls.py': '2 keys',
-    'background-subtick-gate/negative_controls.py': '4 keys',
+    'api-server-channel/negative_controls.py': '6 keys',
+    'api-web/negative_controls.py': '10 keys',
+    'attach-followups-a/negative_controls.py': '6 keys',
+    'background-create-gate/negative_controls.py': '6 keys',
+    'background-output/negative.py': '6 keys',
+    'background-panic/negative_controls.py': '4 keys + 1 unresolvable',
+    'background-persist-progress/negative_controls.py': '6 keys',
+    'background-persist-restart/negative_controls.py': '6 keys',
+    'background-subtick-gate/negative_controls.py': '8 keys',
     'baseline-provenance/negative_controls.py': '1 key',
-    'channel-core/negative_controls.py': '6 keys + 3 unresolvable',
-    'channel-unmigrated-startup/negative_controls.py': '1 key',
-    'channel-unmigrated/negative_controls.py': '2 keys + 1 unresolvable',
+    'channel-core/negative_controls.py': '11 keys + 2 unresolvable',
+    'channel-unmigrated-startup/negative_controls.py': '6 keys',
+    'channel-unmigrated/negative_controls.py': '7 keys + 1 unresolvable',
     'cli-parity-isolation/negative_controls.py': '1 key + 1 unresolvable',
-    'cli-parity-lock-bounded/negative_controls.py': '3 keys',
+    'cli-parity-lock-bounded/negative_controls.py': '7 keys',
     'cli-parity-mock-gateway/negative_controls.py': '1 key + 1 unresolvable',
     'closure_guard_negative.py': '3 keys',
-    'commands-catalog/negative_controls.py': '3 keys',
-    'config-changes/negative_coverage.py': '2 keys',
-    'config-store/negative_controls.py': '1 key',
-    'connection-context/negative.py': '6 keys + 1 unresolvable',
-    'cron-schedule/negative_controls.py': '2 keys',
-    'cron-store/negative_controls.py': '2 keys',
+    'commands-catalog/negative_controls.py': '4 keys',
+    'config-changes/negative_coverage.py': '6 keys',
+    'config-store/negative_controls.py': '6 keys',
+    'connection-context/negative.py': '7 keys + 2 unresolvable',
+    'cron-schedule/negative_controls.py': '6 keys',
+    'cron-store/negative_controls.py': '6 keys',
     'diff-backfill/negative.py': '1 key',
     'edgeclaw-accessors/negative.py': '5 keys',
-    'edgeclaw-capture-turn/negative.py': '3 keys',
-    'edgeclaw-dangling-links/negative.py': '2 keys',
+    'edgeclaw-capture-turn/negative.py': '6 keys',
+    'edgeclaw-dangling-links/negative.py': '3 keys',
     'edgeclaw-dream-run/negative.py': '1 key',
     'edgeclaw-dream-runner/negative.py': '1 key',
     'edgeclaw-dream/negative.py': '1 key',
@@ -167,240 +173,230 @@ KNOWN_BLIND = {
     'edgeclaw-entries/negative.py': '1 key',
     'edgeclaw-entries/negative_fix1.py': '1 key + 1 unresolvable',
     'edgeclaw-entries/negative_ids.py': '1 key',
-    'edgeclaw-entries/negative_round6.py': '3 keys',
+    'edgeclaw-entries/negative_round6.py': '6 keys',
     'edgeclaw-entries/negative_round7.py': '1 key',
-    'edgeclaw-export/negative_locks.py': '1 key',
-    'edgeclaw-file-memory/negative.py': '2 keys',
+    'edgeclaw-export/negative_locks.py': '2 keys',
+    'edgeclaw-file-memory/negative.py': '3 keys',
     'edgeclaw-heartbeat-indexer/negative.py': '2 keys',
-    'edgeclaw-heartbeat-isolation/negative.py': '6 keys',
-    'edgeclaw-heartbeat/negative.py': '1 key',
+    'edgeclaw-heartbeat-isolation/negative.py': '10 keys',
+    'edgeclaw-heartbeat/negative.py': '2 keys',
     'edgeclaw-llm-config/negative.py': '1 key',
     'edgeclaw-llm-dream/negative.py': '1 key',
     'edgeclaw-llm-envelope/negative.py': '1 key',
     'edgeclaw-llm-index/negative.py': '1 key',
     'edgeclaw-llm-recall/negative.py': '1 key',
-    'edgeclaw-llm-telemetry/negative.py': '2 keys',
+    'edgeclaw-llm-telemetry/negative.py': '6 keys',
     'edgeclaw-llm/negative.py': '1 key',
     'edgeclaw-messages/negative.py': '2 keys',
-    'edgeclaw-native-default/negative.py': '6 keys',
-    'edgeclaw-provider/negative.py': '6 keys',
+    'edgeclaw-native-default/negative.py': '11 keys',
+    'edgeclaw-provider/negative.py': '11 keys',
     'edgeclaw-real-provider/negative.py': '2 keys',
     'edgeclaw-retrieval-helpers/negative.py': '1 key',
     'edgeclaw-retriever/negative.py': '1 key',
-    'edgeclaw-same-root-generation/negative.py': '8 keys',
-    'edgeclaw-service-facade/negative.py': '2 keys',
-    'edgeclaw-service-facade/switch_negative.py': '4 keys',
+    'edgeclaw-same-root-generation/negative.py': '12 keys',
+    'edgeclaw-service-facade/negative.py': '6 keys',
+    'edgeclaw-service-facade/switch_negative.py': '8 keys',
     'edgeclaw-service-orchestration/negative.py': '1 key',
-    'edgeclaw-service-orchestration/switch_negative.py': '2 keys',
+    'edgeclaw-service-orchestration/switch_negative.py': '7 keys',
     'edgeclaw-text/negative.py': '4 keys',
     'exact-receipt-yaml/negative_controls.py': '1 key',
     'exact-rerun-receipt/negative_controls.py': '1 key',
-    'failure-guard/negative.py': '5 keys',
+    'failure-guard/negative.py': '7 keys',
     'fe-baseline-report/negative_controls.py': '1 unresolvable',
     'fe-coexist/negative_controls.py': '1 key',
-    'file-history-cwd/negative_controls.py': '4 keys',
-    'flake-progress/negative_controls.py': '2 keys',
+    'file-history-cwd/negative_controls.py': '9 keys',
+    'flake-progress/negative_controls.py': '6 keys',
     'frozen-manifest/negative_controls.py': '2 keys',
-    'frozen-reinsert-guard/negative_controls.py': '4 keys',
+    'frozen-reinsert-guard/negative_controls.py': '8 keys',
     'gateway-batch/negative_controls.py': '2 keys',
-    'grep-etxtbsy/negative_controls.py': '2 keys',
+    'grep-etxtbsy/negative_controls.py': '6 keys',
     'hooks-output/negative.py': '1 key',
     'host-event-pump/negative_controls.py': '1 key',
-    'html-timing/negative_controls.py': '2 keys',
-    'http-store-park/negative_controls.py': '3 keys',
-    'interaction-bus/negative_controls.py': '3 keys',
+    'html-timing/negative_controls.py': '2 keys + 1 unresolvable',
+    'http-store-park/negative_controls.py': '6 keys',
+    'interaction-bus/negative_controls.py': '4 keys + 1 unresolvable',
     'interaction-values/negative_controls.py': '4 keys',
-    'issue-1246/negative_controls.py': '2 keys',
-    'issue-1437-methods/negative_controls.py': '1 key',
-    'issue-297/negative_controls.py': '3 keys',
+    'issue-1246/negative_controls.py': '3 keys',
+    'issue-1437-methods/negative_controls.py': '6 keys',
+    'issue-297/negative_controls.py': '7 keys',
     'js-math-zero/negative.py': '1 key',
     'ledger-diffs/negative_controls.py': '2 keys',
-    'live-e2e-tmpdir/negative_controls.py': '2 keys',
-    'live-e2e/negative_controls.py': '3 keys + 2 unresolvable',
+    'live-e2e-tmpdir/negative_controls.py': '6 keys',
+    'live-e2e/negative_controls.py': '7 keys + 3 unresolvable',
     'live-history/negative.py': '1 key',
-    'live-recording/negative.py': '6 keys',
-    'live-session/negative_controls.py': '2 keys',
-    'locale-adaptive/negative_controls.py': '2 keys',
-    'locale-contract/negative_controls.py': '2 keys',
-    'locked-storage/negative_controls.py': '2 keys',
-    'manager-gateway/negative_controls.py': '3 keys',
-    'mcp-detached-dispatch/negative_controls.py': '1 key',
-    'mcp-gateway/negative_controls.py': '2 keys',
+    'live-recording/negative.py': '10 keys',
+    'live-session/negative_controls.py': '6 keys',
+    'locale-adaptive/negative_controls.py': '7 keys',
+    'locale-contract/negative_controls.py': '6 keys',
+    'locked-storage/negative_controls.py': '6 keys',
+    'manager-gateway/negative_controls.py': '7 keys',
+    'mcp-detached-dispatch/negative_controls.py': '6 keys',
+    'mcp-gateway/negative_controls.py': '6 keys',
     'mcp-hooks-spawn/negative_controls.py': '1 key',
-    'mcp-http-corrupt-body/negative_controls.py': '2 keys',
-    'mcp-http-encoding/negative.py': '2 keys',
+    'mcp-http-corrupt-body/negative_controls.py': '6 keys',
+    'mcp-http-encoding/negative.py': '6 keys',
     'memory-maintenance/negative_controls.py': '2 keys',
-    'metadata-from-env/negative_controls.py': '3 keys',
-    'model-catalog-cwd/negative_controls.py': '5 keys',
-    'model-complete-timeout/negative_controls.py': '2 keys',
-    'model-complete/negative-controls.py': '3 keys + 2 unresolvable',
+    'metadata-from-env/negative_controls.py': '8 keys',
+    'model-catalog-cwd/negative_controls.py': '10 keys',
+    'model-complete-timeout/negative_controls.py': '6 keys',
+    'model-complete/negative-controls.py': '4 keys + 2 unresolvable',
     'model-factory/negative-controls.py': '1 key',
     'model-http-encoding/negative.py': '1 key',
-    'module-host-approvals/negative_controls.py': '5 keys',
-    'module-host/negative_controls.py': '5 keys',
-    'native-archive-cwd/negative_controls.py': '3 keys',
-    'native-archive-cwd/negative_proxy.py': '2 keys',
-    'native-archive-cwd/negative_regeneration.py': '4 keys',
-    'native-collation/negative_controls.py': '7 keys',
-    'native-config/negative_controls.py': '2 keys',
-    'native-cron/negative_controls.py': '2 keys',
-    'native-dispatch/negative_controls.py': '4 keys',
-    'native-entry-authority/negative_controls.py': '3 keys',
-    'native-http-basic/negative_controls.py': '5 keys',
-    'native-loop-stimulus/negative_controls.py': '4 keys',
-    'native-management/negative_controls.py': '4 keys',
-    'native-metadata-cwd/negative_controls.py': '3 keys',
-    'native-metadata-cwd/negative_regeneration.py': '4 keys',
-    'native-process/negative_controls.py': '2 keys',
-    'native-registry-switch/negative_controls.py': '3 keys',
+    'module-host-approvals/negative_controls.py': '10 keys',
+    'module-host/negative_controls.py': '10 keys',
+    'native-archive-cwd/negative_controls.py': '7 keys',
+    'native-archive-cwd/negative_proxy.py': '6 keys',
+    'native-archive-cwd/negative_regeneration.py': '6 keys',
+    'native-collation/negative_controls.py': '9 keys',
+    'native-config/negative_controls.py': '6 keys',
+    'native-cron/negative_controls.py': '6 keys',
+    'native-dispatch/negative_controls.py': '8 keys',
+    'native-entry-authority/negative_controls.py': '7 keys',
+    'native-http-basic/negative_controls.py': '10 keys',
+    'native-loop-stimulus/negative_controls.py': '7 keys',
+    'native-management/negative_controls.py': '8 keys',
+    'native-metadata-cwd/negative_controls.py': '7 keys',
+    'native-metadata-cwd/negative_regeneration.py': '6 keys',
+    'native-process/negative_controls.py': '6 keys',
+    'native-registry-switch/negative_controls.py': '7 keys',
     'native-session-e2e/negative_controls.py': '2 keys',
-    'native-settings/negative/negative_controls.py': '3 keys',
-    'native-stimulus-plan/negative_controls.py': '5 keys',
-    'native-storage-stimulus/negative_controls.py': '3 keys',
+    'native-settings/negative/negative_controls.py': '4 keys + 1 unresolvable',
+    'native-stimulus-plan/negative_controls.py': '9 keys',
+    'native-storage-stimulus/negative_controls.py': '7 keys',
     'native-topology/negative_signals.py': '3 keys',
     'native-witness/negative.py': '2 keys',
     'native-witness/negative_authentication.py': '4 keys',
     'native-witness/negative_boundary.py': '2 keys',
-    'native-ws-caps/negative_controls.py': '3 keys + 1 unresolvable',
-    'native-ws-entry/negative_controls.py': '6 keys + 1 unresolvable',
-    'native-ws-notify/negative_controls.py': '2 keys',
+    'native-ws-caps/negative_controls.py': '8 keys + 1 unresolvable',
+    'native-ws-entry/negative_controls.py': '11 keys + 1 unresolvable',
+    'native-ws-notify/negative_controls.py': '6 keys',
     'negative-adaptive/isolation_negative.py': '2 keys',
     'negative-adaptive/negative_controls.py': '2 keys',
-    'negative-output-directory/negative.py': '3 keys',
+    'negative-output-directory/negative.py': '7 keys',
     'negative_oracle_guard.py': '1 key + 1 unresolvable',
-    'network-timing/negative_controls.py': '4 keys',
+    'network-timing/negative_controls.py': '6 keys',
     'network-timing/negative_private.py': '2 keys',
-    'node-io/negative_controls.py': '3 keys',
-    'node-provenance/negative.py': '2 keys',
-    'operation-ledger/negative.py': '2 keys',
+    'node-io/negative_controls.py': '4 keys',
+    'node-provenance/negative.py': '6 keys',
+    'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '3 keys',
-    'p01-preflight/negative_controls.py': '2 keys',
-    'parity-lock-release/negative_controls.py': '2 keys',
+    'p01-preflight/negative_controls.py': '6 keys',
+    'parity-lock-release/negative_controls.py': '6 keys',
     'pending-reanchor/negative_controls.py': '4 keys',
-    'plugin-loader/negative-controls.py': '3 keys',
-    'plugin-runtime/negative-controls.py': '4 keys',
-    'plugin-runtime/notify-window-negative.py': '3 keys',
-    'plugin-runtime/panic-negative.py': '3 keys',
-    'private-ca/negative_controls.py': '1 key',
-    'project-files-linux-dirent/negative_controls.py': '3 keys',
-    'projector-cwd/negative_controls.py': '3 keys',
-    'provider-http-boundaries/negative_controls.py': '2 keys',
-    'proxy-listen-address/negative_controls.py': '3 keys',
-    'pump-order-cases/negative_controls.py': '2 keys',
-    'recorder/fix3-negative.py': '5 keys',
-    'regeneration-masks/negative.py': '2 keys',
-    'replacement/negative-518.py': '2 keys',
+    'plugin-loader/negative-controls.py': '4 keys + 1 unresolvable',
+    'plugin-runtime/negative-controls.py': '6 keys',
+    'plugin-runtime/notify-window-negative.py': '4 keys',
+    'plugin-runtime/panic-negative.py': '4 keys',
+    'private-ca/negative_controls.py': '6 keys',
+    'project-files-linux-dirent/negative_controls.py': '4 keys',
+    'projector-cwd/negative_controls.py': '8 keys',
+    'provider-http-boundaries/negative_controls.py': '6 keys',
+    'proxy-listen-address/negative_controls.py': '7 keys',
+    'pump-order-cases/negative_controls.py': '6 keys',
+    'recorder/fix3-negative.py': '7 keys',
+    'regeneration-masks/negative.py': '6 keys',
+    'replacement/negative-518.py': '3 keys',
     'replacement/negative.py': '1 key',
-    'retry-after-dialects/negative_controls.py': '2 keys',
-    'run-registry/count-negative.py': '6 keys',
-    'run-registry/timestamp-negative.py': '4 keys',
-    'runtime-spawn-panic/helpers_negative.py': '2 keys',
-    'runtime-spawn-panic/negative_controls.py': '3 keys',
-    'sdk-cli-lifecycle/negative_controls.py': '2 keys + 1 unresolvable',
-    'sdk-format/negative_controls.py': '4 keys + 2 unresolvable',
-    'sdk-mcp-p2/negative.py': '2 keys',
-    'sdk-run/negative_controls.py': '5 keys + 3 unresolvable',
-    'sdk-sessions-list/negative_controls.py': '2 keys + 1 unresolvable',
-    'sdk-sessions-messages/negative_controls.py': '6 keys + 1 unresolvable',
-    'sdk-settings/negative_controls.py': '5 keys + 2 unresolvable',
-    'sdk-signal-read-lease/negative_controls.py': '3 keys',
-    'sdk-signals-close-order-pin/negative_controls.py': '2 keys',
-    'sdk-signals/negative_controls.py': '3 keys + 3 unresolvable',
-    'sdk-terminal/negative_controls.py': '4 keys + 2 unresolvable',
-    'session-abort-contract/negative.py': '3 keys',
-    'session-admission/negative.py': '3 keys',
-    'session-adopt/switch_negative.py': '2 keys',
-    'session-assembly-1316/negative_controls.py': '3 keys + 8 unresolvable',
+    'retry-after-dialects/negative_controls.py': '6 keys',
+    'run-registry/count-negative.py': '8 keys',
+    'run-registry/timestamp-negative.py': '6 keys',
+    'runtime-spawn-panic/helpers_negative.py': '3 keys',
+    'runtime-spawn-panic/negative_controls.py': '4 keys',
+    'sdk-cli-lifecycle/negative_controls.py': '6 keys + 1 unresolvable',
+    'sdk-format/negative_controls.py': '8 keys + 2 unresolvable',
+    'sdk-mcp-p2/negative.py': '6 keys',
+    'sdk-run/negative_controls.py': '9 keys + 3 unresolvable',
+    'sdk-sessions-list/negative_controls.py': '6 keys + 1 unresolvable',
+    'sdk-sessions-messages/negative_controls.py': '10 keys + 1 unresolvable',
+    'sdk-settings/negative_controls.py': '8 keys + 2 unresolvable',
+    'sdk-signal-read-lease/negative_controls.py': '6 keys',
+    'sdk-signals-close-order-pin/negative_controls.py': '6 keys',
+    'sdk-signals/negative_controls.py': '7 keys + 3 unresolvable',
+    'sdk-terminal/negative_controls.py': '8 keys + 2 unresolvable',
+    'session-abort-contract/negative.py': '6 keys + 1 unresolvable',
+    'session-admission/negative.py': '4 keys',
+    'session-adopt/switch_negative.py': '7 keys',
+    'session-assembly-1316/negative_controls.py': '4 keys + 5 unresolvable',
     'session-domain-cleanup/negative_controls.py': '2 keys',
-    'session-domain-expectations/negative_controls.py': '3 keys',
-    'session-domain-lock-release/negative_controls.py': '3 keys',
-    'session-domain-native/negative_controls.py': '3 keys',
+    'session-domain-expectations/negative_controls.py': '7 keys',
+    'session-domain-lock-release/negative_controls.py': '7 keys',
+    'session-domain-native/negative_controls.py': '7 keys',
     'session-domain/adapter-negative.py': '1 key',
     'session-domain/fix1-negative.py': '1 key',
     'session-domain/fix2-negative.py': '1 key + 1 unresolvable',
-    'session-drop-release/negative_controls.py': '4 keys',
-    'session-factory/append-delta/negative_controls.py': '3 keys + 7 unresolvable',
-    'session-factory/negative_controls.py': '12 keys',
-    'session-factory/projection-cache/negative_controls.py': '5 keys + 4 unresolvable',
+    'session-drop-release/negative_controls.py': '8 keys',
+    'session-factory/append-delta/negative_controls.py': '6 keys + 7 unresolvable',
+    'session-factory/negative_controls.py': '16 keys + 1 unresolvable',
+    'session-factory/projection-cache/negative_controls.py': '8 keys + 4 unresolvable',
     'session-lease/negative.py': '3 keys',
     'session-owner-hooks/negative.py': '1 key',
-    'session-owner/negative.py': '3 keys',
-    'session-owner/negative_close_shutdown.py': '2 keys',
-    'settings-gateway/negative_controls.py': '4 keys',
+    'session-owner/negative.py': '4 keys',
+    'session-owner/negative_close_shutdown.py': '6 keys',
+    'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
     'settings/negative_controls.py': '2 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
     'sidecar-payload/negative.py': '1 key',
-    'skills-external/negative_controls.py': '2 keys',
-    'skills-external/negative_controls_949.py': '1 key',
+    'skills-external/negative_controls.py': '6 keys',
+    'skills-external/negative_controls_949.py': '6 keys',
     'skills-tree-files/negative.py': '1 key',
     'skills/negative_controls.py': '3 keys',
     'spill-isolation/negative_controls.py': '1 key',
-    'stats-cwd/negative_controls.py': '4 keys',
+    'stats-cwd/negative_controls.py': '9 keys',
     'stress-followups/negative_controls.py': '2 keys',
-    'surrogate-collation-matrix/negative_controls.py': '5 keys',
+    'surrogate-collation-matrix/negative_controls.py': '7 keys',
     'task-budget-zero/negative.py': '1 key',
     'tool-budget/negative_project.py': '1 key',
     'transcript-resolve/negative_controls.py': '1 key',
-    'transcript-trim/negative_controls.py': '2 keys',
-    'treelock-budget/negative_controls.py': '5 keys',
-    'turn-gateway/negative-fence.py': '9 keys',
-    'turn-gateway/negative.py': '5 keys',
-    'turn-publish/negative.py': '4 keys',
-    'turn-read/negative.py': '4 keys',
-    'turn-replay/negative.py': '6 keys',
-    'turn-runner/forward_negative.py': '5 keys',
-    'turn-runner/input_negative.py': '4 keys',
-    'turn-runner/integrity_negative.py': '4 keys',
-    'turn-runner/live_negative.py': '2 keys',
-    'turn-runner/negative_controls.py': '1 key',
-    'turn-runner/recording_negative.py': '2 keys',
-    'turn-runner/runner_negative.py': '2 keys',
+    'transcript-trim/negative_controls.py': '6 keys',
+    'treelock-budget/negative_controls.py': '7 keys',
+    'turn-gateway/negative-fence.py': '10 keys',
+    'turn-gateway/negative.py': '6 keys',
+    'turn-publish/negative.py': '5 keys',
+    'turn-read/negative.py': '5 keys',
+    'turn-replay/negative.py': '7 keys',
+    'turn-runner/forward_negative.py': '11 keys',
+    'turn-runner/input_negative.py': '9 keys',
+    'turn-runner/integrity_negative.py': '10 keys',
+    'turn-runner/live_negative.py': '7 keys',
+    'turn-runner/negative_controls.py': '2 keys',
+    'turn-runner/recording_negative.py': '3 keys',
+    'turn-runner/runner_negative.py': '3 keys',
     'turn-submit-admission/negative_controls.py': '2 keys',
-    'turn-submit/negative.py': '4 keys',
+    'turn-submit/negative.py': '6 keys',
     'ui-server-parity-isolation/negative_controls.py': '2 unresolvable',
-    'unsafe-config-boundary/negative_controls.py': '3 keys',
+    'unsafe-config-boundary/negative_controls.py': '4 keys',
     'upload-gateway/negative_controls.py': '2 keys',
-    'user-dialog-channel/negative.py': '7 keys + 1 unresolvable',
-    'user-dialog-guard-order/negative_controls.py': '2 keys',
-    'user-dialog-http-store-1555/negative_controls_1555.py': '2 keys',
-    'user-dialog-http-store/negative_controls_1232.py': '2 keys',
-    'user-dialog-http-store/negative_controls_1277.py': '2 keys',
-    'user-dialog-lock-scope/negative_controls.py': '3 keys',
-    'web-conversion-lifecycle/negative.py': '3 keys',
-    'webhook-channel/negative_controls.py': '7 keys',
-    'wecom-callback/negative_controls.py': '7 keys + 2 unresolvable',
-    'weixin-channel/negative_controls.py': '9 keys + 2 unresolvable',
-    'workspace-pristine/negative_controls.py': '5 keys',
-    'workspace-snapshot-gate/negative_controls.py': '1 key',
-    'workspace-snapshot-nonutf8/negative_controls.py': '1 key',
-    'zone-read-bound/negative_controls.py': '2 keys',
-
+    'user-dialog-channel/negative.py': '8 keys + 1 unresolvable',
+    'user-dialog-guard-order/negative_controls.py': '6 keys',
+    'user-dialog-http-store-1555/negative_controls_1555.py': '6 keys',
+    'user-dialog-http-store/negative_controls_1232.py': '6 keys',
+    'user-dialog-http-store/negative_controls_1277.py': '6 keys',
+    'user-dialog-lock-scope/negative_controls.py': '4 keys',
+    'web-conversion-lifecycle/negative.py': '7 keys',
+    'webhook-channel/negative_controls.py': '10 keys',
+    'wecom-callback/negative_controls.py': '12 keys + 2 unresolvable',
+    'weixin-channel/negative_controls.py': '14 keys + 2 unresolvable',
+    'workspace-pristine/negative_controls.py': '7 keys',
+    'workspace-snapshot-gate/negative_controls.py': '1 key + 1 unresolvable',
+    'workspace-snapshot-nonutf8/negative_controls.py': '1 key + 1 unresolvable',
+    'zone-read-bound/negative_controls.py': '6 keys',
 }
 
 ROOT_NAMES = frozenset({'ROOT'})
 
-# Shared executors and helpers every table imports; they are not tables
-# themselves. ``neg-for-diff.sh`` filters these out of the list it emits
+# Exactly the basenames ``neg-for-diff.sh`` drops from its own output list
 # (``grep -vE '/(_negative_common|negative_suite|negative_process|negative_panic|
-# negative_selection|negative_source|negative_shared)\.py$'``), and this list is
-# that filter plus two helpers the host does not name but which define no
-# mutation table either (``anchor_selfcheck.py``, ``pending_reanchor.py``, and
-# ``negative_scope.py``). ``test_*.py`` is dropped by the same host filter and is
-# skipped alongside these by ``sweep``. A helper still owed an anchor is found by
-# the import scan: the list says what is not a table, not what a table may
-# depend on for free.
-SHARED_HELPERS = frozenset({
-    '_negative_common.py', 'anchor_selfcheck.py', 'negative_panic.py',
-    'negative_process.py', 'negative_scope.py', 'negative_selection.py',
-    'negative_shared.py', 'negative_source.py', 'negative_suite.py',
-    'pending_reanchor.py',
+# negative_selection|negative_source|negative_shared|test_[^/]*)\.py$'``). The
+# sweep must skip no more than this, or a file the host is willing to run would
+# never be measured here — and no less, or the register would carry files the
+# host never emits. Shared helpers that the host *does* emit stay in scope: they
+# are measured like any other file, and a table that imports one is owed that
+# helper's key by the import scan.
+HOST_FILTERED = frozenset({
+    '_negative_common.py', 'negative_panic.py', 'negative_process.py',
+    'negative_selection.py', 'negative_shared.py', 'negative_source.py',
+    'negative_suite.py',
 })
-
-# Directories holding shared libraries rather than discovery targets. A changed
-# ``fixtures/_shared/mutant_switch.py`` is keyed ``_shared/mutant_switch.py`` by
-# the loop, so importing from one of these is the same dependency as importing a
-# ``SHARED_HELPERS`` module one level up.
-LIBRARY_DIRS = frozenset({'_shared', '_negkit'})
 
 
 def _bind_names(target, names):
@@ -414,39 +410,69 @@ def _bind_names(target, names):
         _bind_names(target.value, names)
 
 
+# Pattern-matching bindings exist from 3.10 on; keep the names lookup total so a
+# parser without them still imports (it can never produce the nodes either).
+MATCH_BINDINGS = tuple(
+    node for node in (getattr(ast, 'MatchAs', None), getattr(ast, 'MatchStar', None))
+    if node is not None)
+
+
+def _bound_names(node):
+    """Every name one AST node binds, whatever the binding form.
+
+    One dispatcher for both ``_rebound_elsewhere`` and ``_function_scoped_names``
+    so the two cannot drift: a form added here is seen by both. The plain
+    ``name = ...`` case is included; the caller decides whether it counts.
+    """
+    names = set()
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        arguments = node.args
+        for argument in (list(arguments.posonlyargs) + list(arguments.args)
+                         + list(arguments.kwonlyargs)
+                         + [arguments.vararg, arguments.kwarg]):
+            if argument is not None:
+                names.add(argument.arg)
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        _bind_names(node.target, names)
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        for item in node.items:
+            if item.optional_vars is not None:
+                _bind_names(item.optional_vars, names)
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        names.add(node.name)
+    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        for generator in node.generators:
+            _bind_names(generator.target, names)
+    elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+        _bind_names(node.target, names)
+    elif isinstance(node, ast.NamedExpr):
+        _bind_names(node.target, names)
+    elif isinstance(node, ast.Assign):
+        for target in node.targets:
+            _bind_names(target, names)
+    elif isinstance(node, ast.match_case):
+        for child in ast.walk(node.pattern):
+            if MATCH_BINDINGS and isinstance(child, MATCH_BINDINGS) and child.name:
+                names.add(child.name)
+            elif isinstance(child, getattr(ast, 'MatchMapping', ())) and child.rest:
+                names.add(child.rest)
+    return names
+
+
 def _rebound_elsewhere(tree):
     """Names bound by any form other than a plain ``name = ...`` statement.
 
     A parameter, a ``for`` target, a ``with ... as``, an ``except ... as``, a
-    comprehension target, a ``+=`` or a walrus binds the name just as firmly as
-    an assignment. When the same name is also assigned once, the *other* binding
-    decides its value at that site, so substituting the assignment there keys a
-    directory the runtime never uses — a wrong key, or a spurious failure.
+    comprehension target, a ``+=``, a walrus or a ``match`` pattern binds the
+    name just as firmly as an assignment. When the same name is also assigned
+    once, the *other* binding decides its value at that site, so substituting the
+    assignment there keys a directory the runtime never uses — a wrong key, or a
+    spurious failure.
     """
     names = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            arguments = node.args
-            for argument in (list(arguments.posonlyargs) + list(arguments.args)
-                             + list(arguments.kwonlyargs)
-                             + [arguments.vararg, arguments.kwarg]):
-                if argument is not None:
-                    names.add(argument.arg)
-        elif isinstance(node, (ast.For, ast.AsyncFor)):
-            _bind_names(node.target, names)
-        elif isinstance(node, (ast.With, ast.AsyncWith)):
-            for item in node.items:
-                if item.optional_vars is not None:
-                    _bind_names(item.optional_vars, names)
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
-        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            for generator in node.generators:
-                _bind_names(generator.target, names)
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-            _bind_names(node.target, names)
-        elif isinstance(node, ast.NamedExpr):
-            _bind_names(node.target, names)
+        if not isinstance(node, ast.Assign):
+            names |= _bound_names(node)
     return names
 
 
@@ -487,10 +513,15 @@ def _constants(tree):
 
 
 def _shadowed_names(tree):
-    """Names bound at module level and rebound inside a function or class.
+    """Module-level names that some other binding form also binds.
 
     Such a name means different directories at different sites, so the scanner
-    refuses to substitute it and reports the site instead of guessing.
+    refuses to substitute it and reports the site instead of guessing. Every
+    binding form counts, not only an assignment in a nested block: a function
+    parameter (``def run(BASE): ...``) hides the module constant just as well,
+    and following the module value there would key a directory the runtime never
+    uses while hiding the real one. ``_rebound_elsewhere`` already enumerates
+    those forms at every depth, so it carries the decision.
     """
     module_level = set()
     for statement in tree.body:
@@ -498,7 +529,8 @@ def _shadowed_names(tree):
             for target in statement.targets:
                 if isinstance(target, ast.Name):
                     module_level.add(target.id)
-    return _function_scoped_names(tree) & module_level
+    return ((_function_scoped_names(tree) | _rebound_elsewhere(tree))
+            & module_level)
 
 
 def _function_scoped_names(tree):
@@ -511,39 +543,12 @@ def _function_scoped_names(tree):
     """
     names = set()
 
-    def bind(target):
-        if isinstance(target, ast.Name):
-            names.add(target.id)
-        elif isinstance(target, (ast.Tuple, ast.List)):
-            for element in target.elts:
-                bind(element)
-        elif isinstance(target, ast.Starred):
-            bind(target.value)
-
     def visit(node, scoped):
         for child in ast.iter_child_nodes(node):
             inner = scoped or isinstance(
                 child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef))
             if inner:
-                if isinstance(child, ast.Assign):
-                    for target in child.targets:
-                        bind(target)
-                elif isinstance(child, (ast.AnnAssign, ast.AugAssign)):
-                    bind(child.target)
-                elif isinstance(child, ast.For):
-                    bind(child.target)
-                elif isinstance(child, (ast.With, ast.AsyncWith)):
-                    for item in child.items:
-                        if item.optional_vars is not None:
-                            bind(item.optional_vars)
-                elif isinstance(child, ast.ExceptHandler) and child.name:
-                    names.add(child.name)
-                elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp,
-                                        ast.GeneratorExp)):
-                    for generator in child.generators:
-                        bind(generator.target)
-                elif isinstance(child, ast.NamedExpr):
-                    bind(child.target)
+                names.update(_bound_names(child))
             visit(child, inner)
 
     visit(tree, False)
@@ -655,11 +660,6 @@ def _is_bare_component(value):
             and not any(character.isspace() for character in value))
 
 
-def _bare_file(node):
-    """A file name with no directory of its own: the shape that needs an anchor."""
-    return (isinstance(node, ast.Constant) and isinstance(node.value, str)
-            and _is_bare_component(node.value))
-
 
 def _path_literal_ending_in_file(value):
     """Whether a string literal ends in a bare file name (``'/x/mod.rs'``).
@@ -687,7 +687,7 @@ def _path_literal_operand(value):
         return False
     if value.endswith('/'):
         return any(_is_bare_component(part) for part in value.split('/'))
-    return _is_bare_component(value.rsplit('/', 1)[1])
+    return _path_literal_ending_in_file(value)
 
 
 def _joins_a_path_string(node):
@@ -706,48 +706,61 @@ def _joins_a_path_string(node):
 
 
 def _iterated_elements(node, constants):
-    """The literal elements a ``for name in (...)`` loop walks, or None."""
+    """The literal elements a ``for name in (...)`` loop walks, or None.
+
+    A starred element is only literal if what it unpacks is: ``(*('a.rs',),)``
+    walks ``'a.rs'``, while ``(*runtime_names,)`` is unknowable and returns None
+    so the caller reports the shape instead of guessing.
+    """
     target = node
     if isinstance(node, ast.Name) and node.id in constants:
         target = constants[node.id]
     if isinstance(target, (ast.Tuple, ast.List)):
-        return list(target.elts)
+        elements = []
+        for element in target.elts:
+            if isinstance(element, ast.Starred):
+                unpacked = _iterated_elements(element.value, constants)
+                if unpacked is None:
+                    return None
+                elements.extend(unpacked)
+            else:
+                elements.append(element)
+        return elements
     return None
 
 
-def _join_base(element, target_name):
-    """The part of a comprehension element that precedes the loop variable.
+def _literal_combinations(generators, constants):
+    """Every binding a comprehension's literal sources can produce, or None.
 
-    ``[SMS / name for name in ('mod.rs',)]`` and ``[Path(SMS, name) for ...]``
-    and ``[SMS.joinpath(name) for ...]`` all append the loop variable to a
-    directory, so the directory is what decides the key. Returning the base lets
-    the caller substitute each literal element and key the result; returning
-    None means the element is not of that shape. Anything else — including a
-    join spelling the resolver does not model, such as ``os.path.join`` — keeps
-    its base here too, so the caller reports it instead of skipping it.
+    ``[SMS / name for name in ('a.rs', 'b.rs')]`` really runs twice, once per
+    element, so the key is known for each. A comprehension with several
+    ``for`` clauses is the same loop nested, and each clause contributes its own
+    literal elements: the bindings multiply. As soon as one source is not a
+    literal tuple the scanner cannot enumerate it and returns None, so the caller
+    reports the shape instead of keying a guess.
     """
-    if (isinstance(element, ast.BinOp) and isinstance(element.op, ast.Div)
-            and isinstance(element.right, ast.Name) and element.right.id == target_name):
-        return element.left
-    if not isinstance(element, ast.Call) or not element.args:
-        return None
-    last = element.args[-1]
-    if not (isinstance(last, ast.Name) and last.id == target_name):
-        return None
-    func = element.func
-    if isinstance(func, ast.Name) and func.id == 'Path':
-        parts = list(element.args[:-1])
-    elif isinstance(func, ast.Attribute) and func.attr in ('joinpath', 'join'):
-        parts = [func.value] + list(element.args[:-1])
-    else:
-        return None
-    if not parts:
-        return None
-    base = parts[0]
-    for part in parts[1:]:
-        # ``Path(a, b)`` means ``a / b``; folding keeps one path model.
-        base = ast.BinOp(left=base, op=ast.Div(), right=part)
-    return base
+    combos = [{}]
+    for generator in generators:
+        if not isinstance(generator.target, ast.Name):
+            return None
+        elements = _iterated_elements(generator.iter, constants)
+        if elements is None:
+            return None
+        expanded = []
+        for combo in combos:
+            for element in elements:
+                bound = dict(combo)
+                bound[generator.target.id] = element
+                expanded.append(bound)
+        combos = expanded
+    return combos
+
+
+def _add_operands(node):
+    """Every operand of a left-associated ``a + b + c`` chain."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _add_operands(node.left) + [node.right]
+    return [node]
 
 
 def _is_repo_rooted(node, constants, seen=(), shadowed=()):
@@ -759,9 +772,11 @@ def _is_repo_rooted(node, constants, seen=(), shadowed=()):
     anchor. An expression that does start at ``ROOT`` / ``__file__`` but that
     this scanner cannot evaluate is a real hole and is reported.
 
-    ``shadowed`` names are not substituted: a module-level constant rebound in a
-    function means different values at different sites, and following it would
-    report a directory the code never uses.
+    ``shadowed`` names are not substituted: a module-level constant rebound
+    somewhere else (in a function, a loop target, a ``with``/``except`` binding,
+    a parameter, a walrus or a match pattern) means different values at
+    different sites, and following it would report a directory the code never
+    uses.
     """
     if isinstance(node, ast.Name):
         if node.id in ROOT_NAMES or node.id == '__file__':
@@ -778,6 +793,34 @@ def _is_repo_rooted(node, constants, seen=(), shadowed=()):
 PATH_CALL_ATTRS = frozenset({
     'joinpath', 'with_name', 'with_suffix', 'resolve', 'absolute', 'expanduser',
 })
+
+# Calls that list a directory's contents: what they yield is a runtime value, so
+# a repository path passed to one is a key the loop can never derive from text.
+ENUMERATION_ATTRS = frozenset({
+    'glob', 'rglob', 'iterdir', 'walk', 'listdir', 'scandir',
+})
+ENUMERATION_NAMES = frozenset({'walk', 'listdir', 'scandir'})
+# Stdlib modules whose enumeration helpers take the *directory* as an argument
+# (``os.walk(SMS)``) rather than as the receiver (``SMS.glob('*.rs')``). Only
+# these get the argument test: ``ast.walk(ast.parse(source))`` is also an
+# ``.walk`` whose receiver is not a path, and its argument is file *content*
+# that merely happens to be built from a repository constant.
+FS_MODULES = frozenset({'os', 'os.path', 'glob', 'shutil', 'pathlib'})
+
+
+def _module_aliases(tree):
+    """Map every name an import statement binds to the module path it names."""
+    aliases = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split('.')[0]
+                aliases[bound] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                if alias.name != '*':
+                    aliases[alias.asname or alias.name] = f'{node.module}.{alias.name}'
+    return aliases
 
 
 def _bare_tail(node, constants, seen=()):
@@ -839,6 +882,46 @@ def _is_path_shape(node, constants):
     return False
 
 
+def _is_path_expression(node):
+    """Whether ``node`` is *spelled* as a path build, resolvable or not.
+
+    ``_is_path_shape`` answers a narrower question — "does this end in a bare
+    file name, so it must be keyed" — and therefore says no to ``BASE / name``
+    while ``name`` is still an opaque loop variable. For a comprehension over a
+    non-literal source that is exactly the shape that must be reported: the loop
+    variable is runtime data, so neither the key nor its absence is decidable.
+    Container elements are searched so ``(BASE / name, label)`` is not missed;
+    a tuple that merely *contains* a repository constant (``(n, source, s, r)``
+    fed to a printer) is not a path build and stays silent.
+    """
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return any(_is_path_expression(child) for child in node.elts)
+    if isinstance(node, ast.Dict):
+        return any(_is_path_expression(child)
+                   for child in list(node.keys) + list(node.values)
+                   if child is not None)
+    if isinstance(node, ast.BinOp):
+        return isinstance(node.op, ast.Div) or _joins_a_path_string(node)
+    if isinstance(node, ast.JoinedStr):
+        return True
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Name):
+            return func.id in ('Path', 'join')
+        if isinstance(func, ast.Attribute):
+            return func.attr in PATH_CALL_ATTRS or func.attr in (
+                'join', 'format', 'format_map')
+    return False
+
+
+def _module_file(parts, root):
+    """The file one module path names under ``root``, or None if there is none."""
+    if not parts:
+        return None
+    path = root.joinpath(*parts).with_suffix('.py')
+    return path if path.is_file() else None
+
+
 def _module_key(parts, root):
     """Discovery key for one imported module path, or nothing if it is not here.
 
@@ -849,18 +932,71 @@ def _module_key(parts, root):
     file this repository does not have, and covers every local helper rather
     than a hand-maintained list.
     """
-    if not parts:
+    path = _module_file(parts, root)
+    if path is None:
         return set()
-    rel = '/'.join(list(parts[:-1]) + [parts[-1] + '.py'])
-    if not (root / rel).is_file():
-        return set()
+    rel = path.relative_to(root).as_posix()
     if len(parts) == 1:
         return {'fixtures/' + rel}
-    return {'/'.join(rel.split('/')[-2:])}
+    return {'/'.join(parts[-2:]) + '.py'}
+
+
+def _module_candidates(tree, search_dirs):
+    """Every module path an import statement can name, with its search order.
+
+    ``search_dirs`` are the directories Python would try, in order: the running
+    script's directory comes first (the host runs ``python3 <table>``), then the
+    fixtures root. Relative imports resolve against the importing file's own
+    directory, which is what the caller passes for a module it recursed into.
+
+    ``importlib.import_module('x')`` / ``__import__('x')`` count too when the
+    argument is a string literal: the dependency is exactly as real as an
+    ``import`` line. A *computed* module name stays out of reach — no static
+    scanner can know it — and is listed as a known boundary in the README.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                parts = tuple(alias.name.split('.'))
+                for directory in search_dirs:
+                    yield tuple(directory) + parts
+        elif isinstance(node, ast.Call):
+            func = node.func
+            dynamic = (
+                (isinstance(func, ast.Attribute) and func.attr == 'import_module')
+                or (isinstance(func, ast.Name) and func.id == '__import__'))
+            if not dynamic or not node.args:
+                continue
+            argument = node.args[0]
+            if not (isinstance(argument, ast.Constant)
+                    and isinstance(argument.value, str)):
+                continue
+            parts = tuple(argument.value.split('.'))
+            for directory in search_dirs:
+                yield tuple(directory) + parts
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                base = list(search_dirs[0])
+                if node.level > 1:
+                    base = base[:max(0, len(base) - (node.level - 1))]
+                module = tuple(base) + (tuple(node.module.split('.')) if node.module else ())
+                yield module
+                for alias in node.names:
+                    yield module + (alias.name,)
+            elif node.module:
+                parts = tuple(node.module.split('.'))
+                # An absolute import is resolved against the running script's
+                # directory first: ``from helper import x`` finds
+                # ``<table dir>/helper.py`` before ``<fixtures>/helper.py``.
+                for directory in search_dirs:
+                    candidate = tuple(directory) + parts
+                    yield candidate
+                    for alias in node.names:
+                        yield candidate + (alias.name,)
 
 
 def _shared_module_keys(tree, root=FIXTURES, table_dir=()):
-    """Discovery keys for every local module the table imports.
+    """Discovery keys for every local module the table imports, transitively.
 
     The discovery loop keys a changed ``fixtures/negative_suite.py`` as
     ``fixtures/negative_suite.py`` and a changed ``fixtures/_shared/x.py`` as
@@ -869,26 +1005,31 @@ def _shared_module_keys(tree, root=FIXTURES, table_dir=()):
     ``DISCOVERY_ANCHORS`` is what puts it there. ``from _shared import x`` names
     no module path at all, so each imported name is expanded as well; relative
     imports resolve against the table's own directory.
+
+    The walk is transitive: ``negative_suite`` imports ``negative_panic``, which
+    imports ``negative_scope``, and the loop keys each changed helper on its own
+    — a table is scheduled for any of them only if the literal is in its text.
+    Stopping at the direct imports left that whole second level silently
+    unscheduled, the same false pass one hop further out. Each file is visited
+    once, so import cycles terminate.
     """
     keys = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                keys |= _module_key(alias.name.split('.'), root)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                base = list(table_dir)
-                if node.level > 1:
-                    base = base[:max(0, len(base) - (node.level - 1))]
-                module = base + (node.module.split('.') if node.module else [])
-                keys |= _module_key(module, root)
-                for alias in node.names:
-                    keys |= _module_key(module + [alias.name], root)
-            elif node.module:
-                module = node.module.split('.')
-                keys |= _module_key(module, root)
-                for alias in node.names:
-                    keys |= _module_key(module + [alias.name], root)
+    seen = set()
+    queue = [(tree, (tuple(table_dir), ()))]
+    while queue:
+        current, search_dirs = queue.pop()
+        for candidate in _module_candidates(current, search_dirs):
+            # Importing a package also runs its ``__init__.py``, and the loop
+            # keys a changed ``pkg/__init__.py`` as ``pkg/__init__.py``.
+            for parts in (candidate, candidate + ('__init__',)):
+                keys.update(_module_key(parts, root))
+            path = _module_file(candidate, root)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            module_dir = path.relative_to(root).parts[:-1]
+            queue.append((ast.parse(path.read_text(encoding='utf-8')),
+                          (module_dir, tuple(table_dir), ())))
     return keys
 
 
@@ -906,6 +1047,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                  else tuple(table.split('/')))
     constants = _constants(tree)
     shadowed = _shadowed_names(tree)
+    aliases = _module_aliases(tree)
     keys = {}
     problems = []
 
@@ -927,7 +1069,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             ambiguous = sorted({child.id for child in ast.walk(node)
                                 if isinstance(child, ast.Name) and child.id in shadowed})
             if ambiguous:
-                problems.append('ambiguous module-level name rebound inside a function: '
+                problems.append('ambiguous module-level name rebound elsewhere: '
                                 f'{ambiguous[0]}: {expression}')
             elif repo_rooted(node):
                 problems.append('unresolvable repository path (this scanner cannot '
@@ -939,13 +1081,25 @@ def bare_concat_keys(tree, table, root=FIXTURES):
 
     class Visitor(ast.NodeVisitor):
         def visit_BinOp(self, node):
-            if (isinstance(node.op, ast.Add) and _joins_a_path_string(node)
-                    and repo_rooted(node)):
-                # ``str(ROOT) + '/src/x/mod.rs'`` is statically resolvable in
-                # principle but not by this scanner; keeping it silent would be
-                # the same fail-open shape the gate exists to catch.
-                problems.append('unsupported string concatenation of a repository path '
-                                f'(use ``/`` joins): {ast.unparse(node)}')
+            if isinstance(node.op, ast.Add) and repo_rooted(node):
+                separators = [
+                    operand for operand in _add_operands(node)
+                    if isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str) and '/' in operand.value]
+                if _joins_a_path_string(node) or separators:
+                    # ``str(ROOT) + '/src/x/mod.rs'`` is statically resolvable in
+                    # principle but not by this scanner; keeping it silent would
+                    # be the same fail-open shape the gate exists to catch. The
+                    # same goes for a chain that only ever adds separators and
+                    # bare components (``str(ROOT) + '/' + 'src' + …``): each
+                    # fragment looks harmless on its own.
+                    problems.append('unsupported string concatenation of a repository '
+                                    f'path (use ``/`` joins): {ast.unparse(node)}')
+                    # Report the whole chain once. Recursing would report the
+                    # same concatenation again for every prefix of it.
+                    for operand in _add_operands(node):
+                        self.visit(operand)
+                    return
             elif _is_path_shape(node, constants):
                 resolve(node, ast.unparse(node))
             self.generic_visit(node)
@@ -958,11 +1112,25 @@ def bare_concat_keys(tree, table, root=FIXTURES):
 
         def visit_Call(self, node):
             func = node.func
-            if (isinstance(func, ast.Attribute)
-                    and func.attr in ('glob', 'rglob', 'iterdir', 'walk')
-                    and repo_rooted(func.value)):
+            enumerates_repository = (
+                (func.attr in ENUMERATION_ATTRS
+                 and (repo_rooted(func.value)
+                      or (isinstance(func.value, ast.Name)
+                          and aliases.get(func.value.id) in FS_MODULES
+                          and any(repo_rooted(argument) for argument in node.args))))
+                if isinstance(func, ast.Attribute) else False)
+            if enumerates_repository:
                 # Enumerating a repository directory yields file names only the
-                # runtime knows; the loop can never key them from the text.
+                # runtime knows; the loop can never key them from the text. Both
+                # spellings count: ``SMS.glob('*.rs')`` on the directory itself
+                # and ``os.walk(SMS)`` / ``os.listdir(SMS)`` taking it as an
+                # argument — the stdlib ones are the more common shape.
+                problems.append('unsupported enumeration of a repository path '
+                                f'(this scanner cannot follow it): {ast.unparse(node)}')
+            elif (isinstance(func, ast.Name) and func.id in ENUMERATION_NAMES
+                    and any(repo_rooted(argument) for argument in node.args)):
+                # ``from os import walk`` / ``from os import listdir`` reaches the
+                # same unmodelled call.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
             elif (isinstance(func, ast.Name) and func.id == 'join'
@@ -979,13 +1147,30 @@ def bare_concat_keys(tree, table, root=FIXTURES):
 
             The loop really runs the body with each literal bound, so a path
             built from the target (``SMS / name``) is statically known. Walking
-            it once with an opaque name would leave the key invisible.
+            it once with an opaque name would leave the key invisible. The
+            iterable itself is walked as well: ``for p in (BASE / 'new.rs',):``
+            builds a real path before the body ever runs.
             """
+            self.visit(node.iter)
             elements = None
             if isinstance(node.target, ast.Name):
                 elements = _iterated_elements(node.iter, constants)
             if elements is None:
-                self.generic_visit(node)
+                # The target really is bound to a runtime value here, so a stale
+                # constant of the same name (for instance an outer literal loop
+                # that bound it) must not be substituted inside the body: the
+                # key it would produce is one the code never builds.
+                missing = object()
+                stale = (constants.pop(node.target.id, missing)
+                         if isinstance(node.target, ast.Name) else missing)
+                try:
+                    for statement in node.body:
+                        self.visit(statement)
+                    for statement in node.orelse:
+                        self.visit(statement)
+                finally:
+                    if stale is not missing:
+                        constants[node.target.id] = stale
                 return
             missing = object()
             saved = constants.get(node.target.id, missing)
@@ -1002,39 +1187,57 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             for statement in node.orelse:
                 self.visit(statement)
 
+        visit_AsyncFor = visit_For
+
         def visit_ListComp(self, node):
-            self._comprehension(node)
+            self._comprehension(node, [node.elt])
 
         def visit_SetComp(self, node):
-            self._comprehension(node)
+            self._comprehension(node, [node.elt])
 
         def visit_GeneratorExp(self, node):
-            self._comprehension(node)
+            self._comprehension(node, [node.elt])
 
-        def _comprehension(self, node):
-            element, generators = node.elt, node.generators
-            base = None
-            if len(generators) == 1 and isinstance(generators[0].target, ast.Name):
-                base = _join_base(element, generators[0].target.id)
-            if base is not None:
-                segments = _segments(base, constants, self_path)
-                elements = _iterated_elements(generators[0].iter, constants)
-                if elements is None:
-                    if repo_rooted(generators[0].iter):
-                        problems.append(f'unresolvable comprehension source: {ast.unparse(node)}')
-                elif segments is None:
-                    if repo_rooted(base):
-                        problems.append(f'unresolvable comprehension base: {ast.unparse(node)}')
-                else:
-                    for candidate in elements:
-                        if _bare_file(candidate):
-                            record(segments + (candidate.value,),
-                                   f'{ast.unparse(element)} for {candidate.value}')
-            elif (isinstance(element, (ast.BinOp, ast.Call, ast.JoinedStr))
-                    and _is_path_shape(element, constants)):
-                # A comprehension element that is a path shape but not a literal
-                # tuple walk is still a path: evaluate or report it like any other.
-                resolve(element, ast.unparse(element))
+        def visit_DictComp(self, node):
+            self._comprehension(node, [node.key, node.value])
+
+        def _comprehension(self, node, parts):
+            """Bind the loop variables and visit the element in each binding.
+
+            A comprehension is a nested loop whose elements are evaluated with
+            the targets bound; walking the element under every literal binding
+            keys ``[SMS / name for name in ('a.rs',)]`` exactly like the plain
+            loop. That also covers a tuple element
+            (``[(BASE / 'new.rs', x) for x in ('x',)]``), a dict key/value, and
+            several ``for`` clauses, all of which used to be skipped whole. When
+            a source is not literal the bindings are unknown: if an element
+            still builds a repository path and no key came out of it, the shape
+            is reported.
+            """
+            generators = node.generators
+            combos = _literal_combinations(generators, constants)
+            if combos is None:
+                for part in parts:
+                    recorded = len(keys)
+                    self.visit(part)
+                    if (len(keys) == recorded and repo_rooted(part)
+                            and _is_path_expression(part)):
+                        problems.append(
+                            f'unresolvable comprehension source: {ast.unparse(node)}')
+            else:
+                missing = object()
+                for combo in combos:
+                    saved = {name: constants.get(name, missing) for name in combo}
+                    constants.update(combo)
+                    try:
+                        for part in parts:
+                            self.visit(part)
+                    finally:
+                        for name, value in saved.items():
+                            if value is missing:
+                                constants.pop(name, None)
+                            else:
+                                constants[name] = value
             # Never drop the iteration sources or the ``if`` clauses: a shape
             # this scanner cannot follow can hide there just as well as in the
             # element, and skipping them was a silent hole.
@@ -1044,7 +1247,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     self.visit(condition)
 
     Visitor().visit(tree)
-    return keys, problems
+    return keys, list(dict.fromkeys(problems))
 
 
 def declared_anchors(tree):
@@ -1131,15 +1334,11 @@ def sweep(root=FIXTURES):
         rel = path.relative_to(root).as_posix()
         if 'negative' not in path.name or rel in TABLES:
             continue
-        if path.name in SHARED_HELPERS or path.name.startswith('test_'):
-            # Same two exclusions the host applies to its own output list
-            # (``grep -vE '/(...|test_[^/]*)\.py$'`` in neg-for-diff.sh), so a
-            # file skipped here is never emitted as a table there either.
-            continue
-        if rel.split('/')[0] in LIBRARY_DIRS:
-            # Library directories hold shared modules, not runnable tables; the
-            # host chain imports them. Anywhere else a leading underscore is a
-            # normal directory name and the host still discovers the file.
+        if path.name in HOST_FILTERED or path.name.startswith('test_'):
+            # The two exclusions the host applies to its own output list, no
+            # more: a file skipped here is never emitted as a table there
+            # either, so the sweep never has to measure something the host
+            # cannot run.
             continue
         text = path.read_text(encoding='utf-8')
         tree = ast.parse(text)
@@ -1527,8 +1726,89 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "DISCOVERY_ANCHORS = ()\n"
             "rows = [os.path.join(SMS, name) for name in ('new.rs',)]\n")
         problems = violations(synthetic, 'example/negative_controls.py')
-        self.assertTrue(any('unresolvable comprehension base' in problem
+        self.assertTrue(any('unresolvable repository path' in problem
                             for problem in problems), problems)
+
+    def test_a_comprehension_element_is_walked_whatever_its_shape(self):
+        """The element sits inside a tuple, and several ``for`` clauses nest."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [(BASE / 'new.rs', x) for x in ('x',)]\n"
+            "more = [BASE / name for x in ('x',) for name in ('new.rs',)]\n"
+            "table = {BASE / name: 1 for name in ('new.rs',)}\n"
+            "gen = (BASE / name for name in ('new.rs',))\n"
+            "sett = {BASE / name for name in ('new.rs',)}\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: example/new.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_comprehension_over_a_runtime_source_fails_closed(self):
+        """The file name comes from a call, so no key is derivable from text."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def names():\n"
+            "    return ('new.rs',)\n"
+            "rows = [BASE / name for name in names()]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable comprehension source' in problem
+                            for problem in problems), problems)
+
+    def test_a_comprehension_element_that_is_not_a_path_stays_silent(self):
+        """A tuple fed to a printer is not a path build, even if it holds one."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SOURCE = ROOT / 'src/example/mod.rs'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def show(mutations):\n"
+            "    print([(n, SOURCE) for n, s in mutations])\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_starred_or_constant_comprehension_source_is_expanded(self):
+        """``(*('new.rs',),)`` and ``(NAME,)`` are both literal enough."""
+        for source in ("(*('new.rs',),)", "(NAME,)"):
+            with self.subTest(source=source):
+                synthetic = (
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "BASE = ROOT / 'src/example'\n"
+                    "NAME = 'new.rs'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    f"rows = [BASE / name for name in {source}]\n")
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('missing anchor: example/new.rs' in problem
+                                    for problem in problems), problems)
+
+    def test_a_for_loop_walks_its_iterable_too(self):
+        """``for p in (BASE / 'new.rs',):`` builds the path before the body."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def main():\n"
+            "    for path in (BASE / 'new.rs',):\n"
+            "        print(path)\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: example/new.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_separator_only_string_chain_fails_closed(self):
+        """``str(ROOT) + '/' + 'src' + …`` is a path split beyond recognition."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "path = str(ROOT) + '/' + 'src' + '/' + 'example' + '/' + 'new.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        reports = [problem for problem in problems
+                   if 'unsupported string concatenation' in problem]
+        self.assertEqual(len(reports), 1, problems)
 
     def test_a_shadowed_module_constant_is_not_substituted(self):
         """A name rebound inside a function means two directories; report it."""
@@ -1577,6 +1857,80 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertTrue(any('unsupported' in problem for problem in problems),
                                 problems)
 
+    def test_stdlib_enumeration_taking_the_directory_as_an_argument(self):
+        """``os.walk(SMS)`` and friends enumerate a repository directory too.
+
+        The directory is the argument here, not the receiver, so the receiver
+        test alone missed the most common spelling.
+        """
+        shapes = {
+            'os.walk': "import os\npaths = os.walk(SMS)\n",
+            'os.listdir': "import os\nnames = os.listdir(SMS)\n",
+            'os.scandir': "import os\nentries = list(os.scandir(SMS))\n",
+            'aliased': "import os as filesystem\npaths = filesystem.listdir(SMS)\n",
+            'bare-walk': "from os import walk\npaths = walk(SMS)\n",
+            'bare-listdir': "from os import listdir\nnames = listdir(SMS)\n",
+        }
+        for label, line in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + line
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('unsupported enumeration' in problem
+                                    for problem in problems), problems)
+
+    def test_a_non_path_walk_over_file_contents_stays_silent(self):
+        """``ast.walk(ast.parse(source))`` is not a directory enumeration.
+
+        ``source`` is file *content* that happens to be built from a repository
+        constant. Treating every ``.walk`` whose argument touches ``ROOT`` as a
+        directory scan would report tables that have no hole at all.
+        """
+        synthetic = (
+            "import ast\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def main():\n"
+            "    source = (ROOT / 'src/example').read_text()\n"
+            "    return [node for node in ast.walk(ast.parse(source))]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertFalse(any('enumeration' in problem for problem in problems), problems)
+
+    def test_a_runtime_loop_does_not_reuse_a_stale_literal_binding(self):
+        """An inner ``for name in names()`` must not key the outer literal name."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def main():\n"
+            "    out = []\n"
+            "    for name in ('outer.rs',):\n"
+            "        for name in names():\n"
+            "            out.append(SMS / name)\n"
+            "    return out\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertFalse(any('sms/outer.rs' in problem for problem in problems), problems)
+
+    def test_a_match_pattern_binds_a_name_like_an_assignment(self):
+        """``case {'dir': BASE}`` rebinds ``BASE`` at that site, as ``=`` does."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example/a'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def main(value):\n"
+            "    match value:\n"
+            "        case {'dir': BASE}:\n"
+            "            return [BASE / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous' in problem for problem in problems), problems)
+
     def test_a_for_loop_over_a_literal_tuple_carries_its_keys(self):
         """``for name in ('mod.rs',):`` runs with a literal, so the key is known."""
         synthetic = (
@@ -1610,6 +1964,76 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertEqual(sorted(keys),
                          ['_shared/switch.py', 'deep/helper.py', 'pkg/sibling.py'])
 
+    def test_a_sibling_module_of_the_table_keys_like_the_script_dir(self):
+        """``from helper import x`` finds ``<table dir>/helper.py`` at runtime.
+
+        The host runs ``python3 <table>``, so the script's directory is on
+        ``sys.path`` before the fixtures root. Keying only ``fixtures/helper.py``
+        missed a change to ``example/helper.py`` — the file the table really
+        imports — and demanded an anchor for one it does not.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'example').mkdir()
+            (root / 'example' / 'helper.py').write_text('', encoding='utf-8')
+            (root / 'example' / 'pkg').mkdir()
+            (root / 'example' / 'pkg' / '__init__.py').write_text('', encoding='utf-8')
+            tree = ast.parse(
+                "from helper import run\n"
+                "import pkg\n")
+            keys = _shared_module_keys(tree, root, ('example',))
+        self.assertEqual(sorted(keys),
+                         ['example/helper.py', 'pkg/__init__.py'])
+
+    def test_imports_are_followed_transitively(self):
+        """A helper's own imports are keys of the table that imports it.
+
+        ``negative_suite`` imports ``negative_panic``, which imports
+        ``negative_scope``; a change to either keys a helper the table's text
+        never spells, so stopping at the direct imports left it unscheduled.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'suite.py').write_text(
+                'from panic import run\n', encoding='utf-8')
+            (root / 'panic.py').write_text(
+                'from _shared import scope\n', encoding='utf-8')
+            (root / '_shared').mkdir()
+            (root / '_shared' / 'scope.py').write_text('', encoding='utf-8')
+            tree = ast.parse('from suite import run\n')
+            keys = _shared_module_keys(tree, root, ())
+        self.assertEqual(sorted(keys), ['_shared/scope.py', 'fixtures/panic.py',
+                                        'fixtures/suite.py'])
+
+    def test_a_literal_dynamic_import_is_followed(self):
+        """``import_module('x')`` names the same helper as ``import x``.
+
+        Tables reach for it to import a helper by name at runtime; the module
+        path is still a literal, so the key is known.
+        """
+        shapes = {
+            'importlib': "import importlib\nhelper = importlib.import_module('_shared.scope')\n",
+            'dunder': "helper = __import__('_shared.scope')\n",
+        }
+        for label, line in shapes.items():
+            with self.subTest(shape=label):
+                with tempfile.TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    (root / '_shared').mkdir()
+                    (root / '_shared' / 'scope.py').write_text('', encoding='utf-8')
+                    keys = _shared_module_keys(ast.parse(line), root, ())
+                self.assertEqual(sorted(keys), ['_shared/scope.py'])
+
+    def test_an_import_cycle_terminates(self):
+        """Two helpers importing each other must not loop the walk."""
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'a.py').write_text('import b\n', encoding='utf-8')
+            (root / 'b.py').write_text('import a\n', encoding='utf-8')
+            tree = ast.parse('import a\n')
+            keys = _shared_module_keys(tree, root, ())
+        self.assertEqual(sorted(keys), ['fixtures/a.py', 'fixtures/b.py'])
+
     def test_a_parameter_is_not_substituted_for_a_single_assignment(self):
         """A name that is also a parameter is not a module constant.
 
@@ -1628,7 +2052,13 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_imported_shared_helpers_need_an_anchor(self):
-        """A shared fixture helper is discovered by its own path literal."""
+        """A shared fixture helper is discovered by its own path literal.
+
+        The walk is transitive, so importing ``negative_suite`` also owes the
+        helpers *it* imports (``negative_panic`` → ``negative_scope`` …): the
+        loop keys each changed helper on its own and the table text spells out
+        none of them.
+        """
         synthetic = (
             "from negative_suite import matrix_main\n"
             "ROOT = Path(__file__).resolve().parents[5]\n"
@@ -1636,24 +2066,45 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "rows = [('a', ROOT / 'src/example/named.rs', 'x')]\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
-        self.assertTrue(any('missing anchor: fixtures/negative_suite.py' in problem
-                            for problem in problems), problems)
-        declared = synthetic.replace("DISCOVERY_ANCHORS = ()",
-                                     "DISCOVERY_ANCHORS = ('fixtures/negative_suite.py',)")
-        self.assertEqual(violations(declared, 'example/negative_controls.py'), [])
+        for key in ('fixtures/negative_suite.py', 'fixtures/negative_panic.py',
+                    'fixtures/negative_scope.py', 'fixtures/pending_reanchor.py'):
+            self.assertIn(f'missing anchor: {key} ', '\n'.join(problems), problems)
+        direct_only = synthetic.replace(
+            "DISCOVERY_ANCHORS = ()",
+            "DISCOVERY_ANCHORS = ('fixtures/negative_suite.py',)")
+        self.assertTrue(any('missing anchor: fixtures/negative_panic.py' in problem
+                            for problem in violations(direct_only,
+                                                      'example/negative_controls.py')),
+                        'the second import level must still be owed')
+        transitive = synthetic.replace(
+            "DISCOVERY_ANCHORS = ()",
+            "DISCOVERY_ANCHORS = ('fixtures/negative_suite.py',\n"
+            "                     'fixtures/negative_panic.py',\n"
+            "                     'fixtures/negative_process.py',\n"
+            "                     'fixtures/negative_scope.py',\n"
+            "                     'fixtures/negative_selection.py',\n"
+            "                     'fixtures/pending_reanchor.py')")
+        self.assertEqual(violations(transitive, 'example/negative_controls.py'), [])
 
-    def test_a_shadowed_module_constant_is_not_substituted(self):
-        """A name rebound inside a function means two directories; report it."""
+    def test_a_parameter_shadows_a_module_constant_of_the_same_name(self):
+        """``def run(BASE)`` hides the module constant at that call site.
+
+        The parameter is bound at every depth by ``_rebound_elsewhere``, so the
+        module value is not substituted there; the site is reported instead of
+        keying the directory the module constant happens to name.
+        """
         synthetic = (
             "ROOT = Path(__file__).resolve().parents[5]\n"
             "BASE = ROOT / 'src/example/a'\n"
             "DISCOVERY_ANCHORS = ()\n"
-            "def main():\n"
-            "    BASE = ROOT / 'src/example/b'\n"
-            "    return [BASE / 'mod.rs']\n"
+            "def run(BASE):\n"
+            "    return BASE / 'new.rs'\n"
+            "run(ROOT / 'src/example/b')\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
-        self.assertTrue(any('ambiguous' in problem for problem in problems), problems)
+        self.assertTrue(any('ambiguous module-level name rebound elsewhere: BASE'
+                            in problem for problem in problems), problems)
+        self.assertFalse(any('a/new.rs' in problem for problem in problems), problems)
 
     def test_a_negative_parent_index_is_not_the_repository_root(self):
         synthetic = (
