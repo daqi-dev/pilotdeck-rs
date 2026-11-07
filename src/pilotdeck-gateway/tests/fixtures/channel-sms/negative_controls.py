@@ -28,6 +28,16 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'
 PREFIX = 'channel::sms::tests::'
+# #2133: neg-for-diff.sh finds the tables a diff needs by the literal
+# `dir/file` of every changed .rs file (`git grep -F 'sms/mod.rs'`). Rows below
+# concatenate a bare file name onto `SMS`, so `sms/<file>` never appears on its
+# own and a change under `channel/sms/` would schedule no mutation at all.
+# Every bare-filename key this table mutates is declared here; the rows and
+# this tuple must agree (fixtures/test_literal_anchors.py).
+ANCHORS = (
+    'sms/mod.rs', 'sms/gateway.rs', 'sms/mapper.rs', 'sms/render.rs',
+    'sms/elicitation.rs', 'sms/permission.rs', 'sms/sender.rs', 'sms/tests.rs',
+)
 switches = [
     # stop reason replaced by the default: the drain stop of the stop-during-
     # turn cell logs "no reason" instead of the recorded reason.
