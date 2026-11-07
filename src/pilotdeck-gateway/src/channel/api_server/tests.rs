@@ -187,6 +187,20 @@ fn req_spec_refuses_a_non_string_header() {
 }
 
 #[test]
+#[should_panic(expected = "request `setHost` must be a boolean")]
+fn req_spec_refuses_a_non_boolean_set_host() {
+    // #1683: `setHost` decides whether the replay writes the `Host:` line. A
+    // truthy non-boolean (or a string) read as "present" would silently send a
+    // Host header and turn the recorded missing-Host 400 into an admitted 200
+    // control, which the replay would then compare against itself.
+    ReqSpec::from_json(&json!({
+        "method": "GET",
+        "path": "/health",
+        "setHost": "false",
+    }));
+}
+
+#[test]
 #[should_panic(expected = "request headers must be an object")]
 fn req_spec_refuses_a_non_object_header_container() {
     // #1606 r4: r3 caught non-string header *values*; a `headers` that is not
@@ -710,18 +724,21 @@ fn mask_text(text: &str) -> String {
     created.replace(&format!("api-{FIXED_UUID}"), "api-FIXED")
 }
 
-fn actual_headers(response: &RawResponse) -> BTreeMap<String, String> {
+/// #1683: `parser_admission` scopes the one registered transport difference to
+/// the two cells that actually exhibit it. hyper adds `content-length: 0` to
+/// the parser-level bare 400 where Node writes no length at all (the same
+/// registered diff the native-http and webhook lanes already normalize —
+/// A8.4-NATIVE-HTTP-001, extended to this lane by A8.3-API-SERVER-005). The
+/// ledger entry limits that exemption to the bare 400, so a mask applied to
+/// every cell would let an unrelated regression (say, hyper starting to emit
+/// `content-length: 0` on a `HEAD` the baseline answers without one) compare
+/// green. The replay's raw-byte pin
+/// (`parser_rejections_keep_the_registered_transport_shape`) asserts the line
+/// really is there, so the masking cannot hide a missing rejection either.
+fn actual_headers(response: &RawResponse, parser_admission: bool) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for (name, value) in &response.headers {
-        // #1683: hyper adds `content-length: 0` to the parser-level bare 400
-        // where Node writes no length at all — the same registered transport
-        // diff the native-http and webhook lanes already normalize
-        // (A8.4-NATIVE-HTTP-001, extended to this lane by
-        // A8.3-API-SERVER-005). Only the transport shape is masked; the
-        // replay's raw-byte pin (`parser_rejections_keep_the_registered_
-        // transport_shape`) asserts the line is actually there, so this
-        // normalization cannot hide a missing response.
-        if name == "content-length" && value == "0" {
+        if parser_admission && name == "content-length" && value == "0" {
             continue;
         }
         out.insert(
@@ -1019,7 +1036,7 @@ fn compare_response(case: &str, index: usize, expected: &Value, actual: &RawResp
         })
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
-        actual_headers(actual),
+        actual_headers(actual, matches!(case, "unknown-method" | "missing-host")),
         expected_headers,
         "#1333 {case} request {index}: headers differ"
     );
