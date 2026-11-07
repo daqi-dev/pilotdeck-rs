@@ -2370,6 +2370,21 @@ self_check_controls_run | return | return problems
                     reason, covered = exception[0], exception[1]
                     relays = tuple(exception[2]) if len(exception) > 2 else ()
                     self.assertTrue(reason, f'#1900 the exception for {key} states why')
+                    # #1900 fix-r1 codex P2: the key carries the file and the
+                    # *leaf* fn name only, so a second function of the same
+                    # name in another `mod` of the same file would inherit this
+                    # exception without anyone registering it (measured: the
+                    # guard stayed green for such a duplicate). The register
+                    # excuses one call site; refuse the ambiguous file instead
+                    # of silently excusing all of them.
+                    definitions = len(re.findall(
+                        rf'\bfn\s+{re.escape(owner)}\s*[(<]', text))
+                    self.assertEqual(
+                        definitions, 1,
+                        f'#1900 the exception for {key} is keyed by a function name that '
+                        f'occurs {definitions} times in {source.relative_to(crate)}; a '
+                        f'duplicate would inherit the exception unregistered — key the '
+                        f'exception by module path or rename the duplicate')
                     for name in covered:
                         self.assertIn(name, named,
                                       f'#1900 the exception for {key} claims {name} covers it, '
@@ -2558,6 +2573,32 @@ self_check_controls_run | return | return problems
             with self.assertRaisesRegex(AssertionError, 'but no .fn ghost_test. exists'):
                 self.assert_every_skip_line_reaches_nextest(
                     'test(=registered) | test(=unregistered) | test(=ghost_test)', crate=crate)
+        # #1900 fix-r1 codex P2: the key is `file::leaf`, so a same-named
+        # *test* in another `mod` of the same file would inherit the exception
+        # without a register entry of its own (codex measured the guard green
+        # for exactly that duplicate; a non-test would instead be caught by the
+        # relay walk, which is why the two functions here carry `#[test]`).
+        ambiguous = self.root/'ambiguous-crate'
+        (ambiguous/'tests').mkdir(parents=True)
+        (ambiguous/'tests'/'dup.rs').write_text(
+            'mod first {\n'
+            '    #[test]\n'
+            '    fn duplicated() {\n'
+            '        skip_line::stderr_skip_line("skip: first\\n");\n'
+            '    }\n'
+            '}\n'
+            'mod second {\n'
+            '    #[test]\n'
+            '    fn duplicated() {\n'
+            '        skip_line::stderr_skip_line("skip: second\\n");\n'
+            '    }\n'
+            '}\n')
+        with patch.object(self, 'skip_line_exceptions',
+                          {'tests/dup.rs::duplicated': ('one call site is excused', ())}):
+            with self.assertRaisesRegex(AssertionError,
+                                        r'occurs 2 times.*inherit the exception'):
+                self.assert_every_skip_line_reaches_nextest(
+                    'test(=duplicated)', crate=ambiguous)
         # Only the one shared writer is exempt, not every file called
         # `skip_line.rs`: a copy that prints a skip line is still a call site.
         (crate/'tests'/'other').mkdir(parents=True)
