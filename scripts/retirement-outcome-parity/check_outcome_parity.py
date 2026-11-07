@@ -70,6 +70,23 @@ REGISTERED_UNAVAILABLE_METHODS = frozenset({
     'manager_browsers', 'memory_list', 'memory_wipe',
     'snapshot_get', 'snapshot_list', 'snapshot_restore',
 })
+# —— 显式延期（#2143，diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R1.md）——
+# 这三个 always-on 方法按 2026-11-05 人定「只做核心 agent 功能，always-on 等增值
+# 模块暂缓」尚未实现：Rust 无条件回 CAPABILITY_UNAVAILABLE（#1313），而 TS 基线的
+# 真实回答是 **成功信封** `ok:true` + payload `error.code`
+# （#2143 实测 cc7c4e6 / Node v22.22.0：cycle_not_found / not_configured /
+# not_configured）。金样没写错，所以这是**延期**不是「金样过期」，更不是豁免：
+# 容忍范围只有一格 —— 该方法 `outcome == 'error'` 且
+# `errorCode == CAPABILITY_UNAVAILABLE` 对应金样 `ok`。Rust 若回别的码、或将来
+# 回 `ok` 之外的第三种形状，P3/P4 **照常 FAIL**；P1/P2/P6/P7/P8 对这三个方法
+# 照常核；P3/P4/P5 对其余 98 个方法逐字节不变。**逐方法显式列出，不许前缀匹配。**
+DEFERRED_UNAVAILABLE_METHODS = frozenset({
+    'always_on_apply', 'always_on_abort', 'always_on_rerun_plan',
+})
+DEFERRED_REASON = (
+    'always-on 三方法按 2026-11-05 人定暂缓实现（A7.8-ALWAYS-ON-DEFERRED-001）；'
+    'Rust 如实回 CAPABILITY_UNAVAILABLE，TS 基线实测回 ok:true 信封。'
+    '登记：diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R1.md（延期，非豁免）')
 KNOWN_OUTCOMES = ('ok', 'error')
 KNOWN_SHAPES = ('request', 'stream')
 
@@ -217,12 +234,27 @@ def index_wire(frames, path):
     return send_ids, responses, finals
 
 
+def deferred_match(method, row, golden):
+    """该行是否落在**已登记延期**的那一格：金样 ok，Rust 回 CAPABILITY_UNAVAILABLE。
+
+    只有这一格被容忍；调用方不得把本函数当「该方法不用判」的开关——P1/P2/P6/P7/P8
+    对延期方法照常核，本函数只为 P3/P4/P5 的比对开一格。
+    """
+    return (method in DEFERRED_UNAVAILABLE_METHODS
+            and golden is not None
+            and golden['outcome'] == 'ok' and golden['errorCode'] is None
+            and row['outcome'] == 'error'
+            and row.get('errorCode') == CAPABILITY_UNAVAILABLE)
+
+
 def analyze_round(round_name, rows, wire, oracle_index):
     """单轮 P1–P6、P8 判分；P7 跨轮，见 analyze_stability。"""
     send_ids, responses, finals = wire
     violations = []
     stats = {'round': round_name, 'rows': len(rows),
-             'executed': 0, 'ok': 0, 'error': 0, 'timeout': 0}
+             'executed': 0, 'ok': 0, 'error': 0, 'timeout': 0,
+             # 延期命中必须显式可见：计数 + 逐方法，不允许静默跳过。
+             'deferred': 0, 'deferredMethods': []}
     seen = set()
     unavailable = set()
     # 一个请求 id 只能属于一个方法：共用 id 时两条方法会读同一条 response，
@@ -265,16 +297,22 @@ def analyze_round(round_name, rows, wire, oracle_index):
                 'P1-COVERAGE', round_name, method,
                 'method outside the registered 101-method execution set'))
         else:
+            deferred = deferred_match(method, row, golden)
+            if deferred:
+                stats['deferred'] += 1
+                stats['deferredMethods'].append(method)
             if shape != golden['shape']:
                 violations.append(violation(
                     'P2-SHAPE', round_name, method,
                     f'shape {shape!r} != golden {golden["shape"]!r}'))
-            if outcome != golden['outcome']:
+            if outcome != golden['outcome'] and not deferred:
                 violations.append(violation(
                     'P3-OUTCOME', round_name, method,
                     f'outcome {outcome!r} != golden {golden["outcome"]!r} '
                     '(no availability-ratio discounting)'))
-            if outcome == 'error':
+            if deferred:
+                pass  # 已计入 stats['deferred']；P4 只对这一格不比对
+            elif outcome == 'error':
                 code = row.get('errorCode')
                 if not isinstance(code, str) or not code:
                     violations.append(violation(
@@ -390,7 +428,10 @@ def analyze_round(round_name, rows, wire, oracle_index):
             'missing from the executed set (registered 101)'))
     # P5：unavailable 集合恰好等于登记的 6 个（集合外答 unavailable 即 FAIL，
     # 6 个之内答非 unavailable 也 FAIL；99/101 unavailable 必须 FAIL）。
-    for method in sorted(unavailable - REGISTERED_UNAVAILABLE_METHODS):
+    # 已登记延期的 3 个 always-on 方法不在集合判定内——它们答 unavailable 是登记
+    # 过的既知差异（上面已计入 stats['deferred']），而不是「集合外答 unavailable」。
+    for method in sorted(unavailable - REGISTERED_UNAVAILABLE_METHODS
+                         - DEFERRED_UNAVAILABLE_METHODS):
         violations.append(violation(
             'P5-UNAVAILABLE-SET', round_name, method,
             'answers CAPABILITY_UNAVAILABLE outside the registered gated set '
@@ -497,6 +538,24 @@ def load_oracle(path):
         raise InputError(
             f'{path}: oracle unavailable set {sorted(unavailable)} does not match '
             f'the registered gated set {sorted(REGISTERED_UNAVAILABLE_METHODS)}')
+    # 延期集合的登记前提（fail-closed）：金样里必须是 `ok`（TS 基线的真实回答，
+    # #2143 实测），且与 gated 集不相交、全部在 101 条里。任一漂移说明登记与数据
+    # 打架：此时继续跑会让延期变成「对未知形状的静默放行」。
+    overlap = sorted(DEFERRED_UNAVAILABLE_METHODS & REGISTERED_UNAVAILABLE_METHODS)
+    if overlap:
+        raise InputError(f'{path}: deferred methods {overlap} also belong to the '
+                         'registered gated set')
+    for method in sorted(DEFERRED_UNAVAILABLE_METHODS):
+        row = index.get(method)
+        if row is None:
+            raise InputError(f'{path}: deferred method {method!r} is missing from '
+                             f'the {EXPECTED_METHOD_COUNT}-method golden')
+        if row['outcome'] != 'ok' or row['errorCode'] is not None:
+            raise InputError(
+                f'{path}: deferred method {method!r} is registered as '
+                f'{row["outcome"]}/{row["errorCode"]!r}; the deferral only covers '
+                'the TS baseline answering ok (a different golden row is a registry '
+                'drift, not something to tolerate)')
     assert_matches_frozen({method: row['shape'] for method, row in index.items()},
                           str(path))
     return data, index
@@ -562,6 +621,18 @@ def run_emit(args):
     if len(self_index) != EXPECTED_METHOD_COUNT:
         raise InputError(
             f'first round holds {len(self_index)} methods, expected {EXPECTED_METHOD_COUNT}')
+    # 金样只能从 TS 基线的真实回答派生：延期方法的金样行必须是 `ok`。若拿一轮
+    # 「延期方法答 CAPABILITY_UNAVAILABLE」的数据去 emit，延期分支会让它自洽通过，
+    # 从而把 Rust 差异写进金样 —— 这里 fail-closed 挡住。
+    for method in sorted(DEFERRED_UNAVAILABLE_METHODS):
+        row = self_index.get(method)
+        if row is None:
+            raise InputError(f'emit: first round lacks deferred method {method!r}')
+        if row['outcome'] != 'ok' or row['errorCode'] is not None:
+            raise InputError(
+                f'emit: {method!r} answered {row["outcome"]}/{row["errorCode"]!r} in '
+                'the first round; the golden must come from the TS baseline where '
+                'it answers ok (a deferred divergence is never a golden row)')
     # 生成侧也核：金样是第 5 份登记表，生成时同样不得与冻结 fixture 漂移。
     assert_matches_frozen({row['method']: row['shape'] for row in bundles[0]['rows']},
                           str(bundles[0]['dir']))
@@ -657,6 +728,11 @@ def run_check(args):
         'status': 'PASS' if not violations else 'FAIL',
         'command': 'check',
         'oracle': {'path': str(args.oracle), 'methods': len(oracle_index)},
+        # 已登记延期（不是豁免）：显式列出方法集与理由，逐轮命中数见 rounds[].deferred。
+        'deferred': {'methods': sorted(DEFERRED_UNAVAILABLE_METHODS),
+                     'reason': DEFERRED_REASON,
+                     'registration': 'specs/gateway-parity/diffs/'
+                                     'A8.6-RETIREMENT-OUTCOME-PARITY-001-R1.md'},
         'rounds': stats,
         # 单轮时 P7 是空判（每个方法只有一项，distinct 恒为 1）：PASS 不等于
         # 「跨轮稳定已核」。报告显式给出评估轮数，下游不得把 1 轮当 P7 证据。

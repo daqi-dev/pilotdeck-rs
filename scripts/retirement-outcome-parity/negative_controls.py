@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N17）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N18）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -699,6 +699,14 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     assert gated in CHECK.REGISTERED_UNAVAILABLE_METHODS
     assert find_row(base_rows, gated)['errorCode'] == CAPABILITY_UNAVAILABLE
     assert ALT_CODE != CHECK.CAPABILITY_UNAVAILABLE
+    # N18（#2143）：延期只容忍「金样 ok ↔ 被测回 CAPABILITY_UNAVAILABLE」这一格。
+    # 探针取一个**已登记延期**且基线为 ok/request 的方法；拿不到就说明登记与基线
+    # 数据打架，控件无从构造（assert 显式失败，不静默跳过）。
+    deferred_probes = [row['method'] for row in base_rows
+                       if row['method'] in CHECK.DEFERRED_UNAVAILABLE_METHODS
+                       and row['outcome'] == 'ok' and row['shape'] == 'request']
+    assert deferred_probes, ('baseline has no deferred ok/request method; '
+                             'N18 needs one')
 
     def clone(*samples):
         return [([dict(row) for row in rows], [json.loads(json.dumps(frame)) for frame in frames])
@@ -973,6 +981,12 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
         Control('N17', f'{shape_probe} 的 send 帧复制一条（一个方法两条 send）',
                 ['P6-WIRE-CODE'], shape_probe, n17,
                 landed_count('send', 'request', shape_probe)(2)),
+        # #2143：延期的边界。同一延期方法换成别的错误码，P3 + P4 必须双双点名它；
+        # 只报一条或一条都不报，就说明延期被写成了对该方法的整体豁免。
+        Control('N18', f'已登记延期方法 {deferred_probes[0]} 的码改 {ALT_CODE}（线缆同步）',
+                ['P3-OUTCOME', 'P4-ERRORCODE'], deferred_probes[0],
+                one(lambda rows, frames: set_error(rows, frames, deferred_probes[0], ALT_CODE)),
+                landed_row('errorCode', ALT_CODE, deferred_probes[0])),
     ]
 
 
@@ -1107,7 +1121,7 @@ def build_parser():
     """
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
-        description='Negative controls N1-N17 for the retirement outcome-parity '
+        description='Negative controls N1-N18 for the retirement outcome-parity '
                     'checker (#1477). Data-only mutations; no source text is touched.')
     defaults = {'data': str(DEFAULT_DATA), 'oracle': str(DEFAULT_ORACLE)}
     for key, flags, help_text in PARSER_OPTIONS:
