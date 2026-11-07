@@ -39,18 +39,21 @@ skipped. ``_segments`` understands module constants, an alias assigned exactly
 once anywhere in the file, ``/`` joins, ``ROOT``, ``__file__``, ``Path(...)``,
 ``.parent``, ``.parents[n]``, ``.resolve()``, ``.joinpath()``, ``.with_name()``
 and ``.with_suffix()``; ``_is_path_shape`` also reads the call spellings a table
-may use instead of ``/`` (``Path(base, 'mod.rs')``, ``base.joinpath('mod.rs')``,
-``'x.json'.format(...)``). Paths built by string ``+`` or by an f-string are
-outside that family and are reported as errors rather than guessed; so is
-anything else the resolver cannot follow from the repository root, including a
-module-level name that a function rebinds and a comprehension over a non-literal
-source. Silent skipping is what makes a discovery gate *look* green while
-measuring nothing.
+may use instead of ``/`` (``Path(base, 'mod.rs')``, ``base.joinpath('mod.rs')``).
+Paths built by string ``+``, by an f-string, or with ``os.path.join`` / ``%`` /
+``.format()`` are outside that family and are reported as errors rather than
+guessed; so is anything else the resolver cannot follow from the repository
+root, including a module-level name that a function rebinds and a comprehension
+over a non-literal source. Silent skipping is what makes a discovery gate *look*
+green while measuring nothing.
 
-A table also depends on the shared fixtures it imports: the loop keys a changed
-``fixtures/negative_suite.py`` as ``fixtures/negative_suite.py``, and the import
-alone does not put that literal in the table's text, so ``violations`` requires
-the same anchor for every imported ``negative_*`` helper.
+A table also depends on the fixtures it imports: the loop keys a changed
+``fixtures/negative_suite.py`` as ``fixtures/negative_suite.py`` and a changed
+``fixtures/_shared/mutant_switch.py`` as ``_shared/mutant_switch.py``, and the
+import alone does not put either literal in the table's text, so ``violations``
+requires the same anchor for every imported shared helper — both the
+``SHARED_HELPERS`` modules and the library directories (``_shared``,
+``_negkit``).
 
 ``test_removing_an_anchor_turns_the_guard_red`` re-runs the check with each
 anchor dropped in turn, so the guard's discrimination is proven on every run
@@ -246,6 +249,12 @@ SHARED_HELPERS = frozenset({
     'anchor_selfcheck.py', 'negative_panic.py', 'negative_process.py',
     'negative_selection.py', 'negative_suite.py', 'pending_reanchor.py',
 })
+
+# Directories holding shared libraries rather than discovery targets. A changed
+# ``fixtures/_shared/mutant_switch.py`` is keyed ``_shared/mutant_switch.py`` by
+# the loop, so importing from one of these is the same dependency as importing a
+# ``SHARED_HELPERS`` module one level up.
+LIBRARY_DIRS = frozenset({'_shared', '_negkit'})
 
 
 def _constants(tree):
@@ -547,30 +556,51 @@ def _is_path_shape(node, constants):
     return False
 
 
-def _shared_module_keys(tree):
-    """``fixtures/<helper>.py`` for every shared fixture helper the table imports.
+def _imported_module_keys(dotted, root):
+    """Discovery keys for one absolute import, by the loop's ``dir/file`` rule.
+
+    ``negative_suite`` and ``pending_reanchor`` are top-level fixture files, so
+    their key is ``fixtures/<name>.py``; ``_shared.mutant_switch`` lives one
+    directory down and keys as ``_shared/mutant_switch.py``. The check that the
+    module is really there keeps a same-named third-party import from demanding
+    an anchor for a file this repository does not have.
+    """
+    parts = dotted.split('.')
+    if parts[0] in LIBRARY_DIRS:
+        if len(parts) < 2:
+            return set()
+        rel = f'{parts[0]}/{parts[1]}.py'
+        return {rel} if (root / rel).is_file() else set()
+    name = f'{parts[0]}.py'
+    if name in SHARED_HELPERS and (root / name).is_file():
+        return {f'fixtures/{name}'}
+    return set()
+
+
+def _shared_module_keys(tree, root=FIXTURES):
+    """Discovery keys for every shared fixture module the table imports.
 
     The discovery loop keys a changed ``fixtures/negative_suite.py`` as
     ``fixtures/negative_suite.py``; a table that imports that helper is not
     scheduled for the change unless the same literal occurs in its own text.
-    Declaring it in ``DISCOVERY_ANCHORS`` is what puts it there.
+    Declaring it in ``DISCOVERY_ANCHORS`` is what puts it there. ``from _shared
+    import mutant_switch`` names no module path at all, so each imported name is
+    expanded against the library directory (``_shared/mutant_switch.py``).
     """
     keys = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            modules = [alias.name for alias in node.names]
+            for alias in node.names:
+                keys |= _imported_module_keys(alias.name, root)
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            modules = [node.module]
-        else:
-            continue
-        for module in modules:
-            name = module.split('.')[0]
-            if name.startswith('negative_') and (FIXTURES / f'{name}.py').is_file():
-                keys.add(f'fixtures/{name}.py')
+            keys |= _imported_module_keys(node.module, root)
+            if node.module in LIBRARY_DIRS:
+                for alias in node.names:
+                    keys |= _imported_module_keys(f'{node.module}.{alias.name}', root)
     return keys
 
 
-def bare_concat_keys(tree, table):
+def bare_concat_keys(tree, table, root=FIXTURES):
     """``({key: [source expression, ...]}, problems)`` for one table.
 
     A key is the discovery key ``dir/file`` of a path the table builds from a
@@ -580,13 +610,20 @@ def bare_concat_keys(tree, table):
     table that hides its directory behind an unsupported expression fails the
     guard instead of quietly passing it.
     """
-    self_path = FIXTURES_FROM_ROOT + tuple(table.split('/'))
+    self_path = (FIXTURES_FROM_ROOT + tuple(table.split('/')) if root == FIXTURES
+                 else tuple(table.split('/')))
     constants = _constants(tree)
     shadowed = _shadowed_names(tree)
     keys = {}
     problems = []
 
     def record(segments, expression):
+        # A single component is not a discovery key: the loop always keys
+        # ``dir/file``. Every caller reports it here rather than at its own
+        # call site, so a comprehension and a ``/`` join agree.
+        if len(segments) < 2:
+            problems.append(f'no discovery key (needs a directory and a file name): {expression}')
+            return
         keys.setdefault('/'.join(segments[-2:]), []).append(expression)
 
     def resolve(node, expression):
@@ -602,9 +639,6 @@ def bare_concat_keys(tree, table):
                                 f'follow it): {expression}')
             return
         if not _bare_tail(node, constants):
-            return
-        if len(segments) < 2:
-            problems.append(f'no discovery key (needs a directory and a file name): {expression}')
             return
         record(segments, expression)
 
@@ -759,7 +793,8 @@ def sweep(root=FIXTURES):
             continue
         if rel.startswith('_'):
             continue
-        keys, problems = bare_concat_keys(ast.parse(path.read_text(encoding='utf-8')), rel)
+        keys, problems = bare_concat_keys(ast.parse(path.read_text(encoding='utf-8')), rel,
+                                          root=root)
         if keys:
             blind[rel] = keys
         hard = [problem for problem in problems
@@ -842,7 +877,26 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertTrue((FIXTURES / rel).is_file(),
                                 f'{rel} is gone; drop its KNOWN_BLIND entry')
                 self.assertNotIn(rel, TABLES, f'{rel} is registered; drop its KNOWN_BLIND entry')
-                self.assertGreater(len(reason), 4, f'{rel}: KNOWN_BLIND needs a reason')
+                self.assertRegex(reason, r'^(?:\d+ keys?|\d+ unresolvable)'
+                                         r'(?: \+ \d+ unresolvable)?$',
+                                 f'{rel}: KNOWN_BLIND needs the measured counts')
+
+    def test_every_blind_table_really_hides_a_key(self):
+        """A blind entry must name a table that actually lacks one of its keys.
+
+        ``neg-for-diff.sh`` schedules a table by grepping for the literal key, so
+        a table whose every computed key already occurs in its own text is not
+        blind at all: the entry is either stale (the table was fixed — register
+        it in ``TABLES``) or the register is drifting.
+        """
+        blind, _ = sweep()
+        for rel, keys in sorted(blind.items()):
+            text = (FIXTURES / rel).read_text(encoding='utf-8')
+            with self.subTest(table=rel):
+                self.assertTrue(
+                    [key for key in keys if key not in text],
+                    f'{rel}: every computed key already appears in the table text; '
+                    'drop the KNOWN_BLIND entry or register anchors in TABLES')
 
     def test_known_blind_counts_match_the_scan(self):
         """The register's numbers are part of it: a stale count hides new keys.
