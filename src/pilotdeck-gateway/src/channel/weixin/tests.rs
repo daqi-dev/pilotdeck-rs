@@ -234,6 +234,21 @@ fn read_state(file: &std::path::Path) -> Option<String> {
     std::fs::read_to_string(file).ok()
 }
 
+/// #2073: how long a `flush` may take before the test calls it a wedge. Shared
+/// by the orphaned-entry check, the "still persists" check and the retry in the
+/// abandoned-drain test, so tuning one does not silently drift from the others.
+const FLUSH_DEADLINE: Duration = Duration::from_secs(5);
+
+/// #2073: how long the test waits for a debounce timer to reach its park point.
+/// Must stay well above the debounce it is paired with.
+const PARK_WAIT: Duration = Duration::from_secs(30);
+
+/// #2073: wall-clock bound on waiting for a superseded timer to retire. An
+/// iteration count is not a bound on elapsed time — every `sleep(1ms)` may
+/// overshoot under load — and the observation window below must stay narrower
+/// than the debounce for an early write to prove anything.
+const SETTLE_WINDOW: Duration = Duration::from_secs(2);
+
 /// #2073 P0: a debounce timer that has already woken up must retire itself
 /// when a newer `save` supersedes it — and must not lose the newest state.
 ///
@@ -255,12 +270,13 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     }
     let observed = multi_thread_runtime().block_on(async {
         let root = Root::new();
-        // The debounce must outlast the whole observation window below (the
-        // settle loop plus one `flush`), otherwise the *live* timer may fire
-        // legitimately and an early write would not identify the superseded
-        // timer. 5 s of debounce against a <= 3 s window keeps that margin
-        // without slowing the negative-control rows much; the park wait below
-        // is sized to cover it.
+        // An early write can only be blamed on the superseded timer if the
+        // *live* timer cannot fire before `early_write` is sampled below. That
+        // sample happens right after the settle loop, which `SETTLE_WINDOW`
+        // bounds by the wall clock — so a 5 s debounce keeps a 3 s margin no
+        // matter how far each `sleep(1ms)` overshoots. The `flush` calls come
+        // later and are not part of the window: `flush` retires live timers by
+        // sequence in the lock, before its first await.
         let persistence = ChannelStatePersistence::with_debounce(root.path(), 5_000);
         let key = js("weixin");
         let file = root.path().join("weixin.state.json");
@@ -270,7 +286,7 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
         persistence.save(&key, state_with_value(1.0));
         tokio::task::spawn_blocking(move || {
             entered
-                .recv_timeout(std::time::Duration::from_secs(30))
+                .recv_timeout(PARK_WAIT)
                 .expect("#2073 the debounce timer must reach the park point")
         })
         .await
@@ -281,32 +297,28 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
         persistence.save(&key, state_with_value(2.0));
         persistence.release_parked_timer();
         let mut settled = persistence.timer_exits() > exits;
-        for _ in 0..2_000 {
-            if settled {
-                break;
-            }
+        let settle_deadline = std::time::Instant::now() + SETTLE_WINDOW;
+        while !settled && std::time::Instant::now() < settle_deadline {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             settled = persistence.timer_exits() > exits;
         }
 
         // A superseded timer must not write: the live timer's debounce still has
-        // seconds to go, and TS would not have written either. Sampling here is
-        // safe only because the debounce outlasts this whole window.
+        // seconds to go, and TS would not have written either.
         let early_write = read_state(&file).is_some();
 
         // The newest state must land; pre-fix it was claimed and then dropped,
         // and `flush` waited forever on the orphaned in-flight entry.
-        let flushed = tokio::time::timeout(std::time::Duration::from_secs(5), persistence.flush())
+        let flushed = tokio::time::timeout(FLUSH_DEADLINE, persistence.flush())
             .await
             .is_ok();
         let after_flush = read_state(&file);
 
         // And the key must not be wedged: a later save still persists.
         persistence.save(&key, state_with_value(3.0));
-        let later_flushed =
-            tokio::time::timeout(std::time::Duration::from_secs(5), persistence.flush())
-                .await
-                .is_ok();
+        let later_flushed = tokio::time::timeout(FLUSH_DEADLINE, persistence.flush())
+            .await
+            .is_ok();
         Observed {
             settled,
             early_write,
@@ -351,8 +363,10 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
     struct Observed {
         waiters: usize,
         cancelled: bool,
-        /// `None` means the waiting flush never returned (the wedge).
-        second: Option<Result<(), String>>,
+        /// `None` means the waiting flush never returned (the wedge);
+        /// `Some(false)` means it returned with an error or panicked — neither
+        /// is the hang this test is about.
+        second: Option<bool>,
         content: Option<String>,
     }
     let observed = multi_thread_runtime().block_on(async {
@@ -387,10 +401,10 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
         // Drop the drainer mid-write; the waiter must recover, not wedge.
         first.abort();
         let cancelled = matches!(first.await, Err(error) if error.is_cancelled());
-        let second = match tokio::time::timeout(std::time::Duration::from_secs(5), second).await {
-            // A join error means the retry panicked; only the timeout is the
-            // wedge. Keep them distinguishable instead of collapsing to `None`.
-            Ok(joined) => Some(joined.unwrap_or_else(|error| Err(format!("join: {error}")))),
+        let second = match tokio::time::timeout(FLUSH_DEADLINE, second).await {
+            // Only the timeout is the wedge; a join error (panic) or a flush
+            // error is a different failure and must not read as `None`.
+            Ok(joined) => Some(joined.is_ok()),
             Err(_) => None,
         };
         Observed {
@@ -413,13 +427,7 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
         observed.second.is_some(),
         "#2073 the waiting flush must not hang on an abandoned entry"
     );
-    crate::negative_assert!(
-        observed
-            .second
-            .as_ref()
-            .is_some_and(|result| result.is_ok()),
-        "#2073 the retry writes"
-    );
+    crate::negative_assert!(observed.second == Some(true), "#2073 the retry writes");
     crate::negative_assert_eq!(
         observed.content.as_deref(),
         Some("{\n  \"v\": 5\n}"),
