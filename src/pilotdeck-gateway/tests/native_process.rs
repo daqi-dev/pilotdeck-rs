@@ -329,10 +329,7 @@ impl tokio::io::AsyncRead for ErrorAfter {
     ) -> std::task::Poll<std::io::Result<()>> {
         let this = self.get_mut();
         if this.bytes.position() as usize >= this.bytes.get_ref().len() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "#1989 injected read error",
-            )));
+            return std::task::Poll::Ready(Err(std::io::Error::other("#1989 injected read error")));
         }
         std::pin::Pin::new(&mut this.bytes).poll_read(cx, buf)
     }
