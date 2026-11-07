@@ -137,7 +137,7 @@ mutations.append((
     '            .resolve_dialog_project(project_key)\n'
     '            .map(JsString::from)\n'
     '            .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))',
-    '        let root = self.project_root.to_str().unwrap_or_default();\n'
+    '        let root = self.options.project.to_str().unwrap_or_default();\n'
     '        if project_key.equals_str(root) {\n'
     '            Ok(project_key.clone())\n'
     '        } else {\n'
@@ -165,6 +165,18 @@ mutations.append((
     ASSEMBLY_MEMORY,
     '        if !self.serves_project(project_key) {',
     '        if false && !self.serves_project(project_key) {',
+    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    'must not reach the served project'))
+# #1456 r2 (codex sibling P2): the gate must be *project*-exact. Degrading the
+# shared predicate to a textual prefix admits a registered sibling whose
+# spelling starts with the served root (`<tmp>/project-2`) and would wipe the
+# served project's memory; the prefix-sharing fixture cell must kill it.
+mutations.append((
+    'memory-foreign-project-served-by-prefix',
+    ASSEMBLY_MEMORY,
+    '            .is_ok_and(|key| self.options.serves_project(&key))',
+    '            .is_ok_and(|key| key\n'
+    '                .starts_with(self.options.project.to_string_lossy().as_ref()))',
     'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
     'must not reach the served project'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
@@ -358,7 +370,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 97
+EXPECTED_TOTAL = 98
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -418,6 +430,7 @@ EXPECTED_NAMES = (
     'memory-project-key-exact-only',
     'memory-lease-dropped',
     'memory-foreign-project-served',
+    'memory-foreign-project-served-by-prefix',
     'capability-resolve_settings',
     'submit-workspace-id-unwired',
     'submit-snapshots-unwired',
