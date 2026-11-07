@@ -174,6 +174,12 @@ impl Options {
                 .ok_or_else(|| format!("native mode requires {key}"))
         };
         let home = directory(Path::new(take("--home")?), "home")?;
+        // #2036: `--home` is judged on the canonical path `directory` returns,
+        // not on the argv spelling alone. A UTF-8 argv can still resolve through
+        // a symlink to a raw name; `environment()` then writes `HOME` /
+        // `PILOT_HOME` with `to_string_lossy` while every other consumer uses
+        // the raw `PathBuf`, silently handing the child a different home.
+        utf8_argument(home.as_os_str(), "home")?;
         // Keep Node path.resolve identity (including symlink spelling). Only
         // the containment check uses the physical path, preserving isolation.
         let project = crate::metadata::resolve_process_path(cwd, Path::new(take("--project")?))?;
@@ -183,10 +189,9 @@ impl Options {
         // while `serves_project` compares the raw `PathBuf`, so the resulting
         // workspace id was reachable by no `snapshot_list` request: the turn
         // captured snapshots nothing could list. Refuse the unreachable path at
-        // parse, like `--storage-root` below.
-        if project.to_str().is_none() {
-            return Err("project is not UTF-8".into());
-        }
+        // parse, like `--storage-root` below. (`resolve_process_path` is
+        // lexical, so the process cwd can contribute raw bytes as well.)
+        utf8_argument(project.as_os_str(), "project")?;
         let physical_project = directory(&project, "project")?;
         if home.starts_with(&physical_project) || physical_project.starts_with(&home) {
             return Err("native home and project must be separate directories".into());
@@ -200,6 +205,11 @@ impl Options {
         }
         let token_file = file(Path::new(take("--token-file")?), "token file")?;
         let sidecar = file(Path::new(take("--sidecar")?), "sidecar")?;
+        // #2036: `assembly` builds the child's command line from this path with
+        // `to_string_lossy` (assembly.rs:398). Accepting raw bytes would launch
+        // a different executable than the canonical path validated above, with
+        // no error. Judge the canonical spelling, like `--home`.
+        utf8_argument(sidecar.as_os_str(), "sidecar")?;
         let drain_ms = values
             .get("--drain-ms")
             .map(|s| {
@@ -223,9 +233,9 @@ impl Options {
             drain_budget: Duration::from_millis(drain_ms),
             storage_root: values
                 .get("--storage-root")
-                .map(|v| v.to_str().ok_or("storage root is not UTF-8"))
+                .map(|v| utf8_argument(v, "storage root"))
                 .transpose()?
-                .map(|s| s.to_owned()),
+                .map(str::to_owned),
         })
     }
 
@@ -281,6 +291,21 @@ fn file(path: &Path, label: &str) -> Result<PathBuf, ProxyError> {
         return Err(format!("native {label} must be an existing file").into());
     }
     Ok(path)
+}
+
+/// #2036: one rule for every argv path field. Node's argv is a JS string, so the
+/// TS baseline can only ever name these paths by their UTF-8 spelling; a raw
+/// byte spelling is a branch no client can reach. Worse, the gateway keeps the
+/// raw `PathBuf` while children get `to_string_lossy` (`HOME`, `PILOT_HOME`, the
+/// sidecar command line), so raw bytes silently split one path into two
+/// directories. Refuse them at parse with the field's name. Callers pass the
+/// value that actually lands in `Options` — the canonical path for the
+/// filesystem fields, since resolution can surface raw bytes even from a UTF-8
+/// argv.
+fn utf8_argument<'a>(value: &'a std::ffi::OsStr, label: &str) -> Result<&'a str, ProxyError> {
+    value
+        .to_str()
+        .ok_or_else(|| format!("{label} is not UTF-8").into())
 }
 
 fn validate_environment(env: &Env) -> Result<(), ProxyError> {
