@@ -126,10 +126,16 @@ impl ChannelHandle for SlackHandle {
         let reason = reason.to_owned();
         Box::pin(async move {
             shared.log("info", format!("slack: stopping ({reason})"));
-            let mut runtime = shared.runtime.lock().await;
-            if let Some(app) = runtime.app.take()
-                && let Some(mut sink) = app.sink
-            {
+            // The sink is taken out before any `await` on it: holding the
+            // runtime mutex across `send(Close)` would stall every reader
+            // frame and `send_reply` gate on a peer that stopped reading
+            // (a full send buffer parks the send forever).
+            let sink = {
+                let mut runtime = shared.runtime.lock().await;
+                runtime.bot_user_id = JsValue::Null;
+                runtime.app.take().and_then(|app| app.sink)
+            };
+            if let Some(mut sink) = sink {
                 let _ = sink
                     .send(Message::Close(Some(
                         tokio_tungstenite::tungstenite::protocol::CloseFrame {
@@ -139,7 +145,6 @@ impl ChannelHandle for SlackHandle {
                     )))
                     .await;
             }
-            runtime.bot_user_id = JsValue::Null;
             Ok(())
         })
     }
@@ -282,7 +287,7 @@ async fn post_json(shared: &SlackShared, path: &str, body: &JsValue) -> Result<J
             &url,
             Some("application/json"),
             &text,
-            std::time::Duration::from_secs(30),
+            super::http_client::UNDICI_DEFAULT_TIMEOUT,
         )
         .await?;
     let payload = String::from_utf8_lossy(&response.body);
@@ -314,9 +319,17 @@ async fn start_session(shared: &Arc<SlackShared>) -> Result<(), String> {
     let url = super::sms::js_string_of(&open.get("url").cloned().unwrap_or(JsValue::Undefined));
     // The socket opens with the message/error handlers already registered —
     // a frame that lands mid-`auth.test` dispatches with `botUserId = null`.
-    let (ws, _response) = connect_async(String::from_utf16_lossy(url.units()))
-        .await
-        .map_err(|_| WEBSOCKET_ERROR.to_owned())?;
+    // The handshake is deadline-bounded: a black-holed WS endpoint would
+    // otherwise park `start()` forever (the TS `ws` handshake bound is
+    // SDK-internal and unmeasured — A8.3-CH-SLACK-001 item 2 — so the
+    // repo-measured JS exchange bound is used; no oracle case reaches it).
+    let (ws, _response) = tokio::time::timeout(
+        super::http_client::UNDICI_DEFAULT_TIMEOUT,
+        connect_async(String::from_utf16_lossy(url.units())),
+    )
+    .await
+    .map_err(|_| WEBSOCKET_ERROR.to_owned())?
+    .map_err(|_| WEBSOCKET_ERROR.to_owned())?;
     let (sink, stream) = ws.split();
     {
         let mut runtime = shared.runtime.lock().await;

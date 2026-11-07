@@ -48,6 +48,14 @@ MUTATIONS = [
      '    "qq",\n    "wecom",\n];',
      '    "qq",\n    "wecom",\n    "sms",\n];',
      'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
+    # M4b (#1344): the implemented channel must not be back in the reject
+    # table; re-inserting the key refuses startup for the subset the loader
+    # test keeps loadable (the #1343 precedent
+    # `reject-table-reinserts-bluebubbles`).
+    ('reject-table-reinserts-slack', source / 'loader.rs',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "homeassistant",',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "slack",\n    "homeassistant",',
+     'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
     # M5: the loader-table truthiness gate is constant-true; the falsy-enabled
     # control kills. Anchor is the `else` arm of `rejects_enabled`, which is
     # the only place the nine loader keys read `js_truthy`.
