@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 290 mutants:
+`JUDGES`, keyed by the same names. The current table has 295 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -461,7 +461,12 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-class-body-clear`, `calibrate-for-target-with-suppress`,
 `calibrate-for-target-class-body-shadow`,
 `calibrate-for-target-lambda-default`, `calibrate-for-target-class-body-def`,
-`calibrate-for-target-method-self`.
+`calibrate-for-target-method-self`,
+`calibrate-for-target-conditional-literal-rebind`,
+`calibrate-for-target-enclosing-binding-after-use`,
+`calibrate-for-target-tuple-partial-alias`,
+`calibrate-for-target-comp-partial-shadow`,
+`calibrate-for-target-assert-msg`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1298,4 +1303,19 @@ Round 9's flat scan is kept; round 10 fixes the places where it confused a
 | Comprehension target shadows the handle (false FAIL guard). | self-test `round 10: a comprehension target that shadows the handle` |
 | `finally` rebinding is provably executed (false FAIL guard). | self-test `round 10: a rebinding in a finally block` |
 | Tuple unpack copies the handle instead of handing it over (false FAIL guard). | self-test `round 10: a tuple unpack that copies the handle` |
-| Assertion message is only formatted on failure (false FAIL guard). | self-test `round 10: an assertion message` |
+| Assertion message is only formatted on failure (false FAIL guard). **Withdrawn in round 11**: the object survives in `AssertionError.args`. | `calibrate-for-target-assert-msg` |
+
+### Closed by `fix-r1` round 11 (codex r7 five P0 / one P1)
+
+Round 10's scope model is kept; round 11 fixes five places where it proved too
+much from too little, plus one pre-existing survivor.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A literal rebinding that may not run**: `items = (md,); if flag: items = (); for x in items: x.common = <stub>`. | `calibrate-for-target-conditional-literal-rebind` |
+| **Enclosing-scope binding written after the use's line**: `def early(): for x in items: ...` then `items = (md,)`. | `calibrate-for-target-enclosing-binding-after-use` |
+| **One alias must not skip the rest of the right-hand side**: `f, x = h, [h('common', <stub>)]`. | `calibrate-for-target-tuple-partial-alias` |
+| **Shadowing one tracked name must not clear the others**: `f = h; [f('common', <stub>) for h in (None,)]`. | `calibrate-for-target-comp-partial-shadow` |
+| **The assertion message carries the object**: `try: assert False, h except AssertionError as e: e.args[0](...)`. | `calibrate-for-target-assert-msg` |
+| **Class-body rebinding shadows the outer handle for later statements** (false FAIL guard). | self-test `round 11: a class body that rebinds the handle name before the call` |
+| **`from builtins import setattr as alias` is the builtin** (pre-existing survivor). | `calibrate-builtin-alias-setattr` |
