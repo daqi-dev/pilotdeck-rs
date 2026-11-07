@@ -1768,8 +1768,11 @@ async fn list_tools_reports_a_timeout_shaped_schema_error_as_a_timeout() {
 ///    the late handshake settles (`dirRemovedAtClose: false` here,
 ///    `true` in the baseline).
 ///
-/// 1–3 are registered in the accepted-diff ledger as human-approved option A
-/// (#1751): `specs/parity/diffs/A6.5-MCP-SESSION-DIR-LIFETIME-001.md` and the
+/// 1–2 are covered by the pre-existing `handshakeClose` row of the
+/// accepted-diff ledger (`specs/parity/accepted-diffs.md` #4,
+/// human-approved 2026-10-21); only 3 — the directory lifetime — is
+/// registered as human-approved option A (#1751):
+/// `specs/parity/diffs/A6.5-MCP-SESSION-DIR-LIFETIME-001.md` and the
 /// gateway-parity same-ID `-R1` correction.
 #[tokio::test]
 async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
@@ -1843,9 +1846,14 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     // registered as human-approved option A (#1751:
     // `specs/parity/diffs/A6.5-MCP-SESSION-DIR-LIFETIME-001.md` plus the
     // gateway-parity same-ID `-R1` correction), so the ledger no longer
-    // blocks pinning it — with the handshake gated (and the 120 s pinned
-    // timeout not yet fired) the value is deterministic, and the positive
-    // control is left to follow-up #2233 rather than widened here.
+    // blocks pinning it — with the handshake gated the value is deterministic
+    // only inside `min(handshake_timeout_ms, 60 s)` of the initialize send:
+    // the 120 s pin merely suppresses the 10 s timeout branch, while the
+    // SDK's hardcoded 60 s `initialize` request timeout settles the
+    // handshake as failed and `dispose()` then removes the directory before
+    // returning (measured in `_tmp/20261107-2225-r5/probe.log`). This test
+    // disposes well inside that window; the positive control is left to
+    // follow-up #2233 rather than widened here.
     assert_eq!(
         runtime
             .client("mock")
