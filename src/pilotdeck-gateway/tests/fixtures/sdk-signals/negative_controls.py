@@ -3,7 +3,7 @@
 
 --check remains a compatibility alias for --check-anchors.
 
-The catalog has exactly 77 controls. Each selected control runs its named
+The catalog has exactly 79 controls. Each selected control runs its named
 positive, compiles the mutant, runs the named negative, restores, and reruns the
 positive. All verdicts are published only after the source guard has verified
 restoration. New/dirty source and test files must first be committed by the
@@ -71,7 +71,7 @@ def guarded_paths():
     return sorted({row[1] for row in mutations}, key=str)
 
 
-EXPECTED_TOTAL = 77
+EXPECTED_TOTAL = 79
 # #1382: per-ID unordered-close controls are pinned to the registered
 # close-order ledger IDs. These three whole-scope boundary controls are not
 # one-per-ID rows, so they are excluded from that pin; a future boundary
@@ -206,6 +206,41 @@ mutations = [
         "            }",
         "signal_cases::run_query_hello_hold_sigint",
         "#1145 run--query-hello-hold-sigint four surfaces, abort count, listeners and connections match TS",
+    ),
+    (
+        # #1178: mapping the stream-phase socket error with an abort in flight
+        # back to "retain the query and await the abort reply" is the tempting
+        # wrong alternative to the measured TS crash. The RST cell observes no
+        # exit inside the 12s window (the abort deadline is 30s on a dead
+        # socket), so status/natural surfaces differ and the cell must fail.
+        "rst-abort-waits-for-reply",
+        turn,
+        "                return if abort_ids.is_empty() {\n"
+        "                    QueryOutcome::Retain(error)\n"
+        "                } else {\n"
+        "                    QueryOutcome::InitializationFailed(error)\n"
+        "                };",
+        "                return if abort_ids.is_empty() {\n"
+        "                    QueryOutcome::Retain(error)\n"
+        "                } else {\n"
+        "                    return retain_query(error, abort_ids, abort_deadline);\n"
+        "                };",
+        "signal_cases::run_abort_rst_sigint",
+        "#1145 run--abort-rst-sigint four surfaces, abort count, listeners and connections match TS",
+    ),
+    (
+        # #1178: a mock that swallows the reset keeps the Rust child alive,
+        # so the RST cell degrades to an observation timeout instead of the
+        # TS-measured exit -- the replay would stop measuring the mapping.
+        "rst-mock-never-resets",
+        replay,
+        "                    Some(Action::Reset) => {\n"
+        "                        let _ = socket.get_ref().set_linger(Some(Duration::ZERO));\n"
+        "                        break;\n"
+        "                    }",
+        "                    Some(Action::Reset) => { continue; }",
+        "signal_cases::run_abort_rst_sigint",
+        "#1145 run--abort-rst-sigint four surfaces, abort count, listeners and connections match TS",
     ),
     (
         # #1260 r1: the 16-cell list is also pinned exhaustively against all

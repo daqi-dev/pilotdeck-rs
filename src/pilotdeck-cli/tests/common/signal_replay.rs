@@ -233,6 +233,7 @@ struct Request {
 enum Action {
     Send(Value),
     Close,
+    Reset,
 }
 enum Event {
     Frame(usize, Value),
@@ -263,6 +264,14 @@ async fn socket_actor(
                     Some(Action::Close) => Message::Close(Some(CloseFrame {
                         code: CloseCode::Library(4003), reason: "auth_failed".into(),
                     })),
+                    // #1178: a zero linger makes the drop below close the TCP
+                    // socket with a real RST -- the same reset the TS mock
+                    // applies to the query socket on abort_turn. The close is
+                    // then recorded as 1006, like an abnormally closed peer.
+                    Some(Action::Reset) => {
+                        let _ = socket.get_ref().set_linger(Some(Duration::ZERO));
+                        break;
+                    }
                     None => break,
                 };
                 match tokio::time::timeout(CLEANUP, socket.send(message)).await {
@@ -319,6 +328,7 @@ struct Replay {
     terminal_consumed: bool,
     terminal_after_abort: bool,
     late_abort_handled: bool,
+    rst_applied: bool,
     resolved_held: bool,
     trigger: bool,
     first_signal: bool,
@@ -578,6 +588,19 @@ impl Replay {
         if self.stage() == "abort-terminal" {
             self.pending_abort = Some(request);
             self.terminal("completed", self.input["final"] == true);
+        } else if self.action() == "rst" {
+            // #1178: the peer resets the query socket instead of replying to
+            // the dispatched abort; the actor records the death as close 1006.
+            self.rst_applied = true;
+            let socket = self
+                .sockets
+                .get(&request.connection)
+                .unwrap_or_else(|| panic!("#1145 {} abort socket actor", self.id));
+            require(
+                socket.send(Action::Reset),
+                &self.id,
+                "reset owned query socket",
+            );
         } else if self.action() != "hold" {
             self.reply(&request, self.action() != "error");
         }
@@ -927,6 +950,7 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
         terminal_consumed: false,
         terminal_after_abort: false,
         late_abort_handled: false,
+        rst_applied: false,
         resolved_held: false,
         trigger: false,
         first_signal: false,
@@ -1028,6 +1052,7 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
         "terminalConsumed":replay.stage()!="terminal" || replay.terminal_consumed,
         "terminalAfterAbort":replay.stage()!="abort-terminal" || replay.terminal_after_abort,
         "lateAbortHandled":replay.stage()!="abort-terminal" || replay.late_abort_handled,
+        "rstApplied":replay.action()!="rst" || replay.rst_applied,
         "blockingStdin":true});
     let actual = json!({"input":replay.input,"status":if expired {"OBSERVED_TIMEOUT"} else {"OBSERVED_EXIT"},
         "milestones":milestones,"aborts":replay.aborts,"connections":replay.connections,
@@ -1271,7 +1296,7 @@ mod comparison_tests {
         }
         assert_eq!(
             (normalized, retained),
-            (16, 8),
+            (20, 8),
             "#1145 observed business-prefixed and unprefixed denominator"
         );
     }
@@ -1906,6 +1931,7 @@ mod comparison_tests {
             terminal_consumed: false,
             terminal_after_abort: false,
             late_abort_handled: false,
+            rst_applied: false,
             resolved_held: false,
             trigger: false,
             first_signal: false,
@@ -2144,7 +2170,7 @@ mod comparison_tests {
         }
         assert_eq!(
             (total, timeout),
-            (88, 26),
+            (92, 26),
             "#1252 all multiclose and death-window cells covered"
         );
     }
@@ -2154,13 +2180,16 @@ mod comparison_tests {
     /// 1006 when the socket is still open and the server's 4003 when hello was
     /// rejected. They are not order-exempt, so pin each cell's concrete pair
     /// and prove the comparator rejects the inverted pair for that exact ID.
+    /// #1178: the four abort-rst cells share that causal shape (the RST kills
+    /// the query socket before the client's finally closes control) and stay
+    /// order-strict the same way.
     #[test]
     fn stable_query_before_control_cells_keep_concrete_order() {
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1260 stable order original JSON");
         let registered: BTreeSet<String> = registered_unordered_close_ids().into_iter().collect();
-        let cells: [(&str, u64); 16] = [
+        let cells: [(&str, u64); 20] = [
             ("run--query-hello-hold-sigint", 1006),
             ("run--query-hello-hold-sigterm", 1006),
             ("run--query-hello-reject-sigint", 4003),
@@ -2177,11 +2206,15 @@ mod comparison_tests {
             ("resume--query-model-reject-sigterm", 1006),
             ("resume--query-resume-reject-sigint", 1006),
             ("resume--query-resume-reject-sigterm", 1006),
+            ("run--abort-rst-sigint", 1006),
+            ("run--abort-rst-sigterm", 1006),
+            ("resume--abort-rst-sigint", 1006),
+            ("resume--abort-rst-sigterm", 1006),
         ];
         let unique: BTreeSet<_> = cells.iter().map(|(id, _)| *id).collect();
         assert_eq!(unique.len(), cells.len(), "#1260 unique stable-diff IDs");
-        // Exhaustiveness: across all 96 captures the "query (2) closes first,
-        // control (1) 1005 second" shape must occur for exactly these 16 IDs.
+        // Exhaustiveness: across all 100 captures the "query (2) closes first,
+        // control (1) 1005 second" shape must occur for exactly these 20 IDs.
         // Without this the list could silently lose a cell (or a new same-shape
         // cell could appear) while every per-cell assertion still passes.
         let measured: BTreeSet<&str> = source["captures"]
@@ -2254,6 +2287,136 @@ mod comparison_tests {
             assert!(
                 !closes_match(id, matches[0], &inverted),
                 "#1260 control-before-query must fail: {id}"
+            );
+        }
+    }
+
+    /// #1178: pin the four abort-rst originals. Every surface asserted here is
+    /// TS-measured, including that these cells need neither an approved stderr
+    /// exception nor an unordered-close registration: the business-prefixed Node
+    /// tail normalizes to the single business line, and the query RST close
+    /// causally precedes the client's own control close.
+    #[test]
+    fn rst_cells_keep_verified_original_shape() {
+        let source: Value =
+            serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
+                .expect("#1178 RST original JSON");
+        let cells: [(&str, &str); 4] = [
+            ("run--abort-rst-sigint", "SIGINT"),
+            ("run--abort-rst-sigterm", "SIGTERM"),
+            ("resume--abort-rst-sigint", "SIGINT"),
+            ("resume--abort-rst-sigterm", "SIGTERM"),
+        ];
+        // Exhaustiveness: the RST axis is exactly these four measured cells.
+        let measured: BTreeSet<&str> = source["captures"]
+            .as_array()
+            .expect("#1178 RST captures")
+            .iter()
+            .filter(|row| row["input"]["action"] == "rst")
+            .map(|row| row["input"]["id"].as_str().expect("#1178 RST cell id"))
+            .collect();
+        let unique: BTreeSet<&str> = cells.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            measured, unique,
+            "#1178 RST axis is exactly the measured cells"
+        );
+        for (id, signal) in cells {
+            let expected = source["captures"]
+                .as_array()
+                .expect("#1178 RST captures")
+                .iter()
+                .find(|row| row["input"]["id"] == id)
+                .unwrap_or_else(|| panic!("#1178 unique RST original: {id}"));
+            assert_eq!(
+                expected["input"]["signal"],
+                json!(signal),
+                "#1178 RST signal: {id}"
+            );
+            assert_eq!(
+                expected["input"]["stage"],
+                json!("stream"),
+                "#1178 RST stage: {id}"
+            );
+            assert_eq!(
+                expected["status"],
+                json!("OBSERVED_EXIT"),
+                "#1178 RST status: {id}"
+            );
+            assert_eq!(
+                expected["naturalExit"],
+                json!({"code":1,"signal":null,"cleanup":false}),
+                "#1178 RST natural exit: {id}"
+            );
+            assert_eq!(
+                expected["cleanupExit"],
+                Value::Null,
+                "#1178 RST cleanup exit: {id}"
+            );
+            assert_eq!(expected["aborts"], json!(1), "#1178 RST abort count: {id}");
+            assert_eq!(
+                expected["connections"],
+                json!(2),
+                "#1178 RST connections: {id}"
+            );
+            assert_eq!(
+                expected["activeAfterExit"],
+                json!(0),
+                "#1178 RST no lingering socket: {id}"
+            );
+            assert_eq!(
+                expected["stdout"],
+                json!(""),
+                "#1178 RST stdout empty: {id}"
+            );
+            assert_eq!(
+                expected["milestones"]["rstApplied"],
+                json!(true),
+                "#1178 RST milestone: {id}"
+            );
+            let raw = expected["stderrRaw"].as_str().expect("#1178 RST stderr");
+            assert!(
+                stderr_matches(raw, b"Gateway WebSocket closed.\n"),
+                "#1178 RST business-prefixed Node tail normalizes to the business line: {id}"
+            );
+            assert!(
+                approved_signal_stderr(id).is_none(),
+                "#1178 RST cells take no approved stderr exception: {id}"
+            );
+            assert!(
+                !UNORDERED_CLOSE_CASES.contains(&id),
+                "#1178 RST close order stays strict: {id}"
+            );
+            let closes = expected["closes"].as_array().expect("#1178 RST closes");
+            assert_eq!(closes.len(), 2, "#1178 RST close pair: {id}");
+            assert_eq!(
+                (
+                    closes[0]["connection"].as_u64(),
+                    closes[0]["code"].as_u64(),
+                    closes[1]["connection"].as_u64(),
+                    closes[1]["code"].as_u64(),
+                ),
+                (Some(2), Some(1006), Some(1), Some(1005)),
+                "#1178 RST query RST close precedes the control close: {id}"
+            );
+            let trace = expected["trace"].as_array().expect("#1178 RST trace");
+            let rst = trace
+                .iter()
+                .position(|event| event["kind"] == "server-rst")
+                .unwrap_or_else(|| panic!("#1178 RST reset event: {id}"));
+            let abort = trace
+                .iter()
+                .position(|event| {
+                    event["kind"] == "wire-receive" && event["frame"]["method"] == "abort_turn"
+                })
+                .unwrap_or_else(|| panic!("#1178 RST abort RPC: {id}"));
+            assert!(
+                abort < rst,
+                "#1178 RST follows the dispatched abort RPC: {id}"
+            );
+            assert_eq!(
+                trace[rst]["connection"],
+                json!(2),
+                "#1178 RST resets the query connection: {id}"
             );
         }
     }
