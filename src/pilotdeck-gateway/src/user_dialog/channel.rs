@@ -869,6 +869,19 @@ impl GatewayUserDialogChannel {
                 signal.remove_abort(token);
             }
         }
+        // This waiter can no longer be answered, so its "answer in flight"
+        // record must not keep the id alive in the bus (#2027). Only this
+        // registration's own record goes: a same-id registration consumed
+        // while this one was finishing still has an answer on the way.
+        // The guard is taken on its own, never across the request-table lock.
+        {
+            let mut bus = self.inner.options.bus.lock().unwrap();
+            bus.forget_taken(
+                &self.inner.options.session_key,
+                &state.request_id,
+                state.generation.load(Ordering::SeqCst),
+            );
+        }
         let _ = state.result.send(answer);
         let mut requests = self.inner.requests.lock().unwrap();
         if requests
@@ -1150,6 +1163,12 @@ impl GatewayUserDialogChannel {
                     self.end_replaced(state, replaced_by_registration());
                     return;
                 }
+                // Not a take-over: this registration's own consumer took the
+                // entry and the answer is on its way. Broadcasting
+                // `user_dialog_cancelled` here would contradict the answer
+                // that lands next, and a failing emit would win the `settled`
+                // swap over it and drop the answer. Leave both alone (#2027).
+                return;
             }
         }
         let mut event = JsObject::new();

@@ -3356,15 +3356,25 @@ fn an_abort_after_the_owner_already_consumed_leaves_the_answer_to_land() {
     // error that never happened.
     //
     // The guard has two layers (`cancel_owned`'s `takeover` and
-    // `end_replaced`'s "answer is in flight" check), so the negative control
-    // for this test disables both; either one alone already keeps the waiter
-    // alive and the mutant would be equivalent.
+    // `end_replaced`'s "answer is in flight" check), so this PR's temporary
+    // negative control disables both; either one alone already keeps the
+    // waiter alive and the mutant would be equivalent. The rewound layers are
+    // not registered in the fixture catalog yet (see the P2 follow-up).
     let clock = Arc::new(AtomicI64::new(0));
     let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
         &clock,
         "bus-own-consume-abort",
     ))));
-    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    let emitted = Arc::new(Mutex::new(Vec::<JsValue>::new()));
+    let recorder = emitted.clone();
+    let mut options = ChannelOptions::new(
+        "session",
+        bus.clone(),
+        Arc::new(move |event| {
+            recorder.lock().unwrap().push(event.clone());
+            Ok(())
+        }),
+    );
     options.uuid = Arc::new(|| "shared-request".to_string());
     options.now_ms = {
         let clock = clock.clone();
@@ -3392,6 +3402,13 @@ fn an_abort_after_the_owner_already_consumed_leaves_the_answer_to_land() {
     negative_assert!(
         request.try_result().is_none(),
         "#2027 an abort that finds its own consumed entry must not end the waiter"
+    );
+    negative_assert!(
+        !emitted.lock().unwrap().iter().any(|event| event
+            .get("type")
+            .and_then(JsValue::as_string)
+            .is_some_and(|value| value.equals_str("user_dialog_cancelled"))),
+        "#2027 an abort whose answer is in flight must not broadcast a cancellation"
     );
 
     (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
@@ -3550,4 +3567,179 @@ fn a_poll_keeps_waiting_when_its_answer_is_in_flight_across_a_republish() {
         ),
         other => panic!("#2027 the in-flight answer must still reach the victim, got {other:?}"),
     }
+}
+
+#[test]
+fn a_poll_keeps_waiting_when_a_later_same_id_answer_is_in_flight_too() {
+    use crate::negative_assert;
+
+    // #2027 boundary: two registrations under one id can have their answers in
+    // flight at the same time. Recording only the *last* consumer would make
+    // the older registration's poll read "not mine and I never consumed it"
+    // and end a waiter whose answer is already on its way.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-two-in-flight",
+    ))));
+    let now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let mut victim_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    victim_options.uuid = Arc::new(|| "shared-request".to_string());
+    victim_options.now_ms = now_ms.clone();
+    victim_options.take_stored_answer = Some(Arc::new(|_request_id: &JsString| Ok(None)));
+    let victim_channel = GatewayUserDialogChannel::new(victim_options);
+    let mut other_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    other_options.uuid = Arc::new(|| "shared-request".to_string());
+    other_options.now_ms = now_ms;
+    let other_channel = GatewayUserDialogChannel::new(other_options);
+
+    let mut victim = victim_channel.request_input(&InputRequest {
+        tool_call_id: "call-victim".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Polled while two answers are in flight".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+
+    let victim_consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the victim must own the bus entry");
+    let mut other = other_channel.request_confirm(&ConfirmRequest {
+        tool_call_id: "call-other".into(),
+        tool_name: "request_user_confirm".into(),
+        prompt: "Same id republished while the first answer is in flight".into(),
+        confirm_label: None,
+        cancel_label: None,
+        default_value: None,
+        abort: None,
+    });
+    let other_consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "cross_gateway_answer")
+        .expect("#2027 the republished registration must own the bus entry");
+    negative_assert!(
+        other_consumed.entry.tool_call_id == "call-other".into(),
+        "#2027 the second consume must be the republished registration's dialog"
+    );
+
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    victim_channel.tick();
+    negative_assert!(
+        victim.try_result().is_none(),
+        "#2027 a later same-id consume must not turn the victim's in-flight answer into a take-over"
+    );
+    negative_assert!(
+        other.try_result().is_none(),
+        "#2027 the republished registration must stay pending while its answer is in flight"
+    );
+
+    (victim_consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match victim.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the victim's in-flight answer must still land"
+        ),
+        other => panic!("#2027 the victim's in-flight answer must still land, got {other:?}"),
+    }
+
+    (other_consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(false)));
+    match other.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(false),
+            "#2027 the republished registration's in-flight answer must still land"
+        ),
+        other => panic!(
+            "#2027 the republished registration's in-flight answer must still land, got {other:?}"
+        ),
+    }
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#2027 answered registrations must leave no pending entry"
+    );
+}
+
+#[test]
+fn a_restore_only_forgets_its_own_answer_in_flight() {
+    use crate::negative_assert;
+
+    // #2027 boundary: `restore` rolls back one registration's consumed entry
+    // after a settle hook failed. Forgetting the whole id instead of just its
+    // own generation would erase a same-id registration whose answer is also
+    // in flight, so its poll or abort would end it as a take-over.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-restore-two-in-flight",
+    ))));
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    let pending = |call: &str| PendingDialog {
+        request_id: id.clone(),
+        dialog_kind: "input".into(),
+        tool_call_id: call.into(),
+        tool_name: "request_user_input".into(),
+        event: crate::metadata::object([("requestId", JsValue::String(id.clone()))]),
+        accepts: Arc::new(|_value: &JsValue| true),
+        resolve: Box::new(|_answer| {}),
+        reject: Box::new(|_error| {}),
+        on_settled: None,
+    };
+
+    let first_generation = bus
+        .lock()
+        .unwrap()
+        .register(&session, pending("call-first"));
+    let first = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "first_answer")
+        .expect("#2027 the first registration must own the entry");
+    let second_generation = bus
+        .lock()
+        .unwrap()
+        .register(&session, pending("call-second"));
+    let _second = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "second_answer")
+        .expect("#2027 the second registration must own the entry");
+    negative_assert!(
+        bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, first_generation),
+        "#2027 the first in-flight answer must be recorded"
+    );
+    negative_assert!(
+        bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, second_generation),
+        "#2027 the second in-flight answer must be recorded as well"
+    );
+
+    let restored = bus.lock().unwrap().restore(&session, first);
+    negative_assert!(
+        restored.is_none(),
+        "#2027 the rollback must put its own entry back"
+    );
+    negative_assert!(
+        !bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, first_generation),
+        "#2027 a rollback must forget its own in-flight record"
+    );
+    negative_assert!(
+        bus.lock()
+            .unwrap()
+            .consumed_own(&session, &id, second_generation),
+        "#2027 a rollback must keep a later same-id answer in flight"
+    );
 }
