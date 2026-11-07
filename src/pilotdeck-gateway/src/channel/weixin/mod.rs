@@ -956,36 +956,28 @@ impl WeixinChannel {
                 .context_tokens
                 .insert(from_user.clone(), token.clone());
         }
-        // Rich items need `await this.extractIncomingMessage(...)` (the CDN
-        // download), so they hand off to the spawned task with the raw
-        // message; a text-only message keeps the synchronous prefix.
-        if has_rich_items(message) {
-            return Some(DispatchStart::Inbound {
-                user: from_user,
-                message: message.clone(),
-            });
-        }
+        // `dispatchMessage` runs synchronously until its first `await`, and
+        // the only suspending step in `extractIncomingMessage` is the
+        // attachment store call. A message with a downloadable image/file
+        // therefore hands off to the spawned task here (with the raw message,
+        // whose extraction re-walks the items); every other message finishes
+        // inline, so a whole poll batch keeps Node's microtask call order.
         let mut text_parts: Vec<JsString> = Vec::new();
-        if let Some(JsValue::Array(items)) = message.get("item_list") {
-            for item in items {
-                if let Some(text) = text_item_text(item) {
-                    text_parts.push(text);
+        let mut diagnostics: Vec<String> = Vec::new();
+        for action in plan_incoming_items(message) {
+            match action {
+                IncomingAction::Text(text) => text_parts.push(text),
+                IncomingAction::Diagnostic(line) => diagnostics.push(line),
+                IncomingAction::Download { .. } => {
+                    return Some(DispatchStart::Inbound {
+                        user: from_user,
+                        message: message.clone(),
+                    });
                 }
             }
         }
-        let joined = String::from_utf16_lossy(join_units(&text_parts).units());
-        let text = crate::metadata::js_trim(&joined).to_string();
-        if text.is_empty() {
-            return None;
-        }
-        self.log(
-            "info",
-            format!(
-                "weixin: received message from {} attachments=0",
-                String::from_utf16_lossy(from_user.units())
-            ),
-        );
-        self.dispatch_mapped(from_user, &text, Vec::new())
+        push_diagnostics(&mut text_parts, &diagnostics);
+        self.finish_inbound_dispatch(from_user, text_parts, Vec::new())
     }
 
     /// The mapper resolution and `/new` rotation `dispatchMessage` runs after
@@ -1046,25 +1038,9 @@ impl WeixinChannel {
     /// resolution.
     async fn run_inbound_extraction(&self, user: JsString, message: JsValue) {
         let extracted = self.extract_incoming_message(&message, &user).await;
-        let joined = String::from_utf16_lossy(join_units(&extracted.text_parts).units());
-        let text = crate::metadata::js_trim(&joined).to_string();
-        if text.is_empty() && extracted.attachments.is_empty() {
-            return;
-        }
-        self.log(
-            "info",
-            format!(
-                "weixin: received message from {} attachments={}",
-                String::from_utf16_lossy(user.units()),
-                extracted.attachments.len()
-            ),
-        );
-        let message_text = if text.is_empty() {
-            WEIXIN_ATTACHMENT_FALLBACK_TEXT.to_string()
-        } else {
-            text
-        };
-        if let Some(start) = self.dispatch_mapped(user, &message_text, extracted.attachments) {
+        if let Some(start) =
+            self.finish_inbound_dispatch(user, extracted.text_parts, extracted.attachments)
+        {
             self.spawn_dispatch(start);
         }
     }
@@ -1081,67 +1057,69 @@ impl WeixinChannel {
         let mut attachments: Vec<ChannelAttachment> = Vec::new();
         let mut diagnostics: Vec<String> = Vec::new();
         let message_id = message_id(message);
-        let items = match message.get("item_list") {
-            Some(JsValue::Array(items)) => items.as_slice(),
-            _ => &[],
-        };
-        for item in items {
-            let item_type = item.get("type").and_then(JsValue::as_number);
-            if item_type == Some(client::MESSAGE_ITEM_TYPE_TEXT) {
-                if let Some(text) = text_item_text(item) {
-                    text_parts.push(text);
-                }
-                continue;
-            }
-            if item_type == Some(client::MESSAGE_ITEM_TYPE_IMAGE) {
-                match self.save_image_item(item, from_user, &message_id).await {
-                    Ok(Some(attachment)) => attachments.push(attachment),
-                    Ok(None) => diagnostics.push(WEIXIN_IMAGE_MISSING_URL_TEXT.to_string()),
-                    Err(error) => {
-                        diagnostics.push(format!("微信附件处理失败：{}", error.formatted()));
+        for action in plan_incoming_items(message) {
+            match action {
+                IncomingAction::Text(text) => text_parts.push(text),
+                IncomingAction::Diagnostic(line) => diagnostics.push(line),
+                IncomingAction::Download { item, kind } => {
+                    let saved = match kind {
+                        AttachmentKind::Image => {
+                            self.save_image_item(&item, from_user, &message_id).await
+                        }
+                        _ => self.save_file_item(&item, from_user, &message_id).await,
+                    };
+                    match saved {
+                        Ok(Some(attachment)) => attachments.push(attachment),
+                        // The plan only schedules a download when the item
+                        // resolves a URL, so this cannot happen; keep the
+                        // baseline's skip diagnostic rather than drop it.
+                        Ok(None) => diagnostics.push(match kind {
+                            AttachmentKind::Image => WEIXIN_IMAGE_MISSING_URL_TEXT.to_string(),
+                            _ => missing_file_url_diagnostic(&item),
+                        }),
+                        Err(error) => {
+                            diagnostics.push(format!("微信附件处理失败：{}", error.formatted()));
+                        }
                     }
                 }
-                continue;
-            }
-            if item_type == Some(client::MESSAGE_ITEM_TYPE_FILE) {
-                match self.save_file_item(item, from_user, &message_id).await {
-                    Ok(Some(attachment)) => attachments.push(attachment),
-                    Ok(None) => {
-                        let name = js_string_field(item.get("file_item"), "file_name")
-                            .unwrap_or_else(|| "(unknown)".into());
-                        diagnostics.push(format!(
-                            "微信文件 {name} 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
-                        ));
-                    }
-                    Err(error) => {
-                        diagnostics.push(format!("微信附件处理失败：{}", error.formatted()));
-                    }
-                }
-                continue;
-            }
-            if item_type == Some(client::MESSAGE_ITEM_TYPE_VOICE) {
-                if let Some(text) =
-                    js_string_field(item.get("voice_item"), "text").filter(|text| !text.is_empty())
-                {
-                    text_parts.push(JsString::from(format!("[微信语音转文字]\n{text}")));
-                }
-                continue;
-            }
-            if item_type == Some(client::MESSAGE_ITEM_TYPE_VIDEO) {
-                diagnostics.push(WEIXIN_VIDEO_SKIPPED_TEXT.to_string());
             }
         }
-        if !diagnostics.is_empty() {
-            let lines: Vec<String> = diagnostics.iter().map(|line| format!("- {line}")).collect();
-            text_parts.push(JsString::from(format!(
-                "[Attachment diagnostics]\n{}",
-                lines.join("\n")
-            )));
-        }
+        push_diagnostics(&mut text_parts, &diagnostics);
         ExtractedMessage {
             text_parts,
             attachments,
         }
+    }
+
+    /// The tail of `dispatchMessage` after the extraction: join the text
+    /// parts, trim, skip an empty message, log, apply the attachment fallback
+    /// text, resolve the mapper and rotate `/new`. Shared by the spawned rich
+    /// path and the synchronous one.
+    fn finish_inbound_dispatch(
+        &self,
+        user: JsString,
+        text_parts: Vec<JsString>,
+        attachments: Vec<ChannelAttachment>,
+    ) -> Option<DispatchStart> {
+        let joined = String::from_utf16_lossy(join_units(&text_parts).units());
+        let text = crate::metadata::js_trim(&joined).to_string();
+        if text.is_empty() && attachments.is_empty() {
+            return None;
+        }
+        self.log(
+            "info",
+            format!(
+                "weixin: received message from {} attachments={}",
+                String::from_utf16_lossy(user.units()),
+                attachments.len()
+            ),
+        );
+        let message_text = if text.is_empty() {
+            WEIXIN_ATTACHMENT_FALLBACK_TEXT.to_string()
+        } else {
+            text
+        };
+        self.dispatch_mapped(user, &message_text, attachments)
     }
 
     /// One IMAGE item: `image?.cdn_url ?? image?.url ?? extractWeixinMediaUrl`,
@@ -1154,10 +1132,7 @@ impl WeixinChannel {
     ) -> Result<Option<ChannelAttachment>, AttachmentError> {
         let undefined = JsValue::Undefined;
         let image = item.get("image_item").unwrap_or(&undefined);
-        let url = js_string_field(Some(image), "cdn_url")
-            .or_else(|| js_string_field(Some(image), "url"))
-            .or_else(|| media::extract_weixin_media_url(image));
-        let Some(url) = url.filter(|url| !url.is_empty()) else {
+        let Some(url) = item_media_url(item, "image_item") else {
             return Ok(None);
         };
         let image_owned = image.clone();
@@ -1220,10 +1195,7 @@ impl WeixinChannel {
     ) -> Result<Option<ChannelAttachment>, AttachmentError> {
         let undefined = JsValue::Undefined;
         let file = item.get("file_item").unwrap_or(&undefined);
-        let url = js_string_field(Some(file), "cdn_url")
-            .or_else(|| js_string_field(Some(file), "url"))
-            .or_else(|| media::extract_weixin_media_url(file));
-        let Some(url) = url.filter(|url| !url.is_empty()) else {
+        let Some(url) = item_media_url(item, "file_item") else {
             return Ok(None);
         };
         let name = js_string_field(Some(file), "file_name");
@@ -1258,11 +1230,8 @@ impl WeixinChannel {
                 chat_id: String::from_utf16_lossy(from_user.units()),
                 message_id: message_id.to_string(),
                 kind: AttachmentKind::File,
+                mime_type: guess_mime_type_from_name(name.as_deref()).map(str::to_string),
                 name,
-                mime_type: guess_mime_type_from_name(
-                    js_string_field(Some(file), "file_name").as_deref(),
-                )
-                .map(str::to_string),
                 bytes: file.get("file_size").and_then(JsValue::as_number),
                 metadata,
                 transform: Some(transform),
@@ -1868,22 +1837,106 @@ fn text_item_text(item: &JsValue) -> Option<JsString> {
         .cloned()
 }
 
-/// Whether any item needs the awaiting extraction path.
-fn has_rich_items(message: &JsValue) -> bool {
+/// One `item_list` entry reduced to the effect `extractIncomingMessage` has
+/// for it. Only `Download` suspends, which is what lets the poll loop decide
+/// whether `dispatchMessage` runs inline or hands off to the spawned task.
+enum IncomingAction {
+    Text(JsString),
+    Diagnostic(String),
+    Download { item: JsValue, kind: AttachmentKind },
+}
+
+/// `extractIncomingMessage`'s item walk, without the downloads: text parts,
+/// voice transcripts, the skip diagnostics, and one `Download` per image/file
+/// item that resolves a URL, all in item order.
+fn plan_incoming_items(message: &JsValue) -> Vec<IncomingAction> {
     let Some(JsValue::Array(items)) = message.get("item_list") else {
-        return false;
+        return Vec::new();
     };
-    items.iter().any(|item| {
-        matches!(
-            item.get("type").and_then(JsValue::as_number),
-            Some(
-                client::MESSAGE_ITEM_TYPE_IMAGE
-                    | client::MESSAGE_ITEM_TYPE_FILE
-                    | client::MESSAGE_ITEM_TYPE_VOICE
-                    | client::MESSAGE_ITEM_TYPE_VIDEO
-            )
-        )
-    })
+    let mut plan = Vec::new();
+    for item in items {
+        let item_type = item.get("type").and_then(JsValue::as_number);
+        if item_type == Some(client::MESSAGE_ITEM_TYPE_TEXT) {
+            if let Some(text) = text_item_text(item) {
+                plan.push(IncomingAction::Text(text));
+            }
+            continue;
+        }
+        if item_type == Some(client::MESSAGE_ITEM_TYPE_IMAGE) {
+            if item_media_url(item, "image_item").is_some() {
+                plan.push(IncomingAction::Download {
+                    item: item.clone(),
+                    kind: AttachmentKind::Image,
+                });
+            } else {
+                plan.push(IncomingAction::Diagnostic(
+                    WEIXIN_IMAGE_MISSING_URL_TEXT.to_string(),
+                ));
+            }
+            continue;
+        }
+        if item_type == Some(client::MESSAGE_ITEM_TYPE_FILE) {
+            if item_media_url(item, "file_item").is_some() {
+                plan.push(IncomingAction::Download {
+                    item: item.clone(),
+                    kind: AttachmentKind::File,
+                });
+            } else {
+                plan.push(IncomingAction::Diagnostic(missing_file_url_diagnostic(
+                    item,
+                )));
+            }
+            continue;
+        }
+        if item_type == Some(client::MESSAGE_ITEM_TYPE_VOICE) {
+            if let Some(text) =
+                js_string_field(item.get("voice_item"), "text").filter(|text| !text.is_empty())
+            {
+                plan.push(IncomingAction::Text(JsString::from(format!(
+                    "[微信语音转文字]\n{text}"
+                ))));
+            }
+            continue;
+        }
+        if item_type == Some(client::MESSAGE_ITEM_TYPE_VIDEO) {
+            plan.push(IncomingAction::Diagnostic(
+                WEIXIN_VIDEO_SKIPPED_TEXT.to_string(),
+            ));
+        }
+    }
+    plan
+}
+
+/// `value?.cdn_url ?? value?.url ?? extractWeixinMediaUrl(value)`, with the
+/// baseline's `if (!url) skip` emptiness test applied.
+fn item_media_url(item: &JsValue, field: &str) -> Option<String> {
+    let undefined = JsValue::Undefined;
+    let inner = item.get(field).unwrap_or(&undefined);
+    js_string_field(Some(inner), "cdn_url")
+        .or_else(|| js_string_field(Some(inner), "url"))
+        .or_else(|| media::extract_weixin_media_url(inner))
+        .filter(|url| !url.is_empty())
+}
+
+fn missing_file_url_diagnostic(item: &JsValue) -> String {
+    let name =
+        js_string_field(item.get("file_item"), "file_name").unwrap_or_else(|| "(unknown)".into());
+    format!(
+        "微信文件 {name} 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
+    )
+}
+
+/// The `[Attachment diagnostics]` text part the baseline appends last, when
+/// any item was skipped or failed.
+fn push_diagnostics(text_parts: &mut Vec<JsString>, diagnostics: &[String]) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    let lines: Vec<String> = diagnostics.iter().map(|line| format!("- {line}")).collect();
+    text_parts.push(JsString::from(format!(
+        "[Attachment diagnostics]\n{}",
+        lines.join("\n")
+    )));
 }
 
 /// `String(msg.message_id ?? msg.client_id ?? Date.now())`.

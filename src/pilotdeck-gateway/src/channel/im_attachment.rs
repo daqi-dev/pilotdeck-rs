@@ -482,15 +482,32 @@ fn replace_extension(name: &str, extension: &str) -> String {
 
 /// `isPathWithinDirectory`: `relative(dir, candidate)` is empty or neither
 /// `..`-rooted nor absolute. Both sides are already resolved (the store joins
-/// single sanitized segments onto an absolute root), so the lexical check is
-/// exact.
+/// single sanitized segments onto an absolute root), so the relative form is
+/// exactly the joined filename, and Node's `startsWith("..")` is a prefix test
+/// on that text — `..foo.txt` is a *single* component that is still inside the
+/// directory lexically, yet the baseline rejects it (Node `path.relative`
+/// returns `..foo.txt`, which starts with `..`). Keeping the prefix test fails
+/// closed for every input the store can produce.
 pub fn is_path_within_directory(candidate: &Path, directory: &Path) -> bool {
-    match candidate.strip_prefix(directory) {
-        Ok(rest) => !rest
-            .components()
-            .any(|component| component.as_os_str() == ".."),
-        Err(_) => false,
+    let Ok(rest) = candidate.strip_prefix(directory) else {
+        return false;
+    };
+    if rest.as_os_str().is_empty() {
+        return true;
     }
+    if rest.is_absolute() {
+        return false;
+    }
+    // Defensive: a nested `..` component cannot come out of `safe_filename`
+    // (every separator is rewritten to `_`), but rejecting it keeps the guard
+    // fail-closed if that ever changes.
+    if rest
+        .components()
+        .any(|component| component.as_os_str() == "..")
+    {
+        return false;
+    }
+    !rest.to_string_lossy().starts_with("..")
 }
 
 /// `guessMimeTypeFromName` (ImAttachmentDelivery.ts:73-85).
