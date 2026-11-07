@@ -940,4 +940,41 @@ mod tests {
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }
+
+    // #1604: the other half of the same gate. Missing, blank (JS trim,
+    // U+FEFF included) and non-UTF-8 keys all keep the plain `Error` shape TS
+    // produces — `gateway_request_failed` and `projectKey is required.` — and
+    // none of them reaches an owner call.
+    #[tokio::test]
+    async fn close_project_sessions_blank_or_surrogate_project_key_is_the_domain_error() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        for (label, value) in [
+            ("blank", JsValue::from("  ")),
+            ("bom-only", JsValue::from("\u{feff}")),
+            (
+                "lone-surrogate",
+                JsValue::String(JsString::from_utf16(vec![0xd800])),
+            ),
+        ] {
+            let error = r
+                .session_dir_request(
+                    "close_project_sessions".into(),
+                    object([("projectKey", value)]),
+                )
+                .await
+                .expect_err("#1604 a projectKey that cannot name a directory is refused");
+            assert_eq!(
+                "gateway_request_failed", error.code,
+                "#1604 the {label} projectKey keeps the domain code"
+            );
+            assert_eq!(
+                "projectKey is required.",
+                key_message(&error),
+                "#1604 the {label} projectKey keeps the domain message"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
 }

@@ -232,6 +232,16 @@ mutations = [
      '            if value.to_utf8().is_err() || crate::metadata::js_trim(&text).is_empty() {',
      DIR + 'resume_session_accepts_lone_surrogate_session_key',
      '#1455 resume_session accepts the surrogate key'),
+    # #1604: `close_project_sessions` keeps TS's plain `Error` shape on the
+    # missing/blank/non-UTF-8 branch; this mutant rewords the domain message so
+    # that branch's test is the one that has to die.
+    ('session-dir-project-key-domain-message', SESSION_DIR,
+     '            "projectKey is required.",\n'
+     '        )?;',
+     '            "projectKey is missing.",\n'
+     '        )?;',
+     DIR + 'close_project_sessions_blank_or_surrogate_project_key_is_the_domain_error',
+     '#1604 the blank projectKey keeps the domain message'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source

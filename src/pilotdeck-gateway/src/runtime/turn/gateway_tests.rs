@@ -1586,17 +1586,19 @@ fn a_hung_cleanup_does_not_hold_the_failure_report() {
 /// nothing actually disposed factory/project).
 ///
 /// #1960: the argument is the value production actually passes.
-/// `start_with_cleanup_budget` adds [`super::INITIALIZATION_TEARDOWN_SLACK`]
-/// before it calls `initialization_teardown_bounds`, so a
-/// declared 300 ms arrives here as 300 ms + SLACK. Feeding the raw declared
-/// budget instead made `cleanup_bound == declared` and
+/// `start_with_cleanup_budget` turns a declared budget into
+/// [`super::declared_cleanup_budget`] before it calls
+/// `initialization_teardown_bounds`, so a declared 300 ms arrives here as
+/// 300 ms + SLACK. The test takes that value from the same function production
+/// calls — copying the arithmetic by hand left the slack unpinned. Feeding the
+/// raw declared budget instead made `cleanup_bound == declared` and
 /// `owner + cleanup <= declared + DEADLINE` hold for the wrong reason: on the
 /// real input they are `declared + SLACK` and exactly
 /// `declared + SLACK + DEADLINE`.
 #[test]
 fn a_slow_refused_owner_does_not_shrink_the_cleanup_bound() {
     let declared = std::time::Duration::from_millis(300);
-    let passed = declared.saturating_add(super::INITIALIZATION_TEARDOWN_SLACK);
+    let passed = super::declared_cleanup_budget(declared);
     let (owner_bound, cleanup_bound) = super::initialization_teardown_bounds(passed);
     assert_eq!(
         super::INITIALIZATION_TEARDOWN_DEADLINE,
