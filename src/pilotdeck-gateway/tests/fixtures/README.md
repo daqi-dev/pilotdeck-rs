@@ -91,7 +91,7 @@ python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
 
 `mutating_sources` 和 `build_snapshot` 在取得源码树锁并通过基础输入 pristine 检查后，按需以 `--locked` 构建缺失的 `workspace_inputs` example（冷注册表允许按已提交 lockfile 下载依赖，锁文件本身不得变更；CI 全新 runner 依赖这一点，#1166 fix-r6）；先排 cargo 槽位（900 秒），构建总期限 1800 秒、静默期限 600 秒，失败或取消即拒绝进入变异/快照。已有 helper 不自动重建，锁内每次扫描仍核对源码摘要、仓库根和 HEAD；摘要不符须由持有人重建，不能默许陈旧或别树的 scanner。纯 Python 负控的“无 Cargo”只指变异/绑定测试本身，首次共享入口可能构建 scanner。
 
-冷、暖 scanner target 下 `PDRS_NEGATIVE_BASELINE` 逃生口的可用条件（bootstrap 字面 `HEAD` 校验 / 身份 5 文件比对 / 陈旧 scanner 一律拒绝）见 [`_negkit/README.md`](./_negkit/README.md) 的「现状（#2106 实测）」段。
+冷、暖 scanner target 下 `PDRS_NEGATIVE_BASELINE` 逃生口的可用条件（bootstrap 字面 `HEAD` 校验 / 身份 5 文件字节比对、HEAD 移动本身不作废 scanner / 身份失配的 scanner 拒绝所有候选）见 [`_negkit/README.md`](./_negkit/README.md) 的「现状（#2106 实测）」段。
 
 负控脚本仍使用调用方的 `CARGO_TARGET_DIR`，允许树外但须本树独占。共享入口将相对值按仓库根解释并传绝对值给 Cargo/扫描器；普通 `mutating_sources` 调用未设置时，scanner 使用本树 `_build/cargo-target`。测量 `build_snapshot` 仍要求显式 target，并在树锁内校验 HEAD、重新调用 Cargo、从本次 artifact JSON 取 executable 后独占复制；target 位置不是来源证明。共享 target 归一化在副作用前拒收空白串、`.`、文件系统根、仓库根及 `src/` 内目录（显式空值同样拒收）。构建前在 target 原子发布 root / HEAD / 随机 nonce 标记；复制后只复核 owner 标记未变、artifact 身份未变（不比较 mtime：复用早于本次构建的产物正常，Cargo 命中旧缓存产物不因 mtime 拒收），再发布摘要与 build-owner.json。
 

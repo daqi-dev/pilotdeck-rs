@@ -121,10 +121,11 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/config-store/negative_controls.p
 - runner 默认要求产品源码与 `HEAD` 逐字节一致；沙箱评审树无法 commit 时用
   `PDRS_NEGATIVE_BASELINE=$(git stash create)`（悬空提交，不动 ref、不改 index）
   钉住被审树，stdout 会打 `NON-HEAD BASELINE` 提醒这不是宿主证据。守卫同时比对
-  worktree 与 index（`git diff --cached`，只针对 `src`/`.cargo`/`rust-toolchain*`
-  被扫描区域），而 `stash create` 只快照 worktree——落在被扫描区域内、未 commit
-  的改动要先 `git add` 暂存，否则全行报 `source baseline mismatch`；区域外改动
-  （如 `scripts/`、`state/`）不暂存也通过。冷、暖 scanner target 下该逃生口的
+  worktree 与 index（`git diff --cached`，针对 `src`/`.cargo`/`rust-toolchain*` 被扫描区域
+  加上 scanner 字面输入集），而 `stash create` 只快照 worktree——落在被扫描区域内、未 commit
+  的改动要先 `git add` 暂存，否则全行报 `source baseline mismatch`；区域外且非字面输入的改动
+  （如 `state/`）不暂存也通过，但被 `include_str!` 连到的文件（实测含 `scripts/cli-parity/`
+  两个文件）虽在 `src` 外也是字面输入，未暂存同样被拒。冷、暖 scanner target 下该逃生口的
   可用条件见 `_negkit/README.md` 的「现状（#2106 实测）」段。
 - 产物：每行 `-positive` / `-negative` / `-restored` 日志与 `summary.json`
   （`controls[]` + `counts`），全 `KILLED` 退出码 0。
