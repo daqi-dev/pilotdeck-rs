@@ -705,7 +705,7 @@ async fn production_host_management_and_restart() {
         capabilities.sort_unstable();
         let expected = expected_capabilities(true);
         negative_assert_eq!(capabilities, expected, "#1231 exact wired capability set");
-        assert_ts_capability_subset(&expected, false);
+        assert_ts_capability_subset(&expected);
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
@@ -1088,7 +1088,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
             expected,
             "#1231 disabled storage exact capability set"
         );
-        assert_ts_capability_subset(&expected, true);
+        assert_ts_capability_subset(&expected);
     }
     host.shutdown(options.drain_budget)
         .await
@@ -1176,21 +1176,17 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
     expected
 }
 
-/// #1761: the TS states a wire table must be legal in, paired by config state
-/// rather than checked against all three unconditionally.
+/// #1761/#1352: the TS config states a wire table must be legal in.
 /// `oracle.json` carries `contract` / `contract.emptyStorage` /
-/// `contract.missingStorage`. A snapshots-enabled table only has to be a TS
-/// subset in the default state it actually runs in; checking it against the
-/// disabled contracts would false-FAIL the day the three arrays diverge. The
-/// snapshots-disabled table is the minimal set, so it must be legal in every
-/// state — that direction only tightens the guard.
-fn assert_ts_capability_subset(expected: &[&str], include_disabled_states: bool) {
-    let mut states = vec!["contract"];
-    if include_disabled_states {
-        states.push("emptyStorage");
-        states.push("missingStorage");
-    }
-    for state in states {
+/// `contract.missingStorage`.
+///
+/// Since #1352 the expected table is *derived* from `contract`, so checking it
+/// against `contract` again could never fail — the meaningful direction is the
+/// two disabled contracts, which the derivation never reads (#1761 already
+/// required every table to stay legal there). This replaced the old
+/// `include_disabled_states` flag, whose `false` branch became that tautology.
+fn assert_ts_capability_subset(expected: &[&str]) {
+    for state in ["emptyStorage", "missingStorage"] {
         let ts_capabilities = oracle_capabilities(state);
         negative_assert!(
             expected
@@ -1578,7 +1574,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                     expected,
                     "#1231 production entry exact capability set"
                 );
-                assert_ts_capability_subset(&expected, true);
+                assert_ts_capability_subset(&expected);
             }
             host.shutdown(options.drain_budget)
                 .await
@@ -1761,7 +1757,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
         expected,
         "#1323 --storage-root CLI path advertises snapshot-enabled capabilities"
     );
-    assert_ts_capability_subset(&expected, false);
+    assert_ts_capability_subset(&expected);
     host.shutdown(options.drain_budget)
         .await
         .expect("#1323 host shutdown");

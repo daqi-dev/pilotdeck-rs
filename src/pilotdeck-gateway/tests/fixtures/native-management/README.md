@@ -22,7 +22,7 @@ manager_sessions 金样读取固定时间戳的真实非空 JSONL transcript（s
 
 U4 在 TS 注入真实 listProjectSessions 作为 sessionCatalog（与 Rust 已合入的 TranscriptSessionCatalog 提供同一 JSONL provider）；未注入固定返回值。TS 默认 sessionDataPlane 的底层存储选择与原生 JSONL provider 不同，不把两者混为同一部署。
 
-queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 在测试显式非空 storage 下排序后精确比较 `expected_capabilities`（#1352 起由 `oracle.json` 的 `contract.capabilities` 派生：减去 `capabilities::NOT_ADVERTISED` 与夹具未绑定的 provider，不再手抄清单），重复、多报和漏报均失败，同时验证 expected 是 oracle.contract.capabilities 的子集；管理能力分别配漏报变异，upload_* 五项另配改名致缺变异，另含 upload_create 多报与 run_get 重复变异。skill_* 仅作为 RPC 方法，不属于 TS capability 契约；「宣告一个 TS 不记录的名字」这一类由 `capability-invented-always_on_apply` 代表。
+queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+FFFD。固定命令 replacement�.md 用于区分有损替换；typed callers 继续沿已有字符串接口，wire caller 使用同一 catalog 的 UTF-16 入口。限额线程池测试覆盖四族，describe 在测试显式非空 storage 下排序后精确比较 `expected_capabilities`（#1352 起由 `oracle.json` 的 `contract.capabilities` 派生：减去 `capabilities::NOT_ADVERTISED` 与夹具未绑定的 provider，不再手抄清单），重复、多报和漏报均失败，同时验证 expected 在每个禁用 storage 契约（`contract.emptyStorage` / `contract.missingStorage`）下仍是 TS 子集——#1352 起 expected 由 `contract` 派生，再拿 `contract` 自比恒真，故不再比较该状态；管理能力分别配漏报变异，upload_* 五项另配改名致缺变异，另含 upload_create 多报与 run_get 重复变异。skill_* 仅作为 RPC 方法，不属于 TS capability 契约；「宣告一个 TS 不记录的名字」这一类由 `capability-invented-always_on_apply` 代表。
 
 ## 生产入口边界（fix-r3、#1323）
 
