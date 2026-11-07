@@ -1024,6 +1024,17 @@ class EnvironmentControls(unittest.TestCase):
              "    tmp=path.parent / f'.negctl-{path.name}.tmp'"),
         ),
     }
+    # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
+    # 被 `if bound:` 当成通过 —— 把临时变量**整体改名**再追加一次重绑，查表恒 0 命中，
+    # 钉子全绿而残留落回 `src/`。这里按真实语法定点改名（字符串里的 `".tmp"` 不动），
+    # 再在改名后的绑定后面补一句重绑。
+    SIBLING_RENAME_MUTANTS = {
+        'model-complete/negative-controls.py': (
+            ('temp-renamed-and-rebound',
+             '    fd, tmp = tempfile.mkstemp(dir=str(scratch), '
+             'prefix=".negctl-" + path.name, suffix=".tmp")'),
+        ),
+    }
     # r3（MiniMax concurrency P2）：把调用点换回原地截断写时钉子必须红。
     SIBLING_WRITE_MUTANTS = {
         'native-config/negative_controls.py': (
@@ -1056,6 +1067,33 @@ class EnvironmentControls(unittest.TestCase):
                 return ast.get_source_segment(source, node)
         self.fail(f'#1692 §9 r2 the sibling fixture must define {function}()')
 
+    @staticmethod
+    def published_temp_names(body):
+        """`os.replace(<tmp>, <target>)` 里 `<tmp>` 的变量名（AST，不硬编码夹具变量名）。"""
+        names = []
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'replace' and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Name)):
+                names.append(node.args[0].id)
+        return names
+
+    @staticmethod
+    def mkstemp_scratch_names(body):
+        """`tempfile.mkstemp(dir=str(<scratch>))` 里 `<scratch>` 的变量名（AST）。"""
+        names = []
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'mkstemp'):
+                continue
+            for keyword in node.keywords:
+                value = keyword.value
+                if (keyword.arg == 'dir' and isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Name) and value.func.id == 'str'
+                        and value.args and isinstance(value.args[0], ast.Name)):
+                    names.append(value.args[0].id)
+        return names
+
     def sibling_atomic_guards(self, source, function):
         """#1692 §9 r2/r3：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
         body = self.sibling_atomic_body(source, function)
@@ -1085,11 +1123,21 @@ class EnvironmentControls(unittest.TestCase):
         # 注解赋值 `tmp: Path = …`、无空格 `tmp=…`、元组解包 `fd, tmp = mkstemp(...)`、
         # 海象都不在 `^[ \t]*tmp = ` 的命中集里；model-complete 的健康体正是解包形态，
         # 于是那条钉子在它上面**恒空转**。改用与 `bound_names` 同一套 AST 口径。
-        for variable in ('tmp', 'scratch'):
-            bound = self.body_binding_count(body, variable)
-            if bound:
-                self.assertEqual(bound, 1,
-                                 f'#1692 §9 r2 the temp path is derived exactly once: {variable}')
+        # r5（DeepSeek boundary P1）：连变量名本身也不许硬编码 —— 按 `('tmp', 'scratch')`
+        # 查表时「零次绑定」被 `if bound:` 当成通过，把 model-complete 的临时变量整体
+        # 改名（`tmp` → `temp`）再追加一次重绑，查表恒 0 命中、钉子全绿而残留落回 `src/`。
+        # 改为从 AST 里读出「真正被 `os.replace()` 发布的那个名字」与「`mkstemp(dir=str(…))`
+        # 用的那个名字」，再要求它们各只绑一次：名字叫什么、被改成什么都不影响判据。
+        published = self.published_temp_names(body)
+        self.assertEqual(len(published), 1,
+                         '#1692 §9 r2 exactly one variable may be published by os.replace()')
+        self.assertEqual(self.body_binding_count(body, published[0]), 1,
+                         '#1692 §9 r2 the published temp is derived exactly once: '
+                         + published[0])
+        for scratch_variable in self.mkstemp_scratch_names(body):
+            self.assertEqual(self.body_binding_count(body, scratch_variable), 1,
+                             '#1692 §9 r2 the mkstemp scratch dir is bound exactly once: '
+                             + scratch_variable)
         self.assertEqual(self.body_binding_count(source, 'PUBLISH_DIR'), 1,
                          '#1692 §9 r2 the scratch constant is bound exactly once')
         self.assertIn('mode = path.stat().st_mode & 0o7777', body,
@@ -1199,6 +1247,24 @@ class EnvironmentControls(unittest.TestCase):
                 with self.assertRaises(AssertionError,
                                        msg=f'#1692 §9 r2 {relative} {label} must be caught'):
                     self.sibling_atomic_guards(source.replace(old, new, 1), function)
+                print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
+                      flush=True)
+            for label, anchor in self.SIBLING_RENAME_MUTANTS.get(relative, ()):
+                self.assertIn(anchor, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                # 只改语义上的标识符：`".tmp"` 这类字符串字面量里的 `tmp` 保持原样
+                # （前面是 `.` 时不算标识符）。
+                renamed = re.sub(r'(?<![\w.])tmp(?!\w)', 'temp', source)
+                self.assertNotEqual(renamed, source,
+                                    f'#1692 §9 r2 {relative} {label}: the rename must bite')
+                renamed_anchor = re.sub(r'(?<![\w.])tmp(?!\w)', 'temp', anchor)
+                self.assertIn(renamed_anchor, renamed,
+                              f'#1692 §9 r2 {relative} {label}: anchor after the rename')
+                mutated = renamed.replace(
+                    renamed_anchor,
+                    renamed_anchor + "\n    temp = path.parent / f'.negctl-{path.name}.tmp'", 1)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_atomic_guards(mutated, function)
                 print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
                       flush=True)
             for label, old, new in self.SIBLING_WRITE_MUTANTS[relative]:
@@ -1809,7 +1875,16 @@ self_check_controls_run | return | return problems
         # 只剩「常量行唯一」，把 `publish = Path(root) / PUBLISH_DIR` 改成
         # `path.parent / PUBLISH_DIR` 能存活全部钉子，于是临时文件落回 `src/`，
         # SIGKILL 残留被 `git ls-files --others` 读到 → 整棵拒跑，而尺子报 PASS。
+        # r5（zai sibling P1 + DeepSeek sibling P1）：这条钉子在 r4 里被漏掉了 ——
+        # `source.count(scratch)`（scratch 是整行 `PUBLISH_DIR = '.negctl-publish'`）
+        # 只认**逐字照抄**的那一行：在模块末尾追加 `PUBLISH_DIR = 'src/.negctl-publish'`
+        # 或 `PUBLISH_DIR: str = …`，字面量行仍只出现一次，钉子全绿，而运行期
+        # `publish = Path(root) / PUBLISH_DIR` 取最后绑定 → 临时目录落进被扫的 `src/`。
+        # 与 `sibling_atomic_guards` 同口径：按名字数绑定，不按行文本数。
         scratch_constant = scratch.split('=', 1)[0].strip()
+        self.assertEqual(self.body_binding_count(source, scratch_constant), 1,
+                         '#1692 §9 the publish scratch constant is bound exactly once: '
+                         + scratch_constant)
         self.assertIn(f'{scratch_name} = Path(root) / {scratch_constant}', body,
                       '#1692 §9 the scratch dir is derived from the repo ROOT, not from the '
                       'mutated file: a residue beside a `src/` file is an untracked build '
@@ -1935,6 +2010,15 @@ self_check_controls_run | return | return problems
                  "    temporary = publish / f'.negctl-{path.name}.tmp'",
                  "    temporary = publish / f'.negctl-{path.name}.tmp'\n"
                  "    temporary += path.parent / f'.negctl-{path.name}.tmp'"),
+                # r5（zai sibling P1 + DeepSeek sibling P1）：常量本身也要按名计绑定 ——
+                # 追加第二条不同拼写的 `PUBLISH_DIR`，逐字行仍只出现一次。
+                ('atomic-publish-scratch-constant-rebound',
+                 "PUBLISH_DIR = '.negctl-publish'",
+                 "PUBLISH_DIR = '.negctl-publish'\nPUBLISH_DIR = 'src/.negctl-publish'"),
+                ('atomic-publish-scratch-constant-annotated-rebound',
+                 "PUBLISH_DIR = '.negctl-publish'",
+                 "PUBLISH_DIR = '.negctl-publish'\n"
+                 "PUBLISH_DIR: str = 'src/.negctl-publish'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
