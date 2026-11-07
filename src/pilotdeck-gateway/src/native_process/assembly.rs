@@ -71,6 +71,46 @@ mod user_dialog;
 
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
 
+/// The cached live writer this request shares a transcript file with, if the
+/// session is loaded, together with the key it is registered under. Callers
+/// append *through* it instead of building a second writer: the recorder
+/// numbers its appends from an in-memory sequence, so a fresh writer that
+/// restores the tail and appends `sequence + 1` would either duplicate that
+/// number or leave the recorder replaying a stale one. The owner key is
+/// returned because `session_model_set`/`clear` must close *that* key for the
+/// new selection to be read back — the request spelling can be an alias.
+///
+/// The lookup uses the stored-transcript identity, not the request spelling --
+/// `/p` and `/p/.`, `a/b` and `a-b` name one file and therefore one writer.
+///
+/// #1860: lives next to [`Recorders`] because it is the map's reader; the
+/// transcript fence it pairs with moved to `runtime::session::transcript_locks`
+/// so the session factory can take it without a `runtime` → `native_process`
+/// edge.
+pub(crate) fn live_recorder(
+    recorders: &Recorders,
+    session_key: &JsString,
+) -> Option<(JsString, Arc<Recorder>)> {
+    let wanted = crate::storage::sanitize_session_id(session_key);
+    let map = recorders.lock().unwrap_or_else(|error| error.into_inner());
+    // Prefer the exact spelling when both it and an alias are live; either way
+    // both names belong to one transcript, so any live writer is the writer.
+    let mut alias = None;
+    for (key, weak) in map.iter() {
+        if crate::storage::sanitize_session_id(key) != wanted {
+            continue;
+        }
+        let Some(recorder) = weak.upgrade() else {
+            continue;
+        };
+        if key == session_key {
+            return Some((key.clone(), recorder));
+        }
+        alias = Some((key.clone(), recorder));
+    }
+    alias
+}
+
 /// The controlled registry switch for collection and testing (#1369).
 /// Unset keeps the production default (registry on, no receipt); "on"/"off"
 /// state the switch explicitly and publish a construction receipt; every
@@ -1043,15 +1083,14 @@ async fn start_assembly(
     }
 }
 pub fn transcript_path(options: &Options, session: &JsString) -> std::path::PathBuf {
-    crate::session_chat_dir(
+    // #1860: one derivation, shared with the transcript write fence — a second
+    // copy could drift and leave the fence guarding a file the store never
+    // opens.
+    crate::runtime::session::transcript_locks::session_transcript_path(
         &options.home,
         &options.project,
-        &options.project.to_string_lossy(),
+        session,
     )
-    .join(format!(
-        "{}.jsonl",
-        crate::storage::sanitize_session_id(session)
-    ))
 }
 
 /// #1864 (a): the pure compose step for the three session selections —

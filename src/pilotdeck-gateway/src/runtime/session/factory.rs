@@ -964,6 +964,18 @@ impl ProjectSessionFactory {
                     acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
                 *lock(&storage.writer_lease) = Some(lease);
             }
+            // #1860: hydration is itself a transcript writer. `restore()` seeds
+            // the recorder's in-memory sequence from the tail and
+            // `prepared.host(binding)` publishes it; a metadata request that
+            // restored the same tail between those steps would claim the same
+            // `sequence + 1`. Take the fence the metadata writers take, after
+            // the writer lease (that is what excludes other processes and
+            // requests; this is what makes the in-process "who writes this
+            // tail" decision atomic with its append). The guard lives to the end
+            // of this block, i.e. past publication. (mutant:
+            // transcript-hydrate-fence-removed)
+            let fence_path = storage.recorder.writer().path().to_owned();
+            let _write_fence = super::transcript_locks::acquire(&fence_path).await;
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
