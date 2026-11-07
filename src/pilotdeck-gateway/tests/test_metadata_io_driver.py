@@ -978,6 +978,23 @@ class EnvironmentControls(unittest.TestCase):
         'native-stimulus-plan/negative_controls.py':
             ('tmp = PUBLISH_DIR / ', 'tmp = path.parent / '),
     }
+    # r3（zai sibling P1）：先正确派生、之后再重绑 —— 子串/正则钉都只看「出现过」，
+    # 重绑后真正落盘的是后者。三处各一条，且刻意避开 `tmp = path.parent` 那条已有钉子
+    # （native-config / native-stimulus-plan 重绑到 `src/` 里的其它位置）。
+    SIBLING_REBIND_MUTANTS = {
+        'native-config/negative_controls.py': (
+            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+            "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
+        'model-complete/negative-controls.py': (
+            '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
+            '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent\n'
+            '    scratch = path.parent'),
+        'native-stimulus-plan/negative_controls.py': (
+            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+            "    tmp = root / 'src' / f'.negctl-{path.name}.tmp'"),
+    }
     # r3（MiniMax concurrency P2）：把调用点换回原地截断写时钉子必须红。
     SIBLING_WRITE_MUTANTS = {
         'native-config/negative_controls.py': (
@@ -1032,6 +1049,16 @@ class EnvironmentControls(unittest.TestCase):
             self.assertRegex(body, r'scratch = PUBLISH_DIR if path\.is_relative_to\(ROOT\)'
                                    r' else path\.parent',
                              '#1692 §9 r2 the scratch dir follows the target')
+        # r3（zai sibling P1）：上面全是「出现过」型钉子 —— 先正确派生、之后再补一句
+        # `tmp = ROOT / 'src' / …` 或 `scratch = path.parent`，每条都照绿，而落盘走的是后者，
+        # 残留回到被扫的 `src/`。派生变量与常量都只准绑一次。
+        for variable in ('tmp', 'scratch'):
+            bound = re.findall(rf'^[ \t]*{variable} = ', body, re.M)
+            if bound:
+                self.assertEqual(len(bound), 1,
+                                 f'#1692 §9 r2 the temp path is derived exactly once: {variable}')
+        self.assertEqual(len(re.findall(r'^PUBLISH_DIR = ', source, re.M)), 1,
+                         '#1692 §9 r2 the scratch constant is bound exactly once')
         self.assertIn('mode = path.stat().st_mode & 0o7777', body,
                       '#1692 §9 r2 the published mode is taken from the source')
         self.assertIn('os.fsync(', body,
@@ -1127,7 +1154,9 @@ class EnvironmentControls(unittest.TestCase):
                     ('scratch-dir-unignored', constant,
                      constant.replace(quote + '.negctl-publish',
                                       quote + 'negctl-publish')),
-                    ('temp-derived-from-the-target', *self.SIBLING_TEMP_MUTANTS[relative])):
+                    ('temp-derived-from-the-target', *self.SIBLING_TEMP_MUTANTS[relative]),
+                    ('temp-rebound-after-the-correct-derivation',
+                     *self.SIBLING_REBIND_MUTANTS[relative])):
                 self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
                 with self.assertRaises(AssertionError,
                                        msg=f'#1692 §9 r2 {relative} {label} must be caught'):
@@ -1599,45 +1628,84 @@ self_check_controls_run | return | return problems
                 return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
         self.fail('#1692 §9 the module must define write_source_atomic()')
 
-    def fixture_bindings(self, source, name):
-        """`source` 里所有把 `name` 绑进本模块命名空间的语法点（#1903 r2 DeepSeek boundary P2）。
+    @staticmethod
+    def bound_names(source):
+        """`source` 里所有把名字绑进**本模块命名空间**的语法点 → `[(名字, 形态)]`。
 
-        只有**恰好一条** `from negative_process import name` 才允许通过。覆盖的形态：
-        `def` / `async def` / `class`、赋值（`=` / `+=` / 注解赋值）、
-        `from X import name`、`from X import other as name`、`import X as name`、
-        以及把 `name` 声明成参数（默认参就是运行期绑定）。
+        #1903 r2/r3（DeepSeek boundary P2 + zai boundary P1）：第一版只枚举
+        `def` / `class` / 简单赋值 / 导入 / 参数，而 `for X in …`、`with … as X`、
+        `except E as X`、海象 `(X := …)`、元组解包 `a, X = …`、`from M import *`、
+        `*X` / `**X` 形参、match 捕获都能在**不动两个调用点**的前提下把本地副本绑进来，
+        于是「夹具只从 negative_process 导入」这条钉子对它们假 PASS。
+        这里把 AST 里**每一个**产生名字绑定的节点都摊平（含解包递归），
+        调用方按名字过滤即可 —— 判据是「恰好一条共享导入」，形态漏一个就不成立。
         """
         found = []
+
+        def bind_target(node, how):
+            if isinstance(node, ast.Name):
+                found.append((node.id, f'{how} {node.id}'))
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                for element in node.elts:
+                    bind_target(element, how)
+            elif isinstance(node, ast.Starred):
+                bind_target(node.value, how)
+
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.ImportFrom):
                 for alias in node.names:
-                    if alias.name == name and alias.asname is None:
-                        found.append(f'from {node.module} import {name}')
-                    elif alias.asname == name:
-                        found.append(f'from {node.module} import {alias.name} as {name}')
+                    if alias.name == '*':
+                        found.append(('*', f'from {node.module} import *'))
+                    elif alias.asname:
+                        found.append((alias.asname,
+                                      f'from {node.module} import {alias.name} as {alias.asname}'))
+                    else:
+                        found.append((alias.name, f'from {node.module} import {alias.name}'))
             elif isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.asname == name:
-                        found.append(f'import {alias.name} as {name}')
+                    bound = alias.asname or alias.name.split('.')[0]
+                    spelled = f'import {alias.name}' + (f' as {bound}' if alias.asname else '')
+                    found.append((bound, spelled))
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                if node.name == name:
-                    found.append(f'def {name}')
+                found.append((node.name, f'def {node.name}'))
             elif isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id == name:
-                        found.append(f'{name} = …')
-            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-                if isinstance(node.target, ast.Name) and node.target.id == name:
-                    found.append(f'{name} = …')
+                    bind_target(target, 'assign')
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+                bind_target(node.target, 'assign')
+            elif isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+                bind_target(node.target, 'loop')
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        bind_target(item.optional_vars, 'with-as')
+            elif isinstance(node, ast.ExceptHandler):
+                if node.name:
+                    found.append((node.name, f'except as {node.name}'))
             elif isinstance(node, ast.arguments):
-                positional = node.posonlyargs + node.args + node.kwonlyargs
-                if any(argument.arg == name for argument in positional):
-                    found.append(f'parameter {name}')
+                parameters = node.posonlyargs + node.args + node.kwonlyargs
+                parameters += [argument for argument in (node.vararg, node.kwarg)
+                               if argument is not None]
+                for argument in parameters:
+                    found.append((argument.arg, f'parameter {argument.arg}'))
+            elif isinstance(node, (ast.MatchAs, ast.MatchStar)):
+                if node.name:
+                    found.append((node.name, f'match as {node.name}'))
+            elif isinstance(node, ast.MatchMapping):
+                if node.rest:
+                    found.append((node.rest, f'match **{node.rest}'))
         return found
 
-    def restore_definition(self, guard):
-        """`mutating_sources` 的未装饰函数（`@contextmanager` 把原函数挂在 `__wrapped__`）。"""
-        return getattr(guard.mutating_sources, '__wrapped__', guard.mutating_sources)
+    def fixture_bindings(self, source, name):
+        """`source` 里所有把 `name` 绑进本模块命名空间的语法点（#1903 r2/r3）。
+
+        只有**恰好一条** `from negative_process import name` 才允许通过。
+        枚举口径见 `bound_names`：形态漏一个，钉子就能被绕过。
+        星导入绑进来的名字在静态上**不可知**（`from local_impl import *` 可能顶掉任何符号），
+        所以 `*` 按通配处理：出现即算作该名字的一条绑定。
+        """
+        return [how for bound, how in self.bound_names(source)
+                if bound in (name, '*')]
 
     def assert_restore_reads_the_patched_global(self, guard, label):
         """#1903 r2：见 `restore_wiring_problems`（判据在模块级，两个测试类共用）。"""
@@ -1701,6 +1769,11 @@ self_check_controls_run | return | return problems
         # 上面三条仍然全绿，而落盘走的是后者。整个函数体里 `publish =` 只准出现一次。
         self.assertEqual(body.count(f'{scratch_name} ='), 1,
                          f'#1692 §9 the scratch dir is bound exactly once: {scratch_name}')
+        # 同一类漂移对**临时路径**照样成立（r3 DeepSeek sibling/boundary P2）：
+        # `temporary` 才是 `open()` / `os.replace()` 真正用的变量，只钉 `publish`
+        # 时在它后面补一句 `temporary = path.parent / …` 仍全绿。
+        self.assertEqual(body.count('temporary ='), 1,
+                         '#1692 §9 the temp path is bound exactly once')
         self.assertIn(f"{scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
                       '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
         self.assertIn(f'{scratch_name}.mkdir(parents=True, exist_ok=True)', body,
@@ -1724,8 +1797,10 @@ self_check_controls_run | return | return problems
         # `def` + 一条赋值正则不够（r2 DeepSeek boundary P2：`from local_impl import
         # write_source_atomic`、`import local_impl as write_source_atomic`、缩进变体都逃得掉）。
         # 这里改成 AST 枚举**所有**能把名字绑进本模块命名空间的语法点，恰好只允许一条共享导入。
-        # 这是形态钉不是共享性钉：夹具必须用**非限定名**调用（两处调用点钉子同口径），
-        # 将来若要改成 `negative_process.write_source_atomic(...)`，两处要一起放宽。
+        # 范围说明（r3 DeepSeek boundary P2 #2）：这条钉子只管**绑定形态**，不管调用点的
+        # 接收者写法 —— 两处调用点用的是 `write_source_atomic(...)` 子串计数，改成
+        # `negative_process.write_source_atomic(...)` 会同时让计数钉与这里变红，不会静默放过；
+        # 真放过的只有「另一条同名绑定 + 调用点仍写非限定名」，那正被这里挡掉。
         for name in ('write_source_atomic', 'mutating_sources'):
             self.assertEqual(self.fixture_bindings(source, name),
                              [f'from negative_process import {name}'],
@@ -1786,6 +1861,11 @@ self_check_controls_run | return | return problems
                  "    temporary = publish / f'.negctl-{path.name}.tmp'",
                  '    publish = path.parent / PUBLISH_DIR\n'
                  "    temporary = publish / f'.negctl-{path.name}.tmp'"),
+                # 临时路径自己重绑（r3 DeepSeek sibling/boundary P2）：`publish` 仍正确，
+                # 落盘的 tmp 却在目标旁边。
+                ('atomic-publish-temp-rebound-after-the-fact',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = path.parent / f'.negctl-{path.name}.tmp'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
@@ -1826,6 +1906,28 @@ self_check_controls_run | return | return problems
                  anchor_after_import,
                  'def mutating_sources(root, paths, **kwargs):\n'
                  "    raise AssertionError('local shadow')\n\n\n" + anchor_after_import),
+                # 6-12）不经过 `def` / 赋值 / import 的其余绑定形态（r3 zai boundary P1）：
+                # 第一版枚举漏了它们，两个调用点原样不动、截断正则也不匹配本地副本，
+                # 钉子会全绿。每个形态一条，确保 `bound_names` 的每一支都有对杀负控。
+                ('fixture-binds-via-for-target',
+                 anchor_after_import, 'for write_source_atomic in (_local,):\n    pass\n\n'
+                 + anchor_after_import),
+                ('fixture-binds-via-with-alias',
+                 anchor_after_import, 'with open(__file__) as write_source_atomic:\n    pass\n\n'
+                 + anchor_after_import),
+                ('fixture-binds-via-except-alias',
+                 anchor_after_import, 'try:\n    pass\nexcept Exception as write_source_atomic:\n'
+                 '    pass\n\n' + anchor_after_import),
+                ('fixture-binds-via-walrus',
+                 anchor_after_import, '(write_source_atomic := None)\n\n' + anchor_after_import),
+                ('fixture-binds-via-tuple-unpacking',
+                 anchor_after_import, '_, write_source_atomic = None, None\n\n'
+                 + anchor_after_import),
+                ('fixture-shadowed-by-star-import',
+                 anchor_after_import, 'from local_impl import *\n\n' + anchor_after_import),
+                ('fixture-binds-via-vararg',
+                 anchor_after_import, 'def _local(*write_source_atomic):\n    pass\n\n\n'
+                 + anchor_after_import),
                 ('mutant-write-back-to-truncating',
                  'write_source_atomic(root, path, changed.encode())', 'path.write_text(changed)'),
                 ('restore-write-back-to-truncating',
@@ -1878,10 +1980,18 @@ self_check_controls_run | return | return problems
         """#1903 r2：探针接线的**行为**正控。
 
         r2 第一版接线自证是恒真式（zai boundary P1；DeepSeek boundary / concurrency P2）。
-        只做结构判据仍可能漏掉「还原搬去别的 helper」这类漂移，所以这里直接跑一次真的
-        `mutating_sources`：锁可用 → 进入变异窗口 → 还原，记录型包装器必须被调用**恰好一次**，
+        只做结构判据仍可能漏掉「还原搬去别的 helper」这类漂移，所以这里真跑一次
+        `mutating_sources`：进入变异窗口 → 还原，记录型包装器必须被调用**恰好一次**，
         且源文件字节不变。#166 的两处探针 patch 的是同一个模块属性，这条正控覆盖它们两处。
+
+        r3（DeepSeek boundary P2 #4 / concurrency P2 #1-3）：`mutating_sources` 的外围守卫
+        会 `_ensure_workspace_scanner()`（缺二进制时起 cargo build，上限 1800 s）并对**真实
+        工作树**做 pristine 检查 —— 放进 CI 的 `metadata-observer` 既慢又非 hermetic（`src/`
+        任何未提交文件都会让它红，且与被测行为无关）。这里把外围守卫换成 no-op，
+        只留被测的**快照 + 还原 + 回读校验**真路径：判据仍是「还原按模块全局解析」，
+        但不再依赖扫描器二进制、工作树洁净度或 `.negative-source.lock` 的拥塞。
         """
+        import contextlib
         guard = self.negative_process_module()
         root = Path(__file__).resolve().parents[3]
         relative = 'src/pilotdeck-gateway/tests/fixtures/negative-restore/test_restore.py'
@@ -1894,7 +2004,12 @@ self_check_controls_run | return | return problems
             calls.append(str(args[1]))
             return real(*args, **kwargs)
 
-        with patch.object(guard, 'write_source_atomic', side_effect=recording):
+        with patch.object(guard, 'write_source_atomic', side_effect=recording), \
+                patch.object(guard, '_assert_workspace_sources', lambda *a, **k: None), \
+                patch.object(guard, '_ensure_workspace_scanner', lambda *a, **k: None), \
+                patch.object(guard, '_assert_product_pristine', lambda *a, **k: None), \
+                patch.object(guard, 'tree_lock',
+                             return_value=contextlib.nullcontext()):
             with guard.mutating_sources(root, [relative], lock_timeout=120):
                 pass
         self.assertEqual(calls, [str(target.resolve())],
