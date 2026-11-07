@@ -534,7 +534,9 @@ pub(crate) fn native_collector_backstop() -> Duration {
 /// the knob exists to help slow hosts, and a host that set it for one fixture
 /// must not shorten the deadline of a fixture that needs more (a `channel-sms`
 /// regeneration under a leftover `600` would be killed mid-cell).
-fn run_generator(
+// #2116 r2: pub(crate) so marker tests use the knob-aware entry instead of
+// hardcoding a `run_generator_with_deadline` bound that ignores the knob.
+pub(crate) fn run_generator(
     command: &mut Command,
     fixture: &str,
 ) -> Result<(ExitStatus, Vec<u8>, Vec<u8>), String> {

@@ -642,10 +642,20 @@ fn runner_regenerates_identically() {
 #[ignore = "requires Node 22 and pinned TS; spawns real sidecars"]
 fn turn_runner_generator_writes_owned_marker() {
     use std::path::PathBuf;
+    // #1890 caliber: the manual negative controls make these assertions
+    // panic on purpose, so a plain trailing remove_dir_all would never run
+    // and leave the scratch behind in /tmp. The Drop guard cleans both paths.
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
     for collision in [false, true] {
         let root =
             std::env::temp_dir().join(format!("pdrs-2116-turn-runner-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).expect("#2116 create turn-runner marker scratch");
+        let _scratch = Scratch(root.clone());
         if collision {
             fs::write(root.join(".generation-owner"), "session-factory\n")
                 .expect("#2116 seed foreign owner marker");
@@ -663,12 +673,9 @@ fn turn_runner_generator_writes_owned_marker() {
                     .join("tests/fixtures/turn-runner/generate.mts"),
             )
             .arg(&root);
-        let (status, stdout, stderr) = crate::test_baseline::run_generator_with_deadline(
-            &mut command,
-            "turn-runner",
-            Duration::from_secs(600),
-        )
-        .expect("#2116 bounded turn-runner marker generator");
+        let (status, stdout, stderr) =
+            crate::test_baseline::run_generator(&mut command, "turn-runner")
+                .expect("#2116 turn-runner marker generator run");
         let output = format!(
             "{}{}",
             String::from_utf8_lossy(&stdout),
@@ -689,6 +696,19 @@ fn turn_runner_generator_writes_owned_marker() {
                 "session-factory\n",
                 "#2116 failed turn-runner generation preserves the foreign owner bytes"
             );
+            // The marker is the first write into OUT: pin that the generator
+            // wrote nothing else before the exclusive open failed, or a moved
+            // (still-wx) marker write would pass every assertion above.
+            let mut names: Vec<_> = fs::read_dir(&root)
+                .expect("#2116 list collision scratch")
+                .map(|entry| entry.expect("#2116 read scratch entry").file_name())
+                .collect();
+            names.sort();
+            assert_eq!(
+                names,
+                [std::ffi::OsString::from(".generation-owner")],
+                "#2116 collision cell writes nothing before the exclusive marker open"
+            );
         } else {
             assert!(
                 !output.contains("EEXIST"),
@@ -701,7 +721,6 @@ fn turn_runner_generator_writes_owned_marker() {
                 "#2116 turn-runner generator writes its ownership marker"
             );
         }
-        fs::remove_dir_all(&root).expect("#2116 remove turn-runner marker scratch");
     }
 }
 
