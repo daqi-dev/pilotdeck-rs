@@ -203,15 +203,18 @@ fn tui_stderr_nonblocking(message: &str) {
 
 fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let home = paths::pilot_home(env, cwd)?;
+    #[cfg(unix)]
+    let load_snapshot = pilotdeck_gateway::config::load_snapshot_bounded;
+    #[cfg(not(unix))]
+    let load_snapshot = pilotdeck_gateway::config::load_snapshot;
     let snapshot =
-        pilotdeck_gateway::config::load_snapshot(&home, cwd, &env.strings(), Some("."), 1.0, "")
-            .map_err(|error| {
-                if error.requires_host {
-                    Failure::Todo("config requiring JavaScript host support")
-                } else {
-                    Failure::Error(String::from_utf16_lossy(error.message.units()))
-                }
-            })?;
+        load_snapshot(&home, cwd, &env.strings(), Some("."), 1.0, "").map_err(|error| {
+            if error.requires_host {
+                Failure::Todo("config requiring JavaScript host support")
+            } else {
+                Failure::Error(String::from_utf16_lossy(error.message.units()))
+            }
+        })?;
     let port = snapshot
         .get("config")
         .and_then(|v| v.get("gateway"))

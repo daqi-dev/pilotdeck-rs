@@ -6,7 +6,7 @@
 PILOT_HOME=/isolated/home /path/to/pilotdeck tui
 ```
 
-配置中的模型、Gateway 端口和 token 需与所选宿主一致。当前尚未接默认进程内 Gateway fallback；未发现可连接的宿主时明确返回未实现状态，不自动启动另一份宿主。显式宿主入口的准备方式见 [CONTROL.md](CONTROL.md)。
+配置中的模型、Gateway 端口和 token 需与所选宿主一致。 Unix入口使用有界配置加载：每个输入文件最多8MiB、一次加载累计最多32MiB，特殊文件或超限明确报错。该预检不会把本地StaffDeck绑定配置发送给远端宿主。当前尚未接默认进程内 Gateway fallback；未发现可连接的宿主时明确返回未实现状态，不自动启动另一份宿主。显式宿主入口的准备方式见 [CONTROL.md](CONTROL.md)。
 
 当前基础交互包括输入与提交、增量回复、模式及权限文件、`/new`、`/switch`、`/sidebar`、`/view`、`/clear`、`/help` 和 `/exit`，PageUp/PageDown 可翻阅聊天。权限请求展示工具及参数摘要，y/n 分别允许一次或拒绝，a 保存本地允许规则后应答。服务端未确认送达时保留请求，可重试或中止。实际可用能力仍由宿主决定。
 

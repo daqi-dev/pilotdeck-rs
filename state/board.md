@@ -4773,3 +4773,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · CLI只读binding与有界配置（Codex/Sol，仅本机）
 
 移除默认CLI对StaffDeck runtime binding的无条件TODO，复用Gateway只读loader，新增Unix opt-in有界facade（8MiB单文件/32MiB累计），保留旧Gateway API与非UnixCLI分流。mbp2 r3严格clippy、9配置单测含30真实TS新格及14旧格、3有界IO父测试（辅助子进程逐格实际调用）、错误退出与独占18789真实remote分支测试全PASS；不访问真实StaffDeck，CLI预检不把modules传给远端。初轮home拓扑与bundled-skills测试环境错误已修，原失败/最终日志和10文件源码/bin指纹在主仓 `_tmp/20261108-cli-binding/r3-evidence/`；TS原件归档 `_tmp/20261108-control-cli/binding-worker/`。新D2差异待人复核、无冻结豁免；下一步协调者接TUI bounded snapshot并整合main，Sol转SDK token安全读。未标完整CLI/A8/真人实效，无GitHub写入与本机Rust构建。
+
+### 2026-11-08 · TUI配置加载接入（Codex，仅本机）
+
+只读binding已与工具viewer无代码冲突整合，TUI启动在Unix选用同一bounded snapshot，非Unix保留旧loader。mbp2组合22库/132主bin测试、两个config进程测试、strict clippy/build通过；真实TUI三格FIFO/超限启动精确退出1并保留终端属性，普通mock流smoke退出0恢复正常，原件与12源文件/bin绑定在主仓 `_tmp/20261108-cli-binding/tui-r1-evidence/`。七个主bin ignored仍按五辅助父调用/两既有未跑分别计，不报全量全过。下一步继续帮助设置页、SDK token读器并整合刚fetch上游；本机提交、不推GitHub，完整CLI及阶段均未完成。
