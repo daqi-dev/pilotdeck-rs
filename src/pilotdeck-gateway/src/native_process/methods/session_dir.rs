@@ -436,7 +436,7 @@ impl Requests {
         )?;
         // #2083: the TS baseline runs a lone-surrogate `projectKey` to
         // completion (`closeProjectSessions` answers `{sessionKeys: []}`;
-        // real-entry probe `_tmp/20261026-issue-2083/probe.out`), so the only
+        // real-entry probe `_tmp/20261107-issue-2083/worker-r1/probe.out`), so the only
         // gate is the `?.trim()` shape above. The key converts lossily for the
         // configured-project comparison, like TS's own path handling; the raw
         // UTF-16 key still reaches the owner, so a session created under the
@@ -984,7 +984,7 @@ mod tests {
     // #2083: a lone-surrogate `projectKey` is a non-blank key, and the TS
     // baseline runs it to completion (`closeProjectSessions` answers
     // `{sessionKeys: []}` on both branches — real-entry probe
-    // `_tmp/20261026-issue-2083/probe.out`). It therefore passes the trim gate
+    // `_tmp/20261107-issue-2083/worker-r1/probe.out`). It therefore passes the trim gate
     // and reaches the same configured-project check every other foreign key
     // fails, on both the close and the resume branch, instead of being
     // answered the missing-key domain error.
@@ -1015,6 +1015,72 @@ mod tests {
                 key_message(&error),
                 "#2083 the surrogate projectKey keeps the capability message ({label} branch)"
             );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2083 r1 (DS sibling#1): the admission gate in `GatewayRequests::request`
+    // is the same source as the handler's configured-project check above, so
+    // it converts the key lossily too. Through the real entry an unserved
+    // surrogate is answered by the admission gate itself (`gateway_request_failed`
+    // + the isolation message, like every foreign key), and the registered
+    // residual — a key whose lossy form names a configured project path
+    // containing U+FFFD — is admitted and served on both layers alike
+    // (`resume` arm: the gate sits before the branch).
+    #[tokio::test]
+    async fn close_project_sessions_surrogate_project_key_meets_the_same_lossy_gate_at_the_entry() {
+        let (_s, mut r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "close_project_sessions".into(),
+            object([
+                (
+                    "projectKey",
+                    JsValue::String(JsString::from_utf16(vec![0xd800])),
+                ),
+                ("resume", JsValue::Bool(true)),
+            ]),
+        )
+        .await
+        .expect_err("#2083 an unserved surrogate projectKey is refused at the entry");
+        assert_eq!(
+            "gateway_request_failed", error.code,
+            "#2083 the entry answers the admission refusal for the surrogate projectKey"
+        );
+        assert_eq!(
+            "The isolated native process serves only its configured project.",
+            key_message(&error),
+            "#2083 the entry keeps the isolation message for the surrogate projectKey"
+        );
+        let residual = format!("{}-pd-\u{FFFD}", r.options.project.to_string_lossy());
+        r.options.project = std::path::PathBuf::from(&residual);
+        let residual_units: Vec<u16> = residual
+            .encode_utf16()
+            .map(|unit| if unit == 0xFFFD { 0xD800 } else { unit })
+            .collect();
+        let served = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "close_project_sessions".into(),
+            object([
+                (
+                    "projectKey",
+                    JsValue::String(JsString::from_utf16(residual_units)),
+                ),
+                ("resume", JsValue::Bool(true)),
+            ]),
+        )
+        .await
+        .expect("#2083 the residual lossy form of the configured project is served at the entry");
+        match served.get("sessionKeys") {
+            Some(JsValue::Array(keys)) => assert!(
+                keys.is_empty(),
+                "#2083 the residual project has no sessions to close"
+            ),
+            other => {
+                panic!("#2083 the resume arm must answer the sessionKeys array, got {other:?}")
+            }
         }
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");

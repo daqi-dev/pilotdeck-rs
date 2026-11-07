@@ -302,11 +302,17 @@ impl GatewayRequests for Requests {
             {
                 return result;
             }
+            // #2083 r1: this admission gate is the same source as the
+            // handler's configured-project check (`session_close_project`),
+            // so the key converts lossily here too. A lone-surrogate
+            // `projectKey` is refused as any other unserved key, and the
+            // registered residual — a lossy form naming a configured path
+            // that contains U+FFFD — is admitted on both layers alike.
             if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
-                && !project
-                    .as_string()
-                    .and_then(|s| s.to_utf8().ok())
-                    .is_some_and(|p| self.options.serves_project(&p))
+                && !project.as_string().is_some_and(|key| {
+                    let lossy = String::from_utf16_lossy(key.units());
+                    self.options.serves_project(&lossy)
+                })
             {
                 return Err(RequestError::new(
                     "The isolated native process serves only its configured project.",

@@ -273,8 +273,11 @@ mutations = [
     # #2083: a lone-surrogate `projectKey` passes the trim gate and reaches
     # the configured-project check (TS runs it to completion; the baseline
     # gate is only `?.trim()`). Re-adding the pre-#2083 UTF-8 rejection must
-    # turn the gate-order test red.
-    ('session-dir-surrogate-rejected', SESSION_DIR,
+    # turn the gate-order test red. r1: renamed off the #1455
+    # `session-dir-surrogate-rejected` (METHODS_MOD) — this runner keys its
+    # evidence files on the mutation name alone, so two rows sharing a name
+    # overwrite each other's logs.
+    ('session-dir-project-key-surrogate-rejected', SESSION_DIR,
      '        let project_key_str = String::from_utf16_lossy(project_key.units());',
      '        let project_key_str = project_key\n'
      '            .to_utf8()\n'
@@ -359,9 +362,9 @@ mutations = [
 # string that matches no scanned file cannot be told apart from a `{...}`
 # template, so it is not refused here -- the run finds it as an INVALID.
 #
-# The table pins every anchor that is verbatim in the scanned files: 36 of the
-# 41 rows (31 distinct strings, 32 entries -- `the transcript still loads` is
-# registered once per file), the remaining five rows ride a `{...}` template and
+# The table pins every anchor that is verbatim in the scanned files: 37 of the
+# 43 rows (32 distinct strings, 33 entries -- `the transcript still loads` is
+# registered once per file), the remaining six rows ride a `{...}` template and
 # cannot be pinned. Row and entry counts differ on purpose: rows vs. distinct
 # strings vs. (string, file) pairs are three different numbers. Pinning is the
 # point: when a message is reworded, `--check` fails here instead of surfacing as
@@ -420,8 +423,8 @@ LITERAL_ANCHORS = [
 # mutates `factory.rs` but asserts on a message in `factory_tests.rs`). A pin may
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
-SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS, REVIEW_TESTS,
-                FACTORY, FACTORY_TESTS)
+SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS)
 
 
 def _assertions(case):
@@ -514,6 +517,12 @@ def main():
     args = [arg for arg in args if arg != '--compile-only']
     every_row = [Case(*row) for row in mutations]
     selected_rows = every_row
+    # r1 (DS sibling#2 / MM): this runner keys its evidence files on the
+    # mutation name alone, so two rows sharing a name silently overwrite each
+    # other's logs. The argv check below cannot see a name repeated in the
+    # table itself; refuse the whole run (including `--check`) instead.
+    if len({case.mutation for case in every_row}) != len(every_row):
+        raise SystemExit('#1457 duplicate mutation name in the table')
     if args == ['--check']:
         # Guard first: it reports an unreadable scanned file as a clean refusal,
         # while the anchor probe below would raise a bare OSError on the same tree.
