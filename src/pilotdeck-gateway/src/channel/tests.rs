@@ -1148,18 +1148,20 @@ async fn stop_prefix_can_reenter_close() {
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The six keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
+/// The seven keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
 /// `reject_unmigrated_channels` must leave them alone. This is *not* a
 /// "fully assembled" list: `weixin` is built by the native assembly, `feishu`
 /// is refused by `reject_unimplemented_bundle_channels` until #1329, and the
-/// four loader-table keys have no native construction unit yet (#1302 B).
-const SUBSET_CHANNEL_KEYS: [&str; 6] = [
+/// five loader-table keys have no production assembly call yet (#1302 B;
+/// `bluebubbles` joined via #1343's `register` mount, like `sms`).
+const SUBSET_CHANNEL_KEYS: [&str; 7] = [
     "weixin",
     "feishu",
     "apiServer",
     "webhook",
     "wecomCallback",
     "sms",
+    "bluebubbles",
 ];
 
 fn adapters_config(entries: &str) -> JsValue {
@@ -1233,10 +1235,6 @@ fn rejects_unmigrated_whatsapp() {
     assert_rejects_unmigrated("whatsapp");
 }
 #[test]
-fn rejects_unmigrated_bluebubbles() {
-    assert_rejects_unmigrated("bluebubbles");
-}
-#[test]
 fn rejects_unmigrated_dingtalk() {
     assert_rejects_unmigrated("dingtalk");
 }
@@ -1276,7 +1274,7 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
     }
 }
 
-// The other eleven keys are consumed by `loadEnabledChannels`'s
+// The other ten keys are consumed by `loadEnabledChannels`'s
 // `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
 // `enabled` must still reject.
 #[test]
@@ -1298,7 +1296,7 @@ fn unmigrated_loader_channels_use_js_truthiness() {
 // #1579 r3 P1: both suites above derive their key set from the constant, so a
 // wrong membership flips the TS-parity property with every test still green
 // (drop `qq` and the strict suite simply stops looking at it; add `telegram`
-// and the truthiness suite skips it). Pin the membership and the 2/11 split.
+// and the truthiness suite skips it). Pin the membership and the 2/10 split.
 #[test]
 fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
     let expected: &[&str] = &["qq", "wecom"];
@@ -1311,8 +1309,8 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
         .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
         .count();
     crate::negative_assert!(
-        loader_keys == 11,
-        "#1386 eleven loader keys keep JS truthiness next to the two strict keys"
+        loader_keys == 10,
+        "#1386 ten loader keys keep JS truthiness next to the two strict keys"
     );
 }
 
@@ -1379,7 +1377,7 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // All 13 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
+    // All 12 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
     // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
     // reported.
     let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
