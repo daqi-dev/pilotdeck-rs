@@ -76,6 +76,7 @@ snapshot = _common.snapshot
 staged_skills_identity = _common.staged_skills_identity
 compare = _load('compare', _here / 'compare.py').compare
 sandbox_profile = _load('policy', _here / 'policy.py').sandbox_profile
+ts_read_root_overlap = _load('policy', _here / 'policy.py').ts_read_root_overlap
 
 MAX_BYTES = 4 * 1024 * 1024
 
@@ -131,16 +132,15 @@ def ts_read_roots(raw, output, baseline, rust_bin=None):
         raise Blocked('duplicate --ts-read-dir after canonicalization')
     # Root inside a protected tree leaks it; a root containing one swallows
     # it. Home only rejects being covered or equaled: a narrow dependency dir
-    # like ~/opt/libuv-1.52.1/lib inside it is the legitimate use.
+    # like ~/opt/libuv-1.52.1/lib inside it is the legitimate use. The overlap
+    # test itself lives in policy.ts_read_root_overlap and compares by
+    # (st_dev, st_ino) identity, not by spelling: macOS case variants and the
+    # /System/Volumes/Data firmlink alias must not bypass the guard (#2231 r1).
     protected = [ROOT, Path(output).resolve(), Path(baseline).resolve()]
     if rust_bin:
         protected.append(Path(rust_bin).resolve().parent)
-    home = Path.home()
     for root in roots:
-        for base in protected:
-            if base == root or base in root.parents or root in base.parents:
-                raise Blocked(f'--ts-read-dir overlaps a protected tree: {root}')
-        if root == home or root in home.parents:
+        if ts_read_root_overlap(root, protected, home=Path.home()) is not None:
             raise Blocked(f'--ts-read-dir overlaps a protected tree: {root}')
     return roots
 

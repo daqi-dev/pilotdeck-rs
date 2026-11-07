@@ -26,7 +26,7 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 
 五项负控基于真实 TS 原件复制到新目录，分别丢 stdout、改 stderr、改退出码、漏保留文件、多写文件；更新派生 manifest 仍须同时被对应 oracle 与成对字段比较检出。第六项 `drop-case`（#122）删掉整场景目录（首选无 argv 的默认分流场景），轮必须以 `round.case-files` FAIL，不得退化为只比剩余场景——对应计划 D0「漏命令或默认路径」负照面；两侧一致缺场景的合成件另有单测 `test_missing_scenario_on_both_sides_cannot_pass` 钉死。另有 host_negative_controls.py，用本机 clang 从 exec_node_control.c 构建会 execv Node 的原生假候选，在 Rust 轮记录 EPERM/EACCES 和 exit=126 才算负控通过；该候选绝非 Rust 产品。无有效真实原件时 controls 为 BLOCKED。单测使用临时合成证据验证比较器机制，**不算 TS 定标或真实负控通过**。
 
-本次新增隔离边界需要协调者沙箱外重跑；单测不证明 Seatbelt 实效。host_negative_controls.py 与真实定标的具体命令见 `_tmp/20261017-d0/FIX3.md`。产品超时/输出超限目前统一 BLOCKED、从不 PASS；Rust 行为 FAIL 的细分列为后续分类改进。
+本次新增隔离边界需要协调者沙箱外重跑；单测不证明 Seatbelt 实效。host_negative_controls.py 与真实定标的具体命令见 `_tmp/20261017-d0/FIX3.md`；该宿主命令自 #2231 r1 起同样接受可重复 `--ts-read-dir DIR`（原样透传给 run_round.py），钉版 Node 的 libuv 在 Homebrew 前缀之外的目标机必须带上它，否则宿主负控在 TS preflight 即 BLOCKED。产品超时/输出超限目前统一 BLOCKED、从不 PASS；Rust 行为 FAIL 的细分列为后续分类改进。
 
 ## 锁被保留时怎么解
 
