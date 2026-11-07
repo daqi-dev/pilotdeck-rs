@@ -11,7 +11,7 @@ use crate::runtime::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -302,6 +302,7 @@ struct State {
     status: String,
     cursor: u64,
     waits: BTreeMap<String, String>,
+    seen_waits: HashSet<String>,
     cancelled: Option<String>,
     attached: bool,
 }
@@ -344,6 +345,39 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
         }
         if let Some(wait) = view["waiting"]["id"].as_str() {
             state.waits.insert(wait.into(), call.into());
+        }
+        // Child waits retain their original execution identity; observing a
+        // parent never grants or fabricates a second approval for its child.
+        let mut candidates = HashSet::new();
+        for event in events
+            .iter()
+            .filter(|event| event["correlation_id"].as_str() == state.call_run.as_deref())
+        {
+            if let Some(wait) = event["payload"]["waiting"]["id"].as_str() {
+                state.seen_waits.insert(wait.into());
+            }
+            if event["state"] == "needs_human" {
+                if let Some(child) = event["call_ref"].as_str() {
+                    if child != call {
+                        candidates.insert(child.to_string());
+                    }
+                }
+            }
+        }
+        if state.run.is_some() {
+            for child in candidates {
+                let view = rpc
+                    .call(
+                        "execution.get",
+                        json!({"session_id":session,"call_ref":child}),
+                    )
+                    .await?;
+                if view["state"] == "needs_human" {
+                    if let Some(wait) = view["waiting"]["id"].as_str() {
+                        state.waits.insert(wait.into(), child);
+                    }
+                }
+            }
         }
     } else {
         state.status = "idle".into();
@@ -630,7 +664,23 @@ impl LiveSession for KernelSession {
                     } else {
                         Value::Null
                     };
-                    let value = json!({"backend":"kernel","kernelSessionId":kernel_id,"executionId":facts.call,"runId":facts.run,"cursor":facts.cursor,"execution":current,"status":facts.status});
+                    let journal = rpc
+                        .call(
+                            "execution.events",
+                            json!({"session_id":kernel_id,"after":0}),
+                        )
+                        .await?;
+                    if let Some(projection) = &projection {
+                        let history = rpc
+                            .call(
+                                "execution.history.snapshot",
+                                json!({"session_id":kernel_id,"context_ref":context_ref}),
+                            )
+                            .await?;
+                        projection.sync(&history)?;
+                    }
+                    let attached = state.lock().unwrap().attached;
+                    let value = json!({"backend":"kernel","kernelSessionId":kernel_id,"executionId":facts.call,"runId":facts.call_run,"cursor":facts.cursor,"execution":current,"status":facts.status,"journal":journal,"attached":attached});
                     let mut state = state.lock().unwrap();
                     if !state.attached {
                         let disposed = state.disposed;
@@ -781,9 +831,10 @@ impl LiveSession for KernelSession {
                     rpc.lock().await.call("execution.respond", json!({"session_id":kernel_id,"call_ref":call,"wait_id":params["requestId"],"messages":[{"role":"user","text":decision}],"idempotency_key":format!("permission:{}",params["requestId"])})).await?;
                     state.lock().unwrap().waits.remove(wait);
                     if let Some(interactions) = &interactions {
-                        interactions
-                            .reconnect_port()
-                            .set_external_pending(&session, false);
+                        interactions.reconnect_port().set_external_pending(
+                            &session,
+                            !state.lock().unwrap().waits.is_empty(),
+                        );
                     }
                     json!({"delivered":true})
                 }
@@ -797,10 +848,27 @@ impl LiveSession for KernelSession {
                         )
                         .await?;
                     let facts = recover(&mut *rpc.lock().await, &kernel_id).await?;
-                    let requests=facts.waits.iter().map(|(id,call)|json!({"requestId":id,"executionId":call,"kind":"permission"})).collect::<Vec<_>>();
+                    let mut requests = Vec::new();
+                    for (id, call) in &facts.waits {
+                        let view = rpc
+                            .lock()
+                            .await
+                            .call(
+                                "execution.get",
+                                json!({"session_id":kernel_id,"call_ref":call}),
+                            )
+                            .await?;
+                        requests.push(json!({"requestId":id,"executionId":call,"kind":"permission","toolName":view["waiting"]["schema"]["tool_name"],"payload":view["waiting"]["schema"]}));
+                    }
+                    if let Some(interactions) = &interactions {
+                        interactions
+                            .reconnect_port()
+                            .set_external_pending(&session, !facts.waits.is_empty());
+                    }
                     {
                         let mut state = state.lock().unwrap();
                         state.waits = facts.waits;
+                        state.seen_waits.extend(facts.seen_waits);
                         if !state.attached {
                             state.call = facts.call;
                             state.run = facts.run;
@@ -960,13 +1028,14 @@ impl LiveTurn for KernelTurn {
                             event["payload"]["waiting"]["id"].as_str(),
                             event["call_ref"].as_str(),
                         ) {
-                            let fresh = self
-                                .state
-                                .lock()
-                                .unwrap()
-                                .waits
-                                .insert(wait.into(), call.into())
-                                .is_none();
+                            let fresh = {
+                                let mut state = self.state.lock().unwrap();
+                                let fresh = state.seen_waits.insert(wait.into());
+                                if fresh {
+                                    state.waits.insert(wait.into(), call.into());
+                                }
+                                fresh
+                            };
                             if fresh {
                                 if let Some(interactions) = &self.interactions {
                                     interactions.reconnect_port().set_external_pending(
@@ -986,6 +1055,33 @@ impl LiveTurn for KernelTurn {
                         let mut agent_event = agent_event.clone();
                         agent_event["sessionId"] = json!(self.session);
                         agent_event["turnId"] = json!(self.run);
+                        if agent_event["type"] == "permission_request" {
+                            if let (Some(wait), Some(call)) = (
+                                agent_event["requestId"].as_str(),
+                                agent_event["executionId"].as_str(),
+                            ) {
+                                let fresh = {
+                                    let mut state = self.state.lock().unwrap();
+                                    let fresh = state.seen_waits.insert(wait.into());
+                                    if fresh {
+                                        state.waits.insert(wait.into(), call.into());
+                                    }
+                                    fresh
+                                };
+                                if !fresh {
+                                    continue;
+                                }
+                                if let Some(interactions) = &self.interactions {
+                                    interactions
+                                        .reconnect_port()
+                                        .set_external_pending(&self.session.as_str().into(), true);
+                                }
+                            } else {
+                                return Err(error(
+                                    "Native permission event omitted original wait/execution identity.",
+                                ));
+                            }
+                        }
                         if agent_event["type"] == "turn_completed" {
                             self.final_event = Some(agent_event);
                         } else {
@@ -1051,7 +1147,7 @@ impl LiveTurn for KernelTurn {
                         self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":original["code"].as_str().unwrap_or("KERNEL_EXECUTION_FAILED"),"message":message,"details":{"kernelSessionId":self.kernel_id,"executionId":root,"kernelError":original},"userHint":"Inspect the original Kernel execution and error before retrying."}}))?);
                     }
                     if outcome == "unknown" {
-                        self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":"KERNEL_OUTCOME_UNKNOWN","message":"Execution stopped waiting; an external effect may still have happened. Inspect the original execution before retrying.","details":{"kernelSessionId":self.kernel_id,"executionId":root,"outcome":"unknown"}}}))?);
+                        self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":"result_unknown","nativeCode":"KERNEL_OUTCOME_UNKNOWN","message":"Execution stopped waiting; an external effect may still have happened. Inspect the original execution before retrying.","details":{"kernelSessionId":self.kernel_id,"executionId":root,"outcome":"unknown"}}}))?);
                     }
                     let mut final_event = self.final_event.take().unwrap_or_else(|| {
                         json!({"type":"turn_completed","sessionId":self.session,"turnId":self.run,"result":{"type":if outcome=="completed"{"success"}else if outcome=="cancelled"{"aborted"}else{"error"},"stopReason":if outcome=="completed"{"completed"}else if outcome=="unknown"{"kernel_outcome_unknown"}else{outcome},"usage":{},"permissionDenials":[],"turns":0}})

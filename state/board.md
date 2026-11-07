@@ -4572,3 +4572,7 @@ Kernel committed history/revision 现驱动原 JSONL 的产品缓存，保留原
 ### 2026-11-08 原 UI 历史模型 readiness 修复（lane C）
 
 真实 UI 的 Send disabled 根因已由隔离 HTTP 读验证：models catalog 仅有 openai/default，router.autoAvailable=false，而 Kernel session_model_get 返回 saved auto，前端按不存在的 router/auto 禁止发送。现 frozen getter 返回同一实际 provider/model 的具体选择；不改变 Kernel 路由或活跃状态 fence。补无 RPC 的 getter 正例，focused 原生 tests 14/14 通过（含工作树中的下一批 restart replay）；真实 UI 重试由总集成完成。
+
+### 2026-11-08 Kernel journal active replay 与标准 Unknown（lane C）
+
+Gateway 重启后没有 attached pump 时，active snapshot 现从原 root execution/journal 重建有界 Gateway frame 视图，经原 projector 得到文本/工具帧，原 wait 只显示一次，实际 response 才标 terminal；permission 显示/响应始终保留原 child call/wait。重连仅在本进程从未见过 binding 的 native owner 上接受旧浏览器恢复观察，新连接 identity 仍控制后续审批；已有 generation fence 不变。Unknown 公共错误改为产品标准 result_unknown，nativeCode=KERNEL_OUTCOME_UNKNOWN 及原 session/execution ID 保留；native failure frame 不再经 projector 丢 details。focused kernel 14/14 通过；真实重启/CLI SIGINT 仍由总集成公共 WS/CLI 实测，UI 历史/live 标识重复已定位并与 B 接续。

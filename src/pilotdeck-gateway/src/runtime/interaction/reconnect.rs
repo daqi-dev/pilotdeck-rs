@@ -85,6 +85,12 @@ impl InteractionReconnectPort {
     pub fn has_external_pending(&self, owner: &JsString) -> bool {
         self.state.lock().unwrap().external_pending.contains(owner)
     }
+    /// Volatile identity is absent after a process restart. A native owner can
+    /// rebind observation without treating an old browser binding as consent.
+    pub fn has_binding_history(&self, owner: &JsString) -> bool {
+        let state = self.state.lock().unwrap();
+        current(&state, owner).is_some() || lookup(&state.last, owner).is_some()
+    }
     pub fn current_binding(&self, owner: &JsString) -> Option<InteractionBinding> {
         current(&self.state.lock().unwrap(), owner)
     }

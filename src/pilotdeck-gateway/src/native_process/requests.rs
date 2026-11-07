@@ -461,7 +461,19 @@ impl GatewayRequests for Requests {
                         });
                         let gate = self
                             .interactions
-                            .reconnect(session, next, previous.as_ref())
+                            .reconnect(
+                                session,
+                                next,
+                                if self
+                                    .interactions
+                                    .reconnect_port()
+                                    .has_binding_history(session)
+                                {
+                                    previous.as_ref()
+                                } else {
+                                    None
+                                },
+                            )
                             .map_err(RequestError::new)?;
                         if gate
                             .get("outcome")
@@ -478,6 +490,17 @@ impl GatewayRequests for Requests {
                         .await
                         .map_err(|e| RequestError::new(e.message))?
                 {
+                    if method == "reconnect_interaction" {
+                        if let JsValue::Object(ref mut output) = value {
+                            output.insert(
+                                "binding".into(),
+                                self.interactions
+                                    .get_binding(session)
+                                    .map(|binding| binding.to_value())
+                                    .unwrap_or(JsValue::Null),
+                            );
+                        }
+                    }
                     if method == "run_get" || method == "run_reattach" || method == "run_events" {
                         let native = value;
                         let mut projected =
@@ -502,6 +525,14 @@ impl GatewayRequests for Requests {
                         }
                         value = projected;
                     } else if method == "active_turn_snapshot" {
+                        if value.get("attached") != Some(&JsValue::Bool(true)) {
+                            return crate::runtime::session::kernel_replay::snapshot(
+                                &value,
+                                &String::from_utf16_lossy(session.units()),
+                                &self.options.home,
+                            )
+                            .map_err(|e| RequestError::new(e.message));
+                        }
                         let mut projection = self
                             .coordinator
                             .snapshot(&crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(

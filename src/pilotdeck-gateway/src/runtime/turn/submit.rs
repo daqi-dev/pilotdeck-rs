@@ -1143,6 +1143,16 @@ impl TurnSubmitter {
                     last_model = Some(key);
                 }
             }
+            if handle.backend_kind() == "kernel" && is(&event, "type", "turn_failed") {
+                // Native outcomes carry the original operation identity. Keep
+                // those facts in the existing public error frame contract.
+                let mut frame = field(&event, "error").clone();
+                set(&mut frame, "type", "error".into());
+                set(&mut frame, "runId", JsValue::String(run.run_id.clone()));
+                set(&mut frame, "recoverable", JsValue::Bool(false));
+                publisher.gateway_event(frame);
+                continue;
+            }
             let events = self
                 .projector
                 .project(&GatewayAgentEventProjectionInput {
