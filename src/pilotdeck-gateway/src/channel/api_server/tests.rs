@@ -1628,8 +1628,7 @@ async fn parser_rejections_keep_the_registered_transport_shape() {
         "#1683 HTTP/1.1 without Host is a parser 400"
     );
     assert_eq!(
-        missing_host.body,
-        b"",
+        missing_host.body, b"",
         "#1683 the missing-Host 400 has an empty body"
     );
     assert!(
