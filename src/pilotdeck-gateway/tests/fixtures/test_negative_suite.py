@@ -1569,6 +1569,18 @@ class AuditBindingTests(unittest.TestCase):
         self.assertFalse(
             suite.declares_test('let s = cr#"x"fn case_a(){"#; let q = \'"\';', 'case_a'),
             '#2064 a raw C string literal must not satisfy the fn form')
+        # r4: a raw hash delimiter with no ``r``-bearing prefix (``c#"…"#``)
+        # is not legal Rust (rustc 1.99.0: ``error: prefix `c` is unknown``);
+        # the scanner must refuse it instead of guessing a plain string whose
+        # inner quote would return the carried text to the code view.
+        # (Kept after the cr carrier: with the refusal disabled the carrier
+        # dies as an unterminated string, so the bound kill is this message
+        # check, not the assertRaises around it.)
+        with self.assertRaises(ValueError) as raised:
+            suite.declares_test('let s = c#"x"fn case_a(){"#; fn case_a() {}',
+                               'case_a')
+        self.assertIn('invalid Rust string prefix', str(raised.exception),
+                      '#2064 a hash delimiter without an r prefix must fail closed')
         self.assertFalse(suite.declares_test('// case_a => "row"', 'case_a'),
                          '#2064 a line comment must not satisfy the table form')
         self.assertFalse(suite.declares_test('let s = "case_a => 1";', 'case_a'),

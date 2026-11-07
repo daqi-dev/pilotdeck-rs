@@ -419,6 +419,31 @@ MUTANT_ROWS = [
         'test_negative_suite.AuditBindingTests.test_rust_code_only_blanks_escape_char_literals',
         '#2064 an escaped char literal must be blanked whole',
     ),
+    (
+        # #2064 r4: the fail-closed refusal of a raw hash delimiter with no
+        # r-bearing prefix. Disabling the refusal re-opens the c#"…"# carrier:
+        # the inner quote closes a bogus plain string and the carried fn text
+        # returns to the code view (here it dies as unterminated instead, so
+        # the bound kill is the message check after the assertRaises).
+        'audit-binding-c-string-hash-prefix-accepted',
+        SUITE,
+        "            if hashes and 'r' not in start.group(0):",
+        "            if False and 'r' not in start.group(0):",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a hash delimiter without an r prefix must fail closed',
+    ),
+    (
+        # #2064 r4: the gate that lets a c-prefixed literal open a string.
+        # Dropping ``c`` from the gate set re-opens the raw C string hole via
+        # the cr carrier (bound there; the c# carrier below would die as an
+        # unterminated string and blur the first failure).
+        'audit-binding-c-string-gate-allowed',
+        SUITE,
+        "        if source[i] == '\"' or (source[i] in 'rbc' and _token_start(source, i)):",
+        "        if source[i] == '\"' or (source[i] in 'rb' and _token_start(source, i)):",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a raw C string literal must not satisfy the fn form',
+    ),
 ]
 
 
