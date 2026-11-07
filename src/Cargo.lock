@@ -987,6 +987,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-budget"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
+ "pilotdeck-tokenizer",
+ "regex",
+]
+
+[[package]]
 name = "pilotdeck-child-signals"
 version = "0.1.0"
 dependencies = [
@@ -1018,6 +1027,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilotdeck-context"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-budget",
+ "pilotdeck-protocol",
+ "pilotdeck-tokenizer",
+]
+
+[[package]]
 name = "pilotdeck-gateway"
 version = "0.1.0"
 dependencies = [
@@ -1038,7 +1056,9 @@ dependencies = [
  "icu_locale_core",
  "icu_normalizer",
  "libc",
+ "pilotdeck-budget",
  "pilotdeck-child-signals",
+ "pilotdeck-context",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "pilotdeck-transport",

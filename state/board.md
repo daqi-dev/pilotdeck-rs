@@ -4534,3 +4534,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 Kernel 产品 backend 接缝（lane C，开发中）
 
 已把 ProjectSessionFactory 的 SessionBinding 装配改为真实 SessionBackendFactory/SessionBackend；旧 TurnHostFactory 是其中一个实现。新增原生 Scheduler L-C ABI2/UDS backend，经 execution.input/events/control/respond 驱动，独立持久化 canonical project/session→Kernel ID、binding/context/revision owner，默认 legacy，新会话显式 kernel；Kernel 模式无需 sidecar 参数，旧 owner 不自动转换。`cargo check -p pilotdeck-gateway --offline` 已过。此为候选接缝，真实网关链、重连/权限/Unknown、显式导入、全产品能力清单与验收仍在推进；没有声明 678 项通过或旧循环退役。
+
+### 2026-11-08 PD→Kernel 能力抽取车道 B（首批代码）
+
+已按本轮人批批量接入范围，把 gateway 既有 pricing/o200k 请求计数、wire accounting admission 与预算 snapshot policy 移到独立 `pilotdeck-budget`，把无模型 snip/micro/tool-pair 算法移到独立 `pilotdeck-context`；gateway 原路径转导复用，新包不依赖 gateway。独立包测试已通过，gateway 原 model-cost oracle 回归在本树 `_build/cargo-target` 验证中；未修改 fixtures/oracles/冻结尺子，README sha256 仍为 `f8958a3280a95df7c9e2032247b3803dd383e30b033b49292540af302cb4a6e5`。下一步在独立 integration provider 组合真实 Kernel model/tool/Ask/history/steer/publication；全产品 678 入口及真人实效仍是上游依赖，不因本批标完成。

@@ -4,6 +4,8 @@ exclude = ["vendor/tiktoken-rs", "vendor/icu_collator", "data/icu_collator_data"
 members = [
     "pilotdeck-cli",
     "pilotdeck-agent",
+    "pilotdeck-budget",
+    "pilotdeck-context",
     "pilotdeck-transport",
     "pilotdeck-protocol",
     "pilotdeck-tokenizer",

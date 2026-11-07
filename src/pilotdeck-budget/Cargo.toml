@@ -1,0 +1,14 @@
+[package]
+name = "pilotdeck-budget"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+
+[dependencies]
+pilotdeck-protocol.workspace = true
+pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
+regex = "=1.13.1"
+
+[lints]
+workspace = true

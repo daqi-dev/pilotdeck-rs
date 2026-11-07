@@ -14,6 +14,8 @@ pdrs-mutants = []
 workspace = true
 
 [dependencies]
+pilotdeck-budget = { path = "../pilotdeck-budget" }
+pilotdeck-context = { path = "../pilotdeck-context" }
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
 base64 = "=0.22.1"
 libc = "=0.2.190"
