@@ -144,7 +144,10 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
           # already holds (anthropic r2 P1#3 suggestion). The append-failure
           # rollback deletion is the issue-297-domain-fold fixture's
           # plan-pinned mutant, so this row keeps the distinct post-commit half.
-          ('domain-published-before-store', '        drop(undo);',
+          # r4 (MM r3 boundary/simplify, DS r3 sibling): renamed from the r1-era
+          # `domain-published-before-store` — the old name described the removed
+          # pre-store publish; this row pins the post-commit rollback.
+          ('domain-rolled-back-after-store', '        drop(undo);',
            '        inner.recorder_domain.rollback(&mut undo);'),
         ]
         for name, old, new in changes:
