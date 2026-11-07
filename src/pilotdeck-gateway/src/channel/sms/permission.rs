@@ -762,10 +762,29 @@ fn request_id_matches(
     }
 }
 
+/// Deepest container nesting `stringify_indented` renders (#1929). The
+/// recursive walk used to be unbounded and aborted the process from ~2507
+/// levels, while the protocol parser accepts arbitrary depth, so a peer
+/// could kill the gateway. 256 matches the MCP schema depth cap (#1754) and
+/// is far past anything displayable: every level costs `"[\n"` plus its
+/// `2·(depth+1)` indent spaces, so a bare chain spends `format_payload`'s
+/// 800-unit budget within ~27 levels (measured Node v22.22.0: `JSON.stringify`
+/// itself throws `RangeError` only from depth 3659, and `formatPayload`'s
+/// catch then falls back to `String(payload)`, which rethrows for arrays).
+const MAX_STRINGIFY_DEPTH: usize = 256;
+
 /// `JSON.stringify(payload, null, 2)` — 2-space indentation, `None` for a
 /// top-level `undefined`.
 fn stringify_indented(payload: &JsValue) -> Option<String> {
-    fn write(value: &JsValue, depth: usize, out: &mut String) -> Option<()> {
+    // Set once the depth cap elides a subtree; every enclosing container then
+    // skips its closing bracket, so the text stays bounded no matter how deep
+    // the payload nests.
+    fn write(value: &JsValue, depth: usize, out: &mut String, truncated: &mut bool) -> Option<()> {
+        if depth >= MAX_STRINGIFY_DEPTH {
+            out.push_str("\"...\"");
+            *truncated = true;
+            return Some(());
+        }
         let pad = "  ".repeat(depth);
         let pad_inner = "  ".repeat(depth + 1);
         match value {
@@ -785,13 +804,18 @@ fn stringify_indented(payload: &JsValue) -> Option<String> {
                         out.push_str(",\n");
                     }
                     out.push_str(&pad_inner);
-                    if write(item, depth + 1, out).is_none() {
+                    if write(item, depth + 1, out, truncated).is_none() {
                         out.push_str("null");
                     }
+                    if *truncated {
+                        break;
+                    }
                 }
-                out.push('\n');
-                out.push_str(&pad);
-                out.push(']');
+                if !*truncated {
+                    out.push('\n');
+                    out.push_str(&pad);
+                    out.push(']');
+                }
             }
             JsValue::Object(object) => {
                 let entries: Vec<_> = object
@@ -811,17 +835,23 @@ fn stringify_indented(payload: &JsValue) -> Option<String> {
                     out.push_str(&pad_inner);
                     out.push_str(&pilotdeck_protocol::quote_json_string(key));
                     out.push_str(": ");
-                    write(value, depth + 1, out);
+                    write(value, depth + 1, out, truncated);
+                    if *truncated {
+                        break;
+                    }
                 }
-                out.push('\n');
-                out.push_str(&pad);
-                out.push('}');
+                if !*truncated {
+                    out.push('\n');
+                    out.push_str(&pad);
+                    out.push('}');
+                }
             }
         }
         Some(())
     }
     let mut out = String::new();
-    write(payload, 0, &mut out)?;
+    let mut truncated = false;
+    write(payload, 0, &mut out, &mut truncated)?;
     Some(out)
 }
 
@@ -834,6 +864,11 @@ fn js_number(value: f64) -> String {
     }
 }
 
+/// `formatPayload`. Invariant (#1929): for a payload of any depth this returns
+/// a bounded string without panicking — `stringify_indented` elides past
+/// [`MAX_STRINGIFY_DEPTH`] instead of exhausting the Rust stack, and its
+/// `None` (top-level `undefined` only) never reaches `js_string_of`'s
+/// `RangeError` panic, which only a too-deep *array* join triggers.
 fn format_payload(payload: &JsValue) -> JsString {
     let text = stringify_indented(payload)
         .unwrap_or_else(|| String::from_utf16_lossy(js_string_of(payload).units()));
@@ -867,4 +902,214 @@ fn format_permission_prompt(entry: &PendingPermission) -> JsString {
         JsString::from("回复 1 允许一次，回复 2 允许本会话，回复 0 拒绝。"),
     ];
     JsString::from_utf16(join_lines(&lines))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::JsObject;
+
+    /// `n` arrays around a leaf: `write` runs at depths `0..n`.
+    fn nested_array(n: usize) -> JsValue {
+        let mut value = JsValue::String(JsString::from("leaf"));
+        for _ in 0..n {
+            value = JsValue::Array(vec![value]);
+        }
+        value
+    }
+
+    /// `n` objects around a leaf: `write` runs at depths `0..n`.
+    fn nested_object(n: usize) -> JsValue {
+        let mut value = JsValue::String(JsString::from("leaf"));
+        for _ in 0..n {
+            let mut object = JsObject::new();
+            object.insert(JsString::from("a"), value);
+            value = JsValue::Object(object);
+        }
+        value
+    }
+
+    /// The expected `JSON.stringify(value, null, 2)` text for an array chain,
+    /// built inside-out independently of `stringify_indented`'s writer.
+    fn expected_array_text(n: usize) -> String {
+        let mut expected = String::from("\"leaf\"");
+        for depth in (0..n).rev() {
+            expected = format!(
+                "[\n{}{}\n{}]",
+                "  ".repeat(depth + 1),
+                expected,
+                "  ".repeat(depth)
+            );
+        }
+        expected
+    }
+
+    #[test]
+    fn shallow_payload_matches_json_stringify_exactly() {
+        let mut options = JsObject::new();
+        options.insert(JsString::from("timeout"), JsValue::Number(1.5));
+        options.insert(JsString::from("retries"), JsValue::Null);
+        options.insert(JsString::from("verbose"), JsValue::Bool(true));
+        let mut payload = JsObject::new();
+        payload.insert(
+            JsString::from("tool"),
+            JsValue::String(JsString::from("bash")),
+        );
+        payload.insert(
+            JsString::from("args"),
+            JsValue::Array(vec![
+                JsValue::String(JsString::from("ls")),
+                JsValue::String(JsString::from("-l")),
+            ]),
+        );
+        payload.insert(JsString::from("options"), JsValue::Object(options));
+        payload.insert(JsString::from("empty_array"), JsValue::Array(Vec::new()));
+        payload.insert(
+            JsString::from("empty_object"),
+            JsValue::Object(JsObject::new()),
+        );
+        // Golden from Node v22.22.0 `JSON.stringify(payload, null, 2)`.
+        let expected = concat!(
+            "{\n",
+            "  \"tool\": \"bash\",\n",
+            "  \"args\": [\n",
+            "    \"ls\",\n",
+            "    \"-l\"\n",
+            "  ],\n",
+            "  \"options\": {\n",
+            "    \"timeout\": 1.5,\n",
+            "    \"retries\": null,\n",
+            "    \"verbose\": true\n",
+            "  },\n",
+            "  \"empty_array\": [],\n",
+            "  \"empty_object\": {}\n",
+            "}"
+        );
+        let payload = JsValue::Object(payload);
+        assert_eq!(
+            stringify_indented(&payload).as_deref(),
+            Some(expected),
+            "#1929 shallow output must stay byte-identical to JSON.stringify"
+        );
+        let formatted = format_payload(&payload);
+        assert_eq!(
+            String::from_utf16_lossy(formatted.units()),
+            expected,
+            "#1929 format_payload must pass the shallow text through unchanged"
+        );
+    }
+
+    #[test]
+    fn depth_at_threshold_renders_fully() {
+        // `MAX_STRINGIFY_DEPTH - 1` containers keep every `write` call at
+        // depths 0..MAX_STRINGIFY_DEPTH - 1, just under the cap. The
+        // expectation text was cross-checked byte-for-byte against Node
+        // v22.22.0 `JSON.stringify(v, null, 2)` for the same chain.
+        let full = MAX_STRINGIFY_DEPTH - 1;
+        assert_eq!(
+            stringify_indented(&nested_array(full)).as_deref(),
+            Some(expected_array_text(full).as_str()),
+            "#1929 a threshold-deep array chain must still render completely"
+        );
+        let mut expected = String::from("\"leaf\"");
+        for depth in (0..full).rev() {
+            expected = format!(
+                "{{\n{}\"a\": {}\n{}}}",
+                "  ".repeat(depth + 1),
+                expected,
+                "  ".repeat(depth)
+            );
+        }
+        assert_eq!(
+            stringify_indented(&nested_object(full)).as_deref(),
+            Some(expected.as_str()),
+            "#1929 a threshold-deep object chain must still render completely"
+        );
+    }
+
+    #[test]
+    fn depth_past_threshold_truncates_without_panicking() {
+        // A chain of `n` containers puts its leaf write at depth `n`, so the
+        // threshold itself is the first truncation point.
+        for depth in [MAX_STRINGIFY_DEPTH, 1000, 100_000] {
+            for (name, value) in [
+                ("array", nested_array(depth)),
+                ("object", nested_object(depth)),
+            ] {
+                let text = stringify_indented(&value)
+                    .unwrap_or_else(|| panic!("#1929 {name} chain at depth {depth} lost its text"));
+                assert!(
+                    text.contains("\"...\""),
+                    "#1929 {name} chain at depth {depth} must carry the truncation marker"
+                );
+                assert!(
+                    !text.contains("\"leaf\""),
+                    "#1929 {name} chain at depth {depth} must not render the elided leaf"
+                );
+                assert!(
+                    // The cap bounds the text: 256 opens with their indents,
+                    // then the marker — no closing-bracket tail.
+                    text.len() <= MAX_STRINGIFY_DEPTH * MAX_STRINGIFY_DEPTH * 2,
+                    "#1929 {name} chain at depth {depth} produced {} bytes",
+                    text.len()
+                );
+                let formatted = format_payload(&value);
+                let units = formatted.units();
+                assert!(
+                    units.len() <= 803,
+                    "#1929 format_payload on a depth-{depth} {name} chain returned {} units",
+                    units.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wide_deep_payload_stays_bounded_after_first_truncation() {
+        // 1000 siblings under an array at the cap's edge: once the first
+        // subtree elides, no further sibling may keep writing.
+        let mut deep_child = nested_array(MAX_STRINGIFY_DEPTH);
+        for _ in 0..1000 {
+            let mut object = JsObject::new();
+            object.insert(JsString::from("k"), deep_child.clone());
+            deep_child = JsValue::Object(object);
+        }
+        let mut wide = Vec::new();
+        for _ in 0..1000 {
+            wide.push(deep_child.clone());
+        }
+        let text = stringify_indented(&JsValue::Array(wide))
+            .expect("#1929 a wide-deep payload must still stringify");
+        assert!(
+            text.contains("\"...\""),
+            "#1929 the wide-deep payload must carry the truncation marker"
+        );
+        assert!(
+            text.len() <= MAX_STRINGIFY_DEPTH * MAX_STRINGIFY_DEPTH * 2,
+            "#1929 the wide-deep payload produced {} bytes",
+            text.len()
+        );
+        let formatted = format_payload(&JsValue::Array(vec![deep_child]));
+        assert!(
+            formatted.units().len() <= 803,
+            "#1929 format_payload on the wide-deep payload returned {} units",
+            formatted.units().len()
+        );
+    }
+
+    #[test]
+    fn deep_chain_format_payload_matches_full_json_prefix() {
+        // Past the cap the elided `"..."` sits far beyond `format_payload`'s
+        // 800-unit cut, so the observable text stays byte-identical to the
+        // pre-#1929 (unbounded) rendering of the complete JSON.
+        let full = expected_array_text(300);
+        let trimmed = full.trim();
+        let units: Vec<u16> = trimmed.encode_utf16().collect();
+        let expected = String::from_utf16_lossy(&units[..800]) + "...";
+        assert_eq!(
+            String::from_utf16_lossy(format_payload(&nested_array(300)).units()),
+            expected,
+            "#1929 format_payload must stay byte-identical to the full-JSON prefix"
+        );
+    }
 }
