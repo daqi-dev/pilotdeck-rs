@@ -231,9 +231,10 @@ mutations.append(('storage-root-nonutf8-accepted', ENTRY,
 # #2037: `Metadata::project_storage_id` (the turn/management snapshot workspace
 # id, `resolveProjectStorageId`) is the resolver behind `SnapshotProjects`: the
 # registered `.cwd` marker wins, the legacy path slug is only the fallback.
-# `snapshot_workspace_id_prefers_registered_marker` asserted both halves but no
-# mutation targeted `metadata.rs`, so deleting the marker branch was caught only
-# by an ordinary test (and by the oracle replay) — the same "assertion without a
+# `snapshot_workspace_id_prefers_registered_marker` asserted both halves, but no
+# row in this table targeted `metadata.rs`: `snapshot-projection` does mutate the
+# same marker branch (`storage-id-ignores-marker`), yet it binds `#888 marker
+# owns storage id`, not this test — the same "assertion without a bound
 # mutation" gap #1431 closed for the three management routes. Two halves, one
 # mutant each, plus the trim rule `project_id` applies to the fallback. All
 # three anchors occur exactly once in `metadata.rs`, and every marker below is
