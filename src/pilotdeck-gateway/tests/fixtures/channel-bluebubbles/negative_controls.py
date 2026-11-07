@@ -76,6 +76,17 @@ MUTATIONS = [
      'const MESSAGE_LIMIT: u32 = 50;',
      'const MESSAGE_LIMIT: u32 = 51;',
      GOLDEN, '#1343 case first-poll-hello-reply matches the TS oracle'),
+    # The poll GET's only bound is the undici default 300 s deadline
+    # (measured 301,257 ms on Node v22.22.0); unwiring that deadline must
+    # fail the silent-server behavioral pin.
+    ('unbounded-timeout-dropped',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        match tokio::time::timeout(\n'
+     '            UNDICI_DEFAULT_TIMEOUT,\n',
+     '        match tokio::time::timeout(\n'
+     '            std::time::Duration::from_secs(100000),\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 a silent server settles the no-signal poll GET at the undici default'),
     # A8.3-CHANNEL-BLUEBUBBLES-001-R2: the implemented channel must not be in
     # the unmigrated rejection table; re-inserting the key refuses startup
     # for the subset the loader test keeps loadable.
@@ -114,6 +125,7 @@ def main():
     guarded.extend(path for path in (fixtures / 'channel-bluebubbles').rglob('*') if path.is_file())
     guarded.append(root / 'src/pilotdeck-gateway/src/channel/loader.rs')
     guarded.append(root / 'src/pilotdeck-gateway/src/channel/tests.rs')
+    guarded.append(root / 'src/pilotdeck-gateway/src/channel/http_client.rs')
     args = ['--check'] if sys.argv[1:] == ['--check-anchors'] else sys.argv[1:]
     return matrix_main(root, __file__, 'channel::', MUTATIONS,
                        passed_count=1, child_count=0, paths=guarded,

@@ -79,13 +79,14 @@ impl HttpClient {
 
     /// `fetch(url, { signal })` without `AbortSignal.timeout`: no per-call
     /// deadline, but the exchange is still bounded — Node v22.22.0 global
-    /// fetch is undici under the hood, whose default `headersTimeout`/
-    /// `bodyTimeout` settle a hanging exchange after ~300 s
-    /// (`TypeError: fetch failed`, cause `HeadersTimeoutError`; measured
-    /// 301,257 ms in `_tmp/20261107-issue-1343-r2/harvest/arbitration/`).
-    /// The bluebubbles poll GET re-polls every 2.5 s, so without this bound
-    /// a server that accepts and stays silent accumulates one hung exchange
-    /// per tick with no recovery, where the TS process settles each one.
+    /// fetch is undici under the hood, whose default `headersTimeout`
+    /// settles a hanging exchange after ~300 s as a plain
+    /// `TypeError: fetch failed` (cause `HeadersTimeoutError`; measured
+    /// 301,257 ms in `_tmp/20261107-issue-1343-r2/harvest/arbitration/`),
+    /// not `AbortSignal.timeout`'s TimeoutError. The bluebubbles poll GET
+    /// re-polls every 2.5 s, so without this bound a server that accepts
+    /// and stays silent accumulates one hung exchange per tick with no
+    /// recovery, where the TS process settles each one.
     pub(crate) async fn request_unbounded(
         &self,
         method: &str,
@@ -93,15 +94,18 @@ impl HttpClient {
         content_type: Option<&str>,
         body: &str,
     ) -> Result<HttpResponse, String> {
-        self.send(
-            method,
-            url,
-            content_type,
-            None,
-            body,
-            Some(UNDICI_DEFAULT_TIMEOUT),
+        match tokio::time::timeout(
+            UNDICI_DEFAULT_TIMEOUT,
+            self.send(method, url, content_type, None, body, None),
         )
         .await
+        {
+            Ok(result) => result,
+            // The undici default deadline surfaces with the ordinary
+            // fetch-failure text (measured), so the `poll error` log keeps
+            // the TS `TypeError: fetch failed` shape.
+            Err(_) => Err("TypeError: fetch failed".to_owned()),
+        }
     }
 
     async fn send(
@@ -174,6 +178,8 @@ pub(crate) fn encode_uri_component(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
 
     #[test]
     fn encodes_like_encode_uri_component() {
@@ -182,5 +188,57 @@ mod tests {
             "a%20b%26c%2Fd%3Fe%3D%E4%B8%AD"
         );
         assert_eq!(encode_uri_component("-_.!~*'()"), "-_.!~*'()");
+    }
+
+    // The bluebubbles poll GET passes no `AbortSignal.timeout`, so its only
+    // bound is undici's default 300 s `headersTimeout` (Node v22.22.0,
+    // measured 301,257 ms). `request_unbounded` must keep that deadline
+    // wired: a server that accepts and stays silent settles with the
+    // ordinary fetch-failure text instead of hanging the exchange (and with
+    // it every subsequent 2.5 s tick). Paused time advances straight to
+    // the 300 s deadline, so this costs milliseconds of wall clock; the
+    // outer 400 s bound only fires for the unbounded mutant and turns the
+    // hang into a named assertion.
+    #[tokio::test(start_paused = true)]
+    async fn request_unbounded_settles_a_silent_server_at_the_undici_default() {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("#1343 silent server bind");
+        let port = listener
+            .local_addr()
+            .expect("#1343 silent server addr")
+            .port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("#1343 silent accept");
+            // Drain the request; never answer.
+            let mut sink = [0u8; 512];
+            loop {
+                match stream.read(&mut sink).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        });
+        let client = HttpClient::new();
+        let bounded = tokio::time::timeout(
+            Duration::from_secs(400),
+            client.request_unbounded(
+                "GET",
+                &format!("http://127.0.0.1:{port}/api/v1/message"),
+                None,
+                "",
+            ),
+        )
+        .await;
+        server.abort();
+        let outcome = match bounded {
+            Ok(result) => result,
+            Err(_) => Err("__never_settled__".to_owned()),
+        };
+        crate::negative_assert_eq!(
+            outcome.err(),
+            Some("TypeError: fetch failed".to_owned()),
+            "#1343 a silent server settles the no-signal poll GET at the undici default"
+        );
     }
 }
