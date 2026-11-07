@@ -1070,6 +1070,19 @@ class EnvironmentControls(unittest.TestCase):
             ('mkstemp-prefix-interpolates-a-foreign-attribute',
              'prefix=".negctl-" + path.name',
              'prefix=f"{scratch.name}-" + path.name'),
+            # r12（zai sibling P1 + zai/deepseek concurrency/boundary P1）：`mkstemp` 的位置序
+            # 同样能塞进 prefix；`**{...}` 摊平同理。
+            ('mkstemp-prefix-passed-positionally',
+             'tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, suffix=".tmp")',
+             'tempfile.mkstemp(".tmp", "../src/.negctl-" + path.name, dir=str(scratch))'),
+            ('mkstemp-arguments-unpacked',
+             'tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, suffix=".tmp")',
+             "tempfile.mkstemp(dir=str(scratch), **{'prefix': '../src/.negctl-' + "
+             "path.name, 'suffix': '.tmp'})"),
+            # r12（zai sibling P1 #2）：`mkstemp(dir=str(scratch))` 的 `str` 被模块级重绑。
+            ('str-shadowed-by-a-module-rebind',
+             'ROOT = Path(__file__).resolve().parents[5]',
+             "ROOT = Path(__file__).resolve().parents[5]\nstr = lambda value: '../src'"),
         ),
         'native-stimulus-plan/negative_controls.py': (
             ('temp-rebound-after-the-correct-derivation',
@@ -1138,6 +1151,13 @@ class EnvironmentControls(unittest.TestCase):
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    class _E:\n        name = '../src'\n"
              "    path = _E()\n    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'"),
+            # r12（zai concurrency P1 + deepseek sibling/boundary P1）：非赋值形态的绑定
+            # （for / with-as / except-as）同样能改掉目标名。
+            ('target-name-rebound-via-a-for-loop',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    class _E:\n        name = '../src'\n"
+             "    for path in (_E(),):\n        pass\n"
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1410,11 +1430,17 @@ class EnvironmentControls(unittest.TestCase):
         r11（DeepSeek sibling P1 #3）：同一动机对 `os` / `tempfile` 也成立 —— 判据只读
         `os.replace` / `tempfile.mkstemp` 的属性名，不读接收者，模块级 `os = _Shim()`
         能让整条发布链改道而正文一字未动。
+        r12（zai sibling P1 #2）：`mkstemp(dir=str(scratch))` 里的 `str` 也是判据按名字读的
+        —— 模块级 `str = lambda value: '../src'` 让 dir 整体改道。`form` 传 `None` 表示
+        「这个模块名一次都不许被绑定」。
         """
         problems = []
         for name, form in expected.items():
             got = self.fixture_bindings(source, name)
-            if got != [form]:
+            if form is None:
+                if got:
+                    problems.append(f'{name} must not be bound at module scope, got {got}')
+            elif got != [form]:
                 problems.append(f'{name} must be bound only by "{form}", got {got}')
         return problems
 
@@ -1424,13 +1450,23 @@ class EnvironmentControls(unittest.TestCase):
         `dir=` 由 `roots_at` 沿绑定链回溯；prefix/suffix 同样是**路径片段**：CPython 用
         `os.path.join(dir, prefix + … + suffix)` 拼接，prefix 里带 `'/'` 或 `'..'` 时临时
         文件直接逃出暂存目录、落回被扫的 `src/`，SIGKILL 残留就是 untracked build input。
+        r12（zai sibling P1 #1 + zai/deepseek concurrency/boundary P1）：只看 `prefix=` /
+        `suffix=` 两个关键字还不够 —— `mkstemp(suffix, prefix, dir)` 的位置序、`*args`、
+        `**{'prefix': …}` 都能把同一个片段塞进去，而 `dir=` 仍是关键字、派生链照绿。
+        健康形态全是纯关键字调用，所以位置实参 / 星号 / 双星一律判红。
         """
         problems = []
         for node in ast.walk(ast.parse(textwrap.dedent(body))):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                     and node.func.attr == 'mkstemp'):
                 continue
+            if node.args:
+                problems.append('mkstemp(...) must pass suffix/prefix/dir by keyword; '
+                                'positional arguments can smuggle a path fragment')
             for keyword in node.keywords:
+                if keyword.arg is None:
+                    problems.append('mkstemp(**{...}) can smuggle a path fragment')
+                    continue
                 if keyword.arg not in ('prefix', 'suffix'):
                     continue
                 if not self.plain_relative_component(keyword.value, body):
@@ -1456,17 +1492,25 @@ class EnvironmentControls(unittest.TestCase):
         # 仍是 `path`、判据照绿，而临时文件落到 `src/`。目标名在函数体里只准出现一次绑定，
         # 且必须是把自身规范化成 `Path` 的那一句（共享实现的 `path = Path(path)`）；
         # 夹具里它本来就是形参，一次绑定都不该有。
+        # r12（zai concurrency P1 + deepseek sibling/boundary P1）：枚举不能只看
+        # `bound_expressions`（Assign/AnnAssign/海象）—— `for path in …` / `with … as path` /
+        # `except … as path` 同样是绑定，`bound_names` 早已把它们立为必须枚举。这里与
+        # `body_binding_count` 同源：先按 `bound_names` 数形态，再核对那唯一一次的右值。
         problems = []
         for target in sorted(self.replacement_target_names(body)):
+            forms = [how for bound, how in self.bound_names(textwrap.dedent(body))
+                     if bound == target]
+            # 形参本身是合法的那一次绑定（夹具的 `path` 就是形参）。
+            if forms and forms[0] == f'parameter {target}':
+                forms = forms[1:]
             sources = [ast.unparse(value) for bound, value in self.bound_expressions(body)
                        if bound == target]
-            if sources not in ([], [f'Path({target})']):
+            if forms not in ([], [f'assign {target}']) or \
+                    sources not in ([], [f'Path({target})']):
                 problems.append(
                     f'the published target {target} may only be rebound as '
-                    f'"Path({target})", got: {sources}')
-        if problems:
-            return problems
-        return []
+                    f'"Path({target})", got: {forms} / {sources}')
+        return problems
 
     def sibling_atomic_guards(self, source, function):
         """#1692 §9 r2/r3：同族夹具的发布必须是 tmp + fsync + chmod + 一次 rename。"""
@@ -1498,9 +1542,13 @@ class EnvironmentControls(unittest.TestCase):
         # `body_binding_count(body, 'Path') == 0` 照样成立，而 `Path(root)` 走的是重绑后的
         # 对象 —— 仓根判定与 `PUBLISH_DIR` 派生全被改掉、钉子却全绿。
         # r11（DeepSeek sibling/boundary P1）：只数次数也不行 —— 把 import 整行**换成**
-        # 一条 `Path = …`，计数仍是 1。判据读到的模块名一律按**形态**钉。
-        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os'}
-        if 'tempfile.mkstemp(' in body:
+        # 一条 `Path = …`，计数仍是 1。判据读到的模块名一律按**形态**钉
+        # （r12 zai sibling P1：`str` 也在此列 —— `mkstemp(dir=str(scratch))` 按名字读它）。
+        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os', 'str': None}
+        # r12（deepseek boundary P1）：要不要钉 `tempfile` 不能由正文文本 `'tempfile.mkstemp('`
+        # 决定 —— 对手控制这串拼写（`tempfile .mkstemp(` 变体 AST 等价）。改为按**绑定表**
+        # 决定：模块里一旦出现 `tempfile` 绑定，就必须是唯一那条 plain import。
+        if self.fixture_bindings(source, 'tempfile'):
             expected_imports['tempfile'] = 'import tempfile'
         self.assertEqual(self.module_import_form_problems(source, expected_imports), [],
                          '#1692 §9 r11 the module names the guard reads are bound exactly '
@@ -2254,8 +2302,9 @@ self_check_controls_run | return | return problems
         # `Path(path).resolve()` 同时改道，函数体一字未动、全部钉子绿。
         # r11（DeepSeek sibling/boundary P1）：次数不够，形态也要钉死；`os` / `tempfile`
         # 同理（判据只读 `os.replace` / `tempfile.mkstemp` 的属性名，模块级 shim 能整条改道）。
-        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os'}
-        if 'tempfile.mkstemp(' in body:
+        # r12（zai/DeepSeek）：`str` 与 `tempfile` 的闸门口径同上（按绑定表，不看正文拼写）。
+        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os', 'str': None}
+        if self.fixture_bindings(source, 'tempfile'):
             expected_imports['tempfile'] = 'import tempfile'
         self.assertEqual(self.module_import_form_problems(source, expected_imports), [],
                          '#1692 §9 r11 the module names the guard reads are bound exactly '
@@ -2376,7 +2425,7 @@ self_check_controls_run | return | return problems
         # 钉子只看 `negative_process.py`。同一形态钉在调用方这边也补一条。
         self.assertEqual(self.module_import_form_problems(
             source, {'Path': 'from pathlib import Path', 'os': 'import os',
-                     'tempfile': 'import tempfile'}), [],
+                     'tempfile': 'import tempfile', 'str': None}), [],
             '#1903 r11 the call-site fixture binds the module names by the plain import form')
         self.assertEqual(source.count('write_source_atomic(root, path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
