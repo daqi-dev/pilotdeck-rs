@@ -26,7 +26,9 @@ import sys
 import tempfile
 
 if not sys.flags.isolated:
-    raise SystemExit('run with -I')
+    # 与装置同一口径：用法/环境错误 = 64，不占用「用例失败」的 1（#2031 r4 P3）。
+    print('用法错误：自测必须用 `python3 -I` 运行（rc=64）', file=sys.stderr)
+    raise SystemExit(64)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location('frame_attrib', os.path.join(HERE, 'frame_attrib.py'))
@@ -153,7 +155,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '86dbf51cb4da74e6584b741dbc73604047040e44f0d7b6e61779b95b12f9159e'
+PINNED_DEVICE_SHA256 = '6dd297112267bacc6dbacabab68bf96f6fa235b606361da9e6f8f9e284bb0967'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -932,11 +934,47 @@ check('用法：argparse 缺参数 → rc=64（改前退 2，与「反证命中�
 
 # ⑯ r3：module 级守卫也是「用法错误」，不得退 1（negctl 表里 1 = 「证据目录不可用」，
 #    复查会去换目录名重跑）。非 `-I` 运行必须退 64。
-_p = subprocess.run([sys.executable, fa.__file__, '/x', 'deadline'],
+_p = subprocess.run([sys.executable, os.path.join(HERE, 'frame_attrib.py'), '/x', 'deadline'],
                     capture_output=True, timeout=120)
 check('用法：非 -I 运行 → rc=64（改前 rc=1，与「证据目录不可用」撞码）',
       _p.returncode == 64 and b'-I' in _p.stderr,
       f'rc={_p.returncode} err={_p.stderr[-160:]!r}')
+
+# ⑰ r4：`_repo_root()` 找不到仓库根也是**用法/环境错误**，同样必须退 64 而不是 1。
+#    装置拷到仓库外（向上没有 scripts/parity/g03_compare.py）跑，stderr 要点名原因。
+import shutil  # noqa: E402 —— 只在这段里用
+
+_outside = tempfile.mkdtemp(prefix='pdrs-2031-outside-')
+_dev_outside = os.path.join(_outside, 'frame_attrib.py')
+with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as _src, open(_dev_outside, 'wb') as _dst:
+    _dst.write(_src.read())
+try:
+    _p = subprocess.run([sys.executable, '-I', _dev_outside, '/x', 'deadline'],
+                        capture_output=True, timeout=120)
+    check('用法：_repo_root() 找不到仓库根 → rc=64（改前 rc=1，与「证据目录不可用」撞码）',
+          _p.returncode == 64 and b'repo root not found' in _p.stderr,
+          f'rc={_p.returncode} err={_p.stderr[-200:]!r}')
+
+    # ⑱ r4：module 级守卫的 print 发生在 `main()` 装配 `_PipeSafe` **之前**。读者提前退出
+    #    （`2>&1 | head -n 0`）时裸 print 会把 rc 改写成 120（缓冲）/ 1（`-u`），
+    #    正是 r3 要消灭的撞码。这里把管道读端**先关掉**再起进程：等价但不靠调度竞态。
+    def _rc_with_closed_stderr(argv):
+        """读端预先关闭的管道接到 stderr：等价 `2>&1 | head -n 0`，但无调度竞态。"""
+        _r, _w = os.pipe()
+        os.close(_r)
+        try:
+            return subprocess.run([sys.executable, *argv], stdout=subprocess.DEVNULL,
+                                  stderr=_w, timeout=120).returncode
+        finally:
+            os.close(_w)
+
+    _rc = _rc_with_closed_stderr([os.path.join(HERE, 'frame_attrib.py'), '/x', 'deadline'])
+    check('用法：断管道下非 -I 守卫仍退 64（改前 120 / -u 下 1）', _rc == 64, f'rc={_rc}')
+
+    _rc = _rc_with_closed_stderr(['-I', _dev_outside, '/x', 'deadline'])
+    check('用法：断管道下 _repo_root() 守卫仍退 64（改前 120 / -u 下 1）', _rc == 64, f'rc={_rc}')
+finally:
+    shutil.rmtree(_outside, ignore_errors=True)
 
 print()
 if FAILS:
