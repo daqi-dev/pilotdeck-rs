@@ -19,7 +19,7 @@ id: D1-SDK-SIGNAL-RUNID-LITERAL-001
 `{"status":"result_unknown","recovery":{"sessionId":"d1-session","runId":"7a0c08c8-6b0f-4baa-a434-88a1169d8cc0"}}`
 与 `resume--unknown-cleanup` 的
 `"runId":"c19fd263-25a7-4427-87c5-f1637668e022"`。装置比较器
-`src/pilotdeck-cli/tests/common/signal_replay.rs:1177` 发布的
+`src/pilotdeck-cli/tests/common/signal_replay.rs:1199` 发布的
 `comparison.json` 归一化说明明文
 `UUID bytes stay literal`（只归一化 TS SQLite 前缀与完整业务前缀的
 Node v22.22.0 尾段）——即**故意不归一化 UUID，按字面比较**。
@@ -38,11 +38,20 @@ Node v22.22.0 尾段）——即**故意不归一化 UUID，按字面比较**。
 ## 范围
 
 **只覆盖这 2 格（`run--unknown-cleanup` / `resume--unknown-cleanup`）的
-`recovery.runId` 一个字段**：该两格的其余 stdout 字节、stderr、wire、
-abort 计数、连接、监听器与初末文件树仍严格比较；其余 94 格全部字节
-严格比较，不受本条影响。不动比较器（`tests/common/signal_replay.rs`）、
-不动金样（`source.json` / `oracle.json`）、不动产品代码；两格在 96 格
-验收命令下继续 FAIL 属本条登记的预期结果，红格数 2 / 绿格数 94 即符合。
+`recovery.runId` 一个字段**：该两格的其余比较面仍按既有规则严格比较——
+`compare_surfaces`（`signal_replay.rs:1045`）实际比较的是 status /
+naturalExit / cleanupExit / aborts / connections / activeAfterExit /
+initial / final / milestones / stdout / stderr / connection closures /
+listener removal；`wire` 只随 `actual.json` 落盘记录、**不参与比较**。
+其余 94 格适用的既有比较规则不变（含已登记例外：31 格
+`D1-SDK-WS-CLOSE-ORDER-001` 序不敏感、8 格
+`D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` stderr、4 格
+`D1-SDK-WS-CLOSE-REASON-001` close reason）。不动比较器
+（`tests/common/signal_replay.rs`）、不动金样（`source.json` /
+`oracle.json`）、不动产品代码；`comparison.json` 的 `acceptedDifferences`
+清单（`signal_replay.rs:1200-1202`）按 #2165 裁定**不更新、不含本条**，
+不得把它当作已批差异全集。两格在 96 格验收命令下继续 FAIL 属本条登记的
+预期结果，红格数 2 / 绿格数 94 即符合。
 #2165 已核：该差异不是 #1260 引入（#1260 分支与 `origin/main` 的
 merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"]`
 完全相同）。若未来把 `recovery.runId` 归一化（改比较器语义），须按冻结
@@ -50,10 +59,18 @@ merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"
 
 ## 机器判据
 
-已登记的 96 格验收命令（必须恰好执行 96 个测试；0 个测试不构成验收）：
-`cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli
---test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_
---test-threads=1`。#1260 修复后全量实跑：`test result: FAILED. 94 passed;
+已登记的 96 格验收命令（必须恰好执行 96 个测试；0 个测试不构成验收；
+命令正本：`src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放
+与产品负控」节）：`cargo test --offline --manifest-path src/Cargo.toml -p
+pilotdeck-cli --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_
+--test-threads=1`。**前置：整批须独占 28999 mock 端口车道**——批内只有
+进程内 `SERIAL` 互斥（`signal_replay.rs:34`、`run` 的 try_lock 循环
+`signal_replay.rs:1110`），跨进程无互斥；与同机任何
+绑定 `127.0.0.1:28999` 的既有套件（`sdk_run_exit.rs` / `sdk_format_exit.rs` /
+`sdk_sessions_list_exit.rs` 等）串行执行（宿主按 `mkdir /tmp/pdrs-parity.lock`
+目录租约排队），批期间不得并行任何绑 28999 的套件，否则
+`TcpListener::bind` EADDRINUSE panic 会多出红格且失败面不是 stdout 单面，
+本条的「红格数 2」不可复现。#1260 修复后全量实跑：`test result: FAILED. 94 passed;
 2 failed; 0 ignored; 0 measured; 118 filtered out`，失败恰为本条两格、
 surface 均为 `["stdout"]`；原始 `test result` 行与逐格输出见
 `_tmp/20261107-issue-1260/matrix/matrix.stdout`（mbp2，HEAD `d98cafa18`，

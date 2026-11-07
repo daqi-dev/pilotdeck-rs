@@ -147,7 +147,10 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
 abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）在 phase4 登记为 94 PASS / 2 FAIL；
 #1252 首轮严格比较的 58 PASS / 38 FAIL 已按上述真实重复结果重新归因，不能沿用 phase4 历史结论。
-`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；16 个稳定关闭顺序差异已由 #1260
+`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较，该 2 格红已登记为
+`specs/gateway-parity/diffs/D1-SDK-SIGNAL-RUNID-LITERAL-001.md`（#2165 人拍 2：只覆盖
+这 2 格的 `recovery.runId` 一个字段，属该登记的预期红格；`comparison.json` 的
+`acceptedDifferences` 不含该条，比较器与金样语义不变）；16 个稳定关闭顺序差异已由 #1260
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
