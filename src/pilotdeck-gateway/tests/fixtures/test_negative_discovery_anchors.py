@@ -130,7 +130,11 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 252 files (the host glob can reach all of them), 212 blind only, 2 with unresolvable shapes only, 38 in both; 1276 keys: 355 bare-filename joins and 921 shared-helper import keys.
+# 253 files (the host glob can reach all of them), 190 blind only, 2 with unresolvable shapes only, 61 in both; 1284 keys: 358 bare-filename joins and 926 shared-helper import keys.
+# Why a key a table needs shows up in no table text: the import line spells a
+# module name, while the host keys the helper file it lives in.
+IMPORTED_HELPER_REASON = 'imported shared fixture helper'
+
 KNOWN_BLIND = {
     '_negkit/negative_compare_verdicts.py': '1 key',
     '_negkit/negative_contract.py': '4 keys',
@@ -1574,7 +1578,7 @@ def violations(text, table, anchors=None):
     problems.extend(scan_problems)
     for key in sorted(_shared_module_keys(tree, FIXTURES,
                                          tuple(table.split('/')[:-1]))):
-        required.setdefault(key, ['imported shared fixture helper'])
+        required.setdefault(key, [IMPORTED_HELPER_REASON])
     declared, anchor_problems = declared_anchors(tree)
     problems.extend(anchor_problems)
     if anchors is not None:
@@ -1629,7 +1633,7 @@ def sweep(root=FIXTURES):
             # import line spells the module name, not the key. This is the same
             # blind spot as a bare file name, one level up, and it applies to
             # every table — not just the four that declare anchors.
-            keys.setdefault(key, ['imported shared fixture helper'])
+            keys.setdefault(key, [IMPORTED_HELPER_REASON])
         # "Blind" is exactly the loop's condition: the literal key does not
         # occur anywhere in the table, so ``git grep -F`` cannot find it. A key
         # already spelled out in the text needs no entry.
@@ -1791,6 +1795,34 @@ class DiscoveryAnchorTests(unittest.TestCase):
                     else f'{len(problems)} unresolvable')
                 self.assertEqual(reason, expected,
                                  f'{rel}: KNOWN_BLIND reason is stale; re-measure the table')
+
+    def test_the_register_summary_line_matches_the_scan(self):
+        """The one-line tally above KNOWN_BLIND is a claim like any other row.
+
+        Per-table counts are checked above; the summary sentence is the number
+        reviewers and follow-up issues quote, and it drifted once already (a
+        regeneration rewrote the block but not the sentence). Re-measure it.
+        """
+        blind, unresolvable = sweep()
+        measured = set(blind) | set(unresolvable)
+        total_keys = sum(len(keys) for keys in blind.values())
+        import_keys = sum(1 for keys in blind.values() for rows in keys.values()
+                          if rows == [IMPORTED_HELPER_REASON])
+        expected = (
+            f'# {len(measured)} files (the host glob can reach all of them), '
+            f'{sum(1 for rel in measured if blind.get(rel) and not unresolvable.get(rel))} blind only, '
+            f'{sum(1 for rel in measured if unresolvable.get(rel) and not blind.get(rel))} '
+            f'with unresolvable shapes only, '
+            f'{sum(1 for rel in measured if blind.get(rel) and unresolvable.get(rel))} in both; '
+            f'{total_keys} keys: {total_keys - import_keys} bare-filename joins and '
+            f'{import_keys} shared-helper import keys.')
+        source = (FIXTURES / 'test_negative_discovery_anchors.py').read_text(encoding='utf-8')
+        line = next((row for row in source.splitlines()
+                     if row.startswith('# ') and 'files (the host glob can reach all of them)' in row),
+                    None)
+        self.assertEqual(line, expected,
+                         'the summary line above KNOWN_BLIND is stale; re-run the sweep and '
+                         'rewrite it (see the r6 regeneration script in _tmp)')
 
     def test_tables_declare_their_discovery_anchors(self):
         for name in TABLES:
