@@ -188,6 +188,18 @@ mutations = [
         "#1226 js_is_space_unit drifted from the TS trim whitespace set",
         "runtime::memory::gateway::tests::js_is_space_unit_pins_the_ts_trim_whitespace_set",
     ),
+    # #1456: the replay used to flatten both dispatch arms into one JSON value,
+    # so answering a thrown wrapper error as a successful body still matched
+    # every recorded cell. The replay now pins the recorded step kind; this row
+    # proves that pin fires.
+    (
+        "error-mapped-to-response",
+        SOURCE / "runtime/memory/gateway.rs",
+        "            Err(error) => MemoryDispatch::Error(error),\n",
+        "            Err(error) => MemoryDispatch::Response(error.to_js()),\n",
+        "the TS wrapper threw; answering",
+        "gateway_replays_real_ts_wrapper_oracle",
+    ),
     # #1226: the validator must return the raw key, not the trimmed one
     # (requireManagementProjectKey only trims to check emptiness).
     (

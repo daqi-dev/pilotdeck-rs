@@ -81,6 +81,9 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 （`0x2000..=0x200A` 尾收、`0x0009..=0x000D` 首收）、删 `0x1680` / `0x202F` /
 `0x205F`、`require_management_project_key` 返回 trim 后的 key；前 5 行绑定
 lib 穷举单测 `js_is_space_unit_pins_the_ts_trim_whitespace_set`，末行绑定
-`require_management_project_key_only_trims_for_emptiness`。新文件提交前不在 HEAD，
+`require_management_project_key_only_trims_for_emptiness`。#1456 追加 1 行：
+`Err(error) => Error` 改回 `Response(error.to_js())`，绑定回放的「步骤种类」
+断言（oracle 记 `resultJson` 还是 `error`）——此前两个分支压成同一个 JSON 值，
+把抛错当成功体返回仍能过全部 74 步。新文件提交前不在 HEAD，
 `mutating_sources` 拒跑：提交后由协调者在宿主执行
 （`CARGO_TARGET_DIR` 由调用方设置）。
