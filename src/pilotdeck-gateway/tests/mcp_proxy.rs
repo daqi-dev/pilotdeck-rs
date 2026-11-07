@@ -56,9 +56,12 @@ const REQUEST_LOG_TIMEOUT: Duration = Duration::from_secs(5);
 /// opened this issue) can still be queued when the child exits. This window is
 /// a **bounded allowance, not proof of completeness**: it is how long a
 /// recorder may lag. It is followed by ending the writer and only then reading,
-/// so the read itself cannot race a later append; a record a fixture has not
-/// written within the window is lost, and a lost *expected* record fails the
-/// case instead of passing it.
+/// so the read itself cannot race a later append. A record a fixture has not
+/// written within the window is lost: a lost *expected* record fails the case,
+/// while a lost *extra* record is indistinguishable from one that was never
+/// sent and lets the case pass. That asymmetry is the price of a bounded
+/// window; only a mock-side flush barrier could close it, and the fixtures are
+/// shared with the TS recorder, so it is out of scope here (#2047 follow-up).
 const REQUEST_LOG_WINDOW: Duration = Duration::from_millis(1000);
 
 fn oracle() -> JsValue {
@@ -213,10 +216,12 @@ impl Child {
         .await
     }
     /// #2047: end the mock and wait for it, so its log is final before the
-    /// caller reads it. `mock_server.mjs:126-127` exits on stdin end, which is
-    /// the same completion signal the TS recorder in `generate.mts` relies on;
-    /// every record is appended with `appendFileSync`, so nothing can still be
-    /// sitting in a buffer when this returns.
+    /// caller reads it. `mock_server.mjs:126-127` exits on stdin end, so this
+    /// side gets an exit status it can assert on; the TS recorder in
+    /// `generate.mts:698-706` ends stdin and then races `SIGTERM`/`SIGKILL`
+    /// against it. Both sides can treat the log as final for the same reason,
+    /// and it is not the exit path: every record is written with
+    /// `appendFileSync`, which reaches the file before the call returns.
     async fn finish(mut self, label: &str) {
         drop(self.child.stdin.take());
         let status = tokio::time::timeout(REQUEST_LOG_TIMEOUT, self.child.wait())
