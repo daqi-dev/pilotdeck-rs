@@ -448,9 +448,10 @@ fn surrogate_collation_matrix_regenerates_identically() {
         "#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)"
     );
     // #2248: libuv completes the pinned identity triple (decision card
-    // 2026-10-31 A), same shape as the #283 libuv gate below. The homebrew
-    // node links a shared libuv, so a Homebrew upgrade can drift it under
-    // the same node binary and the matrix must not silently regenerate.
+    // 2026-10-31 A), same shape as the #283 libuv gate below. process.versions
+    // pins the build-time triple of the node binary (a rebuilt node is caught
+    // here); a dylib-only swap under the unchanged binary is invisible to
+    // version strings — loaded-object probe is follow-up #2340.
     let uv = baseline::node_command()
         .args(["-p", "process.versions.uv"])
         .output()

@@ -13,8 +13,10 @@ build other than the recorded 78.2 (homebrew node@22 baseline, decision card
 2026-10-31) gets the whole suite BLOCKED — a dedicated status that is never
 counted as INVALID — and the process exits 3 (0=all killed, 1=control failure
 or refusal, 2=unverified restore, 3=environment blocked). #2248: libuv 1.52.1
-completes the pinned identity triple; a drifted shared libuv (Homebrew upgrade
-under the same node binary) is BLOCKED the same way.
+completes the pinned identity triple; a node build reporting another libuv is
+BLOCKED the same way. Version strings are compile-time constants: a dylib-only
+swap under the unchanged binary stays invisible to this gate (it surfaces as a
+byte mismatch, not BLOCKED); a loaded-object probe is follow-up #2340.
 """
 import json
 import os
