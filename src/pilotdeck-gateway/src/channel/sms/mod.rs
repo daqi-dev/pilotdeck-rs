@@ -249,6 +249,36 @@ struct SmsShared {
     /// Node's server `headersTimeout`, applied to the request-head read
     /// (#1955). Immutable for the channel's lifetime, so no lock.
     headers_timeout: std::time::Duration,
+    /// #2035: detached connection tasks of **this** channel that have not
+    /// finished. Test-only bookkeeping for the `sms-stop-waits-for-connections`
+    /// mutation switch; production builds neither declare the field nor pay
+    /// for the counter.
+    #[cfg(test)]
+    live_connections: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// Keeps one count in the channel's own `live_connections` for the lifetime of
+/// a detached connection task. Taken in the accept loop **before**
+/// `tokio::spawn`, so a task that has been spawned but not polled yet is
+/// already counted: `stop()` must not observe zero while such a task is still
+/// queued. Per channel, not process-wide, so a parallel unit test's connection
+/// cannot satisfy another test's reading (#2035).
+#[cfg(test)]
+struct LiveConnection(Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl LiveConnection {
+    fn track(counter: &Arc<std::sync::atomic::AtomicUsize>) -> Self {
+        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self(counter.clone())
+    }
+}
+
+#[cfg(test)]
+impl Drop for LiveConnection {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl SmsShared {
@@ -322,6 +352,22 @@ impl ChannelHandle for SmsHandle {
                 let _ = server.shutdown.send(true);
                 let _ = server.task.await;
             }
+            // #2035 mutation: the pre-fix shape for the detach semantics — a
+            // `stop()` that drains the detached connections before clearing
+            // the client. Production is constant-false
+            // (`mutants::on` without the feature), and this is what the
+            // paired case `stop_returns_before_the_detached_connection_ends`
+            // is killed by.
+            if crate::mutants::on("sms-stop-waits-for-connections") {
+                #[cfg(test)]
+                while shared
+                    .live_connections
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    > 0
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
             shared.runtime.lock().await.client = None;
             Ok(())
         })
@@ -390,6 +436,8 @@ impl SmsChannel {
                 // #1955: one injection knob for both Node server defaults; see
                 // `SmsChannelOptions::request_timeout`.
                 headers_timeout: request_timeout.unwrap_or(DEFAULT_HEADERS_TIMEOUT),
+                #[cfg(test)]
+                live_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             }),
             inputs: StdMutex::new(SmsStartInputs {
                 extra,
@@ -591,7 +639,14 @@ impl ChannelAdapter for SmsChannel {
                         accepted = listener.accept() => match accepted {
                             Ok((stream, _)) => {
                                 let shared = server_shared.clone();
+                                // #2035: taken before the spawn, so `stop()`'s
+                                // detach mutation counts a task that is queued
+                                // but not polled yet.
+                                #[cfg(test)]
+                                let live = LiveConnection::track(&server_shared.live_connections);
                                 tokio::spawn(async move {
+                                    #[cfg(test)]
+                                    let _live = live;
                                     // Read before `shared` moves into the
                                     // service closure below.
                                     let headers_timeout = shared.headers_timeout;
@@ -607,10 +662,11 @@ impl ChannelAdapter for SmsChannel {
                                     // residual. The mutation switch is what
                                     // proves the deadline is load-bearing.
                                     //
-                                    // #1958 (in flight) owns the fixture
-                                    // table: register `sms-header-read-no-timeout`
-                                    // in `tests/fixtures/channel-sms/negative_controls.py`
-                                    // once it lands.
+                                    // #2020: registered in
+                                    // `tests/fixtures/channel-sms-head-timeout/negative_controls.py`
+                                    // (the `channel-sms` table's single
+                                    // `channel::sms::tests::` prefix cannot
+                                    // reach this module).
                                     let mut builder =
                                         hyper::server::conn::http1::Builder::new();
                                     if !crate::mutants::on("sms-header-read-no-timeout") {
