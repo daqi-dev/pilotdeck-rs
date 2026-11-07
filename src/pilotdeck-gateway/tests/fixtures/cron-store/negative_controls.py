@@ -32,10 +32,11 @@ fixture-create panic) and is SKIPPED on Linux, where the probe already
 returns true and forcing it changes nothing. Neither drop fails the run
 (same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
 
-#1672 adds three rows that mutate the probe triage itself (the errno
-decision and its #1672 fd-limit arm, now a tested unit instead of an
-untested call-site match) and bind to the two synthetic-errno unit tests;
-those rows are killable on every host, no filesystem cooperation needed.
+#1672 adds four rows that mutate the probe triage itself (the errno
+decision, its #1672 fd-limit arm, and the retry condition, now tested
+units instead of an untested call-site match) and bind to the two
+synthetic-errno unit tests; those rows are killable on every host, no
+filesystem cooperation needed.
 """
 from pathlib import Path
 import json
@@ -253,7 +254,7 @@ mutations = [
     # and
     # `runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision`,
     # which execute the decision (retry included) with synthetic errnos on
-    # every host, plus the three #1672 rows directly below, which mutate the
+    # every host, plus the four #1672 rows directly below, which mutate the
     # decision itself and are killable on any host. A filesystem-level
     # control still needs fault injection the mutation mechanism does not
     # have (registered as a follow-up).
