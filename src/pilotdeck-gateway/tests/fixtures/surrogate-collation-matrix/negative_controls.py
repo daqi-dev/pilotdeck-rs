@@ -37,6 +37,7 @@ STRUCTURE = 'surrogate_collation_matrix_covers_locale_and_key_classes'
 DIFFERS = ('#280 surrogate-collation-matrix/oracle.json differs from committed '
            'bytes outside the exact masks')
 GENERATOR_FAILED = '#280 surrogate-collation-matrix: generator failed'
+NODE_PIN = 'v22.22.0'
 ICU_PIN = '78.2'
 UV_PIN = '1.52.1'
 BLOCKED_MARKER = '#132a BLOCKED'
@@ -52,13 +53,26 @@ class BlockedEnvironment(BaseException):
 
 
 def runtime_blockage():
-    """Return the BLOCKED reason when node's pinned runtime (ICU, libuv) is not the recorded build."""
-    for probe_expr, pin, label in (('process.versions.icu', ICU_PIN, 'ICU'),
+    """Return the BLOCKED reason when node's pinned runtime (node, ICU, libuv) is not the recorded build."""
+    for probe_expr, pin, label in (('process.version', NODE_PIN, 'Node'),
+                                   ('process.versions.icu', ICU_PIN, 'ICU'),
                                    ('process.versions.uv', UV_PIN, 'libuv')):
-        probe = run_owned(['node', '-p', probe_expr], timeout=60)
+        try:
+            probe = run_owned(['node', '-p', probe_expr], timeout=60)
+        except OSError as exc:
+            # #2248 review boundary#1: an unspawnable probe must fail closed —
+            # "cannot verify the environment" is a BLOCKED, not a pass.
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node spawn failed: {exc}); the pinned runtime '
+                    f'is unverified, treating the environment as blocked')
         if probe.returncode != 0:
-            # A missing node surfaces through the ordinary cargo failure path.
-            return None
+            # #2248 review boundary#1: a failing probe used to read as
+            # "environment verified" (None) and degraded every row to INVALID;
+            # report it as BLOCKED instead (#132a fix-r1 semantics).
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node -p exited {probe.returncode}: '
+                    f'{probe.stderr.strip()[:200]}); the pinned runtime is '
+                    f'unverified, treating the environment as blocked')
         version = probe.stdout.strip()
         if version != pin:
             return (f'{BLOCKED_MARKER}: surrogate-collation-matrix requires {label} '
