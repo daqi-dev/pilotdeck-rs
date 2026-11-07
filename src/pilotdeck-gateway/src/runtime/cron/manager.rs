@@ -868,19 +868,19 @@ impl CronRuntime {
     /// reading the clock twice lets a millisecond tick in between turn a valid
     /// run-now into the TS-faithful "One-time Cron tasks must be scheduled in
     /// the future." rejection. That intermittent rejection is the bug being
-    /// removed, not a behaviour worth keeping: the baseline's own golden cell
+    /// removed, not a behaviour worth keeping.
+    ///
+    /// Facts this rests on, without inferring past them: the golden cell
     /// `run-now-shape` (`tests/fixtures/native-cron/oracle.json`, recorded
-    /// from real TS at cc7c4e6) pins `{"started":true,…}` for this exact
-    /// input, so a second read could only make the baseline contradict its own
-    /// recorded behaviour — bug criterion ② in `.42cog/intent.md` §不做什么
-    /// (2026-10-14 人定「默认修」), which is why this seam was approved as an
-    /// accepted difference (2026-11-07, AI 代批，待人复核) rather than left
-    /// implicit; entering it in the append-only `specs/gateway-parity` ledger
-    /// is tracked by #2096. Only a clock that ticks between the two reads can
-    /// observe the change, and that tick is reachable, not theoretical: the
-    /// window is one millisecond wide and a run-now straddled it in about 2.5%
-    /// of calls on a loaded runner (see the #2047 triage). The deterministic
-    /// regression test is
+    /// from real TS at cc7c4e6) records `{"started":true,…}` for this exact
+    /// input; the removed path is reachable, not theoretical — the window is
+    /// one millisecond wide and a run-now straddled it in 6 of 180 calls on a
+    /// loaded runner (6/180 ≈ 3.3%; 「加探针后 3/120」, see the #2047 triage);
+    /// and the golden was recorded under a pinned clock, so it does not by
+    /// itself exercise the cross-millisecond path. The seam is therefore an
+    /// approved accepted difference (2026-11-07, AI 代批，待人复核), and the
+    /// append-only `specs/gateway-parity` entry for it is tracked by #2096.
+    /// The deterministic regression test is
     /// `run_now_shares_one_clock_read_with_the_task_it_creates`.
     fn create_task_at(&self, input: &JsValue, now_ms: f64) -> Result<JsValue, CronError> {
         if !self.config.enabled {
