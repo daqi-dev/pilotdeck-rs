@@ -341,7 +341,24 @@ def _indexed(path, tracked):
     return False
 
 
-def _open_input(relative):
+def _repository_identity():
+    """`(st_dev, st_ino)` of the checkout root, taken before the copy starts.
+
+    The descriptor walk below protects every component *under* the root, but
+    `os.open(REPO)` itself would follow a link if the whole checkout were
+    replaced between the scan and the copy (#1570 r21 codex P0). The caller
+    takes this identity once, before it reads anything, and every later open
+    of the root must land on the same directory.
+    """
+    try:
+        info = os.stat(REPO)
+    except OSError as error:
+        raise RuntimeError(f'source_copy: cannot stat the repository root {REPO}: '
+                           f'{error}') from error
+    return (info.st_dev, info.st_ino)
+
+
+def _open_input(relative, root_identity=None):
     """Open a workspace input without following a link at any level.
 
     Opening `REPO / relative` with `O_NOFOLLOW` protects only the last
@@ -349,14 +366,23 @@ def _open_input(relative):
     the checks and the open, and the bytes still come from outside the
     checkout (#1570 r20 codex P0). Each component is therefore opened
     relative to the descriptor of the one above (`openat`), so every level is
-    checked by the open that uses it and no path is resolved twice.
+    checked by the open that uses it and no path is resolved twice. The root
+    itself is opened `O_NOFOLLOW` and compared against `root_identity`, so
+    replacing the checkout root does not redirect the walk either
+    (#1570 r21 codex P0).
     `O_NONBLOCK` matters too: opening a FIFO read-only waits for a writer
     forever, and the type check only happens on the descriptor
     (#1570 r20 codex P0). On a regular file it changes nothing.
     """
+    identity = _repository_identity() if root_identity is None else root_identity
     parts = relative.parts
-    directory = os.open(REPO, os.O_RDONLY | os.O_DIRECTORY)
+    directory = os.open(REPO, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
+        info = os.fstat(directory)
+        if (info.st_dev, info.st_ino) != identity:
+            raise RuntimeError('source_copy: the repository root changed while the control '
+                               'was starting; the scratch copy must come from the tree the '
+                               'scan read, so refusing to run the control')
         for part in parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                             dir_fd=directory)
@@ -368,7 +394,41 @@ def _open_input(relative):
         os.close(directory)
 
 
-def _copy_input(path, destination):
+def _sha256_of(descriptor):
+    """sha256 of exactly the bytes one descriptor holds."""
+    digest = hashlib.sha256()
+    with os.fdopen(descriptor, 'rb', closefd=False) as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_digest(path, root_identity=None):
+    """sha256 of one workspace input, read from a single descriptor.
+
+    The last line of defence used to call `read_bytes()` on the path again:
+    a path swapped for a FIFO after the copy made it hang instead of refuse,
+    and a path swapped for a link read through it (#1570 r21 codex P0). The
+    descriptor is opened once, checked for type, and read.
+    """
+    try:
+        descriptor = _open_input(path, root_identity)
+    except OSError as error:
+        raise RuntimeError(f'source_copy: {path} changed while it was being copied '
+                           f'({error}); refusing to run the control against a moving tree'
+                           ) from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f'source_copy: {path} is not a regular file any more; the tree '
+                               'changed while the copy was being made, so refusing to run the '
+                               'control against a moving tree')
+        return _sha256_of(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _copy_input(path, destination, root_identity=None):
     """Copy one workspace input from a single opened descriptor.
 
     Checking the path and then calling `copyfile` is a check-then-use race: a
@@ -381,7 +441,7 @@ def _copy_input(path, destination):
     written, and the bytes copied are the ones that descriptor holds.
     """
     try:
-        descriptor = _open_input(path)
+        descriptor = _open_input(path, root_identity)
     except OSError as error:
         if error.errno in (errno.ELOOP, errno.ENOTDIR):
             raise RuntimeError(f'source_copy: {path} became a symlink or left the repository '
@@ -996,6 +1056,10 @@ def source_copy(root):
     "Workspace inputs" is `src/` plus whatever `src/` reads at compile time
     from elsewhere in the repository (#1570, see `compile_inputs`).
     """
+    # Bind every open below to *this* checkout: taken before anything is read,
+    # so a root replaced mid-copy is refused instead of copied from
+    # (#1570 r21 codex P0).
+    root_identity = _repository_identity()
     # One list for both halves: the scan is told exactly which `src/` files to
     # read, and the copy is built from that same list. Listing the index twice
     # would let a file added in between be copied without ever being scanned,
@@ -1090,7 +1154,7 @@ def source_copy(root):
                                'scratch copy must not carry anything from outside the '
                                'checkout, so refusing to copy it')
         destination.parent.mkdir(parents=True, exist_ok=True)
-        _copy_input(path, destination)
+        _copy_input(path, destination, root_identity)
         written.append(path)
     # `rustup` must keep the repository toolchain when Cargo runs in /tmp, and
     # `LICENSE` rides along for the same "workspace inputs" promise. Both can
@@ -1114,7 +1178,7 @@ def source_copy(root):
                                'scratch copy must not carry anything from outside the '
                                'checkout, so refusing to copy it')
         _refuse_special(REPO / name, Path(name), 'the workspace inputs')
-        _copy_input(Path(name), root / name)
+        _copy_input(Path(name), root / name, root_identity)
         written.append(Path(name))
     # #1570: prove the inputs landed instead of trusting the write loop.
     verify_copy(root, files)
@@ -1164,8 +1228,12 @@ def source_copy(root):
     # when someone edits the tree while a control is starting up (#1570 r15
     # concurrency).
     for path in written:
+        # Re-read the source the same way it was copied: `read_bytes()` here
+        # followed links and blocked forever on a path swapped for a FIFO
+        # after the copy, so the last line of defence could hang instead of
+        # refusing (#1570 r21 codex P0).
+        source = _source_digest(path, root_identity)
         try:
-            source = hashlib.sha256((REPO / path).read_bytes()).hexdigest()
             duplicate = hashlib.sha256((root / path).read_bytes()).hexdigest()
         except OSError as error:
             raise RuntimeError(f'source_copy: {path} changed while it was being copied '
