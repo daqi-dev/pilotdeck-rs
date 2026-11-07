@@ -841,7 +841,15 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
             .unwrap_or_else(|| super::fixture_directory().join("sigint_default.py"));
         let _lease = super::read_lease::fixture_read_lease();
         let bytes = require(fs::read(&source), id, "SIGINT default wrapper bytes");
-        let snapshot = directory.join("sigint_default.py");
+        // #1885 r2: the child runs with `current_dir` set to its own project
+        // directory, so a relative caller-supplied results directory would
+        // hand it a script path it cannot open. Absolute here keeps the
+        // snapshot valid for any output directory spelling.
+        let snapshot = require(
+            std::path::absolute(directory.join("sigint_default.py")),
+            id,
+            "SIGINT wrapper snapshot path",
+        );
         private_file(&snapshot, &bytes, id);
         snapshot
     };
