@@ -4988,6 +4988,59 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 15 (codex r14 P0-1 / P0-2 / P0-4): the enclosing
+    # binding is read at the call, an assignment whose right side names a
+    # write helper keeps the spelling one, and the first resolution of a
+    # module scope sees its loop back edges.  Each row failed before round 15.
+    ('calibrate-for-target-module-call-before-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _mc\n"
+      "    def _mc_use():\n"
+      "        _mc(md, 'common', object())\n"
+      "    _mc_use()\n"
+      "    from builtins import print as _mc\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-self-assignment', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _ms\n"
+      "    _ms = _ms\n"
+      "    def _ms_use():\n"
+      "        _ms(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-loop-first-use', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _ml\n"
+      "    for _ml_x in ():\n"
+      "        _ml(md, 'common', object())\n"
+      "        from builtins import setattr as _ml\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6085,6 +6138,30 @@ def calibrate_for_target_class_block_alias(rows):
         'passed=False')
 
 
+def calibrate_for_target_module_call_before_rebind(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-call-before-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-call-before-rebind '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_self_assignment(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-self-assignment."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-self-assignment '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_loop_first_use(rows):
+    """#1953 fix-r1 round 15: calibrate-for-target-module-loop-first-use."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-loop-first-use '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -6897,6 +6974,15 @@ JUDGES = {
         'aggregation-audit', calibrate_for_target_class_block_alias, False, ()),
     'calibrate-for-target-nested-copy-alias': (
         'aggregation-audit', calibrate_for_target_nested_copy_alias, False, ()),
+    'calibrate-for-target-module-call-before-rebind': (
+        'aggregation-audit', calibrate_for_target_module_call_before_rebind,
+        False, ()),
+    'calibrate-for-target-module-self-assignment': (
+        'aggregation-audit', calibrate_for_target_module_self_assignment,
+        False, ()),
+    'calibrate-for-target-module-loop-first-use': (
+        'aggregation-audit', calibrate_for_target_module_loop_first_use,
+        False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

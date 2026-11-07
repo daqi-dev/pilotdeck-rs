@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 307 mutants:
+`JUDGES`, keyed by the same names. The current table has 310 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -475,7 +475,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-class-body-copy-alias`,
 `calibrate-for-target-nested-class-method`, `calibrate-for-target-conditional-rebind`,
 `calibrate-for-target-loop-back-edge`, `calibrate-for-target-same-line-rebind`,
-`calibrate-for-target-class-block-alias`, `calibrate-for-target-nested-copy-alias`.
+`calibrate-for-target-class-block-alias`, `calibrate-for-target-nested-copy-alias`,
+`calibrate-for-target-module-call-before-rebind`,
+`calibrate-for-target-module-self-assignment`,
+`calibrate-for-target-module-loop-first-use`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1388,3 +1391,28 @@ is conditional and the loops it sits inside.
 | **A class-body block hands the alias on**: `class C: if True: f = _h` followed by `f('common', <stub>)` after the block. | `calibrate-for-target-class-block-alias`; self-test `round 14: a class body that copies the handle inside a block` |
 | **A nested function hands the alias on**: `def g(): if True: f = _h` then `f('common', <stub>)`, called from the enclosing function. | `calibrate-for-target-nested-copy-alias`; self-tests `round 14: a nested function that copies the handle before the call`, `a nested function that only reads the copy` |
 | **An unconditional non-write import after the write import** (false FAIL guard): at module scope the last binding before the call is what the body reads. | self-test `round 14: an unconditional non-write import after the write import` |
+
+### Closed by `fix-r1` round 15 (codex r14 four P0 / one P1, GLM sibling r14 P1)
+
+Round 14 resolved an enclosing binding by "the last unconditional binding in
+the module", which is only right when nothing is known about when the
+enclosing function runs.  Round 15 reads the module binding at the module-scope
+call site, resolves the right-hand side of an assignment whose value names a
+write helper, and builds a scope's flow marks before the first lookup.  It
+also stops a copy from surviving an unconditional overwrite.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A module call that ran before a later rebinding**: `from builtins import setattr as w; def f(): w(md, ...); f(); from builtins import print as w` still writes. | `calibrate-for-target-module-call-before-rebind`; self-tests `round 15: a module call before the write alias is rebound` (aggregation), `round 15: a module call before the write alias is rebound` (status) |
+| **A self assignment keeps the write helper**: `from builtins import setattr as w; w = w; w(md, ...)`. | `calibrate-for-target-module-self-assignment`; self-tests `round 15: a module self assignment of the write alias` (both sides) |
+| **A conditional assignment of the helper**: `from builtins import print as w; if flag: w = setattr; w(report, 'status', 'PASS')` writes when `flag` is true. | self-test `round 15: a conditional assignment of the write helper` |
+| **The first lookup in a module scope already sees its loop back edge**: `from builtins import print as w; for ...: w(md, ...); from builtins import setattr as w`. | `calibrate-for-target-module-loop-first-use`; self-test `round 15: a module loop whose first use sits on the back edge` |
+| **A copy that is certainly overwritten is no alias** (false FAIL guard): `f = _h; f = lambda *a: None; f('common', <stub>)` calls the fresh object. | self-test `round 15: a copy that is certainly overwritten` |
+| **A non-write rebinding after the call on the same line** (false FAIL guard, status side). | self-test `round 15: a non-write rebinding after the call on the same line` |
+| **An unconditional non-write import after the module write import** (false FAIL guard): with no call site the round-14 rule stands. | self-test `round 15: an unconditional non-write import after the module write import` |
+
+Known boundary: an assignment whose right side is an *attribute*
+(`w = builtins.setattr`) still resolves to no helper, and a nested function's
+enclosing call site is read from the module-level definition it sits in, so a
+call made from a sibling function body is not modelled.  Both directions keep
+the round-14 answer.
