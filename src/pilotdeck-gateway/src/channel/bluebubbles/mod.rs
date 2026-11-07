@@ -194,6 +194,14 @@ impl Logger {
     }
 }
 
+// Lock strategy: the helper state machines in `interaction.rs` recover a
+// poisoned mutex (`PoisonError::into_inner`, the `sms/permission.rs`
+// `lock_state` pattern, #1790) because a turn that panics mid-prompt must
+// not take the channel down. These plain-state guards keep `.expect`
+// instead: their sections only move scalars and set members (the payloads
+// are converted to `JsString` before the guard is taken), so a panic under
+// one of them means an invariant is already broken — fail loudly and let
+// the driver's panic surface it (panic detection is #2285 ③).
 struct Runtime {
     key: ChannelKey,
     /// Normalized `serverUrl` (scalar string; it only feeds the URL builder
