@@ -326,8 +326,6 @@ impl GatewayRequests for Requests {
                 "read_session_messages",
                 "permission_decide",
                 "reconnect_interaction",
-                "export_session_transcript",
-                "restore_session_transcript",
             ]
             .contains(&method.as_str())
                 && let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)

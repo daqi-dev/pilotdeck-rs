@@ -4538,3 +4538,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 PD→Kernel 能力抽取车道 B（首批代码）
 
 已按本轮人批批量接入范围，把 gateway 既有 pricing/o200k 请求计数、wire accounting admission 与预算 snapshot policy 移到独立 `pilotdeck-budget`，把无模型 snip/micro/tool-pair 算法移到独立 `pilotdeck-context`；gateway 原路径转导复用，新包不依赖 gateway。独立包测试已通过，gateway 原 model-cost oracle 回归在本树 `_build/cargo-target` 验证中；未修改 fixtures/oracles/冻结尺子，README sha256 仍为 `f8958a3280a95df7c9e2032247b3803dd383e30b033b49292540af302cb4a6e5`。下一步在独立 integration provider 组合真实 Kernel model/tool/Ask/history/steer/publication；全产品 678 入口及真人实效仍是上游依赖，不因本批标完成。
+
+### 2026-11-08 Kernel backend 原生会话链及显式历史导入（lane C，候选）
+
+补齐 session.lease_acquire 与续租、超时/取消时关闭占用 socket、journal 查询重开时的 root execution 与 pending wait、Kernel new_session 即落 owner；旧 owner 仍按自己的 backend 路由。新增 export_session_transcript / restore_session_transcript 最小服务：只导入完整工具配对及可校验的内联附件，校验包/附件 sha256，源 quiescent 且无 pending/Unknown，目标为不同新 Kernel 会话，由 Kernel pristine import 与原始 receipt 保证幂等。legacy read_session_messages 现可只读读取投影。focused 原生 UDS 文本→权限→原始 execution.respond→最终事件 / 连接丢失 2/2；hash/工具配对/附件/拒绝 resume 状态 2/2；最新 cargo check 通过。新组合 WS/CLI 由总集成树继续实测；控制器装配、动态配置与其余产品面未被此结果自动验收，下一步是逐方法 ownership 审计并标出能力缺口。

@@ -206,10 +206,10 @@ impl Options {
         let token_file = file(Path::new(take("--token-file")?), "token file")?;
         let sidecar = if values.contains_key("--sidecar") {
             file(Path::new(take("--sidecar")?), "sidecar")?
-        } else if std::env::var("PILOTDECK_SESSION_BACKEND").as_deref() == Ok("kernel") {
-            PathBuf::new()
         } else {
-            return Err("native option --sidecar is required for legacy sessions".into());
+            // Backend ownership is known only when a session is opened. A
+            // Kernel-owned session must not require an unused sidecar binary.
+            PathBuf::new()
         };
         // #2036: `assembly` builds the child's command line from this path with
         // `to_string_lossy` (assembly.rs:398). Accepting raw bytes would launch

@@ -105,7 +105,7 @@ impl Requests {
             match method.as_str() {
                 "list_sessions" => self.session_list(&params).await,
                 "resume_session" => self.session_resume(&params),
-                "new_session" => self.session_new(&params),
+                "new_session" => self.session_new(&params).await,
                 "close_session" => self.session_close(&params).await,
                 "delete_session" => self.session_delete(&params).await,
                 "rename_session" => self.session_rename_or_tag(&params, false).await,
@@ -182,7 +182,7 @@ impl Requests {
     }
 
     /// `InProcessGateway.newSession` → generate key from channelKey + optional projectKey.
-    fn session_new(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+    async fn session_new(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let channel_key = params
             .get("channelKey")
             .and_then(JsValue::as_string)
@@ -204,10 +204,25 @@ impl Requests {
             project_prefix,
             suffix,
         );
-        Ok(object([(
-            "sessionKey",
-            JsValue::String(session_key.into()),
-        )]))
+        let session_key = JsString::from(session_key);
+        if self
+            .env
+            .get("PILOTDECK_SESSION_BACKEND")
+            .map(String::as_str)
+            == Some("kernel")
+        {
+            self.owner
+                .get_or_create(crate::runtime::session::SessionContext {
+                    session_key: session_key.clone(),
+                    project_key: Some(self.options.project.to_string_lossy().into_owned().into()),
+                    channel_key,
+                    allowed_tools: None,
+                    disallowed_tools: None,
+                })
+                .await
+                .map_err(|error| RequestError::new(error.message))?;
+        }
+        Ok(object([("sessionKey", JsValue::String(session_key))]))
     }
 
     /// `InProcessGateway.closeSession` → owner.close + interaction coordinator cleanup.

@@ -590,6 +590,7 @@ pub struct PreparedSession {
 #[derive(Clone)]
 pub struct SessionBinding {
     pub context: SessionContext,
+    pub historical_transcript: bool,
     pub recorder: Arc<Recorder>,
     pub checkpoint: HostToolCheckpoint,
     pub projection: Arc<SessionProjection>,
@@ -988,6 +989,9 @@ impl ProjectSessionFactory {
                 .map_err(|error| {
                     RuntimeError::new(String::from_utf16_lossy(error.message.units()))
                 })?;
+            let historical_transcript = std::fs::metadata(storage.recorder.writer().path())
+                .map(|metadata| metadata.len() > 0)
+                .unwrap_or(false);
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
@@ -1020,6 +1024,7 @@ impl ProjectSessionFactory {
                 .map_err(|e| RuntimeError::new(e.to_string()))?;
             let binding = SessionBinding {
                 context: context.clone(),
+                historical_transcript,
                 recorder: storage.recorder.clone(),
                 checkpoint: checkpoint.clone(),
                 projection: storage.projection.clone(),
@@ -1625,7 +1630,7 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
-fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+pub fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
     #[cfg(test)]
     PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));
     let completed: HashSet<_> = entries
