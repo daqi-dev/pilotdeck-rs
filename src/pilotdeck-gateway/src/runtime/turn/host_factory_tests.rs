@@ -163,6 +163,19 @@ async fn bounded<T>(future: impl Future<Output = T>) -> T {
 /// surface (#978 second review).
 const SIDECAR_LIVENESS: Duration = Duration::from_secs(60);
 
+/// #2054: the `steer-insert` case watches the transcript while the host is
+/// still closing its per-turn scope. `TurnRunner::complete()` cannot run
+/// before that scope releases the terminal frame, and the scope's wait for the
+/// child is bounded by `close_timeout` — so the observation window has to
+/// outlast that bound. A fixed 100 ms window closed long before
+/// `complete_turn` was even attempted once `close_timeout` went back to the
+/// product default of 1 s, which is exactly how "steer closed before the
+/// durable write" stopped being observable.
+const STEER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+const STEER_CLOSE_WINDOW: Duration = Duration::from_secs(2);
+const STEER_CLOSE_STEP: Duration = Duration::from_millis(5);
+const _: () = assert!(STEER_CLOSE_WINDOW.as_secs() >= 2 * STEER_CLOSE_TIMEOUT.as_secs());
+
 async fn bounded_liveness<T>(future: impl Future<Output = T>) -> T {
     timeout(SIDECAR_LIVENESS, future)
         .await
@@ -1593,14 +1606,17 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                 // still bounded below (60 s for the sidecar-dependent ones,
                 // the shared 10 s for in-process state), and no assertion
                 // changed. `close_timeout` is the product default 1 s rather
-                // than an artificially short 20 ms: it bounds child shutdown
-                // and disposer cleanup only (terminal waits use the separate
-                // `POST_CANCEL_EXIT_TIMEOUT`), and 20 ms is shorter than any
+                // than an artificially short 20 ms: 20 ms is shorter than any
                 // real deployment's SIGTERM-and-reap, so on a loaded host it
                 // force-killed the child mid-cleanup for no test reason.
+                // #2054: it is also how long the per-turn scope holds the
+                // terminal frame, so `complete()` cannot enter before it
+                // elapses (measured: ~1.0 s after `abort()`); the steer-close
+                // observation window below is therefore tied to this value,
+                // not to a fixed 100 ms.
                 let factory = TurnHostFactory::new(factory_registry.clone(), deployment,
                     Limits {
-                        close_timeout: Duration::from_secs(1),
+                        close_timeout: STEER_CLOSE_TIMEOUT,
                         handshake_timeout: Duration::from_secs(60),
                         io_timeout: Duration::from_secs(60),
                         ..Default::default()
@@ -1627,7 +1643,7 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                     Ok(host)
                 })
             },
-        ).with_close_timeout(Duration::from_secs(1));
+        ).with_close_timeout(STEER_CLOSE_TIMEOUT);
         for round in 0..if case == "reuse" { 2 } else { 1 } {
             let input =
                 parse_json(r#"{"type":"text","text":"hello"}"#).expect("#743 production input");
@@ -1745,25 +1761,68 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
                             .abort(&"user-stop".into())
                             .expect("#743 steer insert abort");
                         let mut next = stream.next();
-                        let early = timeout(Duration::from_millis(100), &mut next).await;
-                        let early_result = std::fs::read_to_string(recorder.writer().path())
-                            .expect("#743 steer transcript exists")
-                            .lines()
-                            .any(|line| {
-                                parse_json(line)
-                                    .expect("#743 steer transcript JSON")
-                                    .get("type")
-                                    == Some(&"turn_result".into())
-                            });
+                        // #2054: a fixed 100 ms window closed before
+                        // `complete_turn` could even be attempted once
+                        // `close_timeout` went back to the product default of
+                        // 1 s, so moving `close_session_steer()` past the
+                        // durable write became invisible. Poll the transcript
+                        // for the whole window instead. The in-flight insert
+                        // below stays unreleased, which keeps `complete()`
+                        // parked inside `close_session_steer()` until
+                        // `run.wait()` sees the serialized mailbox drain — so
+                        // a `turn_result` landing here was written before the
+                        // steer closed.
+                        let turn_result_written = || {
+                            std::fs::read_to_string(recorder.writer().path())
+                                .expect("#743 steer transcript exists")
+                                .lines()
+                                .any(|line| {
+                                    parse_json(line)
+                                        .expect("#743 steer transcript JSON")
+                                        .get("type")
+                                        == Some(&"turn_result".into())
+                                })
+                        };
+                        let started = tokio::time::Instant::now();
+                        let mut early_result = None;
+                        let mut early_event = false;
+                        loop {
+                            if turn_result_written() {
+                                early_result = Some(started.elapsed());
+                                break;
+                            }
+                            let elapsed = started.elapsed();
+                            if elapsed >= STEER_CLOSE_WINDOW {
+                                break;
+                            }
+                            let step = STEER_CLOSE_STEP.min(STEER_CLOSE_WINDOW - elapsed);
+                            match timeout(step, &mut next).await {
+                                Ok(_) => {
+                                    early_event = true;
+                                    break;
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                        if let Some(seen) = early_result {
+                            // The negative-control receipt is keyed on the
+                            // exact assertion string below, so the timing
+                            // evidence goes to the captured output instead of
+                            // changing the message.
+                            eprintln!(
+                                "#2054 turn_result landed {:?} into a {:?} window (close_timeout {:?})",
+                                seen, STEER_CLOSE_WINDOW, STEER_CLOSE_TIMEOUT
+                            );
+                        }
                         crate::negative_assert!(
-                            !early_result,
+                            early_result.is_none(),
                             "#743 turn_result waits durable steer close"
                         );
                         crate::negative_assert!(
-                            early.is_err(),
+                            !early_event,
                             "#743 terminal waits durable steer close"
                         );
-                        // #1847: the 100 ms above asserts only the negative
+                        // #1847: the window above asserts only the negative
                         // direction (nothing settles early); it must not double
                         // as a bet that the close has landed by then. `abort()`
                         // just cancels a token, and the mailbox close travels
