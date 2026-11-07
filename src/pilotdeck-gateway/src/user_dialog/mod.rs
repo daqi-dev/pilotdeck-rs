@@ -7,14 +7,21 @@
 //!
 //! Concurrency model (#2027): a channel is safe to share across threads. Host
 //! callbacks may reenter it (single-thread) and another thread may run another
-//! registration, so a same request id can be taken over at any point. The
-//! destructive bus actions (`register` / `consume`) are therefore bound to the
-//! acting registration's generation *inside* the bus lock, and a registration
-//! that lost an id is ended through one path (`end_replaced`) that removes only
-//! its own bus entry and releases only its own owner lease. The one window this
-//! module does not serialize itself is the durable journal/store write: those
-//! records are keyed by request id alone and rely on the host store's atomicity
-//! and cross-process locking, exactly as `ChannelOptions` documents.
+//! registration, so a same request id can be taken over at any point. Destructive
+//! bus actions that act on an existing entry (`consume` from cancel, poll and
+//! answer) are bound to the acting registration's generation *inside* the bus
+//! lock, and a registration that lost an id is ended through one path
+//! (`end_replaced`) that removes only its own bus entry and releases only its own
+//! owner lease. `register` itself keeps the TS baseline
+//! (`GatewayUserDialogBus.ts:150-160`): publishing a same-id dialog replaces the
+//! entry by request id. A registration on another Gateway that shares the bus and
+//! publishes under this id therefore wins the entry only as long as it is
+//! pending: the loser is ended by its own cancel or poll, which is the only place
+//! that observes the take-over (a channel cannot see another channel's request
+//! table). The one window this module does not serialize itself is the durable
+//! journal/store write: those records are keyed by request id alone and rely on
+//! the host store's atomicity and cross-process locking, exactly as
+//! `ChannelOptions` documents.
 
 mod bus;
 mod channel;

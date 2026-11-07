@@ -7,8 +7,8 @@
 //! clock. Abort notifications are delivered explicitly through `AbortSignal`.
 
 use super::{
-    DialogAnswer, DialogError, DialogRuntime, FileGatewayUserDialogStore, Result, StoreKey,
-    StoredAnswer, StoredDialog, UserDialogJournal,
+    DialogAnswer, DialogError, DialogRuntime, FileGatewayUserDialogStore, GatewayUserDialogBus,
+    Result, StoreKey, StoredAnswer, StoredDialog, UserDialogJournal,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::system_clock::format_epoch_iso;
@@ -666,13 +666,16 @@ impl GatewayUserDialogChannel {
         let (taken_over, events) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             // #2027: the ownership checks above all ran outside this guard, so
-            // a registration on another thread may have published the same id
-            // since. Publishing here would replace its bus entry by id
-            // (`GatewayUserDialogBus.ts:150-160`) and leave its waiter with
-            // nothing left to answer through. The replaced flag is written
-            // before any registration publishes, and publication needs this
-            // same guard, so reading it here closes the check-then-act window
-            // (window 3 sequence B).
+            // a same-id registration on another thread of *this* channel may
+            // have published since. Publishing here would replace its bus
+            // entry by id (`GatewayUserDialogBus.ts:150-160`) and leave its
+            // waiter with nothing left to answer through. The replaced flag is
+            // written (under the request table lock) before any registration
+            // publishes, and publication needs this same guard, so reading it
+            // here closes the check-then-act window (window 3 sequence B).
+            // Another channel sharing the bus is not covered: it writes the
+            // entry without this table, so its loser is ended by its own
+            // cancel or poll instead (see the module's concurrency model).
             let taken_over = state.replaced.load(Ordering::SeqCst);
             let events = if taken_over {
                 bus.drain_events()
@@ -903,8 +906,15 @@ impl GatewayUserDialogChannel {
     /// own poll entry, and its own owner lease through [`settle`]; the
     /// journal/store rows stay with whoever owns the id now, exactly as
     /// before (#1599).
+    ///
+    /// Does nothing when this registration's own consumer already took the bus
+    /// entry and is about to answer it: that answer still belongs to this
+    /// waiter, so ending it would drop the answer and report a replacement
+    /// that never happened (#2027).
     fn end_replaced(&self, state: &Arc<RequestState>, message: String) {
-        self.drop_own_bucket(state);
+        if self.drop_own_bucket(state) {
+            return;
+        }
         stop_polling(
             &self.inner,
             &state.request_id,
@@ -915,19 +925,25 @@ impl GatewayUserDialogChannel {
     }
 
     /// Removes this registration's bus entry if it is still the one the bus
-    /// holds (#2027), delivering the changes the removal queued.
+    /// holds (#2027), delivering the changes the removal queued. Returns true
+    /// when the entry was instead already taken by this registration's own
+    /// consumer, i.e. the answer is in flight and the caller must not end the
+    /// waiter.
     ///
     /// `bus.consume` is keyed by request id alone: a same-id registration that
     /// published after this one owns the entry now, and consuming it would
     /// delete that dialog and leave its waiter with nothing to answer through.
     /// The generation check below runs under the same guard as the consume, so
-    /// no publication can land between them.
-    fn drop_own_bucket(&self, state: &Arc<RequestState>) {
+    /// no publication can land between them; the same guard makes the
+    /// "already consumed by our own responder" check atomic with respect to
+    /// that consume, so a responder cannot slip in between the check and the
+    /// settlement.
+    fn drop_own_bucket(&self, state: &Arc<RequestState>) -> bool {
         if !state.registered.load(Ordering::SeqCst) {
-            return;
+            return false;
         }
         let generation = state.generation.load(Ordering::SeqCst);
-        let (consumed, outbox) = {
+        let (consumed, outbox, answered) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             let own = bus.pending_matches(
                 &self.inner.options.session_key,
@@ -943,8 +959,14 @@ impl GatewayUserDialogChannel {
                     )
                 })
                 .flatten();
+            let answered = !own
+                && bus.consumed_own(
+                    &self.inner.options.session_key,
+                    &state.request_id,
+                    generation,
+                );
             let outbox = bus.drain_events();
-            (consumed, outbox)
+            (consumed, outbox, answered)
         };
         if let Some(consumed) = consumed {
             // The waiter is already being ended with an explicit error and
@@ -958,6 +980,7 @@ impl GatewayUserDialogChannel {
                 .map_or(Ok(()), |hook| hook());
         }
         outbox.deliver();
+        answered
     }
 
     /// Ends a registration whose same-id replacement appeared while a host
@@ -989,16 +1012,20 @@ impl GatewayUserDialogChannel {
     /// Whether a later registration owns the bus entry under this request id
     /// while this registration is still registered (#2027). Callers must not
     /// hold the bus guard.
+    ///
+    /// A missing entry is not "still mine": `register` replaces by request id
+    /// (`GatewayUserDialogBus.ts:150-160`), so another registration that took
+    /// the id and was answered first leaves this waiter with nothing to answer
+    /// through. The bus records which registration the entry belonged to when
+    /// it was taken, so the one case that must not end the waiter — this
+    /// registration's own consumer is holding it and about to answer — is
+    /// excluded.
     fn bus_taken_over(&self, state: &Arc<RequestState>) -> bool {
         if !state.registered.load(Ordering::SeqCst) {
             return false;
         }
         let bus = self.inner.options.bus.lock().unwrap();
-        bus.pending_replaced(
-            &self.inner.options.session_key,
-            &state.request_id,
-            state.generation.load(Ordering::SeqCst),
-        )
+        taken_over(&bus, &self.inner.options.session_key, state)
     }
 
     pub fn abort(&self, request_id: &JsString) {
@@ -1041,7 +1068,7 @@ impl GatewayUserDialogChannel {
         // the dialog pending and broadcast-free (fail-closed,
         // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
         // consumed entry instead of resolving.
-        let (consumed, pre, outbox, own) = {
+        let (consumed, pre, outbox, takeover) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             // `pre` holds changes queued before this consume (normally
             // empty here); a lease that expires inside `consume` lands in
@@ -1070,8 +1097,14 @@ impl GatewayUserDialogChannel {
                     )
                 })
                 .flatten();
+            // A missing entry is not a take-over when this registration's own
+            // consumer (a renderer response that already ran
+            // `consume_for_response`) holds it and is about to answer: ending
+            // the waiter here would drop that answer and report a replacement
+            // that never happened (#2027).
+            let takeover = !own && taken_over(&bus, &self.inner.options.session_key, state);
             let outbox = bus.drain_events();
-            (consumed, pre, outbox, own)
+            (consumed, pre, outbox, takeover)
         };
         match consumed {
             Some(consumed) => {
@@ -1104,14 +1137,15 @@ impl GatewayUserDialogChannel {
             None => {
                 pre.deliver();
                 outbox.deliver();
-                if !own {
+                if takeover {
                     // The bus entry under this id belongs to a different
-                    // registration, so there is nothing left for this waiter
-                    // to be cancelled through. End it explicitly instead of
-                    // leaving it pending forever (#2027). The take-over is
-                    // sticky like a same-channel replacement: the journal and
-                    // store rows under this id may already be the taker's, so
-                    // the settlement below must not delete them.
+                    // registration (or was taken by one), so there is nothing
+                    // left for this waiter to be cancelled through. End it
+                    // explicitly instead of leaving it pending forever
+                    // (#2027). The take-over is sticky like a same-channel
+                    // replacement: the journal and store rows under this id
+                    // may already be the taker's, so the settlement below must
+                    // not delete them.
                     state.replaced.store(true, Ordering::SeqCst);
                     self.end_replaced(state, replaced_by_registration());
                     return;
@@ -1437,6 +1471,23 @@ fn replaced(inner: &Inner, state: &RequestState) -> bool {
 
 fn superseded_by_registration(inner: &Inner, state: &Arc<RequestState>) -> bool {
     replaced(inner, state)
+}
+
+/// Whether the bus entry under `state`'s request id no longer answers this
+/// registration (#2027). Callers must hold the bus guard and have checked that
+/// the registration is published.
+///
+/// The entry still answers this waiter while either the bus holds it for this
+/// generation, or a consumer already took *this* generation's dialog (the
+/// answer is on its way, whatever the id looks like now — a later registration
+/// may even have published over it since, which is why the bus records the
+/// consumed generation instead of deriving it from the entry).
+fn taken_over(bus: &GatewayUserDialogBus, session: &JsString, state: &Arc<RequestState>) -> bool {
+    let generation = state.generation.load(Ordering::SeqCst);
+    if bus.pending_matches(session, &state.request_id, generation) {
+        return false;
+    }
+    !bus.consumed_own(session, &state.request_id, generation)
 }
 
 fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {

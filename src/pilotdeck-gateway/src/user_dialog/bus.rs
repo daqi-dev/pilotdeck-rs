@@ -165,6 +165,13 @@ pub struct GatewayUserDialogBus {
     /// the same validator handle (#1599).
     next_generation: u64,
     generations: HashMap<(JsString, JsString), u64>,
+    /// Registration number the entry last consumed under a `(session,
+    /// requestId)` key belonged to (#2027). Without it a missing entry is
+    /// ambiguous: a poll cannot tell "another registration took the id" (its
+    /// waiter will never be answered, so it must be ended) from "the
+    /// registration's own consumer already took the entry and is about to
+    /// answer it" (ending it would drop that answer).
+    taken: HashMap<(JsString, JsString), u64>,
 }
 impl GatewayUserDialogBus {
     /// Legacy observer-coupled constructor: connected iff a change observer is
@@ -186,6 +193,7 @@ impl GatewayUserDialogBus {
             connected,
             next_generation: 0,
             generations: HashMap::new(),
+            taken: HashMap::new(),
         }
     }
 
@@ -204,6 +212,7 @@ impl GatewayUserDialogBus {
             connected: true,
             next_generation: 0,
             generations: HashMap::new(),
+            taken: HashMap::new(),
         }
     }
 
@@ -232,6 +241,11 @@ impl GatewayUserDialogBus {
         let generation = self.next_generation;
         self.generations
             .insert((session.clone(), entry.request_id.clone()), generation);
+        // The `taken` record is *not* cleared here (#2027): it belongs to the
+        // registration that was just replaced, and it is how that waiter's own
+        // in-flight answer (already consumed, not yet resolved) stays visible.
+        // Consumers compare it by generation, so a newer registration reads it
+        // as "not mine" while the older one still sees its answer on the way.
         let bucket = self.pending.entry(session.clone()).or_default();
         if let Some(index) = bucket
             .iter()
@@ -316,6 +330,11 @@ impl GatewayUserDialogBus {
             .generations
             .remove(&(session.clone(), request.clone()))
             .unwrap_or_default();
+        // Remember which registration owned the entry that just went away: a
+        // poll that finds no entry can then tell a take-over from its own
+        // in-flight answer (#2027).
+        self.taken
+            .insert((session.clone(), request.clone()), generation);
         self.emit(object([
             ("type", "settled".into()),
             ("sessionKey", JsValue::String(session.clone())),
@@ -379,6 +398,9 @@ impl GatewayUserDialogBus {
         bucket.insert(position, entry);
         self.generations
             .insert((session.clone(), request_id.clone()), generation);
+        // The entry is back, so the rollback of a failed settle hook also
+        // rolls back the "this id was consumed" record (#2027).
+        self.taken.remove(&(session.clone(), request_id.clone()));
         if let Some(lease) = lease {
             self.leases.insert((session.clone(), request_id), lease);
         }
@@ -409,6 +431,17 @@ impl GatewayUserDialogBus {
         generation: u64,
     ) -> bool {
         self.peek(session, request).is_some() && !self.pending_matches(session, request, generation)
+    }
+
+    /// Whether the entry last taken from `request` belonged to registration
+    /// `generation` (#2027). Only a consumer that took this registration's own
+    /// dialog will answer its waiter, so a poll that finds the id gone must
+    /// not end it; any other consumer (or another registration taking the id)
+    /// leaves the waiter with nothing to answer through.
+    pub fn consumed_own(&self, session: &JsString, request: &JsString, generation: u64) -> bool {
+        self.taken
+            .get(&(session.clone(), request.clone()))
+            .is_some_and(|taken| *taken == generation)
     }
 
     /// As in TS this does not validate values: callers must call `accepts`
@@ -457,6 +490,15 @@ impl GatewayUserDialogBus {
     pub fn reject_session(&mut self, session: &JsString, reason: &str) -> Vec<RejectedDialog> {
         let entries = self.pending.remove(session).unwrap_or_default();
         self.leases.retain(|(key, _), _| key != session);
+        // The caller rejects every entry it just took, so record whose
+        // registrations those were: a poll that finds the id gone in the
+        // meantime must not end a waiter that is about to be rejected here
+        // (#2027).
+        for entry in &entries {
+            let key = (session.clone(), entry.request_id.clone());
+            let generation = self.generations.remove(&key).unwrap_or_default();
+            self.taken.insert(key, generation);
+        }
         self.generations.retain(|(key, _), _| key != session);
         entries
             .into_iter()
