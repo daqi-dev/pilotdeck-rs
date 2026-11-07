@@ -321,7 +321,11 @@ mod tests {
         let mut calls = 0;
         let outcome: std::io::Result<()> = attempt_with_one_fd_retry(|| {
             calls += 1;
-            Err(error(if calls == 1 { libc::EMFILE } else { libc::EACCES }))
+            Err(error(if calls == 1 {
+                libc::EMFILE
+            } else {
+                libc::EACCES
+            }))
         });
         assert!(
             matches!(&outcome, Err(err) if err.raw_os_error() == Some(libc::EACCES)) && calls == 2,
@@ -404,8 +408,7 @@ mod tests {
         // name for a process-level condition. On hosts where the write
         // arm returns at the EILSEQ skip, the open call is never reached
         // end to end; the helper's unit test carries that arm's contract.
-        let write_outcome =
-            attempt_with_one_fd_retry(|| fs::write(&file_path, b"non-utf8-bytes"));
+        let write_outcome = attempt_with_one_fd_retry(|| fs::write(&file_path, b"non-utf8-bytes"));
         match write_outcome {
             Ok(()) => {}
             Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
