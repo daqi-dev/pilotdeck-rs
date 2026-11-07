@@ -90,6 +90,27 @@ def drive_refusal():
     print(f'VERDICT {code} {failure}'.rstrip())
 
 
+def eacces_is_stageable():
+    """True when this host really refuses to read a mode-000 file.
+
+    Review r3 boundary P2: ``geteuid() == 0`` is a proxy, not a measurement --
+    a root container may still honour the mode bits, and an unprivileged host
+    may not. Probe the actual behaviour instead of predicting it.
+    """
+    with tempfile.TemporaryDirectory(prefix='negctl-1922-probe-') as base:
+        probe = Path(base) / 'mode-000'
+        probe.write_text('probe\n', encoding='utf-8')
+        os.chmod(probe, 0)
+        try:
+            probe.read_text()
+        except PermissionError:
+            return True
+        return False
+
+
+EACCES_STAGEABLE = eacces_is_stageable()
+
+
 class UnreadableSourceRefusal(unittest.TestCase):
     """An unreadable bound source refuses (2) and leaves no evidence directory."""
 
@@ -165,8 +186,8 @@ class UnreadableSourceRefusal(unittest.TestCase):
             names=[UNKNOWN])
         self.assertRefused(result, left_behind, "codec can't decode")
 
-    @unittest.skipIf(os.geteuid() == 0,
-                     '#1922 root reads a mode-000 file, so EACCES cannot be staged')
+    @unittest.skipUnless(EACCES_STAGEABLE,
+                         '#1922 this host can read a mode-000 file; EACCES cannot be staged')
     def test_controls_module_read_eacces_is_refused(self):
         result, left_behind = self.drive(
             CONTROLS_SCRIPT,
@@ -185,8 +206,17 @@ class UnreadableSourceRefusal(unittest.TestCase):
             names=[], target=True)
         self.assertRefused(result, left_behind, 'No such file or directory')
 
-    @unittest.skipIf(os.geteuid() == 0,
-                     '#1922 root reads a mode-000 file, so EACCES cannot be staged')
+    def test_private_catalog_undecodable_is_refused(self):
+        # Review r3 sibling P2: negative_private.py catches ValueError too, and
+        # nothing exercised that half of the tuple at this entry.
+        result, left_behind = self.drive(
+            PRIVATE_SCRIPT,
+            edit=(PRIVATE_NETWORK, "network = '{undecodable}'"),
+            names=[], target=True)
+        self.assertRefused(result, left_behind, "codec can't decode")
+
+    @unittest.skipUnless(EACCES_STAGEABLE,
+                         '#1922 this host can read a mode-000 file; EACCES cannot be staged')
     def test_private_catalog_eacces_is_refused(self):
         result, left_behind = self.drive(
             PRIVATE_SCRIPT,
@@ -208,6 +238,17 @@ class UnreadableSourceRefusal(unittest.TestCase):
         # observable here (review r2 simplify P2); what is observable is that a
         # refusal prints no partial catalog.
         self.assertRefused(result, left_behind, 'No such file or directory',
+                           claimed_path=False)
+        self.assertEqual(result.stdout.strip(), self.verdict(result),
+                         '#1922 a refused catalog must not print a partial catalog')
+
+    def test_private_catalog_mode_undecodable_is_refused(self):
+        # Same ValueError half of the tuple, reached through `--catalog`.
+        result, left_behind = self.drive(
+            PRIVATE_SCRIPT,
+            edit=(PRIVATE_NETWORK, "network = '{undecodable}'"),
+            argv=['--catalog'])
+        self.assertRefused(result, left_behind, "codec can't decode",
                            claimed_path=False)
         self.assertEqual(result.stdout.strip(), self.verdict(result),
                          '#1922 a refused catalog must not print a partial catalog')
