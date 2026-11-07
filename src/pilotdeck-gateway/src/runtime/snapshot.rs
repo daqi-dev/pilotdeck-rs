@@ -410,7 +410,7 @@ pub enum SnapshotDispatch {
 /// `dispatch.rs`'s `LOCAL_METHODS` and has no production consumer yet (the
 /// native-process entry in `native_process/management.rs` calls `list` /
 /// `get` / `restore` directly); its outcome shape mirrors
-/// [`crate::runtime::memory::MemoryDispatch`] since #2194: unknown methods
+/// [`crate::runtime::memory::gateway::MemoryDispatch`] since #2194: unknown methods
 /// return `None`, a host boundary is [`SnapshotDispatch::Forward`], a success
 /// is the wire result JSON, and a failure is [`SnapshotDispatch::Error`],
 /// never a flattened response.
@@ -1261,9 +1261,18 @@ mod tests {
             .expect("#888 known method routes");
         // Asserting only `Response(_)` would also accept the old boundary
         // answered as a local *error* object (#132 review P1): require the
-        // list payload so reinstating the refusal turns this red.
-        let SnapshotDispatch::Response(response) = routed else {
-            panic!("#132 unpaired-surrogate collation answers locally, never forwards");
+        // list payload so reinstating the refusal turns this red. Since #2194
+        // a refusal is `Error`, never a flattened response, so the guard
+        // itself carries the payload marker for the `workspace-host-remains`
+        // mutant.
+        let response = match routed {
+            SnapshotDispatch::Response(response) => response,
+            SnapshotDispatch::Error(cause) => panic!(
+                "#132 collation case answers with a list, not an error: {cause:?}"
+            ),
+            SnapshotDispatch::Forward => {
+                panic!("#132 unpaired-surrogate collation answers locally, never forwards")
+            }
         };
         let Some(JsValue::Array(items)) = response.get("items") else {
             panic!("#132 collation case answers with a list, not an error: {response:?}");

@@ -61,6 +61,17 @@ mutations = [
         "runtime::snapshot::tests::requires_host_covers_the_errno_boundary_shape",
         "#888 errno shape forwards",
     ),
+    # #2194: a dispatch failure is `Error`, never a flattened response body
+    # (the memory-gateway family's `error-mapped-to-response` row, mirrored).
+    (
+        "error-mapped-to-response",
+        SOURCE / "runtime/snapshot.rs",
+        "            Err(error) => SnapshotDispatch::Error(error),\n",
+        "            Err(error) => SnapshotDispatch::Response(error.as_json()),\n",
+        "lib",
+        "runtime::snapshot::tests::dispatch_routes_only_snapshot_methods",
+        "#2194 snapshot_list failure must dispatch as SnapshotDispatch::Error",
+    ),
     (
         "resolver-general-always",
         SOURCE / "metadata.rs",
@@ -220,6 +231,7 @@ mutations = [
 EXPECTED_NAMES = (
     "mkdtemp-eexist-fabricated",
     "requires-host-false",
+    "error-mapped-to-response",
     "resolver-general-always",
     "storage-id-ignores-marker",
     "storage-id-stats-normalized-marker",

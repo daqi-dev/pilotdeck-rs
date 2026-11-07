@@ -3,16 +3,21 @@
 //! in front of the existing [`MemoryProjection`]
 //! (`createLocalGateway.ts:1238-1259`).
 //!
-//! The adapter is deliberately not registered in the native dispatch table:
-//! wiring `memory_*` into `requests.rs` belongs to the A8 entry lane, so the
-//! methods stay forwarded to the TS host until then. `dispatch` has no
-//! production consumer yet (it, too, waits for the A8 entry); it is the
-//! reference shape [`crate::runtime::snapshot::SnapshotGateway`]'s `dispatch`
-//! mirrors since #2194: unknown methods return `None`, a `requires_host`
-//! boundary returns [`MemoryDispatch::Forward`] (the whole request goes to
-//! the Node host), a success is the wire-shaped result JSON, and a failure is
-//! [`MemoryDispatch::Error`] so the WS entry answers with `ok:false` exactly
-//! as the TS `throw` does.
+//! The adapter stays out of `dispatch.rs`'s `LOCAL_METHODS`, but the methods
+//! are not forwarded to the TS host: `memory_list` / `memory_wipe` are
+//! answered natively by the native-process management family
+//! (`native_process/methods/management.rs` -> `Requests::management_request`
+//! -> `memory_dispatch`, `native_process/management.rs`), which is
+//! `dispatch`'s production consumer — it returns the wire-shaped result JSON
+//! for [`MemoryDispatch::Response`], maps [`MemoryDispatch::Forward`] to
+//! `CAPABILITY_UNAVAILABLE` (the isolated native process has no Node host to
+//! forward to), and maps [`MemoryDispatch::Error`] to a `RequestError` the WS
+//! entry answers with `ok:false` exactly as the TS `throw` does. `dispatch` is
+//! the reference shape [`crate::runtime::snapshot::SnapshotGateway`]'s
+//! `dispatch` mirrors since #2194: unknown methods return `None`, a
+//! `requires_host` boundary returns [`MemoryDispatch::Forward`] (the whole
+//! request goes to the Node host), and the two local outcomes are the
+//! `Response` / `Error` shapes mapped above.
 //!
 //! Validation order is the TS wrapper's, measured by
 //! `tests/fixtures/memory-gateway`: projectKey first, then the optional
