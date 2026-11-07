@@ -21,6 +21,8 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
+除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被变异源码里（另一头 `negative_assert!` / `negative_assert_eq!` 走 `format!`，锚点本来就是展开后的文本，不进这张表）。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。
+
 ## 每条变异做什么
 
 正控（命名测试通过）→ 写入变异 → `cargo test --no-run`（编译门）→ 命名测试必须 FAILED 且 panic 载荷含该条的专属断言串 → 恢复源码 → 恢复后正控再跑一次。任何一步失败记 `INVALID`，脚本以非零退出；汇总写 `<NEW_OUTPUT_DIR>/summary.json`。

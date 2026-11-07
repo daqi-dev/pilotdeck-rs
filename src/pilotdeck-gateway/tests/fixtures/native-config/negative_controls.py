@@ -93,7 +93,9 @@ mutations = [
      'if !mode_ok {',
      'if !mode_ok && false {',
      CFG + 'set_permission_mode_applies_and_validates',
-     '#1457 set_permission_mode rejects unknown mode'),
+     # #2065: the panic rides a literal `expect_err`, so the payload keeps the
+     # source's own `{label}` -- only the text before it is matchable.
+     '#1457 set_permission_mode rejects '),
     ('mode-whitelist-narrowed', CONFIG,
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| m.equals_str(allowed))',
      'PERMISSION_MODES\n                .iter()\n                .any(|allowed| *allowed != "default" && m.equals_str(allowed))',
@@ -278,6 +280,34 @@ mutations = [
 ]
 
 
+# #2065: `expect` / `expect_err` take `&str` and never interpolate, so a panic
+# that rides one can only be matched by text the source holds verbatim -- the
+# `{label}` stays literal in the payload. The `format!`-backed
+# `negative_assert!` / `negative_assert_eq!` macros are the opposite: their
+# anchors legitimately expand `{...}` and do not appear in the source at all.
+# Each entry pairs the mutated source with an anchor that MUST be a verbatim
+# substring of it, and must still prefix some row's assertion (so renaming the
+# row cannot leave a stale guard behind). `classify` stays untouched: this only
+# refuses a run whose literal anchor could never match.
+LITERAL_ANCHORS = [
+    (CONFIG, '#1457 set_permission_mode rejects '),
+]
+
+
+def _assertions(case):
+    return case.assertion if isinstance(case.assertion, list) else [case.assertion]
+
+
+def check_literal_anchors(cases):
+    for path, anchor in LITERAL_ANCHORS:
+        if anchor not in path.read_text():
+            raise SystemExit(f'#2065 literal anchor not in {path.name}: {anchor!r}')
+        if not any(anchor in assertion
+                   for case in cases if case.path == path
+                   for assertion in _assertions(case)):
+            raise SystemExit(f'#2065 literal anchor unbound to any row: {anchor!r}')
+
+
 def mutate(case, original):
     count = original.count(case.old)
     if count != 1 or case.old == case.new:
@@ -325,7 +355,9 @@ def main():
     if args == ['--check']:
         for case in selected_rows:
             mutate(case, case.path.read_text())
-        print(f'#1457 {len(selected_rows)} mutation anchors OK')
+        check_literal_anchors(selected_rows)
+        print(f'#1457 {len(selected_rows)} mutation anchors OK; '
+              f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK')
         return 0
     if not args:
         raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
