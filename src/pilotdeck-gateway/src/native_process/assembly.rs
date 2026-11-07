@@ -591,6 +591,14 @@ async fn start_assembly(
                     resources: retained,
                     tail,
                     host: Box::new(move |binding| {
+                        // #1864 (b): one source closure feeds both the session
+                        // tools and the live adapter — the same store and key
+                        // the prepare closure read back.
+                        let permission_source = {
+                            let session_overrides = session_overrides.clone();
+                            let session = session.clone();
+                            Arc::new(move || session_overrides.permission_mode(&session))
+                        };
                         #[cfg(unix)]
                         if let crate::runtime::session::kernel::BackendOwner::Kernel(factory) =
                             crate::runtime::session::kernel::KernelBackendFactory::select(
@@ -599,7 +607,14 @@ async fn start_assembly(
                                 &options.project,
                             )?
                         {
-                            return Ok(Box::new(factory.with_interactions(interactions.clone())));
+                            return Ok(Box::new(
+                                factory
+                                    .with_interactions(interactions.clone())
+                                    .with_turn_preferences(
+                                        config.clone(),
+                                        permission_source.clone(),
+                                    ),
+                            ));
                         }
                         if options.sidecar.as_os_str().is_empty() {
                             return Err(RuntimeError::new(
@@ -610,14 +625,6 @@ async fn start_assembly(
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .insert(session.clone(), Arc::downgrade(&binding.recorder));
-                        // #1864 (b): one source closure feeds both the session
-                        // tools and the live adapter — the same store and key
-                        // the prepare closure read back.
-                        let permission_source = {
-                            let session_overrides = session_overrides.clone();
-                            let session = session.clone();
-                            Arc::new(move || session_overrides.permission_mode(&session))
-                        };
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),

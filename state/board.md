@@ -4559,3 +4559,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 Kernel 实际审批帧与导入接续（lane C）
 
 总集成真实 Ask 已在 Kernel needs_human 且 effects=0；发现 AgentEvent projector 会丢原生 permission_request，现按旧 interaction emit 的产品 Gateway frame 路径交 TurnPublisher，原 approval/call ID 不变。新增 external-pending reconnect 身份标记，无假 resolver、无 PD 第二审批状态机；原权限决定仍发 execution.respond。失败根 response 在 completion 前投原 Kernel code/detail 错误，Unknown 保留原 ID 与效果未决说明。导入查询 session.get 的真实 generation；观察类 get/events/history.snapshot 不再被过期 lease 续租挡住。原生 canonical history 的 metadata.model、thinking.text/reasoningContent、tool_call/toolCallId、内联 image/pdf/audio 与工具结果内媒体均按实际形状校验；导出只保留模型展示注释，不复制 runtime metadata。新提交前 cargo check 已过，组合真实 Ask 正反及导入继续由总集成验证。
+
+### 2026-11-08 Kernel 原 UI 默认选择与 turn preferences（lane C）
+
+原 UI 实测已连到真实网关，发现常规 `{mode:"auto"}` 被旧 SDK/model 总闸拒绝；现自动选择及相同 provider/model 保留 Kernel 装配路由，实际变更/未绑定调参仍明确拒绝。permission/thinking/output style 接原有配置 store 与实际 native payload.agent，活跃 Kernel root 上拒绝修改；新提交前重新查询真正活跃 execution，保留旧 Unknown 原 ID，导入用 session.get 的真实 generation。focused kernel 测试 10/10（含本轮原 UI 自动/相同模型放行与真实变更拒绝的正负例）通过。原 UI 会话索引/历史缓存仍在实现中，不将本修复记作完整 UI 验收。

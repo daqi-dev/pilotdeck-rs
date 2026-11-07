@@ -356,3 +356,37 @@ pub(super) fn replay_payload(value: Option<JsValue>) -> Option<JsValue> {
         .filter(|v| !v.is_undefined())
         .map(|value| replay(&value))
 }
+
+#[cfg(test)]
+mod kernel_pending_tests {
+    use super::*;
+    #[test]
+    fn native_wait_preserves_connection_replay_identity_without_a_fake_resolver() {
+        let coordinator = GatewayInteractionCoordinator::default();
+        let owner = JsString::from("native");
+        let first = InteractionBinding {
+            connection_id: "first".into(),
+            generation: 1,
+        };
+        coordinator
+            .reconnect_for_turn(&owner, first.clone())
+            .unwrap();
+        coordinator
+            .reconnect_port()
+            .set_external_pending(&owner, true);
+        let disconnected = coordinator.disconnect(&owner, &first).unwrap();
+        assert_eq!(disconnected.get("preserveTurn"), Some(&JsValue::Bool(true)));
+        let next = InteractionBinding {
+            connection_id: "next".into(),
+            generation: 2,
+        };
+        let replay = coordinator
+            .reconnect(&owner, Some(next), Some(&first))
+            .unwrap();
+        assert_eq!(replay.get("outcome"), Some(&JsValue::from("reconnected")));
+        assert!(
+            coordinator.permission_bus().snapshot(&owner).is_empty(),
+            "Kernel remains the only approval owner"
+        );
+    }
+}

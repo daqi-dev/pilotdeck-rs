@@ -8,7 +8,7 @@ use crate::runtime::{
     project::{DisposeFuture, RuntimeError, RuntimeResult},
     refresh::BoxFuture,
 };
-use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -51,12 +51,23 @@ pub struct KernelBackendFactory {
     pub project: PathBuf,
     pub session: JsString,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
+    agent_config: JsObject,
+    permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 pub enum BackendOwner {
     Legacy,
     Kernel(KernelBackendFactory),
 }
 impl KernelBackendFactory {
+    pub fn with_turn_preferences(
+        mut self,
+        config: JsObject,
+        source: Arc<dyn Fn() -> Option<JsString> + Send + Sync>,
+    ) -> Self {
+        self.agent_config = config;
+        self.permission_mode_source = Some(source);
+        self
+    }
     pub fn with_interactions(
         mut self,
         interactions: Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
@@ -102,6 +113,8 @@ impl KernelBackendFactory {
                     project,
                     session,
                     interactions: None,
+                    agent_config: JsObject::new(),
+                    permission_mode_source: None,
                 })),
                 _ => Err(error("Unsupported persisted session backend.")),
             };
@@ -140,6 +153,8 @@ impl KernelBackendFactory {
             project,
             session,
             interactions: None,
+            agent_config: JsObject::new(),
+            permission_mode_source: None,
         }))
     }
 }
@@ -283,6 +298,7 @@ struct State {
     disposed: bool,
     run: Option<String>,
     call: Option<String>,
+    call_run: Option<String>,
     status: String,
     cursor: u64,
     waits: BTreeMap<String, String>,
@@ -314,6 +330,9 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
             )
             .await?;
         state.call = Some(call.into());
+        state.call_run = view["invocation"]["correlation_id"]
+            .as_str()
+            .map(str::to_string);
         state.status = view["state"].as_str().unwrap_or("unknown").into();
         if matches!(
             state.status.as_str(),
@@ -339,6 +358,8 @@ struct KernelSession {
     started: Arc<AtomicBool>,
     context_ref: String,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
+    agent_config: JsObject,
+    permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 impl SessionBackendFactory for KernelBackendFactory {
     fn build(
@@ -458,13 +479,25 @@ impl SessionBackendFactory for KernelBackendFactory {
                 started: Arc::new(AtomicBool::new(false)),
                 context_ref,
                 interactions: self.interactions,
+                agent_config: self.agent_config,
+                permission_mode_source: self.permission_mode_source,
             }) as Box<dyn SessionBackend>)
         })
     }
 }
 impl SessionBackend for KernelSession {
     fn permission_mode(&self) -> JsString {
-        "default".into()
+        let stored = self
+            .permission_mode_source
+            .as_ref()
+            .and_then(|source| source())
+            .or_else(|| {
+                self.agent_config
+                    .get("permissionMode")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            });
+        crate::runtime::permission::effective_permission_mode(&self.agent_config, stored)
     }
     fn execution_started(&self) -> Arc<AtomicBool> {
         self.started.clone()
@@ -481,6 +514,42 @@ impl LiveSession for KernelSession {
             .or_else(|| options["runId"].as_str())
             .ok_or_else(|| error("Kernel turn requires turnId or runId."))?
             .to_string();
+        let mut payload = json_value(&input)?;
+        if !payload.is_object() {
+            return Err(error("Native input must be an object."));
+        }
+        if payload["type"] == "blocks" {
+            return Err(error(
+                "Native block/attachment ingress is awaiting its canonical binding; no input was accepted.",
+            ));
+        }
+
+        let config = json_value(&JsValue::Object(self.agent_config.clone()))?;
+        let mut agent = serde_json::Map::new();
+        for key in [
+            "systemPrompt",
+            "appendSystemPrompt",
+            "planModeInstructions",
+            "runtimeContextSurface",
+            "thinking",
+            "toolChoice",
+            "maxContextMessages",
+            "jsonSelfCorrect",
+        ] {
+            if let Some(value) = config.get(key) {
+                agent.insert(key.into(), value.clone());
+            }
+        }
+        agent.insert(
+            "permissionMode".into(),
+            json!(text(&self.permission_mode())?),
+        );
+        payload["agent"] = Value::Object(agent);
+        for key in ["runMode", "allowPlanModeTools"] {
+            if let Some(value) = options.get(key) {
+                payload[key] = value.clone();
+            }
+        }
         let mut state = self.state.lock().unwrap();
         if state.disposed || state.run.is_some() {
             return Err(error("Kernel session is disposed or already running."));
@@ -488,15 +557,15 @@ impl LiveSession for KernelSession {
         state.run = Some(run.clone());
         state.status = "running".into();
         state.cancelled = None;
-        state.call = None;
         state.attached = true;
+        self.started.store(false, Ordering::SeqCst);
         Ok(Box::new(KernelTurn {
             rpc: self.rpc.clone(),
             kernel_id: self.kernel_id.clone(),
             session: self.session.clone(),
             state: self.state.clone(),
             started: self.started.clone(),
-            input: Some(json_value(&input)?),
+            input: Some(payload),
             run,
             queue: VecDeque::new(),
             done: false,
@@ -705,7 +774,11 @@ impl LiveSession for KernelSession {
         let call = {
             let mut state = self.state.lock().unwrap();
             state.cancelled = Some(text(reason)?);
-            state.call.clone()
+            if state.run.as_ref() == state.call_run.as_ref() {
+                state.call.clone()
+            } else {
+                None
+            }
         };
         if let Some(call) = call {
             let rpc = self.rpc.clone();
@@ -772,7 +845,11 @@ impl LiveTurn for KernelTurn {
                         .ok_or_else(|| error("Kernel input omitted execution identity."))?
                         .to_string();
                     self.accepted = true;
-                    self.state.lock().unwrap().call = Some(call.clone());
+                    {
+                        let mut state = self.state.lock().unwrap();
+                        state.call = Some(call.clone());
+                        state.call_run = Some(self.run.clone());
+                    }
                     // A duplicate idempotency key observes its original journal
                     // range; it never starts a replacement provider execution.
                     let journal = self
@@ -969,6 +1046,8 @@ mod tests {
             started: Arc::new(AtomicBool::new(false)),
             context_ref: "default".into(),
             interactions: None,
+            agent_config: JsObject::new(),
+            permission_mode_source: None,
         }
     }
     async fn next(turn: &mut dyn LiveTurn) -> Value {
@@ -1252,6 +1331,198 @@ mod abi2_wire_tests {
         .unwrap()
         .unwrap();
         assert_eq!(result["attempt"], 1);
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod recovery_contract_tests {
+    use super::*;
+    use tokio::net::UnixListener;
+    fn session(socket: PathBuf) -> KernelSession {
+        KernelSession {
+            rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
+                socket,
+                stream: None,
+                next: 0,
+                node: "test".into(),
+                lease: None,
+            })),
+            kernel_id: "native-session".into(),
+            session: "pd-session".into(),
+            state: Arc::new(Mutex::new(State::default())),
+            started: Arc::new(AtomicBool::new(false)),
+            context_ref: "default".into(),
+            interactions: None,
+            agent_config: JsObject::new(),
+            permission_mode_source: None,
+        }
+    }
+    #[tokio::test]
+    async fn import_reads_and_sends_original_session_generation_not_lease_epoch() {
+        let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for method in ["initialize", "session.get", "execution.history.import"] {
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                let req: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(req["method"], method);
+                let reply = if method == "session.get" {
+                    json!({"status":"done","effect":"observe","data":{"generation":7,"epoch":99}})
+                } else {
+                    if method == "execution.history.import" {
+                        assert_eq!(req["params"]["generation"], 7);
+                        assert_eq!(req["params"]["context_ref"], "default");
+                        assert_eq!(req["params"]["idempotency_key"], "pd-import:verified-hash");
+                        assert_eq!(req["params"]["expected_revision"], 0);
+                    }
+                    json!({"jsonrpc":"2.0","id":req["id"],"result":{"revision":1,"receipt":"original-receipt"}})
+                };
+                stream
+                    .get_mut()
+                    .write_all(format!("{reply}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        let session = session(socket.clone());
+        let result=session.backend_request("restore_session_transcript".into(),js(&json!({"sessionKey":"new","transcript":{"sha256":"verified-hash","messages":[{"role":"user","content":[{"type":"text","text":"old"}]}]}})).unwrap()).await.unwrap().unwrap();
+        assert_eq!(result.get("imported"), Some(&JsValue::Bool(true)));
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+    #[tokio::test]
+    async fn reopened_actual_active_execution_rejects_distinct_new_input_without_replay() {
+        let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for method in ["initialize", "execution.events", "execution.get"] {
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                let req: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(req["method"], method);
+                let result = match method {
+                    "execution.events" => {
+                        json!([{"kind":"call.accepted","call_ref":"original-active","correlation_id":"old-run","cursor":1,"payload":{"cause_execution_ref":null}}])
+                    }
+                    "execution.get" => {
+                        json!({"state":"running","invocation":{"correlation_id":"old-run"}})
+                    }
+                    _ => json!({}),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            let mut line = String::new();
+            assert_eq!(
+                stream.read_line(&mut line).await.unwrap(),
+                0,
+                "no second execution.input may be sent"
+            );
+        });
+        let session = session(socket.clone());
+        let mut turn = session
+            .submit(
+                js(&json!({"type":"text","text":"new"})).unwrap(),
+                js(&json!({"turnId":"new-run"})).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            turn.next()
+                .await
+                .unwrap_err()
+                .message
+                .contains("different active execution")
+        );
+        drop(turn);
+        assert_eq!(
+            session.snapshot().get("executionId"),
+            Some(&JsValue::from("original-active"))
+        );
+        assert_eq!(
+            session.snapshot().get("status"),
+            Some(&JsValue::from("running"))
+        );
+        drop(session);
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+    #[tokio::test]
+    async fn native_turn_preferences_reach_wire_without_overriding_kernel_model_route() {
+        let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut accepted = false;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let result = match req["method"].as_str().unwrap() {
+                    "initialize" => json!({}),
+                    "execution.events" if !accepted => json!([]),
+                    "execution.input" => {
+                        let agent = &req["params"]["input"]["agent"];
+                        assert_eq!(agent["permissionMode"], "bypassPermissions");
+                        assert_eq!(
+                            agent["thinking"],
+                            json!({"enabled":true,"budgetTokens":1024})
+                        );
+                        assert_eq!(agent["appendSystemPrompt"], "write concise answers");
+                        assert!(agent.get("provider").is_none());
+                        assert!(agent.get("model").is_none());
+                        assert_eq!(req["params"]["input"]["runMode"], "plan");
+                        accepted = true;
+                        json!({"call_ref":"original"})
+                    }
+                    "execution.events" => {
+                        json!([{"kind":"response","call_ref":"original","correlation_id":"run","cursor":1,"payload":{"outcome":"completed","content":"done"}}])
+                    }
+                    other => panic!("unexpected {other}"),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut session = session(socket.clone());
+        session.agent_config=js(&json!({"provider":"must-not-override","model":"must-not-override","thinking":{"enabled":true,"budgetTokens":1024},"appendSystemPrompt":"write concise answers"})).unwrap().as_object().unwrap().clone();
+        session.permission_mode_source = Some(Arc::new(|| Some("bypassPermissions".into())));
+        let mut turn = session
+            .submit(
+                js(&json!({"type":"text","text":"hello"})).unwrap(),
+                js(&json!({"turnId":"run","runMode":"plan"})).unwrap(),
+            )
+            .unwrap();
+        while turn.next().await.unwrap().is_some() {}
+        drop(turn);
+        drop(session);
         task.await.unwrap();
         std::fs::remove_file(socket).unwrap();
     }

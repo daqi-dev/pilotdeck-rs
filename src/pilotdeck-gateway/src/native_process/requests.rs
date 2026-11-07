@@ -356,6 +356,43 @@ impl GatewayRequests for Requests {
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;
+            if super::kernel_profile::BOUND_CONFIG_METHODS.contains(&method.as_str())
+                && let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
+                && self.kernel_owned(session)?
+            {
+                let handle = if let Some(handle) = self.owner.current_handle(session) {
+                    handle
+                } else {
+                    self.owner
+                        .get_or_create(crate::runtime::session::SessionContext {
+                            session_key: session.clone(),
+                            project_key: Some(
+                                self.options.project.to_string_lossy().into_owned().into(),
+                            ),
+                            channel_key: "configuration".into(),
+                            allowed_tools: None,
+                            disallowed_tools: None,
+                        })
+                        .await
+                        .map_err(|e| RequestError::new(e.message))?
+                };
+                let snapshot = handle
+                    .backend_request("active_turn_snapshot".into(), params.clone())
+                    .await
+                    .map_err(|e| RequestError::new(e.message))?
+                    .ok_or_else(|| RequestError::new("Kernel state is unavailable."))?;
+                if snapshot
+                    .get("status")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|state| {
+                        ["accepted", "running", "needs_human"]
+                            .iter()
+                            .any(|expected| state.equals_str(expected))
+                    })
+                {
+                    return Err(RequestError{code:"SESSION_BUSY".into(),message:"Cannot change native turn preferences while the original Kernel execution is active.".into(),details:Some(Box::new(snapshot)),validation:None});
+                }
+            }
             if super::kernel_profile::UNSUPPORTED_SESSION_METHODS.contains(&method.as_str()) {
                 let kernel = match params.get("sessionKey").and_then(JsValue::as_string) {
                     Some(session) => self.kernel_owned(session)?,

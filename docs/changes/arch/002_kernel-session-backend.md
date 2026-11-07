@@ -42,3 +42,5 @@ backend 先取得原生 lease，并在存活期间续租；请求 Future 被取�
 ## 验证边界
 
 本 lane 自证为：gateway `cargo check`；原生 UDS 文本→原 wait permission→同 execution.respond→最终事件；连接丢失保留原 operation identity；transfer 包 hash、完整 tool pair、附件字节与拒绝 resume 元数据。真实组合 WS、CLI run、Kernel 重启、资源/进程回收与 provider 测试由总集成树补证。真人 UI/桌面实效与全入口验收尚未因这些测试关闭。
+
+当前 turn preferences 已从原产品选择器接到原生 payload.agent：permissionMode 逐 turn 取 live store，thinking / output style 在下一次 prepare 取选择后的配置；活跃 Kernel execution 上拒绝改动。模型/binding 仍由 assembly 冻结。原 UI `{mode:"auto"}` 和与装配相同 provider/model 可提交；实际 route 变更与未绑定 SDK/模型调参明确拒绝。

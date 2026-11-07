@@ -696,9 +696,6 @@
       "gateway.method:session_model_set",
       "gateway.method:set_mcp_permission_mode_override",
       "gateway.method:set_mcp_servers",
-      "gateway.method:set_output_style",
-      "gateway.method:set_permission_mode",
-      "gateway.method:set_session_thinking",
       "gateway.method:supported_agents",
       "gateway.method:usage_snapshot"
     ],
@@ -708,6 +705,11 @@
       "gateway.method:always_on_rerun_plan",
       "gateway.method:sop_resume",
       "gateway.method:sop_status"
+    ],
+    "turn_preferences_native_binding_candidate": [
+      "gateway.method:set_output_style",
+      "gateway.method:set_permission_mode",
+      "gateway.method:set_session_thinking"
     ]
   }
 }

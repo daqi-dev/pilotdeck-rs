@@ -20,9 +20,6 @@ pub const UNSUPPORTED_SESSION_METHODS: &[&str] = &[
     "session_model_get",
     "session_model_set",
     "session_model_clear",
-    "set_permission_mode",
-    "set_session_thinking",
-    "set_output_style",
     "seed_read_state",
     "grant_session_permission",
     "cancel_steer",
@@ -40,13 +37,30 @@ pub const UNSUPPORTED_SESSION_METHODS: &[&str] = &[
     "usage_snapshot",
     "model_usage_snapshot",
 ];
+pub const BOUND_CONFIG_METHODS: &[&str] = &[
+    "set_permission_mode",
+    "set_session_thinking",
+    "set_output_style",
+];
 pub fn description() -> pilotdeck_protocol::JsValue {
     use pilotdeck_protocol::JsValue;
     crate::metadata::object([
         ("profile", "kernel-native-session-v1".into()),
         ("executionAuthority", "kernel".into()),
         ("historyAuthority", "kernel_journal".into()),
-        ("configuration", "frozen_per_session".into()),
+        (
+            "configuration",
+            "immutable_loop_and_model_with_turn_preferences".into(),
+        ),
+        (
+            "turnPreferences",
+            JsValue::Array(
+                BOUND_CONFIG_METHODS
+                    .iter()
+                    .map(|method| JsValue::from(*method))
+                    .collect(),
+            ),
+        ),
         ("supportsController", JsValue::Bool(false)),
         (
             "methods",
@@ -81,12 +95,7 @@ mod tests {
         for method in BACKEND_METHODS {
             assert!(!UNSUPPORTED_SESSION_METHODS.contains(method));
         }
-        for method in [
-            "set_permission_mode",
-            "session_model_set",
-            "set_mcp_servers",
-            "rewind_files",
-        ] {
+        for method in ["session_model_set", "set_mcp_servers", "rewind_files"] {
             assert!(UNSUPPORTED_SESSION_METHODS.contains(&method));
         }
     }

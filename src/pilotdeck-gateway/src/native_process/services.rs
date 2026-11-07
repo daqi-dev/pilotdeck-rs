@@ -33,6 +33,126 @@ pub struct Services {
     pub snapshot_recorder: Option<Arc<ContentAddressedWorkspaceSnapshotRecorder>>,
     pub upload_store: Arc<UploadStore>,
 }
+impl Services {
+    fn kernel_input(&self, input: &JsValue) -> Result<bool, SubmitError> {
+        if let Some(session) = input.get("sessionKey").and_then(JsValue::as_string) {
+            if let Some(handle) = self.owner.current_handle(session) {
+                return Ok(handle.backend_kind() == "kernel");
+            }
+            let transcript = super::assembly::transcript_path(&self.options, session);
+            let mut owner = transcript.as_os_str().to_os_string();
+            owner.push(".backend.json");
+            match std::fs::read(PathBuf::from(owner)) {
+                Ok(bytes) => {
+                    let owner: serde_json::Value =
+                        serde_json::from_slice(&bytes).map_err(|e| failure(e.to_string()))?;
+                    return Ok(owner["backend"] == "kernel");
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    if std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0) {
+                        return Ok(false);
+                    }
+                }
+                Err(e) => return Err(failure(e.to_string())),
+            }
+        }
+        Ok(self
+            .env
+            .get("PILOTDECK_SESSION_BACKEND")
+            .map(String::as_str)
+            == Some("kernel"))
+    }
+    fn accepts_frozen_model_selection(&self, value: &JsValue) -> Result<bool, SubmitError> {
+        let lease = self.project.acquire(None).map_err(|e| failure(e.message))?;
+        let staged = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| failure("Native project config missing."))?
+            .context()
+            .snapshot();
+        let selected = staged
+            .get("config")
+            .and_then(|c| c.get("agent"))
+            .and_then(|agent| agent.get("model"));
+        Ok(frozen_model_selection_matches(value, selected))
+    }
+}
+/// UI automatic selection leaves the assembly route in charge. A concrete
+/// selection is accepted only when it names that same provider and model.
+fn frozen_model_selection_matches(value: &JsValue, selected: Option<&JsValue>) -> bool {
+    if matches!(value, JsValue::Undefined | JsValue::Null) {
+        return true;
+    }
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.is_empty() {
+        return true;
+    }
+    if value
+        .get("mode")
+        .and_then(JsValue::as_string)
+        .is_some_and(|s| s.equals_str("auto"))
+    {
+        return object
+            .entries()
+            .iter()
+            .all(|(key, _)| key.equals_str("mode"));
+    }
+    let candidate = value.get("selection").unwrap_or(value);
+    candidate.as_object().is_some_and(|object| {
+        object.entries().iter().all(|(key, _)| {
+            ["mode", "provider", "model"]
+                .iter()
+                .any(|allowed| key.equals_str(allowed))
+        })
+    }) && ["provider", "model"].iter().all(|key| {
+        candidate
+            .get(key)
+            .and_then(JsValue::as_string)
+            .is_some_and(|actual| {
+                selected
+                    .and_then(|selected| selected.get(key))
+                    .and_then(JsValue::as_string)
+                    == Some(actual)
+            })
+    })
+}
+#[cfg(test)]
+mod kernel_model_selection_tests {
+    use super::*;
+    fn value(input: &str) -> JsValue {
+        pilotdeck_protocol::parse_json(input).unwrap()
+    }
+    #[test]
+    fn kernel_model_selection_accepts_ui_auto_and_same_route_rejects_real_overrides() {
+        let selected = value(r#"{"provider":"fixture","model":"fixed"}"#);
+        for input in [
+            r#"{"mode":"auto"}"#,
+            r#"{"mode":"model","provider":"fixture","model":"fixed"}"#,
+            "null",
+            "{}",
+        ] {
+            assert!(
+                frozen_model_selection_matches(&value(input), Some(&selected)),
+                "{input}"
+            );
+        }
+        for input in [
+            r#"{"mode":"model","provider":"fixture","model":"other"}"#,
+            r#"{"mode":"model","provider":"other","model":"fixed"}"#,
+            r#"{"mode":"auto","model":"other"}"#,
+            r#"{"mode":"model","provider":"fixture","model":"fixed","reasoning":8192}"#,
+        ] {
+            assert!(
+                !frozen_model_selection_matches(&value(input), Some(&selected)),
+                "{input}"
+            );
+        }
+    }
+}
+
 fn base64_encode(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
 }
@@ -1297,8 +1417,23 @@ impl SubmitHostServices for Services {
         }
         // The composition does not expose the SDK/model setter yet. Refuse
         // these before session admission instead of reporting a false selection.
+        let kernel = self.kernel_input(input)?;
         for key in ["modelSelection", "modelOverride", "sdkConfig"] {
-            if input.get(key).is_some_and(|v| !v.is_undefined()) {
+            if let Some(value) = input.get(key).filter(|value| !value.is_undefined()) {
+                if kernel {
+                    let allowed = if key == "sdkConfig" {
+                        matches!(value, JsValue::Null)
+                            || value.as_object().is_some_and(JsObject::is_empty)
+                    } else {
+                        self.accepts_frozen_model_selection(value)?
+                    };
+                    if allowed {
+                        continue;
+                    }
+                    return Err(unavailable(
+                        "This Kernel session keeps its frozen model route. Select automatic/default or the same configured provider/model; changing the route requires a new assembly/session.",
+                    ));
+                }
                 return Err(unavailable(
                     "Per-turn model/SDK overrides are not installed in this isolated process.",
                 ));
@@ -1530,6 +1665,9 @@ impl SubmitHostServices for Services {
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
         Box::pin(async move {
+            if self.kernel_input(input)? {
+                return Ok(object([("source", "kernel_assembly".into())]));
+            }
             let metadata = crate::metadata::Metadata {
                 home: self.options.home.clone(),
                 cwd: std::path::PathBuf::new(),
