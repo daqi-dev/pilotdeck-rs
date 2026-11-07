@@ -8,11 +8,11 @@
 requestEvidence 比较、C4 的 identity_ok、`rounds()` 的目录校验、`round_problem()` 轮次闸门、
 `judge()` 的 C0–C6 编排（注入 G03 桩，不跑冻结比较器）、`verdict_exit()` 退出码折叠、
 `case_mark()` 负控归类、`write_trace()` 原子写、`build_cases()` 的基线前置守卫、
-`negctl()` 的端到端接线（0 / 3 / 4 / 8 / 9 五个退出码，含 BaselineUnusable→rc=3 与
+`negctl()` 的端到端接线（0 / 3 / 4 / 8 / 9 五个结论码 + 64 用法错误，含 BaselineUnusable→rc=3 与
 轮次目录名不合规→rc=3）、清理兜底（atexit 删半成品证据目录）与断管道下 rc 不被改写，
 以及装置自身的 sha256 pin。`#2031` 残留批的六条各有判别断言：stderr 也套 `_PipeSafe`、
-SIGTERM 不被折成 rc=3、makedirs→登记窗口屏蔽信号、negctl 场景名校验（rc=2）、
-`_silence_stdout` 不漏 fd、写失败抛 `OutputFailure` → rc=9。
+SIGTERM 不被折成 rc=3、makedirs→登记窗口屏蔽信号、场景不在册 → rc=64 用法错误（run 与 negctl
+同一把闸）、`_silence_stdout` 不漏 fd、写失败抛 `OutputFailure` → rc=9。
 15 条负控在**真实数据**上的判定不在这里，见 README「验证记录」。
 """
 import contextlib
@@ -153,7 +153,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = 'd7e6c4c1d78a7ae877f1f3bba7272c135426806edc47f18d5fee718192b2424d'
+PINNED_DEVICE_SHA256 = '3f95de17144c898d54b545a722ae147c9a0106bf0596221862f84dbf0d15b2e1'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -833,14 +833,14 @@ with tempfile.TemporaryDirectory() as tdir:
 
 # ⑪ 第 4 条：negctl 收到真实存在但不在 SCENARIOS 的场景 id。
 #    改前：C1 把每条用例判成 NOT_6 → A/L/N/O 全 MISMATCH → rc=4「判据被证伪」（最强否定
-#    结论被发给用法错误），还建出证据目录。改后：rc=2 用法错误，且不动证据目录。
+#    结论被发给用法错误），还建出证据目录。改后：rc=64 用法错误，且不动证据目录。
 with tempfile.TemporaryDirectory() as tdir:
     outdir = os.path.join(tdir, 'negctl-out')
     err = io.StringIO()
     with contextlib.redirect_stderr(err):
         rc = fa.negctl(tdir, 'sidecar_budget_limit', outdir)
-    check('第4条：negctl 收到不在册场景 → rc=2 用法错误，不建证据目录',
-          rc == 2 and not os.path.exists(outdir) and '用法错误' in err.getvalue(),
+    check('第4条：negctl 收到不在册场景 → rc=64 用法错误，不建证据目录',
+          rc == 64 and not os.path.exists(outdir) and '用法错误' in err.getvalue(),
           f'rc={rc} exists={os.path.exists(outdir)} err={err.getvalue()[:120]!r}')
 
 # ⑫ 第 5 条：`redirect_stdout(StringIO())` 形状下 _silence_stdout 不得泄漏 fd。
@@ -902,6 +902,33 @@ finally:
     sys.argv, sys.stdout, fa.run = _argv_saved, _out_saved, _run_saved
 check('第6条：main() 在输出写失败时返回 rc=9（截断日志不算完整证据）',
       _got == 9, f'got={_got!r}')
+
+# ⑭ r2 boundary P2：`run()` 收到不在册场景时不得落到 rc=2「反证命中」。
+#    改前：C1 把每条 pair 判成 NOT_6 → rc=2，用法错误被报成最强的否定结论。
+_out2, _err2 = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(_out2), contextlib.redirect_stderr(_err2):
+    _rc2 = fa.run('/nonexistent-rounds', 'sidecar_budget_limit')
+check('用法：run() 收到不在册场景 → rc=64，不打印任何归因结论',
+      _rc2 == 64 and _out2.getvalue() == '' and '用法错误' in _err2.getvalue(),
+      f'rc={_rc2} out={_out2.getvalue()[:120]!r} err={_err2.getvalue()[:120]!r}')
+
+# ⑮ r2 boundary P2：argparse 的用法错误也不能退 2（与 run 的「已证伪」撞码）。
+_argv_saved, _out_saved, _err_saved = sys.argv, sys.stdout, sys.stderr
+_code = err_txt = None
+try:
+    sys.argv = ['frame_attrib.py']  # 缺 root / scenario
+    _cap = io.StringIO()
+    with contextlib.redirect_stderr(_cap):
+        try:
+            fa.main()
+        except SystemExit as exc:
+            _code = exc.code
+    err_txt = _cap.getvalue()
+finally:
+    sys.argv, sys.stdout, sys.stderr = _argv_saved, _out_saved, _err_saved
+check('用法：argparse 缺参数 → rc=64（改前退 2，与「反证命中」撞码）',
+      _code == 64 and '用法错误' in (err_txt or ''),
+      f'code={_code!r} err={(err_txt or "")[:160]!r}')
 
 print()
 if FAILS:

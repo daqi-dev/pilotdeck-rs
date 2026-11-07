@@ -16,7 +16,7 @@
 | 2026-11-07 | 第二轮修复轮（r2 评审：GLM/zai 四角色 + Claude 三角色）：B/G 的 gsf 循环补变异点守卫（与 E/H 同源的空操作假 `MISMATCH`）、`rounds()` 的目录名校验在 negctl 折成 rc=3（不再与「目录已存在」rc=1 撞码）、未判定汇总行报**真正的**退出码、SIGTERM handler 提前到入口 + atexit 删半成品证据目录、rc=9 收尾输出遇断管道不改写 rc、`write_trace` 发布 0644、`need()` 内联 |
 | 2026-11-07 | 上述改动的**评审修复轮**（GLM/zai 四角色）：E/H 两条用例补变异点守卫（此前是静默空操作 → 假 `MISMATCH`）、N/O 成因改**结构化集合**（正文子串匹配会被进程级证据行里的 G03 stderr 污染）、`negctl` 循环中途崩溃独立 rc=9 并删半成品、`--negctl-out` 创建失败捕 `OSError`、空串不再静默落进 `run()`、G03 起不来按「未判定」而非崩溃、`g03_tmpdir` 接 SIGTERM |
 | 2026-11-07 | 第三轮修复轮（r3 评审 boundary P2）：stdout 统一套 `_PipeSafe` —— 输出接 `\| head -1` 这类短读者时，退出码此前会被改写成 **120**（缓冲，解释器退出 flush 失败）或 **1**（`-u` 无缓冲，`BrokenPipeError` 未捕获），两者都会盖掉真实 rc；现在一律保留真实 rc（实测见下「管道与退出码」） |
-| 2026-11-07 | `#2031`（r4 评审残留批 P2×6）：**stderr 也套 `_PipeSafe`**（`2>&1 \| head -1` 下 stderr 洪泛照样改 rc）· 写失败不再当断管道——只吞 `BrokenPipeError`，其余抛 `OutputFailure` 并在 `main()` 显式 flush 后折成 **rc=9**（ENOSPC 此前静默截断且 rc=0）· negctl 收到 SIGTERM 的 `SystemExit(143)` **不再折成 rc=3「基线不可用」**（只折 `SystemExit(str)`）· `--negctl-out` 建目录到登记之间**屏蔽 SIGTERM**（此前信号落在窗口内会留空证据目录）· negctl **先校验场景名**，不在 `SCENARIOS` 即 **rc=2 用法错误**（此前 A/L/N/O 全假 `MISMATCH` → rc=4）· `_silence_stream` 先取 fd 再 open `/dev/null`（`StringIO` 重定向下每次调用漏 1 个 fd） |
+| 2026-11-07 | `#2031`（r4 评审残留批 P2×6）：**stderr 也套 `_PipeSafe`**（`2>&1 \| head -1` 下 stderr 洪泛照样改 rc）· 写失败不再当断管道——只吞 `BrokenPipeError`，其余抛 `OutputFailure` 并在 `main()` 显式 flush 后折成 **rc=9**（ENOSPC 此前静默截断且 rc=0）· negctl 收到 SIGTERM 的 `SystemExit(143)` **不再折成 rc=3「基线不可用」**（只折 `SystemExit(str)`）· `--negctl-out` 建目录到登记之间**屏蔽 SIGTERM**（此前信号落在窗口内会留空证据目录）· negctl **先校验场景名**，不在 `SCENARIOS` 即 **rc=64 用法错误**（此前 A/L/N/O 全假 `MISMATCH` → rc=4；r2 前记 rc=2，与 `run` 的「反证命中」撞码）· `_silence_stream` 先取 fd 再 open `/dev/null`（`StringIO` 重定向下每次调用漏 1 个 fd） |
 
 入仓理由：`#1157` 的常驻复查条件写着「用同一份 `frame_attrib.py` 重跑」，而 `_tmp/` 是可回收目录。
 放 `scripts/parity-attrib/` 而**不是** `scripts/parity/`：后者在冻结检查（`check_frozen.py`）扫描范围内。
@@ -41,13 +41,15 @@ python3 -I scripts/parity-attrib/test_frame_attrib.py
 `2` 有 `NOT_6`（**反证命中**，已证伪）· `5` 有效轮次不足（空对拍，**拒绝给结论**）·
 `6` 有轮次无效因而只覆盖部分批次（结论不算验收证据）· `7` 本批次**没有任何 FAIL**（全 PASS）
 → 不能作为 #6 归因证据 · `8` 有 pair **未判定**（比较器超时 / 输出不可解析 / 输出缺该场景）·
-`9` **输出写失败**（ENOSPC / EIO：日志被截断，**不得当作完整证据**；见下「管道与退出码」）。
+`9` **输出写失败**（ENOSPC / EIO：日志被截断，**不得当作完整证据**；见下「管道与退出码」）·
+`64` **用法错误**（缺位置参数 / 场景名不在 `SCENARIOS` 里；`#2031` r2 boundary P2）。
 `8` 与 `2` 严格区分：「工具没跑成」不是「不是 #6」，不能把 rc=2 这个最强否定结论发给装置故障。
+**用法错误一律 64，不落 2**：argparse 默认退 2（与「反证命中」撞码），现在由 `_UsageParser`
+统一改写；`run()` 进场也先校验场景在册（不在册会被 C1 判 `NOT_6` → 假 `rc=2`「已证伪」）。
 `--negctl-out` 子命令的退出码是另一套语义：`0` = 15 条负控全部按期望命中 · `1` = 证据目录
 **不可用**（已存在 → 独占新建失败、不覆盖证据；或无法创建，如只读父目录 / 路径中段是文件）·
-`2` **用法错误**：场景名不在 `SCENARIOS` 里（`#2031` 第 4 条；未在册的场景会让 C1 把每条用例
-都判成 `NOT_6`、A/L/N/O 全记 `MISMATCH` → 假 `rc=4`，所以在动证据目录之前就拒绝。注意与 `run`
-的 `2` = 反证命中是**两张表**，按子命令读）·
+`64` **用法错误**：场景名不在 `SCENARIOS` 里（`#2031` 第 4 条；未在册的场景会让 C1 把每条用例
+都判成 `NOT_6`、A/L/N/O 全记 `MISMATCH` → 假 `rc=4`，所以在动证据目录之前就拒绝）·
 `3` **基线不可用**（没有有效轮次 / 轮次目录名不合规 / 基线 trace 缺本装置需要改的变异点，**数据问题，不下判据结论**；`rounds()` 的 `SystemExit(str)` 在 negctl 里也折成 `3`，不再以 stdlib 的 `1` 出口。**只折字符串 code**：`install_sigterm()` 的 `sys.exit(143)` 是 int code，会原样上抛让进程真的退 143——被 `timeout` / CI 杀掉不是「基线不可用」，吞成 `3` 会让复查去换数据重跑）·
 `4` 有 `MISMATCH`（判据真被证伪）· `8` 有负控**未判定**（同一条 case 上比较器故障，不折成
 `MISMATCH`——那会把装置故障报成「判据被证伪」；与 `4` 并存时汇总行报 `rc=4`，不硬编码 `rc=8`）·
@@ -205,12 +207,19 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
   逐 pair 判据行（100 行）与 negctl 全量输出见 `_tmp/20261107-issue-2031/evidence/recompute-*/`
   （`01-recompute.txt` / `02-negctl.txt`）。同目录 `prefix/` 是六条的**改前**实测、
   `postfix/` 是改后：`01a/01b` 管道（120 / 1 → 5）、`02` 真 SIGTERM（rc=3 → 143）、
-  `03` makedirs→登记窗口（空目录残留 → 不残留）、`04` 不在册场景（rc=4 + 假 MISMATCH → rc=2）、
+  `03` makedirs→登记窗口（空目录残留 → 不残留）、`04` 不在册场景（rc=4 + 假 MISMATCH → rc=64 用法错误）、
   `05` fd 泄漏（50 次漏 50 → 0）、`06` ENOSPC（rc=0 且日志 0 字节 → rc=9 并打印截断警告）。
+- **`#2031` r2（boundary P2 两条）后再复算（同一批 20 轮）：数字仍不变**
+  `## 汇总：100 pair 中 PASS=80 · 归因 #6=20 · 不能归因=0`（rc=0），自测 127/127，negctl 15/15 `OK`；
+  原始输出 `_tmp/20261107-issue-2031/evidence/recompute-r2-20261107T002433Z/`（`00-selftest.txt` /
+  `01-recompute.txt` / `02-negctl.txt` / `00-rc.txt`）。r2 的改前/改后对照在同目录
+  `prefix/07-run-scope.txt`（`run` 传不在册场景 → 假 `rc=2`「已证伪」+ 打印反证命中）
+  对 `postfix/07-run-scope.txt`（`rc=64` 用法错误、无任何归因结论），以及两者各自的
+  `*-argparse.txt`（缺参数：`rc=2` → `rc=64`）；`postfix/04-negctl-scope.txt` 为 rc=64 的 negctl 侧。
 - 旧 11 条 negctl 结果与 `#1811` 完全一致（仍全部按期望命中），新增 L/M/N/O 亦符合期望（15/15 `OK`）。
 - 每条 pair 的「ev」列给出两侧 `requestEvidence` 出现数：本轮 20 轮里只有 `ts-r4` 与 `rust-r5` 各 1 条，
   且两者规范化后逐字节相同（C6 判 PASS）。
-- 自测 `test_frame_attrib.py` 现有 125 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
+- 自测 `test_frame_attrib.py` 现有 127 条断言：C2b 形态与字段集、C5 口径、C6 多重集配对、
   `identity_ok`、`rounds()` 目录校验、`round_problem()` 轮次闸门（缺 summary / 缺 started_wall /
   BLOCKED / 超大整数 started_wall）、`verdict_exit()` 退出码折叠（含未判定）、`judge()` 的 C1–C6
   编排与 `UNKNOWN`（注入 G03 桩，不跑冻结比较器）、C0 的进程内自报（`trace_input` /
@@ -229,9 +238,11 @@ C5 用集合而非逐位：`#1841` 的 `context.budget` 相对顺序偏离已被
   各一条：读一行就关管道，rc 必须是真实值而不是 120 / 1）。
   另有 `#2031` 残留批新增的六条判别断言：stderr 洪泛下 `2>&1 | head -1` 的 rc 仍是 5（改前 120 / 1）、
   `collect_rounds` 抛 `SystemExit(143)` 时 negctl 如实上抛（改前折成 rc=3）、makedirs→登记窗口内的
-  真 SIGTERM 不残留证据目录（改前留空目录）、不在册场景 rc=2 且不建目录（改前 rc=4 假 MISMATCH）、
+  真 SIGTERM 不残留证据目录（改前留空目录）、不在册场景 rc=64 且不建目录（改前 rc=4 假 MISMATCH）、
   `StringIO` 重定向下 50 次 `_silence_stdout` 不漏 fd（改前漏 50 个）、写失败抛 `OutputFailure` 且
   `main()` 返回 rc=9（改前静默截断 + rc=0）。
+  `#2031` r2（boundary P2）另加两条：`run()` 收到不在册场景 → rc=64 且不打印任何归因结论
+  （改前 C1 判 `NOT_6` → 假 `rc=2`「已证伪」）、argparse 缺参数 → rc=64（改前退 2，与「反证命中」撞码）。
   每条闸门断言都带判别力：缺 summary 的用例会把 summary 恢复后再测 started_wall，
   原因串必须点名 `started_wall`（否则删掉闸门也照样绿）。
 
