@@ -4610,3 +4610,7 @@ Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接�
 以 A/root 的通用 scheduler.history-archive.v1 原始 revision/history/checkpoint 页重建全产品对话，snapshot revision 固定每次目标；跨页更新不冒充原子快照，同 ID 压缩前全文保留，不同 ID 同正文不合并，synthetic summary 不显示，原 compactMetadata 生成唯一边界。删除 PD JSONL 后仍从 Kernel 版本重建，current contextMessages 与完整 canonicalMessages 分开，边界不参与 canonical 导出。原 /compact admission 现持有 owner/handle maintenance，经 private nativeCommand compact/1 调 Kernel native Loop 原 manualForce 算法；必须 actual saved binding grant+archive feature，B bootstrap 另验安装 marker。无普通提示、无 PD 总结/CAS；普通 submit 注入拒绝；取消只发原 call control 后等真实终态，Unknown 保留 result_unknown/原 IDs；legacy absent-router 协议保留。
 
 focused kernel 30/30 PASS（含 pinned multipage/newer commit、cache 删除重建、不同 ID 相同内容、private compact wire、cancel→原 Unknown/仅1次 input）；原 admission oracle 10 PASS +1 既有需 Node22 regeneration ignored，config/selector 32 PASS。两条新 UDS fixture 首次失败因 macOS SUN_LEN 已改独立 /tmp 随机路径；旧 active-error 文案断言保持原 substring，补 busy 文意。未把这些接线测试记作真实摘要/组合 UI 验收；需要 A24bf459f+root b833df00 和 B cd5c8b7 实际能力组合，由总集成原产品 WS/模型/CAS/重启/压缩后下一轮验。
+
+### 2026-11-08 lease 握手后的最终 input 取消门（lane C）
+
+补最后一个具体窗口：Rpc 的连接/lease_status/acquire 仍可 await，取消在此前发生时，execution.input 写 wire 前再看原 ingress 取消与已存在同 run 的 Kernel identity。确定未发送的新 input 返回专门 no-send 结果，由原 kernelAccepted=false aborted 路径结束；已接受同 run 仍观察/控制原执行，传输不确定仍按原 Unknown 处理。新增 UDS barrier 卡住 lease_status 后取消的测试，证明确实可拿 lease 但没有 execution.input/started/call，非重放或虚构效果撤销。focused kernel 31/31 PASS；无 Cargo 运行，释放本机槽供 A 原始 ordered acceptance，source import writer fence 另批实现。

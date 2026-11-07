@@ -193,6 +193,16 @@ struct Rpc {
 }
 impl Rpc {
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
+        self.call_guarded(method, params, None)
+            .await?
+            .ok_or_else(|| error("Kernel RPC omitted its reply."))
+    }
+    async fn call_guarded(
+        &mut self,
+        method: &str,
+        params: Value,
+        admission: Option<(&Mutex<State>, &str)>,
+    ) -> Result<Option<Value>, RuntimeError> {
         let mut phase = format!("{method}:connect");
         let timed=tokio::time::timeout(std::time::Duration::from_secs(30), async {
             if self.stream.is_none() {
@@ -218,7 +228,12 @@ impl Rpc {
                 }
             }
             phase=method.into();
-            self.exchange(method,params).await
+            if let Some((state,run))=admission {
+                let state=state.lock().unwrap();
+                let original=state.call.is_some() && state.call_run.as_deref()==Some(run);
+                if state.cancelled.is_some() && !original { return Ok(None); }
+            }
+            self.exchange(method,params).await.map(Some)
         }).await;
         let result = match timed {
             Ok(result) => result,
@@ -1369,8 +1384,18 @@ impl LiveTurn for KernelTurn {
                     if let Some(limits) = &self.limits {
                         params["limits"] = limits.clone();
                     }
-                    let accepted = rpc.call("execution.input", params).await?;
+                    let accepted = rpc
+                        .call_guarded("execution.input", params, Some((&self.state, &self.run)))
+                        .await?;
                     drop(rpc);
+                    let Some(accepted) = accepted else {
+                        if self.finish_unaccepted_cancellation()? {
+                            continue;
+                        }
+                        return Err(error(
+                            "Kernel input was not sent but cancellation identity changed.",
+                        ));
+                    };
                     let call = accepted["call_ref"]
                         .as_str()
                         .ok_or_else(|| error("Kernel input omitted execution identity."))?
@@ -1826,6 +1851,88 @@ mod tests {
         );
         assert!(error.message.contains("original-loop"));
         assert!(error.message.contains("kernel-s"));
+        drop(session);
+        server.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+
+    #[tokio::test]
+    async fn kernel_abort_during_lease_handshake_does_not_send_execution_input() {
+        let socket =
+            std::path::PathBuf::from("/tmp").join(format!("pdl-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let ready = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (seen, proceed) = (ready.clone(), release.clone());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            let mut acquired = 0;
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap() == 0 {
+                    break;
+                }
+                let req: Value = serde_json::from_str(&line).unwrap();
+                let result = match req["method"].as_str().unwrap() {
+                    "initialize" => json!({}),
+                    "execution.events" => json!([]),
+                    "session.lease_status" => {
+                        seen.notify_one();
+                        proceed.notified().await;
+                        json!({"data":{"active":false,"epoch":0}})
+                    }
+                    "session.lease_acquire" => {
+                        acquired += 1;
+                        json!({"data":{"epoch":1}})
+                    }
+                    other => panic!("Pre-admission cancellation must not send {other}"),
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({"jsonrpc":"2.0","id":req["id"],"result":result})
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            assert_eq!(acquired, 1);
+        });
+        let session = session(socket.clone());
+        session.rpc.lock().await.lease = None;
+        let mut turn = session
+            .submit(
+                js(&json!({"type":"text","text":"must never be admitted"})).unwrap(),
+                js(&json!({"turnId":"turn-1"})).unwrap(),
+            )
+            .unwrap();
+        let consumer = tokio::spawn(async move {
+            let first = next(turn.as_mut()).await;
+            let final_event = next(turn.as_mut()).await;
+            assert!(turn.next().await.unwrap().is_none());
+            (first, final_event)
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), ready.notified())
+            .await
+            .unwrap();
+        session
+            .abort(&"cancelled during lease handshake".into())
+            .unwrap();
+        release.notify_one();
+        let (first, final_event) =
+            tokio::time::timeout(std::time::Duration::from_secs(2), consumer)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(first["type"], "session_aborted");
+        assert_eq!(first["kernelAccepted"], false);
+        assert_eq!(final_event["result"]["type"], "aborted");
+        assert!(!session.started.load(Ordering::SeqCst));
+        assert!(session.state.lock().unwrap().call.is_none());
         drop(session);
         server.await.unwrap();
         std::fs::remove_file(socket).unwrap();
