@@ -7,8 +7,12 @@
 //! (or two instances) mutating the same upload concurrently can lose an update,
 //! exactly as in TS; the shared contract is the disk format, not a cross-process
 //! lock. Inside one instance, `complete` and `cancel` judge the record
-//! re-read within that per-id gate, so an interleaved pair can no longer
-//! both succeed or delete the files behind a reported completion (#1631).
+//! re-read within that per-id gate, so an interleaved complete/cancel pair
+//! on the same id can no longer both succeed, and a `completed` record's
+//! files survive that racing cancel (#1631). The guarantee is scoped to
+//! that pair: a `write_part` in flight does not judge status inside the
+//! gate, so it can still flip a record back to `uploading` after a cancel —
+//! the same-gate rework for `write_part`/`fail`/`remove_tree` is #1503.
 //! Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
 //! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
@@ -371,33 +375,21 @@ impl UploadStore {
     pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         let mut refusal: Option<UploadError> = None;
-        let updated = self.mutate(&record, |r| match status(r).as_str() {
-            "created" | "uploading" => {
-                if array(r, "manifest")
-                    .iter()
-                    .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
-                {
-                    set(r, "status", text("failed"));
-                    set(r, "errorCode", text("UPLOAD_MANIFEST_MISMATCH"));
-                    set(
-                        r,
-                        "errorMessage",
-                        text("One or more declared files were not uploaded."),
-                    );
-                    refusal = Some(UploadError::dialog(
-                        "UPLOAD_MANIFEST_MISMATCH",
-                        "One or more declared files were not uploaded.",
-                    ));
-                } else {
-                    set(r, "status", text("completed"));
-                    set(r, "uploadedBytes", value(r, "totalBytes"));
-                }
+        let updated = self.mutate(&record, |r| {
+            if !active(r) {
+                refusal = Some(invalid_state(r));
+                return;
             }
-            other => {
-                refusal = Some(UploadError::dialog(
-                    "UPLOAD_INVALID_STATE",
-                    format!("Upload is {other}."),
-                ));
+            if array(r, "manifest")
+                .iter()
+                .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+            {
+                let message = JsString::from("One or more declared files were not uploaded.");
+                mark_failed(r, "UPLOAD_MANIFEST_MISMATCH", &message);
+                refusal = Some(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+            } else {
+                set(r, "status", text("completed"));
+                set(r, "uploadedBytes", value(r, "totalBytes"));
             }
         })?;
         match refusal {
@@ -408,23 +400,23 @@ impl UploadStore {
 
     /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
     /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
-    /// `completed` record's files survive a racing cancel.
+    /// `completed` record's files survive a racing cancel. The `remove_tree`
+    /// itself still runs after the gate (the module-doc pair scope and #1503
+    /// cover what a concurrently in-flight `write_part` can interleave).
     pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         let mut refusal: Option<UploadError> = None;
         let mut cancelled = false;
-        let updated = self.mutate(&record, |r| match status(r).as_str() {
-            "created" | "uploading" => {
+        let updated = self.mutate(&record, |r| {
+            if active(r) {
                 set(r, "status", text("cancelled"));
                 cancelled = true;
-            }
-            "completed" => {
+            } else if status(r) == "completed" {
                 refusal = Some(UploadError::dialog(
                     "UPLOAD_ALREADY_COMPLETED",
                     "Completed uploads cannot be cancelled.",
                 ));
             }
-            _ => {}
         })?;
         if let Some(e) = refusal {
             return Err(e);
@@ -437,11 +429,7 @@ impl UploadStore {
 
     pub fn fail(&self, upload_id: &str, code: &str, message: &JsString) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
-        self.mutate(&record, |r| {
-            set(r, "status", text("failed"));
-            set(r, "errorCode", text(code));
-            set(r, "errorMessage", JsValue::String(message.clone()));
-        })
+        self.mutate(&record, |r| mark_failed(r, code, message))
     }
 
     pub fn subscribe(&self, upload_id: &str) -> UploadSubscription {
@@ -1345,14 +1333,27 @@ fn status(record: &UploadRecord) -> String {
 fn active(record: &UploadRecord) -> bool {
     matches!(status(record).as_str(), "created" | "uploading")
 }
+/// The `UPLOAD_INVALID_STATE` refusal for a record that left the active set
+/// — one message formula shared by the pre-gate check (`require_active`) and
+/// the in-gate refusals (#1631).
+fn invalid_state(record: &UploadRecord) -> UploadError {
+    UploadError::dialog(
+        "UPLOAD_INVALID_STATE",
+        format!("Upload is {}.", status(record)),
+    )
+}
+/// The three-field failed-record write shared by `fail` and `complete`'s
+/// in-gate mismatch branch (which cannot re-enter the gate through `fail`).
+fn mark_failed(record: &mut UploadRecord, code: &str, message: &JsString) {
+    set(record, "status", text("failed"));
+    set(record, "errorCode", text(code));
+    set(record, "errorMessage", JsValue::String(message.clone()));
+}
 fn require_active(record: &UploadRecord) -> Result<()> {
     if active(record) {
         Ok(())
     } else {
-        Err(UploadError::dialog(
-            "UPLOAD_INVALID_STATE",
-            format!("Upload is {}.", status(record)),
-        ))
+        Err(invalid_state(record))
     }
 }
 fn path_value(path: &Path) -> JsValue {
