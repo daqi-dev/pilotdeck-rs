@@ -1973,12 +1973,19 @@ fn object_prototype_names_match_the_measured_v8_set() {
         "__proto__",
         "toLocaleString",
     ];
-    for name in measured {
-        negative_assert!(
-            crate::config::builtin_property(&JsString::from(name)),
-            "#1682 Object.prototype own property name missing from builtin_property"
-        );
-    }
+    // Set equality, both directions: a name missing from the shared table would
+    // silently restore a 404 divergence, and a name *added* to it would 200 a
+    // route the baseline answers 404 for. Membership probes alone catch only
+    // the first direction (#2183 评审 r2 P1).
+    let mut table = crate::config::BUILTIN_PROPERTY_NAMES;
+    table.sort_unstable();
+    let mut expected = measured;
+    expected.sort_unstable();
+    negative_assert_eq!(
+        table,
+        expected,
+        "#1682 Object.prototype own property names under Node v22.22.0"
+    );
     negative_assert!(
         !crate::config::builtin_property(&JsString::from("nope")),
         "#1682 an ordinary name must not answer as an Object.prototype property"
