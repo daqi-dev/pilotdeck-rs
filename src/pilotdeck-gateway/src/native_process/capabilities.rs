@@ -229,22 +229,33 @@ pub(super) fn advertised(requests: &Requests) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::negative_assert;
+    use crate::{negative_assert, negative_assert_eq};
 
     const ORACLE: &str = include_str!("../../tests/fixtures/native-management/oracle.json");
 
-    /// The names the TS baseline recorded in `contract.capabilities`. Held in
-    /// a `OnceLock` so they can be compared as `&'static str`.
-    fn recorded_names() -> Vec<&'static str> {
+    /// The names the TS baseline recorded in one config state. Held in a
+    /// `OnceLock` so they can be compared as `&'static str`.
+    fn recorded_capabilities(state: &str) -> Vec<&'static str> {
         static PARSED: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
-        PARSED
-            .get_or_init(|| serde_json::from_str(ORACLE).expect("#1352 oracle parses"))["contract"]
-            ["capabilities"]
+        let oracle =
+            PARSED.get_or_init(|| serde_json::from_str(ORACLE).expect("#1352 oracle parses"));
+        let contract = &oracle["contract"];
+        let node = if state == "contract" {
+            contract
+        } else {
+            &contract[state]
+        };
+        node["capabilities"]
             .as_array()
-            .expect("#1352 oracle capabilities")
+            .unwrap_or_else(|| panic!("#1352 oracle capabilities missing at contract.{state}"))
             .iter()
             .map(|value| value.as_str().expect("#1352 oracle capability string"))
             .collect()
+    }
+
+    /// The names the TS baseline recorded in `contract.capabilities`.
+    fn recorded_names() -> Vec<&'static str> {
+        recorded_capabilities("contract")
     }
 
     fn table_names() -> Vec<&'static str> {
@@ -269,12 +280,20 @@ mod tests {
     /// only methods the #1305 registry routes. A method that is missing would
     /// otherwise be promised by `describe_server` and then answer
     /// `CAPABILITY_UNAVAILABLE`.
+    ///
+    /// `methods/tools.rs` registers the two background names only on unix, so
+    /// off unix the registry gate is precisely what has to drop those two rows.
+    /// Asserting the expectation in both directions (`true` on unix, exactly
+    /// those two `false` elsewhere) keeps this test honest on either platform
+    /// instead of turning into a false FAIL on Windows.
     #[test]
     fn capability_methods_are_registered() {
         let registered: Vec<&str> = registered_methods().collect();
         for capability in CAPABILITIES {
-            negative_assert!(
+            let unix_only = matches!(capability.name, "background_task_stop" | "background_tasks");
+            negative_assert_eq!(
                 methods_registered(capability, &registered),
+                cfg!(unix) || !unix_only,
                 "#1352 {} promises a method the registry does not route: {:?}",
                 capability.name,
                 promised(capability).collect::<Vec<_>>()
@@ -332,6 +351,18 @@ mod tests {
     /// `CRON_METHODS` owns for both sides.
     #[test]
     fn capability_table_covers_every_recorded_name() {
+        // The module header claims all three recorded config states carry the
+        // same names; the rest of this test only reads `contract`. Pin that
+        // claim here, so a re-recorded oracle that drops a name from one of the
+        // disabled states fails instead of quietly making the header stale.
+        let contract = recorded_names();
+        for state in ["emptyStorage", "missingStorage"] {
+            let names = recorded_capabilities(state);
+            negative_assert!(
+                names == contract,
+                "#1352 oracle contract.{state} no longer carries the same capability names as contract"
+            );
+        }
         let recorded = recorded_names();
         let table = table_names();
         for name in &recorded {
