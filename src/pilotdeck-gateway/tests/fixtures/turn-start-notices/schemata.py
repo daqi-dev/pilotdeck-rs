@@ -58,6 +58,13 @@ GUARDED = [
     # Scratch/registry helpers live here), so a concurrent edit during a run
     # must be caught by the source guard.
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
+    # #1274 MM r1 P1: the parents of that #[path] chain — factory_tests.rs
+    # assembles this module and defines the Scratch/registry helpers the
+    # binding inherits via `use super::*` (factory.rs:1184 ->
+    # factory_tests.rs:4577), and factory.rs assembles factory_tests itself,
+    # so concurrent edits to either must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/factory.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
