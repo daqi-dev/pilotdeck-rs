@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 320 mutants:
+`JUDGES`, keyed by the same names. The current table has 322 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -488,7 +488,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-shadowed-constructor`,
 `calibrate-for-target-handle-container-copy`,
 `calibrate-status-bound-handle-alias-chain`,
-`calibrate-status-three-arg-handle-live`.
+`calibrate-status-three-arg-handle-live`,
+`calibrate-status-getattr-alias-callee`,
+`calibrate-for-target-nested-container-copy`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1496,3 +1498,24 @@ calls alone.
 The three mutants are green at round 17 and red at round 18; the two clean
 shapes are red at round 17 and green at round 18 (see the round-18 matrix in
 the PR).
+
+### Closed by `fix-r1` round 19 (GLM boundary r17 one P0 / one P1, codex r18 two P0 / two P1, GLM boundary r18 one P0)
+
+The status ruler decoded only the literal `getattr` spelling, so an aliased
+handle factory lost the write; the round-17 block table judged a binding in a
+`finally` body (or the taken arm of a statically decided `if`) as "may not
+have run", so a clean file was flagged.  Round 18's own guards then had three
+holes of their own: the container copy was decoded one level deep (a nested or
+sliced copy read as fresh), the by-name handle chain was cut at eight hops,
+and it read every binding a name ever had instead of the one in force.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The handle factory may reach the call under another name**: `ga = getattr; f = ga(report, '__setattr__'); f('status', 'PASS')` (also `ga = builtins.getattr`) is the same status write. | `calibrate-status-getattr-alias-callee`; self-tests `round 19: a status write through an aliased getattr factory`, `... through an aliased builtins.getattr factory` |
+| **A factory alias that is not `getattr` writes nothing** (false FAIL guard): `ga = dict; f = ga(report, '__setattr__')`. | self-test `round 19: a status write through a factory alias that is not getattr` |
+| **A nested or sliced copy still carries the handles**: `hs2 = list(tuple(hs))` / `list(hs[:])` / `list(iter(hs))` / `list(hs.copy())`. | `calibrate-for-target-nested-container-copy`; self-tests `round 19: a handle container copied through a nested constructor`, `... through a slice` |
+| **A long name chain is still a handle** (false PASS guard): nine hops of `a1 = a0`. | self-test `round 19: a status write through a nine-hop name chain` |
+| **The binding in force decides, not the history** (false FAIL guard): `g = report.__setitem__; g = print; f = g`. | self-tests `round 19: a status handle certainly overwritten by another name`, `... overwritten only in an if arm` |
+| **A container certainly replaced before the copy no longer carries** (false FAIL guard): `hs = [...]` handles; `hs = [lambda *a: None]`; `hs2 = list(hs)`. | self-tests `round 19: a handle container certainly replaced before the copy`, `... replaced only in an if arm before the copy` |
+| **A handle certainly overwritten in a `finally` block is gone** (false FAIL guard): `h = getattr(md, '__setattr__'); try: ... finally: h = lambda *a: None; h('common', ...)`. | self-tests `round 19: a handle certainly overwritten in a finally block`, `... in a statically true if` |
+| **A handle overwritten in an ordinary branch stays live** (fail-closed): `if object(): h = lambda *a: None` may not run. | self-test `round 19: a handle overwritten in an ordinary branch` |
