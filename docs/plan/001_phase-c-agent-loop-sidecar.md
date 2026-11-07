@@ -55,12 +55,12 @@ related: [changes/arch/001_phase-c-agent-loop-sidecar, research/002_parity-bound
 2. **逐条规则的负向对照**：G03 v1 每放宽一处（通道拆分、E1–E12 各条），各构造一对注入了对应差异的 trace，断言是**那条规则**判它 FAIL（不是「随便哪里 FAIL」）。另加**端到端**的负向对照：在一对真实 trace 里注入差异、删掉一个场景、截断一份 trace，都必须判 FAIL。放在 `scripts/parity/controls/`，`python3 -I scripts/parity/controls/run_all.py` 一键跑。
    ⚠️ 评审 A 指出旧 `verify_a9.py` 的 E 规则失败只「旁报」、不进总判决（`:435`），场景靠 glob 取（`:423`）——**总判决必须同时要求：53 个场景齐全、两侧身份断言通过、所有适用的 E 规则通过**。
 3. **两侧同坏**：两边都空、两边都报同样的错——必须判 FAIL。
-4. **独立审查**：codex + opencode 双谱系各审一遍尺子与对照结果，记录在 `docs/reviews/001_ruler-recheck.md`（与本计划同号）。**最多两轮**；两轮后仍有 P0/P1/P2，停下交人仲裁，不再自己调。
+4. **独立审查**：codex + opencode 双谱系各审一遍尺子与对照结果，记录在 `docs/reviews/001_ruler-recheck.md`（与本计划同号）。**最多两轮**；两轮后仍有 P0/P1 停下交人仲裁，不再自己调；P2 不要求清零——到点（前置于本节点及更早）有明确处置即可（处置口径见 CLAUDE.md 问题分级，#2063 B）。
 
 **Issue #1 怎么算做完**
 - [ ] `python3 -I scripts/parity/check_ruler.py` 输出一份 JSON，四项对照各一个布尔值，**全为 true**；结果与原始数据路径写进 `exp004`
 - [ ] `acceptance.md`、`normalization.md` 写好后**先交人批**，批了才冻结；`FROZEN.md` 记录 `specs/parity/` 全部规约 **以及 `scripts/parity/` 下全部比较器与驱动代码**的 sha256；`python3 -I scripts/parity/check_frozen.py` 校验全部哈希。冻结后改任何一份都要另开 issue、由人批
-- [ ] 双谱系审查收敛到无 P0/P1/P2（最多两轮，见上）
+- [ ] 双谱系审查收敛到无 P0/P1；P2 到点（前置于本节点及更早）有明确处置即可，不要求清零（最多两轮，见上；处置口径见 CLAUDE.md 问题分级，#2063 B）
 - [ ] CI `check` 绿（本 issue 不碰 Rust 代码，但 PR 照常走闸）
 
 ### Issue #2 · 搬入旧 Rust sidecar（在 Issue #1 合并之后）
