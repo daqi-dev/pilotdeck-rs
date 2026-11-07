@@ -1226,6 +1226,16 @@ class ParityMutationLock(unittest.TestCase):
                             self.fail("#166 busy parity lock must refuse before mutation")
                     self.assertEqual(write.call_count, 0, "#166 refused lock must not write source bytes")
                     self.assertEqual(publish.call_count, 0, "#166 refused lock must not publish source bytes")
+                    # #1903 r2：与 test_metadata_io_driver 的两处 #166 探针同形接线判据 ——
+                    # 还原必须按 negative_process 的**模块全局**解析，否则上面那条
+                    # `publish.call_count == 0` 永远成立（探针空转）。默认参绑定与函数内
+                    # `from negative_process import …` 都会落进 `co_varnames`，一并抓。
+                    restore = getattr(negative_process.mutating_sources, "__wrapped__",
+                                      negative_process.mutating_sources)
+                    self.assertIn("write_source_atomic", restore.__code__.co_names,
+                                  "#1903 the restore must resolve write_source_atomic as a global")
+                    self.assertNotIn("write_source_atomic", restore.__code__.co_varnames,
+                                     "#1903 a parameter or local binding would blind this probe")
                 self.assertEqual(target.read_bytes(), snapshot[target], "#166 busy lock preserves original bytes")
 
     def test_failed_restore_retains_cleanup_pending_lease(self):
