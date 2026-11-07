@@ -19,6 +19,27 @@ driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
 
 
+def restore_wiring_problems(guard):
+    """#1903 r2：共享还原是否**按全局名**解析 `write_source_atomic`（探针接线的结构判据）。
+
+    r2 第一版自证写成 `assertIs(__globals__['write_source_atomic'], guard.write_source_atomic)`，
+    两边是同一次字典查找 → 恒真（zai boundary P1；DeepSeek boundary / concurrency P2）。
+    真实让 #166 探针空转的两种漂移都会落进 `co_varnames`：默认参绑定
+    `def mutating_sources(…, write_source_atomic=…)`，与函数内
+    `from negative_process import write_source_atomic` 的局部绑定。
+    行为侧的证明见 `test_restore_publishes_through_the_patched_module_global`。
+    """
+    restore = getattr(guard.mutating_sources, '__wrapped__', guard.mutating_sources)
+    problems = []
+    if restore.__globals__ is not vars(guard):
+        problems.append('the restore must stay defined in negative_process')
+    if 'write_source_atomic' not in restore.__code__.co_names:
+        problems.append('the restore must resolve write_source_atomic as a global')
+    if 'write_source_atomic' in restore.__code__.co_varnames:
+        problems.append('a parameter or local binding would blind the probe')
+    return problems
+
+
 class EnvironmentControls(unittest.TestCase):
     nextest_command = ('cargo nextest run --workspace --no-fail-fast --profile ci '
                        '--config-file ../.config/nextest.toml')
@@ -1578,6 +1599,52 @@ self_check_controls_run | return | return problems
                 return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
         self.fail('#1692 §9 the module must define write_source_atomic()')
 
+    def fixture_bindings(self, source, name):
+        """`source` 里所有把 `name` 绑进本模块命名空间的语法点（#1903 r2 DeepSeek boundary P2）。
+
+        只有**恰好一条** `from negative_process import name` 才允许通过。覆盖的形态：
+        `def` / `async def` / `class`、赋值（`=` / `+=` / 注解赋值）、
+        `from X import name`、`from X import other as name`、`import X as name`、
+        以及把 `name` 声明成参数（默认参就是运行期绑定）。
+        """
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == name and alias.asname is None:
+                        found.append(f'from {node.module} import {name}')
+                    elif alias.asname == name:
+                        found.append(f'from {node.module} import {alias.name} as {name}')
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname == name:
+                        found.append(f'import {alias.name} as {name}')
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name == name:
+                    found.append(f'def {name}')
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id == name:
+                        found.append(f'{name} = …')
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if isinstance(node.target, ast.Name) and node.target.id == name:
+                    found.append(f'{name} = …')
+            elif isinstance(node, ast.arguments):
+                positional = node.posonlyargs + node.args + node.kwonlyargs
+                if any(argument.arg == name for argument in positional):
+                    found.append(f'parameter {name}')
+        return found
+
+    def restore_definition(self, guard):
+        """`mutating_sources` 的未装饰函数（`@contextmanager` 把原函数挂在 `__wrapped__`）。"""
+        return getattr(guard.mutating_sources, '__wrapped__', guard.mutating_sources)
+
+    def assert_restore_reads_the_patched_global(self, guard, label):
+        """#1903 r2：见 `restore_wiring_problems`（判据在模块级，两个测试类共用）。"""
+        self.assertEqual(restore_wiring_problems(guard), [],
+                         f'#1903 {label}: the restore must resolve write_source_atomic '
+                         'through the module global the #166 probes patch')
+
     def publish_guards(self, source, *, scratch, scratch_name):
         """#1692 §9 / #1903：原子发布的三条形态 + 残留的落点。
 
@@ -1619,6 +1686,21 @@ self_check_controls_run | return | return problems
         self.assertEqual(source.count(scratch), 1,
                          '#1692 §9 the publish scratch dir is one root-level constant: '
                          + scratch)
+        # 派生链也要钉（r1 DeepSeek concurrency P2）：上提后旧的
+        # `assertEqual(source.count("PUBLISH_DIR = root / '.negctl-publish'"), 1)` 没了，
+        # 只剩「常量行唯一」，把 `publish = Path(root) / PUBLISH_DIR` 改成
+        # `path.parent / PUBLISH_DIR` 能存活全部钉子，于是临时文件落回 `src/`，
+        # SIGKILL 残留被 `git ls-files --others` 读到 → 整棵拒跑，而尺子报 PASS。
+        scratch_constant = scratch.split('=', 1)[0].strip()
+        self.assertIn(f'{scratch_name} = Path(root) / {scratch_constant}', body,
+                      '#1692 §9 the scratch dir is derived from the repo ROOT, not from the '
+                      'mutated file: a residue beside a `src/` file is an untracked build '
+                      'input and locks the tree out')
+        # 子串存在性挡不住「先正确赋值、之后再重绑」的漂移（r2 DeepSeek boundary P2 /
+        # concurrency P3）：在被钉行之后补一句 `publish = path.parent / PUBLISH_DIR`，
+        # 上面三条仍然全绿，而落盘走的是后者。整个函数体里 `publish =` 只准出现一次。
+        self.assertEqual(body.count(f'{scratch_name} ='), 1,
+                         f'#1692 §9 the scratch dir is bound exactly once: {scratch_name}')
         self.assertIn(f"{scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
                       '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
         self.assertIn(f'{scratch_name}.mkdir(parents=True, exist_ok=True)', body,
@@ -1634,7 +1716,20 @@ self_check_controls_run | return | return problems
                          'not by being ignored')
 
     def fixture_call_sites(self, source):
-        """#1903：夹具侧只剩两个调用点，都不许落回截断写。"""
+        """#1903：夹具侧只剩两个调用点，都不许落回截断写，也不许长出本地实现。"""
+        # #1903 把实现上提到共享守卫后，`publish_guards` 只读共享那份（r1 DeepSeek
+        # boundary P2）：夹具若再长出一份本地 `write_source_atomic`，两个调用点名字不变、
+        # 截断写正则也不匹配 `open(path, 'wb')`，两条断言照绿，而真正跑的是本地副本。
+        # 「夹具与 `mutating_sources` 的还原共用同一份实现」必须由断言钉住 —— 而且只数
+        # `def` + 一条赋值正则不够（r2 DeepSeek boundary P2：`from local_impl import
+        # write_source_atomic`、`import local_impl as write_source_atomic`、缩进变体都逃得掉）。
+        # 这里改成 AST 枚举**所有**能把名字绑进本模块命名空间的语法点，恰好只允许一条共享导入。
+        # 这是形态钉不是共享性钉：夹具必须用**非限定名**调用（两处调用点钉子同口径），
+        # 将来若要改成 `negative_process.write_source_atomic(...)`，两处要一起放宽。
+        for name in ('write_source_atomic', 'mutating_sources'):
+            self.assertEqual(self.fixture_bindings(source, name),
+                             [f'from negative_process import {name}'],
+                             f'#1903 the fixture must bind {name} only from negative_process')
         self.assertEqual(source.count('write_source_atomic(root, path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
         self.assertEqual(source.count('write_source_atomic(root, path, original)'), 1,
@@ -1680,6 +1775,17 @@ self_check_controls_run | return | return problems
                 # 有 scratch 目录但名字不在 `.gitignore` 覆盖范围内。
                 ('atomic-publish-scratch-dir-not-ignored',
                  "PUBLISH_DIR = '.negctl-publish'", "PUBLISH_DIR = 'negctl-publish'"),
+                # 派生点漂移（r1 DeepSeek concurrency P2）：scratch 跟着目标文件走，
+                # 残留就落回 `src/` 里 —— 保护来自位置，位置错了保护就没了。
+                ('atomic-publish-scratch-follows-the-target',
+                 '    publish = Path(root) / PUBLISH_DIR',
+                 '    publish = path.parent / PUBLISH_DIR'),
+                # 先正确赋值、之后再重绑（r2 DeepSeek boundary P2）：子串钉子全绿，
+                # 实际落盘跟着目标文件走 → 残留回到 `src/`。
+                ('atomic-publish-scratch-rebound-after-the-fact',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 '    publish = path.parent / PUBLISH_DIR\n'
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
@@ -1695,7 +1801,31 @@ self_check_controls_run | return | return problems
                 self.assertEqual(re.findall(r'(?<![\w.])path\.write_(?:text|bytes)\(', mutant), [],
                                  '#1903 the shared restore has no truncating in-place write')
             print(f'#1692 §9 atomic-publish mutant {label}: KILLED', flush=True)
+        # 夹具命名空间的钉子也要有对杀负控（r2 DeepSeek sibling P2 / boundary P2）：
+        # 一条变异只触发一条钉子，否则先抛的那条会把后面的判定逻辑遮成零覆盖。
+        anchor_after_import = ("root = Path(__file__).resolve().parents[5]\n"
+                               "source = root / 'src/pilotdeck-gateway/src'")
         for label, old, new in (
+                # 1) 导入模块名写错 → 「只允许从 negative_process 导入」这条钉子必须红。
+                ('fixture-imports-another-module',
+                 'from negative_process import ', 'from negative_process_local import '),
+                # 2) 追加一条同名别名导入 → 绑定表出现第二条 → 必须红。
+                ('fixture-imports-an-alias-shadow',
+                 anchor_after_import,
+                 'from local_impl import write_source_atomic\n\n' + anchor_after_import),
+                # 3) 真 shadow：`def` 放在 import **之后**，运行期用的就是本地副本。
+                ('fixture-defines-a-local-write-source-atomic',
+                 anchor_after_import,
+                 'def write_source_atomic(root, path, data):\n'
+                 "    Path(path).write_bytes(data)\n\n\n" + anchor_after_import),
+                # 4) 普通重绑定。
+                ('fixture-rebinds-write-source-atomic',
+                 anchor_after_import, 'write_source_atomic = None\n\n' + anchor_after_import),
+                # 5) 同一夹具还能把共享入口本身顶掉（r2 DeepSeek sibling P2 #4）。
+                ('fixture-shadows-mutating-sources',
+                 anchor_after_import,
+                 'def mutating_sources(root, paths, **kwargs):\n'
+                 "    raise AssertionError('local shadow')\n\n\n" + anchor_after_import),
                 ('mutant-write-back-to-truncating',
                  'write_source_atomic(root, path, changed.encode())', 'path.write_text(changed)'),
                 ('restore-write-back-to-truncating',
@@ -1731,6 +1861,77 @@ self_check_controls_run | return | return problems
                              [],
                              '#1903 the shared restore must not truncate the source in place')
         print('#1903 shared-restore guard mutant truncating-shared-restore: KILLED', flush=True)
+
+    def negative_process_module(self):
+        """进程内唯一的 `negative_process` 模块（夹具与 #166 探针用的就是这一个）。"""
+        import sys
+        module = sys.modules.get('negative_process')
+        if module is None:
+            path = Path(__file__).resolve().parent/'fixtures/negative_process.py'
+            spec = importlib.util.spec_from_file_location('negative_process', path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules['negative_process'] = module
+            spec.loader.exec_module(module)
+        return module
+
+    def test_restore_publishes_through_the_patched_module_global(self):
+        """#1903 r2：探针接线的**行为**正控。
+
+        r2 第一版接线自证是恒真式（zai boundary P1；DeepSeek boundary / concurrency P2）。
+        只做结构判据仍可能漏掉「还原搬去别的 helper」这类漂移，所以这里直接跑一次真的
+        `mutating_sources`：锁可用 → 进入变异窗口 → 还原，记录型包装器必须被调用**恰好一次**，
+        且源文件字节不变。#166 的两处探针 patch 的是同一个模块属性，这条正控覆盖它们两处。
+        """
+        guard = self.negative_process_module()
+        root = Path(__file__).resolve().parents[3]
+        relative = 'src/pilotdeck-gateway/tests/fixtures/negative-restore/test_restore.py'
+        target = root/relative
+        before = target.read_bytes()
+        calls = []
+        real = guard.write_source_atomic
+
+        def recording(*args, **kwargs):
+            calls.append(str(args[1]))
+            return real(*args, **kwargs)
+
+        with patch.object(guard, 'write_source_atomic', side_effect=recording):
+            with guard.mutating_sources(root, [relative], lock_timeout=120):
+                pass
+        self.assertEqual(calls, [str(target.resolve())],
+                         '#1903 the restore must publish through the module global the '
+                         '#166 probes patch -- otherwise their call_count is always 0')
+        self.assertEqual(target.read_bytes(), before,
+                         '#1903 the behavioural control must not change the source bytes')
+        self.assert_restore_reads_the_patched_global(guard, '#1903 behavioural control')
+        print('#1903 restore publishes through the patched module global: 1 call, bytes '
+              'unchanged', flush=True)
+
+    def test_restore_wiring_self_proof_can_fail(self):
+        """#1903 r2：接线判据自己的负控 —— 两种真实漂移必须被它抓住。
+
+        `assert_restore_reads_the_patched_global` 若不是恒真就必须能报错；这里把两种让
+        #166 探针空转的形态塞进同构的假模块（`__globals__` 与 `vars(guard)` 同一份字典，
+        与真模块同构），逐条要求它失败，再用真模块确认它不误报。
+        """
+        shadow = types.ModuleType('negative_process_wiring_control')
+        exec(compile(
+            'def default_parameter(root, paths, *, write_source_atomic=None):\n'
+            '    return write_source_atomic\n'
+            '\n'
+            'def local_import(root, paths):\n'
+            '    from negative_process import write_source_atomic\n'
+            '    return write_source_atomic\n', '<wiring-control>', 'exec'), shadow.__dict__)
+        for label, name in (('default-parameter', 'default_parameter'),
+                            ('local-import', 'local_import')):
+            with self.subTest(label=label):
+                shadow.mutating_sources = getattr(shadow, name)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1903 {label} must blind the probes and be caught'):
+                    self.assert_restore_reads_the_patched_global(shadow, f'#1903 control {label}')
+        self.assert_restore_reads_the_patched_global(self.negative_process_module(),
+                                                     '#1903 real module')
+        print('#1903 restore-wiring self-proof: default-parameter and local-import are both '
+              'caught, the real module passes', flush=True)
 
 
     def documented_exit_codes(self, script):
@@ -4018,11 +4219,22 @@ class AggregationAudit(unittest.TestCase):
                         patch.object(guard, 'tree_lock', return_value=contextlib.nullcontext()), \
                         patch.object(Path, 'write_text', evidence_only), \
                         patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 busy lock must not write source')), \
+                        patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 busy lock must not publish source bytes')) as publish, \
                         patch.object(module.sys, 'argv', argv), \
                         patch.object(module, 'run_owned', side_effect=AssertionError('#166 busy lock must not launch a test')):
                     if hasattr(module, 'pgrep_launcher'):
                         module.pgrep_launcher = lambda: ''
                     code = module.main()
+                # #1903：还原改走 `write_source_atomic`（临时文件 + `os.replace`），不再经过
+                # `Path.write_text/bytes`；只钉那两个入口，这条「拒锁期间不得写源码」的探针
+                # 对还原路径就变成空转（r1 DeepSeek sibling / zai sibling P2）。
+                # 接线自证见 `assert_restore_reads_the_patched_global`（r2 zai boundary P1：
+                # 第一版 assertIs 两边是同一次字典查找，恒真）。
+                self.assertEqual(restore_wiring_problems(guard), [],
+                                 f'#166 busy lock {folder}: the restore must resolve '
+                                 'write_source_atomic through the patched module global')
+                self.assertEqual(publish.call_count, 0,
+                                 '#166 busy lock must not publish source bytes')
                 self.assertEqual(calls, [True], '#166 both negative suites must request parity lock')
                 self.assertEqual(code, 1 if folder == 'gateway-entry-guard' else 2,
                                  '#166 busy parity lock must exit nonzero per suite contract')
@@ -4094,6 +4306,7 @@ class AggregationAudit(unittest.TestCase):
                             patch.object(Path, 'read_bytes', lambda p: residue if p == common_path else raw_read(p)), \
                             patch.object(Path, 'write_text', evidence_only), \
                             patch.object(Path, 'write_bytes', side_effect=AssertionError('#166 dirty guard must never write')), \
+                            patch.object(guard, 'write_source_atomic', side_effect=AssertionError('#166 dirty guard must never publish')) as publish, \
                             patch.object(module, 'run_owned', side_effect=AssertionError('#166 dirty guard must never run child')), \
                             patch.object(module.sys, 'argv', argv):
                         if hasattr(module, 'pgrep_launcher'):
@@ -4102,6 +4315,13 @@ class AggregationAudit(unittest.TestCase):
                             code = module.main()
                         except Exception as error:
                             caught = error
+                    # #1903：同 busy-lock 探针 —— 还原走 `write_source_atomic`，不经过
+                    # `Path.write_bytes`，只钉旧入口等于没钉还原路径。
+                    self.assertEqual(restore_wiring_problems(guard), [],
+                                     f'#166 dirty {folder}: the restore must resolve '
+                                     'write_source_atomic through the patched module global')
+                    self.assertEqual(publish.call_count, 0,
+                                     '#166 dirty guard must not publish source bytes')
                     self.assertIn(common_path, supplied, '#166 common.py must be included in guarded sources')
                     self.assertEqual(imports, [], '#166 residual mapping must be guarded before import')
                     self.assertIsNone(caught, '#166 source guard must report BLOCKED without traceback')
