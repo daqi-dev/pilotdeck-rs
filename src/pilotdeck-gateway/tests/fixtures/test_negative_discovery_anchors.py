@@ -2995,6 +2995,43 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(any('missing anchor: x/mod.rs' in problem
                             for problem in problems), problems)
 
+    def test_an_annotated_second_assignment_is_ambiguous_too(self):
+        """The annotated form takes part in ambiguity, not only in resolution.
+
+        ``SMS: Path = ROOT / 'x'`` twice with different values means the site
+        depends on which line ran; resolving the last one would key a directory
+        the earlier use never built. The same value twice stays resolvable.
+        """
+        different = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS: Path = ROOT / 'src/example/x'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [SMS / 'mod.rs']\n"
+            "SMS: Path = ROOT / 'src/example/y'\n"
+        )
+        problems = violations(different, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous' in problem for problem in problems), problems)
+        self.assertFalse(any('y/mod.rs' in problem for problem in problems), problems)
+        same = different.replace("example/y", "example/x")
+        problems = violations(same, 'example/negative_controls.py')
+        self.assertFalse(any('ambiguous' in problem for problem in problems), problems)
+        self.assertTrue(any('missing anchor: x/mod.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_length_mismatched_unpacking_fails_closed(self):
+        """``A, B = ROOT / 'x'`` cannot be paired up any more than a starred one."""
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "A, B = ROOT / 'src/example/x'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [A / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unsupported unpacking of a repository path' in problem
+                            for problem in problems), problems)
+
     def test_a_tuple_loop_target_does_not_reuse_a_stale_constant(self):
         """``for name, kind in rows:`` binds ``name`` as firmly as a bare name."""
         synthetic = (
