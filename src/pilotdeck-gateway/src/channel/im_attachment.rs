@@ -205,6 +205,13 @@ impl ImAttachmentStore {
         }
     }
 
+    /// The `maxBytes` this store was built with. The weixin dispatcher uses it
+    /// to tell a download that `saveFromUrl` rejects before it touches the
+    /// transport from one that has to wait for bytes.
+    pub(crate) fn max_bytes(&self) -> usize {
+        self.max_bytes
+    }
+
     /// `saveFromUrl`, in the baseline's order: declared-size guard, fetch,
     /// transform, post-transform size guard, mime normalization, mkdir,
     /// filename, containment check, write, `stat`.

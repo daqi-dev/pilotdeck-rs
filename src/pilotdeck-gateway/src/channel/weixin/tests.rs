@@ -555,6 +555,17 @@ fn inbound_text_message(text: &str) -> JsValue {
     .expect("#1821 inbound message json")
 }
 
+/// A FILE item whose declared size is past the store limit, so `saveFromUrl`
+/// rejects it before it opens a socket.
+fn oversize_file_message(chat: &str, token: &str, name: &str, cdn: &str) -> JsValue {
+    parse_json(&format!(
+        r#"{{"from_user_id":"{chat}","context_token":"{token}","message_type":1.0,
+            "item_list":[{{"type":4.0,"file_item":{{"file_name":"{name}",
+              "file_size":52428801.0,"cdn_url":"http://{cdn}/{name}"}}}}]}}"#
+    ))
+    .expect("#1822 oversize file message json")
+}
+
 /// Give the spawned turn enough scheduler rounds to reach its parked select
 /// (the paused runtime fires or skips the armed watchdog on its own once no
 /// task is runnable, so the assertions below never depend on poll order).
@@ -849,20 +860,21 @@ impl WeixinGatewayPort for RecordingGateway {
 /// one resolves first because its extraction never suspends. Starting the
 /// downloads only after the batch has been walked keeps that order instead of
 /// racing a spawned task against the loop.
-#[tokio::test]
+///
+/// Multi-threaded on purpose: a current-thread runtime cannot run a spawned
+/// task while `start_poll_batch` is still walking the batch, so it would pass
+/// even with the per-message `spawn` this test guards against.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_later_text_message_in_the_same_batch_reaches_the_session_first() {
     let root = Root::new();
     let gateway = Arc::new(RecordingGateway::default());
     let channel = channel_with_gateway(&root, gateway.clone());
-    // A file item whose declared size is past `WEIXIN_MAX_ATTACHMENT_BYTES`:
-    // `saveFromUrl` rejects it before it opens a socket.
-    let oversize = parse_json(
-        r#"{"from_user_id":"chat-1","context_token":"tok-1","message_type":1.0,
-            "item_list":[{"type":4.0,"file_item":{"file_name":"big.bin",
-              "file_size":52428801.0,"cdn_url":"http://127.0.0.1:9/big.bin"}}]}"#,
-    )
-    .expect("#1822 oversize file message json");
-    channel.start_poll_batch(vec![oversize, inbound_text_message("after")]);
+    channel
+        .start_poll_batch(vec![
+            oversize_file_message("chat-1", "tok-1", "big.bin", "127.0.0.1:9"),
+            inbound_text_message("after"),
+        ])
+        .await;
     until("both batch messages submit", || {
         gateway.submits().len() == 2
     })
@@ -877,4 +889,117 @@ async fn a_later_text_message_in_the_same_batch_reaches_the_session_first() {
         submits[1].starts_with("[Attachment diagnostics]\n- 微信附件处理失败："),
         "#1822 the instantly failing attachment follows the text"
     );
+}
+
+/// Two attachments the store rejects before it opens a socket reach the same
+/// chat in *batch* order, like two already-settled promises: Node queues their
+/// continuations in the order `dispatchMessage` awaited them. Without the
+/// pre-transport phase both would be spawned and their admission order would
+/// be left to the scheduler.
+///
+/// Same chat on purpose: `enqueue_or_run` admits the first turn inline and
+/// queues the second behind it, and a chat's marker is only released once its
+/// turn *completed* (i.e. after its submit), so no interleaving lets the
+/// second message reach the gateway first. Across two different chats the two
+/// turns are independent and the gateway call order follows task start order,
+/// which this port does not serialise — see the fixture README.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_instantly_failing_attachments_keep_their_batch_order() {
+    let root = Root::new();
+    let gateway = Arc::new(RecordingGateway::default());
+    let channel = channel_with_gateway(&root, gateway.clone());
+    channel
+        .start_poll_batch(vec![
+            oversize_file_message("chat-1", "tok-1", "first.bin", "127.0.0.1:9"),
+            oversize_file_message("chat-1", "tok-1", "second.bin", "127.0.0.1:9"),
+        ])
+        .await;
+    until("both failing attachments submit", || {
+        gateway.submits().len() == 2
+    })
+    .await;
+    let submits = gateway.submits();
+    crate::negative_assert!(
+        submits[0].contains("first.bin"),
+        "#1822 the first instantly failing attachment submits first"
+    );
+    crate::negative_assert!(
+        submits[1].contains("second.bin"),
+        "#1822 the second instantly failing attachment submits second"
+    );
+}
+
+/// `WeixinChannel.ts:561-564`: `if (item.text_item?.text)` is a JS truthiness
+/// test and `textParts.join("")` stringifies whatever it holds, so a numeric
+/// text item still becomes message text; only falsy values skip it.
+#[test]
+fn a_non_string_text_item_still_becomes_message_text() {
+    let texts = |body: &str| -> Vec<String> {
+        let message = parse_json(body).expect("#1822 text item json");
+        plan_incoming_items(&message)
+            .into_iter()
+            .filter_map(|action| match action {
+                IncomingAction::Text(text) => Some(String::from_utf16_lossy(text.units())),
+                _ => None,
+            })
+            .collect()
+    };
+    crate::negative_assert_eq!(
+        texts(r#"{"item_list":[{"type":1.0,"text_item":{"text":5}}]}"#),
+        vec!["5".to_string()],
+        "#1822 a numeric text item is stringified, not dropped"
+    );
+    crate::negative_assert_eq!(
+        texts(r#"{"item_list":[{"type":1.0,"text_item":{"text":true}}]}"#),
+        vec!["true".to_string()],
+        "#1822 a boolean text item is stringified, not dropped"
+    );
+    for body in [
+        r#"{"item_list":[{"type":1.0,"text_item":{"text":0}}]}"#,
+        r#"{"item_list":[{"type":1.0,"text_item":{"text":""}}]}"#,
+        r#"{"item_list":[{"type":1.0,"text_item":{"text":false}}]}"#,
+        r#"{"item_list":[{"type":1.0,"text_item":{"text":null}}]}"#,
+    ] {
+        crate::negative_assert!(texts(body).is_empty(), "#1822 falsy text item is skipped");
+    }
+}
+
+/// Only the declared-size guard settles without I/O; anything that feeds the
+/// transport, and anything without a download, must take the spawned path.
+#[test]
+fn only_the_declared_size_guard_settles_without_io() {
+    let max = crate::channel::im_attachment::DEFAULT_MAX_BYTES;
+    let oversize = parse_json(
+        r#"{"item_list":[{"type":4.0,"file_item":{"file_name":"big.bin",
+            "file_size":52428801.0,"cdn_url":"http://127.0.0.1:9/big.bin"}}]}"#,
+    )
+    .expect("#1822 oversize file json");
+    crate::negative_assert!(
+        settles_without_io(&oversize, max),
+        "#1822 an over-limit file is rejected before the transport"
+    );
+    for (tag, body) in [
+        (
+            "a file under the limit still downloads",
+            r#"{"item_list":[{"type":4.0,"file_item":{"file_name":"ok.bin",
+                "file_size":10.0,"cdn_url":"http://127.0.0.1:9/ok.bin"}}]}"#,
+        ),
+        (
+            "an image has no declared size",
+            r#"{"item_list":[{"type":2.0,"image_item":{"cdn_url":"http://127.0.0.1:9/a.jpg"}}]}"#,
+        ),
+        (
+            "an over-limit file next to an image still downloads",
+            r#"{"item_list":[{"type":2.0,"image_item":{"cdn_url":"http://127.0.0.1:9/a.jpg"}},
+                {"type":4.0,"file_item":{"file_name":"big.bin","file_size":52428801.0,
+                  "cdn_url":"http://127.0.0.1:9/big.bin"}}]}"#,
+        ),
+        (
+            "a text-only message has no download at all",
+            r#"{"item_list":[{"type":1.0,"text_item":{"text":"hi"}}]}"#,
+        ),
+    ] {
+        let message = parse_json(body).expect("#1822 predicate json");
+        crate::negative_assert!(!settles_without_io(&message, max), "#1822 {tag}");
+    }
 }

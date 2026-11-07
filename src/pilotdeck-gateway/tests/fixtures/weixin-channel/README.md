@@ -166,23 +166,42 @@ listener 再把 `<port>` 换掉。这样端口不是宿主全局资源，不会 
 `name` / `path` / `mimeType` / `bytes` / `metadata`，路径掩码成
 `<tmp>/.pilotdeck/im-attachments/weixin/<chat>/<message>/<name>`）、语音转写、
 视频与缺 URL 的诊断段、以及 `media.full_url` + AES 解密的 `source` 分支。
+文本项本身按 JS 真值判定再 `String()` 归一（`WeixinChannel.ts:561-564`：
+`item.text_item?.text` 为真才 push，`join("")` 负责字符串化），所以
+`text: 5` / `text: true` 仍是一条消息，`0` / `""` / `false` / `null` 跳过；
+金样五格只有字符串形状，这条边界由 `a_non_string_text_item_still_becomes_message_text`
+钉住。
 落盘顺序（声明大小闸 → 取件 → transform → 再量一次 → mime 归一 → mkdir 0700
 → 文件名 → 越界检查 → 写 0600 → `stat`）只有 mock transport 能驱动，由
 `src/pilotdeck-gateway/src/channel/im_attachment/tests.rs` 的聚焦格钉住：其中
 「再量一次」用的是**变换后**的字节（`save_from_url_checks_the_size_limit_after_the_transform`
 用上限 3 分别测「8 字节变换后 3 字节成功」与「2 字节变换后 6 字节被拒」）。
 消息级调度（同一 poll 批内谁先入会话）也只能读代码：`plan_incoming_items`
-把 item 归成文本 / 语音 / 诊断 / 需下载四类；`start_poll_batch` 先把整批的同步前缀
-走完（文本消息在此时就完成映射与入队），再把「需下载」的那几条按批内顺序起任务
-——等价于 Node 把 `for (const msg of msgs) void dispatchMessage(msg)` 跑完才排空
-微任务队列。回归锁：`a_later_text_message_in_the_same_batch_reaches_the_session_first`
-（同批「声明大小超限的文件 + 文本」，文本必须先 submit）。
+把 item 归成文本 / 语音 / 诊断 / 需下载四类；`start_poll_batch` 分三段走完整批
+——① 同步前缀（文本消息在此时就完成映射与入队）；② `settles_without_io` 为真的
+附件消息在**批内顺序**上就地 await（`saveFromUrl` 的声明大小闸在读流之前就拒绝，
+基线里这类 Promise 已经 settled，微任务队列按 `await` 顺序恢复，排在所有真实下载
+之前）；③ 其余（真要取字节的）整批走完才 spawn。等价于 Node 把
+`for (const msg of msgs) void dispatchMessage(msg)` 跑完才排空微任务队列，且
+「立即失败」与「真下载」两类的相对次序与基线一致；真实下载之间仍并发，按完成顺序
+入会话（与基线同形，不逐格钉死）。
+边界：`enqueue_or_run` 的 turn 在独立任务里跑，**同一 chat** 的次序由通道的
+`active_chats` 队列与 `enqueue_or_run` 的内联准入共同钉死（前一条 turn 完成才放行
+后一条，而完成必在其 submit 之后），跨 chat 的两条 turn 相互独立，网关调用次序
+跟着任务启动次序走，本移植不额外串行（基线那侧也只是微任务次序，对用户不可见）；
+金样里没有「一批多消息」的格子，故不把跨 chat 次序写成等价性声明。
+回归锁：`a_later_text_message_in_the_same_batch_reaches_the_session_first`
+（同批「声明大小超限的文件 + 文本」，文本必须先 submit；多线程运行时，逐条 spawn
+的实现会在这里红）、`two_instantly_failing_attachments_keep_their_batch_order`
+（两条立即失败按批内顺序）与 `only_the_declared_size_guard_settles_without_io`
+（谓词只对「文件项声明超限」成立，图片 / 未超限文件 / 混合消息 / 纯文本都走 spawn）。
 
-负控七条（全部 KILLED）：`weixin-attachment-fallback-text` /
+负控八条（全部 KILLED）：`weixin-attachment-fallback-text` /
 `-submit-dropped` / `-diagnostics-dropped` / `-source-branch` 死在金样比对；
 `im-attachment-declared-size-guard-dropped` / `-image-sniff-dropped` /
-`-post-transform-guard-dropped` 死在 `#1822` 聚焦格的 `negative_assert*`
-收据上。
+`-post-transform-guard-dropped` / `weixin-batch-sync-settle-dropped` 死在 `#1822`
+聚焦格的 `negative_assert*` 收据上（最后一条把 `settles_without_io` 恒置假，
+确定性杀死「声明超限文件」那一格；顺序两格依赖运行时，不作为死点）。
 
 ## 确定性
 

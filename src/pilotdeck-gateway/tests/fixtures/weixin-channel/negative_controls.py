@@ -198,6 +198,15 @@ MUTATIONS = [
      '    mime_type',
      'channel::im_attachment::tests::save_from_url_sniffs_images_over_the_response_mime',
      '#1822 image sniff wins over the declared header'),
+    # The batch scheduler's pre-transport branch. With the predicate always
+    # false every attachment is spawned, so the two already-settled
+    # rejections race instead of resuming in batch order; the predicate cell
+    # is the deterministic death (the ordering cells depend on the runtime).
+    ('weixin-batch-sync-settle-dropped', weixin / 'mod.rs',
+     '    downloads > 0\n}',
+     '    downloads > 0 && false\n}',
+     'channel::weixin::tests::only_the_declared_size_guard_settles_without_io',
+     '#1822 an over-limit file is rejected before the transport'),
 
     # #1808: the terminal comparison must reject a wrong-typed `expected`
     # instead of falling back to the old blind read.
