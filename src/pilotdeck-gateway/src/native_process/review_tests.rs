@@ -1227,3 +1227,167 @@ fn transient_audit_before_set_opens_with_the_window() {
         "#1632 the pre-window child is gone by the end snapshot"
     );
 }
+
+use crate::config::permission::PermissionRule;
+use serde_json::{Value, json};
+
+fn ask_tool_names(rules: &crate::config::permission::Lease) -> Vec<String> {
+    rules
+        .rules()
+        .snapshot()
+        .ask
+        .iter()
+        .map(|rule| String::from_utf16_lossy(rule.tool_name.units()))
+        .collect()
+}
+
+#[derive(Default)]
+struct Frames(Mutex<Vec<Value>>);
+impl crate::runtime::connection::GatewayTextConnection for Frames {
+    fn send_text(&self, text: String) {
+        self.0
+            .lock()
+            .expect("#1429 frames lock")
+            .push(serde_json::from_str(&text).expect("#1429 frame JSON"));
+    }
+    fn close(&self, _: u16, _: &str) {}
+}
+
+/// #1429: `syncSdkMcpPermissionRules` also runs when a session lease is
+/// acquired (`ProjectRuntimeRegistry.ts:305-308`). Nothing pinned that: the
+/// acquire harnesses built their config and acquired without ever syncing, and
+/// an unpublished `OnceLock` skipped the sync silently, so deleting the call
+/// (or losing the publication it depends on) left every ruler green.
+///
+/// The fixture makes the acquire path the only possible source of the rule:
+/// the production MCP override route seeds `mcp__a__*` into the live ask
+/// array, the test then empties that array, and only the session acquire that
+/// follows can put the rule back.
+#[tokio::test]
+async fn acquiring_a_session_syncs_the_mcp_ask_rules() {
+    let scratch = Scratch::new();
+    let options = Options::parse(scratch.args()).expect("#1429 options");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG).expect("#1429 config");
+    let key = JsString::from("session");
+    let registry: Arc<crate::config::permission::GatewaySessionPermissionRuleSetRegistry> =
+        Arc::default();
+    // A lease of our own keeps the session's rule-set entry (and its live ask
+    // array) alive after the turn that follows the assertion point.
+    let probe = registry.acquire(&key, None);
+    let host = assembly::start_observed_with_permission_rule_sets(
+        options.clone(),
+        options.environment(Env::new()),
+        registry.clone(),
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|_| {}),
+    )
+    .await
+    .expect("#1429 observed assembly starts");
+    let frames = Arc::new(Frames::default());
+    let connection = host.connect(frames.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(
+            json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"})
+                .to_string(),
+        )
+        .await
+        .expect("#1429 hello");
+    // Seed the generated rule through the production route, so the assertion
+    // below cannot be satisfied by a hand-built rule object.
+    connection
+        .receive(
+            json!({"type":"request","id":"override","method":"set_mcp_permission_mode_override","params":{"sessionKey":"session","serverName":"a","mode":"auto"}})
+                .to_string(),
+        )
+        .await
+        .expect("#1429 MCP override route");
+    negative_assert_eq!(
+        ask_tool_names(&probe),
+        vec!["mcp__a__*".to_owned()],
+        "#1429 the override route seeds the generated ask rule"
+    );
+    // Take it away again: from here only the acquire path can restore it.
+    probe.rules().member("ask").update_array(|ask| ask.clear());
+    negative_assert!(
+        ask_tool_names(&probe).is_empty(),
+        "#1429 the fixture's live ask array starts empty"
+    );
+    let submit = connection.clone();
+    let turn = tokio::spawn(async move {
+        // The turn itself is allowed to fail (the fixture model URL refuses
+        // connections); this test only needs the session acquire inside it.
+        let _ = submit
+            .receive(
+                json!({"type":"request","id":"turn","method":"submit_turn","params":{"sessionKey":"session","runId":"run","message":"hello","channelKey":"test"}})
+                    .to_string(),
+            )
+            .await;
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while ask_tool_names(&probe).is_empty() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let ask = probe.rules().snapshot().ask;
+    negative_assert_eq!(
+        ask.len(),
+        1,
+        "#1429 the acquire path restores the generated ask rule"
+    );
+    let rule = &ask[0];
+    negative_assert!(
+        rule.source.equals_str("session"),
+        "#1429 the synced rule keeps the generated source"
+    );
+    negative_assert!(
+        rule.behavior.equals_str("ask"),
+        "#1429 the synced rule keeps the ask behavior"
+    );
+    negative_assert!(
+        rule.tool_name.equals_str("mcp__a__*"),
+        "#1429 the synced rule is the MCP-generated wildcard for server a"
+    );
+    negative_assert_eq!(
+        rule.force,
+        Some(true),
+        "#1429 the synced rule keeps force: true"
+    );
+    negative_assert!(
+        rule.pattern.is_none(),
+        "#1429 the synced rule carries no pattern"
+    );
+    submit.abort();
+    host.request_shutdown(options.drain_budget);
+    let _ = tokio::time::timeout(Duration::from_secs(10), host.stopped()).await;
+    probe.release();
+}
+
+/// #1429: the missing publication is a signal, not a silent skip. An acquire
+/// whose forward reference was never published must report the miss and leave
+/// the live ask array untouched, so a wiring regression cannot masquerade as
+/// "there was nothing to sync".
+#[test]
+fn an_unpublished_mcp_config_reports_the_skipped_sync() {
+    let registry: Arc<crate::config::permission::GatewaySessionPermissionRuleSetRegistry> =
+        Arc::default();
+    let key = JsString::from("session");
+    let lease = registry.acquire(&key, None);
+    lease.rules().member("ask").update_array(|ask| {
+        ask.push(PermissionRule::new("user", "ask", "kept").into());
+    });
+    let before = ask_tool_names(&lease);
+    negative_assert_eq!(
+        before,
+        vec!["kept".to_owned()],
+        "#1429 the fixture starts with one unrelated ask rule"
+    );
+    negative_assert!(
+        !crate::native_process::assembly::sync_acquired_ask_rules(None, &lease.rules(), &key),
+        "#1429 an unpublished MCP config reports the skipped sync"
+    );
+    negative_assert_eq!(
+        ask_tool_names(&lease),
+        before,
+        "#1429 the skipped sync leaves the live ask array untouched"
+    );
+    lease.release();
+}

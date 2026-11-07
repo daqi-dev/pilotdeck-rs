@@ -152,6 +152,29 @@ type CleanupResult =
 pub(super) type CleanupObserver =
     Arc<dyn Fn(&'static str, Result<(), String>) -> CleanupResult + Send + Sync>;
 
+/// `ProjectRuntimeRegistry.ts:305-308`: when a session lease is acquired, the
+/// wiring layer pushes the MCP-generated ask rules onto `lease.rules().ask`
+/// through `syncSdkMcpPermissionRules`.
+///
+/// Returns `false` when the config was never published into the forward
+/// reference. That state used to be a silent skip — the acquire path left the
+/// ask array as it found it, and no ruler could tell "there was nothing to
+/// sync" from "the publication regressed" (#1429). The caller reports the
+/// miss instead of swallowing it.
+pub(super) fn sync_acquired_ask_rules(
+    config: Option<&Arc<SdkMcpConfig>>,
+    rules: &crate::config::permission::RuleSetHandle,
+    session_key: &JsString,
+) -> bool {
+    let Some(config) = config else {
+        return false;
+    };
+    rules
+        .member("ask")
+        .update_array(|ask| config.sync_permission_rules(session_key, ask));
+    true
+}
+
 // An observer runs only after the actual production disposal. Tests can inject
 // a failure or a deterministic completion gate without substituting resources.
 #[cfg(test)]
@@ -179,12 +202,13 @@ pub(super) async fn start_observed_with_upload_cleanup(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
-    start_impl(
+    start_assembly(
         options,
         env,
         upload_cleanup_interval,
         cleanup_observer,
         cleanup_diagnostic,
+        None,
         None,
     )
     .await
@@ -198,13 +222,14 @@ pub(super) async fn start_with_webhook(
     env: Env,
 ) -> Result<(TurnGateway, crate::native_http::WebhookResolver), ProxyError> {
     let slot = Arc::new(std::sync::OnceLock::new());
-    let host = start_impl(
+    let host = start_assembly(
         options,
         env,
         crate::upload::CLEANUP_INTERVAL,
         Arc::new(|_, result| Box::pin(async move { result })),
         Arc::new(|error| eprintln!("native project cleanup: {error}")),
         Some(slot.clone()),
+        None,
     )
     .await?;
     let slot = slot.get().cloned().ok_or_else(|| {
@@ -216,14 +241,40 @@ pub(super) async fn start_with_webhook(
     ))
 }
 
+/// #1429: the session permission rule set registry is normally created inside
+/// the assembly, which leaves the acquire-time MCP ask sync unobservable from a
+/// test. Supplying the registry keeps the assertion on the production entry
+/// point (real routes, real prepare closure) instead of a copy of it.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
-async fn start_impl(
+pub(super) async fn start_observed_with_permission_rule_sets(
+    options: Options,
+    env: Env,
+    permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry>,
+    cleanup_observer: CleanupObserver,
+    cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
+) -> Result<TurnGateway, ProxyError> {
+    start_assembly(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        cleanup_observer,
+        cleanup_diagnostic,
+        None,
+        Some(permission_rule_sets),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn start_assembly(
     options: Options,
     env: Env,
     upload_cleanup_interval: Duration,
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
     webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
+    permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
 ) -> Result<TurnGateway, ProxyError> {
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
@@ -266,7 +317,7 @@ async fn start_impl(
         snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
     let memory = memory::build_memory(options.clone(), project.clone()).await?;
     let recorders: Recorders = Arc::default();
-    let permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry> = Arc::default();
+    let permission_rule_sets = permission_rule_sets.unwrap_or_default();
     let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
         permission_grants: Some(permission_rule_sets.clone()),
         ..InteractionOptions::default()
@@ -405,10 +456,19 @@ async fn start_impl(
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
-                if let Some(mcp) = mcp_config_handle.get() {
-                    let ask_handle = permission_lease.rules().member("ask");
-                    ask_handle
-                        .update_array(|ask| mcp.sync_permission_rules(&context.session_key, ask));
+                if !sync_acquired_ask_rules(
+                    mcp_config_handle.get(),
+                    &permission_lease.rules(),
+                    &context.session_key,
+                ) {
+                    // #1429: this used to be a silent skip, so no ruler could
+                    // tell a broken publication from an empty ask array.
+                    // `build_mcp_gateway` publishes the config before the host
+                    // serves any request, so reaching here means the startup
+                    // wiring regressed; say it out loud.
+                    eprintln!(
+                        "native session: MCP ask rule sync skipped (the config was not published before the session acquire)"
+                    );
                 }
                 retained.push(move || {
                     Box::pin(async move {
