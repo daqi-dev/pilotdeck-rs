@@ -88,6 +88,13 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 r6 (MM boundary P1 class, no regeneration binding here): the
+    # baseline module is unconditionally compiled with its #[path] submodule
+    # tests/common/regeneration_masks.rs, so a concurrent edit to it during a
+    # run must be caught by the source guard; the mask table itself stays
+    # unregistered because no domain switch binding runs a regeneration
+    # compare over it (the table is a dead input for this fixture).
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
     # #2228 DS r3 P2 (fixed in-round, ~one line): the bound golden test bakes
     # session-domain/oracle.json into the binary (include_str! at
     # session_domain.rs when PDRS_SESSION_DOMAIN_ORACLE is unset), so a

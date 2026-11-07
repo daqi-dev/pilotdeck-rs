@@ -65,6 +65,13 @@ GUARDED = [
     # matrix() starts with crate::test_baseline::oracle(ORACLE) — the same
     # input the five sibling fixtures already register.
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 r6 (MM boundary P1 class, no regeneration binding here): the
+    # baseline module is unconditionally compiled with its #[path] submodule
+    # tests/common/regeneration_masks.rs, so a concurrent edit to it during a
+    # run must be caught by the source guard; the mask table itself stays
+    # unregistered because no cwd binding runs a regeneration compare over
+    # it (the table is a dead input for this fixture).
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the declarators above the
     # switch sites — runtime/turn/mod.rs declares host_factory/live, and

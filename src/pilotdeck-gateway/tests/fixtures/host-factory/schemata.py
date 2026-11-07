@@ -51,6 +51,13 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 r6 (MM boundary P1 class, no regeneration binding here): the
+    # baseline module is unconditionally compiled with its #[path] submodule
+    # tests/common/regeneration_masks.rs, so a concurrent edit to it during a
+    # run must be caught by the source guard; the mask table itself stays
+    # unregistered because no factory binding runs a regeneration compare
+    # over it (the table is a dead input for this fixture).
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',

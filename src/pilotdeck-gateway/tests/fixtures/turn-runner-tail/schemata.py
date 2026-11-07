@@ -26,6 +26,7 @@ PROMPT = SRC / 'runner_prompt.rs'
 # binding inherits via `use super::*` from both parents.
 RUNNER_TESTS = SRC / 'runner_tests.rs'
 PROMPT_TESTS = SRC / 'runner_prompt_tests.rs'
+RUNNER_NOTICE_TESTS = SRC / 'runner_notice_tests.rs'
 # Assembled by live.rs itself (`#[path]` at the `mod tail_tests` boundary).
 LIVE_TAIL_TESTS = SRC / 'live_tail_tests.rs'
 # The regeneration switch lives at the library-test call site: the shared
@@ -144,6 +145,14 @@ GUARDED = [
     # by the source guard; generate.mts stays unregistered because no binding
     # here regenerates that fixture.
     FIXTURES / 'turn-prompt-hooks/oracle.json',
+    # #2228 DS r6 sibling P2 / MM r6 concurrency P2 (same class as the r4
+    # entry above): RUNNER_TESTS also assembles runner_notice_tests.rs
+    # (`#[path]` at runner_tests.rs:18-19), whose row() bakes
+    # turn-start-notices/oracle.json into the same binary
+    # (runner_notice_tests.rs:46 include_str!); generate.mts stays
+    # unregistered for the same reason as the prompt twin above.
+    RUNNER_NOTICE_TESTS,
+    FIXTURES / 'turn-start-notices/oracle.json',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the runner/live modules the bindings
     # resolve through, and runtime/mod.rs declares turn itself, capping the
@@ -151,6 +160,14 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     BASELINE,
+    # #2228 MM r6 boundary P1 / DS r6 sibling+concurrency P2 (two families,
+    # graded P1): baseline.rs unconditionally compiles its #[path] submodule
+    # tests/common/regeneration_masks.rs, whose include_str! bakes the shared
+    # mask table; the tail-regeneration row's compare()
+    # (runner_tail_tests.rs:521 → baseline.rs:348) executes that code over that
+    # table, so both are runtime judges of this fixture's verdict.
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+    FIXTURES / '_shared/regeneration-masks.tsv',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
