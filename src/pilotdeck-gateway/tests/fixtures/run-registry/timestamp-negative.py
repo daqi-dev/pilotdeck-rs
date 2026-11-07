@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
 """#1129: bind clock and exclusive-write mutations to real TS probe assertions.
 
+#1147: the guarded window reuses negative_suite.run_cases' lifecycle (positive,
+mutate, negative, restored per case; #1076 exit contract; atomic summary
+publication) with this script's own node command factory and probe judges
+injected at call time, sits inside negative_control's scratch signal shield,
+and guards the generator's full local import closure discovered with
+run-registry/count-negative.py's fail-closed scanner.
+
 Run after committing, with caller-owned CARGO_TARGET_DIR and PDRS_BASELINE.
 Run exclusively in this worktree: no concurrent builds, tests or source writers.
 The source guard intentionally refuses uncommitted sources and new files.
 """
+import importlib.util
+import itertools
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import invalidate_completed, publish_summary
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
+import negative_suite
+from negative_control import scratch
+from negative_process import mutating_sources, run_owned
+from negative_suite import Case, run_cases
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/tests/fixtures/run-registry/generate.mts'
@@ -47,6 +60,99 @@ mutations = [
      '#1129 oracle publication refuses to overwrite existing fixture'),
 ]
 
+# run_cases hardcodes its shared cargo libtest command; the factory below
+# receives exactly that shape plus one test name and refuses anything else,
+# so a future change in the M6-exclusive suite fails closed here instead of
+# being misread as probe output (#1147).
+CARGO_PREFIX = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
+                '-p', 'pilotdeck-gateway', '--lib']
+LIBTEST_TAIL = ['--', '--exact', '--include-ignored']
+
+
+def count_runner():
+    """Load run-registry/count-negative.py for its fail-closed closure scanner.
+
+    The dashed module name cannot be imported, and registering it in
+    sys.modules is rejected by the anchor selfcheck's dynamic-access rules;
+    executing only its module-level definitions needs neither. Its closure
+    helpers are byte-synced with recorder/fix3-negative.py by
+    test_import_closure.py, so reusing them here cannot drift from
+    count-negative (#1147 P2-2).
+    """
+    path = Path(__file__).resolve().parent / 'count-negative.py'
+    spec = importlib.util.spec_from_file_location('run_registry_count_negative', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _lines(text):
+    """Record lines by '\n' only; splitlines() also splits U+2028/U+2029 (#1140)."""
+    lines = text.split('\n')
+    return lines[:-1] if lines and lines[-1] == '' else lines
+
+
+def probe_passed(result, test):
+    return (result.returncode == 0
+            and _lines(result.stdout).count(f'TEST: {test}') == 1
+            and _lines(result.stdout).count(f'PASS: {test}') == 1)
+
+
+def probe_classify(result, case):
+    if probe_passed(result, case.test):
+        return 'SURVIVED', 'bound probe still passed'
+    out_lines, err_lines = _lines(result.stdout), _lines(result.stderr)
+    if (result.returncode == 1
+            and out_lines.count(f'TEST: {case.test}') == 1
+            and f'PASS: {case.test}' not in out_lines
+            and f'AssertionError [ERR_ASSERTION]: {case.assertion}' in err_lines):
+        return 'KILLED', 'bound real TS probe assertion failed'
+    return 'INVALID', 'missing bound runtime assertion; never a kill'
+
+
+def mutate(text, scope, edits):
+    for old, new in edits:
+        if text.count(old) != 1 or old == new:
+            raise ValueError('#1147 stale timestamp mutation anchor')
+        text = text.replace(old, new, 1)
+    return text
+
+
+class ProbeFactory:
+    """The node command factory injected as negative_suite.run_owned (#1147).
+
+    run_cases resolves run_owned through its module globals at call time and
+    hands the factory its own hardcoded cargo libtest command plus one test
+    name. Anything but that exact shape means the M6-exclusive shared suite
+    drifted, and guessing what to run with it would misjudge every control,
+    so the factory refuses instead (fail-closed).
+    """
+
+    def __init__(self, out):
+        self.out = out
+        self.serial = itertools.count()
+
+    def __call__(self, command, *, cwd, env, timeout):
+        prefix, tail = len(CARGO_PREFIX), len(LIBTEST_TAIL)
+        test = command[prefix] if len(command) == prefix + 1 + tail else None
+        if (test is None or command[:prefix] != CARGO_PREFIX
+                or command[prefix + 1:] != LIBTEST_TAIL
+                or not isinstance(test, str)):
+            raise RuntimeError(f'#1147 run_cases command shape drifted: {command}')
+        directory = self.out / f'probe-{next(self.serial):02d}'
+        directory.mkdir(parents=True, exist_ok=False)
+        node = ['node', '--import',
+                str(Path(env['PDRS_BASELINE']) / 'node_modules/tsx/dist/loader.mjs'),
+                str(probe), str(directory), test.rsplit('::', 1)[1]]
+        result = run_owned(node, cwd=cwd, env=env, timeout=timeout)
+        (directory / 'node.stdout').write_text(result.stdout)
+        (directory / 'node.stderr').write_text(result.stderr)
+        # The fresh probe directory carries this run's generated bytes; append
+        # its path so run_cases' evidence log records where they went.
+        return subprocess.CompletedProcess(
+            node, result.returncode,
+            result.stdout + f'probe-output: {directory}\n', result.stderr)
+
 
 def main():
     if sys.argv[1:] == ['--check-anchors']:
@@ -62,84 +168,51 @@ def main():
         raise SystemExit('caller must supply CARGO_TARGET_DIR and PDRS_BASELINE')
     out = Path(sys.argv[1]).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    results = []
 
-    def run(label, test, *, compile=False):
-        if compile:
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=600, interval=15)
-            (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
-            # Required Rust build receipt; .mts mutations are executed by Node below.
-            command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
-                       '-p', 'pilotdeck-gateway', '--test', 'generator_provenance', '--no-run']
-        else:
-            command = ['node', '--import',
-                       str(Path(env['PDRS_BASELINE']) / 'node_modules/tsx/dist/loader.mjs'),
-                       str(probe), str(out / label), test.rsplit('::', 1)[1]]
-        result = run_owned(command, cwd=root, env=env, timeout=900 if compile else 150)
-        (out / f'{label}.stdout').write_text(result.stdout)
-        (out / f'{label}.stderr').write_text(result.stderr)
-        return result
-
-    def passed(result, test):
-        lines = result.stdout.splitlines()
-        return (result.returncode == 0 and lines.count(f'TEST: {test}') == 1
-                and lines.count(f'PASS: {test}') == 1)
-
-    try:
-        fixture_root = source.parent.parent
-        guarded = [source, probe, Path(__file__).resolve(),
-                   *(fixture_root / name for name in (
-                       'negative_process.py', 'negative_suite.py',
-                       'negative_panic.py', 'pending_reanchor.py',
-                   ))]
-        with mutating_sources(root, guarded) as originals:
-            for name, path, old, new, test, marker in mutations:
-                row = dict(mutation=name, test=test, assertion=marker,
-                           status='INVALID', reason='not run', compiled=False)
+    fixture_root = Path(__file__).resolve().parents[1]
+    base_guarded = [source, probe, Path(__file__).resolve(),
+                    Path(__file__).resolve().parent / 'count-negative.py',
+                    fixture_root / '_shared/negative_control.py',
+                    *(fixture_root / name for name in (
+                        'negative_process.py', 'negative_suite.py',
+                        'negative_panic.py', 'pending_reanchor.py',
+                    ))]
+    # scratch installs the SIGTERM/SIGINT/SIGALRM -> SystemExit handlers and
+    # the deadline before the guarded window opens (#1147 P2-1): a signal then
+    # unwinds through run_cases' #1076 handling and every mutating_sources'
+    # shielded restore, the tree is verified against HEAD, and run_owned's
+    # group kill reaps the session-own cargo/node children.
+    with scratch('run-registry-timestamp', deadline=1800):
+        # Discover imports only after the entry, probe, runner and this
+        # script's judge inputs are checked under the tree lock, then keep
+        # that reentrant lock through the closure guard (#1147 P2-2, mirroring
+        # count-negative.guarded_inputs). The probe executes the generator in
+        # place, so the probe's closure contains the generator's whole local
+        # import closure as well.
+        with mutating_sources(root, base_guarded):
+            closure = count_runner().local_import_closure(probe, root)
+            with mutating_sources(root, closure):
+                # run_cases resolves run_owned/passed/classify through its
+                # module globals at call time, so the node command factory and
+                # probe judges are injected here without touching the
+                # M6-exclusive shared suite (#1147 P2-3; test_negative_suite's
+                # cancellation tests patch the same attributes).
+                saved = (negative_suite.run_owned, negative_suite.passed,
+                         negative_suite.classify)
+                negative_suite.run_owned = ProbeFactory(out)
+                negative_suite.passed = probe_passed
+                negative_suite.classify = probe_classify
                 try:
-                    text = originals[path].decode()
-                    if text.count(old) != 1 or old == new:
-                        raise ValueError('expired or invalid anchor')
-                    if not passed(run(name + '-positive', test), test):
-                        raise RuntimeError('positive probe failed')
-                    path.write_text(text.replace(old, new, 1))
-                    if run(name + '-compile', test, compile=True).returncode != 0:
-                        raise RuntimeError('mutant did not compile')
-                    row['compiled'] = True
-                    result = run(name + '-negative', test)
-                    if passed(result, test):
-                        row.update(status='SURVIVED', reason='bound probe still passed')
-                    elif (result.returncode == 1 and
-                          result.stdout.splitlines().count(f'TEST: {test}') == 1 and
-                          f'PASS: {test}' not in result.stdout.splitlines() and
-                          f'AssertionError [ERR_ASSERTION]: {marker}' in result.stderr.splitlines()):
-                        row.update(status='KILLED', reason='bound real TS probe assertion failed')
-                    else:
-                        row.update(reason='missing bound runtime assertion; never a kill')
-                except Exception as error:
-                    row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+                    # The timeout is the node probe window; a .mts mutant's
+                    # compilation proof is the node run itself (a syntax error
+                    # exits nonzero and is INVALID), matching count-negative's
+                    # #1139 generator rows: cargo would only compile unmutated
+                    # Rust here, so no cargo receipt is recorded.
+                    return run_cases(root, [Case(*row) for row in mutations],
+                                     out, env, mutate, timeout=150, script=__file__)
                 finally:
-                    path.write_bytes(originals[path])
-                try:
-                    if not passed(run(name + '-restored', test), test):
-                        raise RuntimeError('restored positive probe failed')
-                except Exception as error:
-                    row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
-                results.append(row)
-    except BaseException as error:
-        reason = f'source guard: {type(error).__name__}: {error}'
-        invalidate_completed(results, reason)
-        for name, _path, _old, _new, test, marker in mutations[len(results):]:
-            results.append(dict(mutation=name, test=test, assertion=marker,
-                                status='INVALID', reason=reason, compiled=False))
-    # Shared publisher atomically exposes results only after source restoration.
-    publish_summary(out, results)
-    for row in results:
-        print(f'{row["mutation"]}: {row["status"]}: {row["reason"]}', flush=True)
-    print('SUMMARY: ' + ' '.join(
-        f'{status}={sum(row["status"] == status for row in results)}'
-        for status in ('KILLED', 'SURVIVED', 'INVALID')), flush=True)
-    return int(not results or any(row['status'] != 'KILLED' for row in results))
+                    negative_suite.run_owned, negative_suite.passed, \
+                        negative_suite.classify = saved
 
 
 if __name__ == '__main__':
