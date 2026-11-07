@@ -68,9 +68,11 @@ anchor dropped in turn, so the guard's discrimination is proven on every run
 rather than only when somebody remembers to negate it by hand. Local negative
 controls cover the other directions: a new bare row, an empty ``TABLES``, a
 second ``DISCOVERY_ANCHORS`` assignment, a string-built path, unsupported call
-shapes, a shadowed or parameter-bound constant, a comprehension over an
-unsupported join, a display string that only looks like a path, and new blind,
-import-only or unresolvable tables appearing outside both registers.
+shapes, a shadowed, twice-assigned or parameter-bound constant, a runtime file
+name behind ``/``, an f-string or a ``+``, a comprehension over an unsupported
+join, a display string that only looks like a path, a package initialiser whose
+own imports must be keyed, and new blind, import-only or unresolvable tables
+appearing outside both registers.
 
 Scope: the four tables named by #2133 are the ones that carry anchors today;
 adding a table to ``TABLES`` is the whole opt-in, and the rule then demands its
@@ -133,23 +135,24 @@ KNOWN_BLIND = {
     '_negkit/negative_compare_verdicts.py': '1 key',
     '_negkit/negative_contract.py': '4 keys',
     '_negkit/negative_submit_migration.py': '10 keys',
-    '_shared/negative_control.py': '4 keys',
+    '_shared/negative_control.py': '4 keys + 2 unresolvable',
     '_shared/negative_sqlite_header.py': '6 keys',
     '_shared/regeneration-negative.py': '6 keys',
     'agent-event-projector/negative.py': '5 keys',
     'anchor-marker/negative_controls.py': '3 keys',
-    'api-server-channel/negative_controls.py': '6 keys',
+    'api-server-channel/negative_controls.py': '6 keys + 1 unresolvable',
     'api-web/negative_controls.py': '10 keys',
     'attach-followups-a/negative_controls.py': '6 keys',
     'background-create-gate/negative_controls.py': '6 keys',
     'background-output/negative.py': '6 keys',
-    'background-panic/negative_controls.py': '4 keys + 1 unresolvable',
+    'background-panic/negative_controls.py': '4 keys + 2 unresolvable',
     'background-persist-progress/negative_controls.py': '6 keys',
     'background-persist-restart/negative_controls.py': '6 keys',
     'background-subtick-gate/negative_controls.py': '8 keys',
     'baseline-provenance/negative_controls.py': '1 key',
     'channel-core/negative_controls.py': '11 keys + 2 unresolvable',
     'channel-feishu/negative_controls.py': '12 keys + 2 unresolvable',
+    'channel-sms-head-timeout/negative_controls.py': '7 keys',
     'channel-unmigrated-startup/negative_controls.py': '6 keys',
     'channel-unmigrated/negative_controls.py': '7 keys + 1 unresolvable',
     'cli-parity-isolation/negative_controls.py': '1 key + 1 unresolvable',
@@ -159,10 +162,10 @@ KNOWN_BLIND = {
     'commands-catalog/negative_controls.py': '4 keys',
     'config-changes/negative_coverage.py': '6 keys',
     'config-store/negative_controls.py': '6 keys',
-    'connection-context/negative.py': '7 keys + 2 unresolvable',
+    'connection-context/negative.py': '7 keys + 3 unresolvable',
     'cron-schedule/negative_controls.py': '6 keys',
     'cron-store/negative_controls.py': '6 keys',
-    'diff-backfill/negative.py': '1 key',
+    'diff-backfill/negative.py': '1 key + 1 unresolvable',
     'edgeclaw-accessors/negative.py': '5 keys',
     'edgeclaw-capture-turn/negative.py': '6 keys',
     'edgeclaw-dangling-links/negative.py': '3 keys',
@@ -202,7 +205,7 @@ KNOWN_BLIND = {
     'exact-receipt-yaml/negative_controls.py': '1 key',
     'exact-rerun-receipt/negative_controls.py': '1 key',
     'failure-guard/negative.py': '7 keys',
-    'fe-baseline-report/negative_controls.py': '1 unresolvable',
+    'fe-baseline-report/negative_controls.py': '2 unresolvable',
     'fe-coexist/negative_controls.py': '1 key',
     'file-history-cwd/negative_controls.py': '9 keys',
     'flake-progress/negative_controls.py': '6 keys',
@@ -214,16 +217,16 @@ KNOWN_BLIND = {
     'hooks-output/negative.py': '1 key',
     'host-event-pump/negative_controls.py': '1 key',
     'html-timing/negative_controls.py': '2 keys + 1 unresolvable',
-    'http-store-park/negative_controls.py': '6 keys',
+    'http-store-park/negative_controls.py': '6 keys + 1 unresolvable',
     'interaction-bus/negative_controls.py': '4 keys + 1 unresolvable',
     'interaction-values/negative_controls.py': '4 keys',
     'issue-1246/negative_controls.py': '3 keys',
     'issue-1437-methods/negative_controls.py': '6 keys',
     'issue-297/negative_controls.py': '7 keys',
     'js-math-zero/negative.py': '1 key',
-    'ledger-diffs/negative_controls.py': '2 keys',
+    'ledger-diffs/negative_controls.py': '2 keys + 1 unresolvable',
     'live-e2e-tmpdir/negative_controls.py': '6 keys',
-    'live-e2e/negative_controls.py': '7 keys + 3 unresolvable',
+    'live-e2e/negative_controls.py': '7 keys + 7 unresolvable',
     'live-history/negative.py': '1 key',
     'live-recording/negative.py': '10 keys',
     'live-session/negative_controls.py': '6 keys',
@@ -233,7 +236,7 @@ KNOWN_BLIND = {
     'manager-gateway/negative_controls.py': '7 keys',
     'mcp-detached-dispatch/negative_controls.py': '6 keys',
     'mcp-gateway/negative_controls.py': '6 keys',
-    'mcp-hooks-spawn/negative_controls.py': '1 key',
+    'mcp-hooks-spawn/negative_controls.py': '1 key + 1 unresolvable',
     'mcp-http-corrupt-body/negative_controls.py': '6 keys',
     'mcp-http-encoding/negative.py': '6 keys',
     'memory-maintenance/negative_controls.py': '2 keys',
@@ -249,7 +252,7 @@ KNOWN_BLIND = {
     'native-archive-cwd/negative_proxy.py': '6 keys',
     'native-archive-cwd/negative_regeneration.py': '6 keys',
     'native-collation/negative_controls.py': '9 keys',
-    'native-config/negative_controls.py': '6 keys',
+    'native-config/negative_controls.py': '6 keys + 1 unresolvable',
     'native-cron/negative_controls.py': '6 keys',
     'native-dispatch/negative_controls.py': '8 keys',
     'native-entry-authority/negative_controls.py': '8 keys',
@@ -262,29 +265,29 @@ KNOWN_BLIND = {
     'native-registry-switch/negative_controls.py': '7 keys',
     'native-session-e2e/negative_controls.py': '2 keys',
     'native-settings/negative/negative_controls.py': '4 keys + 1 unresolvable',
-    'native-stimulus-plan/negative_controls.py': '9 keys',
+    'native-stimulus-plan/negative_controls.py': '9 keys + 1 unresolvable',
     'native-storage-stimulus/negative_controls.py': '7 keys',
     'native-topology/negative_signals.py': '3 keys',
     'native-witness/negative.py': '2 keys',
-    'native-witness/negative_authentication.py': '4 keys',
+    'native-witness/negative_authentication.py': '4 keys + 1 unresolvable',
     'native-witness/negative_boundary.py': '2 keys',
     'native-ws-caps/negative_controls.py': '8 keys + 1 unresolvable',
     'native-ws-entry/negative_controls.py': '11 keys + 1 unresolvable',
     'native-ws-notify/negative_controls.py': '6 keys',
     'negative-adaptive/isolation_negative.py': '2 keys',
-    'negative-adaptive/negative_controls.py': '2 keys',
+    'negative-adaptive/negative_controls.py': '2 keys + 1 unresolvable',
     'negative-output-directory/negative.py': '7 keys',
-    'negative_oracle_guard.py': '1 key + 1 unresolvable',
+    'negative_oracle_guard.py': '1 key + 2 unresolvable',
     'network-timing/negative_controls.py': '6 keys',
-    'network-timing/negative_private.py': '2 keys',
+    'network-timing/negative_private.py': '2 keys + 2 unresolvable',
     'node-io/negative_controls.py': '4 keys',
-    'node-provenance/negative.py': '6 keys',
+    'node-provenance/negative.py': '6 keys + 1 unresolvable',
     'operation-ledger/negative.py': '6 keys',
     'output-schema/negative.py': '3 keys',
     'p01-preflight/negative_controls.py': '6 keys',
-    'parity-lock-release/negative_controls.py': '6 keys',
+    'parity-lock-release/negative_controls.py': '6 keys + 1 unresolvable',
     'pending-reanchor/negative_controls.py': '4 keys',
-    'plugin-loader/negative-controls.py': '4 keys + 1 unresolvable',
+    'plugin-loader/negative-controls.py': '4 keys + 2 unresolvable',
     'plugin-runtime/negative-controls.py': '6 keys',
     'plugin-runtime/notify-window-negative.py': '4 keys',
     'plugin-runtime/panic-negative.py': '4 keys',
@@ -302,52 +305,52 @@ KNOWN_BLIND = {
     'run-registry/count-negative.py': '8 keys',
     'run-registry/timestamp-negative.py': '6 keys',
     'runtime-spawn-panic/helpers_negative.py': '3 keys',
-    'runtime-spawn-panic/negative_controls.py': '4 keys',
+    'runtime-spawn-panic/negative_controls.py': '4 keys + 2 unresolvable',
     'sdk-cli-lifecycle/negative_controls.py': '6 keys + 1 unresolvable',
     'sdk-format/negative_controls.py': '8 keys + 2 unresolvable',
-    'sdk-mcp-p2/negative.py': '6 keys',
+    'sdk-mcp-p2/negative.py': '6 keys + 2 unresolvable',
     'sdk-run/negative_controls.py': '9 keys + 3 unresolvable',
     'sdk-sessions-list/negative_controls.py': '6 keys + 1 unresolvable',
     'sdk-sessions-messages/negative_controls.py': '10 keys + 1 unresolvable',
     'sdk-settings/negative_controls.py': '8 keys + 2 unresolvable',
     'sdk-signal-read-lease/negative_controls.py': '6 keys',
-    'sdk-signals-close-order-pin/negative_controls.py': '6 keys',
+    'sdk-signals-close-order-pin/negative_controls.py': '6 keys + 1 unresolvable',
     'sdk-signals/negative_controls.py': '7 keys + 3 unresolvable',
     'sdk-terminal/negative_controls.py': '8 keys + 2 unresolvable',
-    'session-abort-contract/negative.py': '6 keys + 1 unresolvable',
+    'session-abort-contract/negative.py': '6 keys + 3 unresolvable',
     'session-admission/negative.py': '4 keys',
     'session-adopt/switch_negative.py': '7 keys',
-    'session-assembly-1316/negative_controls.py': '4 keys + 5 unresolvable',
+    'session-assembly-1316/negative_controls.py': '4 keys + 3 unresolvable',
     'session-domain-cleanup/negative_controls.py': '2 keys',
     'session-domain-expectations/negative_controls.py': '7 keys',
     'session-domain-lock-release/negative_controls.py': '7 keys',
     'session-domain-native/negative_controls.py': '7 keys',
-    'session-domain/adapter-negative.py': '1 key',
-    'session-domain/fix1-negative.py': '1 key',
-    'session-domain/fix2-negative.py': '1 key + 1 unresolvable',
+    'session-domain/adapter-negative.py': '1 key + 2 unresolvable',
+    'session-domain/fix1-negative.py': '1 key + 2 unresolvable',
+    'session-domain/fix2-negative.py': '1 key + 2 unresolvable',
     'session-drop-release/negative_controls.py': '8 keys',
-    'session-factory/append-delta/negative_controls.py': '6 keys + 7 unresolvable',
+    'session-factory/append-delta/negative_controls.py': '6 keys + 8 unresolvable',
     'session-factory/negative_controls.py': '16 keys + 1 unresolvable',
-    'session-factory/projection-cache/negative_controls.py': '8 keys + 4 unresolvable',
+    'session-factory/projection-cache/negative_controls.py': '8 keys + 6 unresolvable',
     'session-lease/negative.py': '3 keys',
     'session-owner-hooks/negative.py': '1 key',
-    'session-owner/negative.py': '4 keys',
+    'session-owner/negative.py': '4 keys + 1 unresolvable',
     'session-owner/negative_close_shutdown.py': '6 keys',
     'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
     'settings/negative_controls.py': '2 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
-    'sidecar-payload/negative.py': '1 key',
+    'sidecar-payload/negative.py': '1 key + 1 unresolvable',
     'skills-external/negative_controls.py': '6 keys',
     'skills-external/negative_controls_949.py': '6 keys',
-    'skills-tree-files/negative.py': '1 key',
+    'skills-tree-files/negative.py': '1 key + 2 unresolvable',
     'skills/negative_controls.py': '3 keys',
-    'sms-stringify-depth/negative_controls.py': '4 keys + 1 unresolvable',
+    'sms-stringify-depth/negative_controls.py': '4 keys + 2 unresolvable',
     'spill-isolation/negative_controls.py': '1 key',
     'stats-cwd/negative_controls.py': '9 keys',
     'stress-followups/negative_controls.py': '2 keys',
     'surrogate-collation-matrix/negative_controls.py': '7 keys',
     'task-budget-zero/negative.py': '1 key',
-    'tool-budget/negative_project.py': '1 key',
+    'tool-budget/negative_project.py': '1 key + 1 unresolvable',
     'transcript-resolve/negative_controls.py': '1 key',
     'transcript-trim/negative_controls.py': '6 keys',
     'treelock-budget/negative_controls.py': '7 keys',
@@ -365,7 +368,7 @@ KNOWN_BLIND = {
     'turn-runner/runner_negative.py': '3 keys',
     'turn-submit-admission/negative_controls.py': '2 keys',
     'turn-submit/negative.py': '6 keys',
-    'ui-server-parity-isolation/negative_controls.py': '2 unresolvable',
+    'ui-server-parity-isolation/negative_controls.py': '3 unresolvable',
     'unsafe-config-boundary/negative_controls.py': '4 keys',
     'upload-gateway/negative_controls.py': '2 keys',
     'user-dialog-channel/negative.py': '8 keys + 1 unresolvable',
@@ -373,11 +376,11 @@ KNOWN_BLIND = {
     'user-dialog-http-store-1555/negative_controls_1555.py': '6 keys',
     'user-dialog-http-store/negative_controls_1232.py': '6 keys',
     'user-dialog-http-store/negative_controls_1277.py': '6 keys',
-    'user-dialog-lock-scope/negative_controls.py': '4 keys',
+    'user-dialog-lock-scope/negative_controls.py': '4 keys + 2 unresolvable',
     'web-conversion-lifecycle/negative.py': '7 keys',
     'webhook-channel/negative_controls.py': '10 keys',
     'wecom-callback/negative_controls.py': '12 keys + 2 unresolvable',
-    'weixin-channel/negative_controls.py': '14 keys + 2 unresolvable',
+    'weixin-channel/negative_controls.py': '15 keys + 2 unresolvable',
     'workspace-pristine/negative_controls.py': '7 keys',
     'workspace-snapshot-gate/negative_controls.py': '1 key + 1 unresolvable',
     'workspace-snapshot-nonutf8/negative_controls.py': '1 key + 1 unresolvable',
@@ -478,17 +481,50 @@ def _rebound_elsewhere(tree):
     return names
 
 
+def _module_level_assignments(tree):
+    """The values every ``name = ...`` statement gives a module-level name.
+
+    ``if flag: A = ...`` at module level runs at import time and rebinds the
+    global just like a top-level line, so it counts. Function, lambda and class
+    bodies do not: those names are local to their scope, and the module-level
+    value they shadow is already handled by ``_function_scoped_names``.
+    """
+    values = {}
+
+    def visit(node):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.Lambda, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Assign):
+                names = set()
+                for target in child.targets:
+                    _bind_names(target, names)
+                written = ast.dump(child.value)
+                for name in names:
+                    values.setdefault(name, []).append(written)
+            visit(child)
+
+    visit(tree)
+    return values
+
+
 def _constants(tree):
     """``name = <expression>`` bindings this scanner is willing to substitute.
 
-    Module-level bindings are authoritative (last one wins, as at runtime).
+    Module-level bindings are authoritative (last one wins, as at runtime), but
+    only when there is exactly one of them: a second ``A = ...`` — at the top
+    level or inside an ``if`` — means an earlier use site saw the first value,
+    so substituting either one keys a directory the code may never build and
+    hides the one it does. Such a name is left out and reported at its uses.
     Tables also build paths from local aliases (``source = ROOT / '...'`` inside
     a function, then ``source.parent / 'x.rs'``); a name assigned exactly once in
     the whole file has no ambiguity, so it is resolved too. A module-level name
-    that a function rebinds is *not* substituted: the two sites would then mean
-    different directories, and resolving both to the module-level value would
-    demand an anchor for a key the runtime never uses while hiding the real one.
-    Neither is a name bound by some other form (parameter, loop target, ...).
+    that a function rebinds is *not* substituted either: the two sites would
+    then mean different directories, and resolving both to the module-level
+    value would demand an anchor for a key the runtime never uses while hiding
+    the real one. Neither is a name bound by some other form (parameter, loop
+    target, ...).
     """
     constants = {}
     for statement in tree.body:
@@ -509,9 +545,19 @@ def _constants(tree):
     for name, value in assignments:
         if name not in constants and counts[name] == 1 and name not in rebound:
             constants[name] = value
-    for name in _shadowed_names(tree) & module_level:
+    for name in (set(_shadowed_names(tree)) | _duplicated_module_names(tree)) & module_level:
         constants.pop(name, None)
     return constants
+
+
+def _duplicated_module_names(tree):
+    """Module-level names whose ``name = ...`` statements disagree.
+
+    Assigning the same expression twice is harmless — whichever ran, the value
+    is the same — so only genuinely different values are ambiguous.
+    """
+    return {name for name, values in _module_level_assignments(tree).items()
+            if len(set(values)) > 1}
 
 
 def _shadowed_names(tree):
@@ -523,7 +569,10 @@ def _shadowed_names(tree):
     parameter (``def run(BASE): ...``) hides the module constant just as well,
     and following the module value there would key a directory the runtime never
     uses while hiding the real one. ``_rebound_elsewhere`` already enumerates
-    those forms at every depth, so it carries the decision.
+    those forms at every depth, so it carries the decision. A plain second
+    assignment counts too: ``A = ROOT / 'x'`` followed by ``A = ROOT / 'y'``
+    makes the value at a given site depend on the order the module ran in, and
+    "last one wins" would key ``y/…`` for code that built ``x/…``.
     """
     module_level = set()
     for statement in tree.body:
@@ -531,7 +580,8 @@ def _shadowed_names(tree):
             for target in statement.targets:
                 if isinstance(target, ast.Name):
                     module_level.add(target.id)
-    return ((_function_scoped_names(tree) | _rebound_elsewhere(tree))
+    return ((_function_scoped_names(tree) | _rebound_elsewhere(tree)
+             | _duplicated_module_names(tree))
             & module_level)
 
 
@@ -707,21 +757,51 @@ def _joins_a_path_string(node):
                and _path_literal_operand(operand.value) for operand in operands)
 
 
-def _iterated_elements(node, constants):
+def _adds_a_runtime_file_name(node, constants, self_path):
+    """Whether an ``Add`` chain appends an unknowable name to a known directory.
+
+    ``str(ROOT) + name`` builds the same unfollowable path as ``ROOT / name``:
+    the directory resolves, the file name does not, so the loop can never key
+    it. Only a *directly adjacent* opaque name counts — ``str(ROOT) + '/x' +
+    label`` is a label, not a path — and the left operand must really be a
+    repository path, not merely a name a caller happened to pass one to, so
+    ordinary string assembly (``name + ': ' + ' | '.join(lines)``) stays quiet.
+    """
+    operands = _add_operands(node)
+    for left, right in zip(operands, operands[1:]):
+        base = left
+        if (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
+                and base.func.id == 'str' and len(base.args) == 1):
+            base = base.args[0]
+        if not (_segments(base, constants, self_path) is not None
+                and _is_repo_rooted(base, constants)):
+            continue
+        if (isinstance(right, ast.Name) and right.id not in ROOT_NAMES
+                and right.id != '__file__' and right.id not in constants):
+            return True
+    return False
+
+
+def _iterated_elements(node, constants, seen=()):
     """The literal elements a ``for name in (...)`` loop walks, or None.
 
     A starred element is only literal if what it unpacks is: ``(*('a.rs',),)``
     walks ``'a.rs'``, while ``(*runtime_names,)`` is unknowable and returns None
-    so the caller reports the shape instead of guessing.
+    so the caller reports the shape instead of guessing. ``seen`` stops a
+    self-referential binding (``NAMES = (*NAMES,)``, dead code at runtime but
+    parsed all the same) from recursing forever.
     """
     target = node
     if isinstance(node, ast.Name) and node.id in constants:
+        if node.id in seen:
+            return None
         target = constants[node.id]
+        seen = seen + (node.id,)
     if isinstance(target, (ast.Tuple, ast.List)):
         elements = []
         for element in target.elts:
             if isinstance(element, ast.Starred):
-                unpacked = _iterated_elements(element.value, constants)
+                unpacked = _iterated_elements(element.value, constants, seen)
                 if unpacked is None:
                     return None
                 elements.extend(unpacked)
@@ -896,6 +976,24 @@ def _module_aliases(tree):
     return aliases
 
 
+def _enumerates_a_directory(func, aliases):
+    """Whether a bare call name is one of the directory-listing functions.
+
+    ``from os import walk`` reaches it by plain name, and ``from os import walk
+    as w`` reaches the same stdlib function through the import alias — the
+    alias map carries the qualified target, so both spellings are one check.
+    """
+    if not isinstance(func, ast.Name):
+        return False
+    if func.id in ENUMERATION_NAMES:
+        return True
+    qualified = aliases.get(func.id)
+    if not qualified:
+        return False
+    module, _, name = qualified.rpartition('.')
+    return module in FS_MODULES and name in ENUMERATION_NAMES
+
+
 def _bare_tail(node, constants, seen=()):
     """Whether the last path component comes from a bare file-name literal.
 
@@ -1068,6 +1166,27 @@ def _module_candidates(tree, search_dirs):
                         yield candidate + (alias.name,)
 
 
+def _package_prefixes(candidate, search_dirs, root):
+    """The parent packages a dotted import runs before the module itself.
+
+    ``import a.b.c`` executes ``a/__init__.py`` and ``a/b/__init__.py`` first, so
+    a helper either of them imports is a real dependency of the table — and the
+    loop keys a changed ``a/__init__.py`` on its own. Only prefixes that really
+    are packages (a directory with ``__init__.py``) count: yielding every prefix
+    would parse a same-named plain module that the import never touches.
+    """
+    for directory in search_dirs:
+        directory = tuple(directory)
+        if candidate[:len(directory)] != directory:
+            continue
+        parts = candidate[len(directory):]
+        for depth in range(1, len(parts)):
+            prefix = directory + parts[:depth]
+            if _module_file(prefix + ('__init__',), root) is not None:
+                yield prefix
+        return
+
+
 def _shared_module_keys(tree, root=FIXTURES, table_dir=()):
     """Discovery keys for every local module the table imports, transitively.
 
@@ -1092,17 +1211,25 @@ def _shared_module_keys(tree, root=FIXTURES, table_dir=()):
     while queue:
         current, search_dirs = queue.pop()
         for candidate in _module_candidates(current, search_dirs):
-            # Importing a package also runs its ``__init__.py``, and the loop
-            # keys a changed ``pkg/__init__.py`` as ``pkg/__init__.py``.
-            for parts in (candidate, candidate + ('__init__',)):
-                keys.update(_module_key(parts, root))
-            path = _module_file(candidate, root)
-            if path is None or path in seen:
-                continue
-            seen.add(path)
-            module_dir = path.relative_to(root).parts[:-1]
-            queue.append((ast.parse(path.read_text(encoding='utf-8')),
-                          (module_dir, tuple(table_dir), ())))
+            chain = list(_package_prefixes(candidate, search_dirs, root))
+            chain.append(candidate)
+            for parts in chain:
+                # Importing a package also runs its ``__init__.py``, and the loop
+                # keys a changed ``pkg/__init__.py`` as ``pkg/__init__.py``. The
+                # file is parsed like any other module: what *it* imports is a
+                # dependency of the table too, and skipping that hop left the
+                # imports made from a package initialiser invisible.
+                for keyed in (parts, parts + ('__init__',)):
+                    keys.update(_module_key(keyed, root))
+                path = _module_file(parts, root)
+                if path is None:
+                    path = _module_file(parts + ('__init__',), root)
+                if path is None or path in seen:
+                    continue
+                seen.add(path)
+                module_dir = path.relative_to(root).parts[:-1]
+                queue.append((ast.parse(path.read_text(encoding='utf-8')),
+                              (module_dir, tuple(table_dir), ())))
     return keys
 
 
@@ -1142,21 +1269,60 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             return
         keys.setdefault('/'.join(segments[-2:]), []).append(expression)
 
+    reported_ambiguous = set()
+
+    def ambiguous_names(node):
+        return sorted({child.id for child in ast.walk(node)
+                       if isinstance(child, ast.Name) and child.id in shadowed})
+
+    def report_ambiguous(name, expression):
+        # One report per name: the same constant used in ten rows is one
+        # decision, and a wall of identical lines buries the real finding.
+        if name in reported_ambiguous:
+            return
+        reported_ambiguous.add(name)
+        problems.append('ambiguous module-level name rebound elsewhere: '
+                        f'{name}: {expression}')
+
+    def report_unresolvable(expression):
+        problems.append('unresolvable repository path (this scanner cannot '
+                        f'follow it): {expression}')
+
     def resolve(node, expression):
         segments = _segments(node, constants, self_path)
         if segments is None:
-            ambiguous = sorted({child.id for child in ast.walk(node)
-                                if isinstance(child, ast.Name) and child.id in shadowed})
+            ambiguous = ambiguous_names(node)
             if ambiguous:
-                problems.append('ambiguous module-level name rebound elsewhere: '
-                                f'{ambiguous[0]}: {expression}')
+                report_ambiguous(ambiguous[0], expression)
             elif repo_rooted(node):
-                problems.append('unresolvable repository path (this scanner cannot '
-                                f'follow it): {expression}')
+                report_unresolvable(expression)
             return
         if not _bare_tail(node, constants):
             return
         record(segments, expression)
+
+    def report_runtime_tail(node):
+        """Report a join whose directory is known but whose file name is not.
+
+        ``SMS / name`` — with ``name`` a parameter, a runtime loop variable or a
+        comprehension source this scanner cannot enumerate — is the same hole as
+        ``SMS.glob('*.rs')``: the loop needs a ``dir/file`` literal the text does
+        not contain. Only the outermost join of a chain reports (an inner opaque
+        prefix is consumed by the join above it), and only when the directory
+        half resolves, so ``ROOT / PICK['dir'] / 'x.rs'`` still reports once, at
+        the join that is actually opaque.
+        """
+        if _segments(node.left, constants, self_path) is None:
+            return
+        if _segments(node.right, constants, self_path) is not None:
+            return
+        if not repo_rooted(node):
+            return
+        ambiguous = ambiguous_names(node)
+        if ambiguous:
+            report_ambiguous(ambiguous[0], ast.unparse(node))
+        else:
+            report_unresolvable(ast.unparse(node))
 
     class Visitor(ast.NodeVisitor):
         def visit_BinOp(self, node):
@@ -1165,13 +1331,16 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     operand for operand in _add_operands(node)
                     if isinstance(operand, ast.Constant)
                     and isinstance(operand.value, str) and '/' in operand.value]
-                if _joins_a_path_string(node) or separators:
+                if (_joins_a_path_string(node) or separators
+                        or _adds_a_runtime_file_name(node, constants, self_path)):
                     # ``str(ROOT) + '/src/x/mod.rs'`` is statically resolvable in
                     # principle but not by this scanner; keeping it silent would
                     # be the same fail-open shape the gate exists to catch. The
                     # same goes for a chain that only ever adds separators and
                     # bare components (``str(ROOT) + '/' + 'src' + …``): each
-                    # fragment looks harmless on its own.
+                    # fragment looks harmless on its own. And ``str(ROOT) + name``
+                    # hides the file name behind a runtime value, so the join is
+                    # no more followable than ``SMS / name``.
                     problems.append('unsupported string concatenation of a repository '
                                     f'path (use ``/`` joins): {ast.unparse(node)}')
                     # Report the whole chain once. Recursing would report the
@@ -1179,12 +1348,36 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     for operand in _add_operands(node):
                         self.visit(operand)
                     return
+            elif isinstance(node.op, ast.Div):
+                if _is_path_shape(node, constants):
+                    resolve(node, ast.unparse(node))
+                else:
+                    report_runtime_tail(node)
             elif _is_path_shape(node, constants):
                 resolve(node, ast.unparse(node))
             self.generic_visit(node)
 
         def visit_JoinedStr(self, node):
-            if _joins_a_path_string(node) and repo_rooted(node):
+            joined = _joins_a_path_string(node)
+            if not joined:
+                # ``f'{SMS}/{name}'`` names its directory but not its file, the
+                # same unfollowable join as ``SMS / name``: a repository
+                # directory interpolated immediately before a ``/``. A display
+                # counter (``f'{killed}/{total} killed'``) interpolates no
+                # repository path, so it is not a path build.
+                for current, following in zip(node.values, node.values[1:]):
+                    if not isinstance(current, ast.FormattedValue):
+                        continue
+                    target = current.value
+                    if not (_segments(target, constants, self_path) is not None
+                            and _is_repo_rooted(target, constants)):
+                        continue
+                    if (isinstance(following, ast.Constant)
+                            and isinstance(following.value, str)
+                            and '/' in following.value):
+                        joined = True
+                        break
+            if joined and repo_rooted(node):
                 problems.append('unsupported f-string path of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             self.generic_visit(node)
@@ -1206,10 +1399,11 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # argument — the stdlib ones are the more common shape.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
-            elif (isinstance(func, ast.Name) and func.id in ENUMERATION_NAMES
+            elif (_enumerates_a_directory(func, aliases)
                     and any(repo_rooted(argument) for argument in node.args)):
                 # ``from os import walk`` / ``from os import listdir`` reaches the
-                # same unmodelled call.
+                # same unmodelled call, and ``from os import walk as w`` reaches
+                # it through the alias.
                 problems.append('unsupported enumeration of a repository path '
                                 f'(this scanner cannot follow it): {ast.unparse(node)}')
             elif (isinstance(func, ast.Name) and func.id == 'join'
@@ -1239,17 +1433,23 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 # constant of the same name (for instance an outer literal loop
                 # that bound it) must not be substituted inside the body: the
                 # key it would produce is one the code never builds.
+                # Every name the target binds, not just a bare ``Name``: a
+                # tuple target binds its pieces the same way, and a piece that
+                # shares a name with a module constant must not be substituted
+                # with that constant inside the body.
+                bound = set()
+                _bind_names(node.target, bound)
                 missing = object()
-                stale = (constants.pop(node.target.id, missing)
-                         if isinstance(node.target, ast.Name) else missing)
+                stale = {name: constants.pop(name, missing) for name in bound}
                 try:
                     for statement in node.body:
                         self.visit(statement)
                     for statement in node.orelse:
                         self.visit(statement)
                 finally:
-                    if stale is not missing:
-                        constants[node.target.id] = stale
+                    for name, value in stale.items():
+                        if value is not missing:
+                            constants[name] = value
                 return
             missing = object()
             saved = constants.get(node.target.id, missing)
@@ -1298,9 +1498,10 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             if combos is None:
                 for part in parts:
                     recorded = len(keys)
+                    diagnosed = len(problems)
                     self.visit(part)
-                    if (len(keys) == recorded and repo_rooted(part)
-                            and _is_path_expression(part)):
+                    if (len(keys) == recorded and len(problems) == diagnosed
+                            and repo_rooted(part) and _is_path_expression(part)):
                         problems.append(
                             f'unresolvable comprehension source: {ast.unparse(node)}')
             else:
@@ -1886,8 +2087,9 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "rows = [BASE / name for name in names()]\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
-        self.assertTrue(any('unresolvable comprehension source' in problem
-                            for problem in problems), problems)
+        # The join itself is now named (``BASE / name``); the source-level
+        # message only stands in when the element yields no diagnosis of its own.
+        self.assertTrue(any('unresolvable' in problem for problem in problems), problems)
 
     def test_a_comprehension_element_that_is_not_a_path_stays_silent(self):
         """A tuple fed to a printer is not a path build, even if it holds one."""
@@ -2243,6 +2445,151 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "rows = [ROOT / 'src/example/named.rs']\n"
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_runtime_file_name_position_fails_closed(self):
+        """``SMS / name`` knows the directory and not the file: report it.
+
+        The three spellings a table reaches for are one hole — the loop needs a
+        ``dir/file`` literal the text does not contain — and a table that uses
+        them was silently skipped, so it registered no anchor and ran no mutant.
+        """
+        shapes = {
+            'division': "def row(name):\n    return SMS / name\n",
+            'f-string': "def row(name):\n    return f'{SMS}/{name}'\n",
+            'string concat': "def row(name):\n    return str(SMS) + name\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/example/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                    + "rows = [row('mod.rs')]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('unresolvable' in problem or 'unsupported' in problem
+                                    for problem in problems), problems)
+
+    def test_a_display_string_stays_silent(self):
+        """A counter or a label joins no repository directory."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def report(killed, total, name, lines):\n"
+            "    print(f'{killed}/{total} killed; probe={SMS}')\n"
+            "    return name + ': ' + ' | '.join(lines)\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_second_plain_assignment_of_a_module_constant_is_ambiguous(self):
+        """Last-wins would key ``y/mod.rs`` for the row that built ``x/mod.rs``."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example/x'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [(BASE / 'mod.rs', 'x')]\n"
+            "BASE = ROOT / 'src/example/y'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous' in problem for problem in problems), problems)
+        self.assertFalse(any('y/mod.rs' in problem for problem in problems), problems)
+
+    def test_a_conditional_second_assignment_is_ambiguous_too(self):
+        """``if flag: BASE = ...`` rebinds at import time like a top-level line."""
+        synthetic = (
+            "import os\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example/x'\n"
+            "if os.environ.get('PDRS_X'):\n"
+            "    BASE = ROOT / 'src/example/y'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [(BASE / 'mod.rs', 'x')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('ambiguous' in problem for problem in problems), problems)
+        self.assertFalse(any('x/mod.rs' in problem for problem in problems), problems)
+
+    def test_the_same_value_assigned_twice_is_not_ambiguous(self):
+        """Assigning one expression twice leaves the value unambiguous."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "BASE = ROOT / 'src/example/x'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [(BASE / 'mod.rs', 'x')]\n"
+            "BASE = ROOT / 'src/example/x'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertFalse(any('ambiguous' in problem for problem in problems), problems)
+        self.assertTrue(any('missing anchor: x/mod.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_tuple_loop_target_does_not_reuse_a_stale_constant(self):
+        """``for name, kind in rows:`` binds ``name`` as firmly as a bare name."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def main(rows):\n"
+            "    out = []\n"
+            "    for name in ('outer.rs',):\n"
+            "        for name, kind in rows:\n"
+            "            out.append(SMS / name)\n"
+            "    return out\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertFalse(any('sms/outer.rs' in problem for problem in problems), problems)
+
+    def test_a_from_import_alias_of_a_directory_walk_fails_closed(self):
+        """``from os import walk as w`` reaches the same unmodelled enumeration."""
+        synthetic = (
+            "from os import walk as w\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "for _root, _dirs, _files in w(SMS):\n"
+            "    pass\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('enumeration' in problem for problem in problems), problems)
+
+    def test_a_self_referential_starred_constant_terminates(self):
+        """``NAMES = (*NAMES,)`` is dead code at runtime but still parsed."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "NAMES = (*NAMES,)\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "for name in NAMES:\n"
+            "    (ROOT / 'src/example' / name, 'x')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable' in problem for problem in problems), problems)
+
+    def test_a_package_initialiser_is_parsed_for_its_own_imports(self):
+        """``import pkg`` runs ``pkg/__init__.py``; what it imports is a key too."""
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'pkg').mkdir()
+            (root / 'pkg' / '__init__.py').write_text(
+                'from helper import run\n', encoding='utf-8')
+            (root / 'helper.py').write_text('', encoding='utf-8')
+            keys = _shared_module_keys(ast.parse('import pkg\n'), root, ())
+        self.assertEqual(sorted(keys), ['fixtures/helper.py', 'pkg/__init__.py'])
+
+    def test_a_dotted_import_keys_every_package_it_runs(self):
+        """``import a.b.c`` executes ``a/__init__.py`` and ``a/b/__init__.py``."""
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'a' / 'b').mkdir(parents=True)
+            (root / 'a' / '__init__.py').write_text('', encoding='utf-8')
+            (root / 'a' / 'b' / '__init__.py').write_text('', encoding='utf-8')
+            (root / 'a' / 'b' / 'c.py').write_text('', encoding='utf-8')
+            keys = _shared_module_keys(ast.parse('import a.b.c\n'), root, ())
+        # The loop keys a nested file by its last two components, so the
+        # ``a/b/__init__.py`` it runs keys as ``b/__init__.py``.
+        self.assertEqual(sorted(keys), ['a/__init__.py', 'b/__init__.py', 'b/c.py'])
 
     def test_a_second_anchors_assignment_turns_the_guard_red(self):
         synthetic = (
