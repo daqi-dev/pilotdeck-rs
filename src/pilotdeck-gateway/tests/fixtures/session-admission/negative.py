@@ -8,13 +8,14 @@ import argparse
 import json
 import os
 import re
-import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_shared"))
+from negative_control import source_copy
 from negative_panic import named_test_failed, panic_evidence
 from negative_process import run_owned, wait_for_slot
 
@@ -117,10 +118,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="pdrs-a71-negative-", dir="/tmp") as directory:
         scratch = Path(directory)
         env["CARGO_TARGET_DIR"] = str(scratch / "src/target")
-        shutil.copytree(rust, scratch / "src", ignore=shutil.ignore_patterns(
-            "target", ".git", "node_modules", ".env*"))
-        shutil.copytree(rust.parent / "specs", scratch / "specs")
-        source_copy = scratch / "src/pilotdeck-gateway/src/runtime/session"
+        # One copy manifest for every control: `source_copy` carries `src/`
+        # plus the compile-time inputs derived from it, so a new input class
+        # cannot reach some controls and miss this one (#1570 r14 sibling).
+        source_copy(scratch)
+        session_source = scratch / "src/pilotdeck-gateway/src/runtime/session"
         fixture_copy = scratch / "src/pilotdeck-gateway/tests/fixtures/session-admission"
         cases = [("baseline", None, None, None)] + mutants
         for name, filename, before, after in cases:
@@ -129,7 +131,7 @@ def main():
                     count = content.count(before)
                     assert count == ANCHOR_COUNTS.get(name, 1), (name, count)
                     content = content.replace(before, after)
-                destination = (fixture_copy if file == "oracle.json" else source_copy)
+                destination = (fixture_copy if file == "oracle.json" else session_source)
                 (destination / file).write_text(content)
             gate = wait_for_slot(fixture.parents[4] / "scripts/cargo-slots.sh")
             test = ("runtime::session::tests::old_abort_never_targets_replacement_across_threads"

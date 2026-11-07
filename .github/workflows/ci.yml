@@ -66,6 +66,12 @@ jobs:
           # 两者都在 -O 子进程里跑真实源码（假 cargo / 一处注入编辑），不需要 cargo 名额。
           python3 -B -m unittest -v test_negative_run_guards
           python3 -B -m unittest -v network-timing/test_negative_controls.py
+      # #1570：共享负控的副本清单从源码推导（src/ 之外被编译期读取的输入）。
+      # 漏一份不会表现成「变异存活」，而是整条变异 INVALID——尺子静默失去判别力。
+      # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
+      - name: 共享副本清单推导自测（#1570）
+        working-directory: src/pilotdeck-gateway/tests/fixtures
+        run: python3 -B -m unittest -v _shared.test_compile_inputs
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
       # 宿主清单、neg-for-diff 都没拦住，靠最终评审读码才发现。glob 统一覆盖今后新增的

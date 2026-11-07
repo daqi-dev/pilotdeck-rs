@@ -2,10 +2,12 @@
 """Bounded negative controls: mutate only disposable /tmp copies."""
 import contextlib
 import difflib
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import subprocess
@@ -141,19 +143,701 @@ def run(name, command, env, cwd=SRC, diagnostic=None):
         print(f'{name}: PASS', flush=True)
 
 
-def source_copy(root):
-    """Copy tracked workspace inputs, including pending fixes, never target/.env."""
-    files = subprocess.check_output(['git', 'ls-files', '-z', 'src'], cwd=REPO)
-    for entry in files.split(b'\0'):
-        if not entry:
+def _tracked(*paths):
+    """Repository-relative tracked files under the given paths."""
+    listing = subprocess.check_output(['git', 'ls-files', '-z', '--', *paths], cwd=REPO)
+    return [Path(os.fsdecode(entry)) for entry in listing.split(b'\0') if entry]
+
+
+def _tracked_but_deleted(relative):
+    """True when `relative` is in the git index, even if the tree deleted it.
+
+    `:(literal)` matters: a plain pathspec treats `[`, `*` and `?` in a file
+    name as glob syntax, so `src/a[b.rs` would silently stop matching (or
+    match a sibling), and a real reference would slip through as fixture text.
+    """
+    completed = subprocess.run(
+        ['git', 'ls-files', '--error-unmatch', '--', f':(literal){relative.as_posix()}'],
+        cwd=REPO, capture_output=True)
+    return completed.returncode == 0
+
+
+def _indexed(path, tracked):
+    """True when `path` names something in the git index, even if the tree deleted it.
+
+    `git ls-files` lists the index, so a pending repair that deletes a tracked
+    file leaves it listed, and a file behind a tracked symlink (`src/link ->
+    real`) is listed under its own name rather than the path that names it.
+    Both are real references, not fixture text: refusing them loudly is what
+    keeps the copy from silently coming up short (#1570 r10/r11).
+    """
+    for base in (REPO, REPO.resolve()):
+        try:
+            relative = path.relative_to(base)
+        except ValueError:
             continue
-        path = Path(os.fsdecode(entry))
+        if relative.parts[:1] == ('src',):
+            return relative in tracked
+        return _tracked_but_deleted(relative)
+    return False
+
+
+def _copy_input(path, destination):
+    try:
+        shutil.copyfile(REPO / path, destination)
+    except OSError as error:
+        raise RuntimeError(f'source_copy: cannot copy {path}: {error}') from error
+
+
+def root_level_inputs(directories, files):
+    """The inputs `compile_inputs` leaves out of `directories` (repository root).
+
+    They have no directory worth copying -- asking git for `.` would copy the
+    whole tree -- so callers copy them as individual files. Kept here, not
+    inlined at each call site: `source_copy` and every control with its own
+    copy loop must agree on which files those are, and a copy loop that stops
+    agreeing silently drops an input (#1570).
+    """
+    return [path for path in files
+            if not any(directory in path.parents for directory in directories)]
+
+
+def verify_copy(root, files):
+    """Refuse a copy that lost a compile-time input.
+
+    A copy that lacks an input does not fail as "the mutation survived": it
+    fails to compile, every mutation reads INVALID, and the control silently
+    stops discriminating -- the #1570 failure itself.
+    """
+    missing = sorted(str(path) for path in files if not (root / path).is_file())
+    if missing:
+        raise RuntimeError('compile-time inputs missing from the copy: '
+                           + ', '.join(missing))
+
+
+# `include_str!` / `include_bytes!` take any macro delimiter (`(` `[` `{`) and
+# allow trivia -- whitespace, line comments, nested block comments -- between
+# every token: `include_str /* why */ ! ( "…" )` compiles, and rustfmt keeps
+# the bracket form. A regex for that gap cannot count nested comments, and a
+# count that silently reads zero is exactly the #1570 failure (nothing copied,
+# every mutation INVALID), so the gap is skipped by a scanner instead. The path
+# is a plain string literal (raw strings included), optionally followed by the
+# single trailing comma `source_inputs.rs` also accepts.
+MACRO_NAME = re.compile(r'\b(include_str|include_bytes|include)\b')
+MACRO_OPENERS = {'(': ')', '[': ']', '{': '}'}
+IDENTIFIER = re.compile(r'(?:r#)?([A-Za-z_][A-Za-z0-9_]*)')
+# Rust's token separator is `Pattern_White_Space`, exactly these eleven code
+# points -- not the whole `Zs` category (`rustc` rejects `include_str<NBSP>!`
+# with "unknown start of token"). `str.isspace()` is wrong in both directions
+# here: it accepts `U+00A0`/`U+1680`/`U+2000`-`U+200A`/`U+202F`/`U+205F`/`U+3000`
+# and `U+001C`-`U+001F`, and misses `U+200E`/`U+200F`. A narrower set (say
+# `' \t\r\n'`) makes `include_str <VT> !` -- legal Rust -- fall through as
+# "not a macro call" and copy nothing.
+RUST_WHITESPACE = '\t\n\x0b\x0c\r \x85\u200e\u200f\u2028\u2029'
+
+
+def _is_trivia_space(char):
+    return char in RUST_WHITESPACE
+
+
+LIFETIME_STOPS = frozenset("'\"\\") | frozenset(RUST_WHITESPACE)
+
+
+def _lifetime_end(text, index):
+    """Index just past the lifetime at `index`, or None when there is none.
+
+    A lifetime is `'` plus an identifier, and Rust identifiers are Unicode
+    (`'α` compiles), so an ASCII class would stop the scan and silently drop
+    every later `path` in the same attribute. Python's `str.isidentifier` uses
+    the same XID tables, but *its* copy can be older than the rustc reading
+    the file: Python 3.9 (Unicode 13) does not know `U+11F02`, which rustc
+    accepts as an identifier. "This Python does not know the character" must
+    therefore not mean "no lifetime" -- that `break`s the attribute scan, the
+    #1570 failure -- so the default is inverted: after `'`, anything but a
+    quote, a backslash or one of Rust's eleven whitespace code points starts
+    a lifetime, and a non-ASCII character continues one even when the local
+    tables do not know it. Misreading one token only skips it; stopping loses
+    the rest of the attribute.
+    """
+    position = index + 1
+    if position >= len(text) or text[position] in LIFETIME_STOPS:
+        return None
+    position += 1
+    while position < len(text):
+        char = text[position]
+        if char in LIFETIME_STOPS:
+            break
+        if char.isascii() and not ('a' + char).isidentifier():
+            break
+        position += 1
+    return position
+
+
+def _skip_trivia(text, index, limit):
+    """Index of the first token after whitespace and Rust comments.
+
+    Block comments nest (`/* a /* b */ c */`) and line comments run to the end
+    of the line; both are legal inside a macro invocation, so neither can be
+    modelled as "some whitespace". An unterminated block comment returns the
+    limit, which makes the caller refuse rather than read past it into code.
+    """
+    while index < limit:
+        char = text[index]
+        if _is_trivia_space(char):
+            index += 1
+        elif text.startswith('//', index):
+            newline = text.find('\n', index, limit)
+            index = limit if newline < 0 else newline + 1
+        elif text.startswith('/*', index):
+            depth, index = 1, index + 2
+            while index < limit and depth:
+                if text.startswith('/*', index):
+                    depth, index = depth + 1, index + 2
+                elif text.startswith('*/', index):
+                    depth, index = depth - 1, index + 2
+                else:
+                    index += 1
+            if depth:
+                return limit
+        else:
+            return index
+    return limit
+
+
+def _skip_string(text, start, limit):
+    """Index just past the string literal at `start`, or None if there is none.
+
+    Covers every string form a macro argument or an attribute can hold: plain,
+    raw (`r#"…"#`, any `#` count), byte (`b"…"`) and C (`c"…"`). A plain string
+    may span lines (`#[doc = "first\nsecond"]` compiles), so a newline does not
+    end the scan -- running to the limit returns None, and every caller refuses
+    rather than reading past an unterminated literal into code.
+    """
+    index, raw = start, False
+    if text.startswith(('br', 'cr'), index):
+        raw, index = True, index + 2
+    elif text[index:index + 1] == 'r':
+        raw, index = True, index + 1
+    elif text[index:index + 1] in ('b', 'c'):
+        index += 1
+    hashes = 0
+    while text[index:index + 1] == '#':
+        hashes, index = hashes + 1, index + 1
+    if text[index:index + 1] != '"' or (hashes and not raw):
+        return None
+    if raw:
+        closing = '"' + '#' * hashes
+        end = text.find(closing, index + 1, limit)
+        return None if end < 0 else end + len(closing)
+    index += 1
+    while index < limit:
+        char = text[index]
+        if char == '\\':
+            index += 2
+            continue
+        if char == '"':
+            return index + 1
+        index += 1
+    return None
+
+
+def _skip_char(text, start, limit):
+    """Index just past the char literal at `start`, or None (a lifetime)."""
+    index = start + 1
+    if index >= limit:
+        return None
+    if text[index] == '\\':
+        index += 2
+        escape = text[index - 1:index]
+        if escape == 'u':                      # \u{1F600}
+            close = text.find('}', index, limit)
+            if close < 0:
+                return None
+            index = close + 1
+        elif escape == 'x':                    # \x41
+            index += 2
+    else:
+        index += 1
+    return index + 1 if text[index:index + 1] == "'" else None
+
+
+def _skip_literal(text, start, limit):
+    """Index just past the literal at `start`, or None when none starts there.
+
+    Literals are skipped whole so that a backtick, a `]` or a `\\` *inside* one
+    is never read as syntax -- that is how a real call used to pass for text
+    (`include!(concat!(/* ` */ …))`, `concat!("a", '`', "b")`, a raw string
+    holding `]"#` inside a `#[cfg_attr]`).
+    """
+    if text[start:start + 1] == "'":
+        return _skip_char(text, start, limit)
+    if text[start:start + 1] in ('b', 'c') and text[start + 1:start + 2] == "'":
+        return _skip_char(text, start + 1, limit)
+    return _skip_string(text, start, limit)
+
+
+def _read_path_literal(text, start, limit):
+    """`(value, end, raw)` for the path string literal at `start`, else None.
+
+    Accepts plain strings and raw strings (`r"…"`, `r#"…"#`). A plain string
+    keeps its escapes undecoded and comes back with `raw=False`; `compile_inputs`
+    refuses that case, because decoding `\\x66` by hand is how a scan starts
+    guessing at paths.
+    """
+    index, raw = start, False
+    if text[index:index + 1] == 'r':
+        raw, index = True, index + 1
+    hashes = 0
+    while text[index:index + 1] == '#':
+        hashes, index = hashes + 1, index + 1
+    if text[index:index + 1] != '"' or (hashes and not raw):
+        return None
+    quote, closing = index, '"' + '#' * hashes
+    index += 1
+    while index < limit:
+        char = text[index]
+        if raw:
+            if text.startswith(closing, index):
+                return text[quote + 1:index], index + len(closing), True
+            index += 1
+            continue
+        if char == '\\':
+            index += 2
+            continue
+        if char == '"':
+            return text[quote + 1:index], index + 1, False
+        if char == '\n':
+            return None
+        index += 1
+    return None
+
+
+def _call_argument(text, match, limit):
+    """`(opener, argument_start)` when the identifier at `match` is a macro call.
+
+    Returns None for a bare identifier (a name or prose mentioning
+    `include_str`), so the scan only judges something the compiler expands.
+    """
+    index = _skip_trivia(text, match.end(), limit)
+    if text[index:index + 1] != '!':
+        return None
+    index = _skip_trivia(text, index + 1, limit)
+    opener = text[index:index + 1]
+    if opener not in MACRO_OPENERS:
+        return None
+    return opener, _skip_trivia(text, index + 1, limit)
+
+
+def _include_argument_can_be_a_literal(text, start, limit=8192):
+    """Whether the `include!` argument at `start` could be a string literal.
+
+    A working `include!` needs an argument that evaluates to a string literal:
+    a literal itself or a macro such as `concat!`/`env!`. Anything else is a
+    compile error, so an occurrence that cannot be one is text rather than a
+    call -- and `unsafe_boundary.rs` is full of such text on purpose. Two
+    shapes cannot be code whatever surrounds them:
+
+    * a leading `{` is a block expression, never a string literal;
+    * a backslash or a backtick outside a string literal and outside a comment
+      is not a Rust token at all, so the occurrence sits inside a comment or a
+      string literal.
+
+    Comments are skipped rather than scanned: `include!(concat!(/* ` */
+    "../specs/", "frag.rs"))` is a real call, and the backtick inside its
+    block comment must not pass for text.
+
+    Everything else is treated as a real call, because `include!` expands its
+    argument at compile time and a silently skipped splice is exactly the
+    failure #1570 is about: the copy misses the fragment, the crate does not
+    compile, and every mutation reads INVALID.
+    """
+    limit = min(len(text), start + limit)
+    if text[start:start + 1] == '{':
+        return False
+    depth, index = 1, start
+    while index < limit:
+        char = text[index]
+        literal = _skip_literal(text, index, limit)
+        if literal is not None:
+            index = literal
+            continue
+        if char in ('"', "'"):
+            # Unterminated literal: not code any tree reports as compiled.
+            return True
+        if text.startswith('/*', index) or text.startswith('//', index):
+            index = _skip_trivia(text, index, limit)
+            continue
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+            if depth == 0:
+                return True
+        elif char in '\\`':
+            return False
+        elif char == '\n':
+            # An unterminated single-line call, or text spanning lines: both
+            # are safer to refuse than to resolve by guessing.
+            return True
+        index += 1
+    return True
+
+
+def _closing_index(text, start, limit):
+    """Index of the token that closes the invocation, skipping a trailing comma."""
+    index = _skip_trivia(text, start, limit)
+    if text[index:index + 1] == ',':
+        index = _skip_trivia(text, index + 1, limit)
+    return index
+
+
+def _path_attributes(text, limit):
+    """Yield `(path, raw)` for every `#[path = "…"]`-shaped attribute.
+
+    `#[path]`, `#![path]`, `#[r#path]` and the `cfg_attr(…, path = …)` form are
+    one token sequence: `#`, an optional `!`, `[`, then a `path` key before the
+    closing `]`. Scanning tokens keeps a newline or a comment between `path`
+    and `=` from hiding the edge, and keeps a `path = ` inside a doc string
+    from inventing one. Brackets are depth-counted, so a nested group such as
+    `doc = stringify!(v[0])` does not end the attribute early.
+
+    The scan over the file is textual, not a lexer: a `#[path = …]` written
+    inside a comment or a raw string is still read as an edge (the tree does
+    this on purpose -- `unsafe_boundary.rs` carries that text). Every invented
+    edge fails loudly rather than silently: a target that does not exist is
+    left alone like fixture text, and one that exists but is untracked or
+    outside the repository refuses the run.
+    """
+    for match in re.finditer(r'#', text):
+        index = _skip_trivia(text, match.end(), limit)
+        if text[index:index + 1] == '!':
+            index = _skip_trivia(text, index + 1, limit)
+        if text[index:index + 1] != '[':
+            continue
+        index += 1
+        depth = 0
+        while index < limit:
+            index = _skip_trivia(text, index, limit)
+            char = text[index:index + 1]
+            # `]` closes the attribute only at the outer level: `stringify!(v[0])`
+            # opens a nested bracket group, and ending the scan on its `]` would
+            # drop a `path = "…"` that follows -- a silent short copy (#1570
+            # r14 boundary).
+            if char in ('(', '[', '{'):
+                depth += 1
+                index += 1
+                continue
+            if char in (')', ']', '}'):
+                if depth:
+                    depth -= 1
+                    index += 1
+                    continue
+                if char == ']':
+                    break
+                index += 1
+                continue
+            if char == '':
+                break
+            literal = _skip_literal(text, index, limit)
+            if literal is not None:
+                index = literal
+                continue
+            if char == "'":
+                # `'a` is a lifetime, not an unterminated char literal:
+                # `#[cfg_attr(all(), doc = stringify!('a), path = "…")]`
+                # compiles, and stopping here would drop the real edge.
+                lifetime = _lifetime_end(text, index)
+                if lifetime is not None:
+                    index = lifetime
+                    continue
+                # Unterminated literal: nothing past it can be proven.
+                break
+            if char == '"':
+                break
+            word = IDENTIFIER.match(text, index)
+            if word is None:
+                index += 1
+                continue
+            index = word.end()
+            if word.group(1) != 'path':
+                continue
+            index = _skip_trivia(text, index, limit)
+            if text[index:index + 1] != '=':
+                continue
+            literal = _read_path_literal(text, _skip_trivia(text, index + 1, limit), limit)
+            if literal is None:
+                continue
+            index = literal[1]
+            yield literal[0], literal[2]
+
+
+def compile_inputs(*, sources=None, read=None):
+    """Repository paths the scratch copy needs beyond `src/` (#1570).
+
+    `src/` alone is not a build: tracked sources include
+    `specs/gateway-coverage/coverage-manifest.json` from pilotdeck-gateway and
+    `scripts/cli-parity/{help.txt,scenarios.json}` from pilotdeck-cli. Without
+    them the copy does not compile, `run()` raises "compilation ... is not
+    evidence", and every mutation that rebuilds those crates is recorded
+    INVALID -- the control has no discriminating power at that point while the
+    summary reads like an environment problem (#1985 block 1: 8/8 INVALID).
+
+    Returns (directories, files). The directories are the inputs' parent
+    directories, not the single files: a data directory is read as a unit at
+    run time too (`specs/gateway-coverage/ledger.json` is read by a lib test),
+    so copying one file out of it only moves the breakage to the next reader.
+    Deriving the list from the sources rather than hardcoding it keeps a new
+    include from silently falling back out of the copy.
+
+    Fail-closed on shapes this scan cannot resolve, because a silently skipped
+    input is the exact failure #1570 is about: same policy as
+    `tests/common/source_inputs.rs` ("fail closed on non-literal paths"). Two
+    consequences worth knowing before editing a fixture:
+
+    * the scan is textual, so a comment or a test string that spells a whole
+      call such as `include_str!("data")` is indistinguishable from a real one.
+      Both directions are safe: an existing target is copied as if used (a
+      little extra copying, nothing missed), a non-existent one stops the
+      control loudly. Masking comments instead would need a Rust lexer, and a
+      wrong mask copies nothing while the run still looks green.
+    * an input that exists but is not tracked cannot be copied (`git ls-files`
+      is the manifest), so it is refused instead of half-copied.
+    * `include!` and `#[path = "…"]` targets are followed only when they exist
+      and stay inside the repository. A missing one is fixture text in the
+      workspace scanners (`unsafe_boundary.rs`) or an error every tree reports,
+      so refusing there would stop controls that work today; a present one is
+      copied when it lives outside `src/`, because it is just as much a
+      compile-time input. A present one under `src/` must be tracked for the
+      same reason `include_str!` targets must be.
+    * an `include!` argument that is not a plain literal is refused, because
+      `include!(concat!("…"))` resolves at compile time and the scan cannot
+      follow it. The one exception is an argument that could not be a string
+      literal at all -- text in a comment or a fixture string; see
+      `_include_argument_can_be_a_literal`.
+
+    Two shapes resolve in rustc's name resolution rather than at the token
+    level, and this scan does not follow either (#2119): a bare `mod name;`
+    inside a fragment pulled from outside `src/` (rustc looks for
+    `name.rs` beside that fragment), and a macro bound to another name
+    (`use std::include_str as load;`, then `load!("…")`). Neither occurs in
+    this tree today; a real one would show up as a copy that does not compile,
+    which is loud in the log but reads as INVALID in the summary -- the #1570
+    shape. `tests/common/source_inputs.rs` already refuses the alias form, so
+    a Rust lexer is the durable fix.
+
+    `sources` pins the `src/` file list this scan reads; `read` collects a
+    sha256 of every file the scan actually read. `source_copy` passes both so
+    the scan and the copy work from one list, and so the copy can be checked
+    against the bytes the derivation was made from -- an index that gains a
+    file after the list was taken would otherwise be scanned by nobody and
+    copied unscanned.
+    """
+    tracked = set(_tracked('src'))
+    repository = REPO.resolve()
+    directories, files, scanned = set(), set(), set()
+    # A pending repair can delete a tracked file. It is not a source any more,
+    # and reading it here would raise a bare `FileNotFoundError` before the
+    # copy loop -- a traceback the host triage reads as "ran and failed"
+    # rather than "never started" (#1570 r9 concurrency P2). An `include!` or
+    # `#[path]` that named the deleted file still refuses below: a required
+    # target must exist.
+    pending = sorted(path for path in (tracked if sources is None else set(sources))
+                     if path.suffix == '.rs' and (REPO / path).is_file())
+    while pending:
+        source = pending.pop()
+        if source in scanned:
+            continue
+        scanned.add(source)
+        data = (REPO / source).read_bytes()
+        if read is not None:
+            read[source] = hashlib.sha256(data).hexdigest()
+        text = data.decode('utf-8', 'surrogateescape')
+        # `include_str!` / `include_bytes!` must resolve: their target is the
+        # input. `include!` splices a Rust fragment into the crate and
+        # `#[path = "…"]` redirects a module file; either can name something
+        # outside `src/`, and the fragment can hold a further `include_str!`,
+        # so an existing in-repo target is treated exactly like an
+        # `include_str!` target: copied when it lives outside `src/`, scanned
+        # for includes in both cases. A target that does not exist is left
+        # alone -- fixture text (`unsafe_boundary.rs` writes
+        # `include!("../../outside.rs")` into a string on purpose) or an error
+        # every tree reports.
+        edges = []  # (required, path text) for every edge this file declares
+        for match in MACRO_NAME.finditer(text):
+            call = _call_argument(text, match, len(text))
+            if call is None:
+                continue
+            macro, (opener, argument) = match.group(1), call
+            literal = _read_path_literal(text, argument, len(text))
+            if literal is None:
+                if macro != 'include':
+                    raise RuntimeError(f'{source}: a {macro}! argument is not a plain '
+                                       'string literal, or only appears inside a comment or '
+                                       'a test string; the scratch copy cannot prove it '
+                                       'carries the file, so refusing to run the control')
+                if not _include_argument_can_be_a_literal(text, argument):
+                    continue
+                raise RuntimeError(f'{source}: an include! argument is not a plain string '
+                                   'literal; the scratch copy cannot prove it carries the '
+                                   'file, so refusing to run the control')
+            value, end, raw = literal
+            cursor = _closing_index(text, end, len(text))
+            if text[cursor:cursor + 1] != MACRO_OPENERS[opener]:
+                raise RuntimeError(f'{source}: {macro}! opens with {opener} and does not '
+                                   'close with its pair; the scratch copy cannot resolve '
+                                   'that shape, so refusing to run the control')
+            if not raw and '\\' in value:
+                # `include!("../specs/\x66rag.rs")` reads `frag.rs`: an escape
+                # hides the real name from a textual scan, and decoding Rust
+                # string escapes here would be guessing. Refuse instead.
+                raise RuntimeError(f'{source}: {macro}! names {value!r}, which contains a '
+                                   'string escape; the scratch copy cannot prove which file '
+                                   'it reads, so refusing to run the control')
+            edges.append((macro != 'include', value))
+        for path, raw in _path_attributes(text, len(text)):
+            if not raw and '\\' in path:
+                raise RuntimeError(f'{source}: #[path = {path!r}] contains a string escape; '
+                                   'the scratch copy cannot prove which file it reads, so '
+                                   'refusing to run the control')
+            edges.append((False, path))
+        for required, relative_path in edges:
+            target = Path(os.path.normpath(REPO / source.parent / relative_path))
+            resolved = target.resolve()
+            if repository not in resolved.parents:
+                # A target that resolves outside the repository cannot be
+                # carried. Existing is what makes it an input rather than
+                # fixture text: `include!("../../outside.rs")` written into a
+                # string names nothing, while a symlink to a real file outside
+                # does -- and skipping that one would leave the copy short.
+                if resolved.is_file():
+                    raise RuntimeError(f'{source}: an include reads {target}, which resolves '
+                                       f'to {resolved} outside the repository; the scratch '
+                                       'copy cannot carry it')
+                if required or _indexed(target, tracked):
+                    raise RuntimeError(f'{source}: an include reads {target}, which is not a '
+                                       'file in this checkout')
+                continue
+            if not resolved.is_file():
+                # A name that is tracked in the index but deleted from the
+                # working tree is a real reference (a pending repair can
+                # delete it), not fixture text: the copy would come up short,
+                # so refuse it even for the edge kinds that tolerate a name
+                # nothing reads. The resolved path is checked too: a tracked
+                # symlink (`src/link -> real`) puts the real file in the index
+                # under its own name, not under the path that names it.
+                if required or _indexed(target, tracked) or _indexed(resolved, tracked):
+                    raise RuntimeError(f'{source}: an include reads {target}, which is not a '
+                                       'file in this checkout')
+                continue
+            try:
+                relative = target.relative_to(REPO)
+            except ValueError:
+                raise RuntimeError(f'{source}: an include reads {target}, which reaches the '
+                                   'repository only through a link; the scratch copy cannot '
+                                   'name it')
+            if SRC in target.parents:
+                if relative not in tracked:
+                    raise RuntimeError(f'{source}: an include reads {relative}, which is not '
+                                       'tracked; `git ls-files src` would not copy it')
+            else:
+                if relative.parent != Path('.'):
+                    # `git ls-files` is the manifest the copy is built from,
+                    # so an untracked file in a subdirectory would be dropped
+                    # between derivation and copy and only surface later as a
+                    # misleading "missing from the copy". Refuse it here, the
+                    # same way the `src/` branch does. Root-level files are
+                    # different: they are copied by name, so an uncommitted
+                    # one still gets carried.
+                    if not _tracked_but_deleted(relative):
+                        raise RuntimeError(f'{source}: an include reads {relative}, which is '
+                                           'not tracked; `git ls-files` would not copy it')
+                    # A repository-root file has no directory worth copying:
+                    # `git ls-files -- .` would drag in the whole tree.
+                    directories.add(relative.parent)
+                files.add(relative)
+            if not required and relative not in scanned:
+                # Only `include!` / `#[path]` pull in a Rust fragment. An
+                # `include_str!` target is data: scanning it for macros would
+                # invent calls out of a JSON payload.
+                pending.append(relative)
+    return tuple(sorted(directories)), tuple(sorted(files))
+
+
+def source_copy(root):
+    """Copy tracked workspace inputs, including pending fixes, never target/.env.
+
+    "Workspace inputs" is `src/` plus whatever `src/` reads at compile time
+    from elsewhere in the repository (#1570, see `compile_inputs`).
+    """
+    # One list for both halves: the scan is told exactly which `src/` files to
+    # read, and the copy is built from that same list. Listing the index twice
+    # would let a file added in between be copied without ever being scanned,
+    # so an `include!` it holds would never become an edge (#1570 r14 codex).
+    sources = _tracked('src')
+    # sha256 of every file the scan read, filled by the scan itself: comparing
+    # the copy against these bytes is what proves the derivation and the copy
+    # came from the same tree, including fragments outside `src/`.
+    read = {}
+    directories, files = compile_inputs(sources=sources, read=read)
+    paths = list(sources)
+    seen = set(paths)
+    for path in _tracked(*directories):
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    # `compile_inputs` leaves root-level inputs out of `directories`, so add
+    # those files back instead of asking git for everything under `.`.
+    for path in root_level_inputs(directories, files):
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    # A pending repair can delete a tracked file; `git ls-files` still lists
+    # it. Inside `src/` the deleted file is skipped: the tree does not compile
+    # either way, so a faithful copy is INVALID for a reason that is printed
+    # below (#1570 r11 arbitration). An input *directory* outside `src/` is
+    # copied whole because its siblings are read at run time
+    # (`specs/gateway-coverage/ledger.json`), and such a read is not in the
+    # include graph: skipping a deleted member there leaves a copy that fails
+    # at run time and reads as INVALID with nothing in the log (#1570 r14
+    # concurrency). Refuse instead.
+    for path in paths:
+        if not (REPO / path).is_file():
+            if any(directory in path.parents for directory in directories):
+                raise RuntimeError(f'source_copy: {path} is a tracked member of an input '
+                                   'directory but is deleted in the working tree; the copy '
+                                   'would silently come up short, so refusing to run the '
+                                   'control')
+            print(f'source_copy: tracked file deleted in the working tree, not copied: {path}',
+                  flush=True)
+            continue
         destination = root / path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(REPO / path, destination)
-    shutil.copyfile(REPO / 'LICENSE', root / 'LICENSE')
-    # rustup must keep the repository toolchain when Cargo runs in /tmp.
-    shutil.copyfile(REPO / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+        _copy_input(path, destination)
+    # `rustup` must keep the repository toolchain when Cargo runs in /tmp, and
+    # `LICENSE` rides along for the same "workspace inputs" promise. Both can
+    # be deleted by a pending repair like any other tracked file, so they get
+    # the same skip-and-say-it-out-loud treatment as the loop above instead of
+    # a bare `FileNotFoundError` that reads as "ran and failed".
+    for name in ('LICENSE', 'rust-toolchain.toml'):
+        if not (REPO / name).is_file():
+            print(f'source_copy: {name} is missing from the working tree, not copied',
+                  flush=True)
+            continue
+        shutil.copyfile(REPO / name, root / name)
+    # #1570: prove the inputs landed instead of trusting the write loop.
+    verify_copy(root, files)
+    copied = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+              for path in read if (root / path).is_file()}
+    if copied != read:
+        raise RuntimeError('the scratch copy does not match the sources the scan read; '
+                           'the tree changed while the copy was being made, so refusing '
+                           'to run the control against a moving tree')
+    if set(_tracked('src')) != set(sources):
+        raise RuntimeError('src/ changed while the scratch copy was being made; refusing '
+                           'to run the control against a moving tree')
+    if compile_inputs(sources=sources) != (directories, files):
+        raise RuntimeError('the workspace inputs changed while the scratch copy was being '
+                           'made; refusing to run the control against a moving tree')
     return root / 'src'
 
 

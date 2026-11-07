@@ -11,13 +11,14 @@ SIGTERM and timeouts kill/reap the owned child before removing the copy.
 import hashlib
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
+from negative_control import source_copy
 from negative_process import target_environment
 
 REPO = Path(__file__).resolve().parents[5]
@@ -151,17 +152,15 @@ def main():
             print(f'isolated source copy: {root}', flush=True)
             # Copy tracked inputs, including current uncommitted repairs; never
             # .env, target, git metadata, or any other worktree's evidence.
-            files = subprocess.check_output(['git', 'ls-files', '-z', 'src', 'LICENSE'], cwd=REPO)
-            for entry in files.split(b'\0'):
-                if not entry:
-                    continue
-                relative = Path(os.fsdecode(entry))
-                source = REPO / relative
-                if not source.exists():  # intentionally deleted tracked files
-                    continue
-                destination = root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, destination)
+            # `src/` alone is not a build (#1570): the lib test target compiles
+            # `methods/tests.rs`, which reads `specs/gateway-coverage/`, so a
+            # src-only copy fails to compile and every mutation reads INVALID
+            # instead of KILLED. Use the shared `source_copy` so this control
+            # and the shared negative harness cannot drift into two copy loops
+            # that disagree about which inputs exist (the invariant
+            # `negative_control.py` states in `compile_inputs`, and the reason
+            # a new input class used to reach only one of them).
+            source_copy(root)
             target_source = root / RELATIVE
             original = ORIGINAL.decode()
             for label, mutated, test in mutations(original):
