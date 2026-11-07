@@ -36,11 +36,11 @@ negctl 子命令用真实 trace 的变异副本证明这些判据不是空话；
 C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_6 反证。
 
 退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定 ·
-9 输出写失败（ENOSPC / EIO，日志被截断，不算完整证据）· 64 **用法错误**（缺参数 / 场景不在
-`SCENARIOS`：不在册场景会被 C1 判成 NOT_6，用法错误不得冒充「判据被证伪」）。
+9 输出写失败（ENOSPC / EIO，日志被截断，不算完整证据）· 64 **用法/环境错误**（缺参数 / 场景不在
+`SCENARIOS` / 没带 `-I` / 找不到仓库根：不在册场景会被 C1 判成 NOT_6，用法错误不得冒充「判据被证伪」）。
 退出码（`--negctl-out`）：0 全部按期望命中 · 1 证据目录不可用（已存在不覆盖 / 无法创建，
-不覆盖证据）· 64 **用法错误**（场景不在 `SCENARIOS`：负控期望表以在册场景为前提，未登记场景会让
-A/L/N/O 全落成 C1-NOT_6 → 假 `MISMATCH`/rc=4）· 3 基线不可用
+不覆盖证据）· 64 **用法/环境错误**（场景不在 `SCENARIOS`：负控期望表以在册场景为前提，未登记场景会让
+A/L/N/O 全落成 C1-NOT_6 → 假 `MISMATCH`/rc=4；同码也含没带 `-I` / 找不到仓库根）· 3 基线不可用
 （无有效轮次 / 轮次目录名不合规 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
 4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的退出码）· 9 装置自身崩溃（已删半成品
 证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
@@ -67,8 +67,15 @@ import tempfile
 import traceback
 from collections import Counter
 
+# 命令行**用法错误**的统一退出码：缺参数 / 场景不在册 / 没带 `-I` / 找不到仓库根。
+# 不能沿用 2：`run` 的 2 是「反证命中（已证伪）」，用法错误落 2 会被按 rc 判停的复查读成
+# 「判据被证伪」；也不能沿用 1：negctl 的 1 是「证据目录不可用」，会被读成「换个目录名重跑」
+# （#2031 r2 sibling/boundary P2）。64 = sysexits 的 EX_USAGE，不进任何结论表。
+EXIT_USAGE = 64
+
 if not sys.flags.isolated:
-    raise SystemExit('run with -I')
+    print(f'用法错误：本装置必须用 `python3 -I` 运行（隔离模式；rc={EXIT_USAGE}）', file=sys.stderr)
+    raise SystemExit(EXIT_USAGE)
 
 
 def _repo_root():
@@ -85,17 +92,16 @@ def _repo_root():
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            raise SystemExit(f'repo root not found: 从 {here} 向上没有 scripts/parity/g03_compare.py')
+            # 环境/用法错误，不是「证据目录不可用」：必须与 negctl 的 rc=1 分开（#2031 r2）。
+            print(f'用法错误：repo root not found（从 {here} 向上没有 scripts/parity/g03_compare.py；'
+                  f'rc={EXIT_USAGE}）', file=sys.stderr)
+            raise SystemExit(EXIT_USAGE)
         cur = parent
 
 
 REPO = _repo_root()
 G03 = f'{REPO}/scripts/parity/g03_compare.py'
 SCENARIOS = ('deadline', 'deadline_during_tool')
-# 命令行**用法错误**（缺参数 / 场景不在册）的统一退出码。不能沿用 2：`run` 的 2 是
-# 「反证命中（已证伪）」，用法错误落 2 会被按 rc 判停的复查读成「判据被证伪」
-# （#2031 r2 boundary P2）。64 = sysexits 的 EX_USAGE，不进任何结论表。
-EXIT_USAGE = 64
 FAIL_CLOSED = 'result_unknown_fail_closed'
 GSF_TEXT = ('AgentLoop terminal outcome is result_unknown and host reconciliation '
             'found no final result.')
