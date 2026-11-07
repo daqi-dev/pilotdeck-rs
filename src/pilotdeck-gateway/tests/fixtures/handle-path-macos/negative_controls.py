@@ -9,8 +9,9 @@ The two rows target the macOS module body directly — the existing
 attach-followups-a rows pin only the services.rs caller, so this body had no
 mutation on any platform. The bound tests are macOS-only and so are the rows:
 on any other host each row is skipped with evidence (anchor present, module
-cfg-eliminated) and never recorded as KILLED. The Linux-side zero
-discriminative power is proven separately by
+cfg-eliminated), never recorded as KILLED, and the run exits 1 — a SKIPPED row
+is not a green run (`specs/negative-controls/README.md` invariant 2). The
+Linux-side zero discriminative power is proven separately by
 `_tmp/20261107-issue-1990/survive-experiment.py`, which mutates the same two
 anchors on a pristine HEAD tree and records SURVIVED for all five Linux
 handle_path tests.
@@ -28,6 +29,8 @@ FIXTURES = Path(__file__).resolve().parents[1]
 HANDLE_PATH = ROOT / 'src/pilotdeck-gateway/src/handle_path.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -54,6 +57,16 @@ mutations = [
      'handle_path::tests::handle_path_rejects_a_non_utf8_name',
      '#1990 macOS must reject a non-UTF-8 handle path as invalid data'),
 ]
+
+# #1990 fix-r1: the denominator is this literal, never `len(mutations)`.
+# `registered()` compares the two in order and refuses on any drift, so a
+# dropped, renamed, duplicated or reordered row is a startup refusal (rc 2)
+# instead of a silently shorter run that still reports "N/N killed"
+# (`specs/negative-controls/README.md` invariant 1).
+EXPECTED_NAMES = (
+    'macos-getpath-error-swallowed',
+    'macos-utf8-lossy',
+)
 
 
 def test_body(test, texts=None):
@@ -94,14 +107,16 @@ def skip_rows(selected, output):
     A KILLED verdict requires the mutation to be compiled *and* judged; on
     Linux the whole `mod macos` is cfg-eliminated, so a run here can prove
     neither. Stale anchors are still refused (they are textual), and each row
-    records the anchor count it saw, the platform, and the cfg guard.
+    records the anchor count it saw, the platform, and the cfg guard. The
+    exit code is the shared `verdict_exit`: SKIPPED is never 0, so a consumer
+    that greens on the exit code cannot read this as a finished run.
     """
     results = []
     for name, _path, old, _new, test, assertion in selected:
         count = HANDLE_PATH.read_text().count(old)
         guard = HANDLE_PATH.read_text().count('#[cfg(target_os = "macos")]')
         if count != 1:
-            raise SystemExit(f'#1990 stale anchor for {name}: {count} matches')
+            refuse(f'#1990 stale anchor for {name}: {count} matches')
         reason = (f'macOS-only module body; host is {sys.platform}, the module '
                   f'is compiled out by #[cfg(target_os = "macos")] (guard '
                   f'present {guard}x); anchor present {count}x in the source '
@@ -119,7 +134,7 @@ def skip_rows(selected, output):
                  'per-anchor evidence'}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(f'summary: SKIP={counts["SKIP"]}, SURVIVED=0, INVALID=0', flush=True)
-    return 0
+    return verdict_exit(results, key='status')
 
 
 def main():
@@ -130,24 +145,38 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
+    # Every refusal below happens before any mutation, so it is rc 2 ("this
+    # run never started") and not rc 1 ("ran, not green") — the four-way table
+    # in `specs/negative-controls/README.md`.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
     stale = stale_names()
     if stale:
-        raise SystemExit('#1990 stale anchor/test/assertion bindings: ' + ', '.join(stale))
+        refuse('#1990 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
         print(f'#1990 {len(mutations)} unique anchors and assertion bindings: OK')
         return 0
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
     if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#1990 unknown or repeated mutation')
+        refuse('#1990 unknown or repeated mutation')
     if not args.output:
-        raise SystemExit('#1990 output directory required')
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+        refuse('#1990 output directory required')
     if sys.platform != 'darwin':
-        # Nothing below this line can be judged off-macOS; cargo never starts.
-        return skip_rows(selected, output)
-    if not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1990 caller CARGO_TARGET_DIR required')
+        # Nothing below this line can be judged off-macOS; cargo never starts,
+        # so a caller-owned target is not required here. The evidence
+        # directory is still claimed the shared way (an existing one is a
+        # refusal, not a verdict).
+        return skip_rows(selected, claim_dir(args.output))
+    # #1990 fix-r1: the target is admitted by the one shared rule (absent,
+    # empty, blank, dot, root, repo root, inside `src`) *before* the evidence
+    # directory exists, so a rejected target cannot leave a directory that
+    # reads like a finished run.
+    if missing_target():
+        refuse('#1990 set CARGO_TARGET_DIR to a dedicated target directory')
+    refuse_unusable_target()
+    output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)

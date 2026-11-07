@@ -85,12 +85,29 @@ mod macos {
     use std::io;
     use std::path::PathBuf;
 
-    pub(super) fn opened_path(file: &File) -> io::Result<PathBuf> {
-        let resolved = rustix::fs::getpath(file)?;
-        let bytes = resolved.to_bytes().to_vec();
+    /// The kernel's raw name bytes → a `PathBuf`, rejecting a name that is
+    /// not UTF-8: a lossy spelling names an object that was never opened, so
+    /// it must not reach a caller's containment check (U+FFFD replacements
+    /// are not the vnode's name).
+    ///
+    /// #1990 fix-r1: split out of `opened_path` so the rejection is reachable
+    /// from a unit test with synthetic bytes. No macOS filesystem can host a
+    /// non-UTF-8 file name — APFS/HFS+ answer `EILSEQ` (os error 92) for
+    /// `open(O_CREAT)`, `mkdir` and `create_dir_all` alike, measured on
+    /// darwin 25.6 and 26.6 across two hosts (`runtime::cron::tests::
+    /// non_utf8_names_writable`, `tests/workspace_snapshot.rs`) — so the
+    /// end-to-end fixture this branch used to build cannot exist on the only
+    /// platform the module compiles on, and it panicked before its assertion
+    /// ran (mbp2 macOS 26.6, 2026-11-07).
+    pub(super) fn utf8_path(bytes: Vec<u8>) -> io::Result<PathBuf> {
         String::from_utf8(bytes)
             .map(PathBuf::from)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "the handle path is not UTF-8"))
+    }
+
+    pub(super) fn opened_path(file: &File) -> io::Result<PathBuf> {
+        let resolved = rustix::fs::getpath(file)?;
+        utf8_path(resolved.to_bytes().to_vec())
     }
 }
 
@@ -253,17 +270,54 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn handle_path_rejects_a_non_utf8_name() {
-        // APFS preserves the raw bytes of a non-UTF-8 leaf name, so the
-        // resolved handle path can be non-UTF-8; passing a lossy spelling
-        // on to a containment check would approve a path that was never
-        // opened (U+FFFD replacements are not the object's name).
+        // #1990 fix-r1: this used to build a real `bad\xff\xfe.bin` file and
+        // assert the rejection end to end. That fixture cannot exist here:
+        // macOS rejects the bytes at `open(O_CREAT)` with EILSEQ (os error
+        // 92), so `fs::write` panicked before the assertion ever ran (mbp2,
+        // macOS 26.6, 2026-11-07: `write the non-UTF-8 named scratch file:
+        // Os { code: 92, kind: Uncategorized, message: "Illegal byte
+        // sequence" }`). The rejection is pinned on the bytes→path step
+        // itself with the same synthetic bytes; the end-to-end half below
+        // runs wherever a filesystem can actually host the name and
+        // announces the skip, with its evidence, where none can.
+        let rejected = super::macos::utf8_path(b"bad\xff\xfe.bin".to_vec());
+        negative_assert!(
+            matches!(&rejected, Err(error) if error.kind() == std::io::ErrorKind::InvalidData),
+            "#1990 macOS must reject a non-UTF-8 handle path as invalid data"
+        );
+        // Positive control on the same step: a UTF-8 name must survive it
+        // byte for byte, so "reject everything" cannot satisfy the
+        // assertion above.
+        let accepted = super::macos::utf8_path(b"/private/tmp/ok-\xe4\xb8\xad.bin".to_vec());
+        negative_assert_eq!(
+            accepted.expect("#1990 macOS must accept a UTF-8 handle path"),
+            PathBuf::from("/private/tmp/ok-\u{4e2d}.bin"),
+            "#1990 the UTF-8 handle path must survive the bytes to path step unchanged"
+        );
         use std::os::unix::ffi::OsStrExt;
         let scratch = Scratch::new("non-utf8");
         let file_path = scratch
             .0
             .join(std::ffi::OsStr::from_bytes(b"bad\xff\xfe.bin"));
-        fs::write(&file_path, b"non-utf8-bytes")
-            .expect("#1990 write the non-UTF-8 named scratch file");
+        match fs::write(&file_path, b"non-utf8-bytes") {
+            Ok(()) => {}
+            Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
+                // The filesystem refuses the name, so no handle for it can
+                // ever be opened: nothing end-to-end is left to measure.
+                // Printed through the raw stderr handle because libtest
+                // captures `eprintln!` for a passing test.
+                crate::test_skip_line::stderr_skip_line(
+                    "handle_path_rejects_a_non_utf8_name: end-to-end half skipped, \
+                     this filesystem rejects non-UTF-8 file names with EILSEQ; \
+                     the bytes-to-path rejection above already ran\n",
+                );
+                return;
+            }
+            Err(error) => panic!(
+                "#1990 write the non-UTF-8 named scratch file failed for a reason \
+                 other than the file name: {error}"
+            ),
+        }
         let file = fs::File::open(&file_path).expect("#1990 open the non-UTF-8 named scratch file");
         let resolved = opened_path(&file);
         negative_assert!(
