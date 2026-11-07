@@ -162,12 +162,25 @@ GUARDED = [
     BASELINE,
     # #2228 MM r6 boundary P1 / DS r6 sibling+concurrency P2 (two families,
     # graded P1): baseline.rs unconditionally compiles its #[path] submodule
-    # tests/common/regeneration_masks.rs, whose include_str! bakes the shared
-    # mask table; the tail-regeneration row's compare()
-    # (runner_tail_tests.rs:521 → baseline.rs:348) executes that code over that
-    # table, so both are runtime judges of this fixture's verdict.
+    # tests/common/regeneration_masks.rs; the tail-regeneration row's compare()
+    # (runner_tail_tests.rs:521 → baseline.rs:348) executes that code, so it is
+    # a runtime judge of this fixture's verdict. r8 (DS r7 concurrency P2#2,
+    # code-verified): the shared mask table stays OUT — regeneration_masks.rs
+    # normalized() early-returns for every fixture but provider-timing and
+    # run-registry (:180-182), so the table is a dead input here and guarding
+    # a cross-fixture shared file would only invite needless INVALID.
     ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
-    FIXTURES / '_shared/regeneration-masks.tsv',
+    # #2228 MM r7 sibling P1: the regeneration row's TS-side judge closure —
+    # generate.mts:16 imports assertBaseline/baselineSourceHashes from
+    # _shared/baseline.mts, which itself imports _shared/generator_guard.mjs
+    # (bindBaseline/recordedSourceHashes) and tests/baseline_source_guard.mjs
+    # (sourceClosureSha256); the regenerated oracle.json bakes their bytes via
+    # sourceCommit/sourceSha256, so concurrent edits during a run must be
+    # caught by the source guard (native-metadata-cwd / native-process /
+    # live-e2e register the same closure).
+    FIXTURES / '_shared/baseline.mts',
+    FIXTURES / '_shared/generator_guard.mjs',
+    ROOT / 'src/pilotdeck-gateway/tests/baseline_source_guard.mjs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

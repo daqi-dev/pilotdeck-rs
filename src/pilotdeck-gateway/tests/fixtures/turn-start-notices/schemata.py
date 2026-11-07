@@ -55,12 +55,23 @@ GUARDED = [
     BASELINE,
     # #2228 r6 (MM boundary P1 / DS sibling+concurrency P2, same class as
     # turn-runner-tail): baseline.rs unconditionally compiles its #[path]
-    # submodule tests/common/regeneration_masks.rs, whose include_str! bakes
-    # the shared mask table; the notices-regeneration row's compare()
-    # executes that code over that table, so both are runtime judges of this
-    # fixture's verdict.
+    # submodule tests/common/regeneration_masks.rs; the notices-regeneration
+    # row's compare() executes that code, so it is a runtime judge of this
+    # fixture's verdict. r8 (DS r7 concurrency P2#2, code-verified): the shared
+    # mask table stays OUT — regeneration_masks.rs normalized() early-returns
+    # for every fixture but provider-timing and run-registry, so the table is
+    # a dead input here and guarding a cross-fixture shared file would only
+    # invite needless INVALID.
     ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
-    FIXTURES / '_shared/regeneration-masks.tsv',
+    # #2228 MM r7 sibling P1: the regeneration row's TS-side judge closure —
+    # generate.mts imports assertBaseline/baselineSourceHashes from
+    # _shared/baseline.mts, which itself imports _shared/generator_guard.mjs
+    # and tests/baseline_source_guard.mjs; the regenerated oracle.json bakes
+    # their bytes, so concurrent edits during a run must be caught by the
+    # source guard (same closure as turn-runner-tail r8).
+    FIXTURES / '_shared/baseline.mts',
+    FIXTURES / '_shared/generator_guard.mjs',
+    ROOT / 'src/pilotdeck-gateway/tests/baseline_source_guard.mjs',
     # #1274 opus-P2 follow-along: the notices-wiring binding runs through
     # factory_tests.rs's #[path] assembly of this module (live_notice and its
     # Scratch/registry helpers live here), so a concurrent edit during a run
@@ -84,6 +95,13 @@ GUARDED = [
     # itself; the bindings inherit via `use super::*` from both parents, so
     # concurrent edits to either must be caught by the source guard.
     SRC / 'runner_tests.rs',
+    # #2228 DS r7 concurrency P2 / MM r7 sibling P2 (two families): the twin
+    # carrier of the chain above — runner_tests.rs also assembles
+    # runner_prompt_tests.rs, whose row() bakes turn-prompt-hooks/oracle.json
+    # into the same binary, so concurrent edits to either must be caught by
+    # the source guard (turn-prompt-hooks registers the mirror pair).
+    SRC / 'runner_prompt_tests.rs',
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
     # #2228 DS r3 P1: the row bindings bake turn-start-notices/oracle.json
     # into the binary (include_str! via runner_notice_tests.rs), the
     # notices-regeneration binding runs turn-start-notices/generate.mts
