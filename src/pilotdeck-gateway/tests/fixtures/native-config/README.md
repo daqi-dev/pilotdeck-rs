@@ -21,7 +21,7 @@ CARGO_TARGET_DIR=<本树独立 target> \
 python3 -I src/pilotdeck-gateway/tests/fixtures/native-config/negative_controls.py --check
 ```
 
-除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被变异源码里（另一头 `negative_assert!` / `negative_assert_eq!` 走 `format!`，锚点本来就是展开后的文本，不进这张表）。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。
+除了逐条变异锚点，`--check` 还校验 `LITERAL_ANCHORS` 表（#2065）：`expect` / `expect_err` 收 `&str`、不做插值，panic 载荷里的 `{label}` 是字面量，所以这类断言串必须逐字出现在被变异源码里（另一头 `negative_assert!` / `negative_assert_eq!` 走 `format!`，锚点本来就是展开后的文本，不进这张表）。新增/改这类锚点时把 `(源码路径, 逐字子串)` 一并登记，否则 `--check` 报错。表项与行的绑定是**逐字相等**：某行断言必须原样等于表里的一条（取源码前缀的行，表里就存那个前缀），所以把行改回比前缀更长的自造后缀会被判 `unbound to any row`；反过来，断言逐字出现在源码里却没登记会被判 `unpinned literal anchor`。
 
 ## 每条变异做什么
 
