@@ -196,16 +196,27 @@ fn gateway_replays_real_ts_wrapper_oracle() {
             let dispatch = gateway
                 .dispatch(method, &params)
                 .unwrap_or_else(|| panic!("#1214 {name} step {i}: {method} must dispatch locally"));
-            let actual = match dispatch {
-                MemoryDispatch::Response(value) => value,
-                // #1456: a thrown wrapper error is a request failure on the
-                // wire; the fixture records the thrown object itself.
-                MemoryDispatch::Error(error) => error.to_js(),
+            // #1456: the oracle records a step's *kind* — `resultJson` when the
+            // TS wrapper returned, `error` when it threw. Both branches used to
+            // be flattened into one JSON value, so replaying an error object as
+            // a successful body (`Err(error) => Response(error.to_js())`, the
+            // pre-#1456 wire shape) still matched all 74 steps. Assert the kind
+            // the fixture recorded, not just the bytes.
+            let (actual, failed) = match dispatch {
+                MemoryDispatch::Response(value) => (value, false),
+                // A thrown wrapper error is a request failure on the wire; the
+                // fixture records the thrown object itself.
+                MemoryDispatch::Error(error) => (error.to_js(), true),
                 MemoryDispatch::Forward => {
                     panic!("#1214 {name} step {i}: this corpus never hits a host boundary")
                 }
             };
             if let Some(result) = step.get("resultJson") {
+                assert!(
+                    !failed,
+                    "#1214 {name} step {i} ({method}): the TS wrapper returned a result; \
+                     answering with a thrown error is the #1456 regression"
+                );
                 let expected = parse_json(
                     text(Some(result))
                         .expect("#1214 resultJson is a string")
@@ -217,6 +228,11 @@ fn gateway_replays_real_ts_wrapper_oracle() {
                     "#1214 {name} step {i} ({method}): wire result must match the TS fixture"
                 );
             } else {
+                assert!(
+                    failed,
+                    "#1214 {name} step {i} ({method}): the TS wrapper threw; answering \
+                     {actual:?} as a successful body is the #1456 regression"
+                );
                 let expected = step
                     .get("error")
                     .expect("#1214 each step records a result or an error")

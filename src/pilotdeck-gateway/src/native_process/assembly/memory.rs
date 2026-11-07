@@ -6,6 +6,7 @@ use super::{
 use crate::metadata::{Metadata, NativeFiles};
 use crate::runtime::project::RuntimeLease;
 use pilotdeck_protocol::JsValue;
+use std::path::Path;
 use std::sync::Arc;
 
 /// `ProjectMemoryRegistry` adapter over the native `ProjectRuntimeRegistry`.
@@ -15,10 +16,16 @@ use std::sync::Arc;
 /// and `..` lexically and matches the registered project catalog, returning
 /// the registered spelling. The earlier exact-code-unit comparison rejected
 /// keys `snapshot_list` accepted for the same project (#1456 item 2).
-/// `memory_management` acquires the current generation, reads
-/// `Resource::MemoryManagement` from the staged context, and keeps that lease
-/// alive for as long as the returned service can be called, returning `None`
-/// when memory management was not staged (provider disabled or absent).
+/// `memory_management` then holds the key to the isolation boundary the
+/// sibling management routes apply (`Requests::admit_management_project`):
+/// the catalog resolves *every* registered project plus the virtual General
+/// workspace, while this process stages one, so a key that folds onto a
+/// different root is rejected instead of reading or wiping the served
+/// project's memory under another project's name. It acquires the current
+/// generation, reads `Resource::MemoryManagement` from the staged context,
+/// and keeps that lease alive for as long as the returned service can be
+/// called, returning `None` when memory management was not staged (provider
+/// disabled or absent).
 struct NativeMemoryRegistry {
     project: Arc<ProjectRuntimeRegistry>,
     project_root: std::path::PathBuf,
@@ -40,16 +47,23 @@ impl NativeMemoryRegistry {
             },
         }
     }
+
+    /// The isolation boundary of the sibling management routes
+    /// (`Options::serves_project`): the key the projection already resolved
+    /// must fold lexically onto the one project this process staged. Both
+    /// sides are `path.resolve`-shaped — `options.project` runs through
+    /// `resolve_process_path` at parse, the key through the project catalog —
+    /// so the comparison is spelling-insensitive but project-exact.
+    fn serves_project(&self, project_key: &JsString) -> bool {
+        project_key.to_utf8().is_ok_and(|key| {
+            crate::metadata::resolve_process_path(Path::new(""), Path::new(&key))
+                .is_ok_and(|path| path == self.project_root)
+        })
+    }
 }
 
 impl ProjectMemoryRegistry for NativeMemoryRegistry {
     fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError> {
-        // A non-UTF-8 served root cannot be named by any JS string; keep the
-        // R19 host boundary instead of lossily folding it onto another
-        // project (unchanged from before #1456).
-        self.project_root
-            .to_str()
-            .ok_or_else(MemoryProviderError::host_required)?;
         self.metadata
             .resolve_dialog_project(project_key)
             .map(JsString::from)
@@ -58,8 +72,21 @@ impl ProjectMemoryRegistry for NativeMemoryRegistry {
 
     fn memory_management(
         &self,
-        _project_key: &JsString,
+        project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
+        // The catalog resolves every registered project plus the virtual
+        // General workspace, while this process stages one. Without this gate
+        // `memory_wipe` carrying another project's key would clear the served
+        // project's memory (#1456) — the same refusal the sibling management
+        // routes return from `Requests::admit_management_project`.
+        if !self.serves_project(project_key) {
+            return Err(MemoryProviderError {
+                name: "DialogGatewayError".into(),
+                code: Some("CAPABILITY_UNAVAILABLE".into()),
+                message: "The isolated native process serves only its configured project.".into(),
+                requires_host: false,
+            });
+        }
         let lease = self
             .project
             .acquire(None)
@@ -203,6 +230,11 @@ mod tests {
         fn root(&self) -> std::path::PathBuf {
             self.0.join("project")
         }
+        /// A second project registered in the same catalog: the catalog-wide
+        /// resolution accepts its key, the isolation gate must not.
+        fn other(&self) -> std::path::PathBuf {
+            self.0.join("other-project")
+        }
     }
     impl Drop for Scratch {
         fn drop(&mut self) {
@@ -210,11 +242,13 @@ mod tests {
         }
     }
 
-    /// The staged provider: `list` returns one item and `dispose` counts, so
-    /// the tests can tell "still serving" from "disposed under the call".
+    /// The staged provider: `list` returns one item, `dispose` and `clear`
+    /// count, so the tests can tell "still serving" from "disposed under the
+    /// call" and "wiped the served project" from "refused a foreign key".
     #[derive(Default)]
     struct FakeMemory {
         list_calls: AtomicUsize,
+        clear_calls: AtomicUsize,
         dispose_calls: AtomicUsize,
     }
     impl MemoryResolver for FakeMemory {
@@ -236,9 +270,11 @@ mod tests {
             Ok(vec![JsValue::from("remembered")])
         }
         fn clear(&self, _scope: &str) -> Result<(), MemoryProviderError> {
+            self.clear_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
         fn clear_session(&self, _session_key: &JsString) -> Result<(), MemoryProviderError> {
+            self.clear_calls.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }
@@ -269,6 +305,14 @@ mod tests {
         std::fs::create_dir_all(&projects).expect("#1456 project catalog entry");
         std::fs::write(projects.join(".cwd"), root.to_string_lossy().as_bytes())
             .expect("#1456 project marker");
+        // A second registered project: the catalog resolves it, this process
+        // does not serve it.
+        let other = scratch.other();
+        std::fs::create_dir_all(&other).expect("#1456 other project directory");
+        let other_entry = home.join("projects/a8-other");
+        std::fs::create_dir_all(&other_entry).expect("#1456 other catalog entry");
+        std::fs::write(other_entry.join(".cwd"), other.to_string_lossy().as_bytes())
+            .expect("#1456 other project marker");
         let mut env = Env::new();
         env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
         let provider_in_factory = Arc::clone(provider);
@@ -416,6 +460,72 @@ mod tests {
                 "#1456 {foreign:?} rejection message"
             );
         }
+        // The catalog is wider than this process. Another registered project
+        // and the virtual General workspace both resolve there, so the
+        // isolation gate — not the resolution — is what must refuse them
+        // (#1456: `memory_wipe` used to clear the served project's memory
+        // under another project's key).
+        let others = [
+            scratch.other().to_string_lossy().into_owned(),
+            scratch.home().to_string_lossy().into_owned(),
+        ];
+        for foreign in &others {
+            assert!(
+                registry
+                    .resolve_project_key(&JsString::from(foreign.clone()))
+                    .is_ok(),
+                "#1456 {foreign} is in the project catalog; the gate below is what refuses it"
+            );
+            let Err(error) = registry.memory_management(&JsString::from(foreign.clone())) else {
+                panic!("#1456 {foreign} must not reach the served project's provider");
+            };
+            assert_eq!(
+                error.code.as_deref(),
+                Some("CAPABILITY_UNAVAILABLE"),
+                "#1456 {foreign} refusal code matches the sibling management routes"
+            );
+            assert_eq!(error.name, "DialogGatewayError", "#1456 refusal name");
+            assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                "The isolated native process serves only its configured project.",
+                "#1456 {foreign} refusal message"
+            );
+        }
+        // The wire keeps the refusal as a thrown error and never touches the
+        // served project's provider.
+        let lists = provider.list_calls.load(Ordering::SeqCst);
+        let clears = provider.clear_calls.load(Ordering::SeqCst);
+        for method in ["memory_list", "memory_wipe"] {
+            for foreign in &others {
+                let params = list_params(foreign);
+                let outcome = gateway
+                    .dispatch(method, &params)
+                    .expect("#1456 memory methods are dispatched here");
+                let MemoryDispatch::Error(error) = &outcome else {
+                    panic!("#1456 {method} for {foreign} must answer ok:false, got {outcome:?}");
+                };
+                assert_eq!(
+                    error.code(),
+                    Some("CAPABILITY_UNAVAILABLE"),
+                    "#1456 {method} {foreign} wire code"
+                );
+                assert_eq!(
+                    String::from_utf16_lossy(error.message().units()),
+                    "The isolated native process serves only its configured project.",
+                    "#1456 {method} {foreign} wire message"
+                );
+            }
+        }
+        assert_eq!(
+            provider.list_calls.load(Ordering::SeqCst),
+            lists,
+            "#1456 a refused key must not list the served project's memory"
+        );
+        assert_eq!(
+            provider.clear_calls.load(Ordering::SeqCst),
+            clears,
+            "#1456 a refused key must not wipe the served project's memory"
+        );
         project.dispose().await.expect("#1456 registry disposal");
     }
 

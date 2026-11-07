@@ -156,6 +156,17 @@ mutations.append((
     '        Ok(Some(resource.management().clone()))',
     'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
     '#1456 the returned service must own a generation lease'))
+# #1456 review (two lineages): the widened catalog resolution also accepts
+# every *other* registered project and the virtual General workspace; without
+# the isolation gate `memory_wipe` with a foreign key clears the served
+# project's memory.
+mutations.append((
+    'memory-foreign-project-served',
+    ASSEMBLY_MEMORY,
+    '        if !self.serves_project(project_key) {',
+    '        if false && !self.serves_project(project_key) {',
+    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    'must not reach the served project'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
 mutations.append(('capability-resolve_settings', REQUESTS, '"resolve_settings",', '"unwired_resolve_settings",', HOST, '#1231 exact wired capability set'))
@@ -347,7 +358,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 96
+EXPECTED_TOTAL = 97
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -406,6 +417,7 @@ EXPECTED_NAMES = (
     'memory-error-as-success',
     'memory-project-key-exact-only',
     'memory-lease-dropped',
+    'memory-foreign-project-served',
     'capability-resolve_settings',
     'submit-workspace-id-unwired',
     'submit-snapshots-unwired',
