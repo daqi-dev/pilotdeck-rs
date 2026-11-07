@@ -4673,6 +4673,96 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 11 (codex r7 five P0).
+    ('calibrate-for-target-conditional-literal-rebind', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _items = (md,)\n"
+      "    if _flag:\n"
+      "        _items = ()\n"
+      "    for _x in _items:\n"
+      "        _x.common = object()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-enclosing-binding-after-use', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _early():\n"
+      "        for _x in _items:\n"
+      "            _x.common = object()\n"
+      "    _items = (md,)\n"
+      "    _early()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-tuple-partial-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f, _x = _h, [_h('common', object())]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-comp-partial-shadow', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = _h\n"
+      "    [_f('common', object()) for _h in (None,)]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-assert-msg', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    try:\n"
+      "        assert False, _h\n"
+      "    except AssertionError as _e:\n"
+      "        _e.args[0]('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -5639,6 +5729,47 @@ def calibrate_for_target_method_self(rows):
         'passed=False')
 
 
+def calibrate_for_target_conditional_literal_rebind(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-conditional-literal-rebind."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-conditional-literal-rebind '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_enclosing_binding_after_use(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-enclosing-binding-after-use."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: '
+        'calibrate-for-target-enclosing-binding-after-use flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_tuple_partial_alias(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-tuple-partial-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-tuple-partial-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_comp_partial_shadow(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-comp-partial-shadow."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-comp-partial-shadow flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_assert_msg(rows):
+    """#1953 fix-r1 round 11: calibrate-for-target-assert-msg."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-assert-msg flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -6401,6 +6532,20 @@ JUDGES = {
         'aggregation-audit', calibrate_for_target_class_body_def, False, ()),
     'calibrate-for-target-method-self': (
         'aggregation-audit', calibrate_for_target_method_self, False, ()),
+    'calibrate-for-target-conditional-literal-rebind': (
+        'aggregation-audit', calibrate_for_target_conditional_literal_rebind,
+        False, ()),
+    'calibrate-for-target-enclosing-binding-after-use': (
+        'aggregation-audit',
+        calibrate_for_target_enclosing_binding_after_use, False, ()),
+    'calibrate-for-target-tuple-partial-alias': (
+        'aggregation-audit', calibrate_for_target_tuple_partial_alias,
+        False, ()),
+    'calibrate-for-target-comp-partial-shadow': (
+        'aggregation-audit', calibrate_for_target_comp_partial_shadow,
+        False, ()),
+    'calibrate-for-target-assert-msg': (
+        'aggregation-audit', calibrate_for_target_assert_msg, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
