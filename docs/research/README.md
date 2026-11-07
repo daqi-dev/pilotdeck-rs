@@ -16,3 +16,4 @@
 | [009](009_a19-host-expectations/decision.md) | 2026-10-31 | A19-HOST 逐格期望登记：D4-B 失败面推导决策卡（AI 代批，待人复核） |
 | [010](010_892-aggregation-exit/decision.md) | 2026-10-31 | #1140 包三：deadline native 接线不新增聚合出口（#892 运行时观测口径）决策卡（AI 代批，待人复核） |
 | [011](011_tls-ca-default-extra-trust/audit.md) | 2026-11-07 | A6.4 TLS CA 审计说明：Rust 默认模式多信任 `SSL_CERT_FILE` / `SSL_CERT_DIR` 的 CA（#1865 选项 3，TODO 待复核） |
+| [012](012_phase-a-switch-matrix/matrix.md) | 2026-11-07 | A8.5-pr2 切换状态机矩阵：状态×事件×时机逐格 TS 实测（#1353，含 drain 注入、双 owner 并存与断言表） |
