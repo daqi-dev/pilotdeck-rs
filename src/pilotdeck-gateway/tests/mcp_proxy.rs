@@ -387,7 +387,7 @@ fn json_lines(path: &Path, replacements: &[(String, String)], dedupe: bool) -> V
 /// written, not a record — drop it and let the next poll see the whole thing.
 /// Every newline-terminated line is parsed as strictly as `json_lines` does,
 /// so a mangled record still panics instead of disappearing.
-fn json_lines_polled(path: &Path, replacements: &[(String, String)]) -> Vec<String> {
+fn json_lines_polled(path: &Path, replacements: &[(String, String)], dedupe: bool) -> Vec<String> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -400,7 +400,60 @@ fn json_lines_polled(path: &Path, replacements: &[(String, String)]) -> Vec<Stri
         .map(|line| text(&scrub(&parse_json(line).unwrap(), replacements)))
         .collect();
     entries.sort();
+    if dedupe {
+        entries.dedup();
+    }
     entries
+}
+
+/// #2047: wait for a mock-written request log to reach `expected` **and** stay
+/// there for [`REQUEST_LOG_SETTLE`], then hand back one strict read.
+///
+/// Reaching the set once is not the end of the log: a request that arrives
+/// just behind the expected ones would otherwise be read as "the log is
+/// complete". Any change resets the quiet timer, the [`REQUEST_LOG_TIMEOUT`]
+/// bound still fails (a request that never arrives cannot be laundered into a
+/// pass), and the read used by the caller is [`json_lines`] — so a record that
+/// changes or arrives between the settle and that read still fails.
+async fn settled_json_lines(
+    path: &Path,
+    replacements: &[(String, String)],
+    dedupe: bool,
+    expected: &[String],
+    label: &str,
+) -> Vec<String> {
+    let started = std::time::Instant::now();
+    let deadline = started + REQUEST_LOG_TIMEOUT;
+    let mut matched_since: Option<std::time::Instant> = None;
+    loop {
+        let current = json_lines_polled(path, replacements, dedupe);
+        if current == expected {
+            let since = *matched_since.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= REQUEST_LOG_SETTLE {
+                break;
+            }
+        } else {
+            matched_since = None;
+        }
+        if std::time::Instant::now() >= deadline {
+            assert_eq!(
+                current,
+                expected,
+                "{label}: did not settle within {:?} (bound {:?}); saw {} of {} recorded entries",
+                started.elapsed(),
+                REQUEST_LOG_TIMEOUT,
+                current.len(),
+                expected.len()
+            );
+            panic!(
+                "{label}: matched the expected set too late in the {:?} window to observe \
+                 {REQUEST_LOG_SETTLE:?} of quiet",
+                started.elapsed()
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    json_lines(path, replacements, dedupe)
 }
 
 /// Child process: drive the client with the environment its parent installed.
@@ -578,57 +631,23 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
         // #2047: the mock writes each request line from Node's event loop, so a
         // loaded runner can land the last line well after the replay child has
         // exited. A fixed sleep is not a timeout — it decides the answer by
-        // timing alone. Poll for the expected set instead, and require it to
-        // hold still for `REQUEST_LOG_SETTLE`: a request that arrives just
-        // behind the expected ones would otherwise be read as "the log is
-        // complete" the moment the shorter set matches. The bound still fails
-        // the case, with what is still missing, so a request that never
-        // arrives cannot be laundered into a pass.
+        // timing alone. Poll for the expected set instead and require it to
+        // hold still for `REQUEST_LOG_SETTLE`; see `settled_json_lines`.
         let expected: Vec<String> = array(field(case, "requests"), "requests")
             .iter()
             .map(text)
             .collect();
-        let started = std::time::Instant::now();
-        let deadline = started + REQUEST_LOG_TIMEOUT;
-        let mut matched_since: Option<std::time::Instant> = None;
-        loop {
-            let current = json_lines_polled(&dir.join("http.jsonl"), &replacements);
-            if current == expected {
-                let since = *matched_since.get_or_insert_with(std::time::Instant::now);
-                if since.elapsed() >= REQUEST_LOG_SETTLE {
-                    break;
-                }
-            } else {
-                matched_since = None;
-            }
-            if std::time::Instant::now() >= deadline {
-                assert_eq!(
-                    current,
-                    expected,
-                    "{id}: server request log did not settle within {:?} (bound {:?}); saw {} of {} recorded requests",
-                    started.elapsed(),
-                    REQUEST_LOG_TIMEOUT,
-                    current.len(),
-                    expected.len()
-                );
-                panic!(
-                    "{id}: server request log matched the expected set but kept changing up to \
-                     the {:?} bound ({REQUEST_LOG_SETTLE:?} of quiet are required)",
-                    started.elapsed()
-                );
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        // The strict read: by now the log has been quiet for the settle window,
-        // so every line is complete and a mangled or extra record fails here.
-        let requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
+        let requests = settled_json_lines(
+            &dir.join("http.jsonl"),
+            &replacements,
+            false,
+            &expected,
+            &format!("{id}: server request log"),
+        )
+        .await;
         assert_eq!(
-            requests,
-            expected,
-            "{id}: server request log after settling for {:?}; saw {} of {} recorded requests",
-            started.elapsed(),
-            requests.len(),
-            expected.len()
+            requests, expected,
+            "{id}: server request log changed between the settle and the final read"
         );
         // The target-side proof for the P0 fix: a caller-supplied
         // `Proxy-Authorization` is either refused before dispatch (the two
@@ -661,12 +680,24 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
             );
         }
         requests_seen += requests.len();
-        let connects = json_lines(&dir.join("proxy.jsonl"), &replacements, true);
+        // Same shape as `http.jsonl`: `proxy.jsonl` is written per CONNECT from
+        // the mock's event loop, so the last line can trail the replay child.
         let expected: Vec<String> = array(field(case, "connects"), "connects")
             .iter()
             .map(text)
             .collect();
-        assert_eq!(connects, expected, "{id}: proxy CONNECT log");
+        let connects = settled_json_lines(
+            &dir.join("proxy.jsonl"),
+            &replacements,
+            true,
+            &expected,
+            &format!("{id}: proxy CONNECT log"),
+        )
+        .await;
+        assert_eq!(
+            connects, expected,
+            "{id}: proxy CONNECT log changed between the settle and the final read"
+        );
         connects_seen += connects.len();
         drop(proxy);
         drop(mock);

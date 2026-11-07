@@ -37,8 +37,13 @@ pinned 时钟 `Date.UTC(2026, 0, 1)`（#1216 金样同款）、计数 taskId `ta
   （8 变异：6 行绑该重放测试，1 行绑全局 list 的 nullish 上限单测，1 行绑
   接纳栅栏 panic 用例，全 KILLED）。
 - runTaskNow 成功格：结果不含时间戳，即便 TS 侧 runAt 由真实时钟折叠
-  （重放仍字节级相等）。这是夹具自身观测不到的点，**不是** Rust/TS 差异，
-  不进 `specs/gateway-parity/diffs/`。
+  （重放仍字节级相等），所以本夹具**观测不到**这一格。
+- #2047 起 Rust 侧只读一次注入时钟、把同一毫秒交给 `createTask`；TS 仍读
+  两次（`CronRuntime.ts` 的 `new Date()` 与 `createTask` 内的
+  `Date.now()`）。于是「两次读跨过毫秒边界」那一格两边分岔：TS 回
+  `One-time Cron tasks must be scheduled in the future.`，Rust 正常启动。
+  这是**有意**消掉的亚毫秒竞态（生产时钟两条路径同源），不是新的语义分歧；
+  该格夹具观测不到，差异账本登记见 #2096。
 
 ## 已知覆盖缺口
 
