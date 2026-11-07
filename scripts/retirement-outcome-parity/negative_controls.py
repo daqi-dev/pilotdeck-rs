@@ -722,12 +722,16 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     keep_ok = stream_ok[:1] + request_ok[:1] if stream_ok else request_ok[:2]
     assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
     shape_probe = request_ok[2]
+    # N10 的注入是「把 keep_ok 之外的行全改成 CAPABILITY_UNAVAILABLE」，归因靠 P5 点名
+    # 探针。P5 的两侧减法（gated 集、延期集）会把这两类方法从判定里扣掉：探针落在
+    # 任何一侧，注入对它都是空操作 → 无违规点名 → SURVIVED（假 FAIL）。两侧都排除。
+    swallowed = CHECK.REGISTERED_UNAVAILABLE_METHODS | CHECK.DEFERRED_UNAVAILABLE_METHODS
     n10_probe = next(row['method'] for row in base_rows
                      if row['method'] not in keep_ok
-                     and row['method'] not in CHECK.DEFERRED_UNAVAILABLE_METHODS)
-    assert n10_probe not in CHECK.DEFERRED_UNAVAILABLE_METHODS, (
-        f'probe {n10_probe} sits in the deferred set; N10 attribution would be '
-        'swallowed by the deferral exemption')
+                     and row['method'] not in swallowed)
+    assert n10_probe not in swallowed, (
+        f'probe {n10_probe} sits in the gated/deferred set; N10 attribution would be '
+        'swallowed by the P5 set subtraction')
     first_row = base_rows[0]['method']
     outcome_probe = ok_rows[2]
     gated = 'memory_list'
@@ -1235,9 +1239,16 @@ def run_positive(positive, out_root, oracle):
     except ValueError as error:
         record.update(verdict='INVALID', reason=f'cannot parse checker output: {error}')
         return record
-    if result.returncode != 0:
+    if result.returncode not in (0, 1):
+        # 与 run_control 同口径：rc2（输入/环境不可用）是「没跑成」，不是判据 FAIL，
+        # 更不能记成「应 PASS 的性质不成立」。
+        record.update(verdict='INVALID',
+                      reason=f'checker exit {result.returncode} (input unusable?): '
+                             f'{result.stdout.strip()[:400]}')
+        return record
+    if result.returncode == 1:
         violations = report.get('violations') if isinstance(report, dict) else None
-        reason = f'checker exit {result.returncode} (expected PASS)'
+        reason = 'checker exit 1 (expected PASS)'
         if violations:
             reason += f'; violations {violations[:3]}'
         record.update(verdict='BROKEN', reason=reason)
