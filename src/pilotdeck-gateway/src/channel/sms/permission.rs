@@ -1164,8 +1164,9 @@ mod tests {
     #[test]
     fn object_siblings_stop_after_the_first_truncation() {
         // A multi-key object: the elided subtree is followed by a sibling key.
-        // Dropping the object branch's `break` writes that sibling, which is
-        // invisible in the single-key objects the other cases use.
+        // Dropping the object branch's `break` writes that sibling's *key*
+        // (the value is still elided by the budget guard), which is invisible
+        // in the single-key objects the other cases use.
         let mut payload = JsObject::new();
         payload.insert(JsString::from("deep"), nested_array(MAX_STRINGIFY_DEPTH));
         payload.insert(
@@ -1181,6 +1182,10 @@ mod tests {
         assert!(
             !text.contains("tail-sibling-marker"),
             "#1929 object siblings after the elided subtree must not be written"
+        );
+        assert!(
+            !text.contains("\"after\""),
+            "#1929 an elided object must not name its following key"
         );
         assert!(
             !text.trim_end().ends_with('}'),
@@ -1250,6 +1255,29 @@ mod tests {
             keyed.len() <= MAX_STRINGIFY_BYTES + 1024,
             "#1929 the oversized key produced {} bytes",
             keyed.len()
+        );
+        assert!(
+            !keyed.contains(": "),
+            "#1929 a truncated key must not be followed by a colon and value"
+        );
+        assert!(
+            !keyed.trim_end().ends_with('}'),
+            "#1929 a truncated key must not close its object"
+        );
+
+        // The cut backs off to a UTF-8 char boundary: a 3-byte character must
+        // never be split, and the marker must still fit inside the bound.
+        let multibyte = "中".repeat(MAX_STRINGIFY_BYTES / 3 + 8);
+        let wide = stringify_indented(&JsValue::String(JsString::from(multibyte.as_str())))
+            .expect("#1929 an oversized multibyte string must still stringify");
+        assert!(
+            wide.contains("\"...\""),
+            "#1929 the oversized multibyte leaf must carry the truncation marker"
+        );
+        assert!(
+            wide.len() <= MAX_STRINGIFY_BYTES + 1024,
+            "#1929 the oversized multibyte leaf produced {} bytes",
+            wide.len()
         );
     }
 
