@@ -919,7 +919,7 @@ impl WeixinChannel {
                     format!("weixin: polled {} message(s)", messages.len()),
                 );
             }
-            self.start_poll_batch(messages);
+            self.start_poll_batch(messages).await;
             self.save_cursor();
         }
     }
@@ -939,7 +939,15 @@ impl WeixinChannel {
     /// structural: walk the whole batch first, then start the messages that
     /// actually suspend. Starting them earlier would let a spawned download
     /// task insert its message before the rest of the batch was even walked.
-    fn start_poll_batch(&self, messages: Vec<JsValue>) {
+    ///
+    /// A download the store rejects *before* it calls the transport is the one
+    /// case where the baseline's ordering is finer than "everything after the
+    /// sync prefix, in completion order": that rejection is already settled
+    /// when `dispatchMessage` reaches its `await`, so Node resumes it in the
+    /// first microtask drain — ahead of any real download, and in batch order
+    /// among themselves. Those messages are therefore run inline here, in
+    /// batch order, before the tasks that wait for bytes are spawned.
+    async fn start_poll_batch(&self, messages: Vec<JsValue>) {
         let mut downloads = Vec::new();
         for message in messages {
             let is_text = message
@@ -957,7 +965,19 @@ impl WeixinChannel {
                 other => self.spawn_dispatch(other),
             }
         }
+        let max_bytes = self.0.attachment_store.max_bytes();
+        let mut spawned = Vec::new();
         for start in downloads {
+            match start {
+                DispatchStart::Inbound { user, message }
+                    if settles_without_io(&message, max_bytes) =>
+                {
+                    self.run_inbound_extraction(user, message).await;
+                }
+                other => spawned.push(other),
+            }
+        }
+        for start in spawned {
             self.spawn_dispatch(start);
         }
     }
@@ -1850,17 +1870,50 @@ struct ExtractedMessage {
     attachments: Vec<ChannelAttachment>,
 }
 
+/// Whether `saveFromUrl` rejects every download item of this message before it
+/// touches the transport, i.e. the message settles without any I/O.
+///
+/// The declared-size guard is the only `saveFromUrl` step that runs before the
+/// transport call (`ImAttachmentStore.ts`, `saveFromUrl`), and only a FILE
+/// item's `file_size` feeds it — the image path passes `bytes: undefined`.
+/// Such a rejection is therefore already settled at the message's first
+/// `await`, and Node resumes it in the first microtask drain, in batch order.
+/// Conservative by construction: any item that needs bytes, and any message
+/// without a download, answers `false` and takes the spawned path.
+fn settles_without_io(message: &JsValue, max_bytes: usize) -> bool {
+    let mut downloads = 0;
+    for action in plan_incoming_items(message) {
+        let IncomingAction::Download { item, kind } = action else {
+            continue;
+        };
+        if kind != AttachmentKind::File {
+            return false;
+        }
+        let declared = item
+            .get("file_item")
+            .and_then(|file| file.get("file_size"))
+            .and_then(JsValue::as_number);
+        if !matches!(declared, Some(bytes) if bytes > max_bytes as f64) {
+            return false;
+        }
+        downloads += 1;
+    }
+    downloads > 0
+}
+
 /// `item.type === MessageItemType.TEXT && item.text_item?.text`: a non-empty
 /// text item, returned as its exact UTF-16 units.
 fn text_item_text(item: &JsValue) -> Option<JsString> {
     if item.get("type") != Some(&JsValue::Number(client::MESSAGE_ITEM_TYPE_TEXT)) {
         return None;
     }
-    item.get("text_item")
-        .and_then(|value| value.get("text"))
-        .and_then(JsValue::as_string)
-        .filter(|text| !text.units().is_empty())
-        .cloned()
+    let text = item.get("text_item")?.get("text")?;
+    // `if (item.text_item?.text)` is a JS truthiness test and the later
+    // `textParts.join("")` stringifies whatever was pushed, so a numeric or
+    // boolean text item still produces a message (the raw value's `String()`),
+    // while `0` / `""` / `false` / `null` skip the item exactly like the
+    // baseline.
+    js_truthy_value(text).then(|| JsString::from(js_template_text(text)))
 }
 
 /// One `item_list` entry reduced to the effect `extractIncomingMessage` has
