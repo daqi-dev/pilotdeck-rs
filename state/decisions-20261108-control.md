@@ -48,3 +48,14 @@
 - 建议与决定：**AI代批，待人复核**采用Unix默认CLI opt-in load_project_bounded及供新入口用的load_snapshot_bounded；普通IO照旧，typed资源拒绝精确返回。非Unix默认CLI保留原load_project，不能把Unix保证变成其他平台普通配置的新前置；新bounded API自身非Unixunsupported，未验Windows、不宣称整crate可编译或平台已支持。
 - 原则与断言：配置读取拒绝不可吞为空或TODO；预算累计包括部分/探测字节，不减计、不重置，fault后read/stat/entries不delegate、process_alive不查。真实FIFO/稀疏超限/32MiB累计IO、snapshot普通/超限、30新TS+14旧frozen与有界真实CLI mock逐项验证。
 - 边界：CLI check只预检并丢弃Config，远端实际module由远端Gateway决定；本地fallback、StaffDeck远程实效和A8仍未完成。这里只限文件读字节/特殊文件，不宣称所有解析内存、故障FS内核IO可中断或跨写者事务；最终mbp2原始日志与源码hash据实登记，未运行不报通过。
+
+## 2026-11-08 · SDK token 文件的 Unix 有界读取
+
+- 卡在哪：SDK文件回退使用无界fs::read，真实完整TS整CLI证明无writer FIFO挂起、65537字节token会完整发送；所有SDK命令族均经此入口。
+- 谁受影响：SDK read_connection的文件来源；argv/env/URL/transport/其他CLI读器不改。58登记worktree只读核sdk.rs及新token.rs无未提交占用后，协调者明确授予本Sol树所有权。
+- 能否撤回：可以，没有数据写入/迁移；普通文件与普通IO/目录错误保持旧合同。新特殊文件/超限拒绝不读pipe内容、不发网络。
+- 动不动尺子/意向：不动冻结装置或旧D1金样；独立D1-SDK-TOKEN-READ-BOUNDS-001未批准、无评分豁免。SDK已合内容/--model专支不重做，A8仍独立。
+- 选项与后果：路径预检不能挡替FIFO/增长；实际fd O_NONBLOCK+普通文件判断+65536+1真实读可限定内存/特殊文件风险，不复制SDK runtime或A装配。保持非Unix旧读器，不臆造Windows保护/实测。
+- 建议与决定：**AI代批，待人复核**采用65536原始字节上限，FIFO/其他已打开特殊文件和超限明确退出1；目录/EACCES等普通IO仍旧token-required。空flag不是空env：真实readValue过滤空flag而回退env；空env不回退，argv/env空白原样、文件UTF8 lossy与trim不变。
+- 原则与断言：读器必须绑定已打开fd，不能以路径预检假称安全；实际增长/替换FIFO barrier、64KiB边界、19格整TS+真实Rust CLI/15命令族资源组合核原件/零连接。延迟3秒writer正控仅TS实际执行，Rustactive pipe不消费不是时序对拍；不以null stdin声称开放stdin等待顺序。
+- 边界：只修SDK文件来源，不称cron/default remote等已保护；旧serializer继续，不扩D1字节顺序判据。故障FS内核IO和跨写者事务不在保证内，真实provider/认证服务和真人签字待验；全部Rust仅mbp2、本机只编辑/离线实采，不推GitHub。

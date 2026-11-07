@@ -4789,3 +4789,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · 默认远端CLI拒绝响应退出（Codex，仅本机）
 
 同ID submit拒绝现经既有关闭路径报错退出，不再继续等final或提交排队第二行；异ID与成功ACK不误结束正常流。mbp2真实TS/旧Rust六格记录确认两秒持续等待及源码缺完成路径，新六格真实子进程与旧矩阵、strict clippy/build全PASS，独立审无确认P0/P1。源码/bin与日志在主仓 `_tmp/20261108-cli-tui/defaultremote-rejection/`，新差异待人复核；下一步整合SDK token本机提交、输入编辑/有界粘贴与HOME路径。未触实际服务、本机不编译、不推GitHub，完整CLI仍未完成。
+
+### 2026-11-08 · SDK token 文件读取安全切片（Codex，本机提交）
+
+SDK文件回退已在Unix接O_NONBLOCK同fd普通文件检查及65536+1有界读取，拒绝FIFO/特殊文件与超限；argv/env优先级、空flag回退/空env不回退、UTF8 lossy+trim、目录/普通IO旧token-required保留，其他读器未改。真实TS19格先采（65537实发、无writer挂起、延迟writer正控），mbp2新token2测试覆盖19金样+15拒绝组合及4个真实fd边界单测，既有SDK/preflight/resume/run/sessions/settings回归全部通过，严格clippy/fmt/build通过，5编译输入hash匹配；证据主仓`_tmp/20261108-cli-sdk-token/r1-evidence/`。独立差异D1-SDK-TOKEN-READ-BOUNDS-001仍未批准、无冻结豁免，仅本机提交；下一步按独立startup路径基线接续，SDK产品保持冻结，不提前标D1/A8/CLI整体完成。
