@@ -522,6 +522,67 @@ impl LiveSession for KernelSession {
                     let receipt=rpc.lock().await.call("execution.history.import",json!({"session_id":kernel_id,"context_ref":context_ref,"expected_revision":0,"idempotency_key":format!("pd-import:{hash}"),"history":transfer["messages"]})).await?;
                     json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true})
                 }
+                "run_get" | "run_reattach" | "run_events" => {
+                    let run = params["runId"]
+                        .as_str()
+                        .ok_or_else(|| error("runId is required."))?;
+                    let mut rpc = rpc.lock().await;
+                    let events = rpc
+                        .call(
+                            "execution.events",
+                            json!({"session_id":kernel_id,"after":0}),
+                        )
+                        .await?;
+                    let root = events
+                        .as_array()
+                        .and_then(|events| {
+                            events.iter().find(|event| {
+                                event["kind"] == "call.accepted"
+                                    && event["correlation_id"] == run
+                                    && event["payload"]["cause_execution_ref"].is_null()
+                            })
+                        })
+                        .and_then(|event| event["call_ref"].as_str())
+                        .ok_or_else(|| error("Original Kernel run identity was not found."))?;
+                    rpc.call(
+                        "execution.get",
+                        json!({"session_id":kernel_id,"call_ref":root}),
+                    )
+                    .await?
+                }
+                "permission_list" => {
+                    let mut rpc = rpc.lock().await;
+                    let facts = recover(&mut rpc, &kernel_id).await?;
+                    let mut requests = Vec::new();
+                    for (request, call) in &facts.waits {
+                        let view = rpc
+                            .call(
+                                "execution.get",
+                                json!({"session_id":kernel_id,"call_ref":call}),
+                            )
+                            .await?;
+                        requests.push(json!({"requestId":request,"executionId":call,"toolName":view["waiting"]["schema"]["tool_name"],"payload":view["waiting"]["schema"]}));
+                    }
+                    json!({"requests":requests})
+                }
+                "steer_turn" => {
+                    let facts = recover(&mut *rpc.lock().await, &kernel_id).await?;
+                    if facts.run.as_deref() != params["runId"].as_str() {
+                        json!({"accepted":false,"reason":if facts.run.is_none(){"no_active_turn"}else{"turn_mismatch"}})
+                    } else {
+                        if params["attachments"]
+                            .as_array()
+                            .is_some_and(|a| !a.is_empty())
+                        {
+                            return Err(error("Kernel steer attachments are not configured."));
+                        }
+                        let call = facts
+                            .call
+                            .ok_or_else(|| error("Original steer execution missing."))?;
+                        let result=rpc.lock().await.call("execution.control",json!({"session_id":kernel_id,"call_ref":call,"kind":"steer","detail":params["message"].as_str().unwrap_or("")})).await?;
+                        json!({"accepted":result=="accepted","outcome":result,"executionId":call})
+                    }
+                }
                 "permission_decide" => {
                     let wait = params["requestId"]
                         .as_str()

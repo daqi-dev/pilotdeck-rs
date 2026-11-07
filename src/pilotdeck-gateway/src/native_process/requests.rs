@@ -152,12 +152,47 @@ impl Requests {
         }))
     }
 }
+impl Requests {
+    fn kernel_owned(&self, session: &JsString) -> Result<bool, RequestError> {
+        if let Some(handle) = self.owner.current_handle(session) {
+            return Ok(handle.backend_kind() == "kernel");
+        }
+        let transcript = super::assembly::transcript_path(&self.options, session);
+        let mut path = transcript.as_os_str().to_os_string();
+        path.push(".backend.json");
+        match std::fs::read(std::path::PathBuf::from(path)) {
+            Ok(bytes) => {
+                let owner: serde_json::Value =
+                    serde_json::from_slice(&bytes).map_err(|e| RequestError::new(e.to_string()))?;
+                Ok(owner["backend"] == "kernel")
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Ok(!std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0)
+                    && self
+                        .env
+                        .get("PILOTDECK_SESSION_BACKEND")
+                        .map(String::as_str)
+                        == Some("kernel"))
+            }
+            Err(e) => Err(RequestError::new(e.to_string())),
+        }
+    }
+}
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
             let memory_enabled = self.memory.is_enabled();
             Ok(object([
                 ("mode", "in_process".into()),
+                (
+                    "sessionBackendDefault",
+                    self.env
+                        .get("PILOTDECK_SESSION_BACKEND")
+                        .map(String::as_str)
+                        .unwrap_or("legacy")
+                        .into(),
+                ),
+                ("kernelProfile", super::kernel_profile::description()),
                 (
                     "sessionCount",
                     JsValue::Number(self.owner.cached_session_count() as f64),
@@ -321,13 +356,21 @@ impl GatewayRequests for Requests {
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;
-            if [
-                "active_turn_snapshot",
-                "read_session_messages",
-                "permission_decide",
-                "reconnect_interaction",
-            ]
-            .contains(&method.as_str())
+            if super::kernel_profile::UNSUPPORTED_SESSION_METHODS.contains(&method.as_str()) {
+                let kernel = match params.get("sessionKey").and_then(JsValue::as_string) {
+                    Some(session) => self.kernel_owned(session)?,
+                    None => {
+                        self.env
+                            .get("PILOTDECK_SESSION_BACKEND")
+                            .map(String::as_str)
+                            == Some("kernel")
+                    }
+                };
+                if kernel {
+                    return Err(RequestError {code:"CAPABILITY_UNAVAILABLE".into(),message:format!("Kernel session profile does not support {method}; its assembly/configuration is pinned. No legacy storage or runtime was changed.").into(),details:Some(Box::new(super::kernel_profile::description())),validation:None});
+                }
+            }
+            if super::kernel_profile::BACKEND_METHODS.contains(&method.as_str())
                 && let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
             {
                 let handle = if let Some(handle) = self.owner.current_handle(session) {
@@ -398,7 +441,30 @@ impl GatewayRequests for Requests {
                         .await
                         .map_err(|e| RequestError::new(e.message))?
                 {
-                    if method == "active_turn_snapshot" {
+                    if method == "run_get" || method == "run_reattach" || method == "run_events" {
+                        let native = value;
+                        let mut projected =
+                            methods::request(self, method.clone(), params.clone()).await?;
+                        if let JsValue::Object(ref mut p) = projected {
+                            p.insert("nativeExecution".into(), native.clone());
+                            if method != "run_events" {
+                                if let Some(state) = native
+                                    .get("state")
+                                    .and_then(JsValue::as_string)
+                                    .and_then(|s| s.to_utf8().ok())
+                                {
+                                    let state = match state.as_str() {
+                                        "needs_human" => "running",
+                                        "cancelled" => "aborted",
+                                        "unknown" => "interrupted",
+                                        other => other,
+                                    };
+                                    p.insert("state".into(), state.into());
+                                }
+                            }
+                        }
+                        value = projected;
+                    } else if method == "active_turn_snapshot" {
                         let mut projection = self
                             .coordinator
                             .snapshot(&crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(

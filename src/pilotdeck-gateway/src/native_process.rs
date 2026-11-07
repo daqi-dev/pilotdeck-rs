@@ -21,6 +21,7 @@ pub use methods::registered_methods;
 pub(crate) use methods::METHODS as SETTINGS_FAMILY_METHODS;
 #[cfg(test)]
 mod channels_tests;
+pub mod kernel_profile;
 #[cfg(test)]
 mod management_tests;
 mod requests;

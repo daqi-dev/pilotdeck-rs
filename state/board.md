@@ -4542,3 +4542,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 Kernel backend 原生会话链及显式历史导入（lane C，候选）
 
 补齐 session.lease_acquire 与续租、超时/取消时关闭占用 socket、journal 查询重开时的 root execution 与 pending wait、Kernel new_session 即落 owner；旧 owner 仍按自己的 backend 路由。新增 export_session_transcript / restore_session_transcript 最小服务：只导入完整工具配对及可校验的内联附件，校验包/附件 sha256，源 quiescent 且无 pending/Unknown，目标为不同新 Kernel 会话，由 Kernel pristine import 与原始 receipt 保证幂等。legacy read_session_messages 现可只读读取投影。focused 原生 UDS 文本→权限→原始 execution.respond→最终事件 / 连接丢失 2/2；hash/工具配对/附件/拒绝 resume 状态 2/2；最新 cargo check 通过。新组合 WS/CLI 由总集成树继续实测；控制器装配、动态配置与其余产品面未被此结果自动验收，下一步是逐方法 ownership 审计并标出能力缺口。
+
+### 2026-11-08 Kernel profile ownership 审计（lane C，候选）
+
+按真实 native owner 挡住旧执行配置/存储旁路：27 个 session 方法明确 CAPABILITY_UNAVAILABLE，避免 PD store 改了却宣称 Kernel 已应用。补齐 native permission_list、steer 与 run_get/reattach/events 的原 execution 查询；describe_server 输出冻结 profile 与未验收标记。文档 `docs/changes/arch/002_kernel-session-backend.md` 与补充矩阵逐项覆盖原 678 ID（集合完全相等），分开记录 9 native backend candidate、6 ingress binding、2 transfer、27 当前 profile unavailable、5 原有 unavailable 和其余 629 未重新验收入口，不将旧账本状态冒充 HEAD 全量行为结果。focused kernel/profile 3/3 通过；真实组合 WS/CLI 及停机期间 PD replay 自动补齐仍由总集成继续验证。
