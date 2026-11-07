@@ -159,38 +159,44 @@ struct Rpc {
 }
 impl Rpc {
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
-        let result=tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let mut phase = format!("{method}:connect");
+        let timed=tokio::time::timeout(std::time::Duration::from_secs(30), async {
             if self.stream.is_none() {
-                self.stream = Some(BufReader::new(
-                    UnixStream::connect(&self.socket).await.map_err(error)?,
-                ));
-                self.exchange(
-                    "initialize",
-                    json!({"abi_version":2,"api_version":"0.1.0","features":[],"node_id":self.node}),
-                )
-                .await?;
+                self.stream=Some(BufReader::new(UnixStream::connect(&self.socket).await.map_err(error)?));
+                phase="initialize".into();
+                self.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":self.node})).await?;
             }
             if method.starts_with("execution.") {
                 if let Some((session,epoch,since))=self.lease.clone() {
                     if since.elapsed()>std::time::Duration::from_secs(60) {
-                        let result=if since.elapsed()>std::time::Duration::from_secs(240) && method=="execution.input" {
-                            self.exchange("session.lease_acquire",json!({"session_id":session,"ttl_ms":300000})).await?
-                        } else { self.exchange("session.lease_renew",json!({"session_id":session,"epoch":epoch,"ttl_ms":300000})).await? };
-                        let epoch=result["data"]["epoch"].as_u64().unwrap_or(epoch);
-                        self.lease=Some((session,epoch,std::time::Instant::now()));
+                        let lease_method=if since.elapsed()>std::time::Duration::from_secs(240)&&method=="execution.input"{"session.lease_acquire"}else{"session.lease_renew"};
+                        phase=lease_method.into();
+                        let renewed=self.exchange(lease_method,json!({"session_id":session,"epoch":epoch,"ttl_ms":300000})).await?;
+                        self.lease=Some((session,renewed["data"]["epoch"].as_u64().unwrap_or(epoch),std::time::Instant::now()));
                     }
                 }
             }
-            self.exchange(method, params).await
-        })
-        .await
-        .map_err(|_| {
-            error("Kernel request timed out; query the original execution before retrying effects.")
-        })?;
+            phase=method.into();
+            self.exchange(method,params).await
+        }).await;
+        let result = match timed {
+            Ok(result) => result,
+            Err(_) => Err(error(format!(
+                "Kernel RPC {phase} timed out after 30 seconds; inspect the original execution before retrying effects."
+            ))),
+        };
         if result.is_err() {
             self.stream = None;
         }
-        result
+        result.map_err(|cause| {
+            let message = format!("Kernel RPC {phase} failed: {}", cause.message);
+            error(message.clone()).with_js_error(crate::runtime::project::RuntimeJsError {
+                name: "KernelBackendError".into(),
+                code: Some("KERNEL_EXECUTION_UNAVAILABLE".into()),
+                message: message.into(),
+                requires_host: false,
+            })
+        })
     }
     async fn exchange(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         self.next += 1;
@@ -221,7 +227,29 @@ impl Rpc {
             }
             let reply: Value = serde_json::from_slice(&bytes).map_err(error)?;
             if reply.get("id").is_none() {
-                continue;
+                // The public ABI2 session methods predate the Scheduler JSON-RPC
+                // wrapper and can return their native {status,effect,data}
+                // envelope directly. Only these known one-request-at-a-time
+                // calls admit that shape; notifications must carry method.
+                if matches!(
+                    method,
+                    "session.create"
+                        | "session.lease_acquire"
+                        | "session.lease_renew"
+                        | "session.lease_release"
+                ) && reply["status"].is_string()
+                    && reply["effect"].is_string()
+                    && reply.get("data").is_some()
+                {
+                    self.stream = Some(stream);
+                    return Ok(reply);
+                }
+                if reply["jsonrpc"] == "2.0" && reply["method"].is_string() {
+                    continue;
+                }
+                return Err(error(format!(
+                    "Kernel RPC {method} received an unrecognized response without request identity."
+                )));
             }
             if reply["id"] != id {
                 return Err(error("Kernel response identity mismatch."));
@@ -1024,6 +1052,129 @@ mod tests {
             session.snapshot().get("status"),
             Some(&JsValue::from("unknown"))
         );
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod abi2_wire_tests {
+    use super::*;
+    use tokio::net::UnixListener;
+    #[tokio::test]
+    async fn abi2_bare_session_envelope_is_a_reply_and_notification_is_not() {
+        let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for method in ["initialize", "session.create", "session.lease_acquire"] {
+                let mut line = String::new();
+                stream.read_line(&mut line).await.unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], method);
+                let reply = match method {
+                    "initialize" => {
+                        json!({"jsonrpc":"2.0","id":request["id"],"result":{"abi_version":2}})
+                    }
+                    "session.create" => {
+                        json!({"data":{"session_id":"local-real-abi2","generation":1},"effect":"advance","epoch":0,"status":"done"})
+                    }
+                    _ => {
+                        json!({"data":{"epoch":1,"expires_at_ms":500000},"effect":"advance","epoch":1,"status":"done"})
+                    }
+                };
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "{}\n{}\n",
+                            json!({"jsonrpc":"2.0","method":"session/events","params":{}}),
+                            reply
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let mut rpc = Rpc {
+            socket: socket.clone(),
+            stream: None,
+            next: 0,
+            node: "test".into(),
+            lease: None,
+        };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            rpc.call("session.create", json!({})),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result["data"]["session_id"], "local-real-abi2");
+        let lease = rpc
+            .call(
+                "session.lease_acquire",
+                json!({"session_id":"local-real-abi2"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(lease["data"]["epoch"], 1);
+        task.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+    #[tokio::test]
+    async fn cancelled_request_discards_its_connection_before_reconnecting() {
+        let socket = std::env::temp_dir().join(format!("pd-kernel-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let task = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                for step in 0..2 {
+                    let mut line = String::new();
+                    stream.read_line(&mut line).await.unwrap();
+                    let request: Value = serde_json::from_str(&line).unwrap();
+                    if attempt == 0 && step == 1 {
+                        let mut tail = String::new();
+                        assert_eq!(stream.read_line(&mut tail).await.unwrap(), 0);
+                        break;
+                    }
+                    let reply =
+                        json!({"jsonrpc":"2.0","id":request["id"],"result":{"attempt":attempt}});
+                    stream
+                        .get_mut()
+                        .write_all(format!("{reply}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let mut rpc = Rpc {
+            socket: socket.clone(),
+            stream: None,
+            next: 0,
+            node: "test".into(),
+            lease: None,
+        };
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(50),
+                rpc.call("execution.get", json!({}))
+            )
+            .await
+            .is_err()
+        );
+        assert!(rpc.stream.is_none());
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            rpc.call("execution.get", json!({})),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(result["attempt"], 1);
         task.await.unwrap();
         std::fs::remove_file(socket).unwrap();
     }

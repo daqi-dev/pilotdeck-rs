@@ -4546,3 +4546,7 @@ READY 本段改动：**改 5 行 + 删 1 行**（六张待人全部消化，96�
 ### 2026-11-08 Kernel profile ownership 审计（lane C，候选）
 
 按真实 native owner 挡住旧执行配置/存储旁路：27 个 session 方法明确 CAPABILITY_UNAVAILABLE，避免 PD store 改了却宣称 Kernel 已应用。补齐 native permission_list、steer 与 run_get/reattach/events 的原 execution 查询；describe_server 输出冻结 profile 与未验收标记。文档 `docs/changes/arch/002_kernel-session-backend.md` 与补充矩阵逐项覆盖原 678 ID（集合完全相等），分开记录 9 native backend candidate、6 ingress binding、2 transfer、27 当前 profile unavailable、5 原有 unavailable 和其余 629 未重新验收入口，不将旧账本状态冒充 HEAD 全量行为结果。focused kernel/profile 3/3 通过；真实组合 WS/CLI 及停机期间 PD replay 自动补齐仍由总集成继续验证。
+
+### 2026-11-08 Kernel ABI2 实际 wire 接续（lane C）
+
+总集成 macmini 原生 WS 试跑定位首个真实组合问题：session.create 的 ABI2 成功包是裸 `{status,effect,data,...}`，先前客户端将无 id 包当通知等待超时。按既有公开 wire 修客户端，只对 session.create/lease 四个已知方法接受裸 envelope；通知仍要求 jsonrpc+method，Scheduler response 仍验原 request id。补 model-session/response-metadata 协商，Kernel 错误保留专用 code，经 submit 传到 UI 的 hint 改为查原 run/execution、不自动重提；超时包含方法和握手阶段。最新 cargo check 已过，裸 create/lease+notification 与取消后新连接测试已加入，正在跑 focused 测试；不改 Kernel wire 适配本客户端。

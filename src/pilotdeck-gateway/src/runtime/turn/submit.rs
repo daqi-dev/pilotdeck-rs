@@ -826,13 +826,16 @@ impl TurnSubmitter {
     async fn publish_failure(&self, run: &RunRef, publisher: &TurnPublisher, error: &SubmitError) {
         let managed = error.code == "SDK_MANAGED_MODEL_DENIED"
             || error.code.starts_with("GATEWAY_ORGANIZATION_")
-            || error.code == "CAPABILITY_UNAVAILABLE";
+            || error.code == "CAPABILITY_UNAVAILABLE"
+            || error.code.starts_with("KERNEL_");
         let code = if managed {
             &error.code
         } else {
             "gateway_submit_failed"
         };
-        let hint = if code == "SDK_MANAGED_MODEL_DENIED" {
+        let hint = if code.starts_with("KERNEL_") {
+            "Inspect the Kernel connection and the original run/execution state. Do not automatically resubmit: an external effect may already have happened."
+        } else if code == "SDK_MANAGED_MODEL_DENIED" {
             "Adjust the SDK session configuration or model selection, then retry."
         } else if error.code.starts_with("GATEWAY_ORGANIZATION_") {
             "The Gateway host policy denied this configuration. Select an allowed model or contact the Gateway administrator."
@@ -958,7 +961,7 @@ impl TurnSubmitter {
                 disallowed_tools: strings(field(input, "disallowedTools")),
             })
             .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
+            .map_err(session_submit_error)?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());
@@ -1041,12 +1044,8 @@ impl TurnSubmitter {
         let mut actual_model = None;
         let mut stream = handle
             .submit(prepared.input, prepared.options)
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
-        while let Some(event) = stream
-            .next()
-            .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?
-        {
+            .map_err(session_submit_error)?;
+        while let Some(event) = stream.next().await.map_err(session_submit_error)? {
             if timed_out.load(Ordering::SeqCst)
                 || !self
                     .owner
@@ -1321,6 +1320,16 @@ fn with_run(mut value: JsValue, run: &RunRef) -> JsValue {
     set(&mut value, "runId", JsValue::String(run.run_id.clone()));
     value
 }
+fn session_submit_error(error: crate::runtime::project::RuntimeError) -> SubmitError {
+    let code = error
+        .js_error()
+        .and_then(|error| error.code.as_ref())
+        .filter(|code| code.starts_with("KERNEL_"))
+        .cloned()
+        .unwrap_or_else(|| "gateway_submit_failed".into());
+    SubmitError::new(&code, error.message)
+}
+
 pub(super) fn error_event(run: &RunRef, code: &str, message: &str, recoverable: bool) -> JsValue {
     object([
         ("type", "error".into()),
