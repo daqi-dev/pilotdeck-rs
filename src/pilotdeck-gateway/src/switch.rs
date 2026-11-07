@@ -41,6 +41,11 @@ use tokio::sync::watch;
 /// `--drain-ms` gate (1..300000, native_process options parsing).
 pub const TIMEOUT_CAP_MS: u64 = 300_000;
 
+/// The slack a machine backstop adds to a face's own budget (A3): long
+/// enough for the face's own internal deadline to fire and be reported
+/// first, short enough to still bound a hung face.
+pub const BACKSTOP_SLACK_MS: u64 = 10_000;
+
 /// The switch phases, matrix §二. `Halted` and `Switched` are terminal: a
 /// halted switch never runs a later face, and only a switched one opened the
 /// new-owner gate.
@@ -107,6 +112,28 @@ impl BoundedTimeout {
 
     pub fn duration(self) -> Duration {
         self.0
+    }
+
+    /// A machine backstop's bound (A3): a face's own budget plus
+    /// [`BACKSTOP_SLACK_MS`]. The shared cap governs operator-supplied
+    /// budgets; a backstop is derived from one, so it may exceed the cap by
+    /// at most the slack. Positive and finite are checked here too — the
+    /// same spelling rules as [`Self::from_millis_f64`], one ceiling
+    /// higher.
+    pub fn backstop_from_millis(ms: f64) -> Result<Self, String> {
+        if !ms.is_finite() {
+            return Err(format!("switch backstop must be finite, got {ms}"));
+        }
+        if ms <= 0.0 {
+            return Err(format!("switch backstop must be positive, got {ms}"));
+        }
+        if ms > (TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS) as f64 {
+            return Err(format!(
+                "switch backstop must be at most {} ms, got {ms}",
+                TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS
+            ));
+        }
+        Ok(Self(Duration::from_secs_f64(ms / 1000.0)))
     }
 }
 
@@ -230,23 +257,24 @@ impl SwitchTimeouts {
     /// own internal deadlines (the WS drain budget; the host shutdown
     /// budget), so each machine bound is the internal budget plus slack —
     /// the machine's timeout is the backstop for a *hung* face (A3), not a
-    /// second copy of the face's own deadline. Clamped to the shared cap:
-    /// at the maximum `--drain-ms` the internal deadlines still bound the
-    /// faces.
+    /// second copy of the face's own deadline. The budget part is capped at
+    /// the shared cap and the slack rides on top: at the maximum
+    /// `--drain-ms` the backstop still sits strictly above the face's own
+    /// deadline instead of racing it (a tie would make the A3 halt fire at
+    /// the same instant and lose the face's own diagnosis).
     pub fn production(drain_budget: Duration) -> Self {
         let base = drain_budget.as_millis() as f64;
-        let with_slack = |extra_ms: f64| {
-            BoundedTimeout::from_millis_f64((base + extra_ms).min(TIMEOUT_CAP_MS as f64))
-                .expect("clamped to TIMEOUT_CAP_MS before validation")
+        let budget = BoundedTimeout::from_millis_f64(base).expect("drain budget is 1..300000 ms");
+        let backstop = |extra_ms: f64| {
+            BoundedTimeout::backstop_from_millis(base.min(TIMEOUT_CAP_MS as f64) + extra_ms)
+                .expect("backstop is inside (0, cap + slack] ms")
         };
-        let base_bound =
-            BoundedTimeout::from_millis_f64(base).expect("drain budget is 1..300000 ms");
         Self {
-            automation: base_bound,
-            entries: with_slack(10_000.0),
-            flush: base_bound,
-            owner: with_slack(10_000.0),
-            handshake: base_bound,
+            automation: budget,
+            entries: backstop(BACKSTOP_SLACK_MS as f64),
+            flush: budget,
+            owner: backstop(BACKSTOP_SLACK_MS as f64),
+            handshake: budget,
         }
     }
 }

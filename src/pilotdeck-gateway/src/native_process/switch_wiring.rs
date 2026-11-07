@@ -31,6 +31,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 use tokio::sync::watch;
 
@@ -122,14 +123,23 @@ impl ProductionFaces {
     /// admission, drain what can be drained, run the S4 half. The machine's
     /// own error stays the one the exit status reports; this returns the
     /// teardown's.
+    ///
+    /// The channel close join is bounded here: a hung channel stop must not
+    /// keep a halted process alive. Entries-scale, like the machine's own
+    /// S2 backstop — the drain budget plus its slack — so a close that
+    /// honors the budget is still joined to completion.
     pub(crate) async fn finish_after_halt(&self) -> Result<(), crate::ProxyError> {
         let close = self.admission.seal();
         let drained = self.phased.drained().await;
-        let close_result = close.await;
+        let close_bound =
+            self.phased.drain_budget() + Duration::from_millis(crate::switch::BACKSTOP_SLACK_MS);
+        let close_result = tokio::time::timeout(close_bound, close).await;
         let finish = self.phased.finish().await;
         let mut failures = Vec::new();
-        if let Err(error) = close_result {
-            failures.push(format!("channel close: {}", error.message()));
+        match close_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => failures.push(format!("channel close: {}", error.message())),
+            Err(_) => failures.push("channel close: exceeded the halt close bound".to_owned()),
         }
         if let Err(error) = finish {
             failures.push(error.to_string());

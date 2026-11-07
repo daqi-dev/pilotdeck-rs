@@ -10,9 +10,10 @@ use super::channels::{NativeChannels, NativeChannelsOptions};
 use super::switch_wiring::{AdmissionGate, ProductionFaces, trigger_stop};
 use crate::runtime::turn::gateway::{GatewayRequests, tests::native_ws_fixture};
 use crate::switch::{Phase, StepFailure, SwitchError, SwitchFaces, SwitchMachine, SwitchTimeouts};
+use crate::test_scratch::Scratch;
 use crate::{native_ws::NativeWsServer, negative_assert};
 use pilotdeck_protocol::{JsValue, parse_json};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -21,28 +22,6 @@ use tokio::{
 };
 
 const DEADLINE: Duration = Duration::from_secs(5);
-
-/// A temporary directory this test owns; removed on drop.
-struct Root(PathBuf);
-impl Root {
-    fn new(label: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "pdrs-1353-switch-{label}-{}-{}",
-            std::process::id(),
-            uuid::Uuid::new_v4()
-        ));
-        std::fs::create_dir(&path).expect("#1353 switch test root");
-        Self(path)
-    }
-    fn path(&self) -> PathBuf {
-        self.0.clone()
-    }
-}
-impl Drop for Root {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// The dispatch fixture's requests: a live `describe_server` is all a
 /// connection needs; no method is ever called by these cases.
@@ -78,9 +57,12 @@ impl GatewayRequests for WiringRequests {
 }
 
 /// A real production face set over a real phased WS run and a real channel
-/// assembly, with the WS budget the caller picks.
-async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces) {
-    let home = Root::new("harness");
+/// assembly, with the WS budget the caller picks. The scratch home is
+/// returned alongside: the channels hold its path, so the caller keeps the
+/// tree alive for as long as the faces are used (dropping it early would
+/// leave the flush face writing into a deleted directory).
+async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces, Scratch) {
+    let home = Scratch::new("1353-switch-harness");
     let host = native_ws_fixture(Arc::new(WiringRequests));
     let server = NativeWsServer::bind(
         "127.0.0.1:0".parse().expect("#1353 harness listen address"),
@@ -92,7 +74,7 @@ async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces)
     .expect("#1353 harness bind");
     let address = server.local_addr().expect("#1353 harness address");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
-        pilot_home: home.path(),
+        pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#1353 harness config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),
         weixin_maker: None,
@@ -104,7 +86,7 @@ async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces)
     let (trigger, trigger_rx) = watch::channel(false);
     let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), drain_budget));
     let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
-    (address, faces)
+    (address, faces, home)
 }
 
 fn bound(ms: u64) -> crate::switch::BoundedTimeout {
@@ -118,9 +100,9 @@ fn bound(ms: u64) -> crate::switch::BoundedTimeout {
 /// returns, before the close's join has resolved.
 #[tokio::test]
 async fn the_seal_linearizes_channel_close_and_listener_stop() {
-    let home = Root::new("seal");
+    let home = Scratch::new("1353-switch-seal");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
-        pilot_home: home.path(),
+        pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#1353 seal config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),
         weixin_maker: None,
@@ -183,7 +165,7 @@ async fn the_seal_linearizes_channel_close_and_listener_stop() {
 /// wiring bug that let flush run early cannot write half-drained state.
 #[tokio::test]
 async fn the_flush_face_rejects_until_the_entries_have_drained() {
-    let (_, faces) = wiring_harness(Duration::from_millis(500)).await;
+    let (_, faces, _home) = wiring_harness(Duration::from_millis(500)).await;
     // The negative-control anchor (`switch-flush-before-drain` deletes the
     // precondition gate): the receipt-emitting assertion leads, so the
     // half-drained flush cannot pass as the drained one.
@@ -209,7 +191,7 @@ async fn the_flush_face_rejects_until_the_entries_have_drained() {
 /// results instead of tearing down again.
 #[tokio::test]
 async fn the_machine_switches_an_idle_production_server() {
-    let (_, faces) = wiring_harness(Duration::from_millis(500)).await;
+    let (_, faces, _home) = wiring_harness(Duration::from_millis(500)).await;
     let machine = SwitchMachine::new(faces.clone(), SwitchTimeouts::uniform(bound(5_000)));
     let gate = machine.gate();
     let phase = machine.phase();
@@ -320,7 +302,7 @@ impl RawClient {
 /// survivor its explicit close(1001, "server switching") before the abort.
 #[tokio::test]
 async fn an_expired_drain_halts_and_the_death_march_closes_the_survivor() {
-    let (address, faces) = wiring_harness(Duration::from_millis(150)).await;
+    let (address, faces, _home) = wiring_harness(Duration::from_millis(150)).await;
     let mut survivor = RawClient::connect(address).await;
     let machine = SwitchMachine::new(faces.clone(), SwitchTimeouts::uniform(bound(5_000)));
     let gate = machine.gate();

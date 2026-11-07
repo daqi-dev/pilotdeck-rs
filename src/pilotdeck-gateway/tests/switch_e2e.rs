@@ -9,10 +9,17 @@
 //! (the `--drain-ms` spelling below) and still exits.
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream,
     process::Command,
     time::timeout,
 };
+
+// The RFC 6455 public handshake sample key, shared with the crate-side
+// tests through the same common file.
+#[path = "common/native_ws_sample.rs"]
+mod native_ws_sample;
+use native_ws_sample::RFC6455_SAMPLE_NONCE;
 
 // The child's own stderr line once it is serving, exactly as the product
 // writes it (`eprintln!("native listening {address}")` in
@@ -134,6 +141,52 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
         advertised,
         "#1353 switch e2e child never advertised listening (last line: {advertisement:?})"
     );
+    // Steady state is actually served before the signal: a client that
+    // completes the WS upgrade against the advertised address proves the
+    // accept loop is live from launch — the phased run the switch later
+    // drives is constructed before the signal wait, so serving must not
+    // wait for SIGTERM (a regression here hangs the upgrade instead of the
+    // clean exit below).
+    let address = advertisement
+        .strip_prefix(NATIVE_LISTENING)
+        .and_then(|rest| rest.strip_prefix(' '))
+        .expect("#1353 switch e2e advertised address");
+    let mut client = timeout(ADVERTISEMENT_BUDGET, TcpStream::connect(address))
+        .await
+        .expect("#1353 switch e2e steady-state connect deadline")
+        .expect("#1353 switch e2e steady-state connect");
+    client
+        .write_all(
+            format!(
+                "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n\
+                 Upgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("#1353 switch e2e steady-state upgrade write");
+    let mut header = Vec::new();
+    timeout(ADVERTISEMENT_BUDGET, async {
+        while !header.ends_with(b"\r\n\r\n") {
+            let mut byte = [0u8; 1];
+            client
+                .read_exact(&mut byte)
+                .await
+                .expect("#1353 switch e2e steady-state upgrade byte");
+            header.push(byte[0]);
+        }
+    })
+    .await
+    .expect("#1353 switch e2e steady-state upgrade deadline");
+    assert!(
+        header.starts_with(b"HTTP/1.1 101"),
+        "#1353 switch e2e steady-state upgrade status, got {}",
+        String::from_utf8_lossy(&header)
+    );
+    // The client's whole job is the upgrade: drop it before the signal, so
+    // the switch below still runs over an idle server (a still-connected
+    // client would expire the drain budget and halt — a different cell).
+    drop(client);
     // The signal the production entry is built around. `kill_on_drop` only
     // SIGKILLs, so the wait below observes the machine's own exit, not this.
     // rustix's safe `kill` wrapper: the workspace forbids `unsafe`, so the
