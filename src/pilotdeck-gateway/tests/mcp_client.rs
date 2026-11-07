@@ -1768,8 +1768,9 @@ async fn list_tools_reports_a_timeout_shaped_schema_error_as_a_timeout() {
 ///    the late handshake settles (`dirRemovedAtClose: false` here,
 ///    `true` in the baseline).
 ///
-/// Registering 1–3 in the accepted-diff ledger is frozen-file work with its
-/// own approval path, so it is tracked in #1751 rather than edited here.
+/// 1–3 are registered in the accepted-diff ledger as human-approved option A
+/// (#1751): `specs/parity/diffs/A6.5-MCP-SESSION-DIR-LIFETIME-001.md` and the
+/// gateway-parity same-ID `-R1` correction.
 #[tokio::test]
 async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     let scratch = Scratch::new("mcp-client-dispose-inflight");
@@ -1838,9 +1839,13 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     // Deliberately NOT asserted here: whether the per-session directory still
     // exists right after `dispose()`. The TS baseline removes it in `close()`
     // (`probe-dispose-inflight.out`: `dirRemovedAtClose: true`) while the port
-    // deletes it only once the late handshake settles, so pinning either way
-    // would freeze an accepted-diff entry that is not registered yet — that
-    // divergence is being raised separately (#401 follow-up).
+    // deletes it only once the late handshake settles. That divergence is now
+    // registered as human-approved option A (#1751:
+    // `specs/parity/diffs/A6.5-MCP-SESSION-DIR-LIFETIME-001.md` plus the
+    // gateway-parity same-ID `-R1` correction), so the ledger no longer
+    // blocks pinning it — with the handshake gated (and the 120 s pinned
+    // timeout not yet fired) the value is deterministic, and the positive
+    // control is left to follow-up #2233 rather than widened here.
     assert_eq!(
         runtime
             .client("mock")
