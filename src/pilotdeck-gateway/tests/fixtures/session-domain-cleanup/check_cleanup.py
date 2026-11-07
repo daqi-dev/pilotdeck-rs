@@ -1686,7 +1686,8 @@ def _bound_literal_elements(node, simple, seen=None, shadowed=()):
     return []
 
 
-def _visible_binding_table(simple, binding_scopes, chain, before=None):
+def _visible_binding_table(simple, binding_scopes, chain, before=None,
+                           certain=None):
     """``name -> values`` as the scope chain *chain* sees them (#1953 r10).
 
     ``_simple_bindings`` is file-wide, so a same-named local of an unrelated
@@ -1696,19 +1697,28 @@ def _visible_binding_table(simple, binding_scopes, chain, before=None):
     within that scope a later literal supersedes the earlier bindings -- an
     earlier value that is not a literal stays in the union, so an ambiguous
     binding still fails closed (GLM boundary r5 P2-5).
+
+    #1953 fix-r1 round 11 (codex r7 P0-1 / P0-2): both of those filters were
+    too eager.  A later literal only supersedes when its assignment provably
+    runs -- ``items = (md,); if flag: items = ()`` still iterates ``md``
+    whenever the flag is false, and the round-10 floor dropped it.  And the
+    use's line number says nothing about a binding in an *enclosing* scope:
+    the inner function resolves it when it is called, which may be long after
+    the use's own line, so only the innermost scope is filtered by line.
     """
     table = {}
     for name, values in simple.items():
-        for level in chain:
+        for index, level in enumerate(chain):
             live = [value for value in values
                     if binding_scopes.get(id(value)) is level
-                    and (before is None
+                    and (before is None or index > 0
                          or getattr(value, 'lineno', 0) <= before)]
             if not live:
                 continue
             literals = [getattr(value, 'lineno', 0) for value in live
                         if isinstance(value, (ast.Tuple, ast.List, ast.Set,
-                                              ast.Dict, ast.Constant))]
+                                              ast.Dict, ast.Constant))
+                        and (certain is None or id(value) in certain)]
             if literals:
                 floor = max(literals)
                 live = [value for value in live
@@ -3209,7 +3219,8 @@ def _scoped_alias_assignments(tree):
             if level is None:
                 break
             level = parents.get(level)
-        return _visible_binding_table(simple, binding_scopes, chain, before)
+        return _visible_binding_table(simple, binding_scopes, chain, before,
+                                      _certain_value_ids(tree))
 
     for scope, node in _walk_scoped(tree):
         if isinstance(node, ast.Assign):
@@ -3502,7 +3513,7 @@ def _statically_false(node):
 
 
 def _assignment_effect(statement, tracked, scope_bound):
-    """``(aliases, fresh)`` an assignment introduces (#1953 fix-r1 round 9).
+    """``(aliases, fresh, copies)`` an assignment introduces (#1953 r9).
 
     ``_f = _h`` does not hand the handle anywhere by itself -- the copy is
     followed instead, so ``_f = _h`` + ``print(_f)`` stays a read while
@@ -3514,39 +3525,53 @@ def _assignment_effect(statement, tracked, scope_bound):
     A target bound to a provably fresh value stops holding the handle
     (``_h = object()``) -- but only when the value really is fresh
     (:func:`_fresh_value`).
+
+    #1953 fix-r1 round 11 (codex r7 P0-3): ``copies`` holds the *elements* of
+    the right-hand side that are pure copies of the handle.  Round 10 skipped
+    the whole right-hand side once one alias turned up, so
+    ``f, x = h, [h('common', <stub>)]`` lost the call that sits in the other
+    element.  Only the copy itself may be skipped; every other element is
+    still an ordinary expression.
     """
     if isinstance(statement, ast.Assign):
         targets, value = statement.targets, statement.value
     elif isinstance(statement, ast.AnnAssign):
         targets, value = [statement.target], statement.value
     else:
-        return set(), set()
+        return set(), set(), set()
     if value is None:
-        return set(), set()
+        return set(), set(), set()
     if len(targets) == 1 and isinstance(targets[0], (ast.Tuple, ast.List)):
         # ``_f, _g = _h, _h`` copies the handle into two names; the positional
         # pairing keeps them aliases instead of reading the bare names in the
         # right-hand tuple as an immediate hand-over (GLM boundary r6 P2-6).
         pairs = _target_value_pairs(targets[0], value)
+        element_wise = True
     else:
         names = [target.id for target in targets if isinstance(target, ast.Name)]
         if len(names) != len(targets):
-            return set(), set()
+            return set(), set(), set()
         pairs = [(name, value) for name in names]
+        element_wise = False
     aliases = set()
     fresh = set()
+    copies = set()
     for name, item in pairs:
         if isinstance(item, ast.Name):
             if item.id in tracked:
                 aliases.add(name)
+                copies.add(id(item))
             continue
         if _fresh_value(item, scope_bound):
             fresh.add(name)
             continue
         # Anything else keeps the conservative answer: no alias, no fresh, and
         # the right-hand side is walked as the ordinary expression it is.
-        return set(), set()
-    return aliases, fresh
+        return set(), set(), set()
+    if aliases and not element_wise:
+        # ``_f = _h``: the single right-hand side *is* the copy.
+        copies = {id(value)}
+    return aliases, fresh, copies
 
 
 # Attributes whose value still is the handle (or the object behind it), so a
@@ -3666,28 +3691,36 @@ def _comprehension_handle_use(node, tracked, scope_bound, aliases):
     (``[h('common', <stub>) for h in (print,)]`` calls ``print``, codex r6
     P1-7); the first iterable is evaluated before that binding exists and is
     still inspected.  Anything else fails closed, as everywhere in this file.
+
+    #1953 fix-r1 round 11 (codex r7 P0-4): only the shadowed *names* leave the
+    tracked set.  Round 10 dropped every name as soon as one target shadowed
+    one of them, so ``f = h; [f('common', <stub>) for h in (None,)]`` looked
+    clean even though ``f`` still is the handle.
     """
     targets = set()
     for generator in node.generators:
-        if not (tracked & targets):
-            if _handle_use(generator.iter, tracked, scope_bound, aliases, False):
-                return True
+        active = tracked - targets
+        if active and _handle_use(generator.iter, active, scope_bound,
+                                  aliases, False):
+            return True
         targets |= set(_target_names(generator.target))
         stopped = False
         for condition in generator.ifs:
-            if not (tracked & targets):
-                if _handle_use(condition, tracked, scope_bound, aliases, True):
-                    return True
+            active = tracked - targets
+            if active and _handle_use(condition, active, scope_bound,
+                                      aliases, True):
+                return True
             if _statically_false(condition):
                 stopped = True
                 break
         if stopped:
             return False
-    if tracked & targets:
+    active = tracked - targets
+    if not active:
         return False
     parts = ([node.key, node.value] if isinstance(node, ast.DictComp)
              else [node.elt])
-    return any(_handle_use(part, tracked, scope_bound, aliases, False)
+    return any(_handle_use(part, active, scope_bound, aliases, False)
                for part in parts)
 
 
@@ -3728,7 +3761,7 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
             # ``class C: print = <writer>`` then ``print(_h)`` inside the same
             # body calls the class attribute, not the builtin (codex r6
             # P0-5).
-            return (_statements_use(statement.body, tracked,
+            return (_class_body_use(statement.body, tracked,
                                     scope_bound | _class_local_names(statement)),
                     set(), set())
         return _nested_scope_uses(statement, tracked, scope_bound), set(), set()
@@ -3740,9 +3773,22 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
         # write even though the value is a fresh container (codex r5 P0-1).
         # Only the pure copy ``_f = _h`` skips its own value -- the copy is
         # followed through ``aliases`` instead.
-        aliases, fresh = _assignment_effect(statement, tracked, scope_bound)
-        if aliases:
+        aliases, fresh, copies = _assignment_effect(
+            statement, tracked, scope_bound)
+        if copies:
             skip = id(statement.value)
+            if isinstance(statement.value, (ast.Tuple, ast.List)):
+                # Round 11 (codex r7 P0-3): only the copies leave the
+                # expression.  ``f, x = h, [h('common', <stub>)]`` calls the
+                # handle from the element that is not a copy, so the whole
+                # right-hand side may never be skipped.
+                for element in statement.value.elts:
+                    if (id(element) in copies
+                            or (isinstance(element, ast.Starred)
+                                and id(element.value) in copies)):
+                        continue
+                    if _handle_use(element, tracked, scope_bound, aliases):
+                        return True, set(), set()
     # A truth test reads the handle: ``if _h:`` / ``while _h:`` / ``assert _h``
     # are not hand-overs (codex r5 P1-5).  Calls inside the test are still
     # inspected -- ``read_only`` stops at a non-read-only callee.
@@ -3751,10 +3797,12 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
         truth_tests.add(id(statement.test))
     elif isinstance(statement, ast.Assert):
         truth_tests.add(id(statement.test))
-        if statement.msg is not None:
-            # ``assert _h, _h`` only formats the message when the assertion
-            # fails; the expression is never handed on (GLM boundary r6 P3).
-            truth_tests.add(id(statement.msg))
+        # #1953 fix-r1 round 11 (codex r7 P0-5): the message is *not* a read.
+        # Round 10 believed it was only formatted on failure, but the failing
+        # assertion keeps the object in ``AssertionError.args``:
+        # ``try: assert False, _h except AssertionError as e:
+        # e.args[0]('common', <stub>)`` writes the receiver.  The message stays
+        # on the ordinary fail-closed path.
     for child in ast.iter_child_nodes(statement):
         if isinstance(child, ast.stmt) or id(child) == skip:
             continue
@@ -3762,6 +3810,45 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
                        id(child) in truth_tests):
             return True, set(), set()
     return False, aliases, fresh
+
+
+def _class_body_use(statements, tracked, scope_bound):
+    """Whether a class body hands a tracked handle on (#1953 fix-r1 r11).
+
+    #1953 fix-r1 round 11 (codex r7 P1): the class namespace shadows an outer
+    name for every statement *after* the one that binds it, so
+    ``class C: _h = lambda *a: None; _h('common', <stub>)`` calls the class
+    attribute and is not a hand-over.  Round 10 passed the outer tracked set
+    through unchanged and turned that clean shape red.  Only a statement
+    written directly in the body rebinds here -- one inside ``if``/``try`` may
+    not run, so the outer handle stays live (fail-closed, exactly like the
+    flat scope scan in :func:`_loop_target_used_after`).
+    """
+    live = set(tracked)
+    for statement in statements:
+        if _handle_use_in_statement(statement, live, scope_bound)[0]:
+            return True
+        live -= _class_body_rebindings(statement)
+    return False
+
+
+def _class_body_rebindings(statement):
+    """Names a class-body statement provably rebinds to a fresh value."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.ClassDef)):
+        # A definition always replaces the class namespace entry.
+        return {statement.name}
+    if isinstance(statement, ast.Assign):
+        targets, value = statement.targets, statement.value
+    elif isinstance(statement, ast.AnnAssign):
+        targets, value = [statement.target], statement.value
+    else:
+        return set()
+    if value is None or not _fresh_value(value):
+        # An alias (``_h = _h``) keeps the handle, and anything else may hold
+        # it, so neither ends the outer name's life.
+        return set()
+    return {target.id for target in targets if isinstance(target, ast.Name)}
 
 
 def _statement_blocks(statement):
@@ -3849,6 +3936,29 @@ def _certain_statements(tree):
             # (codex r6 P0-4).
             mark(node.body)
     return certain
+
+
+_CERTAIN_VALUE_CACHE = {}
+
+
+def _certain_value_ids(tree):
+    """Ids of right-hand sides whose assignment always runs (#1953 r11).
+
+    :func:`_certain_statements` marks statements; the binding table works on
+    right-hand-side nodes, so this is the same set projected onto values.
+    Cached per tree the way ``_object_kinds`` is.
+    """
+    cached = _CERTAIN_VALUE_CACHE.get(id(tree))
+    if cached is not None and cached[0] is tree:
+        return cached[1]
+    certain = _certain_statements(tree)
+    values = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, (ast.Assign, ast.AnnAssign))
+                and id(node) in certain and node.value is not None):
+            values.add(id(node.value))
+    _CERTAIN_VALUE_CACHE[id(tree)] = (tree, values)
+    return values
 
 
 def _loop_target_used_after(tree, scope_root, loop, name):
@@ -4002,7 +4112,8 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     def _visible(scope, before):
         return _visible_binding_table(simple, _binding_scopes,
-                                      list(_chain(scope)), before)
+                                      list(_chain(scope)), before,
+                                      _certain_value_ids(tree))
 
     def _lookup(table, name, scope):
         for level in _chain(scope):
@@ -4359,7 +4470,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
             bindings = scoped_bindings.get(scope)
             if bindings is not None and _resolved_write_helper(
                     node.func, bindings) is None:
-                written = None
+                # #1953 fix-r1 round 11: ``from builtins import setattr as
+                # _sa`` *is* the builtin, but an import leaves no binding for
+                # ``_resolved_write_helper`` to follow, so the guard cleared
+                # the write and ``calibrate-builtin-alias-setattr`` survived.
+                # A spelling the scope never rebinds is the import itself.
+                if not (isinstance(node.func, ast.Name)
+                        and not _bindings_at(bindings, node.func.id, node)
+                        and any('fn:' + name in kinds.get(node.func.id, ())
+                                for name in _MANAGED_WRITE_ATTRS)):
+                    written = None
         if written is not None:
             calls.append((node, scope, loops, written))
         for child in ast.iter_child_nodes(node):
@@ -8979,7 +9099,7 @@ def aggregation_audit():
             ("a tuple unpack that copies the handle",
              "    _f, _g = _h, _h\n", '', 'def main():\n', False),
             ("an assertion message",
-             "    assert _h, _h\n", '', 'def main():\n', False),
+             "    assert _h, _h\n", '', 'def main():\n', True),
             ("a literal bound in another function",
              "    _items = ()\n"
              "    for _m in _items:\n"
@@ -9003,6 +9123,56 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 10)')
+    for _label, _body, _prelude, _signature, _want in (
+            ("a literal rebinding that may not run",
+             "    _items = (md,)\n"
+             "    if _flag:\n"
+             "        _items = ()\n"
+             "    for _x in _items:\n"
+             "        _x.common = object()\n", '', 'def main():\n', True),
+            ("a tuple unpack that only copies one element",
+             "    _f, _x = _h, [_h('common', object())]\n",
+             '', 'def main():\n', True),
+            ("a comprehension target that shadows only one of two names",
+             "    _f = _h\n"
+             "    [_f('common', object()) for _h in (None,)]\n",
+             '', 'def main():\n', True),
+            ("an assertion message that carries the handle",
+             "    try:\n"
+             "        assert False, _h\n"
+             "    except AssertionError as _e:\n"
+             "        _e.args[0]('common', object())\n",
+             '', 'def main():\n', True),
+            ("a class body that rebinds the handle name before the call",
+             "    class _C:\n"
+             "        _h = lambda *a: None\n"
+             "        _h('common', object())\n", '', 'def main():\n', False),
+            ("a builtin write reached through an import alias",
+             "    from builtins import setattr as _bs\n"
+             "    _bs(md, 'common', None)\n", '', 'def main():\n', True),
+    ):
+        _tree = _r9_probe(_body, _prelude, _signature)
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                           frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 11)')
+    # The use sits inside a function whose enclosing scope binds the name
+    # *after* the use's line, so this one cannot go through ``_r9_probe``.
+    if 'md' not in _withdrawn_receivers(
+            ast.parse("def _early():\n"
+                      "    for _x in _items:\n"
+                      "        _x.common = object()\n"
+                      "_items = (md,)\n"
+                      "_early()\n"
+                      "def reader(report):\n"
+                      "    return md.common.aggregate_status(report)[1]\n"),
+            _1953_rel, frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test missed an '
+                        'enclosing-scope binding written after the use '
+                        '(round 11)')
     if 'md' not in _withdrawn_receivers(getattribute_name_probe, _1953_rel,
                                         frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test trusted a '
