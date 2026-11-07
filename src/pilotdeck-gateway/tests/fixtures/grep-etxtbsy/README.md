@@ -53,7 +53,11 @@ paused_poll`）；fdinfo
 读失败不再按 errno 分类放过——**复检 fd 本身的 readlink**，fd 仍在且仍指向
 管道则 fail-closed，fd 已消失（任何 errno：ENOENT/ESRCH/EACCES，本机 6.17
 实测：僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid exec 后→EACCES）即释放
-（`fdinfo_unreadable`，配 Linux 单元测试）；pid 模式 stranger 由 `sleep 5`
+（`fdinfo_unreadable`，配 Linux 单元测试）；#1409 起两级读都按这条口径分开：
+`read_dir` 失败交给来源分类（自身/后代/关系读不出→关；已消失→跳过），
+`read_link` 只有 ENOENT 算释放、其余 errno 一律上报再由来源分类裁决——此前
+两级都是「读不到就 continue」，一条都看不见也照样出干净结论。
+pid 模式 stranger 由 `sleep 5`
 改为停驻 `sleep 30`（与组模式一致，只有守卫 kill 能终结），kill 契约因此可
 判杀。fix-r3（fix-r3 评审 P1-1）：受控用例的暂停改为**事件屏障**——helper
 在算出 `end`、拉起 stranger 后原子发布 `paused` 收据，随后挂起等 `resume`
@@ -247,6 +251,16 @@ panic 用例
 - `boundary-grace-never-evicts`（#1409 第 3 条，Linux，同一单元测试）：
   重检照跑但 `retain(|_| true)` 永不剔除——同一个假 FAIL 换慢路径，同一
   锚点判杀。
+- `blind-source-self-unrelated`（#1409 第 1 条，P1 复审补，Linux，绑定
+  单元测试）：来源分类短路成「一律 Unrelated」——本进程自己也变成可跳过，
+  任何宿主一旦藏起某进程的描述符，扫描都会当成「那里没有」照常出干净结论。
+  绑定 `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`
+  的 `#1409 this process is the scan's own source and must never be
+  skipped`。同一分类里「关系进程正在退出」的收尾重查没有确定性的宿主侧
+  触发（只在一段微秒级内核窗口里成立），不设变异体，改由实测钉住：cb8
+  6.17 上 20 s、289 万次 `/proc/<pid>/fd` 读取里，退出窗口内 `R` 态
+  EACCES 14 次（原始记录 `_tmp/20261107-issue-1409/exit-window-probe.log`），
+  正是重查要吸收的那 14 次——不收尾就会变成健康路径上的假 FAIL。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -279,22 +293,16 @@ python3 -I negative_controls.py --check-anchors
 （或因无关失败 INVALID）——这两个竞态负控是 **Linux 契约**，判杀只在
 Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**非 Linux 上
 的预期结果不同**（#1409 第 4 条更正：此前一段把它们一律写成 SURVIVED）：
-① `boundary-write-end-filter-removed` / `boundary-fdinfo-read-error` /
-`boundary-fdinfo-parse-error` / `stranger-subreaper-removed` /
-`stranger-reap-removed`，以及 #1409 新增的
-`scan-descriptor-dir-unreadable` / `scan-fd-link-unreadable`——被 cfg 掉的
-是扫描或收割的代码路径，绑定用例在非 Linux 上仍然存在且照常通过，宿主观
-测到 **SURVIVED**；② `boundary-fdinfo-unknown-passed` /
-`stranger-pid-kill-removed` / `boundary-grace-removed` /
-`boundary-grace-never-evicts` / `stranger-pid-reap-removed`——绑定的是
-`#[cfg(target_os = "linux")]` 的单元测试或 `pid_mode` 专属用例，非 Linux
-上跑 `--exact` 匹配 0 个测试，正控就被 `passed()` 拒，宿主观测到
-**INVALID**（不是 SURVIVED）。两类名单与其余变异体的条数都由
-`cases` + `SURVIVES_OFF_LINUX` / `INVALID_OFF_LINUX` 派生，`--check-anchors`
-把它与下面两个标记逐项比对，正文不再手写数字。不在契约里的变异体在任意
-unix 宿主上确定性判杀（非 unix 无该测试模块）。
+① `SURVIVES_OFF_LINUX`——被 cfg 掉的是扫描或收割的代码路径，绑定用例在
+非 Linux 上仍然存在且照常通过，宿主观测到 **SURVIVED**；②
+`INVALID_OFF_LINUX`——绑定的是 `#[cfg(target_os = "linux")]` 的单元测试或
+`pid_mode` 专属用例，非 Linux 上跑 `--exact` 匹配 0 个测试，正控就被
+`passed()` 拒，宿主观测到 **INVALID**（不是 SURVIVED）。两份名单不在这里
+手抄，正本就是 `negative_controls.py` 里的同名元组；条数与名单由 `cases` +
+这两个集合派生，`--check-anchors` 把它与下面两个标记逐项比对。不在契约里的
+变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=30 lib=2 test=28 unix=16 linux-survives=9 linux-invalid=5 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts -->
+<!-- mutants: total=31 lib=2 test=29 unix=16 linux-survives=9 linux-invalid=6 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts blind-source-self-unrelated -->
 

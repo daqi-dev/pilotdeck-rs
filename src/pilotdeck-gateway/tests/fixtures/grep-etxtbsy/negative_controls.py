@@ -26,7 +26,12 @@ tests (#1155 fix-r1 review P1; probe: 5 of 7 grep group tests
 watchdog-expired in each of 3 dense runs). macOS uses posix_spawn and
 never shows the write window, so the two race mutants are a Linux contract
 (expected SURVIVED elsewhere), and so are the #1155 scan and reaping
-mutants, which need `/proc` and `PR_SET_CHILD_SUBREAPER`: the scan's
+mutants, which need `/proc` and `PR_SET_CHILD_SUBREAPER`. Off Linux the
+contract splits in two, and the split is the data below, not this prose:
+a mutant whose bound test still exists there reads SURVIVED, while one
+bound to a `#[cfg(target_os = "linux")]` test or a `pid_mode` case
+matches no test at all and reads INVALID (#1409 item 4 corrected an
+earlier paragraph that called every Linux-contract row SURVIVED). The
 access-mode filter (`boundary-write-end-filter-removed`), the fdinfo
 fail-closed branches (`boundary-fdinfo-read-error` /
 `boundary-fdinfo-parse-error`, #1155 fix-r1 review opus row 1, plus
@@ -158,6 +163,9 @@ fdinfo_unit = 'an_unreadable_fdinfo_fails_closed_only_behind_a_live_fd'
 # #1409 item 3: the grace's release case, a Linux-only unit test of the
 # re-check itself (an off-Linux host runs nothing under that name).
 grace_unit = 'a_candidate_that_no_longer_resolves_is_evicted_by_the_grace'
+# #1409 item 1: the classification that decides whether an unreadable source
+# may be skipped — also a Linux-only unit test.
+blind_unit = 'an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -592,8 +600,8 @@ cases = [
     # scan's message inside it — so the binding no longer depends on which
     # downstream assertion the scan error displaces.
     ('boundary-write-end-filter-removed', publication,
-     '''                if access & 0o3 == 0 {''',
-     '''                if false {''',
+     '''                        if access & 0o3 == 0 {''',
+     '''                        if false {''',
      publication_target, dead_stranger, '#1155 a write end of the publication pipe'),
     # #1155 fix-r1 review opus row 1: the scan must fail closed. A fdinfo
     # that cannot be read is an unknown — not a read end — and only the fd's
@@ -726,6 +734,20 @@ cases = [
      '''            .retain(|_| true);''',
      publication_target, grace_unit,
      '#1409 the grace must evict'),
+    # #1409 item 1: the source classification itself. Anyone unreadable is
+    # skipped once the relation check is short-circuited — this process
+    # included — which is the shape that would let a host hide a descendant's
+    # leaked write end and still report a clean scan. Bound to the unit test
+    # that pins "related is never skipped"; the settling re-check for a
+    # task that is still exiting has no deterministic host-side trigger and
+    # stays covered by the measured exit window instead.
+    ('blind-source-self-unrelated', publication,
+     '''    if descended_from_this_process(pid) {
+        settles_into_a_terminal_source(pid)''',
+     '''    if false {
+        settles_into_a_terminal_source(pid)''',
+     publication_target, blind_unit,
+     '#1409 this process is the scan\'s own source and must never be skipped'),
 ]
 
 
@@ -754,6 +776,7 @@ INVALID_OFF_LINUX = (
     'boundary-grace-removed',
     'boundary-grace-never-evicts',
     'stranger-pid-reap-removed',
+    'blind-source-self-unrelated',
 )
 
 
@@ -836,8 +859,13 @@ def main():
             raise
 
     def record(name, test, assertion, status, reason):
-        results.append(dict(mutation=name, test=test, platform=platform_of(name),
-                            assertion=assertion, status=status, reason=reason))
+        # #1409: the platform contract stays out of the row on purpose —
+        # `_negkit/compare_verdicts.py` whitelists row fields and rejects any
+        # other key (exit 2), so a row that grows a field becomes
+        # un-comparable for every consumer. Top-level metadata is ignored
+        # there, and that is where the contract goes (see the summary below).
+        results.append(dict(mutation=name, test=test, assertion=assertion,
+                            status=status, reason=reason))
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
@@ -877,7 +905,14 @@ def main():
             record(name, test, assertion, 'INVALID', reason)
     counts = {state: sum(row['status'] == state for row in results)
               for state in ('KILLED', 'SURVIVED', 'INVALID', 'COMPILED')}
-    (args.out / 'summary.json').write_text(json.dumps(dict(controls=results, counts=counts), indent=2) + '\n')
+    summary = dict(
+        # #1409: the platform contract as top-level metadata, which the shared
+        # comparator ignores (row fields are whitelisted and must not grow).
+        platforms={row['mutation']: platform_of(row['mutation']) for row in results},
+        controls=results,
+        counts=counts,
+    )
+    (args.out / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(counts), flush=True)
     success = 'COMPILED' if args.compile_only else 'KILLED'
     return int(not results or any(row['status'] != success for row in results))
