@@ -74,8 +74,9 @@ def gate(root, environ=None, *, ignored=False):
             ['git', '-C', str(root), 'rev-parse', '--verify', override + '^{commit}'],
             capture_output=True, text=True, errors='replace', timeout=60)
     except (subprocess.SubprocessError, OSError) as error:
-        # r1 boundary#3: a resolver crash (timeout, missing git) is a refusal,
-        # never a traceback that the host triage would misread as exit 1.
+        # #1540 review r1 boundary#3: a resolver crash (timeout, missing git)
+        # is a refusal, never a traceback that the host triage would misread
+        # as exit 1.
         refuse(f'cannot resolve PDRS_NEGATIVE_BASELINE {override!r}: {error}')
     if resolved.returncode != 0:
         refuse(f'cannot resolve PDRS_NEGATIVE_BASELINE {override!r}: '
@@ -107,7 +108,8 @@ def non_head_exit(baseline_source, baseline_sha=None, *, code=0, evidence=None,
     truncate to it, both fail-open against the same mistake.
     """
     if isinstance(code, bool) or not isinstance(code, int) or not 0 <= code < 256:
-        # r1 boundary#2: never let an unusable verdict become a green exit.
+        # #1540 review r1 boundary#2: never let an unusable verdict become a
+        # green exit.
         code = 1
     if code != 0:
         return code
@@ -129,10 +131,13 @@ def non_head_exit(baseline_source, baseline_sha=None, *, code=0, evidence=None,
                     'hostEvidence': False,
                     'exit': NON_HEAD_EXIT}
         if ignored:
-            # r1 boundary#4: the record must not imply the requested tree was
-            # tested when the guard ignored the request and stayed on HEAD.
+            # #1540 review r1 boundary#4 / r2 boundary#4: the record must not
+            # imply the requested tree was tested when the guard ignored the
+            # request and stayed on HEAD — including via ``nonHeadBaseline``,
+            # which keeps its repo-wide meaning "the tested baseline is not
+            # HEAD" (settings-gateway/native-settings define it the same way).
             document.update(baseline='HEAD', requestedBaseline=baseline_sha,
-                            overrideIgnored=True)
+                            overrideIgnored=True, nonHeadBaseline=False)
         temporary = Path(evidence) / 'baseline.json.tmp'
         temporary.write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
         temporary.replace(Path(evidence) / 'baseline.json')

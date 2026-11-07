@@ -110,6 +110,33 @@ class GateTests(unittest.TestCase):
                         '#1540 the crash refusal names the variable too')
 
 
+class RosterTests(unittest.TestCase):
+    longMessage = True
+
+    def test_drifted_roster_refuses_before_claiming(self):
+        # #1540 review r2 boundary#3: the roster guard itself needs a bound
+        # test, or deleting it (or the rows it compares) would stay green in CI.
+        import negative_non_head
+        temp = tempfile.TemporaryDirectory(prefix='negkit-non-head-roster-')
+        self.addCleanup(temp.cleanup)
+        out = Path(temp.name) / 'evidence'
+        trimmed = negative_non_head.VARIANTS[:-1]
+        with patch.object(negative_non_head, 'VARIANTS', trimmed):
+            with redirect_stderr(io.StringIO()) as stderr:
+                try:
+                    negative_non_head.controls(out)
+                except SystemExit as raised:
+                    code = raised.code
+                else:
+                    code = None
+        self.assertTrue(code == 2,
+                        '#1540 a drifted variant roster refuses before any run')
+        self.assertTrue('roster drifted' in stderr.getvalue(),
+                        '#1540 the refusal names the drift')
+        self.assertTrue(not out.exists(),
+                        '#1540 the refusal claims no evidence directory')
+
+
 class VerdictTests(unittest.TestCase):
     longMessage = True
 
@@ -181,7 +208,9 @@ class VerdictTests(unittest.TestCase):
                         '#1540 the ignored flavor still records provenance')
 
     def test_abnormal_verdict_normalizes_to_one(self):
-        for code in (None, 256, True):
+        # #1540 review r2 boundary#1: False is the only input that dies with
+        # the bool clause removed (True == 1 passes any int/range check).
+        for code in (None, False, 256, True, -1):
             with redirect_stdout(io.StringIO()) as stdout:
                 result = non_head.non_head_exit('PDRS_NEGATIVE_BASELINE', self.sha,
                                                 code=code)
@@ -201,6 +230,11 @@ class VerdictTests(unittest.TestCase):
                         and record['overrideIgnored'] is True
                         and record['hostEvidence'] is False,
                         '#1540 the ignored record says HEAD was tested, not the request')
+        # #1540 review r2 boundary#4: "nonHeadBaseline" keeps its repo-wide
+        # meaning "the tested baseline is not HEAD", so an ignored run that
+        # stayed on HEAD must not claim otherwise.
+        self.assertTrue(record['nonHeadBaseline'] is False,
+                        '#1540 the ignored record does not claim a non-HEAD baseline')
 
     def test_without_evidence_directory_nothing_is_written(self):
         with redirect_stdout(io.StringIO()) as stdout:

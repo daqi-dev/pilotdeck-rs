@@ -23,7 +23,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_selection import refuse
+from negative_selection import claim_dir, refuse, registered, select
 import non_head
 import test_non_head as tests
 
@@ -94,16 +94,38 @@ VARIANTS = (
     ('empty-override', 'if not override:', 'if override is None:',
      'GateTests', 'test_empty_override_means_head',
      '#1540 an empty override is unset, not a revision'),
+    # #1540 review r2 sibling#2: the three protections added in review r1
+    # get their own bound variants, or the control would keep reporting
+    # full coverage over code it no longer exercises.
+    ('verdict-normalize',
+     'if isinstance(code, bool) or not isinstance(code, int) or not 0 <= code < 256:',
+     'if False:',
+     'VerdictTests', 'test_abnormal_verdict_normalizes_to_one',
+     '#1540 an unusable verdict must not become a green exit'),
+    ('resolver-crash-refusal',
+     "refuse(f'cannot resolve PDRS_NEGATIVE_BASELINE {override!r}: {error}')",
+     'raise SystemExit(1)',
+     'GateTests', 'test_resolver_crash_refuses',
+     '#1540 a resolver crash is a refusal, never a traceback exit 1'),
+    ('ignored-record-honesty',
+     "document.update(baseline='HEAD', requestedBaseline=baseline_sha,\n"
+     "                            overrideIgnored=True, nonHeadBaseline=False)",
+     'pass',
+     'VerdictTests', 'test_ignored_record_is_honest_about_head',
+     '#1540 the ignored record says HEAD was tested, not the request'),
 )
 
-# r1 boundary#5: frozen roster — deleting or renaming a variant must refuse
-# instead of silently shrinking the control (a count is not a registry, #1538).
+# #1540 review r1 boundary#5: frozen roster — deleting or renaming a variant
+# must refuse instead of silently shrinking the control (a count is not a
+# registry, #1538). Enforced through the shared ``registered()`` so the
+# roster rules (empty, duplicate, drift) stay single-sourced.
 EXPECTED_VARIANTS = (
     'exit-constant', 'head-passthrough', 'failure-passthrough', 'marker-print',
     'marker-exit-code', 'provenance-gate', 'provenance-rename',
     'provenance-direct-write', 'provenance-fields', 'ignored-detail',
     'gate-verify', 'gate-announce', 'gate-ignored-announce', 'gate-refusal',
-    'empty-override',
+    'empty-override', 'verdict-normalize', 'resolver-crash-refusal',
+    'ignored-record-honesty',
 )
 
 
@@ -135,17 +157,19 @@ def run_bound(class_name, method, module, output, label):
 
 def controls(output, selected=None):
     source = Path(non_head.__file__).read_text(encoding='utf-8')
-    chosen = [item for item in VARIANTS if selected is None or item[0] in selected]
-    if not chosen or (selected is not None and set(selected) - {item[0] for item in chosen}):
-        refuse('empty/unknown variant selection: '
-               + ', '.join(item[0] for item in VARIANTS))
-    # r1 boundary#5 / P3#7: validate before touching the filesystem, and pin
-    # the roster so a deleted variant refuses rather than shrinks coverage.
-    names = tuple(item[0] for item in VARIANTS)
-    if names != EXPECTED_VARIANTS:
-        refuse('variant roster drifted: expected '
-               + ', '.join(EXPECTED_VARIANTS) + '; got ' + ', '.join(names))
-    output.mkdir(parents=True, exist_ok=False)
+    # #1540 review r1 boundary#5 / r2 boundary#2 / concurrency#1: validate the
+    # selection and the roster through the shared helpers before touching the
+    # filesystem, then claim the directory the same refusal-first way every
+    # sibling runner does — a repeated name or an existing directory is a
+    # "never started" refusal (2), never a shorter green run or a traceback.
+    if selected is not None and not selected:
+        refuse('empty variant selection')
+    try:
+        chosen = select(VARIANTS, list(selected or ()), always=())
+        registered(VARIANTS, EXPECTED_VARIANTS)
+    except ValueError as error:
+        refuse(str(error))
+    output = claim_dir(output)
     rows = []
     for name, before, after, class_name, method, marker in chosen:
         identity = f'test_non_head.{class_name}.{method}'
