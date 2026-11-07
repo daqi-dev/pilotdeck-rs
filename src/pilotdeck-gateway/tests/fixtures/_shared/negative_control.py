@@ -1132,7 +1132,7 @@ def source_copy(root):
         # The untracked half is a git call too: a failure here used to escape
         # the same way `_tracked` did, one line lower (#1570 r23 codex P2).
         untracked_src = _untracked_files('src')
-    except subprocess.SubprocessError as error:
+    except (subprocess.SubprocessError, OSError) as error:
         # A git failure before anything is copied leaves a bare traceback,
         # which the host triage reads as "ran and failed" instead of "refused
         # to start" -- the #1570 shape. The re-lists after the copy already
@@ -1149,7 +1149,7 @@ def source_copy(root):
     try:
         directories, files = compile_inputs(sources=sources, read=read,
                                             root_identity=root_identity)
-    except subprocess.SubprocessError as error:
+    except (subprocess.SubprocessError, OSError) as error:
         raise RuntimeError(f'cannot derive the workspace inputs ({error}); '
                            'refusing to run the control') from error
     paths = list(sources)
@@ -1162,7 +1162,7 @@ def source_copy(root):
     try:
         tracked_inputs = _tracked(*directories) if directories else ()
         untracked_inputs = _untracked_files(*directories) if directories else []
-    except subprocess.SubprocessError as error:
+    except (subprocess.SubprocessError, OSError) as error:
         raise RuntimeError(f'cannot list the input directories ({error}); '
                            'refusing to run the control') from error
     for path in tracked_inputs:
@@ -1262,8 +1262,16 @@ def source_copy(root):
         written.append(Path(name))
     # #1570: prove the inputs landed instead of trusting the write loop.
     verify_copy(root, files)
-    copied = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-              for path in read if (root / path).is_file()}
+    # The destination side is the control's own 0700 scratch tree, so this is
+    # not the r21 link/FIFO window -- but a read error here (quota, a removed
+    # tmpfs) used to escape as a bare `OSError` and read as "ran and failed",
+    # while the same read four lines below is wrapped (#1570 r23 zai sibling P3).
+    try:
+        copied = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+                  for path in read if (root / path).is_file()}
+    except OSError as error:
+        raise RuntimeError(f'the scratch copy could not be read back ({error}); refusing '
+                           'to run the control against a moving tree') from error
     if copied != read:
         raise RuntimeError('the scratch copy does not match the sources the scan read; '
                            'the tree changed while the copy was being made, so refusing '
@@ -1274,7 +1282,7 @@ def source_copy(root):
     # as something the user is expected to fix (#1570 r20 zai concurrency P3).
     try:
         relisted_src = set(_tracked('src')) | set(_untracked_files('src'))
-    except (RuntimeError, subprocess.SubprocessError) as error:
+    except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         raise RuntimeError('src/ changed while the scratch copy was being made '
                            f'({error}); refusing to run the control against a moving '
                            'tree') from error
@@ -1291,7 +1299,7 @@ def source_copy(root):
     if directories:
         try:
             relisted = set(_tracked(*directories)) | set(_untracked_files(*directories))
-        except (RuntimeError, subprocess.SubprocessError) as error:
+        except (RuntimeError, subprocess.SubprocessError, OSError) as error:
             raise RuntimeError('an input directory changed while the scratch copy was being '
                                f'made ({error}); refusing to run the control against a moving '
                                'tree') from error
@@ -1305,7 +1313,7 @@ def source_copy(root):
     # here even when the index it lists happens to match.
     try:
         unchanged = compile_inputs(sources=sources, root_identity=root_identity)
-    except (RuntimeError, subprocess.SubprocessError) as error:
+    except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         raise RuntimeError('the workspace inputs changed while the scratch copy was being '
                            f'made ({error}); refusing to run the control against a moving '
                            'tree') from error
