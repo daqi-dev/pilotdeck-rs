@@ -889,6 +889,31 @@ class ImportIsolation(unittest.TestCase):
                 self.assertEqual(result.stdout.strip(), json.dumps({'status': status}), message + ': JSON')
                 self.assertEqual(result.stderr, '', message + ': no traceback')
 
+    def test_session_cli_none_or_false_return_is_not_success(self):
+        message = '#1685 a None/False main return must not become exit 0'
+        for value in ('None', 'False'):
+            with self.subTest(value=value):
+                body = ("def _verify_cli_imports(): pass\n"
+                        "def main():\n"
+                        "    print(json.dumps({'status': 'PASS'}))\n"
+                        f"    return {value}\n")
+                result = self.session_dispatch_process(body)
+                self.assertEqual(result.returncode, 2, message + ': ' + result.stderr)
+                self.assertEqual(result.stdout.strip(), json.dumps({'status': 'PASS'}),
+                                 message + ': PASS JSON must still be emitted')
+                self.assertEqual(result.stderr, '', message + ': no traceback')
+
+    def test_guard_run_entry_success_path_is_fail_closed(self):
+        message = '#1685 run_entry must fail closed when main returns None/False'
+        cases = ((None, 2), (False, 2), (0, 0), (1, 1), (2, 2), (3, 3), (True, True))
+        with patch.object(_guard, 'verify_cli_imports', return_value=None):
+            for value, expected in cases:
+                with self.subTest(value=repr(value)):
+                    with self.assertRaises(SystemExit, msg=message) as raised:
+                        _guard.run_entry(lambda: value, 'traceback')
+                    self.assertIs(raised.exception.code, expected,
+                                  message + ': ' + repr(value))
+
     def test_session_cli_preflight_errors_are_blocked(self):
         message = '#166 CLI preflight failure must produce BLOCKED JSON/2'
         for error in ("ValueError('controlled HEAD drift')", "OSError('controlled missing git')",
