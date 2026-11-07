@@ -55,6 +55,7 @@ NEWLINE_GUARD = 'if !line.ends_with(b"\\n") { return false; }'
 def reject_needles():
     """The three kill assertions of the rejects test, each a whole call."""
     return (
+        (OBSERVE, 'listening advertisement observation'),
         (f'negative_assert!(!advertised, "{MARKER_TEMPLATE}");',
          'listening advertisement assertion'),
         (f'negative_assert!(!status.success(), "{MARKER_TEMPLATE}");',
@@ -100,6 +101,14 @@ def shape_needles():
 def observation_needles():
     """The observation pin's five branches, each bound as a whole assertion."""
     return (
+        # The inputs, not only the verdicts: a case whose bytes were trimmed
+        # away keeps its assertion green against a different scenario.
+        (r'&b"native listening 127.0.0.1:4321\n"[..]',
+         'finished advertisement input'),
+        (r'&b"native listening 127.0.0.1:4321"[..]',
+         'EOF half-line input'),
+        ("stream.resize(stream.len() + CHILD_STDERR_LIMIT * 2, b'1');",
+         'unterminated line longer than the byte bound'),
         ('assert!(advertised, "finished advertisement: {collected:?}");',
          'finished advertisement case'),
         ('assert!(!advertised, "line cut by EOF: {collected:?}");',

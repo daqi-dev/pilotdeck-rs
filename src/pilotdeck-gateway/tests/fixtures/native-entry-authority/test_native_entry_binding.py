@@ -196,6 +196,27 @@ class BindingDrift(unittest.TestCase):
     def test_a_missing_budget_elapsed_bound_is_unbound(self):
         self.assertDrift(BUDGET_ELAPSED, '', 'total budget elapsed bound')
 
+    # The case inputs and the rejects test's observation, kept from the old
+    # per-script tables: a verdict assertion alone cannot tell which bytes it
+    # judged.
+    def test_a_trimmed_finished_input_is_unbound(self):
+        self.assertDrift(
+            'read_advertisement(&b"native listening 127.0.0.1:4321\\n"[..], '
+            'silence, budget).await;',
+            'read_advertisement(&b"native listening 127.0.0.1:4321"[..], '
+            'silence, budget).await;',
+            'finished advertisement input')
+
+    def test_a_shortened_byte_bound_input_is_unbound(self):
+        self.assertDrift('CHILD_STDERR_LIMIT * 2', 'CHILD_STDERR_LIMIT',
+                         'unterminated line longer than the byte bound')
+
+    def test_a_missing_rejects_observation_is_unbound(self):
+        self.assertDrift(
+            '        let (collected, advertised) = observe_child_stderr(stderr).await;',
+            '',
+            'listening advertisement observation')
+
 
 class SharedTables(unittest.TestCase):
     """Item 6: one copy of the marker constants and the shared needles."""
