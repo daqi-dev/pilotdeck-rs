@@ -35,14 +35,21 @@ negctl 子命令用真实 trace 的变异副本证明这些判据不是空话；
 是已登记的残余而不是漏判（见 README「C5 残余」）；`N` / `O` 期望 UNKNOWN —— 它们证明
 C0 的自报路径确实把「没比成」判成未判定，而不是折回 NOT_6 反证。
 
-退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定。
+退出码（`run`）：0 归因成功 · 2 反证命中 · 5 有效轮次不足 · 6 批次不完整 · 7 全 PASS 无 FAIL · 8 未判定 ·
+9 输出写失败（ENOSPC / EIO，日志被截断，不算完整证据）。
 退出码（`--negctl-out`）：0 全部按期望命中 · 1 证据目录不可用（已存在不覆盖 / 无法创建，
-不覆盖证据）· 3 基线不可用（无有效轮次 / 轮次目录名不合规 / 基线缺本装置要改的变异点，
-**数据问题，不下判据结论**）· 4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的
-退出码）· 9 装置自身崩溃（已删半成品证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
-进程被 SIGTERM 打断时也会删掉半成品证据目录（入口即装 handler + atexit 兜底）。
-stdout 统一套 `_PipeSafe`：输出接 `| head` 这类短读者时退 120（缓冲）或 1（`-u`）的老毛病不再出现，
-上表里的真实 rc 照旧。
+不覆盖证据）· 2 **用法错误**（场景不在 `SCENARIOS`：负控期望表以在册场景为前提，未登记场景会让
+A/L/N/O 全落成 C1-NOT_6 → 假 `MISMATCH`/rc=4；与 `run` 的 `2`=反证命中是**两张表**）· 3 基线不可用
+（无有效轮次 / 轮次目录名不合规 / 基线缺本装置要改的变异点，**数据问题，不下判据结论**）·
+4 判据被证伪 · 8 有负控未判定（4 优先于 8，汇总行报真正的退出码）· 9 装置自身崩溃（已删半成品
+证据目录；与 `1` 区分开，免得把崩溃读成「目录名已占用」）。
+进程被 SIGTERM 打断时也会删掉半成品证据目录（入口即装 handler + atexit 兜底），退出码是 143
+而不是 `3`「基线不可用」：中断不是数据问题（`rounds()` 抛 `SystemExit(str)`，handler 抛
+`SystemExit(143)`，按 code 类型分开）。
+stdout **与 stderr** 统一套 `_PipeSafe`：输出接 `| head` 这类短读者时退 120（缓冲）或 1（`-u`）的
+老毛病不再出现（`run()` 的无效轮次清单走 stderr，`2>&1 | head -1` 下同样会撞）。
+只吞断管道（`BrokenPipeError`）；其余写失败（ENOSPC / EIO → 日志被截断）**不静默**，
+统一退 rc=9：截断的日志不能被当成完整证据。
 完整语义见 README「退出码」。
 """
 import argparse
@@ -137,6 +144,31 @@ def install_sigterm():
     """
     try:
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    except (ValueError, OSError):
+        pass
+
+
+def _block_sigterm():
+    """在临界区内屏蔽 SIGTERM，返回旧掩码（平台不支持时返回 None）。
+
+    用途：`os.makedirs(outdir)` 成功到 `_PENDING_OUTDIRS.add(outdir)` 之间的窗口一旦被
+    SIGTERM 命中，SystemExit 会在登记之前逃逸，atexit 不认账 → 空证据目录残留，
+    同目录名重跑得 rc=1「已存在」（#2031 第 3 条）。屏蔽后信号在恢复点才送达，
+    那时目录已登记，atexit 能删干净。
+    """
+    try:
+        return signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    except (AttributeError, ValueError, OSError):
+        # 非主线程 / 平台不支持：退回无屏蔽（窗口仍在，但比把信号永久吞掉安全）。
+        return None
+
+
+def _restore_sigmask(old):
+    if old is None:
+        return
+    try:
+        # 被屏蔽期间挂起的 SIGTERM 在这一行之后才送达：此时 add() 已经执行完。
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
     except (ValueError, OSError):
         pass
 
@@ -764,18 +796,49 @@ def build_cases(base_ts, base_ru):
     return cases
 
 
-def _silence_stdout():
-    """把 fd 1 接到 /dev/null：读者已退出（`… | head -1`）后继续往断管道写只会重复抛错。"""
+class OutputFailure(Exception):
+    """装置自身**输出**写失败（ENOSPC / EIO / EBADF …）：日志已被截断，rc 不再代表判定结论。
+
+    与断管道严格分开：读者提前退出（`… | head -1`）是正常用法，吞掉并静音即可；写不进去的盘
+    不是「读者走了」，而是**证据不可信**。混为一谈就是「截断日志当完整证据」（#2031 第 6 条）。
+    """
+
+
+def _silence_stream(stream):
+    """把 stream 的 fd 接到 /dev/null。**先取 fd、再开 /dev/null**：`fileno()` 抛
+    `io.UnsupportedOperation`（`redirect_stdout(StringIO())` 形状，OSError 子类）时不会
+    先开出一个没人关的 fd；无论后面哪步失败，`os.close(devnull)` 都在 `finally` 里
+    （#2031 第 5 条：旧实现先 open 再 fileno，异常时漏 fd）。
+    """
+    try:
+        fd = stream.fileno()
+    except (OSError, ValueError):
+        return
     try:
         devnull = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull, sys.stdout.fileno())
-        os.close(devnull)
+    except OSError:
+        return
+    try:
+        os.dup2(devnull, fd)
     except OSError:
         pass
+    finally:
+        try:
+            os.close(devnull)
+        except OSError:
+            pass
+
+
+def _silence_stdout():
+    _silence_stream(sys.stdout)
+
+
+def _silence_stderr():
+    _silence_stream(sys.stderr)
 
 
 class _PipeSafe:
-    """stdout 包装：读者提前退出时不改写退出码。
+    """stdout / stderr 包装：读者提前退出时不改写退出码，写失败不静默。
 
     只靠 Python 层的 `print` 会在两处翻车，都会把真实 rc（0/2/3/4/8）盖掉 —— 而 #1157 的常驻
     复查是按 rc 判停的：`| head` 读错 rc 会被读成「换名重跑」，甚至把完整证据当没跑完：
@@ -783,41 +846,67 @@ class _PipeSafe:
         traceback → **rc=1**，与 README 登记的「证据目录不可用」撞码；
       · 有缓冲时异常留到解释器退出 flush，CPython 把出口改写成 **120**（实测见 README）。
     实测（2000 个无效轮次，`… | head -1`）：包装前 120 / `-u` 下 1，包装后一律是真实 rc。
+    同一层也套在 **stderr** 上：`run()` 的无效轮次清单走 stderr，`2>&1 | head -1` 同样会撞
+    （#2031 第 1 条）。
+
+    只吞 `BrokenPipeError`。其它 `OSError`（ENOSPC / EIO）说明输出**写不进去**：静音后抛
+    `OutputFailure`，由 `main()` 折成 rc=9 —— 否则日志被截断、rc 照旧，截断的日志会被当成
+    完整证据（#2031 第 6 条）。
     """
 
-    def __init__(self, inner):
+    def __init__(self, inner, silence=None):
         self._inner = inner
+        self._silence = silence
+
+    def _trip(self):
+        (self._silence or _silence_stdout)()
 
     def write(self, s):
         try:
             return self._inner.write(s)
-        except OSError:
-            _silence_stdout()
+        except BrokenPipeError:
+            self._trip()
             return len(s)
+        except OSError as exc:
+            self._trip()
+            raise OutputFailure(f'输出写失败（{exc}）') from exc
 
     def flush(self):
         try:
             self._inner.flush()
-        except OSError:
-            _silence_stdout()
+        except BrokenPipeError:
+            self._trip()
+        except OSError as exc:
+            self._trip()
+            raise OutputFailure(f'输出刷新失败（{exc}）') from exc
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
 
 def _report_crash(exc, outdir):
-    """rc=9 的收尾输出。管道已断（`… | head -1`）或磁盘满时输出本身会抛 OSError：
+    """rc=9 的收尾输出。管道已断（`… | head -1`）或磁盘满时输出本身会失败：
     那时**绝不能**让异常逃出 except 块把 rc 改写成 1（又撞回「目录已存在」的码）。"""
     try:
         traceback.print_exc()
         print(f'## negctl 中断：{exc!r}；已删除半成品证据目录 {outdir}（rc=9，非「目录已存在」rc=1）')
         return
-    except OSError:
+    except (OSError, OutputFailure):
         pass
     _silence_stdout()
+    _silence_stderr()
 
 
 def negctl(root, scenario, outdir):
+    # 场景名必须先校验：负控的**期望表**以「在册场景」为前提（A/L 期望 ATTRIB_6、N/O 期望
+    # UNKNOWN）。传一个真实存在但不在 SCENARIOS 的场景 id 时，`judge()` 的 C1 会把每条用例
+    # 都判成 NOT_6，于是 A/L/N/O 记 MISMATCH → rc=4「判据被证伪」。那是**用法错误**被报成
+    # 最强的否定结论（按 rc 判停的复查会去查产品缺陷）。必须在动证据目录之前拒绝（#2031 第 4 条）。
+    if scenario not in SCENARIOS:
+        print(f'negctl 用法错误：场景 {scenario} 不在 #6 登记范围 {SCENARIOS}。'
+              '负控期望表只对在册场景成立（未登记场景会让 A/L/N/O 全落成 C1-NOT_6 → 假 MISMATCH）。'
+              '（rc=2：用法错误，不进负控、不创建证据目录）', file=sys.stderr)
+        return 2
     trace = f'{scenario}.pilotdeck-current-sidecar.jsonl'
     # 基线必须过**轮次有效性闸门**（与 run() 同一把）：拿被 BLOCKED / 只跑半截的轮次当基线，
     # A-baseline 会实得 NOT_6 → 记 MISMATCH → rc=4「判据被证伪」，而同一批数据 run() 明明
@@ -827,9 +916,14 @@ def negctl(root, scenario, outdir):
         ts_dirs, ts_bad = collect_rounds(root, 'ts', trace)
         ru_dirs, ru_bad = collect_rounds(root, 'rust', trace)
     except SystemExit as exc:
-        # `rounds()` 对不合规目录名 `raise SystemExit(...)`（stdlib 语义 → 进程退 1），与 README
-        # 登记的「证据目录不可用」撞码：按 rc 判停的 #1157 复查会读成「目录名已占用」而换名重跑，
-        # 撞同一个数据问题。数据不合格 = 基线不可用，归 rc=3（r2 sibling 评审 P2）。
+        # 这里会撞上两种 SystemExit，必须按 code **类型**分开（#2031 第 2 条）：
+        #   · `rounds()` 对不合规目录名 `raise SystemExit(str)`：数据不合格 = 基线不可用 → rc=3
+        #     （r2 sibling 评审 P2：stdlib 语义的进程退 1 与「证据目录不可用」撞码）；
+        #   · `install_sigterm()` 的 handler `sys.exit(143)`（int）：CI `timeout` 杀进程时正好
+        #     落在这个窗口（collect_rounds 是大批次里最长的阶段）。把它吞成 rc=3「基线不可用」
+        #     会让按 rc 判停的复查去换数据重跑，而真实原因是自己被杀。
+        if not isinstance(exc.code, str):
+            raise
         print(f'negctl 基线不可用：{exc}（rc=3，不判 MISMATCH）')
         return 3
     if not ts_dirs or not ru_dirs:
@@ -859,13 +953,19 @@ def negctl(root, scenario, outdir):
     # 因此也删掉了 `write_case` 里的 `rmtree` —— 独占新建后用例目录不可能预先存在（#1969 P2）。
     # 非「已存在」的创建失败（只读父目录 / 路径中段是文件）同样归 1：两者都是「证据目录不可用」，
     # 消息点名具体原因，免得按 rc 判停的自动化把它读成同一种情形。
+    # 创建成功到登记之间的窗口屏蔽 SIGTERM：否则信号落在这里 → SystemExit 在下面的 try 之外
+    # 逃逸 → atexit 不认账 → 空证据目录残留，同目录名重跑得 rc=1「已存在」（#2031 第 3 条）。
+    old_mask = _block_sigterm()
     try:
-        os.makedirs(outdir)
-    except OSError as exc:
-        why = '已存在（不覆盖证据）' if isinstance(exc, FileExistsError) else f'无法创建：{exc}'
-        raise SystemExit(f'--negctl-out 必须是可独占新建的目录：{outdir} {why}')
-    # 从这一刻到跑完，目录归本进程所有：中途被打断就由 atexit 删掉（不留残缺证据）。
-    _PENDING_OUTDIRS.add(outdir)
+        try:
+            os.makedirs(outdir)
+        except OSError as exc:
+            why = '已存在（不覆盖证据）' if isinstance(exc, FileExistsError) else f'无法创建：{exc}'
+            raise SystemExit(f'--negctl-out 必须是可独占新建的目录：{outdir} {why}')
+        # 从这一刻到跑完，目录归本进程所有：中途被打断就由 atexit 删掉（不留残缺证据）。
+        _PENDING_OUTDIRS.add(outdir)
+    finally:
+        _restore_sigmask(old_mask)
 
     def write_case(name, ts_recs, ru_recs):
         d = os.path.join(outdir, name)
@@ -917,10 +1017,35 @@ def negctl(root, scenario, outdir):
     return rc
 
 
+def _flush_output():
+    """显式 flush 两条流。
+
+    stdout 是块缓冲（本机 `DEFAULT_BUFFER_SIZE=131072`）：真实批次 20 多 KB 的输出会整个留到
+    解释器退出才写。那时写失败（ENOSPC）既超出 `_PipeSafe` 的捕获点、又会把 rc 改写成 120。
+    在这里主动 flush，失败由 `main()` 统一折成 rc=9（#2031 第 6 条）。
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+
+def _note(msg):
+    """输出失败之后的收尾提示：写不进去就算了，绝不让异常逃出 main 改掉 rc。"""
+    try:
+        print(msg, file=sys.stderr)
+        sys.stderr.flush()
+    except (OSError, OutputFailure):
+        pass
+
+
 def main():
     # 输出接 `| head` 之类的短读者时，退出码必须是真实 rc：不加这层，缓冲/无缓冲两条路径分别
     # 退 120 / 1（实测见 README），按 rc 判停的复查会读错结论。run() 与 negctl() 都由它兜住。
-    sys.stdout = _PipeSafe(sys.stdout)
+    # **stderr 同样要套**：`run()` 的「有效轮次不足 + 逐轮原因」整段走 stderr，
+    # `2>&1 | head -1` 下一样会撞断管道（#2031 第 1 条）。
+    if not isinstance(sys.stdout, _PipeSafe):
+        sys.stdout = _PipeSafe(sys.stdout)
+    if not isinstance(sys.stderr, _PipeSafe):
+        sys.stderr = _PipeSafe(sys.stderr, _silence_stderr)
     ap = argparse.ArgumentParser()
     ap.add_argument('root')
     ap.add_argument('scenario')
@@ -929,9 +1054,18 @@ def main():
     # `is not None` 而不是真值判断：`--negctl-out ''`（未加引号的空 shell 变量）若落进 run()，
     # 调用方会按 negctl 的 rc 表解读 run 的 rc（rc=0「归因成功」被读成「负控全命中」）。
     # 空串交给下面的 makedirs 显式报错。
-    if args.negctl_out is not None:
-        return negctl(args.root, args.scenario, args.negctl_out)
-    return run(args.root, args.scenario)
+    try:
+        if args.negctl_out is not None:
+            rc = negctl(args.root, args.scenario, args.negctl_out)
+        else:
+            rc = run(args.root, args.scenario)
+        _flush_output()
+        return rc
+    except OutputFailure as exc:
+        # 输出（stdout/stderr）写不进去：日志已被截断，rc 不能再说「归因成功 / 判据命中」。
+        # 统一 rc=9，与 negctl 的「装置自身崩溃」同码，与「读者提前退出」严格分开。
+        _note(f'## 装置输出失败：{exc}（rc=9：日志已被截断，不得当作完整证据）')
+        return 9
 
 
 if __name__ == '__main__':

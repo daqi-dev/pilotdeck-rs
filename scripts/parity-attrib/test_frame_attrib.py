@@ -10,9 +10,13 @@ requestEvidence 比较、C4 的 identity_ok、`rounds()` 的目录校验、`roun
 `case_mark()` 负控归类、`write_trace()` 原子写、`build_cases()` 的基线前置守卫、
 `negctl()` 的端到端接线（0 / 3 / 4 / 8 / 9 五个退出码，含 BaselineUnusable→rc=3 与
 轮次目录名不合规→rc=3）、清理兜底（atexit 删半成品证据目录）与断管道下 rc 不被改写，
-以及装置自身的 sha256 pin。15 条负控在**真实数据**上的判定不在这里，见 README「验证记录」。
+以及装置自身的 sha256 pin。`#2031` 残留批的六条各有判别断言：stderr 也套 `_PipeSafe`、
+SIGTERM 不被折成 rc=3、makedirs→登记窗口屏蔽信号、negctl 场景名校验（rc=2）、
+`_silence_stdout` 不漏 fd、写失败抛 `OutputFailure` → rc=9。
+15 条负控在**真实数据**上的判定不在这里，见 README「验证记录」。
 """
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import io
@@ -149,7 +153,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = 'd41b4c6a2e5a5bb7fe011389782367e9ef2c0d3efed51ae3c957fb523df12bae'
+PINNED_DEVICE_SHA256 = 'd7e6c4c1d78a7ae877f1f3bba7272c135426806edc47f18d5fee718192b2424d'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -756,6 +760,148 @@ with tempfile.TemporaryDirectory() as tdir:
             rc = 'timeout'
         check(f'输出接短读者（{tag}，读一行即关管道）时 rc 是真实值 3，不是 120 / 1',
               rc == 3 and b'rc=3' in first, f'rc={rc} first={first[:80]!r}')
+
+# ---- #2031 残留批（P2×6）：每条都留一个「改前会红」的判别断言 ----
+
+# ⑧ 第 1 条：`… 2>&1 | head -1` 下 stderr 洪泛时 rc 必须仍是真实值。
+#    run() 的「无效轮次原因」整段走 stderr；改前 stderr 没套 _PipeSafe，读者一关管道就
+#    BrokenPipeError → 缓冲时 120、`-u` 时 1（实测见 README「验证记录」）。
+with tempfile.TemporaryDirectory() as tdir:
+    rounds_dir = os.path.join(tdir, 'rounds')
+    os.makedirs(rounds_dir)
+    for _i in range(1, 2001):
+        os.makedirs(os.path.join(rounds_dir, f'ts-r{_i}'))
+    p = subprocess.Popen(
+        [sys.executable, '-I', os.path.join(HERE, 'frame_attrib.py'), rounds_dir, 'deadline'],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    first = p.stdout.readline()
+    p.stdout.close()
+    try:
+        rc = p.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        rc = 'timeout'
+    check('第1条：`2>&1 | head -1` 下 stderr 洪泛时 rc 仍是真实值 5，不是 120 / 1',
+          rc == 5, f'rc={rc} first={first[:80]!r}')
+
+# ⑨ 第 2 条：SIGTERM 的 SystemExit(143) 不得被折成 rc=3「基线不可用」。
+#    collect_rounds 是大批次里最长的阶段，CI `timeout` 正落在这里。
+_real_collect = fa.collect_rounds
+_raised = None
+try:
+    fa.collect_rounds = lambda *a, **kw: (_ for _ in ()).throw(SystemExit(143))
+    try:
+        fa.negctl('/nowhere', 'deadline', '/nonexistent/pdrs-2031')
+    except SystemExit as exc:
+        _raised = exc.code
+    except BaseException as exc:  # noqa: BLE001 —— 只要不是 SystemExit(143) 就算错
+        _raised = repr(exc)
+finally:
+    fa.collect_rounds = _real_collect
+check('第2条：collect_rounds 收到 SIGTERM（SystemExit(143)）时如实退出，不折成 rc=3',
+      _raised == 143, f'raised={_raised!r}')
+
+# ⑩ 第 3 条：makedirs 成功 → 登记之间收到 SIGTERM。
+#    改前：信号落在登记之前 → atexit 不认账 → 空证据目录残留（rc=143 / exists=yes）。
+#    改后：临界区屏蔽信号 → 登记完成后才处理 → atexit 删掉（rc=143 / exists=no）。
+#    起真子进程发真 SIGTERM：进程内的 signal.pthread_sigmask 才能如实生效。
+_CHILD = r'''
+import importlib.util, os, signal, sys
+dev, outdir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location('frame_attrib', dev)
+fa = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fa)
+fa.collect_rounds = lambda *a, **k: (['/x'], [])
+fa.load = lambda p: []
+fa.build_cases = lambda ts, ru: []
+_real = os.makedirs
+def makedirs(path, *a, **kw):
+    _real(path, *a, **kw)
+    if os.path.abspath(str(path)) == os.path.abspath(outdir):
+        os.kill(os.getpid(), signal.SIGTERM)
+os.makedirs = makedirs
+sys.exit(fa.negctl('/x', 'deadline', outdir))
+'''
+with tempfile.TemporaryDirectory() as tdir:
+    child_out = os.path.join(tdir, 'negctl-out')
+    p = subprocess.run(
+        [sys.executable, '-I', '-c', _CHILD, os.path.join(HERE, 'frame_attrib.py'), child_out],
+        capture_output=True, timeout=120)
+    check('第3条：makedirs→登记之间的 SIGTERM 被推迟处理，证据目录不残留',
+          p.returncode == 143 and not os.path.exists(child_out),
+          f'rc={p.returncode} exists={os.path.exists(child_out)} err={p.stderr[-200:]!r}')
+
+# ⑪ 第 4 条：negctl 收到真实存在但不在 SCENARIOS 的场景 id。
+#    改前：C1 把每条用例判成 NOT_6 → A/L/N/O 全 MISMATCH → rc=4「判据被证伪」（最强否定
+#    结论被发给用法错误），还建出证据目录。改后：rc=2 用法错误，且不动证据目录。
+with tempfile.TemporaryDirectory() as tdir:
+    outdir = os.path.join(tdir, 'negctl-out')
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = fa.negctl(tdir, 'sidecar_budget_limit', outdir)
+    check('第4条：negctl 收到不在册场景 → rc=2 用法错误，不建证据目录',
+          rc == 2 and not os.path.exists(outdir) and '用法错误' in err.getvalue(),
+          f'rc={rc} exists={os.path.exists(outdir)} err={err.getvalue()[:120]!r}')
+
+# ⑫ 第 5 条：`redirect_stdout(StringIO())` 形状下 _silence_stdout 不得泄漏 fd。
+#    `io.StringIO().fileno()` 抛 io.UnsupportedOperation（OSError 子类）；改前先 open 再
+#    fileno，异常跳过 close → 每调用一次漏一个 fd（实测 50 次漏 50 个）。
+def _nfd():
+    for d in ('/dev/fd', '/proc/self/fd'):
+        try:
+            return len(os.listdir(d))
+        except OSError:
+            continue
+    return None
+
+
+_fd_before = _nfd()
+with contextlib.redirect_stdout(io.StringIO()):
+    for _ in range(50):
+        fa._silence_stdout()
+_fd_after = _nfd()
+check('第5条：StringIO 重定向下 _silence_stdout 不漏 fd（50 次调用 0 增长）',
+      _fd_before is not None and _fd_after == _fd_before,
+      f'before={_fd_before} after={_fd_after}')
+
+
+# ⑬ 第 6 条：非断管道的写失败（ENOSPC / EIO）不得被当成「读者走了」静默吞掉。
+class _FullOut:
+    def write(self, _s):
+        raise OSError(errno.ENOSPC, 'No space left on device')
+
+    def flush(self):
+        raise OSError(errno.ENOSPC, 'No space left on device')
+
+    def fileno(self):
+        raise OSError('no fileno')
+
+
+_w = fa._PipeSafe(_FullOut(), lambda: None)  # 不静音真 stdout：本用例要接着打 ok 行
+_raised = None
+try:
+    _w.write('x' * 10)
+except fa.OutputFailure:
+    _raised = 'OutputFailure'
+except BaseException as exc:  # noqa: BLE001
+    _raised = repr(exc)
+check('第6条：_PipeSafe 把写失败抛成 OutputFailure（不静默截断日志）',
+      _raised == 'OutputFailure', f'raised={_raised!r}')
+
+#    改前：截断的输出配 rc=0（实测 rc=0、日志 0 字节），残缺日志被当成完整证据。
+_argv_saved, _out_saved, _run_saved = sys.argv, sys.stdout, fa.run
+_got = None
+try:
+    sys.argv = ['frame_attrib.py', '/x', 'deadline']
+    sys.stdout = _FullOut()
+    fa.run = lambda *a, **k: 0
+    _got = fa.main()
+except BaseException as exc:  # noqa: BLE001
+    _got = repr(exc)
+finally:
+    sys.argv, sys.stdout, fa.run = _argv_saved, _out_saved, _run_saved
+check('第6条：main() 在输出写失败时返回 rc=9（截断日志不算完整证据）',
+      _got == 9, f'got={_got!r}')
 
 print()
 if FAILS:
