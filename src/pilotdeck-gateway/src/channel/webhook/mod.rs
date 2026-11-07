@@ -583,7 +583,8 @@ async fn route_request(
 /// a closed socket, even one asking to keep alive; an explicit 1.0 response
 /// version keeps hyper's `fix_keep_alive` in its HTTP/1.0 branch — the same
 /// #1209 trick, whose hyper `HTTP/1.0` status line against Node's `HTTP/1.1`
-/// is the draft (unapproved) entry A8.3-CH-WEBHOOK-004, the channel's own
+/// is the accepted-diff entry A8.3-CH-WEBHOOK-004 (approved by its R1
+/// correction, `A8.3-CH-WEBHOOK-004-R1`), the channel's own
 /// record of the A8.4-NATIVE-HTTP-001 item 4 class. Without it `fix_keep_alive`
 /// runs on the response as built (1.1), sees the request's keep-alive and
 /// overwrites this channel's `Connection: close`, so the socket stays open —
