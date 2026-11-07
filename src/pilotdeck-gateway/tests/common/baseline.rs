@@ -475,6 +475,52 @@ pub(crate) fn default_regen_timeout_secs(fixture: &str) -> u64 {
     }
 }
 
+/// Backstop for fixtures that drive the native collector (`collect.py`).
+///
+/// The collector bounds itself: `SESSION_LIMIT_SECONDS = 900` in
+/// `scripts/native-witness/collect.py` plus up to 30 s of `gateway.close(30)` in
+/// `tests/fixtures/native-session-e2e/test_e2e.py`; the measured worst case with
+/// a peer that never replies is 930.1 s, reported by the collector as
+/// `TimeoutError: timed out` (`_tmp/20261107-issue-1408/`). It exists at all
+/// because `Command::output()` has no deadline: a stall above the collector's
+/// own bounds parked `cargo test` forever, with no diagnostics for the whole
+/// wait (#1408).
+///
+/// Scope of the invariant: the backstop is strictly *looser* than one collector
+/// entry (930 s), so a stall inside any single entry is attributed to the
+/// collector and reported with its own `TimeoutError` rather than preempted by
+/// an opaque kill. It is deliberately **not** sized as `entries × 930`: a
+/// fixture process can enter the collector several times serially
+/// (`test_plan.py` twice, `test_e2e.py` several), and a systemic wedge makes
+/// every entry burn its own 900 s. That case is not a hang — each entry raises
+/// and the run finishes — so the launcher cutting a long, already-failing run
+/// short costs only the later entries' duplicate diagnostics. Sizing for it
+/// would mean a multi-hour CI deadline on a 40 s suite, which is the worse
+/// trade.
+///
+/// One constant for every consumer (`native_stimulus_plan.rs`,
+/// `native_session_e2e.rs`, `native_witness.rs`) — they spawn different fixtures
+/// but the bound they must clear is the same one; `native_stimulus_plan.rs` pins
+/// it against both `gateway.close` sites.
+#[allow(dead_code)] // Not every #[path] consumer of this module spawns a collector.
+pub(crate) const NATIVE_COLLECTOR_BACKSTOP: Duration = Duration::from_secs(1200);
+
+/// [`NATIVE_COLLECTOR_BACKSTOP`] with `PDRS_REGEN_TIMEOUT_SECS` applied.
+///
+/// Same rule as [`run_generator`]: the knob is a floor, never a replacement, so
+/// a host that raised it for another fixture cannot shorten this one below the
+/// collector's own bound.
+#[allow(dead_code)] // Paired with the constant above.
+pub(crate) fn native_collector_backstop() -> Duration {
+    let override_secs = std::env::var("PDRS_REGEN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    match override_secs {
+        Some(secs) => Duration::from_secs(secs.max(NATIVE_COLLECTOR_BACKSTOP.as_secs())),
+        None => NATIVE_COLLECTOR_BACKSTOP,
+    }
+}
+
 /// Run a fixture generator child under a total deadline.
 ///
 /// `Command::output()` waits forever when the fixture parks a cell before its
