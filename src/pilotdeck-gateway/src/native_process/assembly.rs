@@ -175,6 +175,34 @@ pub(super) fn sync_acquired_ask_rules(
     true
 }
 
+/// Where the assembly reports a non-fatal wiring miss during a session acquire
+/// (#1429). The process writes it to stderr; the `#[cfg(test)]` seam injects a
+/// sink so the report itself is assertable — the miss branch needs an
+/// unpublished MCP config, which the real wiring never produces.
+pub(super) type AcquireMissReport = Arc<dyn Fn(&str) + Send + Sync>;
+
+const MCP_ASK_SYNC_SKIPPED: &str = "native session: MCP ask rule sync skipped \
+     (the config was not published before the session acquire)";
+
+/// Inputs the assembly normally creates itself and only tests vary. Production
+/// always uses `Default`: the rule-set registry is created in place, the MCP
+/// config is published, and an acquire miss goes to stderr.
+pub(super) struct AssemblySeams {
+    pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
+    pub acquire_miss_report: Option<AcquireMissReport>,
+    pub publish_mcp_config: bool,
+}
+
+impl Default for AssemblySeams {
+    fn default() -> Self {
+        Self {
+            permission_rule_sets: None,
+            acquire_miss_report: None,
+            publish_mcp_config: true,
+        }
+    }
+}
+
 // An observer runs only after the actual production disposal. Tests can inject
 // a failure or a deterministic completion gate without substituting resources.
 #[cfg(test)]
@@ -209,7 +237,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
         cleanup_observer,
         cleanup_diagnostic,
         None,
-        None,
+        AssemblySeams::default(),
     )
     .await
 }
@@ -229,7 +257,7 @@ pub(super) async fn start_with_webhook(
         Arc::new(|_, result| Box::pin(async move { result })),
         Arc::new(|error| eprintln!("native project cleanup: {error}")),
         Some(slot.clone()),
-        None,
+        AssemblySeams::default(),
     )
     .await?;
     let slot = slot.get().cloned().ok_or_else(|| {
@@ -244,13 +272,17 @@ pub(super) async fn start_with_webhook(
 /// #1429: the session permission rule set registry is normally created inside
 /// the assembly, which leaves the acquire-time MCP ask sync unobservable from a
 /// test. Supplying the registry keeps the assertion on the production entry
-/// point (real routes, real prepare closure) instead of a copy of it.
+/// point (real routes, real prepare closure) instead of a copy of it. The miss
+/// sink and the publication switch exist only for tests: production always
+/// publishes the MCP config and writes a miss to stderr.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn start_observed_with_permission_rule_sets(
     options: Options,
     env: Env,
     permission_rule_sets: Arc<GatewaySessionPermissionRuleSetRegistry>,
+    miss_report: AcquireMissReport,
+    publish_mcp_config: bool,
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
 ) -> Result<TurnGateway, ProxyError> {
@@ -261,7 +293,11 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         cleanup_observer,
         cleanup_diagnostic,
         None,
-        Some(permission_rule_sets),
+        AssemblySeams {
+            permission_rule_sets: Some(permission_rule_sets),
+            acquire_miss_report: Some(miss_report),
+            publish_mcp_config,
+        },
     )
     .await
 }
@@ -274,8 +310,13 @@ async fn start_assembly(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
     webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
-    permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
+    seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
+    let AssemblySeams {
+        permission_rule_sets,
+        acquire_miss_report,
+        publish_mcp_config,
+    } = seams;
     let registry_switch = run_registry_switch(&env)?;
     let stimulus_switch = storage_stimulus_switch(&env)?;
     if let Some(dir) = &stimulus_switch {
@@ -337,7 +378,19 @@ async fn start_assembly(
     // Forward reference so the prepare closure can call sync_permission_rules
     // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
-    let build_mcp_config = prepare_mcp_config.clone();
+    // #1429: report at most once per assembly — a per-acquire stderr write would
+    // be unbounded if the publication regressed for good.
+    let acquire_miss_report: AcquireMissReport =
+        acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
+    let prepare_acquire_miss_report = acquire_miss_report.clone();
+    let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
+    // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
+    // production always publishes into the handle the prepare closure reads.
+    let build_mcp_config = if publish_mcp_config {
+        prepare_mcp_config.clone()
+    } else {
+        Arc::new(std::sync::OnceLock::new())
+    };
     let storage_project = project.clone();
     let storage_options = options.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
@@ -350,6 +403,8 @@ async fn start_assembly(
             let interactions = prepare_interactions.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
             let mcp_config_handle = prepare_mcp_config.clone();
+            let acquire_miss_report = prepare_acquire_miss_report.clone();
+            let acquire_miss_reported = prepare_acquire_miss_reported.clone();
             let session_overrides = prepare_overrides.clone();
             Box::pin(async move {
                 let lease = project.acquire(None)?;
@@ -465,10 +520,10 @@ async fn start_assembly(
                     // tell a broken publication from an empty ask array.
                     // `build_mcp_gateway` publishes the config before the host
                     // serves any request, so reaching here means the startup
-                    // wiring regressed; say it out loud.
-                    eprintln!(
-                        "native session: MCP ask rule sync skipped (the config was not published before the session acquire)"
-                    );
+                    // wiring regressed; say it out loud (once per assembly).
+                    if acquire_miss_reported.set(()).is_ok() {
+                        acquire_miss_report(MCP_ASK_SYNC_SKIPPED);
+                    }
                 }
                 retained.push(move || {
                     Box::pin(async move {
