@@ -308,17 +308,19 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
         let early_write = read_state(&file).is_some();
 
         // The newest state must land; pre-fix it was claimed and then dropped,
-        // and `flush` waited forever on the orphaned in-flight entry.
+        // and `flush` waited forever on the orphaned in-flight entry. Both the
+        // deadline and the inner `Result` are checked: a flush that returns
+        // `Err` quickly has not written either.
         let flushed = tokio::time::timeout(FLUSH_DEADLINE, persistence.flush())
             .await
-            .is_ok();
+            .is_ok_and(|result| result.is_ok());
         let after_flush = read_state(&file);
 
         // And the key must not be wedged: a later save still persists.
         persistence.save(&key, state_with_value(3.0));
         let later_flushed = tokio::time::timeout(FLUSH_DEADLINE, persistence.flush())
             .await
-            .is_ok();
+            .is_ok_and(|result| result.is_ok());
         Observed {
             settled,
             early_write,
