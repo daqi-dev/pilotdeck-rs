@@ -266,7 +266,8 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     assert_eq!(
         std::fs::read_to_string(&file).ok().as_deref(),
         Some("{\n  \"v\": 2\n}"),
-        "#2073 the newest state must reach disk"
+        "#2073 the newest state must reach disk (flush completed: {})",
+        flushed.is_ok()
     );
     assert!(
         flushed.is_ok(),

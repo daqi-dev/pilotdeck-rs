@@ -21,6 +21,17 @@ pub const DEFAULT_DEBOUNCE_MS: u64 = 2000;
 #[derive(Default)]
 struct Inner {
     timers: HashMap<JsString, JoinHandle<()>>,
+    /// Sequence of the live debounce timer per key; every `save` bumps it.
+    ///
+    /// `clearTimeout` cannot be expressed with `JoinHandle::abort`: abort only
+    /// takes effect at the task's next yield point, and a timer that already
+    /// woke up spends its whole synchronous section (deleting the *new* timer
+    /// handle, registering `in_flight`, claiming the newest `dirty` state)
+    /// before its first await. The cancel then lands inside `write_to_disk`,
+    /// after the state left `dirty`: the write is lost and `in_flight` keeps
+    /// an entry nobody completes. Each timer instead carries the sequence it
+    /// was armed with and retires itself, untouched, when it is stale.
+    timer_seq: HashMap<JsString, u64>,
     dirty: HashMap<JsString, JsValue>,
     in_flight: HashMap<JsString, watch::Sender<bool>>,
 }
@@ -192,9 +203,16 @@ impl ChannelStatePersistence {
     pub fn save(&self, channel_key: &JsString, state: JsValue) {
         let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.dirty.insert(channel_key.clone(), state);
-        if let Some(timer) = inner.timers.remove(channel_key) {
-            timer.abort();
-        }
+        // `clearTimeout`: retire the pending timer by bumping the sequence (see
+        // `Inner::timer_seq`). The old handle is dropped, not aborted — a timer
+        // that already woke up must finish its synchronous section, and it is
+        // the sequence check inside that section that retires it.
+        let seq = {
+            let seq = inner.timer_seq.entry(channel_key.clone()).or_insert(0);
+            *seq += 1;
+            *seq
+        };
+        inner.timers.remove(channel_key);
         let shared = self.clone();
         let key = channel_key.clone();
         let handle = tokio::spawn(async move {
@@ -203,13 +221,16 @@ impl ChannelStatePersistence {
             tokio::time::sleep(shared.shared.debounce).await;
             #[cfg(test)]
             shared.shared.park_timer_if_armed();
-            shared
-                .shared
-                .inner
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .timers
-                .remove(&key);
+            {
+                let mut inner = shared.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
+                // Superseded by a newer `save` (or by `flush`): return without
+                // deleting the live timer handle, claiming `dirty`, or touching
+                // `in_flight`. The live timer writes every queued state.
+                if inner.timer_seq.get(&key) != Some(&seq) {
+                    return;
+                }
+                inner.timers.remove(&key);
+            }
             // The debounced path logs and swallows, like the TS `.catch`.
             if let Err(error) = shared.ensure_write(&key).await {
                 eprintln!(
@@ -227,8 +248,12 @@ impl ChannelStatePersistence {
     pub async fn flush(&self) -> Result<(), String> {
         {
             let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
-            for (_, timer) in inner.timers.drain() {
-                timer.abort();
+            // `clearTimeout` for every pending timer. The handles are dropped
+            // without aborting; bumping every sequence is what retires a timer
+            // that has already woken up (`Inner::timer_seq`).
+            inner.timers.clear();
+            for seq in inner.timer_seq.values_mut() {
+                *seq += 1;
             }
         }
         let mut keys: Vec<JsString> = {
@@ -253,33 +278,34 @@ impl ChannelStatePersistence {
 
     /// `ensureWrite` — joins the in-flight drain for the key, or starts one.
     async fn ensure_write(&self, channel_key: &JsString) -> Result<(), String> {
-        let waiter = {
-            let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(done) = inner.in_flight.get(channel_key) {
-                Some(done.subscribe())
-            } else {
-                inner
-                    .in_flight
-                    .insert(channel_key.clone(), watch::Sender::new(false));
-                None
+        loop {
+            let waiter = {
+                let mut inner = self.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
+                match inner.in_flight.get(channel_key) {
+                    Some(done) => Some(done.subscribe()),
+                    None => {
+                        inner
+                            .in_flight
+                            .insert(channel_key.clone(), watch::Sender::new(false));
+                        None
+                    }
+                }
+            };
+            let Some(mut waiter) = waiter else { break };
+            // The entry is removed by the drainer's guard, however its task
+            // ends. A closed sender means that drainer was dropped before it
+            // wrote anything: start a fresh drain instead of reporting a
+            // success that never reached the disk (and never hangs).
+            if waiter.wait_for(|done| *done).await.is_err() {
+                continue;
             }
-        };
-        if let Some(mut waiter) = waiter {
-            let _ = waiter.wait_for(|done| *done).await;
             return Ok(());
         }
-        let result = self.drain_writes(channel_key).await;
-        let sender = self
-            .shared
-            .inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .in_flight
-            .remove(channel_key);
-        if let Some(sender) = sender {
-            let _ = sender.send_replace(true);
-        }
-        result
+        let _guard = InFlightGuard {
+            shared: self.shared.as_ref(),
+            channel_key,
+        };
+        self.drain_writes(channel_key).await
     }
 
     /// `drainWrites` — keeps writing while the key keeps being marked dirty.
@@ -292,7 +318,23 @@ impl ChannelStatePersistence {
             let Some(state) = state else {
                 return Ok(());
             };
-            self.write_to_disk(channel_key, &state).await?;
+            // TS removes the entry before writing and lets a failed write drop
+            // it; cancellation has no JS counterpart, and dropping the claimed
+            // state would be a silent lost write, so `ClaimedState` puts it
+            // back unless the future reached the write.
+            let mut claim = ClaimedState {
+                shared: self.shared.as_ref(),
+                channel_key,
+                state: Some(state),
+            };
+            let result = self
+                .write_to_disk(
+                    channel_key,
+                    claim.state.as_ref().expect("#2073 claimed state"),
+                )
+                .await;
+            claim.state = None;
+            result?;
         }
     }
 
@@ -325,6 +367,55 @@ impl ChannelStatePersistence {
             "{}.state.json",
             String::from_utf16_lossy(channel_key.units())
         ))
+    }
+}
+
+/// Clears the key's in-flight entry however the drain ends — the TS
+/// `.finally(() => inFlight.delete(key))`. A drainer whose task is dropped
+/// (the caller's future was cancelled) must not leave an entry nobody will
+/// ever complete; waiters see the sender close and start a fresh drain.
+struct InFlightGuard<'a> {
+    shared: &'a Shared,
+    channel_key: &'a JsString,
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        let sender = self
+            .shared
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .in_flight
+            .remove(self.channel_key);
+        if let Some(sender) = sender {
+            let _ = sender.send_replace(true);
+        }
+    }
+}
+
+/// A state taken out of `dirty` for writing. `drainWrites` removes the entry
+/// before the write (as the TS original does); JS has no cancellation, so a
+/// future dropped mid-write has no TS counterpart, and the claimed state is
+/// put back instead of being lost (a newer `save` keeps its own value).
+struct ClaimedState<'a> {
+    shared: &'a Shared,
+    channel_key: &'a JsString,
+    state: Option<JsValue>,
+}
+
+impl Drop for ClaimedState<'_> {
+    fn drop(&mut self) {
+        let Some(state) = self.state.take() else {
+            return;
+        };
+        self.shared
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .dirty
+            .entry(self.channel_key.clone())
+            .or_insert(state);
     }
 }
 
