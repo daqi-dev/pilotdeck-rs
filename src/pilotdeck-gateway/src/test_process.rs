@@ -951,12 +951,24 @@ impl BlindSources {
     /// `exe` we can read is a process we are allowed to inspect, so a denied
     /// descriptor there is not policy but an anomaly: it stays `Related` and
     /// fails the audit closed.
+    ///
+    /// Before failing it, though, an unrelated source of this user gets the
+    /// same settle window a related one gets: `exit_files()` runs before
+    /// `exit_notify()`, so a process of this user — another tree's `cargo`, a
+    /// shell command — can lose its descriptor table while `stat` still reports
+    /// it alive. Such a source is exiting, not hiding, and the window is short
+    /// (#1409 measured p99 48 µs, max 2.7 ms), so waiting it out is both
+    /// cheaper and truer than a false red on a healthy host.
     fn of_holder(&mut self, pid: &str) -> BlindSource {
         let source = self.of(pid);
-        if source == BlindSource::Unrelated && !descriptors_are_policy_hidden(pid) {
-            return BlindSource::Related;
+        if source != BlindSource::Unrelated || descriptors_are_policy_hidden(pid) {
+            return source;
         }
-        source
+        let settled = settles_into_a_terminal_source(pid);
+        if settled.holds_nothing() {
+            return settled;
+        }
+        BlindSource::Related
     }
 }
 
@@ -974,18 +986,34 @@ impl BlindSources {
 /// which is the shape an LSM that distinguishes the two would produce — that
 /// shape fails closed here, by design.
 ///
-/// `NotFound` counts as hidden: kernel threads have no `exe`, and a process
-/// that vanished between the sweep's read and this check can hold nothing.
-/// Every other error means the kernel gave us an answer we cannot interpret,
-/// so the source stays `Related` (fail-closed).
+/// A missing `exe` is *not* by itself proof of anything. A zombie thread-group
+/// leader has no `exe` either, yet its live threads still share the descriptor
+/// table — this file's own #1409 `probe3` note says so — so it can hold the
+/// data dir the whole time the audit would be skipping it. `NotFound` therefore
+/// only excuses a process provably of another user (a kernel thread has no
+/// `exe` and is not ours); a missing `exe` on a source of this user fails the
+/// audit closed. Every other error means the kernel gave us an answer we
+/// cannot interpret, so the source stays `Related` (fail-closed) as well.
 #[cfg(target_os = "linux")]
 fn descriptors_are_policy_hidden(pid: &str) -> bool {
+    use std::os::unix::fs::MetadataExt;
     match std::fs::read_link(format!("/proc/{pid}/exe")) {
         Ok(_) => false,
-        Err(error) => matches!(
-            error.kind(),
-            io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound
+        // The kernel refuses us this process as a whole, which is what a
+        // non-dumpable process of any user looks like (measured on cb8:
+        // `systemd --user` denies `exe` while listing its fd directory).
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => true,
+        // No `exe` at all: only another user's process (or a kernel thread,
+        // which is root's) may be passed over. `false` when ownership cannot
+        // be read — that is not proof of someone else.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => matches!(
+            (
+                std::fs::metadata(format!("/proc/{pid}")).map(|entry| entry.uid()),
+                std::fs::metadata("/proc/self").map(|entry| entry.uid()),
+            ),
+            (Ok(theirs), Ok(ours)) if theirs != ours
         ),
+        Err(_) => false,
     }
 }
 
@@ -1715,6 +1743,56 @@ fn a_missing_self_stat_fails_the_child_audit() {
     );
 }
 
+/// #2138 negative control: a live child whose `stat` the sweep cannot read must
+/// fail the child audit. The injected proc root carries a valid stat for this
+/// process — so the self-check passes — and a mode-000 `stat` for a real,
+/// living child, which the source classification (reading the real `/proc`)
+/// rightly calls related. Skipping it is exactly the fail-open #2138 removes.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_unreadable_stat_of_a_possible_child_fails_the_child_audit() {
+    use std::os::unix::fs::PermissionsExt;
+    let mine = std::process::id().to_string();
+    let scratch = crate::test_scratch::Scratch::new("2138-blind-child-source");
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#2138 spawn the blind-source child");
+    let child_pid = child.id().to_string();
+    let self_entry = scratch.path().join(&mine);
+    std::fs::create_dir(&self_entry).expect("#2138 create the self proc entry");
+    std::fs::write(self_entry.join("stat"), format!("{mine} (self) S 1 0 0 0"))
+        .expect("#2138 write the self stat the self-check parses");
+    let child_entry = scratch.path().join(&child_pid);
+    std::fs::create_dir(&child_entry).expect("#2138 create the child proc entry");
+    std::fs::write(
+        child_entry.join("stat"),
+        format!("{child_pid} (child) S {mine} 0 0"),
+    )
+    .expect("#2138 write the child stat");
+    std::fs::set_permissions(
+        child_entry.join("stat"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .expect("#2138 make the child stat unreadable");
+    // A privileged test runner ignores the mode bits; the case cannot be built.
+    if std::fs::read_to_string(child_entry.join("stat")).is_ok() {
+        eprintln!("#2138 skipping: this test must not run as root, mode-000 is readable");
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    }
+    let outcome = child_processes_in(scratch.path());
+    let _ = child.kill();
+    let _ = child.wait();
+    let error = outcome.expect_err("#2138 an unreadable child stat must fail the audit");
+    let text = error.to_string();
+    assert!(
+        text.contains("#2138") && text.contains(&child_pid) && text.contains("reading the stat"),
+        "#2138 the failure must name the unreadable child: {text}"
+    );
+}
+
 /// #2138: the data-dir audit's own eyes — on a Linux host it must resolve a
 /// descriptor this process holds, and a scratch directory nobody holds comes
 /// back as no holders (a readable, sound clean result).
@@ -1787,6 +1865,14 @@ fn the_holder_audit_skips_only_sources_the_kernel_hides_entirely() {
         blind_source("4000000"),
         BlindSource::Vanished,
         "#2138 a missing pid is classified, not skipped on ownership"
+    );
+    // A missing `exe` is not a licence to skip: with no `/proc` entry we cannot
+    // prove the source belongs to someone else, so it stays an unknown. This is
+    // the zombie-leader shape — no `exe`, live threads still sharing the fd
+    // table — that must fail closed.
+    assert!(
+        !descriptors_are_policy_hidden("4000000"),
+        "#2138 an unreadable ownership is not proof that the kernel hides it"
     );
     // Only a source the kernel denies wholesale may be passed over.
     if std::path::Path::new("/proc/1").exists() && descriptors_are_policy_hidden("1") {
