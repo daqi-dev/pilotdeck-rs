@@ -46,7 +46,9 @@ switches = [
      '#1955 the server retired the stalled head at the deadline'),
     # #2026 (decision C): the drain is skipped, i.e. the pre-#2026 detach
     # shape — stop() returns while the half-head connection still lives and
-    # the client is cleared immediately. Killed by the drain case's
+    # the client is cleared immediately. The branch forgets the JoinSet, so
+    # its drop never aborts the connections: they stay detached, like the
+    # pre-#2026 bare spawns. Killed by the drain case's
     # during-drain client assertion (the first statement that can observe the
     # early return: a stop that came back cleared the client before the
     # 100 ms probe).
