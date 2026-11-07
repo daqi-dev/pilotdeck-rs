@@ -163,10 +163,11 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
 整批执行须独占 28999 mock 端口车道：批内只有进程内 `SERIAL` 互斥（`signal_replay.rs:34`），
-跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的套件（`sdk_run_exit.rs` /
-`sdk_format_exit.rs` / `sdk_sessions_list_exit.rs` 等）须串行——宿主按
+跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行（全表可用
+`grep -l 28999 src/pilotdeck-cli/tests/*.rs` 取得，不在此维护名单）——宿主按
 `mkdir /tmp/pdrs-parity.lock` 目录租约排队，批期间不得并行任何绑 28999 的套件；
-否则 `TcpListener::bind` EADDRINUSE panic 会多出红格且失败面不再是 stdout 单面。
+否则 `TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
+行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh

@@ -31,9 +31,11 @@ Node v22.22.0 尾段）——即**故意不归一化 UUID，按字面比较**。
 `TextOutput`（`src/pilotdeck-cli/src/sdk/output.rs:203-239`）写入
 `result_unknown` 终态行的 `recovery.runId` 字段（stdout surface）。因此
 同一份代码连跑两次都与冻结金样的固定 UUID 不同，两格以
-`differing surfaces: ["stdout"]` FAIL，红格数恒为 2、失败面恒为 stdout 单面。
-与 TS 行为无产品语义差异：TS 同样每轮生成新 UUID，只是金样冻结了采集那
-一次的值。
+`differing surfaces: ["stdout"]` FAIL——在「机器判据」所引正本的 28999
+独占与租约前置成立时，红格恰为 2、失败面均为 stdout 单面（28999 被并发
+占用时 `TcpListener::bind` 在比较阶段之前 panic，不满足此前置即不满足
+本句）。与 TS 行为无产品语义差异：TS 同样每轮生成新 UUID，只是金样冻结了
+采集那一次的值。
 
 ## 范围
 
@@ -82,8 +84,10 @@ stderr / abort / connections 等其它面，即超出本条范围、须另开条
 
 已批准（已接受差异）：郑达奇 2026-11-07T11:45:19Z 于 #2165 评论原话
 「2」（#2165#issuecomment-6706514345），即决策单选项 2「登记为已批
-差异」——不动比较器、不动金样、不改代码，只新增本差异登记条目；撤回 =
-删本条目（差异账本只追加，更正另开 `<ID>-R<n>`）。前置于 #1260 关单
+差异」——不动比较器、不动金样、不改代码，只新增本差异登记条目；仓内
+决策卡 `state/decisions-20261107-1741-2165-ledger.md`（含评论 URL、
+时间、作者与原话）。合入前撤回 = 删本条目；合入后撤回 / 更正一律另开
+`<ID>-R<n>`（差异账本只追加）。前置于 #1260 关单
 （本条合入后该前置即清）。同类先例（按字面比较动态字段的登记口径）：
 `D1-SDK-WS-CLOSE-ORDER-001`（31 格 UNSTABLE 仅序不敏感，其余严格）、
 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001`（八个完整 ID 的 stderr 单字段）。
