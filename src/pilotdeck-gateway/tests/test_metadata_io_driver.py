@@ -9,6 +9,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import textwrap
 import tomllib
 import types
 import unittest
@@ -981,19 +982,47 @@ class EnvironmentControls(unittest.TestCase):
     # r3（zai sibling P1）：先正确派生、之后再重绑 —— 子串/正则钉都只看「出现过」，
     # 重绑后真正落盘的是后者。三处各一条，且刻意避开 `tmp = path.parent` 那条已有钉子
     # （native-config / native-stimulus-plan 重绑到 `src/` 里的其它位置）。
+    # r4（zai sibling/boundary P1 + DeepSeek boundary P1）：每种**绑定形态**各一条 ——
+    # 只配 `name = ` 一种拼写时，注解赋值 / 元组解包 / 无空格重绑能整段绕过计数钉；
+    # model-complete 的健康体本身就是 `fd, tmp = mkstemp(...)`，文本正则对它恒 0 命中。
     SIBLING_REBIND_MUTANTS = {
         'native-config/negative_controls.py': (
-            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
-            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
-            "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
+            ('temp-rebound-after-the-correct-derivation',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+             "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
+            ('temp-rebound-via-annotation',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+             "    tmp: Path = path.parent / f'.negctl-{path.name}.tmp'"),
+            ('temp-rebound-via-tuple-unpacking',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+             "    tmp, _sign = path.parent / f'.negctl-{path.name}.tmp', None"),
+        ),
         'model-complete/negative-controls.py': (
-            '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
-            '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent\n'
-            '    scratch = path.parent'),
+            ('scratch-rebound-after-the-correct-derivation',
+             '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
+             '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent\n'
+             '    scratch = path.parent'),
+            # 健康体的 tmp 绑定是解包形态：这条变异证明计数钉真的在看它。
+            ('temp-rebound-after-the-mkstemp-unpacking',
+             '    fd, tmp = tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, '
+             'suffix=".tmp")',
+             '    fd, tmp = tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, '
+             'suffix=".tmp")\n'
+             "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
+        ),
         'native-stimulus-plan/negative_controls.py': (
-            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
-            "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
-            "    tmp = root / 'src' / f'.negctl-{path.name}.tmp'"),
+            ('temp-rebound-after-the-correct-derivation',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+             "    tmp = root / 'src' / f'.negctl-{path.name}.tmp'"),
+            ('temp-rebound-without-spaces',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'\n"
+             "    tmp=path.parent / f'.negctl-{path.name}.tmp'"),
+        ),
     }
     # r3（MiniMax concurrency P2）：把调用点换回原地截断写时钉子必须红。
     SIBLING_WRITE_MUTANTS = {
@@ -1052,12 +1081,16 @@ class EnvironmentControls(unittest.TestCase):
         # r3（zai sibling P1）：上面全是「出现过」型钉子 —— 先正确派生、之后再补一句
         # `tmp = ROOT / 'src' / …` 或 `scratch = path.parent`，每条都照绿，而落盘走的是后者，
         # 残留回到被扫的 `src/`。派生变量与常量都只准绑一次。
+        # r4（zai sibling/boundary P1 + DeepSeek boundary P1）：计数不能用文本正则 ——
+        # 注解赋值 `tmp: Path = …`、无空格 `tmp=…`、元组解包 `fd, tmp = mkstemp(...)`、
+        # 海象都不在 `^[ \t]*tmp = ` 的命中集里；model-complete 的健康体正是解包形态，
+        # 于是那条钉子在它上面**恒空转**。改用与 `bound_names` 同一套 AST 口径。
         for variable in ('tmp', 'scratch'):
-            bound = re.findall(rf'^[ \t]*{variable} = ', body, re.M)
+            bound = self.body_binding_count(body, variable)
             if bound:
-                self.assertEqual(len(bound), 1,
+                self.assertEqual(bound, 1,
                                  f'#1692 §9 r2 the temp path is derived exactly once: {variable}')
-        self.assertEqual(len(re.findall(r'^PUBLISH_DIR = ', source, re.M)), 1,
+        self.assertEqual(self.body_binding_count(source, 'PUBLISH_DIR'), 1,
                          '#1692 §9 r2 the scratch constant is bound exactly once')
         self.assertIn('mode = path.stat().st_mode & 0o7777', body,
                       '#1692 §9 r2 the published mode is taken from the source')
@@ -1154,9 +1187,14 @@ class EnvironmentControls(unittest.TestCase):
                     ('scratch-dir-unignored', constant,
                      constant.replace(quote + '.negctl-publish',
                                       quote + 'negctl-publish')),
-                    ('temp-derived-from-the-target', *self.SIBLING_TEMP_MUTANTS[relative]),
-                    ('temp-rebound-after-the-correct-derivation',
-                     *self.SIBLING_REBIND_MUTANTS[relative])):
+                    ('temp-derived-from-the-target', *self.SIBLING_TEMP_MUTANTS[relative])):
+                self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r2 {relative} {label} must be caught'):
+                    self.sibling_atomic_guards(source.replace(old, new, 1), function)
+                print(f'#1692 §9 r2 sibling-publish mutant {relative} {label}: KILLED',
+                      flush=True)
+            for label, old, new in self.SIBLING_REBIND_MUTANTS[relative]:
                 self.assertIn(old, source, f'#1692 §9 r2 {relative} anchor: {label}')
                 with self.assertRaises(AssertionError,
                                        msg=f'#1692 §9 r2 {relative} {label} must be caught'):
@@ -1696,6 +1734,18 @@ self_check_controls_run | return | return problems
                     found.append((node.rest, f'match **{node.rest}'))
         return found
 
+    def body_binding_count(self, source, name):
+        """`source` 里 `name` 的绑定次数，口径与 `bound_names` 完全一致（AST，非文本正则）。
+
+        片段（函数体 / 整个模块）都能吃：先 `dedent` 再 parse。
+        r4（zai sibling/boundary P1 + DeepSeek boundary P1）：三处「只准绑一次」的钉子
+        原先用 `^[ \\t]*name = ` 文本计数，漏掉注解赋值 / 无空格 / 元组解包 / 海象，
+        而 `bound_names` 里同一批形态早已被立为必须枚举 —— 两处口径必须同源，
+        否则「加了形态枚举」只保护了一处钉子。
+        """
+        return len([how for bound, how in self.bound_names(textwrap.dedent(source))
+                    if bound == name])
+
     def fixture_bindings(self, source, name):
         """`source` 里所有把 `name` 绑进本模块命名空间的语法点（#1903 r2/r3）。
 
@@ -1767,12 +1817,14 @@ self_check_controls_run | return | return problems
         # 子串存在性挡不住「先正确赋值、之后再重绑」的漂移（r2 DeepSeek boundary P2 /
         # concurrency P3）：在被钉行之后补一句 `publish = path.parent / PUBLISH_DIR`，
         # 上面三条仍然全绿，而落盘走的是后者。整个函数体里 `publish =` 只准出现一次。
-        self.assertEqual(body.count(f'{scratch_name} ='), 1,
+        self.assertEqual(self.body_binding_count(body, scratch_name), 1,
                          f'#1692 §9 the scratch dir is bound exactly once: {scratch_name}')
         # 同一类漂移对**临时路径**照样成立（r3 DeepSeek sibling/boundary P2）：
         # `temporary` 才是 `open()` / `os.replace()` 真正用的变量，只钉 `publish`
         # 时在它后面补一句 `temporary = path.parent / …` 仍全绿。
-        self.assertEqual(body.count('temporary ='), 1,
+        # r4（zai boundary P2 / DeepSeek boundary P1）：计数走 AST，注解赋值、
+        # 元组解包、无空格拼写都在内。
+        self.assertEqual(self.body_binding_count(body, 'temporary'), 1,
                          '#1692 §9 the temp path is bound exactly once')
         self.assertIn(f"{scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
                       '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
@@ -1862,10 +1914,27 @@ self_check_controls_run | return | return problems
                  '    publish = path.parent / PUBLISH_DIR\n'
                  "    temporary = publish / f'.negctl-{path.name}.tmp'"),
                 # 临时路径自己重绑（r3 DeepSeek sibling/boundary P2）：`publish` 仍正确，
-                # 落盘的 tmp 却在目标旁边。
+                # 落盘的 tmp 却在目标旁边。r4 起补注解赋值与元组解包两种拼写 ——
+                # 计数钉走 AST，形态漏一个就等于没钉。
                 ('atomic-publish-temp-rebound-after-the-fact',
                  "    temporary = publish / f'.negctl-{path.name}.tmp'",
                  "    temporary = path.parent / f'.negctl-{path.name}.tmp'"),
+                ('atomic-publish-temp-rebound-via-annotation',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'\n"
+                 "    temporary: Path = path.parent / f'.negctl-{path.name}.tmp'"),
+                ('atomic-publish-temp-rebound-via-tuple-unpacking',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'\n"
+                 "    temporary, _sign = path.parent / f'.negctl-{path.name}.tmp', None"),
+                ('atomic-publish-temp-rebound-via-walrus',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'\n"
+                 "    _ignored = (temporary := path.parent / f'.negctl-{path.name}.tmp')"),
+                ('atomic-publish-temp-rebound-via-augmented-assignment',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'\n"
+                 "    temporary += path.parent / f'.negctl-{path.name}.tmp'"),
                 # #1903 的核心回归：共享还原落回截断写。
                 ('shared-restore-write-back-to-truncating',
                  'write_source_atomic(root, path, snapshot[path])',
