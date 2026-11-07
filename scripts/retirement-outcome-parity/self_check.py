@@ -344,6 +344,11 @@ REQUIRE_RUN = 'exit 1'
 # 会让六个闸门 step 全红而 job 仍 success。
 RETIREMENT_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'timeout-minutes', 'steps'})
 AGGREGATE_JOB_KEYS = frozenset({'needs', 'if', 'runs-on', 'steps'})
+# 根文档直属键白名单（评审 r6 P0）：workflow 级 `defaults.run.shell` 会把**每个** run
+# step 的 shell 换掉（如 `/bin/true {0}`——全部闸门无条件 rc=0），根级 `env` 给所有
+# job 注入变量；两者都不动任何 job 内的键，只看 `jobs:` 的守卫逐字全等仍假 PASS。
+# 与 job 级 `defaults` 的既有判法同一口径：不在白名单即红。
+ROOT_KEYS = frozenset({'name', 'on', 'jobs', 'permissions', 'concurrency', 'run-name'})
 RETIREMENT_JOB_CONDITION = "${{ needs.scope.outputs.docs_only != 'true' }}"
 # 聚合 `check` job 自己是**必需检查**。GitHub 把被跳过的 job 报成 success，所以
 # `check` 带上 `if: false` 会让必需检查整体「成功」——这一侧没有人再兜底。
@@ -388,6 +393,7 @@ GATE_SCRIPTS = {
 # 的 step、或把两个 step 调换，都会让「登记的命令」与实际执行的不再对应。
 RETIREMENT_STEP_ORDER = (
     ('uses', 'actions/checkout@v4'),
+    ('setup', '安装钉死 PyYAML（#2017-A）'),
     ('gate', 'emit 复算与金样逐字节比对'),
     ('gate', 'check 5 轮'),
     ('gate', '负控 N1–N17 全 KILLED'),
@@ -397,6 +403,20 @@ RETIREMENT_STEP_ORDER = (
 )
 # 非闸门 step 必须是 action：action step 不执行 shell，吞不掉闸门结果。
 USE_STEP_KEYS = frozenset({'name', 'uses', 'if', 'with'})
+# PyYAML 版本钉死（#2017-A，评审 r6 P1）：接线守卫按「PyYAML 解析后的完整标量」判，
+# 不同版本可能解析出不同形状（假 PASS / 假 FAIL）。CI 里由「安装钉死 PyYAML（#2017-A）」
+# 步骤装进 venv 并前置到 PATH（`python3 -I` 不读 user site，但 venv 的 site-packages 属
+# 解释器自身配置、`-I` 下仍可见——本机实测）；版本同步登记在装置 README。
+PYYAML_PINNED_VERSION = '6.0.3'
+# 装置自身的准备 step（#2017-A）：与闸门同一口径——`name` + 一个 literal 块标量
+# `run`，脚本逐字登记。准备步被改（版本号被换 / venv 被指向别处）同样改变判定环境。
+SETUP_SCRIPTS = {
+    '安装钉死 PyYAML（#2017-A）':
+        'python3 -m venv "$RUNNER_TEMP/pyyaml-pinned"\n'
+        '"$RUNNER_TEMP/pyyaml-pinned/bin/pip" install --disable-pip-version-check '
+        f'pyyaml=={PYYAML_PINNED_VERSION}\n'
+        'echo "$RUNNER_TEMP/pyyaml-pinned/bin" >> "$GITHUB_PATH"\n',
+}
 
 
 def _indent_of(line):
@@ -408,13 +428,19 @@ def _normalised_expression(condition):
 
 
 def _yaml_module():
-    """PyYAML 必须可用：不可用时接线守卫 fail-closed 判红，绝不降级回行式解析。"""
+    """PyYAML 必须可用且版本钉死：否则接线守卫 fail-closed 判红，绝不降级回行式解析。"""
     try:
         import yaml
     except ImportError as error:
         raise CheckFailure(
             f'PyYAML is not importable ({error}); the wiring guard fails closed '
             'instead of falling back to line-based parsing') from error
+    if yaml.__version__ != PYYAML_PINNED_VERSION:
+        raise CheckFailure(
+            f'PyYAML version mismatch: installed {yaml.__version__!r} but '
+            f'{PYYAML_PINNED_VERSION!r} is pinned (CI installs it into a venv; the '
+            'device README registers the pin) — a different YAML build may parse the '
+            'workflow differently, so the guard fails closed')
     return yaml
 
 
@@ -545,6 +571,9 @@ def check_wiring(workflow=None):
 
     用 YAML 解析器取**解析后的完整标量值**比对，不做任何行式 / 缩进式文本切块：
 
+    - 根文档直属键必须在白名单内（workflow 级 `defaults.run.shell` 会替换每个 run
+      step 的 shell——全部闸门无条件 rc=0；根级 `env` 给所有 job 注入变量；评审 r6
+      P0）；重复键即红——两个解析器可以对「哪个键活着」各执一词；
     - 只在 `jobs:` 映射里找两个 job（挂在 `on:` 等别处的同名块不是 job）；
     - 两个 job 的直属键必须在白名单内（job 级 `continue-on-error` 会让全红的 job 仍
       success）；重复键即红——两个解析器可以对「哪个键活着」各执一词；
@@ -565,7 +594,16 @@ def check_wiring(workflow=None):
     """
     path = Path(workflow or WORKFLOW)
     yaml, root = _workflow_root(path)
-    jobs_node = dict(_pairs(yaml, path, root, 'the workflow')).get('jobs')
+    root_pairs = _pairs(yaml, path, root, 'the workflow')
+    for key, _ in root_pairs:
+        if key not in ROOT_KEYS:
+            raise CheckFailure(
+                f'{path}: the workflow carries the unregistered root key `{key}`; a '
+                'workflow-level `defaults.run.shell` replaces the shell of every `run` '
+                'step (all gates unconditionally rc=0) and `env` shadows variables for '
+                'every job — neither touches any job-level key the rest of this guard '
+                'checks (same reasoning as the job-level `defaults` ban)')
+    jobs_node = dict(root_pairs).get('jobs')
     if jobs_node is None:
         raise CheckFailure(f'{path}: the workflow has no `jobs:` mapping')
     jobs = dict(_pairs(yaml, path, jobs_node, 'jobs'))
@@ -599,17 +637,18 @@ def check_wiring(workflow=None):
             raise CheckFailure(
                 f'{path}: expected the `{wanted}` step at this position, '
                 f'found `{label}`')
-        if kind == 'gate':
+        if kind in ('gate', 'setup'):
+            registry = GATE_SCRIPTS if kind == 'gate' else SETUP_SCRIPTS
             if set(step) != {'name', 'run'}:
                 raise CheckFailure(
-                    f'{path}: gate step `{label}` may only carry `name` and one top-level '
-                    f'`run`, found {sorted(step)}; `env` / `with` / `if` / '
+                    f'{path}: {kind} step `{label}` may only carry `name` and one '
+                    f'top-level `run`, found {sorted(step)}; `env` / `with` / `if` / '
                     '`continue-on-error` can disable the step or replace what it executes')
             script = _gate_run_text(yaml, path, step['run'], label)
-            if script != GATE_SCRIPTS[label]:
+            if script != registry[label]:
                 raise CheckFailure(
-                    f'{path}: gate step `{label}` does not run the registered script '
-                    f'({_first_line_diff(script, GATE_SCRIPTS[label])}); the parsed '
+                    f'{path}: {kind} step `{label}` does not run the registered script '
+                    f'({_first_line_diff(script, registry[label])}); the parsed '
                     'scalar is pinned verbatim, so an `echo` prefix, a `|| true` / '
                     '`! ` suffix, an `if false; then … fi` wrapper or an extra line '
                     'all change the text')
@@ -767,7 +806,9 @@ def wiring_samples():
     包住整条命令 / 三种 shell 级抑制（`|| true`、`echo` 前缀、`! ` 取反退出码）/
     聚合 Require 的五种改法（禁用、改弱、忽略失败、追加 `&& false`、`exit 0`）/
     删掉一个闸门 step / r5 标量形态四种（run 行内续行、聚合 job `if` 续行、Require
-    `if` 续行、`|`→`>` 折叠块）加 job 挪出 `jobs:`（行首正则会认 `on:` 下的假块）。
+    `if` 续行、`|`→`>` 折叠块）加 job 挪出 `jobs:`（行首正则会认 `on:` 下的假块）与
+    **根级** `defaults.run.shell`（workflow 级 shell 模板让全部闸门无条件 rc=0，评审
+    r6 P0）。
 
     每条样本都**真的能造成假绿**，不是语法坏掉的变异体：`bash -e` 下要么命令没执行、
     要么失败被吞、要么 step / job 被跳过，而 job 结果仍是 success。
@@ -915,6 +956,17 @@ def wiring_samples():
     # 多文档：守卫只读第一份，`---` 之后的文档被静默忽略。
     samples.append(('multi-document', text + '---\n  ignored: job\n'))
 
+    # —— r6（评审 P0）：根级 `defaults.run.shell`。GitHub 支持 workflow 级
+    # `defaults.run`；自定义 shell 模板里 `{0}` 是脚本路径占位，`/bin/true {0}` 让
+    # **每个** run step 无条件 rc=0——全部闸门假绿，而两个 job 的每个被比对标量仍
+    # 逐字等于登记值；只取 `jobs:` 的守卫完全看不见这个键。——
+    if text.count('\njobs:\n') != 1:
+        raise CheckFailure('the workflow must carry exactly one `jobs:` line to anchor '
+                           'the root-level defaults injection')
+    samples.append(('root-defaults-shell', text.replace(
+        '\njobs:\n',
+        '\ndefaults:\n  run:\n    shell: /bin/true {0}\njobs:\n', 1)))
+
     # —— r5：标量形态绕过。r4 的行式 / 缩进式切块在源码行层面看文本，而这四种
     # 形态的**执行文本**（YAML 解析后的完整标量）已经不同——只有按解析后的标量
     # 比对并显式判红形态才能抓住（#2017 P0 复现 P1-1 / P1-2a / P1-2b / P1-3 / P1-4）。——
@@ -935,11 +987,23 @@ def wiring_samples():
 
     # 聚合 job `if` 续行 `&& false`：plain 多行标量折叠后是 `${{ always() }} &&
     # false`，job 从不执行；只收 4 空格行的守卫只看见 `${{ always() }}` → 假 PASS。
-    if '    if: ${{ always() }}\n' not in text:
-        raise CheckFailure('the aggregate job `if` line is not found to mutate')
-    samples.append(('aggregate-job-if-continuation', text.replace(
-        '    if: ${{ always() }}\n',
-        '    if: ${{ always() }}\n      && false\n', 1)))
+    # 按行号改写（`check_job_if` 已锚定聚合 job 块内的 `    if:` 行）：`text.replace`
+    # 的 4 空格目标串同时是 8 空格 step 级 `if:` 的后缀，左起首个命中落在无关 step
+    # （评审 r5 P1）。样本构造前提：变异体必须仍是合法的单文档 YAML——否则 KILLED
+    # 只是「YAML 坏了被误杀」，对这条形态零回归保护；`control_wiring` 的
+    # SAMPLE_FAILURE_ANCHORS 另断言失败文案落在聚合 job 条件那条判定上。
+    aggregate_continuation = ''.join(
+        lines[:check_job_if] + ['    if: ${{ always() }}\n', '      && false\n']
+        + lines[check_job_if + 1:])
+    _sample_yaml = _yaml_module()
+    try:
+        _sample_documents = list(_sample_yaml.compose_all(aggregate_continuation))
+    except _sample_yaml.YAMLError as error:
+        raise CheckFailure(
+            f'aggregate-job-if-continuation must stay parsable as YAML: {error}') from error
+    if len(_sample_documents) != 1:
+        raise CheckFailure('aggregate-job-if-continuation must stay a single YAML document')
+    samples.append(('aggregate-job-if-continuation', aggregate_continuation))
 
     # Require step `if` 续行 `&& false`：续行落在「缩进更深的子行」里被旧守卫
     # 静默忽略，折叠后的条件恒假 → step 从不执行，job 仍 success。
@@ -994,22 +1058,40 @@ def wiring_samples():
     return samples
 
 
+# 样本必须红在**点名的判定**上（评审 r5 P1 / r6）：改错行的样本只是把 YAML 弄坏被
+# 「误杀」，KILLED 不能证明对应形态真的被守卫看见。键为样本名，值为该样本失败文案
+# 必含的锚串——锚串落点同时证明变异体仍是可解析的单文档 YAML（否则红在解析失败）。
+SAMPLE_FAILURE_ANCHORS = {
+    'aggregate-job-if-continuation': '`check` job condition',
+    'root-defaults-shell': 'unregistered root key',
+}
+
+
 def control_wiring():
     """`wiring_samples()` 的每一条都必须让接线守卫变红。"""
     samples = wiring_samples()
     survived = []
+    misattributed = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
         for label, mutated in samples:
             candidate = Path(tmp) / f'ci-{label}.yml'
             candidate.write_text(mutated, encoding='utf-8')
             try:
                 check_wiring(candidate)
-            except CheckFailure:
+            except CheckFailure as error:
+                anchor = SAMPLE_FAILURE_ANCHORS.get(label)
+                if anchor is not None and anchor not in str(error):
+                    misattributed.append(
+                        f'{label}: rejected by the wrong judgment ({error}), '
+                        f'expected the failure to mention `{anchor}`')
                 continue
             survived.append(label)
     if survived:
         raise CheckFailure('wiring guard did not reject: '
                            f'{survived} (the CI wiring check was weakened)')
+    if misattributed:
+        raise CheckFailure('wiring samples rejected by the wrong judgment: '
+                           f'{misattributed}')
     return (f'{len(samples)} mutated workflows '
             f'({", ".join(s for s, _ in samples)}) rejected')
 
