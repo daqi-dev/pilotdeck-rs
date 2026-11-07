@@ -400,6 +400,16 @@ def run_controls(root, results):
 def main():
     if len(sys.argv) != 2 or sys.argv[1].startswith('--'):
         raise SystemExit('usage: count-negative.py NEW_OUTPUT_DIR')
+    # #1666/#1734: a missing or blank caller target or baseline is "never
+    # started" (2) and must refuse before any evidence directory is claimed
+    # or summary published; the shared environment() only guards
+    # CARGO_TARGET_DIR, so PDRS_BASELINE is checked here too
+    # (timestamp-negative.py's main refuses the same way, #1147 r2).
+    if not (os.environ.get('CARGO_TARGET_DIR') or '').strip() \
+            or not (os.environ.get('PDRS_BASELINE') or '').strip():
+        print('INVALID: caller must supply CARGO_TARGET_DIR and PDRS_BASELINE',
+              file=sys.stderr, flush=True)
+        return 2
     out = Path(sys.argv[1]).resolve()
     try:
         out.mkdir(parents=True, exist_ok=False)
