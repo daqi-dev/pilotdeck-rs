@@ -261,18 +261,22 @@ class RealGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='pdrs-1037-real-') as directory:
             root, target = MutatingSources.repo(directory)
             original = target.read_bytes()
-            raw_write, raw_read, raw_head = Path.write_bytes, Path.read_bytes, PROCESS._head_bytes
+            raw_replace, raw_read, raw_head = os.replace, Path.read_bytes, PROCESS._head_bytes
             restoring = False
             injected = False
 
-            def write(path, data):
+            # #1903: the shared restore publishes through `write_source_atomic`
+            # (temp file + one `os.replace`), so the old `Path.write_bytes`
+            # injection no longer runs. The failure is injected at the rename,
+            # which is the step whose failure must abort the restore.
+            def replace(source, destination, *args, **kwargs):
                 nonlocal restoring, injected
-                if path == target and data == original:
+                if Path(destination) == target:
                     restoring = True
                     if fault == 'write':
                         injected = True
                         raise OSError('#1037 real restore write failure')
-                return raw_write(path, data)
+                return raw_replace(source, destination, *args, **kwargs)
 
             def read(path):
                 nonlocal injected
@@ -290,7 +294,7 @@ class RealGuardTests(unittest.TestCase):
 
             error = None
             try:
-                with patch.object(Path, 'write_bytes', write), patch.object(Path, 'read_bytes', read), \
+                with patch.object(os, 'replace', replace), patch.object(Path, 'read_bytes', read), \
                         patch.object(PROCESS, '_head_bytes', head):
                     try:
                         with PROCESS.mutating_sources(root, [target], lock_timeout=0.1):
@@ -309,7 +313,8 @@ class RealGuardTests(unittest.TestCase):
                 if fault != 'write':
                     self.assertEqual(target.read_bytes(), original, '#1037 real guard restores actual bytes')
             finally:
-                raw_write(target, original)
+                # Outside the patch: the restore is not the thing under test here.
+                Path.write_bytes(target, original)
 
     def test_restore_write_failure(self):
         self.exercise('write')
@@ -769,10 +774,13 @@ def negative_controls():
     # r22：restore 循环包进 `with restore_critical():`（MiniMax r17 P1-1）后整体缩进 +4，
     # 锚点跟着源码走；write 锚点若停在旧的 20 空格，会作为 24 空格行的子串错位替换
     # （CI 实测 IndentationError），head 锚点则 0 命中（ValueError stale anchor）。
+    # #1903：还原改走 `write_source_atomic(root, path, …)`（临时文件 + 一次 os.replace），
+    # write 锚点跟着换成新行；吞掉 OSError 后目标仍是变异体，verify 循环照样抛
+    # `restore failed: source.rs`，所以这条负控仍然只钉在 write 故障上。
     for label, test, old, new in [
         ('write', 'test_restore_write_failure',
-         '                        path.write_bytes(snapshot[path])',
-         '                        try:\n                            path.write_bytes(snapshot[path])\n                        except OSError:\n                            pass'),
+         '                        write_source_atomic(root, path, snapshot[path])',
+         '                        try:\n                            write_source_atomic(root, path, snapshot[path])\n                        except OSError:\n                            pass'),
         ('readback', 'test_restore_readback_mismatch',
          'raise RuntimeError(f"restore failed: {relative}")', 'pass'),
         ('head', 'test_restore_head_mismatch',

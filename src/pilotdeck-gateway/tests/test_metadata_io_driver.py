@@ -1333,7 +1333,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '9c360f225e35e58f13a89a7cf010eb3d8dd00d92c81c4d761d978b77a78914a8'
+    SESSION_CONTROLS_SHA256 = '41d5ada7c1c9f6c074653c0c49ad13369b03d018a6ef411eedd111a69d86394e'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -1528,9 +1528,10 @@ self_check_controls_run | return | return problems
                  'counts = publish_summary(summary, timed_out=timed_out)',
                  '(timed_out := None)\ncounts = publish_summary(summary, timed_out=timed_out)'),
                 # r8 DeepSeek sibling P1：把还原调用点注释掉，文本计数仍是 1。
+                # #1903：实现上提到共享守卫后，调用点带上 root，锚点跟着换。
                 ('publish-call-commented-out',
-                 'write_source_atomic(path, original)',
-                 '# write_source_atomic(path, original)'),
+                 'write_source_atomic(root, path, original)',
+                 '# write_source_atomic(root, path, original)'),
                 # r8 DeepSeek concurrency P1-1（后半）：`self_check` 头部早退，四个探针
                 # 一条不跑；`body[-3]` / `body[-1]` 与 extend 文本都不动。
                 ('self-check-early-return',
@@ -1571,17 +1572,19 @@ self_check_controls_run | return | return problems
         assert_killed('timeout-initialiser-relocated', moved_init)
 
     def write_source_atomic_body(self, source):
-        """`write_source_atomic` 的函数体源码（#1692 §9）。"""
+        """`write_source_atomic` 的函数体源码（#1692 §9 / #1903）。"""
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.FunctionDef) and node.name == 'write_source_atomic':
                 return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
-        self.fail('#1692 §9 the fixture must define write_source_atomic()')
+        self.fail('#1692 §9 the module must define write_source_atomic()')
 
-    def publish_guards(self, source):
-        """#1692 §9：原子发布的三条形态 + 残留的落点。
+    def publish_guards(self, source, *, scratch, scratch_name):
+        """#1692 §9 / #1903：原子发布的三条形态 + 残留的落点。
 
-        独立成函数，是为了让每条变异都跑**全部**钉子，而不是各挑一条——
-        与 `slot_guard_cases` 同一个用法。
+        ``source`` 是**定义** `write_source_atomic` 的那个模块，``scratch`` 是它
+        声明暂存目录的那唯一一行，``scratch_name`` 是那个变量名。#1903 把两个写入点
+        （夹具自己的变异/还原、共享守卫 `mutating_sources` 的还原）收成**一份**实现
+        ——断言作用域因此从「夹具源码」扩到「被变异源的全部写入点」。
         """
         body = self.write_source_atomic_body(source)
         self.assertIn("open('wb')", body,
@@ -1607,17 +1610,18 @@ self_check_controls_run | return | return problems
         # 落点也是钉子（#1843 r1 MiniMax boundary P1）：SIGKILL 不执行 `finally`，
         # 所以「临时文件总会被删」恰好在唯一要紧的那条路径上是假的。放在被变异源旁边
         # 就是放进 `src/`，而 `negative_process._assert_input_areas` 用
-        # `git ls-files --others`（故意包含被忽略的文件）扫 `src`，下一次运行会以
-        # 「untracked build input」拒跑——正是 §9 要消灭的那种锁死。**保护来自位置**：
-        # 仓库根不在扫描区（`src` / `.cargo` / `rust-toolchain*`）内；`.gitignore` 的
+        # `git ls-files --others`（故意包含被忽略的文件）扫 `src` / `.cargo` /
+        # `rust-toolchain*`，下一次运行会以「untracked build input」拒跑——正是 §9 要
+        # 消灭的那种锁死。**保护来自位置**：仓库根不在扫描区内；`.gitignore` 的
         # `.negctl-*` 只让 `git status` 保持干净，不是保护本身（r4 MiniMax sibling P2：
         # 这里的旧说法与本 PR 刚改对的 `native-config/README.md` 相反）。仍在同一个
         # 文件系统上，`os.replace` 依旧是一次原子 rename。
-        self.assertEqual(source.count("PUBLISH_DIR = root / '.negctl-publish'"), 1,
-                         '#1692 §9 the publish scratch dir is one root-level constant')
-        self.assertIn("PUBLISH_DIR / f'.negctl-{path.name}.tmp'", body,
+        self.assertEqual(source.count(scratch), 1,
+                         '#1692 §9 the publish scratch dir is one root-level constant: '
+                         + scratch)
+        self.assertIn(f"{scratch_name} / f'.negctl-{{path.name}}.tmp'", body,
                       '#1692 §9 the temp name lives in the ignored .negctl-* namespace')
-        self.assertIn('PUBLISH_DIR.mkdir(parents=True, exist_ok=True)', body,
+        self.assertIn(f'{scratch_name}.mkdir(parents=True, exist_ok=True)', body,
                       '#1692 §9 the scratch dir exists before the first publish')
         repo = Path(__file__).resolve().parents[3]
         ignored = subprocess.run(
@@ -1628,10 +1632,12 @@ self_check_controls_run | return | return problems
                          'SIGKILL residue leaves `git status` clean -- the LOCKOUT is '
                          'avoided by the location (root, outside the scanned areas), '
                          'not by being ignored')
-        # 两个调用点都必须走它：写入变异体一条、还原一条。
-        self.assertEqual(source.count('write_source_atomic(path, changed.encode())'), 1,
+
+    def fixture_call_sites(self, source):
+        """#1903：夹具侧只剩两个调用点，都不许落回截断写。"""
+        self.assertEqual(source.count('write_source_atomic(root, path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
-        self.assertEqual(source.count('write_source_atomic(path, original)'), 1,
+        self.assertEqual(source.count('write_source_atomic(root, path, original)'), 1,
                          '#1692 §9 the restore is published atomically')
         # `log_path.write_text(…)` 之类是别的文件，不算源码树；只看变量名恰为 `path` 的。
         self.assertEqual(re.findall(r'(?<![\w.])path\.write_text\(', source), [],
@@ -1644,9 +1650,18 @@ self_check_controls_run | return | return problems
         # 一次 SIGKILL 落在两者之间，源码文件就只剩空/半截——下一次 `mutating_sources` 的
         # pristine 检查读到「基线不符」，而且直到有人手工修树为止，每次运行都会这样。
         # 正确形态是 tmp + fsync + 一次 rename：读者只会看到旧字节或新字节。
-        source = (Path(__file__).resolve().parent/'fixtures/session-assembly-1316/'
-                  'negative_controls.py').read_text()
-        self.publish_guards(source)
+        # #1903：实现已上提到共享守卫，夹具与 `mutating_sources` 的还原共用同一份。
+        base = Path(__file__).resolve().parent/'fixtures'
+        fixture = (base/'session-assembly-1316'/'negative_controls.py').read_text()
+        shared = (base/'negative_process.py').read_text()
+        self.fixture_call_sites(fixture)
+        self.publish_guards(shared, scratch="PUBLISH_DIR = '.negctl-publish'",
+                            scratch_name='publish')
+        # #1903：共享还原点是**唯一**的还原咽喉，它自己也不许有截断写。
+        self.assertEqual(shared.count('write_source_atomic(root, path, snapshot[path])'), 1,
+                         '#1903 the shared restore publishes atomically')
+        self.assertEqual(re.findall(r'(?<![\w.])path\.write_(?:text|bytes)\(', shared), [],
+                         '#1903 the shared restore has no truncating in-place write')
         for label, old, new in (
                 ('atomic-publish-loses-fsync', '            os.fsync(stream.fileno())\n', ''),
                 ('atomic-publish-copies-instead-of-renaming', 'os.replace(temporary, path)',
@@ -1658,44 +1673,65 @@ self_check_controls_run | return | return problems
                  '        os.chmod(temporary, mode)\n', ''),
                 ('atomic-publish-chmods-drops-the-special-bits',
                  'mode = path.stat().st_mode & 0o7777', 'mode = 0o644'),
-                ('mutant-write-back-to-truncating',
-                 'write_source_atomic(path, changed.encode())', 'path.write_text(changed)'),
-                ('restore-write-back-to-truncating',
-                 'write_source_atomic(path, original)', 'path.write_bytes(original)'),
                 # 残留落回被变异源旁边 = 下一次 preflight 拒跑。
                 ('atomic-publish-leaves-residue-in-src',
-                 "    temporary = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
                  "    temporary = path.with_name(f'.negctl-{path.name}.tmp')"),
                 # 有 scratch 目录但名字不在 `.gitignore` 覆盖范围内。
                 ('atomic-publish-scratch-dir-not-ignored',
-                 "PUBLISH_DIR = root / '.negctl-publish'", "PUBLISH_DIR = root / 'negctl-publish'")):
-            self.assertEqual(source.count(old), 1, f'#1692 §9 unique anchor: {label}')
+                 "PUBLISH_DIR = '.negctl-publish'", "PUBLISH_DIR = 'negctl-publish'"),
+                # #1903 的核心回归：共享还原落回截断写。
+                ('shared-restore-write-back-to-truncating',
+                 'write_source_atomic(root, path, snapshot[path])',
+                 'path.write_bytes(snapshot[path])')):
+            self.assertEqual(shared.count(old), 1, f'#1692 §9 unique anchor: {label}')
+            mutant = shared.replace(old, new, 1)
             with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
-                self.publish_guards(source.replace(old, new, 1))
+                self.publish_guards(mutant, scratch="PUBLISH_DIR = '.negctl-publish'",
+                                    scratch_name='publish')
+                self.assertEqual(
+                    mutant.count('write_source_atomic(root, path, snapshot[path])'), 1,
+                    '#1903 the shared restore publishes atomically')
+                self.assertEqual(re.findall(r'(?<![\w.])path\.write_(?:text|bytes)\(', mutant), [],
+                                 '#1903 the shared restore has no truncating in-place write')
+            print(f'#1692 §9 atomic-publish mutant {label}: KILLED', flush=True)
+        for label, old, new in (
+                ('mutant-write-back-to-truncating',
+                 'write_source_atomic(root, path, changed.encode())', 'path.write_text(changed)'),
+                ('restore-write-back-to-truncating',
+                 'write_source_atomic(root, path, original)', 'path.write_bytes(original)')):
+            self.assertEqual(fixture.count(old), 1, f'#1692 §9 unique anchor: {label}')
+            with self.assertRaises(AssertionError, msg=f'#1692 §9 {label} must be caught'):
+                self.fixture_call_sites(fixture.replace(old, new, 1))
             print(f'#1692 §9 atomic-publish mutant {label}: KILLED', flush=True)
 
-    def test_shared_restore_write_is_a_known_gap(self):
-        """#1903：共享守卫的还原写仍是截断式，#1692 §9 只覆盖夹具自己那一处。
+    def test_shared_restore_write_is_atomic(self):
+        """#1903：共享守卫的还原写是原子的，与夹具那一处同一份实现。
 
-        这条钉的是**已知缺口**，不是正确行为：`negative_process.py` 正被 #892 /
-        PR #1634 改同一个 `restore_critical` 块，本单按协调约束不碰它（同文件同函数
-        串行）。修好后这里会红，那就是提醒：把 §9 的断言扩到共享写入点、关掉 #1903。
-        没有这条，`test_mutation_source_writes_are_published_atomically` 会被读成
-        「被变异源已经全部原子发布」——那正是评审判的假 PASS。
+        #2008 曾在这里钉一条**已知缺口** tripwire（`negative_process.py` 仍是
+        `path.write_bytes(snapshot[path])`，指向 #1903）。#1903 修好后它按设计变红；
+        这里翻成正向断言：共享还原**不存在**截断写、**调用** `write_source_atomic`，
+        并且那个函数仍满足 §9 的全部发布钉子。删掉这条断言而不是改写它，会让
+        `test_mutation_source_writes_are_published_atomically` 再次被读成「被变异源
+        已经全部原子发布」——那正是评审判的假 PASS。
         """
         source = (Path(__file__).resolve().parent/'fixtures/negative_process.py').read_text()
-        pattern = r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)'
-        self.assertEqual(re.findall(pattern, source), ['path.write_bytes(snapshot[path])'],
-                         '#1903 the shared restore write is still truncating; when it becomes '
-                         'atomic, extend test_mutation_source_writes_are_published_atomically '
-                         'to the shared guard and close #1903')
-        fixed = source.replace('path.write_bytes(snapshot[path])',
-                               'write_source_atomic(path, snapshot[path])', 1)
+        self.assertEqual(re.findall(r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)', source),
+                         [],
+                         '#1903 the shared restore must not truncate the source in place')
+        self.assertEqual(source.count('write_source_atomic(root, path, snapshot[path])'), 1,
+                         '#1903 the shared restore must publish through write_source_atomic')
+        self.publish_guards(source, scratch="PUBLISH_DIR = '.negctl-publish'",
+                            scratch_name='publish')
+        fixed = source.replace('write_source_atomic(root, path, snapshot[path])',
+                               'path.write_bytes(snapshot[path])', 1)
         with self.assertRaises(AssertionError,
-                               msg='#1903 an atomic shared restore must flip this tripwire'):
-            self.assertEqual(re.findall(pattern, fixed), ['path.write_bytes(snapshot[path])'],
-                             '#1903 the shared restore write is still truncating')
-        print('#1903 shared-restore tripwire mutant atomic-shared-restore: KILLED', flush=True)
+                               msg='#1903 a truncating shared restore must flip this guard'):
+            self.assertEqual(re.findall(r'(?<!\w)path\.write_bytes\(snapshot\[path\]\)', fixed),
+                             [],
+                             '#1903 the shared restore must not truncate the source in place')
+        print('#1903 shared-restore guard mutant truncating-shared-restore: KILLED', flush=True)
+
 
     def documented_exit_codes(self, script):
         """脚本头部「退出码…」那张表的码集（#1556 后是多行表，续行不算新码）。"""

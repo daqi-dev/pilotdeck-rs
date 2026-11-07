@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
 from negative_selection import baseline_passed
 from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources, run_owned,
-                              tree_lock, wait_for_slot)
+                              tree_lock, wait_for_slot, write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src'
@@ -409,53 +409,6 @@ def append_progress(**fields):
     progress.write(json.dumps(row, ensure_ascii=False) + '\n')
     progress.flush()
     os.fsync(progress.fileno())
-
-
-PUBLISH_DIR = root / '.negctl-publish'
-
-
-def write_source_atomic(path, data):
-    """Publish source bytes in one rename, never a truncating in-place write.
-
-    #1692 §9: `path.write_text` / `write_bytes` truncate first, so a SIGKILL in
-    the middle of the write leaves an empty or half-written source. The next
-    `mutating_sources` preflight reads that as "differs from HEAD" and refuses
-    every later run until a human repairs the tree.
-
-    The temp file goes to `PUBLISH_DIR` (the repository root), not next to the
-    target, and that placement is the point (MiniMax boundary r1 P1,
-    #1843 follow-up): a SIGKILL does not run `finally`, so "the temp is always
-    removed" is false on the one path that matters. Beside the target it would
-    land in `src/`, which `negative_process._assert_input_areas` scans with
-    `git ls-files --others` (ignored files included on purpose), and the next
-    run would die with "untracked build input" - the same lockout §9 exists to
-    remove. At the root it is outside the scanned areas (`src`, `.cargo`,
-    `rust-toolchain*`) -- that is the protection; the `.gitignore`d `.negctl-*`
-    name only keeps `git status` clean, because that scan uses
-    `git ls-files --others` and includes ignored files on purpose.
-    Same filesystem, so `os.replace` is still ONE atomic rename: a reader sees
-    the old bytes or the new ones, never a half-written file.
-    """
-    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
-    temporary = PUBLISH_DIR / f'.negctl-{path.name}.tmp'
-    # The temp is a NEW inode, so the rename would publish the temp's own mode
-    # (0666 & ~umask) instead of the source's. With `core.filemode=true` a
-    # checkout made under one umask and a fixture run under another would then
-    # show a mode-only `git diff` on `src/...`, and the next preflight refuses
-    # the whole tree - the same lockout §9 removes (r1 GLM boundary P3).
-    mode = path.stat().st_mode & 0o7777
-    try:
-        with temporary.open('wb') as stream:
-            stream.write(data)
-            stream.flush()
-            # SIGKILL is the threat here, not power loss: the page cache
-            # outlives the process, so the flush above is enough; the rename
-            # itself needs no directory fsync for that.
-            os.fsync(stream.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
@@ -1670,8 +1623,10 @@ with stop_run(), mutating_sources(
                 fromfile=filename, tofile=filename)))
             take_slot(name)
             append_progress(event='mutation-start', name=name)
-            # #1692 §9: one rename, never a truncating in-place write.
-            write_source_atomic(path, changed.encode())
+            # #1692 §9: one rename, never a truncating in-place write. The
+            # publish helper is the shared one (#1903): the same bytes-shape
+            # guard that covers `mutating_sources`' restore covers this call.
+            write_source_atomic(root, path, changed.encode())
             log_path = out / f'{name}.log'
             code, log = run(full, log_path=log_path)
             log_path.write_text(log)
@@ -1703,7 +1658,7 @@ with stop_run(), mutating_sources(
             # #1692 §9: same rule on the way back. A KILL inside a truncating
             # `write_bytes` leaves an empty source that reads as "differs from
             # HEAD" on the next run; the rename leaves the old bytes instead.
-            write_source_atomic(path, original)
+            write_source_atomic(root, path, original)
             # A restore that does not verify must fail loudly; an assert here is
             # stripped by `python3 -O` (#1632 P2-2). `mutating_sources` re-checks
             # the whole guarded set on exit, this is the per-mutant check.

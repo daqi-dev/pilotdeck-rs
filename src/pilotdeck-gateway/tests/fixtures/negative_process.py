@@ -868,6 +868,55 @@ def take_deferred_signal():
     return signum
 
 
+# Scratch directory for atomic source publication (#1903). Relative to the tree
+# root on purpose: `_assert_input_areas` scans `src` / `.cargo` /
+# `rust-toolchain*` with `git ls-files --others`, which counts ignored files, so
+# a SIGKILL residue beside the target would lock every later run out. The root
+# is outside every scanned area -- that is the protection; the `.gitignore`d
+# `.negctl-*` name only keeps `git status` clean.
+PUBLISH_DIR = '.negctl-publish'
+
+
+def write_source_atomic(root, path, data):
+    """Publish source bytes in one rename, never a truncating in-place write.
+
+    #1903 (#1692 §9 residue): `path.write_text` / `write_bytes` truncate first,
+    so a SIGKILL in the middle of the write-back leaves an empty or
+    half-written source -- not even recoverable by `git checkout`. The temp
+    file goes to `PUBLISH_DIR` at the tree root, which is outside the areas
+    `_assert_input_areas` scans, so a residue left by a SIGKILL (which never
+    runs `finally`) is not read back as an "untracked build input". Same
+    filesystem, so `os.replace` is ONE atomic rename: a reader sees the old
+    bytes or the new ones, never a half-written file.
+
+    The temp is a NEW inode, so the rename would publish the temp's own mode
+    (0666 & ~umask) instead of the source's. `core.filemode=true` would then
+    show a mode-only `git diff` on `src/...` and the next preflight would
+    refuse the whole tree; the mode is taken from the source and applied to
+    the temp before the rename.
+
+    Fail-closed: any failing step raises. Nothing here swallows an error,
+    because a silent skip is exactly the defect class this closes.
+    """
+    path = Path(path)
+    publish = Path(root) / PUBLISH_DIR
+    publish.mkdir(parents=True, exist_ok=True)
+    temporary = publish / f'.negctl-{path.name}.tmp'
+    mode = path.stat().st_mode & 0o7777
+    try:
+        with temporary.open('wb') as stream:
+            stream.write(data)
+            stream.flush()
+            # SIGKILL is the threat here, not power loss: the page cache
+            # outlives the process, so the flush above is enough; the rename
+            # itself needs no directory fsync for that.
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 @contextmanager
 def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     """Lock the tree, prove ``paths`` are pristine, snapshot, mutate, restore.
@@ -877,8 +926,9 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
     the tree lock is held; the whole workspace input tree is also checked so a
     killed runner from another group cannot leave a mutant behind. A mismatch
     aborts *before* anything is written and leaves the unexpected bytes for a
-    human to inspect. On exit the snapshot is written back and compared both to
-    the snapshot and to the same git object.
+    human to inspect. On exit the snapshot is published back through
+    ``write_source_atomic`` (one rename, never a truncating in-place write) and
+    compared both to the snapshot and to the same git object.
 
     Nested product-only use by one thread is supported through TreeLock;
     parity mutation windows must not nest their non-reentrant ruler lease.
@@ -924,7 +974,7 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
             finally:
                 with restore_critical():
                     for _alias, path, _relative in normalized:
-                        path.write_bytes(snapshot[path])
+                        write_source_atomic(root, path, snapshot[path])
                     for _alias, path, relative in normalized:
                         if path.read_bytes() != snapshot[path]:
                             raise RuntimeError(f"restore failed: {relative}")
