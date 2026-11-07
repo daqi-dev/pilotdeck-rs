@@ -23,6 +23,11 @@ DIRS = ('home', 'pilot', 'project', 'tmp', 'bin', 'xdg-config', 'xdg-cache', 'xd
 FILES = {'pilot/pilotdeck.yaml': b'schemaVersion: 1\n', 'project/keep.txt': b'D0 fixture\x00\xff\n',
          'openssl.cnf': b''}
 OPENSSL_CONFIG = {'path': 'openssl.cnf', 'sha256': hashlib.sha256(b'').hexdigest()}
+# The 2026-10-31 node-baseline decision card (option A) pins the TS
+# interpreter build: every round must print and assert these exact values,
+# and a host without this build is BLOCKED, never silently substituted with
+# whatever `node` resolves to (the fnm/Homebrew drift both failed this pin).
+PINNED_NODE = {'node': 'v22.22.0', 'icu': '78.2', 'uv': '1.52.1'}
 # Registered suites keep each batch inside the existing 30-scenario lease.
 SUITE = os.environ.get('PDRS_CLI_PARITY_SUITE', 'default')
 if SUITE not in ('default', 'chat-search'):

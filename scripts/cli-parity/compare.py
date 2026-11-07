@@ -45,6 +45,7 @@ Blocked = _common.Blocked
 HEAD = _common.HEAD
 MOCK_PORT = _common.MOCK_PORT
 OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+PINNED_NODE = _common.PINNED_NODE
 SCRIPT = _common.SCRIPT
 SCENARIOS = _common.SCENARIOS
 TOKEN = _common.TOKEN
@@ -187,6 +188,14 @@ def load_round(path):
         require(provenance['opensslConfig'] == OPENSSL_CONFIG, 'round.openssl-config')
         node = provenance['node']
         require(valid_sha(node['sha256']) and Path(node['path']).is_absolute(), 'round.node')
+        # #122: the interpreter pin (2026-10-31 decision card) and the declared
+        # Node dependency roots are evidence, not operator claims: the profile
+        # text below is re-derived from them and must match byte for byte.
+        require(provenance.get('nodeIdentity') == PINNED_NODE, 'round.node-identity')
+        roots_raw = provenance.get('tsReadDirs')
+        require(isinstance(roots_raw, list) and all(isinstance(root, str) and Path(root).is_absolute() for root in roots_raw),
+                'round.ts-read-dirs')
+        roots = tuple(roots_raw)
         if run['side'] == 'ts':
             require(provenance['sourceHead'] == HEAD and provenance['executable'] == node
                     and provenance['sourcePath'] == baseline['path'], 'round.ts-source')
@@ -220,10 +229,11 @@ def load_round(path):
             except (OSError, ValueError):
                 on_disk_skills = None
             require(on_disk_skills is not None and on_disk_skills == skills, 'round.rust-stage-skills-bytes')
-        policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'])
+        policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'],
+                                 ts_read_dirs=roots if run['side'] == 'ts' else ())
         require(isolation['profileText'] == policy and isolation['profileSha256'] == hashlib.sha256(policy.encode()).hexdigest(),
                 'round.profile-binding')
-        probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts')
+        probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', ts_read_dirs=roots)
         require(isolation['probeProfileSha256'] == hashlib.sha256(probe_policy.encode()).hexdigest(), 'round.probe-profile')
         # #933 mock-gateway evidence: present exactly when the registry marks scenarios.
         mock = run.get('mockIsolation')
@@ -231,10 +241,12 @@ def load_round(path):
         if mock is not None:
             require(isinstance(mock, dict) and mock['status'] == 'PASS' and mock['errors'] == []
                     and mock['exitCode'] == 0, 'round.mock-isolation')
-            mock_policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'], mock_gateway=True)
+            mock_policy = sandbox_profile(runtime, Path(baseline['path']), executed['path'], run['side'], mock_gateway=True,
+                                           ts_read_dirs=roots if run['side'] == 'ts' else ())
             require(mock['profileText'] == mock_policy
                     and mock['profileSha256'] == hashlib.sha256(mock_policy.encode()).hexdigest(), 'round.mock-profile-binding')
-            mock_probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', mock_gateway=True)
+            mock_probe_policy = sandbox_profile(runtime, Path(baseline['path']), node['path'], 'ts', mock_gateway=True,
+                                                 ts_read_dirs=roots)
             require(mock['probeProfileSha256'] == hashlib.sha256(mock_probe_policy.encode()).hexdigest(), 'round.mock-probe-profile')
             probe = mock['gatewayProbe']
             require(probe.get('connectAllowed') is True
@@ -349,6 +361,8 @@ def compare(left, right, expected_rust=None):
             failures.append({'rule': 'round.baseline'})
         if a['provenance']['node'] != b['provenance']['node']:
             failures.append({'rule': 'round.node'})
+        if a['provenance'].get('tsReadDirs') != b['provenance'].get('tsReadDirs'):
+            failures.append({'rule': 'round.ts-read-dirs'})
         if b['side'] == 'rust':
             observed = {key: b['provenance'].get(key) for key in ('side', 'executable', 'sourcePath', 'sourceHead')}
             if expected_rust is None or observed != expected_rust:

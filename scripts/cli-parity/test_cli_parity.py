@@ -61,6 +61,7 @@ CleanupBlocked = _common.CleanupBlocked
 HEAD = _common.HEAD
 MOCK_PORT = _common.MOCK_PORT
 OPENSSL_CONFIG = _common.OPENSSL_CONFIG
+PINNED_NODE = _common.PINNED_NODE
 ROOT = _common.ROOT
 SCRIPT = _common.SCRIPT
 SCENARIOS = _common.SCENARIOS
@@ -99,6 +100,8 @@ capture = _run_round.capture
 check_budget = _run_round.check_budget
 main = _run_round.main
 mock_gateway_preflight = _run_round.mock_gateway_preflight
+node_identity = _run_round.node_identity
+ts_read_roots = _run_round.ts_read_roots
 preflight = _run_round.preflight
 mock_listening_line = _run_round.mock_listening_line
 run_round = _run_round.run_round
@@ -150,11 +153,13 @@ def bind_policy(run):
     p = run['provenance']
     iso = run['isolation']
     executed = p['stagedExecutable'] if run['side'] == 'rust' else p['executable']
-    iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), executed['path'], run['side'])
+    roots = tuple(p.get('tsReadDirs', ()))
+    iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), executed['path'], run['side'],
+                                          ts_read_dirs=roots if run['side'] == 'ts' else ())
     iso['profileSha256'] = hashlib.sha256(iso['profileText'].encode()).hexdigest()
     iso['profilePath'] = '/synthetic/' + run['side'] + '.sb'
     iso['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
-        Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
+        Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts', ts_read_dirs=roots).encode()).hexdigest()
 
 
 def bind_mock_policy(run):
@@ -162,12 +167,14 @@ def bind_mock_policy(run):
     p = run['provenance']
     iso = run['mockIsolation']
     executed = p['stagedExecutable'] if run['side'] == 'rust' else p['executable']
+    roots = tuple(p.get('tsReadDirs', ()))
     iso['profileText'] = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), executed['path'], run['side'],
-                                         mock_gateway=True)
+                                         mock_gateway=True, ts_read_dirs=roots if run['side'] == 'ts' else ())
     iso['profileSha256'] = hashlib.sha256(iso['profileText'].encode()).hexdigest()
     iso['profilePath'] = '/synthetic/' + run['side'] + '-mock.sb'
     iso['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
-        Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts', mock_gateway=True).encode()).hexdigest()
+        Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts', mock_gateway=True,
+        ts_read_dirs=roots).encode()).hexdigest()
 
 
 # These legacy contract fixtures always target the default registry, even when
@@ -244,6 +251,7 @@ def synthetic_round(path, runtime, scenario_fixtures=False):
                                    'osHomedir': str(runtime / 'home')}},
            'provenance': {'side': 'ts', 'sourcePath': '/synthetic/baseline', 'opensslConfig': OPENSSL_CONFIG,
                           'node': {'path': '/synthetic/unit-test-only', 'sha256': '0' * 64}, 'executable': {'path': '/synthetic/unit-test-only', 'sha256': '0' * 64},
+                          'nodeIdentity': dict(PINNED_NODE), 'tsReadDirs': [],
                           'sourceHead': HEAD, 'baseline': {'sourceHead': HEAD, 'entrySha256': '0' * 64,
                               'path': '/synthetic/baseline', 'files': {'src/fixture.ts': '0' * 64},
                               'trees': {name: '0' * 64 for name in ('src', 'dist', 'packages', 'node_modules', 'skills')}}}}
@@ -859,14 +867,20 @@ class ContractTests(unittest.TestCase):
             errors = compare_module.load_round(source)[2]
         self.assertIn('round.empty-registry', errors)
 
-    def test_all_five_mutations_detected_on_synthetic_fixture(self):
+    def test_all_six_mutations_detected_on_synthetic_fixture(self):
         result = run_controls(self.source(), self.root / 'mutants')
         self.assertEqual(result['status'], 'PASS', result)
-        self.assertEqual(len(result['controls']), 5)
+        self.assertEqual(len(result['controls']), 6)
         for row in result['controls']:
-            self.assertEqual(row['status'], 'PASS')
-            self.assertEqual(row['scenario'], 'flag-missing' if row['name'] == 'change-stderr' else 'help-long')
-            self.assertIn(row['expectedPairRule'], row['observedRules'])
+            self.assertEqual(row['status'], 'PASS', result)
+            expected = {'change-stderr': 'flag-missing', 'drop-case': 'empty-nontty'}.get(row['name'], 'help-long')
+            self.assertEqual(row['scenario'], expected)
+            self.assertIn(row['expectedRule'], row['observedRules'])
+            if row['name'] == 'drop-case':
+                # A dropped case never reaches the oracle or the pair comparison.
+                self.assertIsNone(row['expectedPairRule'])
+            else:
+                self.assertIn(row['expectedPairRule'], row['observedRules'])
         self.assertEqual(result['notApplicable'], [])
 
     def test_chat_search_controls_select_eligible_cases_and_detect_mutations(self):
@@ -877,12 +891,15 @@ class ContractTests(unittest.TestCase):
             result = run_controls(source, self.root / 'chat-controls')
         self.assertEqual(result['status'], 'PASS', result)
         self.assertEqual(result['notApplicable'], [])
-        self.assertEqual(len(result['controls']), 5)
+        self.assertEqual(len(result['controls']), 6)
         for row in result['controls']:
             self.assertEqual(row['status'], 'PASS', row)
             self.assertEqual(row['scenario'], 'chat-text' if row['name'] == 'drop-stdout' else 'chat-usage')
             self.assertIn(row['expectedRule'], row['observedRules'])
-            self.assertIn(row['expectedPairRule'], row['observedRules'])
+            if row['name'] == 'drop-case':
+                self.assertIsNone(row['expectedPairRule'])
+            else:
+                self.assertIn(row['expectedPairRule'], row['observedRules'])
 
     def test_controls_report_inapplicable_surfaces_explicitly(self):
         cases = [{'id': 'empty', 'argv': [], 'stdinHex': '', 'token': False,
@@ -912,7 +929,7 @@ class ContractTests(unittest.TestCase):
                 patch('controls.load_round', return_value=({}, {}, [])):
             result = run_controls(self.root / 'zero-source', self.root / 'zero-controls')
         self.assertEqual(result['status'], 'BLOCKED', result)
-        self.assertEqual(len(result['notApplicable']), 5)
+        self.assertEqual(len(result['notApplicable']), 6)
         self.assertFalse(any(row['status'] == 'PASS' for row in result['controls']))
         self.assertEqual(json.loads((self.root / 'zero-controls/controls.json').read_text()), result)
 
@@ -1134,6 +1151,133 @@ class ContractTests(unittest.TestCase):
         self.assertNotIn(str(baseline), rust)
         self.assertNotIn('homebrew', rust)
         self.assertNotIn('/opt/homebrew/bin/node', rust)
+
+    def test_policy_extra_ts_read_roots_are_read_only_and_ts_side_only(self):
+        # #122: declared Node dependency roots are read-only subpaths of the TS
+        # profile only; writes, network and the Rust side never gain anything.
+        runtime, baseline = self.root / 'runtime', self.root / 'baseline'
+        extra = self.root / 'deps/libuv-1.52.1/lib'
+        extra.mkdir(parents=True)
+        ts = sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', ts_read_dirs=[extra])
+        self.assertIn(f'(subpath "{extra}")', ts)
+        self.assertEqual(ts.count(f'(subpath "{extra}")'), 2,
+                         '#122: the root appears in the metadata and data read rules only')
+        self.assertIn(f'(allow file-write* (subpath "{runtime}"))', ts)
+        self.assertNotIn(f'(allow file-write* (subpath "{extra}")', ts)
+        self.assertNotIn('network-outbound', ts)
+        with self.assertRaisesRegex(ValueError, 'Rust side'):
+            sandbox_profile(runtime, baseline, '/candidate/rust-stage/bin/pilotdeck', 'rust', ts_read_dirs=[extra])
+        with self.assertRaisesRegex(ValueError, 'disjoint from the runtime'):
+            sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', ts_read_dirs=[runtime])
+        with self.assertRaisesRegex(ValueError, 'canonical absolute'):
+            sandbox_profile(runtime, baseline, '/synthetic/unit-test-only', 'ts', ts_read_dirs=['deps/lib'])
+
+    def test_pinned_node_identity_gate(self):
+        # The 2026-10-31 decision card: print and assert version/ICU/libuv;
+        # any other build on this host (fnm ICU 77.1, Homebrew 22.23.4) is
+        # BLOCKED, never a silent fallback.
+        def fake(code, stdout):
+            return MagicMock(returncode=code, stdout=stdout, stderr='synthetic stderr')
+
+        pinned = json.dumps(PINNED_NODE)
+        for code, stdout, why in ((0, pinned, 'pinned build'),
+                                  (1, '', 'nonzero exit'),
+                                  (0, 'not json', 'non-JSON output'),
+                                  (0, json.dumps({'node': 'v22.22.0', 'icu': '77.1', 'uv': '1.52.1'}), 'fnm ICU drift'),
+                                  (0, json.dumps({'node': 'v22.23.4', 'icu': '78.2', 'uv': '1.53.0'}), 'homebrew drift'),
+                                  (0, json.dumps({'node': 'v22.22.0', 'icu': '78.2'}), 'missing uv')):
+            with self.subTest(why=why), patch.object(_run_round.subprocess, 'run', return_value=fake(code, stdout)):
+                if code or stdout != pinned:
+                    with self.assertRaisesRegex(Blocked, 'Node runtime'):
+                        node_identity('/synthetic/unit-test-only')
+                else:
+                    self.assertEqual(node_identity('/synthetic/unit-test-only'), PINNED_NODE)
+
+    def test_ts_read_roots_fail_closed_on_protected_trees(self):
+        # #122: only the interpreter's own dependency trees may be declared.
+        allowed = self.root / 'deps/libuv-1.52.1/lib'
+        allowed.mkdir(parents=True)
+        output, baseline, candidate = self.root / 'out', self.root / 'baseline', self.root / 'cand'
+        output.mkdir()
+        baseline.mkdir()
+        candidate.mkdir()
+        self.assertEqual(ts_read_roots([allowed], output, baseline), [allowed])
+        for bad, why in ((Path.home(), 'home itself'),
+                         (Path.home().parent, 'covers home'),
+                         (ROOT, 'the checkout'),
+                         (SCRIPT, 'inside the checkout'),
+                         (output, 'the evidence tree'),
+                         (baseline, 'the baseline'),
+                         (candidate, 'covers the Rust candidate')):
+            with self.subTest(why=why):
+                with self.assertRaisesRegex(Blocked, 'protected tree'):
+                    ts_read_roots([bad], output, baseline, rust_bin=candidate / 'pilotdeck')
+        with self.assertRaisesRegex(Blocked, 'duplicate'):
+            ts_read_roots([allowed, allowed], output, baseline)
+
+    def test_recorded_ts_read_dirs_and_node_identity_are_evidence(self):
+        # #122: the declared Node dependency roots and the interpreter pin are
+        # round evidence. compare re-derives every profile from them, so a
+        # comparator that silently ignored them could not keep the bytes.
+        root = '/PDRS-NODE-DEPS/libuv-1.52.1/lib'
+        mock_ids = {s['id'] for s in SCENARIOS if s.get('mockGateway') is True}
+        pristine = self.source()
+        reference, left = self.root / 'reference', self.root / 'left'
+
+        def rebind(path, roots=(root,)):
+            run = json.loads((path / 'round.json').read_text())
+            run['provenance']['tsReadDirs'] = list(roots)
+            bind_policy(run)
+            if 'mockIsolation' in run:
+                bind_mock_policy(run)
+            save(path / 'round.json', run)
+            for scenario in SCENARIOS:
+                row_path = path / 'cases' / scenario['id'] / 'record.json'
+                row = json.loads(row_path.read_text())
+                binding = run['mockIsolation'] if scenario['id'] in mock_ids else run['isolation']
+                row['profileSha256'] = binding['profileSha256']
+                save(row_path, row)
+            return run
+
+        shutil.copytree(pristine, reference)
+        rebind(reference)
+        shutil.copytree(pristine, left)
+        rebind(left)
+        self.assertEqual(compare(left, reference)['status'], 'PASS')
+
+        def tampered(rule, change):
+            shutil.rmtree(left)
+            shutil.copytree(pristine, left)
+            run = rebind(left)
+            change(run)
+            save(left / 'round.json', run)
+            self.assertIn(rule, [row['rule'] for row in compare(left, reference)['failures']],
+                          f'the comparator must reject tampered {rule} evidence')
+
+        def profile_without_roots(run):
+            # The realistic mutant: a comparator that derives profiles while
+            # ignoring the recorded roots.
+            p = run['provenance']
+            text = sandbox_profile(Path(run['runtime']), Path(p['baseline']['path']), p['executable']['path'], 'ts')
+            run['isolation']['profileText'] = text
+            run['isolation']['profileSha256'] = hashlib.sha256(text.encode()).hexdigest()
+
+        def probe_without_roots(run):
+            p = run['provenance']
+            run['isolation']['probeProfileSha256'] = hashlib.sha256(sandbox_profile(
+                Path(run['runtime']), Path(p['baseline']['path']), p['node']['path'], 'ts').encode()).hexdigest()
+
+        tampered('round.profile-binding', profile_without_roots)
+        tampered('round.probe-profile', probe_without_roots)
+        tampered('round.ts-read-dirs', lambda run: run['provenance'].__setitem__('tsReadDirs', ['relative/lib']))
+        tampered('round.ts-read-dirs', lambda run: run['provenance'].pop('tsReadDirs'))
+        tampered('round.node-identity', lambda run: run['provenance'].__setitem__(
+            'nodeIdentity', {'node': 'v22.22.0', 'icu': '77.1', 'uv': '1.52.1'}))
+        # Consistent but different roots on one side only: not a PASS pair.
+        shutil.rmtree(left)
+        shutil.copytree(pristine, left)
+        rebind(left, roots=('/PDRS-NODE-DEPS/other/lib',))
+        self.assertIn('round.ts-read-dirs', [row['rule'] for row in compare(left, reference)['failures']])
 
     def test_rust_stage_copies_binary_and_skills_and_keeps_baseline_unreadable(self):
         baseline, output = self.root / 'baseline', self.root / 'out'

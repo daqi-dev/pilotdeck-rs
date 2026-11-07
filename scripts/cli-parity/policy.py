@@ -47,12 +47,26 @@ SCRIPT = _common.SCRIPT
 MOCK_GATEWAY_ALLOW = f'(allow network-outbound (remote ip "localhost:{MOCK_PORT}"))'
 
 
-def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
+def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False, ts_read_dirs=()):
     if side not in ('ts', 'rust'):
         raise ValueError('unknown sandbox side')
     if not isinstance(mock_gateway, bool):
         raise ValueError('mock_gateway must be a boolean')
+    # #122: operator-declared, read-only roots for the installed Node's own
+    # dependencies — the pinned build links its libuv outside Homebrew on
+    # hosts where Homebrew drifted past the baseline. Pure string inputs:
+    # archived policy text is re-derived without touching the filesystem, so
+    # the caller canonicalizes and records them; the Rust side never gets them.
+    if not isinstance(ts_read_dirs, (list, tuple)):
+        raise ValueError('ts_read_dirs must be a sequence of canonical paths')
+    roots = [Path(root) for root in ts_read_dirs]
+    if side == 'rust' and roots:
+        raise ValueError('Rust side must not receive TS read roots')
+    if any(not root.is_absolute() or '..' in root.parts for root in roots) or len(set(roots)) != len(roots):
+        raise ValueError('ts read roots must be canonical absolute paths')
     runtime, baseline, binary = Path(runtime), Path(baseline), Path(binary)
+    if any(root == runtime or root in runtime.parents or runtime in root.parents for root in roots):
+        raise ValueError('ts read roots must be disjoint from the runtime')
     # Rust has no Homebrew or baseline access. System libraries are required by
     # native macOS executables; an unsupported external dylib fails closed.
     read_dirs = [runtime, Path('/System'), Path('/usr/lib'), Path('/Library/Apple')]
@@ -67,6 +81,7 @@ def sandbox_profile(runtime, baseline, binary, side, mock_gateway=False):
     if side == 'ts':
         read_dirs += [baseline / name for name in ('dist', 'node_modules', 'packages', 'skills')]
         read_dirs += [Path('/opt/homebrew/Cellar'), Path('/opt/homebrew/opt')]
+        read_dirs += roots
         read_files += [baseline / 'package.json', SCRIPT / 'isolation_probe.mjs']
     # Metadata is limited to readable objects and their ancestor directory
     # objects, not ancestor subtrees. No global stat/exists or directory service.
