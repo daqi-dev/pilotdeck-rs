@@ -312,6 +312,19 @@ mutations = [
      '        NonUtf8Probe::Failed(_) => false,',
      'runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision',
      '#1400 a probe failure must fail closed (panic), not skip'),
+    # #1672 fix-r2 (DS r2 reviews, three roles — the tight half of the retry
+    # contract had no ruler row): the retry condition is loosened into "any
+    # error retries once". Every non-fd errno then burns a second attempt;
+    # the calls == 1 pins in the mapping test are the kill.
+    ('fd-retry-any-error', tests,
+     '    if let Err(error) = &outcome\n'
+     '        && probe_hit_the_fd_limit(error)\n'
+     '    {',
+     '    if let Err(_error) = &outcome\n'
+     '        && true\n'
+     '    {',
+     'runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry',
+     'skip, do not fail, with no retry'),
     # fix-r2 P2 / fix-r3 P1: the entry consults the process cwd unconditionally
     # again, so a deleted cwd fails an absolute-home migration. Bound to the
     # worker itself, whose panic block carries the marker (the parent's
