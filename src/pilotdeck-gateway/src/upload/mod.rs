@@ -6,7 +6,10 @@
 //! within one store instance (TS `updates: Map<string, Promise>`). Two processes
 //! (or two instances) mutating the same upload concurrently can lose an update,
 //! exactly as in TS; the shared contract is the disk format, not a cross-process
-//! lock. Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
+//! lock. Inside one instance, `complete` and `cancel` judge the record
+//! re-read within that per-id gate, so an interleaved pair can no longer
+//! both succeed or delete the files behind a reported completion (#1631).
+//! Live TS cross-tests are `#[ignore]` (need PDRS_BASELINE); the
 //! non-ignored `upload_golden_bytes_match_ts_fixtures` guards the format in CI.
 mod error;
 pub mod gateway;
@@ -357,36 +360,78 @@ impl UploadStore {
         }
     }
 
+    /// #1631: the state and manifest verdicts judge the record re-read inside
+    /// `mutate`'s per-id gate — the pre-gate `get()` snapshot let an
+    /// interleaved cancel delete the files behind a `complete` that had just
+    /// reported success. A refusal is captured and returned after the gate
+    /// (an Err from the closure would poison the queue for later calls, which
+    /// is TS's retained rejected Promise), and the mismatch branch writes the
+    /// failed record itself because `fail` would re-enter the gate this
+    /// closure already holds.
     pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
-        require_active(&record)?;
-        if array(&record, "manifest")
-            .iter()
-            .any(|m| !array(&record, "receivedClientFileIds").contains(&value(m, "clientFileId")))
-        {
-            let message = JsString::from("One or more declared files were not uploaded.");
-            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", &message)?;
-            return Err(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+        let mut refusal: Option<UploadError> = None;
+        let updated = self.mutate(&record, |r| match status(r).as_str() {
+            "created" | "uploading" => {
+                if array(r, "manifest")
+                    .iter()
+                    .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+                {
+                    set(r, "status", text("failed"));
+                    set(r, "errorCode", text("UPLOAD_MANIFEST_MISMATCH"));
+                    set(
+                        r,
+                        "errorMessage",
+                        text("One or more declared files were not uploaded."),
+                    );
+                    refusal = Some(UploadError::dialog(
+                        "UPLOAD_MANIFEST_MISMATCH",
+                        "One or more declared files were not uploaded.",
+                    ));
+                } else {
+                    set(r, "status", text("completed"));
+                    set(r, "uploadedBytes", value(r, "totalBytes"));
+                }
+            }
+            other => {
+                refusal = Some(UploadError::dialog(
+                    "UPLOAD_INVALID_STATE",
+                    format!("Upload is {other}."),
+                ));
+            }
+        })?;
+        match refusal {
+            Some(e) => Err(e),
+            None => Ok(updated),
         }
-        self.mutate(&record, |r| {
-            set(r, "status", text("completed"));
-            set(r, "uploadedBytes", value(r, "totalBytes"));
-        })
     }
 
+    /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
+    /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
+    /// `completed` record's files survive a racing cancel.
     pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
-        if status(&record) == "completed" {
-            return Err(UploadError::dialog(
-                "UPLOAD_ALREADY_COMPLETED",
-                "Completed uploads cannot be cancelled.",
-            ));
+        let mut refusal: Option<UploadError> = None;
+        let mut cancelled = false;
+        let updated = self.mutate(&record, |r| match status(r).as_str() {
+            "created" | "uploading" => {
+                set(r, "status", text("cancelled"));
+                cancelled = true;
+            }
+            "completed" => {
+                refusal = Some(UploadError::dialog(
+                    "UPLOAD_ALREADY_COMPLETED",
+                    "Completed uploads cannot be cancelled.",
+                ));
+            }
+            _ => {}
+        })?;
+        if let Some(e) = refusal {
+            return Err(e);
         }
-        if !active(&record) {
-            return Ok(record);
+        if cancelled {
+            remove_tree(&task_dir(&updated).join("files"))?;
         }
-        let updated = self.mutate(&record, |r| set(r, "status", text("cancelled")))?;
-        remove_tree(&task_dir(&updated).join("files"))?;
         Ok(updated)
     }
 
