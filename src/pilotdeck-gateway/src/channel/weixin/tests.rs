@@ -217,6 +217,23 @@ fn state_with_value(value: f64) -> JsValue {
     JsValue::Object(state)
 }
 
+/// The assertions of the two `#2073` tests run on the libtest thread, after
+/// `block_on`, because a receipt is keyed by the failing thread's name and a
+/// multi-threaded runtime names its workers `tokio-runtime-worker`. The
+/// observations are therefore collected inside the runtime and asserted
+/// outside it.
+fn multi_thread_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("#2073 multi-thread runtime")
+}
+
+fn read_state(file: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(file).ok()
+}
+
 /// #2073 P0: a debounce timer that has already woken up must retire itself
 /// when a newer `save` supersedes it — and must not lose the newest state.
 ///
@@ -226,73 +243,102 @@ fn state_with_value(value: f64) -> JsValue {
 /// section (deletes the *new* timer handle, registers `in_flight`, claims the
 /// newest state in `drain_writes`) and is only cancelled at the first await
 /// inside `write_to_disk`, after the state has left `dirty`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
-    let root = Root::new();
-    // Long enough that the *live* timer cannot fire while this test asserts,
-    // so an early write can only come from the superseded timer.
-    let persistence = ChannelStatePersistence::with_debounce(root.path(), 500);
-    let key = js("weixin");
-    let file = root.path().join("weixin.state.json");
-
-    // Arm the rendezvous, then start a timer that parks as soon as it wakes.
-    let entered = persistence.park_next_timer();
-    persistence.save(&key, state_with_value(1.0));
-    tokio::task::spawn_blocking(move || {
-        entered
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("#2073 the debounce timer must reach the park point")
-    })
-    .await
-    .expect("#2073 park waiter");
-
-    // Supersede the parked timer and let it settle.
-    let exits = persistence.timer_exits();
-    persistence.save(&key, state_with_value(2.0));
-    persistence.release_parked_timer();
-    for _ in 0..2_000 {
-        if persistence.timer_exits() > exits {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+#[test]
+fn superseded_debounce_timer_must_not_drop_the_newest_state() {
+    struct Observed {
+        settled: bool,
+        early_write: bool,
+        flushed: bool,
+        after_flush: Option<String>,
+        later_flushed: bool,
+        after_later: Option<String>,
     }
-    assert!(
-        persistence.timer_exits() > exits,
+    let observed = multi_thread_runtime().block_on(async {
+        let root = Root::new();
+        // Long enough that the *live* timer cannot fire while this test
+        // observes, so an early write can only come from the superseded timer.
+        let persistence = ChannelStatePersistence::with_debounce(root.path(), 500);
+        let key = js("weixin");
+        let file = root.path().join("weixin.state.json");
+
+        // Arm the rendezvous, then start a timer that parks as soon as it wakes.
+        let entered = persistence.park_next_timer();
+        persistence.save(&key, state_with_value(1.0));
+        tokio::task::spawn_blocking(move || {
+            entered
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("#2073 the debounce timer must reach the park point")
+        })
+        .await
+        .expect("#2073 park waiter");
+
+        // Supersede the parked timer and let it settle.
+        let exits = persistence.timer_exits();
+        persistence.save(&key, state_with_value(2.0));
+        persistence.release_parked_timer();
+        let mut settled = persistence.timer_exits() > exits;
+        for _ in 0..2_000 {
+            if settled {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            settled = persistence.timer_exits() > exits;
+        }
+
+        // A superseded timer must not write: the debounce still has ~500 ms to
+        // go, and TS would not have written either.
+        let early_write = read_state(&file).is_some();
+
+        // The newest state must land; pre-fix it was claimed and then dropped,
+        // and `flush` waited forever on the orphaned in-flight entry.
+        let flushed = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            persistence.flush(),
+        )
+        .await
+        .is_ok();
+        let after_flush = read_state(&file);
+
+        // And the key must not be wedged: a later save still persists.
+        persistence.save(&key, state_with_value(3.0));
+        let later_flushed = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            persistence.flush(),
+        )
+        .await
+        .is_ok();
+        Observed {
+            settled,
+            early_write,
+            flushed,
+            after_flush,
+            later_flushed,
+            after_later: read_state(&file),
+        }
+    });
+    crate::negative_assert!(
+        observed.settled,
         "#2073 the superseded timer must settle"
     );
-
-    // A superseded timer must not write: the debounce still has ~500 ms to go,
-    // and TS would not have written either.
-    assert!(
-        std::fs::read_to_string(&file).is_err(),
+    crate::negative_assert!(
+        !observed.early_write,
         "#2073 a superseded timer must not write before the debounce elapses"
     );
-
-    // The newest state must land; pre-fix it was claimed and then dropped, and
-    // `flush` waits forever on the orphaned in-flight entry.
-    let flushed =
-        tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush()).await;
-    assert_eq!(
-        std::fs::read_to_string(&file).ok().as_deref(),
+    crate::negative_assert_eq!(
+        observed.after_flush.as_deref(),
         Some("{\n  \"v\": 2\n}"),
-        "#2073 the newest state must reach disk (flush completed: {})",
-        flushed.is_ok()
+        "#2073 the newest state must reach disk"
     );
-    assert!(
-        flushed.is_ok(),
+    crate::negative_assert!(
+        observed.flushed,
         "#2073 flush must not wait on an orphaned in-flight entry"
     );
-
-    // And the key must not be wedged: a later save still persists.
-    persistence.save(&key, state_with_value(3.0));
-    let flushed =
-        tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush()).await;
-    assert!(
-        flushed.is_ok(),
+    crate::negative_assert!(
+        observed.later_flushed,
         "#2073 flush must not hang after a superseded timer"
     );
-    assert_eq!(
-        std::fs::read_to_string(&file).ok().as_deref(),
+    crate::negative_assert_eq!(
+        observed.after_later.as_deref(),
         Some("{\n  \"v\": 3\n}"),
         "#2073 the key must keep persisting after a superseded timer"
     );
@@ -303,52 +349,77 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
 /// the state it claimed, and the waiter that was subscribed to it starts a
 /// fresh drain instead of reporting a success that never wrote (pre-fix the
 /// entry stayed forever and every later `save`/`flush` waited on it).
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
-    let root = Root::new();
-    let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
-    let key = js("weixin");
-    let file = root.path().join("weixin.state.json");
-    persistence.save(&key, state_with_value(5.0));
-
-    // The first flush parks inside the drain, holding the claimed state.
-    let gate = persistence.park_next_drain();
-    let first = tokio::spawn({
-        let persistence = persistence.clone();
-        async move { persistence.flush().await }
-    });
-    gate.entered.notified().await;
-
-    // A second flush joins the in-flight entry instead of starting its own.
-    let second = tokio::spawn({
-        let persistence = persistence.clone();
-        async move { persistence.flush().await }
-    });
-    for _ in 0..2_000 {
-        if persistence.in_flight_waiters(&key) == 1 {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+#[test]
+fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
+    struct Observed {
+        waiters: usize,
+        cancelled: bool,
+        /// `None` means the waiting flush never returned (the wedge).
+        second: Option<Result<(), String>>,
+        content: Option<String>,
     }
-    assert_eq!(
-        persistence.in_flight_waiters(&key),
+    let observed = multi_thread_runtime().block_on(async {
+        let root = Root::new();
+        let persistence = ChannelStatePersistence::with_debounce(root.path(), 60_000);
+        let key = js("weixin");
+        let file = root.path().join("weixin.state.json");
+        persistence.save(&key, state_with_value(5.0));
+
+        // The first flush parks inside the drain, holding the claimed state.
+        let gate = persistence.park_next_drain();
+        let first = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        gate.entered.notified().await;
+
+        // A second flush joins the in-flight entry instead of starting its own.
+        let second = tokio::spawn({
+            let persistence = persistence.clone();
+            async move { persistence.flush().await }
+        });
+        let mut waiters = persistence.in_flight_waiters(&key);
+        for _ in 0..2_000 {
+            if waiters == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            waiters = persistence.in_flight_waiters(&key);
+        }
+
+        // Drop the drainer mid-write; the waiter must recover, not wedge.
+        first.abort();
+        let cancelled = matches!(first.await, Err(error) if error.is_cancelled());
+        let second = match tokio::time::timeout(std::time::Duration::from_secs(5), second).await {
+            Ok(joined) => joined.ok(),
+            Err(_) => None,
+        };
+        Observed {
+            waiters,
+            cancelled,
+            second,
+            content: read_state(&file),
+        }
+    });
+    crate::negative_assert_eq!(
+        observed.waiters,
         1,
         "#2073 the second flush must wait on the in-flight drain"
     );
-
-    // Drop the drainer mid-write; the waiter must recover, not wedge.
-    first.abort();
-    assert!(
-        first.await.expect_err("#2073 first flush aborted").is_cancelled(),
+    crate::negative_assert!(
+        observed.cancelled,
         "#2073 the parked drain must be cancelled, not completed"
     );
-    let second = tokio::time::timeout(std::time::Duration::from_secs(5), second)
-        .await
-        .expect("#2073 the waiting flush must not hang on an abandoned entry")
-        .expect("#2073 second flush join");
-    second.expect("#2073 the retry writes");
-    assert_eq!(
-        std::fs::read_to_string(&file).ok().as_deref(),
+    crate::negative_assert!(
+        observed.second.is_some(),
+        "#2073 the waiting flush must not hang on an abandoned entry"
+    );
+    crate::negative_assert!(
+        observed.second.as_ref().is_some_and(|result| result.is_ok()),
+        "#2073 the retry writes"
+    );
+    crate::negative_assert_eq!(
+        observed.content.as_deref(),
         Some("{\n  \"v\": 5\n}"),
         "#2073 the claimed state must not be lost with the dropped drain"
     );

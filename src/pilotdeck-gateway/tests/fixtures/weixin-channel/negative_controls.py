@@ -162,7 +162,7 @@ MUTATIONS = [
      '            *seq += 1;',
      '            let seq = inner.timer_seq.entry(channel_key.clone()).or_insert(0);\n'
      '            *seq += 0;',
-     SUPERSEDED, '#2073 a superseded timer must not write before the debounce'),
+     SUPERSEDED, '#2073 a superseded timer must not write before the debounce elapses'),
     # 2) a cancelled drain reports completion: the waiter returns a success
     #    that never wrote (this is the pre-fix shape, where the entry also
     #    stayed forever).
