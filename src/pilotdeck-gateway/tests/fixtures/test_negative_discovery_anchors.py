@@ -69,7 +69,9 @@ rather than only when somebody remembers to negate it by hand. Local negative
 controls cover the other directions: a new bare row, an empty ``TABLES``, a
 second ``DISCOVERY_ANCHORS`` assignment, a string-built path, unsupported call
 shapes, a shadowed, twice-assigned or parameter-bound constant, a runtime file
-name behind ``/``, an f-string or a ``+``, a comprehension over an unsupported
+name behind ``/``, an f-string, a ``+`` or a ``joinpath`` / ``with_name`` /
+``Path(base, name)`` call, a separator or file name behind a constant, a
+comprehension over an unsupported
 join, a display string that only looks like a path, a package initialiser whose
 own imports must be keyed, and new blind, import-only or unresolvable tables
 appearing outside both registers.
@@ -746,6 +748,20 @@ def _path_literal_operand(value):
     return _path_literal_ending_in_file(value)
 
 
+def _string_value(node, constants, seen=()):
+    """The string a fragment names, following module constants to a literal.
+
+    ``str(SMS) + SEP + 'mod.rs'`` hides the separator behind a name; the join
+    is the same path build as spelling ``'/'`` inline, so the fragment test has
+    to look through the constant table rather than at direct operands only.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name) and node.id not in seen and node.id in constants:
+        return _string_value(constants[node.id], constants, seen + (node.id,))
+    return None
+
+
 def _joins_a_path_string(node):
     """Whether an ``Add`` / f-string carries a path-looking string literal.
 
@@ -1328,13 +1344,46 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         else:
             report_unresolvable(ast.unparse(node))
 
+    def report_runtime_call_tail(node):
+        """Report the call spellings of ``SMS / name``.
+
+        ``SMS.joinpath(name)``, ``SMS.with_name(name)`` and ``Path(SMS, name)``
+        join a repository directory to a file name only the runtime knows, just
+        like the ``/`` form that has reported since r9. Left silent, a table
+        written in this style is neither keyed nor flagged, so a new table using
+        it would never be registered — the same false pass this guard exists to
+        prevent. Only the outermost call reports, and only when the directory
+        resolves and the file-name argument does not.
+        """
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in ('joinpath', 'with_name'):
+            base = func.value
+        elif (isinstance(func, ast.Name) and func.id == 'Path'
+                and len(node.args) >= 2 and not node.keywords):
+            base = node.args[0]
+        else:
+            return
+        if not node.args:
+            return
+        tail = node.args[-1]
+        if _segments(tail, constants, self_path) is not None:
+            return
+        if not (_is_repo_rooted(base, constants, shadowed=shadowed)
+                or _carries_repository_path(node, tainted, repository_returns)):
+            return
+        ambiguous = ambiguous_names(node)
+        if ambiguous:
+            report_ambiguous(ambiguous[0], ast.unparse(node))
+        else:
+            report_unresolvable(ast.unparse(node))
+
     class Visitor(ast.NodeVisitor):
         def visit_BinOp(self, node):
             if isinstance(node.op, ast.Add) and repo_rooted(node):
                 separators = [
                     operand for operand in _add_operands(node)
-                    if isinstance(operand, ast.Constant)
-                    and isinstance(operand.value, str) and '/' in operand.value]
+                    if (value := _string_value(operand, constants)) is not None
+                    and '/' in value]
                 if (_joins_a_path_string(node) or separators
                         or _adds_a_runtime_file_name(node, constants, self_path)):
                     # ``str(ROOT) + '/src/x/mod.rs'`` is statically resolvable in
@@ -1417,6 +1466,11 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             if _is_path_shape(node, constants):
                 resolve(node, ast.unparse(node))
+            else:
+                # ``SMS.joinpath(name)`` / ``Path(SMS, name)``: the directory
+                # half resolves and the file name does not — the call spelling
+                # of ``SMS / name``.
+                report_runtime_call_tail(node)
             self.generic_visit(node)
 
         def visit_For(self, node):
@@ -2502,6 +2556,63 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 )
                 problems = violations(synthetic, 'example/negative_controls.py')
                 self.assertTrue(any('unresolvable' in problem or 'unsupported' in problem
+                                    for problem in problems), problems)
+
+    def test_a_runtime_file_name_in_a_call_fails_closed(self):
+        """``SMS.joinpath(name)`` is the call spelling of ``SMS / name``.
+
+        The ``/``, f-string and ``+`` forms reported since r9; the call forms
+        were silent, so a table written that way produced neither a key nor a
+        report and never had to register an anchor.
+        """
+        shapes = {
+            'joinpath': "def row(name):\n    return SMS.joinpath(name)\n",
+            'with_name': "def row(name):\n    return SMS.with_name(name)\n",
+            'Path base arg': "def row(name):\n    return Path(SMS, name)\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/example/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                    + "rows = [row('mod.rs')]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('unresolvable' in problem for problem in problems), problems)
+
+    def test_a_literal_call_tail_still_keys_the_file(self):
+        """``SMS.joinpath('mod.rs')`` names its file: key it, do not report it."""
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/example/sms'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [SMS.joinpath('mod.rs'), Path(SMS, 'gateway.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: sms/mod.rs' in problem for problem in problems), problems)
+        self.assertTrue(any('missing anchor: sms/gateway.rs' in problem for problem in problems), problems)
+
+    def test_a_separator_behind_a_constant_still_fails_closed(self):
+        """``str(SMS) + SEP + 'mod.rs'`` hides the separator behind a name."""
+        shapes = {
+            'separator constant': "SEP = '/'\nrows = [str(SMS) + SEP + 'mod.rs']\n",
+            'fragment constant': "MOD = '/mod.rs'\nrows = [str(SMS) + MOD]\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "SMS = ROOT / 'src/example/sms'\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(any('unsupported string concatenation' in problem
                                     for problem in problems), problems)
 
     def test_a_display_string_stays_silent(self):
