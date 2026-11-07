@@ -72,9 +72,19 @@ MUTATIONS = [
 
 
 def main():
+    # #2228 r13 (DS r12 sibling P2 / MM r12 boundary P1, both families): the
+    # stdio_routes_multiple_modules_and_projects_error_details binding runs
+    # scripts/a6-host/fixture.py at runtime (host/tests.rs:249-254 -> :291-295
+    # command()), and fixture.py imports lifetime unconditionally at its top
+    # (fixture.py:11, the #1779 parent-death/lifetime watchdog), so both are
+    # runtime-read inputs of this fixture's bound rows and belong in the
+    # write-guard set.
     return matrix_main(ROOT, __file__, '', MUTATIONS,
                        passed_count=1, child_count=0,
-                       paths=[HOST, TIMING], exact=True)
+                       paths=[HOST, TIMING,
+                              ROOT / 'scripts/a6-host/fixture.py',
+                              ROOT / 'scripts/a6-host/lifetime.py'],
+                       exact=True)
 
 
 if __name__ == '__main__':

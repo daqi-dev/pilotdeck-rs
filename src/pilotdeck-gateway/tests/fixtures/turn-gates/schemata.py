@@ -86,6 +86,13 @@ GUARDED = [
     # either during a run must be caught by the source guard.
     FIXTURES / 'turn-gates/oracle.json',
     FIXTURES / 'turn-gates/peer.py',
+    # #2228 r13 (DS r12 sibling P1 + MM r12 sibling P1, both families): the
+    # gates_factory_ready_cancel binding routes `live-` prefixed spawn modes
+    # to live-session/peer.py (live_stream_tests.rs:638-643 picks the peer by
+    # prefix, gates_tests.rs:820-838 spawns "live-payload"), so that peer is
+    # a runtime-read input of this fixture's bound rows and must be guarded
+    # like the other peers.
+    FIXTURES / 'live-session/peer.py',
     # #2228 DS r4 P1: the gates-consumer-exists binding reads
     # turn-runner/oracle.json (runner_tests.rs:859 include_str!, and RUNNER_TESTS
     # above is already guarded without its input), so a concurrent edit during a
