@@ -22,7 +22,7 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_RECEIVE_BYTES: usize = 128 * 1024 * 1024;
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-fn websocket_config() -> WebSocketConfig {
+pub(crate) fn websocket_config() -> WebSocketConfig {
     WebSocketConfig::default()
         .max_frame_size(Some(MAX_RECEIVE_BYTES))
         .max_message_size(Some(MAX_RECEIVE_BYTES))
@@ -465,7 +465,7 @@ fn next_sequence(frame: &JsValue, id: &str, previous: f64) -> Result<Option<f64>
     Ok(Some(sequence))
 }
 
-async fn close_socket(mut socket: &mut Socket) {
+pub(crate) async fn close_socket(mut socket: &mut Socket) {
     let _ = timeout(CLOSE_TIMEOUT, SinkExt::close(&mut socket)).await;
 }
 

@@ -1,4 +1,5 @@
 //! The legacy cron CLI uses the local server discovery path, not SDK options.
+use crate::sdk::transport::{close_socket, websocket_config};
 use crate::{
     Failure,
     paths::{self, Env},
@@ -8,8 +9,8 @@ use futures_util::{SinkExt, StreamExt};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use serde_json::{Map, Value, json};
 use std::{path::Path, time::Duration};
-use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio::time::{Instant, timeout, timeout_at};
+use tokio_tungstenite::{connect_async_with_config, tungstenite::Message};
 
 const UNAVAILABLE: &str = "pilotdeck cron requires a running pilotdeck server.";
 
@@ -76,18 +77,37 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
         stderr_line(UNAVAILABLE);
         return Ok(1);
     }
-    let result = timeout(Duration::from_secs(10), async {
-        let (mut ws, _) = connect_async("ws://127.0.0.1:18789/ws").await.ok()?;
-        ws.send(Message::Text(
+    // GatewayWsClient waits for WS open before starting its hello timer.
+    let Ok((mut ws, _)) =
+        connect_async_with_config("ws://127.0.0.1:18789/ws", Some(websocket_config()), false).await
+    else {
+        stderr_line(UNAVAILABLE);
+        return Ok(1);
+    };
+    if ws
+        .send(Message::Text(
             json!({"type":"hello", "protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
             "clientName":"cli", "clientVersion":"0.1.0", "token":token})
             .to_string()
             .into(),
         ))
         .await
-        .ok()?;
+        .is_err()
+    {
+        stderr_line(UNAVAILABLE);
+        return Ok(1);
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let result = timeout_at(deadline, async {
         loop {
-            let frame = ws.next().await?.ok()?;
+            // Ready frames can otherwise monopolize a single poll past the deadline.
+            if Instant::now() >= deadline {
+                return None;
+            }
+            let frame = timeout_at(deadline, ws.next()).await.ok()??.ok()?;
+            if Instant::now() >= deadline {
+                return None;
+            }
             if frame.is_text() {
                 let value: Value = serde_json::from_str(frame.to_text().ok()?).ok()?;
                 if value.get("type").and_then(Value::as_str) == Some("hello_ok") {
@@ -109,7 +129,7 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
     let (method, params) = match command(argv, cwd) {
         Ok(value) => value,
         Err(usage) => {
-            let _ = timeout(Duration::from_secs(1), ws.close(None)).await;
+            close_socket(&mut ws).await;
             stderr_line(usage);
             return Ok(1);
         }
@@ -153,7 +173,7 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
             } else {
                 write_json_pretty_line(&raw);
             }
-            let _ = timeout(Duration::from_secs(1), ws.close(None)).await;
+            close_socket(&mut ws).await;
             return Ok(0);
         }
         let message = value
@@ -162,7 +182,7 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
             .and_then(JsValue::as_string)
             .map(|s| String::from_utf16_lossy(s.units()))
             .unwrap_or_else(|| "Gateway request failed.".into());
-        let _ = timeout(Duration::from_secs(1), ws.close(None)).await;
+        close_socket(&mut ws).await;
         return Err(Failure::Error(message));
     }
     Err(Failure::Error("Gateway WebSocket closed.".into()))

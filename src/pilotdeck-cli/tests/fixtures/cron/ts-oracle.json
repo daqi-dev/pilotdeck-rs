@@ -188,6 +188,157 @@
       "opened": false,
       "closed_before_cleanup": false,
       "wire": []
+    },
+    "create-explicit": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_create",
+          "params": {
+            "message": "hi",
+            "sessionKey": "abc",
+            "channelKey": "custom",
+            "projectKey": "/p",
+            "schedule": {
+              "type": "once",
+              "runAt": "now"
+            }
+          }
+        }
+      ]
+    },
+    "create-plain": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_create",
+          "params": {
+            "message": "hi",
+            "sessionKey": "abc",
+            "channelKey": "cli",
+            "projectKey": "<cwd>",
+            "schedule": {
+              "type": "once",
+              "runAt": "now"
+            }
+          }
+        }
+      ]
+    },
+    "list-invalid": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_list",
+          "params": {
+            "includeHistory": false
+          }
+        }
+      ]
+    },
+    "list-overflow": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_list",
+          "params": {
+            "includeHistory": false
+          }
+        }
+      ]
+    },
+    "stop-empty": {
+      "stdout": "{\n  \"ok\": true\n}\n",
+      "stderr": "",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        },
+        {
+          "type": "request",
+          "id": "<uuid>",
+          "method": "cron_stop",
+          "params": {
+            "taskId": "",
+            "runId": "r"
+          }
+        }
+      ]
+    },
+    "create-empty": {
+      "stdout": "",
+      "stderr": "Usage: pilotdeck cron create --session <sessionKey> --message <text> (--once <iso> | --cron <expr>)\n",
+      "native_exit": null,
+      "opened": true,
+      "closed_before_cleanup": false,
+      "wire": [
+        {
+          "type": "hello",
+          "protocolVersion": "1.2",
+          "clientName": "cli",
+          "clientVersion": "0.1.0",
+          "token": "test-token"
+        }
+      ]
     }
   }
 }
