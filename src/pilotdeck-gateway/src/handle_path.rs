@@ -315,6 +315,18 @@ mod tests {
             matches!(&outcome, Err(error) if probe_hit_the_fd_limit(error)) && calls == 2,
             "#1990 the fd retry is bounded: exactly one retry, then the error stands, never a loop"
         );
+        // #1672 fix-r3 (DS r3 boundary P3): the retried attempt's own
+        // outcome wins even when it fails with a different, non-fd error —
+        // EMFILE then EACCES must surface EACCES, not the first EMFILE.
+        let mut calls = 0;
+        let outcome: std::io::Result<()> = attempt_with_one_fd_retry(|| {
+            calls += 1;
+            Err(error(if calls == 1 { libc::EMFILE } else { libc::EACCES }))
+        });
+        assert!(
+            matches!(&outcome, Err(err) if err.raw_os_error() == Some(libc::EACCES)) && calls == 2,
+            "#1990 the second attempt's terminal outcome wins: EMFILE then EACCES surfaces EACCES, not EMFILE"
+        );
     }
 
     // #1990: the two tests below are macOS-only on purpose. `mod macos` is
@@ -357,8 +369,13 @@ mod tests {
         // Os { code: 92, kind: Uncategorized, message: "Illegal byte
         // sequence" }`). The rejection is pinned on the bytes→path step
         // itself with the same synthetic bytes; the end-to-end half below
-        // runs wherever a filesystem can actually host the name and
-        // announces the skip, with its evidence, where none can.
+        // probes with the real name where the filesystem can host it and
+        // announces the skip, with its evidence, where it cannot. Every
+        // host that compiles this test is in the second camp: the write
+        // arm returns at the EILSEQ skip, so the open arm below is
+        // structurally unreachable here (#1672 fix-r3, DS r3 boundary
+        // P2); that arm's fd protection is executed by the helper's unit
+        // test, not by this end-to-end test.
         let rejected = super::macos::utf8_path(b"bad\xff\xfe.bin".to_vec());
         negative_assert!(
             matches!(&rejected, Err(error) if error.kind() == std::io::ErrorKind::InvalidData),
@@ -378,12 +395,15 @@ mod tests {
         let file_path = scratch
             .0
             .join(std::ffi::OsStr::from_bytes(b"bad\xff\xfe.bin"));
-        // #1672 fix-r1→r2 (DS boundary P1 + r2 sibling/boundary/concurrency
-        // P2): the fd limit (EMFILE/ENFILE) lives in the process or the
-        // system, not in this name. Both probe calls — the write and the
-        // open — go through the tested `attempt_with_one_fd_retry` helper
-        // above, and a persistent limit fails closed with its own marker
-        // instead of blaming the file name for a process-level condition.
+        // #1672 fix-r1→r3 (DS boundary P1 + r2 sibling/boundary/concurrency
+        // P2 + r3 boundary P2): the fd limit (EMFILE/ENFILE) lives in the
+        // process or the system, not in this name. Both probe calls — the
+        // write and the open — go through the tested
+        // `attempt_with_one_fd_retry` helper above, and a persistent limit
+        // fails closed with its own marker instead of blaming the file
+        // name for a process-level condition. On hosts where the write
+        // arm returns at the EILSEQ skip, the open call is never reached
+        // end to end; the helper's unit test carries that arm's contract.
         let write_outcome =
             attempt_with_one_fd_retry(|| fs::write(&file_path, b"non-utf8-bytes"));
         match write_outcome {
