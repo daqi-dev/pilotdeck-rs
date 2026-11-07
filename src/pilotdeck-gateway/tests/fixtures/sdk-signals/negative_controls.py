@@ -20,6 +20,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from negative_process import (
+    _head_bytes,
     exclusive_write,
     mutating_sources,
     new_output_directory,
@@ -274,15 +275,18 @@ def assert_close_order_ledger_matches_head():
     ``src/`` only, so nothing would notice an uncommitted edit moving the
     #1382 baseline behind our back. Keep the proof, drop the write-back: the
     frozen bytes are never put in the truncation window.
+
+    Returns the bytes it verified so the caller parses exactly what was
+    proved; ``_head_bytes`` is the repo's bounded git entry point (own
+    session, group kill, ``GIT_TIMEOUT``) rather than a bare
+    ``subprocess.run`` (GLM simplify/boundary + DeepSeek concurrency r2).
     """
     relative = close_order_ledger.relative_to(root).as_posix()
-    head = subprocess.run(
-        ["git", "cat-file", "blob", f"HEAD:{relative}"],
-        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
-    )
-    if head.returncode or head.stdout != close_order_ledger.read_bytes():
+    data = close_order_ledger.read_bytes()
+    if _head_bytes(root, relative, "HEAD") != data:
         raise RuntimeError(
             "#1885 read-only #1382 baseline must equal HEAD: " + relative)
+    return data
 
 
 def registered_unordered_close_ids():
@@ -292,8 +296,7 @@ def registered_unordered_close_ids():
     D1-SDK-WS-CLOSE-ORDER-001 registration (read-only) exactly like
     ``unordered_close_scope_equals_registration`` in signal_replay.rs.
     """
-    assert_close_order_ledger_matches_head()
-    text = close_order_ledger.read_text(encoding="utf-8")
+    text = assert_close_order_ledger_matches_head().decode("utf-8")
     _, _, after_start = text.partition("<!-- close-order-ids:start -->")
     block, _, _ = after_start.partition("<!-- close-order-ids:end -->")
     fenced = block.strip()

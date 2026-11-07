@@ -109,6 +109,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (
+    _head_bytes,
     exclusive_write,
     mutating_sources,
     new_output_directory,
@@ -122,13 +123,23 @@ catalog = root / catalog_relative
 # The catalog preflight reads two frozen ledgers from the working tree: the
 # #1382 close-order pin reads the first, and the #1145 anchor count for the
 # rejection row reads the second. mutating_sources' workspace guard only
-# covers src/.cargo/toolchain, so name both explicitly: an uncommitted edit
-# must not move the comparison baseline behind our back (the #1145 catalog
-# runner already guards both).
+# covers src/.cargo/toolchain, so both must be proved against HEAD here: an
+# uncommitted edit must not move the comparison baseline behind our back.
+#
+# #1885: prove, do not write back. Every one of the 16 controls rewrites
+# `catalog` and nothing else, so the ledgers used to sit in the restore set
+# for the entry guard alone -- and `mutating_sources` writes every guarded
+# path back on exit with a plain `write_bytes`, no atomic publish. A SIGKILL
+# inside that window truncated a frozen spec ledger, which the next run then
+# read as a baseline mismatch (false FAIL, manual `git checkout` to repair).
+# The restore set now carries only mutated files; the ledgers get an explicit
+# byte-for-byte HEAD proof instead, exactly like `sdk-signals` does for the
+# close-order ledger.
 ledger_relative = "specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md"
 ledger = root / ledger_relative
 d1_ledger_relative = "specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md"
 d1_ledger = root / d1_ledger_relative
+RESTORE_SET = (catalog,)
 
 # #1506: this table is the only register of these controls — anchor_selfcheck
 # pins the script's presence and anchor counts, not its rows — so deleting a
@@ -308,6 +319,41 @@ def check_mutation_table(rows):
 
 check_mutation_table(mutations)
 
+
+def check_restore_set():
+    """#1885: only files a control rewrites may enter the restore set.
+
+    Static, whole-table, and before `[name ...]` narrows anything: a restore
+    path that no mutation targets is pure truncation exposure (it is written
+    back on exit, never changed by the run). The `src/` workspace guard
+    already proves every non-`specs/` leftover, so nothing is lost by
+    dropping such a path.
+    """
+    targets = {root / row[1] for row in mutations}
+    stray = sorted(str(path) for path in RESTORE_SET if path not in targets)
+    if stray:
+        raise RuntimeError(
+            "#1885 restore set must only carry files a control rewrites: "
+            + ", ".join(stray)
+        )
+
+
+check_restore_set()
+
+
+def assert_frozen_ledgers_match_head():
+    """#1885: the read-only replacement for naming the ledgers in the set.
+
+    Same proof the restore set used to give on entry, without ever putting the
+    frozen bytes in the write-back (truncation) window.
+    """
+    for path in (ledger, d1_ledger):
+        relative = path.relative_to(root).as_posix()
+        if _head_bytes(root, relative, "HEAD") != path.read_bytes():
+            raise RuntimeError(
+                "#1885 read-only frozen ledger must equal HEAD: " + relative
+            )
+
 # #1506 fix-r3: the registered name list is frozen here, before `[name ...]`
 # narrows `mutations` below. Read after that rebinding it is just `selected`
 # again, so the full-registry evidence proved nothing on a subset run.
@@ -389,8 +435,9 @@ def record(name, status, reason, compiled):
 # written before the run exits nonzero.
 aborted = None
 try:
+    assert_frozen_ledgers_match_head()
     with mutating_sources(
-        root, [catalog, ledger, d1_ledger], lock_timeout=LOCK_TIMEOUT_SECONDS
+        root, list(RESTORE_SET), lock_timeout=LOCK_TIMEOUT_SECONDS
     ) as snapshots:
         positive = run_check("positive-before")
         if not preflight_passed(positive):
