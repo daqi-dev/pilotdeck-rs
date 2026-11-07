@@ -1,10 +1,10 @@
 {
-  "sourceSha256": "b8c51a94da8610c41d7c5f07590b715aad2deeab08fbad2670e8e2ee2d6d2c7f",
+  "sourceSha256": "b303065d18bc62db6abb6e88be656cff051d68bc85b7c3ba09182179acca69da",
   "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
   "nodeVersion": "v22.22.0",
   "kind": "real-ts-cli-real-websocket-observation-hooks",
   "normalization": "none; raw capture including stderr bootstrap warnings retained",
-  "matrixCells": 102,
+  "matrixCells": 106,
   "gaps": [
     {
       "id": "run--stdin-open-after-response-sigint",
@@ -66,7 +66,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -461,7 +462,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -1186,7 +1188,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -2143,7 +2146,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -2879,7 +2883,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -3572,7 +3577,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -4529,7 +4535,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -5362,7 +5369,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -6121,7 +6129,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -7168,7 +7177,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -8059,7 +8069,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -9010,7 +9021,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -9859,7 +9871,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -10630,6 +10643,907 @@
     },
     {
       "input": {
+        "id": "run--abort-rst-sigint",
+        "leaf": "run",
+        "axis": "abort-rst-sigint",
+        "stage": "stream",
+        "signal": "SIGINT",
+        "action": "rst",
+        "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）",
+        "argv": [
+          "run",
+          "fixture prompt",
+          "--stream-json"
+        ]
+      },
+      "status": "OBSERVED_EXIT",
+      "nodeVersion": "v22.22.0",
+      "stdinTransport": "closed-node-pipe",
+      "milestones": {
+        "observer": true,
+        "trigger": true,
+        "firstSignal": true,
+        "abortEntered": true,
+        "secondSignal": true,
+        "predecessorAction": true,
+        "terminalConsumed": true,
+        "terminalAfterAbort": true,
+        "lateAbortHandled": true,
+        "rstApplied": true,
+        "blockingStdin": true
+      },
+      "missingMilestones": [],
+      "triggerReached": true,
+      "signalDelivered": true,
+      "secondDelivered": false,
+      "aborts": 1,
+      "connections": 2,
+      "activeAfterExit": 0,
+      "naturalExit": {
+        "code": 1,
+        "signal": null,
+        "cleanup": false
+      },
+      "cleanupExit": null,
+      "stdout": "",
+      "stderrRaw": "(node:723553) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway WebSocket closed.\nfile:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81\n            const error = new PilotDeckError({ code: errorCode, message: reason || \"Gateway WebSocket closed.\", retryable: errorCode === \"transport_error\" });\n                          ^\n\nPilotDeckError: Gateway WebSocket closed.\n    at globalThis.WebSocket.<anonymous> (file:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81:27)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:845:20)\n    at globalThis.WebSocket.dispatchEvent (node:internal/event_target:778:26)\n    at fireEvent (node:internal/deps/undici/undici:11855:14)\n    at Socket.onSocketClose (node:internal/deps/undici/undici:12254:7)\n    at Socket.emit (node:events:531:35)\n    at TCP.<anonymous> (node:net:346:12) {\n  code: 'transport_error',\n  requestId: undefined,\n  details: undefined,\n  retryable: true,\n  [cause]: undefined\n}\n\nNode.js v22.22.0\n",
+      "error": null,
+      "initial": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "final": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "hooks": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        }
+      ],
+      "wire": [
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "f69c873d-b3cc-4f6d-aaa4-78d560a5fe06",
+            "method": "new_session",
+            "params": {
+              "channelKey": "cli"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"f69c873d-b3cc-4f6d-aaa4-78d560a5fe06\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "f69c873d-b3cc-4f6d-aaa4-78d560a5fe06",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"f69c873d-b3cc-4f6d-aaa4-78d560a5fe06\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "de7bd296-86ad-49d3-a8b2-430da09b5f20",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"de7bd296-86ad-49d3-a8b2-430da09b5f20\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "de7bd296-86ad-49d3-a8b2-430da09b5f20",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"de7bd296-86ad-49d3-a8b2-430da09b5f20\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "6991d55a-d4bc-4372-9096-f67a61112033",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "2cb19a13-b54e-45b7-a9dc-dfd131c82a4d"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"6991d55a-d4bc-4372-9096-f67a61112033\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"2cb19a13-b54e-45b7-a9dc-dfd131c82a4d\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "34d4ab15-287d-4fbb-ba94-fec898224a62",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "2cb19a13-b54e-45b7-a9dc-dfd131c82a4d",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"34d4ab15-287d-4fbb-ba94-fec898224a62\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"2cb19a13-b54e-45b7-a9dc-dfd131c82a4d\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "closes": [
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "trace": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "f69c873d-b3cc-4f6d-aaa4-78d560a5fe06",
+            "method": "new_session",
+            "params": {
+              "channelKey": "cli"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"f69c873d-b3cc-4f6d-aaa4-78d560a5fe06\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "f69c873d-b3cc-4f6d-aaa4-78d560a5fe06",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"f69c873d-b3cc-4f6d-aaa4-78d560a5fe06\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "de7bd296-86ad-49d3-a8b2-430da09b5f20",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"de7bd296-86ad-49d3-a8b2-430da09b5f20\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "de7bd296-86ad-49d3-a8b2-430da09b5f20",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"de7bd296-86ad-49d3-a8b2-430da09b5f20\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "6991d55a-d4bc-4372-9096-f67a61112033",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "2cb19a13-b54e-45b7-a9dc-dfd131c82a4d"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"6991d55a-d4bc-4372-9096-f67a61112033\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"2cb19a13-b54e-45b7-a9dc-dfd131c82a4d\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 17,
+          "kind": "trigger-reached",
+          "trigger": "stream-held"
+        },
+        {
+          "seq": 18,
+          "kind": "signal-sent",
+          "signal": "SIGINT",
+          "delivered": true
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "34d4ab15-287d-4fbb-ba94-fec898224a62",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "2cb19a13-b54e-45b7-a9dc-dfd131c82a4d",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"34d4ab15-287d-4fbb-ba94-fec898224a62\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"2cb19a13-b54e-45b7-a9dc-dfd131c82a4d\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 22,
+          "kind": "server-rst",
+          "connection": 2
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 29,
+          "kind": "child-exit",
+          "code": 1,
+          "signal": null,
+          "cleanup": false
+        }
+      ]
+    },
+    {
+      "input": {
         "id": "run--second-sigint",
         "leaf": "run",
         "axis": "second-sigint",
@@ -10657,7 +11571,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -11455,7 +12370,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -12349,7 +13265,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -13363,7 +14280,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -14377,7 +15295,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -15395,7 +16314,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -16386,7 +17306,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -16781,7 +17702,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -17506,7 +18428,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -18463,7 +19386,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -19199,7 +20123,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -19892,7 +20817,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -20849,7 +21775,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -21682,7 +22609,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -22441,7 +23369,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -23488,7 +24417,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -24379,7 +25309,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -25330,7 +26261,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -26179,7 +27111,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -26950,6 +27883,907 @@
     },
     {
       "input": {
+        "id": "run--abort-rst-sigterm",
+        "leaf": "run",
+        "axis": "abort-rst-sigterm",
+        "stage": "stream",
+        "signal": "SIGTERM",
+        "action": "rst",
+        "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）",
+        "argv": [
+          "run",
+          "fixture prompt",
+          "--stream-json"
+        ]
+      },
+      "status": "OBSERVED_EXIT",
+      "nodeVersion": "v22.22.0",
+      "stdinTransport": "closed-node-pipe",
+      "milestones": {
+        "observer": true,
+        "trigger": true,
+        "firstSignal": true,
+        "abortEntered": true,
+        "secondSignal": true,
+        "predecessorAction": true,
+        "terminalConsumed": true,
+        "terminalAfterAbort": true,
+        "lateAbortHandled": true,
+        "rstApplied": true,
+        "blockingStdin": true
+      },
+      "missingMilestones": [],
+      "triggerReached": true,
+      "signalDelivered": true,
+      "secondDelivered": false,
+      "aborts": 1,
+      "connections": 2,
+      "activeAfterExit": 0,
+      "naturalExit": {
+        "code": 1,
+        "signal": null,
+        "cleanup": false
+      },
+      "cleanupExit": null,
+      "stdout": "",
+      "stderrRaw": "(node:723560) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway WebSocket closed.\nfile:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81\n            const error = new PilotDeckError({ code: errorCode, message: reason || \"Gateway WebSocket closed.\", retryable: errorCode === \"transport_error\" });\n                          ^\n\nPilotDeckError: Gateway WebSocket closed.\n    at globalThis.WebSocket.<anonymous> (file:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81:27)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:845:20)\n    at globalThis.WebSocket.dispatchEvent (node:internal/event_target:778:26)\n    at fireEvent (node:internal/deps/undici/undici:11855:14)\n    at Socket.onSocketClose (node:internal/deps/undici/undici:12254:7)\n    at Socket.emit (node:events:531:35)\n    at TCP.<anonymous> (node:net:346:12) {\n  code: 'transport_error',\n  requestId: undefined,\n  details: undefined,\n  retryable: true,\n  [cause]: undefined\n}\n\nNode.js v22.22.0\n",
+      "error": null,
+      "initial": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "final": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "hooks": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        }
+      ],
+      "wire": [
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "0a6aec14-45ef-4fa9-9294-a3436e66fb0d",
+            "method": "new_session",
+            "params": {
+              "channelKey": "cli"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"0a6aec14-45ef-4fa9-9294-a3436e66fb0d\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "0a6aec14-45ef-4fa9-9294-a3436e66fb0d",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"0a6aec14-45ef-4fa9-9294-a3436e66fb0d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "1552048d-682f-4e09-aa98-a44e9ab67264",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"1552048d-682f-4e09-aa98-a44e9ab67264\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "1552048d-682f-4e09-aa98-a44e9ab67264",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"1552048d-682f-4e09-aa98-a44e9ab67264\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "4cb51a9b-4566-4a36-a115-b21f807562f2",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"4cb51a9b-4566-4a36-a115-b21f807562f2\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "d89f8b38-a116-41b8-bd64-a7865fe64442",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"d89f8b38-a116-41b8-bd64-a7865fe64442\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "closes": [
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "trace": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "0a6aec14-45ef-4fa9-9294-a3436e66fb0d",
+            "method": "new_session",
+            "params": {
+              "channelKey": "cli"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"0a6aec14-45ef-4fa9-9294-a3436e66fb0d\",\"method\":\"new_session\",\"params\":{\"channelKey\":\"cli\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "0a6aec14-45ef-4fa9-9294-a3436e66fb0d",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"0a6aec14-45ef-4fa9-9294-a3436e66fb0d\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "1552048d-682f-4e09-aa98-a44e9ab67264",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"1552048d-682f-4e09-aa98-a44e9ab67264\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "1552048d-682f-4e09-aa98-a44e9ab67264",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"1552048d-682f-4e09-aa98-a44e9ab67264\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "4cb51a9b-4566-4a36-a115-b21f807562f2",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"4cb51a9b-4566-4a36-a115-b21f807562f2\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 17,
+          "kind": "trigger-reached",
+          "trigger": "stream-held"
+        },
+        {
+          "seq": 18,
+          "kind": "signal-sent",
+          "signal": "SIGTERM",
+          "delivered": true
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "d89f8b38-a116-41b8-bd64-a7865fe64442",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"d89f8b38-a116-41b8-bd64-a7865fe64442\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"acd8b8f0-fe8d-4a3e-bb69-e5738a8b397f\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 22,
+          "kind": "server-rst",
+          "connection": 2
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 29,
+          "kind": "child-exit",
+          "code": 1,
+          "signal": null,
+          "cleanup": false
+        }
+      ]
+    },
+    {
+      "input": {
         "id": "run--second-sigterm",
         "leaf": "run",
         "axis": "second-sigterm",
@@ -26977,7 +28811,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -27775,7 +29610,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -28669,7 +30505,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -29683,7 +31520,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -30697,7 +32535,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -31715,7 +33554,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -32705,7 +34545,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -33099,7 +34940,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -33741,7 +35583,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -34375,7 +36218,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -35067,7 +36911,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -35953,7 +37798,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -36839,7 +38685,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -37695,7 +39542,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -38435,7 +40283,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -39245,7 +41094,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -39719,7 +41569,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -40115,7 +41966,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -40841,7 +42693,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -41799,7 +43652,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -42536,7 +44390,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -43230,7 +45085,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -44188,7 +46044,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -45022,7 +46879,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -45780,7 +47638,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -46826,7 +48685,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -47716,7 +49576,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -48668,7 +50529,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -49518,7 +51380,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -50289,6 +52152,908 @@
     },
     {
       "input": {
+        "id": "resume--abort-rst-sigint",
+        "leaf": "resume",
+        "axis": "abort-rst-sigint",
+        "stage": "stream",
+        "signal": "SIGINT",
+        "action": "rst",
+        "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）",
+        "argv": [
+          "resume",
+          "d1-session",
+          "fixture prompt",
+          "--stream-json"
+        ]
+      },
+      "status": "OBSERVED_EXIT",
+      "nodeVersion": "v22.22.0",
+      "stdinTransport": "closed-node-pipe",
+      "milestones": {
+        "observer": true,
+        "trigger": true,
+        "firstSignal": true,
+        "abortEntered": true,
+        "secondSignal": true,
+        "predecessorAction": true,
+        "terminalConsumed": true,
+        "terminalAfterAbort": true,
+        "lateAbortHandled": true,
+        "rstApplied": true,
+        "blockingStdin": true
+      },
+      "missingMilestones": [],
+      "triggerReached": true,
+      "signalDelivered": true,
+      "secondDelivered": false,
+      "aborts": 1,
+      "connections": 2,
+      "activeAfterExit": 0,
+      "naturalExit": {
+        "code": 1,
+        "signal": null,
+        "cleanup": false
+      },
+      "cleanupExit": null,
+      "stdout": "",
+      "stderrRaw": "(node:723569) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway WebSocket closed.\nfile:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81\n            const error = new PilotDeckError({ code: errorCode, message: reason || \"Gateway WebSocket closed.\", retryable: errorCode === \"transport_error\" });\n                          ^\n\nPilotDeckError: Gateway WebSocket closed.\n    at globalThis.WebSocket.<anonymous> (file:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81:27)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:845:20)\n    at globalThis.WebSocket.dispatchEvent (node:internal/event_target:778:26)\n    at fireEvent (node:internal/deps/undici/undici:11855:14)\n    at Socket.onSocketClose (node:internal/deps/undici/undici:12254:7)\n    at Socket.emit (node:events:531:35)\n    at TCP.<anonymous> (node:net:346:12) {\n  code: 'transport_error',\n  requestId: undefined,\n  details: undefined,\n  retryable: true,\n  [cause]: undefined\n}\n\nNode.js v22.22.0\n",
+      "error": null,
+      "initial": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "final": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "hooks": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 22,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        }
+      ],
+      "wire": [
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "94c1b069-ad8c-4bab-aceb-e86a2b35322c",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"94c1b069-ad8c-4bab-aceb-e86a2b35322c\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "94c1b069-ad8c-4bab-aceb-e86a2b35322c",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"94c1b069-ad8c-4bab-aceb-e86a2b35322c\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "43d2ad48-423e-4926-94c6-48dfe96f4499",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "bdbed6fa-64e3-48c9-9fb0-3b502266c238"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"43d2ad48-423e-4926-94c6-48dfe96f4499\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"bdbed6fa-64e3-48c9-9fb0-3b502266c238\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 19,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "e17ba290-bb2a-45fe-b286-deca294db1be",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "bdbed6fa-64e3-48c9-9fb0-3b502266c238",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"e17ba290-bb2a-45fe-b286-deca294db1be\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"bdbed6fa-64e3-48c9-9fb0-3b502266c238\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "closes": [
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "trace": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"5d2242f0-bc0c-443a-b6cf-3ed60b8ab4b9\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "94c1b069-ad8c-4bab-aceb-e86a2b35322c",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"94c1b069-ad8c-4bab-aceb-e86a2b35322c\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "94c1b069-ad8c-4bab-aceb-e86a2b35322c",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"94c1b069-ad8c-4bab-aceb-e86a2b35322c\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "43d2ad48-423e-4926-94c6-48dfe96f4499",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "bdbed6fa-64e3-48c9-9fb0-3b502266c238"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"43d2ad48-423e-4926-94c6-48dfe96f4499\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"bdbed6fa-64e3-48c9-9fb0-3b502266c238\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 17,
+          "kind": "trigger-reached",
+          "trigger": "stream-held"
+        },
+        {
+          "seq": 18,
+          "kind": "signal-sent",
+          "signal": "SIGINT",
+          "delivered": true
+        },
+        {
+          "seq": 19,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "e17ba290-bb2a-45fe-b286-deca294db1be",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "bdbed6fa-64e3-48c9-9fb0-3b502266c238",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"e17ba290-bb2a-45fe-b286-deca294db1be\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"bdbed6fa-64e3-48c9-9fb0-3b502266c238\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "server-rst",
+          "connection": 2
+        },
+        {
+          "seq": 21,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 22,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 29,
+          "kind": "child-exit",
+          "code": 1,
+          "signal": null,
+          "cleanup": false
+        }
+      ]
+    },
+    {
+      "input": {
         "id": "resume--second-sigint",
         "leaf": "resume",
         "axis": "second-sigint",
@@ -50317,7 +53082,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -51116,7 +53882,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -52011,7 +54778,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -53026,7 +55794,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -54041,7 +56810,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -55060,7 +57830,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -56052,7 +58823,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -56448,7 +59220,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -57174,7 +59947,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -58132,7 +60906,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -58869,7 +61644,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -59563,7 +62339,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -60521,7 +63298,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -61355,7 +64133,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -62113,7 +64892,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -63159,7 +65939,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -64049,7 +66830,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -65001,7 +67783,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -65851,7 +68634,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -66622,6 +69406,908 @@
     },
     {
       "input": {
+        "id": "resume--abort-rst-sigterm",
+        "leaf": "resume",
+        "axis": "abort-rst-sigterm",
+        "stage": "stream",
+        "signal": "SIGTERM",
+        "action": "rst",
+        "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）",
+        "argv": [
+          "resume",
+          "d1-session",
+          "fixture prompt",
+          "--stream-json"
+        ]
+      },
+      "status": "OBSERVED_EXIT",
+      "nodeVersion": "v22.22.0",
+      "stdinTransport": "closed-node-pipe",
+      "milestones": {
+        "observer": true,
+        "trigger": true,
+        "firstSignal": true,
+        "abortEntered": true,
+        "secondSignal": true,
+        "predecessorAction": true,
+        "terminalConsumed": true,
+        "terminalAfterAbort": true,
+        "lateAbortHandled": true,
+        "rstApplied": true,
+        "blockingStdin": true
+      },
+      "missingMilestones": [],
+      "triggerReached": true,
+      "signalDelivered": true,
+      "secondDelivered": false,
+      "aborts": 1,
+      "connections": 2,
+      "activeAfterExit": 0,
+      "naturalExit": {
+        "code": 1,
+        "signal": null,
+        "cleanup": false
+      },
+      "cleanupExit": null,
+      "stdout": "",
+      "stderrRaw": "(node:723576) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nGateway WebSocket closed.\nfile:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81\n            const error = new PilotDeckError({ code: errorCode, message: reason || \"Gateway WebSocket closed.\", retryable: errorCode === \"transport_error\" });\n                          ^\n\nPilotDeckError: Gateway WebSocket closed.\n    at globalThis.WebSocket.<anonymous> (file:///home/clawbox-08/ws/pdrs-runner/resources/PilotDeck/packages/sdk/dist/transport.js:81:27)\n    at [nodejs.internal.kHybridDispatch] (node:internal/event_target:845:20)\n    at globalThis.WebSocket.dispatchEvent (node:internal/event_target:778:26)\n    at fireEvent (node:internal/deps/undici/undici:11855:14)\n    at Socket.onSocketClose (node:internal/deps/undici/undici:12254:7)\n    at Socket.emit (node:events:531:35)\n    at TCP.<anonymous> (node:net:346:12) {\n  code: 'transport_error',\n  requestId: undefined,\n  details: undefined,\n  retryable: true,\n  [cause]: undefined\n}\n\nNode.js v22.22.0\n",
+      "error": null,
+      "initial": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "final": {
+        ".": {
+          "type": "directory",
+          "mode": 448
+        },
+        "bin": {
+          "type": "directory",
+          "mode": 448
+        },
+        "home": {
+          "type": "directory",
+          "mode": 448
+        },
+        "openssl.cnf": {
+          "type": "file",
+          "mode": 384,
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "pilot": {
+          "type": "directory",
+          "mode": 448
+        },
+        "pilot/pilotdeck.yaml": {
+          "type": "file",
+          "mode": 384,
+          "size": 17,
+          "sha256": "ed15348afbcf3cc6b29b6c45a706ac1e7d627dddf3df014a10f560fe97ba3d04"
+        },
+        "project": {
+          "type": "directory",
+          "mode": 448
+        },
+        "project/keep.txt": {
+          "type": "file",
+          "mode": 384,
+          "size": 14,
+          "sha256": "f4bdb825c86b44b083b62bfe5f4c14aa08b05a5654575f2b7770e60a8c435128"
+        },
+        "tmp": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-cache": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-config": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-data": {
+          "type": "directory",
+          "mode": 448
+        },
+        "xdg-state": {
+          "type": "directory",
+          "mode": 448
+        }
+      },
+      "hooks": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        }
+      ],
+      "wire": [
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "5938dfcb-fbbb-47aa-80a0-ab72a4390501",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"5938dfcb-fbbb-47aa-80a0-ab72a4390501\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "5938dfcb-fbbb-47aa-80a0-ab72a4390501",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"5938dfcb-fbbb-47aa-80a0-ab72a4390501\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "a7deed42-cf45-4d3e-8847-299d4f103f1c",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"a7deed42-cf45-4d3e-8847-299d4f103f1c\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "a7deed42-cf45-4d3e-8847-299d4f103f1c",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"a7deed42-cf45-4d3e-8847-299d4f103f1c\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "d3342349-7c69-436a-84db-cd692f7d66d0",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "8b9034fa-0832-4ec2-a505-46e4a8a66a0e"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"d3342349-7c69-436a-84db-cd692f7d66d0\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"8b9034fa-0832-4ec2-a505-46e4a8a66a0e\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "79a1037c-8f5c-4946-a535-7a6742ae11ab",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "8b9034fa-0832-4ec2-a505-46e4a8a66a0e",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"79a1037c-8f5c-4946-a535-7a6742ae11ab\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"8b9034fa-0832-4ec2-a505-46e4a8a66a0e\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "closes": [
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        }
+      ],
+      "trace": [
+        {
+          "seq": 0,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "endpoint-denial-verified",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 1,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "hooks-ready",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 2,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 3,
+          "kind": "connection",
+          "connection": 1
+        },
+        {
+          "seq": 4,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 5,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 6,
+          "kind": "wire-receive",
+          "connection": 1,
+          "frame": {
+            "type": "request",
+            "id": "5938dfcb-fbbb-47aa-80a0-ab72a4390501",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"5938dfcb-fbbb-47aa-80a0-ab72a4390501\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 7,
+          "kind": "wire-send",
+          "connection": 1,
+          "frame": {
+            "type": "response",
+            "id": "5938dfcb-fbbb-47aa-80a0-ab72a4390501",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"5938dfcb-fbbb-47aa-80a0-ab72a4390501\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 8,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 9,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-installed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 10,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-created",
+            "connection": 2,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 1
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 11,
+          "kind": "connection",
+          "connection": 2
+        },
+        {
+          "seq": 12,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "hello",
+            "protocolVersion": "1.2",
+            "clientName": "sdk",
+            "clientVersion": "pilotdeck-cli",
+            "token": "d1-fixture-not-a-secret"
+          },
+          "raw": "{\"type\":\"hello\",\"protocolVersion\":\"1.2\",\"clientName\":\"sdk\",\"clientVersion\":\"pilotdeck-cli\",\"token\":\"d1-fixture-not-a-secret\"}",
+          "cleanup": false
+        },
+        {
+          "seq": 13,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "hello_ok",
+            "protocolVersion": "1.2",
+            "serverVersion": "0.1.0-mock",
+            "serverInfo": {
+              "mode": "remote",
+              "projectKey": "d1-project",
+              "sessionCount": 1,
+              "capabilities": []
+            }
+          },
+          "raw": "{\"type\":\"hello_ok\",\"protocolVersion\":\"1.2\",\"serverVersion\":\"0.1.0-mock\",\"serverInfo\":{\"mode\":\"remote\",\"projectKey\":\"d1-project\",\"sessionCount\":1,\"capabilities\":[]}}",
+          "cleanup": false
+        },
+        {
+          "seq": 14,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "a7deed42-cf45-4d3e-8847-299d4f103f1c",
+            "method": "resume_session",
+            "params": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"a7deed42-cf45-4d3e-8847-299d4f103f1c\",\"method\":\"resume_session\",\"params\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 15,
+          "kind": "wire-send",
+          "connection": 2,
+          "frame": {
+            "type": "response",
+            "id": "a7deed42-cf45-4d3e-8847-299d4f103f1c",
+            "ok": true,
+            "result": {
+              "sessionKey": "d1-session"
+            }
+          },
+          "raw": "{\"type\":\"response\",\"id\":\"a7deed42-cf45-4d3e-8847-299d4f103f1c\",\"ok\":true,\"result\":{\"sessionKey\":\"d1-session\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 16,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "d3342349-7c69-436a-84db-cd692f7d66d0",
+            "method": "submit_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "channelKey": "api_server",
+              "message": "fixture prompt",
+              "canPrompt": false,
+              "canElicit": false,
+              "runId": "8b9034fa-0832-4ec2-a505-46e4a8a66a0e"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"d3342349-7c69-436a-84db-cd692f7d66d0\",\"method\":\"submit_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"channelKey\":\"api_server\",\"message\":\"fixture prompt\",\"canPrompt\":false,\"canElicit\":false,\"runId\":\"8b9034fa-0832-4ec2-a505-46e4a8a66a0e\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 17,
+          "kind": "trigger-reached",
+          "trigger": "stream-held"
+        },
+        {
+          "seq": 18,
+          "kind": "signal-sent",
+          "signal": "SIGTERM",
+          "delivered": true
+        },
+        {
+          "seq": 19,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 20,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "abort-enter",
+            "done": false,
+            "terminalSeen": false,
+            "initialized": true,
+            "listeners": {
+              "SIGINT": 1,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 21,
+          "kind": "wire-receive",
+          "connection": 2,
+          "frame": {
+            "type": "request",
+            "id": "79a1037c-8f5c-4946-a535-7a6742ae11ab",
+            "method": "abort_turn",
+            "params": {
+              "sessionKey": "d1-session",
+              "runId": "8b9034fa-0832-4ec2-a505-46e4a8a66a0e",
+              "reason": "CLI interrupted"
+            }
+          },
+          "raw": "{\"type\":\"request\",\"id\":\"79a1037c-8f5c-4946-a535-7a6742ae11ab\",\"method\":\"abort_turn\",\"params\":{\"sessionKey\":\"d1-session\",\"runId\":\"8b9034fa-0832-4ec2-a505-46e4a8a66a0e\",\"reason\":\"CLI interrupted\"}}",
+          "cleanup": false
+        },
+        {
+          "seq": 22,
+          "kind": "server-rst",
+          "connection": 2
+        },
+        {
+          "seq": 23,
+          "kind": "socket-close",
+          "connection": 2,
+          "code": 1006,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 24,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGINT",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 25,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "listener-removed",
+            "event": "SIGTERM",
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 26,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "socket-close-called",
+            "connection": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 27,
+          "kind": "client-hook",
+          "hook": {
+            "kind": "process-exit",
+            "code": 1,
+            "listeners": {
+              "SIGINT": 0,
+              "SIGTERM": 0
+            }
+          },
+          "cleanup": false
+        },
+        {
+          "seq": 28,
+          "kind": "socket-close",
+          "connection": 1,
+          "code": 1005,
+          "reason": "",
+          "cleanup": false
+        },
+        {
+          "seq": 29,
+          "kind": "child-exit",
+          "code": 1,
+          "signal": null,
+          "cleanup": false
+        }
+      ]
+    },
+    {
+      "input": {
         "id": "resume--second-sigterm",
         "leaf": "resume",
         "axis": "second-sigterm",
@@ -66650,7 +70336,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -67449,7 +71136,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -68344,7 +72032,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -69359,7 +73048,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -70374,7 +74064,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -71393,7 +75084,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -72384,7 +76076,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -72779,7 +76472,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -73422,7 +77116,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -74057,7 +77752,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -74748,7 +78444,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -75635,7 +79332,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -76522,7 +80220,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -77379,7 +81078,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -78120,7 +81820,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,
@@ -78931,7 +82632,8 @@
         "terminalConsumed": true,
         "terminalAfterAbort": true,
         "lateAbortHandled": true,
-        "blockingStdin": true
+        "blockingStdin": true,
+        "rstApplied": true
       },
       "missingMilestones": [],
       "triggerReached": true,

@@ -126,6 +126,15 @@
     "trigger": "server:submit_turn + client:listeners-ready"
   },
   {
+    "id": "run--abort-rst-sigint",
+    "leaf": "run",
+    "axis": "abort-rst-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "rst",
+    "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）"
+  },
+  {
     "id": "run--second-sigint",
     "leaf": "run",
     "axis": "second-sigint",
@@ -310,6 +319,15 @@
     "signal": "SIGTERM",
     "action": "hold",
     "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "run--abort-rst-sigterm",
+    "leaf": "run",
+    "axis": "abort-rst-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "rst",
+    "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）"
   },
   {
     "id": "run--second-sigterm",
@@ -586,6 +604,15 @@
     "trigger": "server:submit_turn + client:listeners-ready"
   },
   {
+    "id": "resume--abort-rst-sigint",
+    "leaf": "resume",
+    "axis": "abort-rst-sigint",
+    "stage": "stream",
+    "signal": "SIGINT",
+    "action": "rst",
+    "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）"
+  },
+  {
     "id": "resume--second-sigint",
     "leaf": "resume",
     "axis": "second-sigint",
@@ -770,6 +797,15 @@
     "signal": "SIGTERM",
     "action": "hold",
     "trigger": "server:submit_turn + client:listeners-ready"
+  },
+  {
+    "id": "resume--abort-rst-sigterm",
+    "leaf": "resume",
+    "axis": "abort-rst-sigterm",
+    "stage": "stream",
+    "signal": "SIGTERM",
+    "action": "rst",
+    "trigger": "server:submit_turn + client:listeners-ready；server 对 abort_turn 直接 RST（不回复）"
   },
   {
     "id": "resume--second-sigterm",

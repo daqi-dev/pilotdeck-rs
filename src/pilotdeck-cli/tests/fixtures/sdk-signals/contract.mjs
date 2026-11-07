@@ -19,7 +19,7 @@ export function validateFiles(source, directory, baseline) {
   }
 }
 
-export const DATA_MUTATIONS = 62;
+export const DATA_MUTATIONS = 64;
 export const EXTRA_CONTROLS = 11;
 export const TOTAL_CONTROLS = DATA_MUTATIONS + EXTRA_CONTROLS;
 export function validateControlCount(mutations, results) {
@@ -45,12 +45,13 @@ function milestonesFromTrace(row) {
     terminalConsumed: input.stage !== 'terminal' || hook('terminal-consumed'),
     terminalAfterAbort: input.stage !== 'abort-terminal' || Boolean(abort && terminal && abort.seq < terminal.seq),
     lateAbortHandled: input.stage !== 'abort-terminal' || row.trace.some(event => event.kind === 'late-abort-handled'),
+    rstApplied: input.action !== 'rst' || row.trace.some(event => event.kind === 'server-rst'),
     blockingStdin: input.stage !== 'stdin' || !/(?:EAGAIN|EPERM|EACCES).*?(?:read|open)/.test(row.stderrRaw),
   };
 }
 
 export function validate(source, definitions) {
-  assert.equal(definitions.length, 102, '#1145 fixed registered matrix denominator');
+  assert.equal(definitions.length, 106, '#1145 fixed registered matrix denominator');
   assert.equal(source.nodeVersion, 'v22.22.0', '#1145 source Node version');
   assert.equal(source.sourceCommit, 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85', '#1145 source baseline commit');
   assert.equal(source.kind, 'real-ts-cli-real-websocket-observation-hooks', '#1145 real CLI capture scope');
@@ -65,7 +66,7 @@ export function validate(source, definitions) {
     assert.ok(Object.values(record).every(value => /^[a-f0-9]{64}$/.test(value)), '#1145 producer SHA256 format');
   }
   const active = definitions.filter(row => row.stage !== 'stdin');
-  assert.equal(active.length, 96, '#1145 fixed active matrix denominator');
+  assert.equal(active.length, 100, '#1145 fixed active matrix denominator');
   assert.equal(source.gaps.length, 6, '#1145 fixed suspended matrix denominator');
   assert.deepEqual(source.gaps.map(row => row.id), definitions.filter(row => row.stage === 'stdin').map(row => row.id), '#1145 exact explicitly suspended stdin gaps');
   assert.ok(source.gaps.every(gap => gap.status === 'GAP' && gap.reason.includes('#123') && gap.attempts.length > 0

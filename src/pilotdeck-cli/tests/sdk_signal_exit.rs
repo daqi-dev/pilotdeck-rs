@@ -24,7 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const NEGATIVE_CONTROLS: u64 = 73;
+const NEGATIVE_CONTROLS: u64 = 75;
 
 fn fixture_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sdk-signals")
@@ -105,7 +105,7 @@ fn verify_local_oracle(directory: &Path) {
     )
     .expect("#1145 definitions JSON");
     let definitions = definitions.as_array().expect("#1145 definitions array");
-    assert_eq!(definitions.len(), 102, "#1145 registered matrix cells");
+    assert_eq!(definitions.len(), 106, "#1145 registered matrix cells");
     assert_eq!(
         source["nodeVersion"], "v22.22.0",
         "#1145 source Node identity"
@@ -115,7 +115,7 @@ fn verify_local_oracle(directory: &Path) {
         "#1145 source commit identity"
     );
     let captures = source["captures"].as_array().expect("#1145 captures array");
-    assert_eq!(captures.len(), 96, "#1145 active matrix cells");
+    assert_eq!(captures.len(), 100, "#1145 active matrix cells");
     let gaps = source["gaps"].as_array().expect("#1145 gaps array");
     assert_eq!(gaps.len(), 6, "#1145 stdin gap denominator");
     let expected = json!({
@@ -546,7 +546,7 @@ mod signal_cases {
     macro_rules! observed {
         ($name:ident, $id:literal) => {
             #[test]
-            #[ignore = "#1145 real TS baseline + 28999 process replay; run the registered 96-cell command"]
+            #[ignore = "#1145 real TS baseline + 28999 process replay; run the registered 100-cell command"]
             fn $name() {
                 super::signal_replay::run($id);
             }
@@ -599,6 +599,7 @@ mod signal_cases {
     observed!(run_abort_ok_sigint, "run--abort-ok-sigint");
     observed!(run_abort_error_sigint, "run--abort-error-sigint");
     observed!(run_abort_hold_sigint, "run--abort-hold-sigint");
+    observed!(run_abort_rst_sigint, "run--abort-rst-sigint");
     observed!(run_second_sigint, "run--second-sigint");
     observed!(run_second_sigint_sigterm, "run--second-sigint-sigterm");
     observed!(
@@ -661,6 +662,7 @@ mod signal_cases {
     observed!(run_abort_ok_sigterm, "run--abort-ok-sigterm");
     observed!(run_abort_error_sigterm, "run--abort-error-sigterm");
     observed!(run_abort_hold_sigterm, "run--abort-hold-sigterm");
+    observed!(run_abort_rst_sigterm, "run--abort-rst-sigterm");
     observed!(run_second_sigterm, "run--second-sigterm");
     observed!(run_second_sigterm_sigint, "run--second-sigterm-sigint");
     observed!(
@@ -734,6 +736,7 @@ mod signal_cases {
     observed!(resume_abort_ok_sigint, "resume--abort-ok-sigint");
     observed!(resume_abort_error_sigint, "resume--abort-error-sigint");
     observed!(resume_abort_hold_sigint, "resume--abort-hold-sigint");
+    observed!(resume_abort_rst_sigint, "resume--abort-rst-sigint");
     observed!(resume_second_sigint, "resume--second-sigint");
     observed!(
         resume_second_sigint_sigterm,
@@ -799,6 +802,7 @@ mod signal_cases {
     observed!(resume_abort_ok_sigterm, "resume--abort-ok-sigterm");
     observed!(resume_abort_error_sigterm, "resume--abort-error-sigterm");
     observed!(resume_abort_hold_sigterm, "resume--abort-hold-sigterm");
+    observed!(resume_abort_rst_sigterm, "resume--abort-rst-sigterm");
     observed!(resume_second_sigterm, "resume--second-sigterm");
     observed!(
         resume_second_sigterm_sigint,
