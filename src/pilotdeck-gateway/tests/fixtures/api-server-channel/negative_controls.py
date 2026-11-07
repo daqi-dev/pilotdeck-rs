@@ -133,11 +133,11 @@ mutations = [
     (
         # #1759 E: raise the cap by one so `MAX_REQUEST_BYTES + 1` (1000002)
         # exceeds the literal `REPLAY_BODY_BUDGET` (1000001). While the budget
-        # was derived from the cap this mutation was invisible to the replay:
-        # the budget tracked the cap, so `recorded_body_refuses_an_unbounded_count`
-        # silently stopped guarding anything and the only red was
-        # `assert_boundary_body_len` calling it "fixture drift". The tie is now
-        # asserted, so a moved product cap has to be reported by name.
+        # was derived from the cap it tracked this mutation instead of catching
+        # it: the budget became 1000002, the cap-floor check passed, and
+        # `recorded_body_refuses_an_unbounded_count` kept refusing
+        # `<9000000 bytes>` — no test named the moved cap. The tie is now
+        # asserted, so a moved product cap is reported by name.
         "replay-budget-vs-cap",
         MOD,
         "1_000_000",
