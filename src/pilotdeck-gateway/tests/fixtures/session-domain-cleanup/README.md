@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 332 mutants:
+`JUDGES`, keyed by the same names. The current table has 331 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -499,8 +499,7 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-status-factory-import-after-assignment`,
 `calibrate-status-factory-import-conditional-overwrite`,
 `calibrate-status-builtins-alias-self-assign`,
-`calibrate-status-builtins-subscript-copy`,
-`calibrate-status-builtins-callback-after-import`.
+`calibrate-status-builtins-subscript-copy`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1598,7 +1597,7 @@ Round 23 trusted the module-scope call list as complete and read a
 
 | Shape | Mutant / self-test |
 |---|---|
-| **A function that also escapes as a value runs after the later import**: `import json as bi; def main(): ...`; `main(...)`; `_cbs.append(main)`; `import builtins as bi`; `for cb in _cbs: cb(...)`. | `calibrate-status-builtins-callback-after-import`; self-tests `round 24: a builtins alias imported after a callback registration`, `... before a nested-scope call`; `_module_value_uses` keeps `call_only` off |
+| **A function that also escapes as a value runs after the later import**: `import json as bi; def main(): ...`; `main(...)`; `_cbs.append(main)`; `import builtins as bi`; `for cb in _cbs: cb(...)`. | self-tests `round 24: a builtins alias imported after a callback registration`, `... before a nested-scope call`; `_module_value_uses` keeps `call_only` off. No table mutant: the shape needs the import at module scope and the write inside a function, which one `(old, new)` replacement cannot express; the end-to-end repro is in the PR body (#1953) |
 | **Direct calls only stay clean** (false FAIL guard): the round-23 shape still reads as no write. | self-test `round 24: a builtins alias imported after direct calls only` |
 | **A copy of an already replaced alias is not the module** (false FAIL guard): `import builtins as bi; bi = Safe; bi = bi; f = bi.getattr(...)`. | self-test `round 24: a self-assigned builtins alias after a certain replacement`; `_resolve_builtins_module_copies` reads `events[name]` |
 
