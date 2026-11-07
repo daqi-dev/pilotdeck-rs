@@ -76,6 +76,21 @@ GUARDED = [
     # itself; the bindings inherit via `use super::*` from both parents, so
     # concurrent edits to either must be caught by the source guard.
     SRC / 'runner_tests.rs',
+    # #2228 DS r3 P1: the row bindings bake turn-start-notices/oracle.json
+    # into the binary (include_str! via runner_notice_tests.rs), the
+    # notices-regeneration binding runs turn-start-notices/generate.mts
+    # through tests/common/baseline.rs, and the notices-wiring binding runs
+    # live-session/peer.py as a python3 subprocess through
+    # interaction_host_tests.rs's client(), so concurrent edits to any of them
+    # during a run must be caught by the source guard.
+    FIXTURES / 'turn-start-notices/oracle.json',
+    FIXTURES / 'turn-start-notices/generate.mts',
+    FIXTURES / 'live-session/peer.py',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the live/runner modules the bindings
+    # resolve through, capping the chain at the same declarator depth the
+    # project chain above already registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

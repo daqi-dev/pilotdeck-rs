@@ -91,6 +91,12 @@ GUARDED = [
     LIVE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_timeline_tests.rs',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the live/timeline modules the bindings
+    # resolve through, and runtime/mod.rs declares turn itself, capping the
+    # chain at the same declarator depth the project chain registers elsewhere.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/execution.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests.rs',
