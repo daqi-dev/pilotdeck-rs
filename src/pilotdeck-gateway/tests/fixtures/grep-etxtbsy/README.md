@@ -51,10 +51,14 @@ ENOENT（fd 中途消失）允许 continue，其余错误、以及 flags 行缺�
 成 seen，新增受控用例 `a_started_past_the_helper_cap_is_not_seen_after_a_
 paused_poll`）；fdinfo
 读失败不再按 errno 分类放过——**复检 fd 本身的 readlink**，fd 仍在且仍指向
-管道则 fail-closed，fd 已消失（任何 errno：ENOENT/ESRCH/EACCES，本机 6.17
-实测：僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid exec 后→EACCES）即释放
-（`fdinfo_unreadable`，配 Linux 单元测试）；#1409 起两级读都按这条口径分开：
-`read_dir` 失败交给来源分类（自身/后代/关系读不出→关；已消失→跳过），
+管道则 fail-closed（`fdinfo_unreadable`，配 Linux 单元测试）。**fix-r2b 当时
+的口径是「fd 已消失（任何 errno：ENOENT/ESRCH/EACCES）即释放」，#1409 起这
+半句已作废**：本机 6.17 实测的僵尸 fdinfo→ENOENT 而 fd 链接→EACCES、setuid
+exec 后→EACCES 两个事实仍然成立，但 EACCES 不再自动等于释放（僵尸靠「整组
+已终态」才释放，setuid exec 后的活持有者必须算仍持有）。#1409 起两级读分成：
+`read_dir` 失败交给来源分类（自身/后代/关系读不出→关；已消失→跳过；
+`Z`/`X` 只有在整个线程组已无活任务时才算终态——组长 `pthread_exit()` 后
+组仍持 fd 表，见 r2 的两个变异体），
 `read_link` 只有 ENOENT 算释放、其余 errno 一律由来源裁决（持有者已消失或
 已终态才算释放，本进程/后代/读不出状态的一律当作仍持有）——此前两级都是
 「读不到就 continue」，一条都看不见也照样出干净结论。这条规则只有一处实现
@@ -266,6 +270,17 @@ panic 用例
   在 50ms 后被宣判已死、可跳过，宿主藏起后代描述符时未知就变成「那里没有」。
   绑定 `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`
   的 `#1409 this process is the scan's own source and must never be skipped`。
+- `zombie-leader-is-terminal`（#1409 第 1 条，r2 复审 concurrency，Linux，绑定
+  单元测试）：`blind_source` 把 `Z`/`X` 直接当终态，不问线程组是否真死——线程
+  组长 `pthread_exit()` 后 `Z` 已成立，而共享 fd 表的其余线程仍开着写端，
+  `/proc/<tgid>/fd` 恰好在这个状态回 EACCES（cb8 6.17 实测：组长 `Z`、worker
+  `S`、fd 目录 EACCES、非阻塞读读端 EAGAIN 即仍有写端，
+  `_tmp/20261107-issue-1409/zombie-leader-probe3.log`）。扫描会跳过唯一仍持有
+  写端的来源。绑定 `a_live_group_behind_a_zombie_leader_is_not_terminal` 的
+  `#1409 a zombie leader with a live group has not released its descriptors`。
+- `thread-group-dead-ignores-live-tasks`（#1409 第 1 条，同上）：判定函数
+  `thread_group_is_dead` 对活任务视而不见——只要列出一个任务就判组已死，运行中
+  的进程一旦 fd 目录被藏起来就变成可跳过。同一单元测试判杀。
 - `blind-source-self-unrelated`（#1409 第 1 条，P1 复审补，Linux，绑定
   单元测试）：来源分类短路成「一律 Unrelated」——本进程自己也变成可跳过，
   任何宿主一旦藏起某进程的描述符，扫描都会当成「那里没有」照常出干净结论。
@@ -276,10 +291,15 @@ panic 用例
   （cb8 6.17，`_tmp/20261107-issue-1409/exit-window-probe-3000.log`）：3000 轮
   `/bin/true`、74,584 次 `/proc/<pid>/fd` 读取，14,290 次 EACCES（同刻状态
   `R` 71,504 / `Z` 3,000 / `D` 80），可观测退出窗口 2810 轮，时长 p50 26.7µs、
-  p90 38.2µs、p99 48.1µs、max 2.7ms，**没有一次达到 50ms 的
-  `BLIND_SOURCE_SETTLE`**——50ms 是三个数量级的余量，不是贴着窗口调出来的
-  值；不收尾这 2810 轮就会变成健康路径上的假 FAIL，收尾过短则在重载下漏掉
-  正在退出的后代。
+  p90 38.2µs、p99 48.1µs、max 2.7ms，没有一次达到 50ms 的
+  `BLIND_SOURCE_SETTLE`；代码真正失败的原语（逐条 `readlink`）另测一遍
+  （`exit-window-probe-readlink.log`：1000 轮同时轮询 fd 目录与 `fd/0` 的
+  `readlink`，目录 p50 19.4µs / p99 50.5µs / max 335µs，逐条 `readlink`
+  p50 32.0µs / p99 69.0µs / max 315µs，两者都是 0 次达到 50ms）。余量的口径
+  要说准：**对 p50/p99 是两三个数量级，对目前观测到的最大样本（2.7ms）是
+  18×，且尾部没有被 3000 轮样本界住**（有 2 个样本落在 1–10ms 桶）。不收尾
+  这 2810 轮就会变成健康路径上的假 FAIL，收尾过短则在重载下漏掉正在退出的
+  后代。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -322,6 +342,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=33 lib=2 test=31 unix=16 linux-survives=9 linux-invalid=8 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal blind-source-self-unrelated -->
+<!-- mutants: total=35 lib=2 test=33 unix=16 linux-survives=9 linux-invalid=10 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks blind-source-self-unrelated -->
 

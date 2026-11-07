@@ -169,6 +169,9 @@ blind_unit = 'an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe'
 # #1409 item 1/3: the one link-failure rule all three read sites share —
 # Linux-only like the sites themselves.
 link_unit = 'an_unreadable_link_is_a_release_only_when_its_holder_is_gone'
+# #1409 item 1 (r2 review, concurrency): a live thread group behind a zombie
+# leader is not terminal — Linux-only, it forks a pthread_exit probe.
+leader_unit = 'a_live_group_behind_a_zombie_leader_is_not_terminal'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -638,10 +641,7 @@ cases = [
             "#1155 reading the fdinfo of {}: {error}",
             fd.display()
         ))),''',
-     '''        Ok(target) if target.to_string_lossy() == wanted => {
-            let _ = target;
-            None
-        }''',
+     '''        Ok(target) if target.to_string_lossy() == wanted => None,''',
      publication_target, fdinfo_unit,
      '#1155 an unreadable fdinfo behind a live fd must fail the scan closed'),
     # #1155 r3 review P2-2: without the subreaper lease the orphaned
@@ -735,10 +735,10 @@ cases = [
             // is gone or already dead — the same rule as the enumeration, so
             // a descriptor hidden mid-grace stays a survivor instead of
             // being quietly dropped from the verdict.
-            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error, sources),
         });
     }''',
-     '''    let _ = (candidates, wanted, grace);''',
+     '''    let _ = (candidates, wanted, grace, sources);''',
      publication_target, grace_unit,
      '#1409 the grace must evict'),
     # #1409 item 3: the other half — a re-check that runs but never evicts
@@ -751,7 +751,7 @@ cases = [
             // is gone or already dead — the same rule as the enumeration, so
             // a descriptor hidden mid-grace stays a survivor instead of
             // being quietly dropped from the verdict.
-            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error, sources),
         });''',
      '''        candidates.retain(|_| true);''',
      publication_target, grace_unit,
@@ -766,17 +766,11 @@ cases = [
     # function).
     ('link-failure-always-release', publication,
      '''    match holder_of(fd) {
-        Some(pid) => matches!(
-            blind_source(&pid),
-            BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated
-        ),
+        Some(pid) => sources.of(pid).holds_nothing(),
         None => false,
     }''',
      '''    match holder_of(fd) {
-        Some(pid) => {
-            let _ = blind_source(&pid);
-            true
-        }
+        Some(_) => true,
         None => true,
     }''',
      publication_target, link_unit,
@@ -795,6 +789,34 @@ cases = [
         }''',
      publication_target, blind_unit,
      '#1409 this process is the scan\'s own source and must never be skipped'),
+    # #1409 item 1 (r2 review, concurrency): `Z` read as terminal without
+    # asking whether the group is dead. A leader that left through
+    # `pthread_exit()` reports `Z` while its surviving threads still share the
+    # fd table — `/proc/<tgid>/fd` answers EACCES in exactly that state (cb8
+    # 6.17, `_tmp/20261107-issue-1409/zombie-leader-probe3.log`), so the scan
+    # would skip the one source that still holds the write end.
+    ('zombie-leader-is-terminal', publication,
+     '''    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
+        return BlindSource::Terminal;
+    }''',
+     '''    if matches!(state, 'Z' | 'X') {
+        return BlindSource::Terminal;
+    }''',
+     publication_target, leader_unit,
+     '#1409 a zombie leader with a live group has not released its descriptors'),
+    # #1409 item 1 (r2 review, concurrency): the group-liveness check itself,
+    # made blind to live tasks — every group with at least one listed task is
+    # called dead, so a running process with a hidden fd directory becomes
+    # skippable. Bound to the same probe test.
+    ('thread-group-dead-ignores-live-tasks', publication,
+     '''        if !matches!(stat_fields(&stat), Some(('Z' | 'X', _))) {
+            return false;
+        }''',
+     '''        if false && !matches!(stat_fields(&stat), Some(('Z' | 'X', _))) {
+            return false;
+        }''',
+     publication_target, leader_unit,
+     '#1409 a zombie leader with a live group has not released its descriptors'),
     # #1409 item 1: the source classification itself. Anyone unreadable is
     # skipped once the relation check is short-circuited — this process
     # included — which is the shape that would let a host hide a descendant's
@@ -836,6 +858,8 @@ INVALID_OFF_LINUX = (
     'boundary-grace-never-evicts',
     'link-failure-always-release',
     'blind-source-settle-always-terminal',
+    'zombie-leader-is-terminal',
+    'thread-group-dead-ignores-live-tasks',
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
 )
