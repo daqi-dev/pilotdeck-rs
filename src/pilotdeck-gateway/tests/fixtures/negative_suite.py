@@ -59,26 +59,114 @@ def bind_module_file(test, modules):
 
 _FN_QUALIFIERS = ('async', 'const', 'unsafe', 'extern', 'pub', 'default')
 
+# #2064 r10: the ``fn`` form's left boundary. A plain word boundary would
+# refuse ``async fn case_a`` (compaction glues the qualifier onto ``fn``), so
+# the boundary whitelists exactly the qualifier words -- and only as whole
+# words: ``run_fncase_a(`` and ``xpubfncase_a(`` stay refused because their
+# qualifier-looking suffix does not start at a word boundary of its own.
+_FN_LEFT = r'(?<!\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'
+
+_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)"')
+_CHAR_START = re.compile(r"b?'(?:\\.|[^\\'])'")
+_WORD = re.compile(r'\w')
+
+
+def _token_start(source, index):
+    """True when ``index`` is not glued to the tail of an identifier."""
+    return index == 0 or not _WORD.match(source[index - 1])
+
+
+def _rust_code_only(source):
+    """Return ``source`` with every comment and literal replaced by a space.
+
+    #2064 r10: a binding that a comment or a string literal satisfies is a
+    binding that audits nothing (``// fn case_a(`` passed the old matcher), so
+    the noise carriers are blanked before any form is matched. The scan is a
+    single pass that knows only the lexical shapes Rust itself guarantees;
+    anything it cannot close -- an unterminated string, char or comment --
+    raises instead of guessing, per the fail-closed scanning rule (#449 /
+    #1166: a hand-rolled guess that mis-lexes is worse than refusing).
+    """
+    code = []
+    i, length = 0, len(source)
+    while i < length:
+        if source.startswith('//', i):
+            end = source.find('\n', i)
+            i = length if end < 0 else end
+            code.append(' ')
+            continue
+        if source.startswith('/*', i):
+            depth, i = 1, i + 2
+            while depth:
+                if source.startswith('/*', i):
+                    depth, i = depth + 1, i + 2
+                elif source.startswith('*/', i):
+                    depth, i = depth - 1, i + 2
+                elif i >= length:
+                    raise ValueError('unterminated Rust block comment')
+                else:
+                    i += 1
+            code.append(' ')
+            continue
+        start = None
+        if source[i] == '"' or (source[i] in 'rb' and _token_start(source, i)):
+            start = _STRING_START.match(source, i)
+        if start is not None:
+            hashes = start.group(1) or ''
+            i = start.end()
+            if 'r' in start.group(0):
+                close = source.find('"' + hashes, i)
+                if close < 0:
+                    raise ValueError('unterminated Rust raw string')
+                i = close + 1 + len(hashes)
+            else:
+                # A literal newline is legal inside a Rust string, so only
+                # the end of the source can prove the literal unterminated.
+                while True:
+                    if i >= length:
+                        raise ValueError('unterminated Rust string')
+                    if source[i] == '"':
+                        i += 1
+                        break
+                    i += 2 if source[i] == '\\' else 1
+            code.append(' ')
+            continue
+        char = None
+        if source[i] == "'" or (source[i] == 'b' and _token_start(source, i)):
+            char = _CHAR_START.match(source, i)
+        if char is not None:
+            i = char.end()
+            code.append(' ')
+            continue
+        code.append(source[i])
+        i += 1
+    return ''.join(code)
+
 
 def declares_test(source, short, macro=None):
     """True when ``source`` declares ``short`` as a function or a table row.
 
-    Whitespace is stripped before matching so the three drifted spellings
+    An empty ``short`` is refused outright (#2064): it degenerates the table
+    form to a bare ``=>`` that any arrow at a boundary satisfies (a tuple
+    match arm), so a mistyped row would audit nothing while ``--check``
+    stayed green. Comments and string/char literals are blanked before
+    matching (#2064 r10): a binding that a comment carrier satisfies is
+    equally hollow. Whitespace is stripped so the three drifted spellings
     (``'fn ' + name``, ``'fn' + name``, ``name + ' =>'``) collapse into one
-    rule. Every form requires a left boundary: a longer identifier that merely
-    ends in ``short`` -- ``run_fncase_a(`` or ``xcase_a =>`` -- must not
-    satisfy the binding. Compaction also glues the function qualifiers onto
-    ``fn`` (``async fn foo`` becomes ``asyncfnfoo``), so the ``fn`` form
-    accepts an identifier character before it only when it is one of those
-    qualifiers. ``macro`` accepts the table form ``macro!(short, ...)`` used by
-    the live-stream cases.
+    rule, and every form requires a left boundary: a longer identifier that
+    merely ends in ``short`` -- ``run_fncase_a(`` or ``xcase_a =>`` -- must
+    not satisfy the binding. Compaction glues the function qualifiers onto
+    ``fn`` (``async fn foo`` becomes ``asyncfnfoo``), so the ``fn`` form's
+    boundary whitelists exactly the qualifier words, and only as whole words.
+    ``macro`` accepts the table form ``macro!(short, ...)`` used by the
+    live-stream cases.
     """
-    compact = ''.join(source.split())
+    if not short:
+        raise ValueError('declares_test needs a short name')
+    compact = ''.join(_rust_code_only(source).split())
     escaped = re.escape(short)
-    for match in re.finditer(r'fn' + escaped + r'\(', compact):
-        head = compact[:match.start()]
-        if not head or not re.search(r'\w$', head) or head.endswith(_FN_QUALIFIERS):
-            return True
+    if re.search(_FN_LEFT + r'fn' + escaped + r'\(', compact):
+        return True
     if re.search(r'(?<!\w)' + escaped + '=>', compact):
         return True
     return bool(macro) and re.search(

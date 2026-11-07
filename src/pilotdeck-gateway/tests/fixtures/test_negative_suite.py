@@ -1519,9 +1519,56 @@ class AuditBindingTests(unittest.TestCase):
             suite.bind_module_file('runtime::c::tests::case_c', self.MODULES)
 
     def test_declares_test_accepts_every_existing_form(self):
-        self.assertTrue(suite.declares_test('fn case_a() {', 'case_a'))
-        self.assertTrue(suite.declares_test('matrix_tests! { case_a=>"row" }', 'case_a'))
-        self.assertTrue(suite.declares_test('case!(case_a,);', 'case_a', 'case!'))
+        self.assertTrue(suite.declares_test('fn case_a() {', 'case_a'),
+                        '#2064 a bare fn declaration must satisfy the fn form')
+        self.assertTrue(suite.declares_test('async fn case_a() {', 'case_a'),
+                        '#2064 an async fn declaration must satisfy the fn form')
+        self.assertTrue(suite.declares_test('pub fn case_a() {', 'case_a'),
+                        '#2064 a pub fn declaration must satisfy the fn form')
+        self.assertTrue(suite.declares_test('unsafe extern "C" fn case_a() {', 'case_a'),
+                        '#2064 an extern fn declaration must satisfy the fn form')
+        self.assertTrue(suite.declares_test('matrix_tests! { case_a=>"row" }', 'case_a'),
+                        '#2064 a table row must satisfy the table form')
+        self.assertTrue(suite.declares_test('case!(case_a,);', 'case_a', 'case!'),
+                        '#2064 a macro table row must satisfy the macro form')
+
+    def test_declares_test_empty_short_is_refused(self):
+        # #2064: an empty short name degenerated the table form to a bare `=>`
+        # matcher that any arrow at a boundary satisfied (a tuple match arm),
+        # so a mistyped binding audited nothing while --check stayed green.
+        with self.assertRaises(
+                ValueError, msg='#2064 declares_test must refuse an empty short name'):
+            suite.declares_test('match pair { (1, 2) => 1 }', '')
+
+    def test_declares_test_ignores_comment_and_string_carriers(self):
+        # r10: a binding that a comment or a string literal satisfies audits
+        # nothing; every noise carrier is blanked before matching.
+        self.assertFalse(suite.declares_test('// fn case_a() {', 'case_a'),
+                         '#2064 a line comment must not satisfy the fn form')
+        self.assertFalse(suite.declares_test('/* /* nested */ fn case_a() { */', 'case_a'),
+                         '#2064 a block comment must not satisfy the fn form')
+        self.assertFalse(suite.declares_test('let s = "fn case_a() {";', 'case_a'),
+                         '#2064 a string literal must not satisfy the fn form')
+        self.assertFalse(suite.declares_test('let s = r#"fn case_a() {"#;', 'case_a'),
+                         '#2064 a raw string literal must not satisfy the fn form')
+        self.assertFalse(suite.declares_test('// case_a => "row"', 'case_a'),
+                         '#2064 a line comment must not satisfy the table form')
+        self.assertFalse(suite.declares_test('let s = "case_a => 1";', 'case_a'),
+                         '#2064 a string literal must not satisfy the table form')
+        # A char literal holding a quote must not open a string either: with
+        # the char branch gone, that quote would swallow code up to the next
+        # string's opening quote and turn it back into un-stripped code.
+        self.assertFalse(
+            suite.declares_test("let q = '\"'; let s = \"fn case_a() {\"; let r = '\"';",
+                               'case_a'),
+            '#2064 a quote char literal must not open a string')
+
+    def test_declares_test_unterminated_literal_is_refused(self):
+        # #449 / #1166: a scanner that cannot close a literal must fail closed
+        # instead of guessing where it ends.
+        with self.assertRaises(
+                ValueError, msg='#2064 an unterminated literal must fail closed'):
+            suite.declares_test('let s = "fn case_a() {', 'case_a')
 
     def test_declares_test_needs_the_exact_name(self):
         # #1890: every assertion carries the message its mutant is bound to; a
@@ -1545,6 +1592,14 @@ class AuditBindingTests(unittest.TestCase):
         # The macro form is only accepted when the caller names the macro.
         self.assertFalse(suite.declares_test('case!(case_a,);', 'case_a'), message)
         self.assertFalse(suite.declares_test('case_other!(case_a,);', 'case_a', 'case!'), message)
+        # r10: a qualifier-looking suffix glued inside a longer identifier is
+        # not a qualifier; the old head.endswith() accepted both shapes.
+        self.assertFalse(
+            suite.declares_test('let x = runasyncfncase_a();', 'case_a'),
+            '#2064 a qualifier glued onto a longer identifier must not satisfy the fn form')
+        self.assertFalse(
+            suite.declares_test('let x = xpubfncase_a();', 'case_a'),
+            '#2064 a qualifier suffix inside a longer identifier must not satisfy the fn form')
 
 
 BASELINE_DEFAULTS = (
