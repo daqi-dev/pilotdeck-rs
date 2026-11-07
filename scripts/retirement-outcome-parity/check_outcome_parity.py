@@ -238,7 +238,8 @@ def deferred_match(method, row, golden):
     """该行是否落在**已登记延期**的那一格：金样 ok，Rust 回 CAPABILITY_UNAVAILABLE。
 
     只有这一格被容忍；调用方不得把本函数当「该方法不用判」的开关——P1/P2/P6/P7/P8
-    对延期方法照常核，本函数只为 P3/P4/P5 的比对开一格。
+    对延期方法照常核，本函数只为 P3/P4 的逐行比对开一格。P5 是集合规则，按方法集合
+    扣除（`DEFERRED_UNAVAILABLE_METHODS`），口径由金样侧 fail-closed 保证一致。
     """
     return (method in DEFERRED_UNAVAILABLE_METHODS
             and golden is not None
@@ -426,10 +427,11 @@ def analyze_round(round_name, rows, wire, oracle_index):
         violations.append(violation(
             'P1-COVERAGE', round_name, method,
             'missing from the executed set (registered 101)'))
-    # P5：unavailable 集合恰好等于登记的 6 个（集合外答 unavailable 即 FAIL，
-    # 6 个之内答非 unavailable 也 FAIL；99/101 unavailable 必须 FAIL）。
-    # 已登记延期的 3 个 always-on 方法不在集合判定内——它们答 unavailable 是登记
-    # 过的既知差异（上面已计入 stats['deferred']），而不是「集合外答 unavailable」。
+    # P5：unavailable 集合 ⊆ 登记的 6 个 gated ∪ 已登记延期的 3 个 always-on，
+    # 且 6 个 gated 必须**双向恰等**（集合外答 unavailable 即 FAIL，gated 之内答
+    # 非 unavailable 也 FAIL；99/101 unavailable 必须 FAIL）。
+    # 延期那 3 个答 unavailable 是登记过的既知差异（上面已计入 stats['deferred']），
+    # 不是「集合外答 unavailable」，故从集合减法里扣除。
     for method in sorted(unavailable - REGISTERED_UNAVAILABLE_METHODS
                          - DEFERRED_UNAVAILABLE_METHODS):
         violations.append(violation(

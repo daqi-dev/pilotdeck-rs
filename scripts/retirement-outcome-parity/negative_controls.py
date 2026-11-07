@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N18）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N18 + 正控 PC1–PC2）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -475,7 +475,8 @@ def _descend(dir_fd, part):
 
     一次只走**一个**路径部件：带分隔符或 ``.`` / ``..`` 的部件直接拒绝——``dir_fd``
     只对单个名字生效，带分隔符的部件会按路径重新解析、中间链接照样被跟随（Codex r14
-    实测 ``'N1/child'`` 写穿到链接目标）。当前控制 ID 是代码内固定的 ``N1``–``N17``，
+    实测 ``'N1/child'`` 写穿到链接目标）。当前控制 ID 是代码内固定的 ``N1``–``N18``
+    与正控 ``PC1``–``PC2``，
     没有外部输入能走到这里；这道守卫是给未来接口留的 fail-closed。
     """
     separators = {sep for sep in ('/', os.sep, os.altsep) if sep}
@@ -673,9 +674,38 @@ class Control:
         self.extra = extra or {}    # 归因加严项：N7 双方码、N11 漂移轮次
 
 
+class Positive:
+    """正控：断言「应当 PASS 的性质」仍成立。
+
+    负控只证明装置**能抓住**注入的错误，证明不了它**没有错判**。延期这一格如果被
+    写窄（``deferred_match`` 漏容忍），18 条负控照样全 KILLED，所以必须有一条数据
+    变异要求 checker **rc=0 且报告如实说出延期**（#2143 两家评审同一条）。
+    """
+
+    def __init__(self, pid, title, probe, build, verify):
+        self.id = pid
+        self.title = title
+        self.probe = probe
+        self.build = build          # () -> (rows, frames)
+        self.verify = verify        # report -> (bool, reason)
+
+
 def build_controls(base_rows, base_frames, round2_rows, round2_frames):
+    # #2143：延期（always-on 三方法）只容忍「金样 ok ↔ 被测回 CAPABILITY_UNAVAILABLE」
+    # 一格。凡靠「答 unavailable 必须被点名」归因的控件，探针都不能落在延期集里——
+    # P3/P4 会按 `deferred_match` 跳过、P5 的集合减法也会把它吞掉，控件就从 KILLED
+    # 退化成 SURVIVED（假 FAIL）。N18 相反，它**专门**用延期方法当探针。
+    deferred_probes = [row['method'] for row in base_rows
+                       if row['method'] in CHECK.DEFERRED_UNAVAILABLE_METHODS
+                       and row['outcome'] == 'ok' and row['shape'] == 'request']
+    assert deferred_probes, ('baseline has no deferred ok/request method; '
+                             'N18 needs one')
     ok_request = next(row['method'] for row in base_rows
-                      if row['outcome'] == 'ok' and row['shape'] == 'request')
+                      if row['outcome'] == 'ok' and row['shape'] == 'request'
+                      and row['method'] not in CHECK.DEFERRED_UNAVAILABLE_METHODS)
+    assert ok_request not in CHECK.DEFERRED_UNAVAILABLE_METHODS, (
+        f'probe {ok_request} sits in the deferred set; N1/N3/N9 attribution '
+        'would be swallowed by the deferral exemption')
     error_probe = next(row['method'] for row in base_rows
                        if row['outcome'] == 'error'
                        and row.get('errorCode') != CAPABILITY_UNAVAILABLE)
@@ -692,22 +722,18 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     keep_ok = stream_ok[:1] + request_ok[:1] if stream_ok else request_ok[:2]
     assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
     shape_probe = request_ok[2]
-    n10_probe = next(row['method'] for row in base_rows if row['method'] not in keep_ok)
+    n10_probe = next(row['method'] for row in base_rows
+                     if row['method'] not in keep_ok
+                     and row['method'] not in CHECK.DEFERRED_UNAVAILABLE_METHODS)
+    assert n10_probe not in CHECK.DEFERRED_UNAVAILABLE_METHODS, (
+        f'probe {n10_probe} sits in the deferred set; N10 attribution would be '
+        'swallowed by the deferral exemption')
     first_row = base_rows[0]['method']
     outcome_probe = ok_rows[2]
     gated = 'memory_list'
     assert gated in CHECK.REGISTERED_UNAVAILABLE_METHODS
     assert find_row(base_rows, gated)['errorCode'] == CAPABILITY_UNAVAILABLE
     assert ALT_CODE != CHECK.CAPABILITY_UNAVAILABLE
-    # N18（#2143）：延期只容忍「金样 ok ↔ 被测回 CAPABILITY_UNAVAILABLE」这一格。
-    # 探针取一个**已登记延期**且基线为 ok/request 的方法；拿不到就说明登记与基线
-    # 数据打架，控件无从构造（assert 显式失败，不静默跳过）。
-    deferred_probes = [row['method'] for row in base_rows
-                       if row['method'] in CHECK.DEFERRED_UNAVAILABLE_METHODS
-                       and row['outcome'] == 'ok' and row['shape'] == 'request']
-    assert deferred_probes, ('baseline has no deferred ok/request method; '
-                             'N18 needs one')
-
     def clone(*samples):
         return [([dict(row) for row in rows], [json.loads(json.dumps(frame)) for frame in frames])
                 for rows, frames in samples]
@@ -990,6 +1016,66 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     ]
 
 
+def build_positives(base_rows, base_frames):
+    """正控（#2143）：延期这一格必须**真被容忍**，而且**真被报告**。
+
+    - PC1：三个延期方法都改成 `error / CAPABILITY_UNAVAILABLE` → checker 必须 rc=0、
+      逐轮 `deferred == 3` 且 `deferredMethods` 点名三条、顶层 `deferred.methods` 是
+      登记集。写窄了（漏容忍）→ BROKEN；报告丢字段（静默放行）→ BROKEN。
+    - PC2：未变异参考轮 → `deferred == 0` 且零违规，钉住「不是整体豁免」。
+    """
+    deferred = CHECK.DEFERRED_UNAVAILABLE_METHODS
+    probes = [row['method'] for row in base_rows if row['method'] in deferred]
+    assert sorted(probes) == sorted(deferred), (
+        f'baseline deferred rows {sorted(probes)} != registered set {sorted(deferred)}')
+    assert all(find_row(base_rows, method)['outcome'] == 'ok' for method in probes), (
+        'baseline deferred rows must be golden-ok; PC1 needs the tolerated cell')
+
+    def clone():
+        return ([dict(row) for row in base_rows],
+                [json.loads(json.dumps(frame)) for frame in base_frames])
+
+    def tolerated():
+        rows, frames = clone()
+        for method in probes:
+            set_error(rows, frames, method, CAPABILITY_UNAVAILABLE)
+        return rows, frames
+
+    def untouched():
+        return clone()
+
+    def verify_tolerated(report):
+        rounds = report.get('rounds') or []
+        if len(rounds) != 1:
+            return False, f'expected 1 round, got {len(rounds)}'
+        stats = rounds[0]
+        if stats.get('deferred') != len(probes):
+            return False, f"deferred {stats.get('deferred')} != {len(probes)}"
+        if sorted(stats.get('deferredMethods') or []) != sorted(probes):
+            return False, f"deferredMethods {stats.get('deferredMethods')}"
+        registered = (report.get('deferred') or {}).get('methods')
+        if sorted(registered or []) != sorted(probes):
+            return False, f'top-level deferred.methods {registered}'
+        if report.get('violations'):
+            return False, f"violations {report['violations'][:3]}"
+        return True, 'tolerated cell passes and is reported'
+
+    def verify_untouched(report):
+        counts = [stats.get('deferred') for stats in report.get('rounds') or []]
+        if counts != [0]:
+            return False, f'baseline deferred counts {counts} != [0]'
+        if report.get('violations'):
+            return False, f"baseline violations {report['violations'][:3]}"
+        return True, 'baseline reports deferred=0 (not a blanket exemption)'
+
+    return [
+        Positive('PC1', f'延期三方法 {", ".join(sorted(probes))} 改 CAPABILITY_UNAVAILABLE',
+                 probes[0], tolerated, verify_tolerated),
+        Positive('PC2', '未变异参考轮', base_rows[0]['method'], untouched,
+                 verify_untouched),
+    ]
+
+
 def preflight_base_rounds(data_root, oracle, names):
     """变异前先确认参考轮本身 PASS（否则负控的归因无意义）。
 
@@ -1111,6 +1197,60 @@ def run_control(control, out_root, oracle):
     return record
 
 
+def run_positive(positive, out_root, oracle):
+    """跑一条正控：HELD（断言成立）/ BROKEN（应 PASS 却没 PASS 或报告丢字段）/ INVALID。"""
+    out_dir = Path(out_root) / positive.id
+    record = {'id': positive.id, 'title': positive.title, 'probe': positive.probe,
+              'verdict': None, 'reason': None, 'rc': None}
+    try:
+        rows, frames = positive.build()
+    except Exception as error:  # noqa: BLE001 - 记录为 INVALID，不中止其余控件
+        record.update(verdict='INVALID', reason=f'build failed: {error!r}')
+        return record
+    write_round(out_root, positive.id, 'round-01', rows, frames)
+    control_fd = open_output_dir(out_root, (positive.id,))
+    try:
+        remove_at(control_fd, 'check-output.json')
+    finally:
+        os.close(control_fd)
+    command = [sys.executable, '-I', str(CHECKER), 'check',
+               '--oracle', str(oracle), '--round', str(out_dir / 'round-01')]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                timeout=CHECK_TIMEOUT_SECONDS, start_new_session=True)
+    except subprocess.TimeoutExpired:
+        record.update(verdict='INVALID',
+                      reason=f'checker timed out after {CHECK_TIMEOUT_SECONDS}s')
+        return record
+    record['rc'] = result.returncode
+    control_fd = open_output_dir(out_root, (positive.id,))
+    try:
+        write_at(control_fd, 'check-output.json', result.stdout)
+    finally:
+        os.close(control_fd)
+    if result.stderr.strip():
+        record['stderr'] = result.stderr.strip()[:2000]
+    try:
+        report = json.loads(result.stdout)
+    except ValueError as error:
+        record.update(verdict='INVALID', reason=f'cannot parse checker output: {error}')
+        return record
+    if result.returncode != 0:
+        violations = report.get('violations') if isinstance(report, dict) else None
+        reason = f'checker exit {result.returncode} (expected PASS)'
+        if violations:
+            reason += f'; violations {violations[:3]}'
+        record.update(verdict='BROKEN', reason=reason)
+        return record
+    try:
+        ok, reason = positive.verify(report)
+    except Exception as error:  # noqa: BLE001
+        record.update(verdict='INVALID', reason=f'verify failed: {error!r}')
+        return record
+    record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)
+    return record
+
+
 def build_parser():
     """正式解析器：选项表与 ``build_classifier`` **同源**（``PARSER_OPTIONS``）。
 
@@ -1121,8 +1261,9 @@ def build_parser():
     """
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
-        description='Negative controls N1-N18 for the retirement outcome-parity '
-                    'checker (#1477). Data-only mutations; no source text is touched.')
+        description='Negative controls N1-N18 + positive controls PC1-PC2 for the '
+                    'retirement outcome-parity checker (#1477). Data-only mutations; '
+                    'no source text is touched.')
     defaults = {'data': str(DEFAULT_DATA), 'oracle': str(DEFAULT_ORACLE)}
     for key, flags, help_text in PARSER_OPTIONS:
         kwargs = {'help': help_text}
@@ -1166,6 +1307,7 @@ def main(argv=None):
                   '先修数据或金样', file=sys.stderr)
             return 2
         controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
+        positives = build_positives(base_rows, base_frames)
     except CHECK.InputError as error:
         print(f'negative_controls: 输入不可用：{error}', file=sys.stderr)
         return 2
@@ -1174,17 +1316,28 @@ def main(argv=None):
         return 2
 
     records = []
+    positive_records = []
     try:
         for control in controls:  # 全部跑完再汇总，不遇败即停
             record = run_control(control, out_root, Path(args.oracle))
             records.append(record)
             print(f"{control.id}: {record['verdict']} ({record['reason']})")
+        for positive in positives:
+            record = run_positive(positive, out_root, Path(args.oracle))
+            positive_records.append(record)
+            print(f"{positive.id}: {record['verdict']} ({record['reason']})")
 
         counts = {verdict: sum(1 for record in records if record['verdict'] == verdict)
                   for verdict in ('KILLED', 'SURVIVED', 'INVALID')}
+        positive_counts = {verdict: sum(1 for record in positive_records
+                                        if record['verdict'] == verdict)
+                           for verdict in ('HELD', 'BROKEN', 'INVALID')}
         summary = {'status': 'PASS' if counts['SURVIVED'] == 0
-                   and counts['INVALID'] == 0 else 'FAIL',
-                   'controls': records, 'counts': counts,
+                   and counts['INVALID'] == 0
+                   and positive_counts['BROKEN'] == 0
+                   and positive_counts['INVALID'] == 0 else 'FAIL',
+                   'controls': records, 'positives': positive_records,
+                   'counts': counts, 'positiveCounts': positive_counts,
                    'oracle': str(args.oracle), 'data': str(args.data)}
         target = out_root / 'summary.json'
         # tmp 名带 pid：同目录并发两次执行时不能共用同一个 tmp（先完成者的 rename
@@ -1208,6 +1361,7 @@ def main(argv=None):
         print(f'negative_controls: 输出目录不可用：{error}', file=sys.stderr)
         return 2
     print(json.dumps({'status': summary['status'], 'counts': counts,
+                      'positiveCounts': positive_counts,
                       'summary': str(target)}, ensure_ascii=False))
     return 0 if summary['status'] == 'PASS' else 1
 
