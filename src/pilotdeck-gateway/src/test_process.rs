@@ -771,71 +771,482 @@ fn bounded_children_reject_zero_match_timeout_output_and_invalid_receipts() {
 // them, and a "before" snapshot taken after the window opened can miss a child
 // that exits in the gap. Both audits therefore open the window with the
 // sampler's first sweep and judge the accumulated sets.
+//
+// #2138: both audits prove a *negative* — "this window spawned no child" and
+// "no other process holds the data dir open" — so a `/proc` read the audit
+// could not perform is an unknown, never evidence of absence. Three rules,
+// mirroring #1409's return-boundary scan (`tests/scratch_publication.rs`:
+// `blind_source` / `holds_nothing` / `a_write_end_this_process_holds_is_visible`):
+//
+//   1. a failed read is classified by source ([`BlindSource`]) before it may
+//      be skipped; a source that could be what the audit hunts fails it closed;
+//   2. every sweep first proves, through the same primitives, that it can see
+//      this process's own stat / descriptors — a host that hides `/proc`
+//      fails the audit instead of passing it on nothing;
+//   3. a sweep that read no process at all fails: "saw nothing" is not
+//      evidence of "nothing there".
+//
+// The integration-test crate cannot share crate-private code with this module,
+// so the classification is a deliberate copy of #1409's — change the two
+// together.
 // ---------------------------------------------------------------------------
 
+/// #2138: the state and parent fields of `/proc/<pid>/stat`. Everything is
+/// read after the *last* `)` because the comm field between the parentheses
+/// may contain spaces and parentheses of its own.
 #[cfg(target_os = "linux")]
-pub(crate) fn child_processes() -> Vec<(i32, Option<std::path::PathBuf>)> {
-    let me = std::process::id() as i32;
-    let mut children = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
-    for entry in entries {
-        let entry = entry.expect("#1316 the audit reads a /proc entry");
-        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
-            continue;
-        };
-        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
-            continue;
-        };
-        let Some((_, rest)) = stat.rsplit_once(')') else {
-            continue;
-        };
-        // After `comm)` come state and ppid.
-        let Some(ppid) = rest
-            .split_whitespace()
-            .nth(1)
-            .and_then(|value| value.parse::<i32>().ok())
-        else {
-            continue;
-        };
-        if ppid == me {
-            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-            children.push((pid, exe));
+fn stat_fields(stat: &str) -> Option<(char, &str)> {
+    let (_, tail) = stat.rsplit_once(')')?;
+    let mut fields = tail.split_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let parent = fields.next()?;
+    Some((state, parent))
+}
+
+/// #2138: whether `pid` is this process or one of its descendants — the only
+/// processes that can be a child the child audit failed to see. An unreadable
+/// chain is an unknown and counts as related, so it fails the audit closed
+/// rather than passing it. Known limits, both needing pid reuse to be reached
+/// at all: an ancestor reaped and its pid reused mid-walk would send the chain
+/// into an unrelated tree, and a `SCM_RIGHTS` handoff is an inheritance the
+/// parent chain does not show (irrelevant for pids: a pid is a child by the
+/// kernel's own parent link, not by descriptor inheritance).
+#[cfg(target_os = "linux")]
+fn descended_from_this_process(pid: &str) -> bool {
+    let mine = std::process::id().to_string();
+    let mut current = pid.to_owned();
+    for _ in 0..64 {
+        if current == mine {
+            return true;
         }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{current}/stat")) else {
+            return true;
+        };
+        let Some((_, parent)) = stat_fields(&stat) else {
+            return true;
+        };
+        if parent == "0" {
+            return false;
+        }
+        current = parent.to_owned();
     }
-    children.sort();
-    children
+    true
+}
+
+/// #2138: whether a `Z`/`X` state means the whole *thread group* is dead, and
+/// with it the group's descriptor table. A thread-group leader can be a zombie
+/// while its group lives on (`pthread_exit` in the leader): the surviving
+/// threads share the fd table, so a descriptor is still open, and
+/// `/proc/<tgid>/fd` answers EACCES in exactly that state (#1409 measured it
+/// on cb8 6.17, `_tmp/20261107-issue-1409/zombie-leader-probe3.log`). A zombie
+/// leader alone therefore proves nothing; only a group whose every task is
+/// `Z`/`X` has closed its descriptors. Anything unreadable is *not* dead, so
+/// the caller keeps treating the source as live.
+#[cfg(target_os = "linux")]
+fn thread_group_is_dead(pid: &str) -> bool {
+    let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return false;
+    };
+    let mut seen = 0usize;
+    for task in tasks {
+        let Ok(task) = task else { return false };
+        let Ok(stat) = std::fs::read_to_string(task.path().join("stat")) else {
+            return false;
+        };
+        if !matches!(stat_fields(&stat), Some(('Z' | 'X', _))) {
+            return false;
+        }
+        seen += 1;
+    }
+    seen != 0
+}
+
+/// #2138: how long a related source may still be finishing its exit before its
+/// unreadable entries count as hidden while alive. `exit_files()` runs before
+/// `exit_notify()` marks the task a zombie, and in that window the descriptor
+/// directory already fails while `/proc/<pid>/stat` still says `R` (#1409
+/// measured the window on cb8 6.17: p99 48µs, max 2.7ms). Failing on that
+/// first read would turn a healthy run red; failing only after the source
+/// settles keeps a live descendant with hidden descriptors a hard failure.
+#[cfg(target_os = "linux")]
+const BLIND_SOURCE_SETTLE: Duration = Duration::from_millis(50);
+
+/// #2138: whether the process behind a failed `/proc` read could be what the
+/// audit is looking for. A child of this process is a descendant by
+/// definition, so a source that is gone, already dead, or provably unrelated
+/// cannot be a child the sweep failed to see; everything else is an unknown,
+/// and on a host that hides `/proc` treating an unreadable related process as
+/// "nothing there" is exactly how the audit would report a clean result it
+/// never verified.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BlindSource {
+    /// Gone between the `/proc` listing and the read: it holds nothing.
+    Vanished,
+    /// A zombie or a dead task: the kernel already closed its descriptors.
+    Terminal,
+    /// Not this process and not one of its descendants.
+    Unrelated,
+    /// This process, a descendant, or a task whose relation cannot be read.
+    Related,
 }
 
 #[cfg(target_os = "linux")]
-fn foreign_data_dir_holders(root: &std::path::Path) -> Vec<i32> {
-    let me = std::process::id() as i32;
-    let mut holders = Vec::new();
-    let entries = std::fs::read_dir("/proc").expect("#1316 the audit reads /proc");
+impl BlindSource {
+    /// #2138: whether a source can be what the audit hunts at all. This is the
+    /// one place the skip set is written, so a new variant or a narrowed set
+    /// cannot silently apply on one side only.
+    fn holds_nothing(self) -> bool {
+        matches!(self, Self::Vanished | Self::Terminal | Self::Unrelated)
+    }
+}
+
+/// #2138: one classification per holder per sweep. [`blind_source`] may spend
+/// the whole settle window on a single holder, and a sweep meets the same
+/// holder once per descriptor, so without the memo one hidden holder would
+/// cost N × `BLIND_SOURCE_SETTLE` inside a sampler cycle that runs every
+/// millisecond. A memo cannot grow stale in a way that loosens the sweep:
+/// `Terminal`/`Vanished` are final, `Unrelated` cannot become a descendant,
+/// and a cached `Related` is the fail-closed verdict.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct BlindSources {
+    seen: std::collections::HashMap<String, BlindSource>,
+}
+
+#[cfg(target_os = "linux")]
+impl BlindSources {
+    /// The classification of `pid`, decided once per sweep.
+    fn of(&mut self, pid: &str) -> BlindSource {
+        *self
+            .seen
+            .entry(pid.to_owned())
+            .or_insert_with(|| blind_source(pid))
+    }
+}
+
+/// #2138: classify a source whose `/proc` reads failed, for the sweep's
+/// "may this be skipped" decision.
+#[cfg(target_os = "linux")]
+fn blind_source(pid: &str) -> BlindSource {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        // No stat at all: the task is gone between the listing and the read.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return BlindSource::Vanished,
+        // Any other failure leaves the relation unknown: never skipped.
+        Err(_) => return BlindSource::Related,
+    };
+    let Some((state, _)) = stat_fields(&stat) else {
+        return BlindSource::Related;
+    };
+    // A zombie leader with a live group has not released its descriptors, so
+    // "terminal" is the whole group being dead, not one task reporting `Z`.
+    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
+        return BlindSource::Terminal;
+    }
+    if descended_from_this_process(pid) {
+        settles_into_a_terminal_source(pid)
+    } else {
+        BlindSource::Unrelated
+    }
+}
+
+/// #2138: re-read a related source's state until it either proves terminal — a
+/// dead thread group, a dead task, or gone — or the settle window runs out, in
+/// which case it is still an unknown and the sweep fails closed on it.
+#[cfg(target_os = "linux")]
+fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
+    let deadline = Instant::now() + BLIND_SOURCE_SETTLE;
+    loop {
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => match stat_fields(&stat) {
+                Some(('Z' | 'X', _)) if thread_group_is_dead(pid) => {
+                    return BlindSource::Terminal;
+                }
+                Some(_) => {}
+                None => return BlindSource::Related,
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return BlindSource::Vanished;
+            }
+            Err(_) => {}
+        }
+        if Instant::now() >= deadline {
+            return BlindSource::Related;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// #2138: the child audit's own eyes. Before a sweep's child set is trusted it
+/// must read the stat of the process running it, through the same primitive it
+/// uses on everyone else. A host that hides `/proc` (hidepid, gVisor, a
+/// restricted container, an LSM) then fails the audit instead of returning an
+/// empty child list that proves nothing.
+#[cfg(target_os = "linux")]
+fn this_process_stat_is_visible(proc_root: &std::path::Path, mine: &str) -> io::Result<()> {
+    let stat = std::fs::read_to_string(proc_root.join(mine).join("stat")).map_err(|error| {
+        io::Error::other(format!(
+            "#2138 the child-process audit cannot read its own {}/{mine}/stat ({error}): \
+             a clean child list would prove nothing",
+            proc_root.display()
+        ))
+    })?;
+    if stat_fields(&stat).is_none() {
+        return Err(io::Error::other(format!(
+            "#2138 the child-process audit cannot parse its own {}/{mine}/stat ({stat:?}): \
+             a clean child list would prove nothing",
+            proc_root.display()
+        )));
+    }
+    Ok(())
+}
+
+/// #2138: the child audit behind [`child_processes`], with the procfs root
+/// injectable so a negative control can simulate a host that hides this
+/// process's own stat (production always passes `/proc`). The only injected
+/// read is the listing and the per-pid `stat`/`exe`; the classification reads
+/// the real `/proc`, because it decides what a real pid is.
+#[cfg(target_os = "linux")]
+fn child_processes_in(
+    proc_root: &std::path::Path,
+) -> io::Result<Vec<(i32, Option<std::path::PathBuf>)>> {
+    let mine = std::process::id().to_string();
+    // #2138: the positive self-check comes first — a sweep that cannot see its
+    // own process must fail, never pass on an empty result.
+    this_process_stat_is_visible(proc_root, &mine)?;
+    let mut children = Vec::new();
+    // #2138: the sweep counts what it could read and fails when that count is
+    // zero; "saw nothing" is not evidence of "nothing there".
+    let mut readable = 0usize;
+    let mut skipped = 0usize;
+    let mut sources = BlindSources::default();
+    let entries = std::fs::read_dir(proc_root).map_err(|error| {
+        io::Error::other(format!(
+            "#1316 the audit reads {}: {error}",
+            proc_root.display()
+        ))
+    })?;
     for entry in entries {
-        let entry = entry.expect("#1316 the audit reads a /proc entry");
-        let Some(pid) = entry.file_name().to_string_lossy().parse::<i32>().ok() else {
+        let entry = entry.map_err(|error| {
+            io::Error::other(format!(
+                "#1316 the audit reads an entry of {}: {error}",
+                proc_root.display()
+            ))
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // A numeric name outside `i32` cannot be a pid this audit can meet
+        // (Linux pids are bounded far below that); it is not a blind read.
+        let Ok(pid) = name.parse::<i32>() else {
             continue;
         };
-        if pid == me {
+        let stat = match std::fs::read_to_string(proc_root.join(&name).join("stat")) {
+            Ok(stat) => {
+                readable += 1;
+                stat
+            }
+            // #2138: a failed read is never silently skipped. A source that
+            // cannot be a child of this process may be passed over; anything
+            // else is an unknown the audit fails closed on, because a hidden
+            // stat is exactly where a child would hide.
+            Err(error) => {
+                if sources.of(&name).holds_nothing() {
+                    skipped += 1;
+                    continue;
+                }
+                return Err(io::Error::other(format!(
+                    "#2138 reading the stat of {name}: {error}"
+                )));
+            }
+        };
+        // `comm)` is followed by state and ppid. A readable stat whose fields
+        // do not parse is an unknown too: it cannot prove the process is not
+        // our child, so it fails the audit instead of being skipped.
+        let Some((_, ppid)) = stat_fields(&stat) else {
+            return Err(io::Error::other(format!(
+                "#2138 the stat of {name} has no parsable state/parent ({stat:?})"
+            )));
+        };
+        if ppid == mine.as_str() {
+            let exe = std::fs::read_link(proc_root.join(&name).join("exe")).ok();
+            children.push((pid, exe));
+        }
+    }
+    if readable == 0 {
+        return Err(io::Error::other(format!(
+            "#2138 the child-process audit could not read the stat of any process \
+             ({skipped} skipped): a clean result would prove nothing"
+        )));
+    }
+    children.sort();
+    Ok(children)
+}
+
+/// #2138: every child of this process, sorted. Fails (panics) when the sweep
+/// cannot prove it saw what it claims — see [`child_processes_in`].
+#[cfg(target_os = "linux")]
+pub(crate) fn child_processes() -> Vec<(i32, Option<std::path::PathBuf>)> {
+    child_processes_in(std::path::Path::new("/proc")).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// #2138: the data-dir audit's own eyes. Before a sweep's holder list is
+/// trusted it must resolve a descriptor this process provably holds through
+/// the very primitives it uses on everyone else — `/proc/<pid>/fd` and
+/// `read_link`. A host that hides descriptors from `/proc` then fails the
+/// audit instead of reporting that no one holds the data dir.
+#[cfg(target_os = "linux")]
+fn this_process_descriptors_are_visible(proc_root: &std::path::Path, mine: &str) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // A pipe this process holds for the whole check: the kernel always resolves
+    // its `/proc/<pid>/fd/<n>` link, while the data dir's own files may
+    // legitimately be closed at any point in the audit.
+    let (_reader, writer) = io::pipe().map_err(|error| {
+        io::Error::other(format!(
+            "#2138 creating the data-dir audit's self-check pipe: {error}"
+        ))
+    })?;
+    let directory = proc_root.join(mine).join("fd");
+    let entries = std::fs::read_dir(&directory).map_err(|error| {
+        io::Error::other(format!(
+            "#2138 the data-dir audit cannot list {} ({error}): \
+             a clean holder list would prove nothing",
+            directory.display()
+        ))
+    })?;
+    let wanted = writer.as_raw_fd().to_string();
+    let mut seen = false;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            io::Error::other(format!(
+                "#2138 the data-dir audit cannot enumerate {}: {error}",
+                directory.display()
+            ))
+        })?;
+        if entry.file_name().to_string_lossy() != wanted {
             continue;
         }
-        let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        seen = true;
+        let target = std::fs::read_link(entry.path()).map_err(|error| {
+            io::Error::other(format!(
+                "#2138 the data-dir audit cannot resolve its own descriptor {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if !target.to_string_lossy().starts_with("pipe:[") {
+            return Err(io::Error::other(format!(
+                "#2138 the data-dir audit resolved its own descriptor {} to {} instead of \
+                 the pipe it holds",
+                entry.path().display(),
+                target.display()
+            )));
+        }
+    }
+    if !seen {
+        return Err(io::Error::other(format!(
+            "#2138 the data-dir audit cannot find its own descriptor in {}: \
+             a clean holder list would prove nothing",
+            directory.display()
+        )));
+    }
+    Ok(())
+}
+
+/// #2138: the data-dir audit behind [`TransientAudit`], with the procfs root
+/// injectable for the same negative-control reason as [`child_processes_in`].
+#[cfg(target_os = "linux")]
+fn foreign_data_dir_holders_in(
+    proc_root: &std::path::Path,
+    root: &std::path::Path,
+) -> io::Result<Vec<i32>> {
+    let me = std::process::id();
+    let mine = me.to_string();
+    // #2138: the positive self-check comes first — a sweep that cannot see its
+    // own descriptors must fail, never pass on an empty holder list.
+    this_process_descriptors_are_visible(proc_root, &mine)?;
+    let mut holders = Vec::new();
+    let mut readable = 0usize;
+    let mut skipped = 0usize;
+    let mut sources = BlindSources::default();
+    let entries = std::fs::read_dir(proc_root).map_err(|error| {
+        io::Error::other(format!(
+            "#1316 the audit reads {}: {error}",
+            proc_root.display()
+        ))
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            io::Error::other(format!(
+                "#1316 the audit reads an entry of {}: {error}",
+                proc_root.display()
+            ))
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // See [`child_processes_in`]: a numeric name outside `i32` is not a
+        // pid this audit can meet, and not a blind read.
+        let Ok(pid) = name.parse::<i32>() else {
             continue;
         };
-        for fd in fds {
-            let Ok(fd) = fd else {
-                continue;
+        // This process is the audit itself, not an external holder.
+        if name == mine {
+            continue;
+        }
+        let descriptors = match std::fs::read_dir(proc_root.join(&name).join("fd")) {
+            Ok(descriptors) => {
+                readable += 1;
+                descriptors
+            }
+            // #2138: a failed read is never silently skipped. A source that
+            // holds nothing may be passed over; anything else is an unknown
+            // the audit fails closed on, because a hidden descriptor of a live
+            // process is exactly where a foreign holder would hide.
+            Err(error) => {
+                if sources.of(&name).holds_nothing() {
+                    skipped += 1;
+                    continue;
+                }
+                return Err(io::Error::other(format!(
+                    "#2138 reading the descriptors of {name}: {error}"
+                )));
+            }
+        };
+        for descriptor in descriptors {
+            let descriptor = descriptor.map_err(|error| {
+                io::Error::other(format!(
+                    "#2138 enumerating the descriptors of {name}: {error}"
+                ))
+            })?;
+            let target = match std::fs::read_link(descriptor.path()) {
+                Ok(target) => target,
+                // #2138: only a link that vanished between the enumeration and
+                // the read is a release. Any other errno (EACCES behind an LSM
+                // or after a setuid exec, EIO) leaves a descriptor the audit
+                // cannot see — the source decides, and a live holder fails the
+                // audit closed.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    if sources.of(&name).holds_nothing() {
+                        continue;
+                    }
+                    return Err(io::Error::other(format!(
+                        "#2138 reading the descriptor {} of {name}: {error}",
+                        descriptor.path().display()
+                    )));
+                }
             };
-            if let Ok(target) = std::fs::read_link(fd.path())
-                && target.starts_with(root)
-            {
+            if target.starts_with(root) {
                 holders.push(pid);
                 break;
             }
         }
     }
+    if readable == 0 {
+        return Err(io::Error::other(format!(
+            "#2138 the data-dir audit could not read the descriptors of any other process \
+             ({skipped} skipped): a clean result would prove nothing"
+        )));
+    }
     holders.sort();
-    holders
+    Ok(holders)
 }
 
 /// Everything the sampler observed inside the write window. A named alias keeps
@@ -980,6 +1391,10 @@ pub(crate) fn node_children(seen: &TransientChildren) -> Vec<String> {
 #[cfg(target_os = "linux")]
 pub(crate) struct TransientAudit {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// #2138: the first audit read the sampler could not perform. A sweep that
+    /// cannot see must fail the run, not hand back an empty observation set —
+    /// "saw nothing" is not evidence of "nothing there".
+    failure: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     worker: Option<std::thread::JoinHandle<TransientObservations>>,
 }
 
@@ -998,6 +1413,13 @@ impl TransientAudit {
     pub(crate) fn start(root: std::path::PathBuf) -> (Self, TransientChildren) {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
+        // #2138: an audit read that fails inside the sampler must reach the
+        // test as a failure carrying its reason. The worker stores the first
+        // failure here and `finish` re-raises it; the opening sweep also sends
+        // it, so `start` fails with the reason instead of waiting on a sweep
+        // that never completes.
+        let failure = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let worker_failure = failure.clone();
         // `start` must not hand control back before the first sweep has run:
         // otherwise the write could begin during the thread's scheduling delay
         // and the opening of the window would be unsampled.
@@ -1010,7 +1432,28 @@ impl TransientAudit {
                 // Read the flag before sweeping: a stop request that lands while
                 // this sweep runs still leaves one more sweep after the writes.
                 let done = flag.load(std::sync::atomic::Ordering::SeqCst);
-                for (pid, exe) in child_processes() {
+                let sweep = child_processes_in(std::path::Path::new("/proc")).and_then(|seen| {
+                    Ok((
+                        seen,
+                        foreign_data_dir_holders_in(std::path::Path::new("/proc"), &root)?,
+                    ))
+                });
+                let (spawned, foreign) = match sweep {
+                    Ok(observation) => observation,
+                    // #2138: never sample on from a blind read — stop and let
+                    // the failure surface at `start`/`finish`.
+                    Err(error) => {
+                        let text = format!("{error}");
+                        if !announced {
+                            let _ = swept.send(Err(text.clone()));
+                        }
+                        *worker_failure
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(text);
+                        return (children, holders);
+                    }
+                };
+                for (pid, exe) in spawned {
                     // A child that exits is a zombie until it is reaped, and a
                     // zombie's `/proc/<pid>/exe` no longer resolves. Overwriting
                     // the exe already read for that pid with `None` would turn
@@ -1025,7 +1468,7 @@ impl TransientAudit {
                     }
                     children.insert(pid, exe);
                 }
-                for pid in foreign_data_dir_holders(&root) {
+                for pid in foreign {
                     holders.insert(pid);
                 }
                 if !announced {
@@ -1033,7 +1476,7 @@ impl TransientAudit {
                     // The first sweep is the window's opening snapshot. A
                     // closed receiver only means `start` was abandoned; keep
                     // sampling, `Drop` still stops this thread.
-                    let _ = swept.send(children.clone());
+                    let _ = swept.send(Ok(children.clone()));
                 }
                 if done {
                     break;
@@ -1042,12 +1485,15 @@ impl TransientAudit {
             }
             (children, holders)
         });
-        let children_before = first_sweep
-            .recv()
-            .expect("#1316 the audit sampler completes its first sweep");
+        let children_before = match first_sweep.recv() {
+            Ok(Ok(children)) => children,
+            Ok(Err(error)) => panic!("{error}"),
+            Err(_) => panic!("#1316 the audit sampler completes its first sweep"),
+        };
         (
             Self {
                 stop,
+                failure,
                 worker: Some(worker),
             },
             children_before,
@@ -1056,11 +1502,24 @@ impl TransientAudit {
 
     pub(crate) fn finish(mut self) -> TransientObservations {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
-        self.worker
+        let joined = self
+            .worker
             .take()
             .expect("#1316 the audit sampler is running")
-            .join()
-            .expect("#1316 the audit sampler joins")
+            .join();
+        // A panic in the sweep keeps its own payload (it is not this module's
+        // failure path); an audit read that could not be performed is re-raised
+        // here with the reason the sweep recorded (#2138).
+        let observations = joined.unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+        if let Some(failure) = self
+            .failure
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        {
+            panic!("{failure}");
+        }
+        observations
     }
 }
 
@@ -1074,4 +1533,133 @@ impl Drop for TransientAudit {
             let _ = worker.join();
         }
     }
+}
+
+/// #2138: the stat parse must survive a comm field with spaces and parentheses
+/// — every field is read after the *last* `)`, because comm may contain both.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_stat_fields_are_read_after_the_last_parenthesis() {
+    let (state, parent) = stat_fields("42 (a ) b (c) Z 7 42 42 0 -1 4194304")
+        .expect("#2138 the stat fields of a comm with parentheses must parse");
+    assert_eq!(
+        (state, parent),
+        ('Z', "7"),
+        "#2138 the state and parent follow the last ')'"
+    );
+    assert!(
+        stat_fields("no parentheses here").is_none(),
+        "#2138 a stat without its comm parentheses must not be guessed at"
+    );
+}
+
+/// #2138: the classification that decides whether a failed `/proc` read may be
+/// passed over. This process is always related (its own children are what the
+/// audit reads first), init cannot descend from a test process, and a reaped
+/// child is gone.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_blind_source_is_skipped_only_when_it_cannot_be_a_child() {
+    let mine = std::process::id().to_string();
+    assert_eq!(
+        blind_source(&mine),
+        BlindSource::Related,
+        "#2138 this process is the audit's own source and must never be skipped"
+    );
+    // Init cannot descend from this process — unless the test binary *is* PID 1
+    // (a container entrypoint), in which case the self check below is the same
+    // assertion and this one must not contradict it; and on a host that hides
+    // other users' processes (`hidepid`) `/proc/1/stat` is not readable, which
+    // is the blind case this audit exists to fail on, not a classification
+    // result to assert.
+    if mine != "1" && std::path::Path::new("/proc/1/stat").exists() {
+        assert_eq!(
+            blind_source("1"),
+            BlindSource::Unrelated,
+            "#2138 init cannot descend from this process"
+        );
+    }
+    let mut child = Command::new("/bin/true")
+        .spawn()
+        .expect("#2138 spawn the vanished-source probe");
+    let pid = child.id().to_string();
+    let _ = child.wait().expect("#2138 reap the vanished-source probe");
+    assert_eq!(
+        blind_source(&pid),
+        BlindSource::Vanished,
+        "#2138 a reaped process is gone and cannot be a child"
+    );
+}
+
+/// #2138: the child audit's own eyes — on a Linux host it must see the stat of
+/// the process running it, and the sweep must not count this process as its
+/// own child.
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_stat_is_visible_to_the_child_audit() {
+    let mine = std::process::id().to_string();
+    this_process_stat_is_visible(std::path::Path::new("/proc"), &mine)
+        .expect("#2138 the child audit can read its own /proc stat");
+    let children = child_processes_in(std::path::Path::new("/proc"))
+        .expect("#2138 the child audit reads /proc on this host");
+    assert!(
+        !children.iter().any(|(pid, _)| pid.to_string() == mine),
+        "#2138 this process is nobody's child"
+    );
+}
+
+/// #2138 negative control: a host that hides this process's own stat must fail
+/// the child audit instead of returning an empty (clean) list. The injected
+/// proc root lists this process but carries no `stat` for it — the shape of a
+/// hidden `/proc`.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_missing_self_stat_fails_the_child_audit() {
+    let scratch = crate::test_scratch::Scratch::new("2138-blind-child");
+    let mine = std::process::id().to_string();
+    std::fs::create_dir(scratch.path().join(&mine)).expect("#2138 create the blind proc entry");
+    let error = child_processes_in(scratch.path())
+        .expect_err("#2138 a sweep that cannot read its own stat must fail");
+    let text = error.to_string();
+    assert!(
+        text.contains("#2138") && text.contains("prove nothing"),
+        "#2138 the failure must name the blind self-read: {text}"
+    );
+}
+
+/// #2138: the data-dir audit's own eyes — on a Linux host it must resolve a
+/// descriptor this process holds, and a scratch directory nobody holds comes
+/// back as no holders (a readable, sound clean result).
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_descriptors_are_visible_to_the_holder_audit() {
+    let mine = std::process::id().to_string();
+    this_process_descriptors_are_visible(std::path::Path::new("/proc"), &mine)
+        .expect("#2138 the data-dir audit can resolve its own descriptor");
+    let scratch = crate::test_scratch::Scratch::new("2138-holder-audit");
+    let holders = foreign_data_dir_holders_in(std::path::Path::new("/proc"), scratch.path())
+        .expect("#2138 the data-dir audit reads /proc on this host");
+    assert!(
+        !holders.contains(&(std::process::id() as i32)),
+        "#2138 this process is not an external holder of its own scratch ({holders:?})"
+    );
+}
+
+/// #2138 negative control: a host that hides this process's own descriptors
+/// must fail the data-dir audit instead of reporting that no one holds the
+/// data dir. The injected proc root lists this process but carries no `fd`
+/// directory for it — the shape of a hidden `/proc`.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_missing_self_descriptor_dir_fails_the_holder_audit() {
+    let scratch = crate::test_scratch::Scratch::new("2138-blind-holders");
+    let mine = std::process::id().to_string();
+    std::fs::create_dir(scratch.path().join(&mine)).expect("#2138 create the blind proc entry");
+    let error = foreign_data_dir_holders_in(scratch.path(), scratch.path())
+        .expect_err("#2138 a sweep that cannot read its own descriptors must fail");
+    let text = error.to_string();
+    assert!(
+        text.contains("#2138") && text.contains("prove nothing"),
+        "#2138 the failure must name the blind self-read: {text}"
+    );
 }
