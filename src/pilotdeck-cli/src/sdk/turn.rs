@@ -134,12 +134,16 @@ async fn run_connected(
         QueryOutcome::InitializationFailed(error) => {
             // An abort awaiting the rejected initialization promise is an
             // unhandled rejection in TS. CLI finally closes only control;
-            // query is subsequently dropped by process termination.
+            // query is subsequently dropped by process termination, so the
+            // peer observes the query close (1006, or the 4003 rejection)
+            // before the control close (1005). Flush any queued close
+            // acknowledgement and release the query transport first; closing
+            // control here would invert the two observed closes.
             signals.remove();
-            control.close().await;
-            if let Some(query) = &mut query {
+            if let Some(mut query) = query.take() {
                 query.flush_pending().await;
             }
+            control.close().await;
             Err(error)
         }
         QueryOutcome::Retain(error) => {
