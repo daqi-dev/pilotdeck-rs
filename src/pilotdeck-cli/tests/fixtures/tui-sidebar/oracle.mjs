@@ -1,0 +1,13 @@
+import {pathToFileURL} from 'node:url';
+import {resolve,join} from 'node:path';
+import {writeFileSync,readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+const [base,out]=process.argv.slice(2);if(process.version!=='v22.22.0'||process.versions.icu!=='78.2')throw Error('Node 22.22.0 required');
+if(execFileSync('git',['-C',base,'rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85')throw Error('unexpected TS checkout');
+const helper='src/adapters/channel/tui/app/sidebar-helpers.ts';
+if(!readFileSync(join(resolve(base),helper)).equals(execFileSync('git',['-C',base,'show','cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:'+helper])))throw Error('helper differs from pinned commit');
+const h=await import(pathToFileURL(join(resolve(base),helper))); 
+const sessions=[{sessionKey:'a',cwd:'/p/alpha',tag:'running',lastModified:20},{sessionKey:'b',cwd:'/p/beta',tag:'idle',lastModified:10},{sessionKey:'c',cwd:'/p/alpha',tag:'waiting',lastModified:30}];
+const result=['project','status'].map(by=>{const groups=h.groupSessions(sessions,by);const collapsed=h.computeSmartCollapse(groups,'a');const encode=()=>h.flattenSidebarRows(groups,collapsed).map(row=>row.kind==='header'?{kind:row.kind,key:row.groupKey,collapsed:row.collapsed}:{kind:row.kind,key:row.session.sessionKey});const before=encode();collapsed.clear();return {by,before,expanded:encode()};});
+const titles=[{customTitle:'CUSTOM',aiTitle:'AI',firstPrompt:'FIRST',summary:'SUMMARY',sessionId:'ID'},{customTitle:'',aiTitle:'AI',summary:'SUMMARY',sessionId:'ID'},{aiTitle:'',firstPrompt:'FIRST',sessionId:'ID'},{firstPrompt:'',summary:'SUMMARY',sessionId:'ID'},{summary:'',sessionId:'ID'},{summary:null,sessionId:'ID'}].map(v=>h.sessionDisplayTitle(v,1024));
+writeFileSync(out,JSON.stringify({groups:result,titles},null,2)+'\n',{flag:'wx'});

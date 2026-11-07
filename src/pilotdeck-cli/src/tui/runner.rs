@@ -306,7 +306,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
     let mut connection_uncertain = false;
     let mut sessions: Vec<JsValue> = Vec::new();
     let mut sidebar = false;
-    let mut sidebar_index = 0usize;
+    let mut sidebar_state = super::sidebar::Sidebar::default();
     let mut viewer: Option<JsValue> = None;
     let mut viewer_layout = ChatLayout::default();
     let mut viewer_scroll = 0usize;
@@ -411,7 +411,8 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                 }
                 Update::Sessions { result, select } => {
                     match result {
-                        Ok(values) => sessions = values,
+                        Ok(values) if super::sidebar::valid(&values) => { sessions = values; sidebar_state.rebuild(&sessions,&session); },
+                        Ok(_) => {new_pending=false;state.messages.push(message("error", "Session list exceeds sidebar limits or contains invalid group fields."));continue;}
                         Err(error) if select.is_some() => {
                             new_pending = false;
                             state
@@ -422,7 +423,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                         Err(_) => {
                             new_pending = false;
                             sidebar = true;
-                            sidebar_index = 0;
+                            sidebar_state.rebuild(&sessions, &session);
                             continue;
                         }
                     }
@@ -433,14 +434,13 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                             updates.clone(),
                             project.clone(),
                             session_key(target),
-                            text(target.get("summary")),
+                            super::sidebar::summary(target),
                         );
                     } else if select.is_some() {
                         request_sessions(client.clone(), updates.clone(), project.clone(), None);
                     } else {
                         new_pending = false;
                         sidebar = true;
-                        sidebar_index = 0;
                     }
                 }
                 Update::Switched { key, messages } => {
@@ -480,10 +480,10 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             }
         }
         // Count all retained application data, including command output and RPC history.
-        if viewer.is_some() && retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()) > 8 * 1024 * 1024 {
+        if viewer.is_some() && retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()).saturating_add(sidebar_state.bytes()) > 8 * 1024 * 1024 {
             viewer=None;viewer_layout.clear();state.messages.push(message("error","Tool output exceeds the TUI state limit."));dirty=true;
         }
-        if retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()) > 8 * 1024 * 1024
+        if retained_bytes(&state, &sessions, viewer.as_ref(), &input).saturating_add(chat_layout.bytes()).saturating_add(viewer_layout.bytes()).saturating_add(sidebar_state.bytes()) > 8 * 1024 * 1024
             || state.messages.len() > 4096
         {
             if state.is_running || !state.pending_permissions.is_empty() {
@@ -504,6 +504,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             state.activity.clear();
             chat_layout.clear();
             sessions.clear();
+            sidebar_state.release();
             sidebar = false;
             viewer = None;viewer_layout.clear();focused_index=None;
             while !state.messages.is_empty()
@@ -520,14 +521,14 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             let mut layout_ready=true;
             if let Some(content)=viewer.as_ref() {
                 let width=terminal.size().map_err(|e|e.to_string())?.width;
-                let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,viewer.as_ref(),&input)).saturating_sub(chat_layout.bytes());
+                let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,viewer.as_ref(),&input)).saturating_sub(chat_layout.bytes()).saturating_sub(sidebar_state.bytes());
                 match viewer_layout.sync_step(std::slice::from_ref(content),width,budget) {
                     Ok(ready)=>layout_ready=ready,
                     Err(_)=>{viewer=None;viewer_layout.clear();state.messages.push(message("error","Tool output exceeds the TUI state limit."));layout_ready=false;dirty=true;}
                 }
             } else if !sidebar && !help {
                 let width=terminal.size().map_err(|e|e.to_string())?.width;
-                let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,None,&input));
+                let budget=(8usize*1024*1024).saturating_sub(retained_bytes(&state,&sessions,None,&input)).saturating_sub(sidebar_state.bytes());
                 let result=chat_layout.sync_step(&state.messages,width,budget);
                 if result.is_err() {
                     if state.is_running || !state.pending_permissions.is_empty() {
@@ -535,7 +536,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                         state.is_running=false;state.pending_permissions.clear();permission_inflight=false;
                         spawn_abort(&mut abort_inflight,client.clone(),updates.clone(),"abort_turn",object(vec![("sessionKey",session.as_str().into())]));
                     }
-                    chat_layout.clear();state.activity.clear();sessions.clear();viewer=None;sidebar=false;
+                    chat_layout.clear();state.activity.clear();sessions.clear();sidebar_state.release();viewer=None;sidebar=false;
                     let warning="TUI state limit reached; newest content removed and any active turn interrupted.";
                     if state.messages.last().is_some_and(|m|text(m.get("text"))==warning) {state.messages.pop();}
                     state.messages.pop();
@@ -560,7 +561,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             else if !sidebar { chat_layout.render(frame, areas[1], chat_scroll); }
             else {
                 let mut lines: Vec<Line> = if sidebar {
-                    sessions.iter().enumerate().map(|(i,s)| Line::raw(format!("{} {}  {}", if i==sidebar_index {">"} else {" "},session_key(s),text(s.get("summary"))))).collect()
+                    sidebar_state.lines(&sessions, areas[1].height as usize, areas[1].width as usize).into_iter().map(Line::raw).collect()
                 } else { Vec::new() };
                 let visible = areas[1].height as usize; if lines.len() > visible {lines.truncate(visible);}
                 frame.render_widget(Paragraph::new(lines).wrap(Wrap {trim:false}),areas[1]);
@@ -620,44 +621,29 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                         continue;
                     }
                     if sidebar && state.pending_permissions.is_empty() {
+                        let ctrl=key.modifiers.contains(KeyModifiers::CONTROL);
                         match key.code {
-                            KeyCode::Esc => {
-                                sidebar = false;
+                            KeyCode::Esc | KeyCode::Char('c' | 'e') if key.code==KeyCode::Esc || ctrl => {sidebar=false;continue;},
+                            KeyCode::Char('s') if ctrl => {sidebar_state.cycle(&sessions,&session);continue;},
+                            KeyCode::Up if input.is_empty()=>{sidebar_state.up();continue;},
+                            KeyCode::Down if input.is_empty()=>{sidebar_state.down();continue;},
+                            KeyCode::Left if input.is_empty()=>{sidebar_state.left();continue;},
+                            KeyCode::Enter | KeyCode::Right if input.is_empty()=>{
+                                let selected=if key.code==KeyCode::Enter {sidebar_state.activate()} else {sidebar_state.right()};
+                                if let Some(i)=selected && !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending {
+                                    let target=&sessions[i];new_pending=true;
+                                    switch_session(client.clone(),updates.clone(),project.clone(),session_key(target),super::sidebar::summary(target));
+                                }
                                 continue;
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                sidebar = false;
-                                continue;
-                            }
-                            KeyCode::Up => {
-                                sidebar_index = sidebar_index.saturating_sub(1);
-                                continue;
-                            }
-                            KeyCode::Down => {
-                                sidebar_index =
-                                    (sidebar_index + 1).min(sessions.len().saturating_sub(1));
-                                continue;
-                            }
-                            KeyCode::Enter
-                                if input.is_empty()
-                                    && !sessions.is_empty()
-                                    && !state.is_running
-                                    && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending =>
-                            {
-                                let target = &sessions[sidebar_index];
-                                let target_key = session_key(target);
-                                new_pending = true;
-                                switch_session(
-                                    client.clone(),
-                                    updates.clone(),
-                                    project.clone(),
-                                    target_key,
-                                    text(target.get("summary")),
-                                );
-                                continue;
-                            }
-                            _ => {}
+                            },
+                            _=>{},
                         }
+                    }
+                    if !sidebar && !help && state.pending_permissions.is_empty() && key.code==KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        if !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending {
+                            new_pending=true;request_sessions(client.clone(),updates.clone(),project.clone(),None);
+                        }
+                        continue;
                     }
                     if !state.pending_permissions.is_empty() {
                         if abort_inflight && key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {exit=true;continue;}
@@ -1297,10 +1283,10 @@ fn switch_session(
                 "History request timed out.".into(),
             ))
         });
-        let fallback = if summary.is_empty() {
-            key.as_str()
+        let fallback: String = if summary.is_empty() {
+            key.chars().take(256).collect()
         } else {
-            summary.as_str()
+            summary
         };
         let messages = match history {
             Ok(result) => {

@@ -4781,3 +4781,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · TUI完整帮助与设置（Codex/Terra，仅本机）
 
 帮助三页、可滚动内容、设置模式循环/原子持久已接通；独审修复失败提示在视口外、文案无效mode参数，并将帮助session显示有界。mbp2 strict clippy/24库测试与七实际PTY通过（重启、窄屏、权限交织/取消、10万字session等）；追加失败后实际请求mode仍default通过，源码/bin指纹和原始帧在主仓 `_tmp/20261108-cli-tui/help-r1-evidence/`。本地20条此前提交已干净rebase到origin/main6c18d6fa8，仅board冲突保留两边；CLI/lock与rebase前逐字一致，新增A五文件同步后clippy/共享native宿主/build通过。下一步侧栏分组与SDK token读器，仍不标完整CLI/native权限/history/local fallback/真人实效；本机磁盘预算118527168KiB为ok，Rust始终只在mbp2，无GitHub写入。
+
+### 2026-11-08 · TUI会话分组与导航（Codex/Terra，仅本机）
+
+项目/状态分组、折叠、选中、宽窄屏及Ctrl-E/Ctrl-S已接通，长标题单行显示、完整session用于双RPC，索引纳入状态预算。mbp2 strict clippy/28库测试与十项PTY全部通过；256长共同前缀路径显示观察0.539243秒（含固定0.5秒等待，只证显示及之后可操作），未发现可确认P0/P1。源码/bin、首编译与脚本重名失败及最终原件保留主仓 `_tmp/20261108-cli-tui/sidebar-r3-evidence/`；新差异待人复核。下一步输入编辑/粘贴、SDK token与默认remote拒绝响应处理；本机提交、无GitHub写入，完整CLI和真人实效未完成。

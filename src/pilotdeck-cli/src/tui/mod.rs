@@ -13,3 +13,6 @@ mod chat_layout;
 
 #[cfg(unix)]
 mod help;
+
+#[cfg(unix)]
+mod sidebar;
