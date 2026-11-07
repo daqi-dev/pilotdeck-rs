@@ -101,21 +101,24 @@ $ cd resources/PilotDeck && node_modules/.bin/tsx ../../_tmp/20261107-issue-2090
 ```
 
 ```
-$ ssh cb8 'cd ~/ws/pdrs-2090-src/src && ulimit -n 4096 && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+$ ssh cb8 'cd ~/ws/pdrs-2090-src/src && echo "source sha256: $(shasum -a 256 \
+      pilotdeck-gateway/src/native_process/methods/session_dir.rs | cut -d" " -f1)" && \
+    ulimit -n 4096 && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
     CARGO_TARGET_DIR=$HOME/ws/pdrs-2020-2035-target bash -c \
     "touch pilotdeck-gateway/src/native_process/methods/session_dir.rs && ~/.cargo/bin/cargo test --offline \
      -p pilotdeck-gateway --lib native_process::methods::session_dir::tests"'
+source sha256: 0f4d04f06b30802e1d6797c806a6a91cff53a26daa83dce9d4e4eb529d9a7d17
    Compiling pilotdeck-gateway v0.1.0 (/home/clawbox-08/ws/pdrs-2090-src/src/pilotdeck-gateway)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 44.65s
 running 17 tests
 test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 5070 filtered out
 ```
 
-全文见 `_tmp/20261107-issue-2090/rust-probe/gate-order-tests-r3.out`（当前用例体的绿跑，含 `Compiling` 行）。**命令里的 `touch` 不能省**：`rsync -a` 保留源 mtime，cargo 会沿用旧制品——本条目早先一份不带 `touch` 的绿跑（`gate-order-tests.out`）正因为此没有 `Compiling` 行，无法证明跑的是当时最新的用例体，已被本份取代。
+全文见 `_tmp/20261107-issue-2090/rust-probe/gate-order-tests-r3b.out`。**这份绿跑钉死了「跑的是哪份源码」**：日志首行的 `source sha256` 与本条目所在提交的 `git show HEAD:src/pilotdeck-gateway/src/native_process/methods/session_dir.rs | shasum -a 256` 完全相同（`0f4d04f0…`），所以不是旧制品。`touch` 要留在命令里：`rsync -a` 保留源 mtime，cargo 可能判为 fresh——早先的 `gate-order-tests.out` 命令里同样有 `touch`，却仍是 `Finished in 0.05s` 且无 `Compiling`，事后无法证明它跑的是当时最新的用例体（两版用例体方法名与条数相同，光看 `17 passed` 分不出来），本份取代它。
 
 新增请求级用例（`session_dir.rs`）：`resume_session_blank_key_gate_order`（`:952`）、`close_session_blank_key_gate_order`（`:957`）、`delete_session_blank_key_gate_order`（`:962`）、`rename_session_blank_key_gate_order`（`:967`）、`tag_session_blank_key_gate_order`（`:972`），共用 `blank_key_gate_order`（`:866`）与两条报文常量（`:862-864`）。每个方法钉六格：无 `projectKey` 时缺键 / 空白键 → `INVALID_SESSION_KEY` / `sessionKey is required.`；显式不受服务 `projectKey` + 空白键、显式不受服务 `projectKey` + 合法键、`projectKey: null` + 空白键、`projectKey: null` + 合法键 → **同一条**准入错误（后四格里两个合法键格是对照：证明这一步由准入决定而非 `sessionKey`，同时把 null 格的现状钉住）。
 
-判别力负控（`_tmp/20261107-issue-2090/rust-negctl/`，命令见其 `commands.txt`）：在 cb8 副本上把准入改成永不拒绝（`filter(|v| !v.is_undefined())` → `filter(|_| false)`，变异体 sha256 `0136be7d…`），`mutant-run-r2.out` 为 `12 passed; 5 failed`，五条用例全红且都是 `left: "INVALID_SESSION_KEY" right: "gateway_request_failed"`（该红跑基于 r2 版用例体：panic 落在 `session_dir.rs:924`，当前体同一断言在 `:935`；第一格断言形态未变，机制结论不受影响）。**这份负控的证明范围要写清**：用例是顺序断言的，准入一关就停在第一步（「空白键 + 不受服务项目」），所以它直接证明的是第一步有判别力；第二、三步（合法键对照、null 格）没有被这一步单独证明——null 格的定向证据是 `null-fallback-under-mutated-admission.out`（同一变异下 null 的答案从准入错误变成 `INVALID_SESSION_KEY` / 方法各自的成功值），合法键对照只有读码支持：准入关掉后 `delete/rename/tag` 会走 `resolve_project`、不再答准入错误，`resume/close` 根本不过项目解析、会直接成功——两者都会让该格断言变红，但没有单独跑这条定向变异。还原后 `requests.rs` sha256 回到 `cdfa0b99…`，`restore-r2.out` 为 `17 passed`。还原后必须先 `touch` 源文件再跑：`rsync -a` 保留源 mtime，cargo 会认为制品仍是新的（第一次还原跑出 `Finished in 0.08s`，仍是变异体二进制，5 红）。
+判别力负控（`_tmp/20261107-issue-2090/rust-negctl/`，命令见其 `commands.txt`）：在 cb8 副本上把准入改成永不拒绝（`filter(|v| !v.is_undefined())` → `filter(|_| false)`，变异体 sha256 `0136be7d…`），`mutant-run-r2.out` 为 `12 passed; 5 failed`，五条用例全红且都是 `left: "INVALID_SESSION_KEY" right: "gateway_request_failed"`（该红跑基于 r2 版用例体：panic 落在 `session_dir.rs:924`，当前体同一断言在 `:935`；第一格断言形态未变，机制结论不受影响）。**这份负控的证明范围要写清**：用例是顺序断言的，准入一关就停在第一步（「空白键 + 不受服务项目」），所以它直接证明的是第一步有判别力；第二、三步（合法键对照、null 格）没有被这一步单独证明——**null 格另有定向负控**：把「valid key + null project」这一格的 `projectKey` 从 `JsValue::Null` 改成 `JsValue::Undefined`（其余一字不动，变异体源码 sha256 `c296297a…`）后重跑，五条用例全红，panic 报文都带 `#2090 admission refuses valid key + null project`，随后是该方法各自的成功值（`resume` `{"sessionKey":"pdrs-2090-control"}`、`close` `undefined`、`delete` 走 `SESSION_NOT_FOUND`、`rename`/`tag` `{"updated":true}`），`test result: FAILED. 12 passed; 5 failed`（`rust-negctl/null-cell-mutant.out`）；还原后 `17 passed`。这一格既有的旁证是 `null-fallback-under-mutated-admission.out`（同一准入变异下 null 的答案从准入错误变成 `INVALID_SESSION_KEY` / 方法各自的成功值），定向负控比它更直接，因为它证明当前用例体确实被执行。合法键对照只有读码支持：准入关掉后 `delete/rename/tag` 会走 `resolve_project`、不再答准入错误，`resume/close` 根本不过项目解析、会直接成功——两者都会让该格断言变红，但没有单独跑这条定向变异。还原后 `requests.rs` sha256 回到 `cdfa0b99…`，`restore-r2.out` 为 `17 passed`。还原后必须先 `touch` 源文件再跑：`rsync -a` 保留源 mtime，cargo 会认为制品仍是新的（第一次还原跑出 `Finished in 0.08s`，仍是变异体二进制，5 红）。
 
 ```
 $ python3 -I scripts/gateway-parity/check_frozen.py --base origin/main
