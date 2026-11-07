@@ -70,7 +70,19 @@ merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"
 本条不再内联命令副本，以免与正本漂移。**判据钉身份与失败面，不只钉数量**：
 失败恰为 `run--unknown-cleanup` / `resume--unknown-cleanup` 两格，两格
 `differing surfaces` 均仅 `["stdout"]`，其余 94 格 `ok`——若失败面含
-stderr / abort / connections 等其它面，即超出本条范围、须另开条目。#1260
+stderr / abort / connections 等其它面，即超出本条范围、须另开条目。
+**字段级复算（本条范围的执法口径，surface 判据不单独构成放行依据）**：
+`compare_surfaces` 对 stdout 是整段字节比较、只产出一个 surface 名，
+单凭 `["stdout"]` 无法区分「仅 runId 不同」与「该两格 stdout 混入其它
+回归」；验收 / 复核本条时须把该批落盘的实际 stdout
+（`evidence/<格>/stdout.bin`，已归一化）中 `recovery.runId` 的 36 字节值
+替换为金样固定 UUID 后与金样 stdout 逐字节比对，相等才在本条范围内，
+否则红格不得按本条放行。本批留档证据已实测：实际值
+`run--unknown-cleanup` = `5352c21a-2910-4ffa-b1cc-caf89756edae`、
+`resume--unknown-cleanup` = `2b9b7f99-c160-44e0-ad17-a1332e665368`，
+替换后两格分别与金样 stdout（`7a0c08c8-…` / `c19fd263-…`）逐字节相等
+（`_tmp/20261107-issue-1260/matrix/evidence/<格>/stdout.bin` 对
+`source.json` 金样）。#1260
 修复后全量实跑：`test result: FAILED. 94 passed; 2 failed; 0 ignored;
 0 measured; 118 filtered out`，失败恰为本条两格、surface 均为
 `["stdout"]`；原始 `test result` 行、逐格输出与实跑 HEAD 见
