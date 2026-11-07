@@ -35,15 +35,113 @@ fn digest(value: &Value) -> Result<String, RequestError> {
     ))
 }
 
-/// Validates complete tool pairs and inline attachment bytes; unknown blocks
-/// cannot smuggle mutable file references or active runtime state into history.
-fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
-    let messages = messages
+/// Import uses canonical PilotDeck content. Provider-shaped historical blocks
+/// are normalized to that content once during export; runtime metadata is not
+/// imported. The model label is a read-only display annotation.
+fn canonical_messages(messages: &Value) -> Result<Value, RequestError> {
+    fn block(value: &Value) -> Result<Value, RequestError> {
+        let mut value = value.clone();
+        match value["type"].as_str() {
+            Some("tool_use") => {
+                value["type"] = json!("tool_call");
+            }
+            Some("thinking") if value.get("text").is_none() => {
+                value["text"] = value["thinking"].clone();
+                value.as_object_mut().unwrap().remove("thinking");
+            }
+            Some("document") => {
+                value["type"] = json!("pdf");
+            }
+            _ => {}
+        }
+        if value["type"] == "tool_result" {
+            if value.get("toolCallId").is_none() {
+                value["toolCallId"] = value["tool_use_id"].clone();
+                value.as_object_mut().unwrap().remove("tool_use_id");
+            }
+            if let Some(text) = value["content"].as_str() {
+                value["content"] = json!([{"type":"text","text":text}]);
+            }
+            if let Some(content) = value["content"].as_array() {
+                value["content"] =
+                    Value::Array(content.iter().map(block).collect::<Result<_, _>>()?);
+            }
+        }
+        if value["source"].is_object() && value["source"]["type"] == "base64" {
+            let source = value["source"].clone();
+            value["source"] = json!("base64");
+            value["data"] = source["data"].clone();
+            value["mimeType"] = source["media_type"].clone();
+        }
+        Ok(value)
+    }
+    let mut result = Vec::new();
+    for message in messages
         .as_array()
-        .ok_or_else(|| err("Transfer messages must be an array."))?;
+        .ok_or_else(|| err("Transfer messages must be an array."))?
+    {
+        let content = if let Some(text) = message["content"].as_str() {
+            json!([{"type":"text","text":text}])
+        } else {
+            Value::Array(
+                message["content"]
+                    .as_array()
+                    .ok_or_else(|| err("Message content must be an array or text."))?
+                    .iter()
+                    .map(block)
+                    .collect::<Result<_, _>>()?,
+            )
+        };
+        let mut next = json!({"role":message["role"],"content":content});
+        if let Some(model) = message["metadata"]["model"].as_str() {
+            next["metadata"] = json!({"model":model});
+        }
+        result.push(next);
+    }
+    Ok(Value::Array(result))
+}
+fn verify_media(
+    block: &Value,
+    path: Value,
+    attachments: &mut Vec<Value>,
+) -> Result<(), RequestError> {
+    let kind = block["type"].as_str().unwrap_or("");
+    if !matches!(kind, "image" | "pdf" | "audio") {
+        return Err(err("Unknown inline attachment type."));
+    }
+    if kind != "pdf" && block["source"] != "base64" {
+        return Err(err(
+            "Attachments must contain inline base64 bytes; mutable paths/URLs cannot be imported.",
+        ));
+    }
+    if kind != "pdf" && !block["mimeType"].is_string() {
+        return Err(err("Canonical attachment mimeType is missing."));
+    }
+    let data = block["data"]
+        .as_str()
+        .ok_or_else(|| err("Attachment bytes missing."))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|_| err("Attachment base64 is invalid."))?;
+    if let Some(size) = block["bytes"].as_u64() {
+        if size != bytes.len() as u64 {
+            return Err(err("Attachment byte count does not match content."));
+        }
+    }
+    let mut manifest = path;
+    manifest["sha256"] = json!(format!("{:x}", Sha256::digest(bytes)));
+    attachments.push(manifest);
+    Ok(())
+}
+fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
     let mut tools = BTreeSet::new();
     let mut attachments = Vec::new();
-    for (m, message) in messages.iter().enumerate() {
+    for (m, message) in messages
+        .as_array()
+        .ok_or_else(|| err("Transfer messages must be an array."))?
+        .iter()
+        .enumerate()
+    {
         if !matches!(
             message["role"].as_str(),
             Some("user" | "assistant" | "system" | "tool")
@@ -51,84 +149,112 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
             return Err(err("Transfer message role is unsupported."));
         }
         if message.as_object().is_none_or(|o| {
-            o.keys().any(|k| {
-                !matches!(
-                    k.as_str(),
-                    "role" | "content" | "id" | "name" | "tool_call_id"
-                )
-            })
+            o.keys()
+                .any(|k| !matches!(k.as_str(), "role" | "content" | "metadata"))
         }) {
-            return Err(err(
-                "Transfer message contains runtime or unverified metadata.",
-            ));
+            return Err(err("Transfer contains unverified message runtime state."));
         }
-        if message["content"].is_string() {
-            continue;
+        if let Some(metadata) = message.get("metadata") {
+            if metadata.as_object().is_none_or(|o| {
+                o.keys().any(|k| k != "model") || !o.get("model").is_some_and(Value::is_string)
+            }) {
+                return Err(err(
+                    "Only read-only model annotation is imported from message metadata.",
+                ));
+            }
         }
         let blocks = message["content"]
             .as_array()
-            .ok_or_else(|| err("Transfer content must be text or blocks."))?;
+            .ok_or_else(|| err("Canonical message content must be an array."))?;
         for (b, block) in blocks.iter().enumerate() {
-            match block["type"]
+            if block.as_object().is_none_or(|o| {
+                o.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "type"
+                            | "text"
+                            | "reasoningContent"
+                            | "signature"
+                            | "blockId"
+                            | "timeline"
+                            | "id"
+                            | "name"
+                            | "input"
+                            | "raw"
+                            | "toolCallId"
+                            | "isError"
+                            | "content"
+                            | "source"
+                            | "data"
+                            | "mimeType"
+                            | "bytes"
+                            | "pages"
+                            | "detail"
+                            | "durationSeconds"
+                    )
+                })
+            }) {
+                return Err(err("History block contains unverified runtime state."));
+            }
+            let kind = block["type"]
                 .as_str()
-                .ok_or_else(|| err("Transfer block type missing."))?
-            {
+                .ok_or_else(|| err("Transfer block type missing."))?;
+            match kind {
                 "text" => {
                     if !block["text"].is_string() {
                         return Err(err("Invalid text block."));
                     }
                 }
                 "thinking" => {
-                    if !block["thinking"].is_string() {
-                        return Err(err("Invalid thinking block."));
+                    if !block["text"].is_string()
+                        || block
+                            .get("reasoningContent")
+                            .is_some_and(|v| !v.is_string())
+                    {
+                        return Err(err("Invalid canonical thinking block."));
                     }
                 }
-                "tool_use" | "tool_call" => {
+                "tool_call" => {
                     let id = block["id"]
                         .as_str()
+                        .filter(|id| !id.is_empty())
                         .ok_or_else(|| err("Tool call identity missing."))?;
-                    if message["role"] != "assistant" || !tools.insert(id.to_string()) {
+                    if message["role"] != "assistant"
+                        || !block["name"].is_string()
+                        || !tools.insert(id.to_string())
+                    {
                         return Err(err("Duplicate or misplaced tool call."));
                     }
                 }
                 "tool_result" => {
-                    let id = block["tool_use_id"]
+                    let id = block["toolCallId"]
                         .as_str()
-                        .or_else(|| block["toolCallId"].as_str())
-                        .ok_or_else(|| err("Tool result identity missing."))?;
+                        .ok_or_else(|| err("Canonical tool result identity missing."))?;
                     if !tools.remove(id) {
-                        return Err(err("Tool result has no verified preceding call."));
+                        return Err(err("Tool result has no preceding verified call."));
                     }
-                    if !block["content"].is_string()
-                        && !block["content"].as_array().is_some_and(|parts| {
-                            parts
-                                .iter()
-                                .all(|p| p["type"] == "text" && p["text"].is_string())
-                        })
+                    for (r, part) in block["content"]
+                        .as_array()
+                        .ok_or_else(|| err("Canonical tool result content must be an array."))?
+                        .iter()
+                        .enumerate()
                     {
-                        return Err(err(
-                            "Only verified inline tool result text can be imported.",
-                        ));
+                        if part["type"] == "text" && part["text"].is_string() {
+                            continue;
+                        }
+                        verify_media(
+                            part,
+                            json!({"message":m,"block":b,"resultItem":r}),
+                            &mut attachments,
+                        )?;
                     }
                 }
-                "image" | "document" => {
-                    let source = &block["source"];
-                    if source["type"] != "base64" {
-                        return Err(err(
-                            "Attachments must contain inline base64 bytes; mutable paths/URLs cannot be imported.",
-                        ));
-                    }
-                    let data = source["data"]
-                        .as_str()
-                        .ok_or_else(|| err("Attachment bytes missing."))?;
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(data)
-                        .map_err(|_| err("Attachment base64 is invalid."))?;
-                    attachments.push(json!({"message":m,"block":b,"sha256":format!("{:x}",Sha256::digest(bytes))}));
+                "image" | "pdf" | "audio" => {
+                    verify_media(block, json!({"message":m,"block":b}), &mut attachments)?
                 }
                 _ => {
                     return Err(err(
-                        "Unknown or unverified history block cannot be imported.",
+                        "Unknown/unverified content or mutable result/media reference cannot be imported.",
                     ));
                 }
             }
@@ -142,6 +268,7 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
     Ok(attachments)
 }
 fn envelope(source: Value, messages: Value) -> Result<Value, RequestError> {
+    let messages = canonical_messages(&messages)?;
     let attachments = verify_messages(&messages)?;
     let body = json!({"format":"pilotdeck-history-import-v1","source":source,"messages":messages,"attachments":attachments});
     let hash = digest(&body)?;
@@ -448,5 +575,23 @@ mod tests {
         body.as_object_mut().unwrap().remove("sha256");
         changed["sha256"] = json!(digest(&body).unwrap());
         assert!(verify_envelope(&changed).is_err());
+    }
+    #[test]
+    fn canonical_native_assistant_metadata_thinking_tools_and_media_roundtrip() {
+        let messages = json!([
+            {"role":"assistant","metadata":{"model":"test-model"},"content":[{"type":"thinking","text":"reason","reasoningContent":"reason","signature":"sig"},{"type":"tool_call","id":"native-tool","name":"read_file","input":{"path":"safe"}}]},
+            {"role":"user","content":[{"type":"tool_result","toolCallId":"native-tool","content":[{"type":"text","text":"read result"},{"type":"image","source":"base64","data":"aGVsbG8=","mimeType":"image/png","bytes":5},{"type":"pdf","data":"aGVsbG8=","bytes":5,"pages":1}]}]},
+            {"role":"assistant","metadata":{"model":"test-model"},"content":[{"type":"text","text":"complete"}]}
+        ]);
+        let exported = envelope(json!({"sessionKey":"original"}), messages.clone()).unwrap();
+        verify_envelope(&exported).unwrap();
+        assert_eq!(exported["messages"], messages);
+        assert_eq!(exported["attachments"].as_array().unwrap().len(), 2);
+        let mut unsafe_history = exported;
+        unsafe_history["messages"][0]["metadata"]["activeHandle"] = json!("must-not-resume");
+        let mut body = unsafe_history.clone();
+        body.as_object_mut().unwrap().remove("sha256");
+        unsafe_history["sha256"] = json!(digest(&body).unwrap());
+        assert!(verify_envelope(&unsafe_history).is_err());
     }
 }

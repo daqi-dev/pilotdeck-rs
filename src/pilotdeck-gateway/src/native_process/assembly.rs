@@ -599,7 +599,7 @@ async fn start_assembly(
                                 &options.project,
                             )?
                         {
-                            return Ok(Box::new(factory));
+                            return Ok(Box::new(factory.with_interactions(interactions.clone())));
                         }
                         if options.sidecar.as_os_str().is_empty() {
                             return Err(RuntimeError::new(

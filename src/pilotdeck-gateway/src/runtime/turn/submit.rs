@@ -1054,6 +1054,12 @@ impl TurnSubmitter {
                 break;
             }
             self.host.observe_event(input, &event).await?;
+            if handle.backend_kind() == "kernel" && is(&event, "type", "permission_request") {
+                // Permission prompts are Gateway frames, like the existing
+                // interaction emit port, not AgentEvent projector variants.
+                publisher.gateway_event(with_run(event, run));
+                continue;
+            }
             if is(&event, "type", "input_accepted") {
                 self.host.commit_accepted_input(run).await?;
                 let snapshot = progress.lock().unwrap().input.clone();

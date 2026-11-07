@@ -68,6 +68,23 @@ pub struct InteractionReconnectPort {
     pub(super) state: Shared,
 }
 impl InteractionReconnectPort {
+    /// Pending work owned outside the gateway (for example a native Kernel
+    /// wait). This retains only reconnect identity; it grants no execution or
+    /// approval authority and installs no placeholder resolver.
+    pub fn set_external_pending(&self, owner: &JsString, pending: bool) {
+        let mut state = self.state.lock().unwrap();
+        if pending {
+            state.external_pending.insert(owner.clone());
+        } else {
+            state.external_pending.remove(owner);
+            if current(&state, owner).is_none() && !state.replay_owners.contains(owner) {
+                state.last.retain(|(key, _)| key != owner);
+            }
+        }
+    }
+    pub fn has_external_pending(&self, owner: &JsString) -> bool {
+        self.state.lock().unwrap().external_pending.contains(owner)
+    }
     pub fn current_binding(&self, owner: &JsString) -> Option<InteractionBinding> {
         current(&self.state.lock().unwrap(), owner)
     }
@@ -161,7 +178,7 @@ impl InteractionReconnectPort {
                 request.binding = None;
             }
         }
-        if !state.replay_owners.contains(owner) {
+        if !state.replay_owners.contains(owner) && !state.external_pending.contains(owner) {
             state.last.retain(|(key, _)| key != owner);
         }
         Ok(true)
@@ -173,6 +190,7 @@ impl InteractionReconnectPort {
         let mut state = self.state.lock().unwrap();
         state.requests.retain(|request| &request.owner != owner);
         state.replay_owners.remove(owner);
+        state.external_pending.remove(owner);
         state.bindings.retain(|(key, _)| key != owner);
         state.last.retain(|(key, _)| key != owner);
     }
@@ -181,6 +199,7 @@ impl InteractionReconnectPort {
         let mut state = self.state.lock().unwrap();
         state.requests.clear();
         state.replay_owners.clear();
+        state.external_pending.clear();
         state.bindings.clear();
         state.last.clear();
     }

@@ -43,19 +43,27 @@ fn text(value: &JsString) -> Result<String, RuntimeError> {
 
 /// Every persisted field participates in reopening: mode changes never switch an
 /// existing session, and canonical project identity prevents cross-project aliases.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KernelBackendFactory {
     pub socket: PathBuf,
     pub loop_version: String,
     pub owner_path: PathBuf,
     pub project: PathBuf,
     pub session: JsString,
+    interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 }
 pub enum BackendOwner {
     Legacy,
     Kernel(KernelBackendFactory),
 }
 impl KernelBackendFactory {
+    pub fn with_interactions(
+        mut self,
+        interactions: Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
+    ) -> Self {
+        self.interactions = Some(interactions);
+        self
+    }
     pub fn select(
         binding: &super::factory::SessionBinding,
         env: &crate::config::Env,
@@ -93,6 +101,7 @@ impl KernelBackendFactory {
                     owner_path,
                     project,
                     session,
+                    interactions: None,
                 })),
                 _ => Err(error("Unsupported persisted session backend.")),
             };
@@ -130,6 +139,7 @@ impl KernelBackendFactory {
             owner_path,
             project,
             session,
+            interactions: None,
         }))
     }
 }
@@ -166,7 +176,7 @@ impl Rpc {
                 phase="initialize".into();
                 self.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":self.node})).await?;
             }
-            if method.starts_with("execution.") {
+            if matches!(method,"execution.input"|"execution.respond"|"execution.history.import") {
                 if let Some((session,epoch,since))=self.lease.clone() {
                     if since.elapsed()>std::time::Duration::from_secs(60) {
                         let lease_method=if since.elapsed()>std::time::Duration::from_secs(240)&&method=="execution.input"{"session.lease_acquire"}else{"session.lease_renew"};
@@ -234,6 +244,7 @@ impl Rpc {
                 if matches!(
                     method,
                     "session.create"
+                        | "session.get"
                         | "session.lease_acquire"
                         | "session.lease_renew"
                         | "session.lease_release"
@@ -327,6 +338,7 @@ struct KernelSession {
     state: Arc<Mutex<State>>,
     started: Arc<AtomicBool>,
     context_ref: String,
+    interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 }
 impl SessionBackendFactory for KernelBackendFactory {
     fn build(
@@ -445,6 +457,7 @@ impl SessionBackendFactory for KernelBackendFactory {
                 state,
                 started: Arc::new(AtomicBool::new(false)),
                 context_ref,
+                interactions: self.interactions,
             }) as Box<dyn SessionBackend>)
         })
     }
@@ -488,6 +501,9 @@ impl LiveSession for KernelSession {
             queue: VecDeque::new(),
             done: false,
             final_event: None,
+            failure_event: false,
+            accepted: false,
+            interactions: self.interactions.clone(),
         }))
     }
     fn snapshot(&self) -> JsValue {
@@ -503,6 +519,8 @@ impl LiveSession for KernelSession {
         let kernel_id = self.kernel_id.clone();
         let state = self.state.clone();
         let context_ref = self.context_ref.clone();
+        let interactions = self.interactions.clone();
+        let session = JsString::from(self.session.clone());
         Box::pin(async move {
             let params = json_value(&params)?;
             let (call, _cursor) = {
@@ -547,7 +565,18 @@ impl LiveSession for KernelSession {
                     let hash = transfer["sha256"]
                         .as_str()
                         .ok_or_else(|| error("Verified import hash missing."))?;
-                    let receipt=rpc.lock().await.call("execution.history.import",json!({"session_id":kernel_id,"context_ref":context_ref,"expected_revision":0,"idempotency_key":format!("pd-import:{hash}"),"history":transfer["messages"]})).await?;
+                    let status = rpc
+                        .lock()
+                        .await
+                        .call(
+                            "session.get",
+                            json!({"session_id":kernel_id,"view":"status"}),
+                        )
+                        .await?;
+                    let generation = status["data"]["generation"].as_u64().ok_or_else(|| {
+                        error("Kernel session generation is unavailable for import.")
+                    })?;
+                    let receipt=rpc.lock().await.call("execution.history.import",json!({"session_id":kernel_id,"generation":generation,"context_ref":context_ref,"expected_revision":0,"idempotency_key":format!("pd-import:{hash}"),"history":transfer["messages"]})).await?;
                     json!({"sessionKey":params["sessionKey"],"kernelSessionId":kernel_id,"sha256":hash,"receipt":receipt,"imported":true})
                 }
                 "run_get" | "run_reattach" | "run_events" => {
@@ -634,6 +663,11 @@ impl LiveSession for KernelSession {
                     };
                     rpc.lock().await.call("execution.respond", json!({"session_id":kernel_id,"call_ref":call,"wait_id":params["requestId"],"messages":[{"role":"user","text":decision}],"idempotency_key":format!("permission:{}",params["requestId"])})).await?;
                     state.lock().unwrap().waits.remove(wait);
+                    if let Some(interactions) = &interactions {
+                        interactions
+                            .reconnect_port()
+                            .set_external_pending(&session, false);
+                    }
                     json!({"delivered":true})
                 }
                 "reconnect_interaction" => {
@@ -707,6 +741,9 @@ struct KernelTurn {
     queue: VecDeque<JsValue>,
     done: bool,
     final_event: Option<Value>,
+    failure_event: bool,
+    accepted: bool,
+    interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 }
 impl LiveTurn for KernelTurn {
     fn next(&mut self) -> SessionNext<'_> {
@@ -719,11 +756,22 @@ impl LiveTurn for KernelTurn {
                     return Ok(None);
                 }
                 if let Some(input) = self.input.take() {
+                    let original = recover(&mut *self.rpc.lock().await, &self.kernel_id).await?;
+                    if original.run.as_deref().is_some_and(|run| run != self.run) {
+                        let mut state = self.state.lock().unwrap();
+                        let disposed = state.disposed;
+                        *state = original;
+                        state.disposed = disposed;
+                        return Err(error(
+                            "Kernel has a different active execution; query or cancel that original execution before submitting a new turn.",
+                        ));
+                    }
                     let accepted=self.rpc.lock().await.call("execution.input",json!({"session_id":self.kernel_id,"idempotency_key":self.run,"input":input})).await?;
                     let call = accepted["call_ref"]
                         .as_str()
                         .ok_or_else(|| error("Kernel input omitted execution identity."))?
                         .to_string();
+                    self.accepted = true;
                     self.state.lock().unwrap().call = Some(call.clone());
                     // A duplicate idempotency key observes its original journal
                     // range; it never starts a replacement provider execution.
@@ -793,7 +841,13 @@ impl LiveTurn for KernelTurn {
                                 .insert(wait.into(), call.into())
                                 .is_none();
                             if fresh {
-                                self.queue.push_back(js(&json!({"type":"permission_request","sessionId":self.session,"turnId":self.run,"requestId":wait,"executionId":call,"payload":event["payload"]["waiting"]["schema"]}))?);
+                                if let Some(interactions) = &self.interactions {
+                                    interactions.reconnect_port().set_external_pending(
+                                        &JsString::from(self.session.clone()),
+                                        true,
+                                    );
+                                }
+                                self.queue.push_back(js(&json!({"type":"permission_request","sessionId":self.session,"turnId":self.run,"requestId":wait,"executionId":call,"toolName":event["payload"]["waiting"]["schema"]["tool_name"],"payload":event["payload"]["waiting"]["schema"]}))?);
                             }
                         }
                     }
@@ -808,6 +862,9 @@ impl LiveTurn for KernelTurn {
                         if agent_event["type"] == "turn_completed" {
                             self.final_event = Some(agent_event);
                         } else {
+                            if agent_event["type"] == "turn_failed" {
+                                self.failure_event = true;
+                            }
                             self.queue.push_back(js(&agent_event)?);
                         }
                     }
@@ -836,6 +893,20 @@ impl LiveTurn for KernelTurn {
                         state.status = outcome.into();
                         state.run = None;
                     }
+                    if let Some(interactions) = &self.interactions {
+                        interactions
+                            .reconnect_port()
+                            .set_external_pending(&JsString::from(self.session.clone()), false);
+                    }
+                    if outcome == "failed" && !self.failure_event {
+                        let original = &event["payload"]["error"];
+                        let message = original["params"]["detail"]
+                            .as_str()
+                            .or_else(|| original["message"].as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| original.to_string());
+                        self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":original["code"].as_str().unwrap_or("KERNEL_EXECUTION_FAILED"),"message":message,"details":{"kernelSessionId":self.kernel_id,"executionId":root,"kernelError":original},"userHint":"Inspect the original Kernel execution and error before retrying."}}))?);
+                    }
                     if outcome == "unknown" {
                         self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":"KERNEL_OUTCOME_UNKNOWN","message":"Execution stopped waiting; an external effect may still have happened. Inspect the original execution before retrying.","details":{"kernelSessionId":self.kernel_id,"executionId":root,"outcome":"unknown"}}}))?);
                     }
@@ -862,10 +933,15 @@ impl LiveTurn for KernelTurn {
 impl Drop for KernelTurn {
     fn drop(&mut self) {
         if !self.done {
-            let mut s = self.state.lock().unwrap();
-            s.status = "unknown".into();
-            s.run = None;
-            s.attached = false;
+            let mut state = self.state.lock().unwrap();
+            if self.accepted {
+                state.status = "unknown".into();
+                state.run = None;
+            } else if state.run.as_deref() == Some(&self.run) {
+                state.run = None;
+                state.status = "idle".into();
+            }
+            state.attached = false;
         }
     }
 }
@@ -892,6 +968,7 @@ mod tests {
             state: Arc::new(Mutex::new(State::default())),
             started: Arc::new(AtomicBool::new(false)),
             context_ref: "default".into(),
+            interactions: None,
         }
     }
     async fn next(turn: &mut dyn LiveTurn) -> Value {
@@ -1018,7 +1095,7 @@ mod tests {
         let task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut stream = BufReader::new(stream);
-            for response in [json!({}), json!({"call_ref":"original-loop"})] {
+            for response in [json!({}), json!([]), json!({"call_ref":"original-loop"})] {
                 let mut line = String::new();
                 stream.read_line(&mut line).await.unwrap();
                 let req: Value = serde_json::from_str(&line).unwrap();
