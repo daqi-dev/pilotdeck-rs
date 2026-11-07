@@ -4738,3 +4738,7 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · TUI 纯模型首片（Codex/Terra，仅本机）
 
 新增TUI事件状态模型与slash命令解析，真实TS reducer金样覆盖UTF-16孤立代理/缺字段/结构化输出，mbp2两测试与all-targets clippy通过；独立审查本片有效GatewayEvent范围无确认P0/P1。命令分派另已采35个真实TS效果原件，下一片接Rust回归，证据主仓 `_tmp/20261108-cli-tui/`。当前仅库模型，用户TUI入口仍未接入，绝不作为TUI完成；下一片由Terra接同连接权限应答/取消与会话流，root持验证与最终整合，本机不构建、不推远端。
+
+### 2026-11-08 · TUI 同连接传输（Codex/Terra，仅本机）
+
+已接单WS并发RPC/stream/permission_decide/abort、有限积压与写入、hello绝对期限；35格真实TS命令效果与真实wire入测试。独立审查修复准入拒绝挂起、取消slot泄漏与满额竞态、consumer drop误断线、未消费大错误漏计预算；mbp2最终6真实socket+5lib、fmt/all-targets clippy通过，原件主仓 `_tmp/20261108-cli-tui/`。真实native探针明确当前宿主can_prompt=false/emit=false且工具调度ask路径未接，权限闭环不能判通过；TUI终端与权限文件仍未接，继续共享安全保存与实际runner。两项新差异待人复核、未改冻结验收；本轮无GitHub写入、无本机Rust构建。

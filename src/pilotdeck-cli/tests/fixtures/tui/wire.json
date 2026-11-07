@@ -1,0 +1,126 @@
+{
+  "rows": [
+    {
+      "direction": "client",
+      "frame": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "cli",
+        "clientVersion": "0.1.0",
+        "token": "fixture-token"
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "hello_ok",
+        "protocolVersion": "1.2",
+        "serverVersion": "fixture",
+        "serverInfo": {
+          "capabilities": []
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "frame": {
+        "type": "request",
+        "id": "c25a43d2-081e-4e7b-b26f-a64558aa29da",
+        "method": "submit_turn",
+        "params": {
+          "sessionKey": "fixture-session",
+          "channelKey": "tui",
+          "projectKey": "/fixture-project",
+          "message": "hello",
+          "mode": "default"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "event",
+        "id": "c25a43d2-081e-4e7b-b26f-a64558aa29da",
+        "seq": 0,
+        "final": false,
+        "event": {
+          "type": "permission_request",
+          "requestId": "p1",
+          "toolName": "bash",
+          "payload": {
+            "command": "git status"
+          }
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "frame": {
+        "type": "request",
+        "id": "5dbf86a8-f96a-4032-bb4a-a5093cbc385b",
+        "method": "permission_decide",
+        "params": {
+          "sessionKey": "fixture-session",
+          "requestId": "p1",
+          "decision": "allow",
+          "remember": false
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "response",
+        "id": "5dbf86a8-f96a-4032-bb4a-a5093cbc385b",
+        "ok": true,
+        "result": {
+          "delivered": true
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "frame": {
+        "type": "request",
+        "id": "3f8ae1df-82de-4fea-8611-e6de7c4ce331",
+        "method": "abort_turn",
+        "params": {
+          "sessionKey": "fixture-session"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "response",
+        "id": "3f8ae1df-82de-4fea-8611-e6de7c4ce331",
+        "ok": true,
+        "result": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "event",
+        "id": "c25a43d2-081e-4e7b-b26f-a64558aa29da",
+        "seq": 1,
+        "final": true,
+        "event": {
+          "type": "turn_completed"
+        }
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "permission_request",
+      "requestId": "p1",
+      "toolName": "bash",
+      "payload": {
+        "command": "git status"
+      }
+    }
+  ]
+}
