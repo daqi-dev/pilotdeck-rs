@@ -83,9 +83,32 @@ python3 -B tests/fixtures/pending-reanchor/test_controls.py
 python3 -B tests/fixtures/anchor_selfcheck.py --anchors-only
 # 先提交；复用调用方的 CARGO_TARGET_DIR，不另建 git 或构建目录。
 python3 -B tests/fixtures/pending-reanchor/negative_controls.py NEW_OUTPUT_DIR
+# 负控发现锚点自检（#2133）：纯静态，不需要 cargo 或 target
+(cd tests/fixtures && python3 -B -m unittest -v test_negative_discovery_anchors)
 ```
 
 以上命令在 `src/pilotdeck-gateway` 下运行。四格及边界自测也由 `tests/negative_anchor_selfcheck.rs` 纳入 Cargo 测试。负控只改 Python 共享件，逐项先 `compile()` 验证语法，再执行绑定自测与恢复自测；不运行 cargo，因此不占 cargo slot。锚点失配、HEAD 不一致、语法错误或非绑定断言失败记 `INVALID`，所有选择项汇总后非零退出；把 WARN 降级逻辑改为 no-op 必须杀于 `#1048 downgrade` 断言。
+
+### 负控发现锚点 `DISCOVERY_ANCHORS`（#2133）
+
+宿主清单由 ops 侧 `neg-for-diff.sh` 按 PR 的 diff 推导：对每个改动的 `src/**/*.rs` 与 `fixtures/**` 文件生成键 `上级目录名/文件名`，再用 `git grep -F` 在 `fixtures/**/*negative*.py` 里找这个字面串；命中哪张表就只跑哪张表的变异。因此**表里的路径必须让这个字面串出现**，否则改了产品文件那张表根本不进负控——闸门看起来全绿，实际一条变异没跑。
+
+两种写法等价性不同：
+
+- `ROOT / 'src/pilotdeck-gateway/src/sms/mod.rs'`——整串在一个字符串里，键天然字面存在，无需登记。
+- `SMS = ROOT / 'src/pilotdeck-gateway/src/sms'` 再 `SMS / 'mod.rs'`——文件里只有 `mod.rs`，键 `sms/mod.rs` 不出现，**必须登记**。目录来自常量、文件名裸写的拼接都算，`.json` / `.mts` / `.mjs` 等夹具文件同理（发现循环对 `fixtures/**` 的任何改动都生成键）。
+
+约定：这类表在模块级写一个 `DISCOVERY_ANCHORS` 元组，逐条列出它依赖的键，值与 `neg-for-diff.sh` 推导出的键**逐字节相同**；没有裸文件名拼接的表写 `DISCOVERY_ANCHORS = ()`（空元组是断言，不是省略）。`test_negative_discovery_anchors.py` 的 `TABLES` 是登记清单，闸门对每张表做四件事：
+
+1. 静态解析该表的路径表达式（`ROOT` / `__file__` / 模块常量、文件内只赋值一次的别名、`/`、`Path(...)`、`.parent`、`.parents[n]`、`.resolve()`、`.joinpath()`、`.with_name()`、`.with_suffix()`），算出全部裸文件名拼接键，要求与 `DISCOVERY_ANCHORS` **集合相等**（漏登记报 `missing anchor: …`，多登记报 `stale anchor: …`）。
+2. 每个锚点必须字面出现在该表文本里——否则 `git grep -F` 同样找不到，登记了也不生效。
+3. 以仓库根为起点、但静态解析不出来的表达式（如 `ROOT / PICK['dir'] / 'x.rs'`）**失败关闭**，不静默跳过；字符串 `+` 拼接与 f-string 拼出的路径不在解析族的，同样按未覆盖形状报错（改写为 `/` 拼接）。证据输出目录一类运行期拼接（`out / 'summary.json'`）不以仓库根为起点，不算发现键，无需登记。
+4. `DISCOVERY_ANCHORS` 只能赋值一次；重复赋值直接失败。
+5. 全目录不漏：每张 `*negative*.py` 要么在 `TABLES`，要么在 `KNOWN_BLIND` 登记（写理由），要么根本不需要锚点——**新出现的盲表会把闸门变红**，不会静默漏过。`KNOWN_BLIND` 是修复清单不是豁免：条目只能靠「补锚点并移进 `TABLES`」删除，表被删/被修好却留着条目也会变红。
+
+判别力由负控自证（改坏任一处必须变红，已实测）：逐条删掉单个锚点、给表注入一条新的裸文件名行、`TABLES` 清空、`DISCOVERY_ANCHORS` 重复赋值、字符串拼接形状、新盲表未登记。只删锚点必须报 `missing anchor: <被删的键>`，不是别的键。
+
+**跟进清单（尚未登记，别再扩大）**：本闸门当前只登记 #2133 点名的 4 张表（`channel-sms` / `memory-gateway` / `snapshot-projection` / `metadata-process-cwd`，共 14 条键）。按同一解析器扫全部 `fixtures/**/*negative*.py`，本提交上还有 **96 张表、273 条键（其中 122 条落在产品路径上）**存在字面缺失，逐表登记在 `test_negative_discovery_anchors.py` 的 `KNOWN_BLIND`，按缺键条数排序推进；把某张表加进 `TABLES`，闸门就会逐条报出它欠的锚点与多余锚点，据此补齐。`schemata.py` 这类不带 `negative` 字样的表不在 `neg-for-diff.sh` 的 glob 内，属于发现脚本本身的边界，不靠本闸门解决；`neg-for-diff.sh` 在仓外（`pdrs-ops`），键规则的正本在那边，本闸门是它的复算副本，宿主改规则时两边需同时核对。
 
 ## 共享输入扫描器（#1166 fix-r4）
 
