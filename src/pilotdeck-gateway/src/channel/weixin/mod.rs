@@ -919,20 +919,46 @@ impl WeixinChannel {
                     format!("weixin: polled {} message(s)", messages.len()),
                 );
             }
-            for message in messages {
-                let is_text = message
-                    .get("message_type")
-                    .map(|value| value == &JsValue::Number(MESSAGE_KIND_TEXT))
-                    .unwrap_or(false);
-                if is_text {
-                    // The synchronous prefix of `void dispatchMessage(msg)`
-                    // runs inline, as it does before the TS first await.
-                    if let Some(start) = self.dispatch_sync_prefix(&message) {
-                        self.spawn_dispatch(start);
-                    }
-                }
-            }
+            self.start_poll_batch(messages);
             self.save_cursor();
+        }
+    }
+
+    /// `for (const msg of msgs) void this.dispatchMessage(msg);` for one poll
+    /// response.
+    ///
+    /// Node runs that loop to completion before the event loop drains a single
+    /// microtask, so every message's *synchronous* prefix — context-token
+    /// capture, extraction up to its first `await`, mapper resolution of the
+    /// text-only ones — is finished before any attachment download resumes.
+    /// A later plain-text message therefore always reaches the session ahead
+    /// of an attachment message from the same batch, even when that
+    /// attachment fails without I/O (declared-size guard, missing URL).
+    ///
+    /// The Rust equivalent cannot lean on a single thread, so the ordering is
+    /// structural: walk the whole batch first, then start the messages that
+    /// actually suspend. Starting them earlier would let a spawned download
+    /// task insert its message before the rest of the batch was even walked.
+    fn start_poll_batch(&self, messages: Vec<JsValue>) {
+        let mut downloads = Vec::new();
+        for message in messages {
+            let is_text = message
+                .get("message_type")
+                .map(|value| value == &JsValue::Number(MESSAGE_KIND_TEXT))
+                .unwrap_or(false);
+            if !is_text {
+                continue;
+            }
+            let Some(start) = self.dispatch_sync_prefix(&message) else {
+                continue;
+            };
+            match start {
+                DispatchStart::Inbound { .. } => downloads.push(start),
+                other => self.spawn_dispatch(other),
+            }
+        }
+        for start in downloads {
+            self.spawn_dispatch(start);
         }
     }
 

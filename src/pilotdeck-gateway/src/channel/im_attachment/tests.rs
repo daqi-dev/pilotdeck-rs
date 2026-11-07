@@ -271,7 +271,10 @@ async fn save_from_url_guards_sizes_and_applies_the_transform() {
     let store = store_with(&root, fetcher.clone());
     let mut oversized = input("https://cdn.test/f", AttachmentKind::File);
     oversized.bytes = Some(DEFAULT_MAX_BYTES as f64 + 1.0);
-    let error = store.save_from_url(oversized).await.expect_err("declared");
+    let error = crate::test_negative_receipt::expect_err(
+        store.save_from_url(oversized).await,
+        "#1822 declared size guard",
+    );
     crate::negative_assert_eq!(
         error.message,
         format!(
@@ -325,12 +328,12 @@ async fn save_from_url_checks_the_size_limit_after_the_transform() {
     growing.transform = Some(Arc::new(|_| Ok(b"abcdef".to_vec())));
     let error = crate::test_negative_receipt::expect_err(
         store.save_from_url(growing).await,
-        "#1822 post-transform size guard rejects",
+        "#1822 post-transform size guard",
     );
     crate::negative_assert_eq!(
         error.message,
         "Attachment is 6 bytes (limit 3).",
-        "#1822 post-transform size guard"
+        "#1822 post-transform size message"
     );
 }
 
