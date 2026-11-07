@@ -69,9 +69,14 @@ def gate(root, environ=None, *, ignored=False):
     override = env.get('PDRS_NEGATIVE_BASELINE')
     if not override:
         return 'HEAD', 'HEAD', None
-    resolved = subprocess.run(
-        ['git', '-C', str(root), 'rev-parse', '--verify', override + '^{commit}'],
-        capture_output=True, text=True, timeout=60)
+    try:
+        resolved = subprocess.run(
+            ['git', '-C', str(root), 'rev-parse', '--verify', override + '^{commit}'],
+            capture_output=True, text=True, errors='replace', timeout=60)
+    except (subprocess.SubprocessError, OSError) as error:
+        # r1 boundary#3: a resolver crash (timeout, missing git) is a refusal,
+        # never a traceback that the host triage would misread as exit 1.
+        refuse(f'cannot resolve PDRS_NEGATIVE_BASELINE {override!r}: {error}')
     if resolved.returncode != 0:
         refuse(f'cannot resolve PDRS_NEGATIVE_BASELINE {override!r}: '
                f'{resolved.stderr.strip()}')
@@ -96,8 +101,14 @@ def non_head_exit(baseline_source, baseline_sha=None, *, code=0, evidence=None,
     downgraded: the ``NON-HOST EVIDENCE`` marker goes to stdout, a
     ``baseline.json`` provenance record is published atomically into
     ``evidence`` (the evidence directory, when the caller has one), and the
-    dedicated ``NON_HEAD_EXIT`` replaces the green 0.
+    dedicated ``NON_HEAD_EXIT`` replaces the green 0.  An unusable verdict
+    value (non-int, bool, or outside the POSIX 0–255 window) is normalised
+    to 1 first: ``SystemExit(None)`` would exit 0 and an oversized code would
+    truncate to it, both fail-open against the same mistake.
     """
+    if isinstance(code, bool) or not isinstance(code, int) or not 0 <= code < 256:
+        # r1 boundary#2: never let an unusable verdict become a green exit.
+        code = 1
     if code != 0:
         return code
     if baseline_source == 'HEAD':
@@ -117,6 +128,11 @@ def non_head_exit(baseline_source, baseline_sha=None, *, code=0, evidence=None,
                     'nonHeadBaseline': True,
                     'hostEvidence': False,
                     'exit': NON_HEAD_EXIT}
+        if ignored:
+            # r1 boundary#4: the record must not imply the requested tree was
+            # tested when the guard ignored the request and stayed on HEAD.
+            document.update(baseline='HEAD', requestedBaseline=baseline_sha,
+                            overrideIgnored=True)
         temporary = Path(evidence) / 'baseline.json.tmp'
         temporary.write_text(json.dumps(document, indent=2) + '\n', encoding='utf-8')
         temporary.replace(Path(evidence) / 'baseline.json')
