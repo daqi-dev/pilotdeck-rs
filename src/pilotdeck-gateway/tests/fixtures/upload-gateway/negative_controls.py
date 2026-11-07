@@ -607,6 +607,10 @@ EXPECTED_NAMES = (
     'read-at-handle-check-dropped', 'read-at-check-before-open',
     'read-at-identity-dropped', 'read-at-approved-stat-follows-link',
     'lease-link-identity-dropped', 'lease-link-follows-symlink-source',
+    # #1887/#1888/#1889 的三条（租约内容摘要 / 写侧租约根 / 读侧词法前缀）也在
+    # 同一 `registered()` 口径下：名册与运行时逐名同序，漏一条即整族 rc 2。
+    'lease-link-content-dropped', 'lease-root-link-refused',
+    'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
     # `registered()` rc 2，整族在宿主上被读成「从未开跑」。
     'cleanup-bad-record-aborts', 'cleanup-orphan-reclaim-removed',
