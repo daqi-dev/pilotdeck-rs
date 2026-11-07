@@ -22,9 +22,12 @@ run); `--check` is a read-only anchor preflight. Refusals before the run
 CARGO_TARGET_DIR, existing output directory) exit 2, distinct from 1 ("some
 control did not kill"); a source-guard failure while restoring revokes every
 recorded row and exits 2 (#979, #1076, #1734). SIGINT/SIGTERM/SIGHUP/
-SIGQUIT raise `SystemExit(2)` -- a cancel is a refusal at every stage, the
-same code `run_cases` itself normalizes to -- so the guard's restore window
-always unwinds and re-verifies the tree.
+SIGQUIT raise `SystemExit(2)`: a cancel outside the shared guard's
+write-back window is a refusal, the same code `run_cases` itself
+normalizes to. A cancel landing inside the restore window still unwinds
+and re-verifies the tree first, then exits 128+signum (the
+`negative_process.mutating_sources` deferred-signal contract, the family
+convention `test_negative_process` locks in).
 """
 import argparse
 import json
@@ -121,11 +124,16 @@ def compile_controls(rows, out, env):
                 results.append(result)
     except Exception as error:
         guard_failed = True
-        reason = f'source guard: {type(error).__name__}: {error}'
-        invalidate_completed(results, reason)
+        # r7 (MM r6 concurrency P2#3): a lock-timeout means not a single byte
+        # was ever written -- report "lock busy, never started", not a
+        # restore failure, so triage does not go hunting for a dirty tree.
+        kind = ('source lock busy (never started)'
+                if isinstance(error, TimeoutError)
+                else f'source guard: {type(error).__name__}: {error}')
+        invalidate_completed(results, kind)
         for name, *_ in rows[len(results):]:
             results.append({'mutation': name, 'compiled': False, 'status': 'INVALID',
-                            'reason': reason})
+                            'reason': kind})
     (out / 'compile-summary.json').write_text(json.dumps(results, indent=2) + '\n')
     for result in results:
         print(json.dumps(result), flush=True)
@@ -157,7 +165,10 @@ def main():
                      'the evidence directory comes first')
     try:
         audit(rows)  # Stale anchors are refusals, never survivors.
-    except ValueError as error:
+    except (ValueError, OSError) as error:
+        # r7 (DS r6 boundary/concurrency + MM r6 boundary, both families): a
+        # missing/renamed source (FileNotFoundError, PermissionError) is an
+        # OSError, not a ValueError -- it must refuse (2), never traceback (1).
         refuse(f'stale anchor: {error}')
     if args.check:
         print(f'{len(rows)} rows / '
@@ -179,7 +190,10 @@ def main():
     # #1076: a signal must unwind through the guard's restore/re-verify window,
     # not kill the process with a mutated tree left behind. The four signals
     # are the ones the shared guard itself shields in its write-back window;
-    # a cancel exits 2 at every stage, matching run_cases' own normalization.
+    # a cancel outside that window exits 2, matching run_cases' own
+    # normalization. Inside the shared write-back window the guard defers
+    # the signal, finishes the restore/verify, then exits 128+signum
+    # (negative_process contract -- r7: docstring states the same split).
     def stop(signum, frame):
         sys.stderr.write(f'interrupted by signal {signum}\n')
         raise SystemExit(2)
@@ -194,9 +208,13 @@ def main():
         return int(not compiled)
     status = run_cases(root, [Case(*row) for row in rows], out, env, mutate,
                        timeout=900, script=Path(__file__))
-    # transcript-trim pattern, extended: a prepass that could not prove every
-    # mutant compiles is not a green run even when all judged rows KILLED.
-    return int(not compiled or status != 0)
+    # r7 (DS r6 concurrency/boundary + MM r6 concurrency/boundary, both
+    # families): run_cases returns 2 when the guard could not restore or
+    # re-verify the tree (every row revoked, tree possibly dirty) and 2 must
+    # not be folded into 1 -- the triage table treats them differently
+    # (#1076/#1734). A prepass that could not prove every mutant compiles is
+    # still not a green run even when all judged rows KILLED.
+    return status or int(not compiled)
 
 
 if __name__ == '__main__':
