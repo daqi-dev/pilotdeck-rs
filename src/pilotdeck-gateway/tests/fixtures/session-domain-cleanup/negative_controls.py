@@ -5041,6 +5041,81 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 16 (codex r15 P0-1 / P0-2 / P0-3 / P0-4): one row per
+    # spelling the round-15 ruler still missed.  A write handle taken into a
+    # name and then handed through a duplicated unpack target, through a call
+    # site on a loop back edge, through a definition header (defaults run at
+    # module level), or through an assignment on a loop back edge.
+    ('calibrate-for-target-duplicated-unpack-target', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _du_use():\n"
+      "        _du = getattr(md, '__setattr__')\n"
+      "        _df, _df = None, _du\n"
+      "        _df('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-module-call-site-loop-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _cw\n"
+      "    def _cw_use():\n"
+      "        _cw(md, 'common', object())\n"
+      "    for _cw_i in (0, 1):\n"
+      "        _cw_use()\n"
+      "        from builtins import setattr as _cw\n"
+      "    from builtins import print as _cw\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-default-value-call', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _dv\n"
+      "    def _dv_use():\n"
+      "        _dv(md, 'common', object())\n"
+      "    def _dv_holder(_x=_dv_use()):\n"
+      "        pass\n"
+      "    from builtins import print as _dv\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-assignment-back-edge', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import print as _ab\n"
+      "    for _ab_i in (0, 1):\n"
+      "        _ab_x = _ab\n"
+      "        _ab_x(md, 'common', object())\n"
+      "        from builtins import setattr as _ab\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6162,6 +6237,38 @@ def calibrate_for_target_module_loop_first_use(rows):
         'flagged, passed=False')
 
 
+def calibrate_for_target_duplicated_unpack_target(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-duplicated-unpack-target."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-duplicated-unpack-target '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_module_call_site_loop_edge(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-module-call-site-loop-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-call-site-loop-edge '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_default_value_call(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-default-value-call."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-default-value-call '
+        'flagged, passed=False')
+
+
+def calibrate_for_target_assignment_back_edge(rows):
+    """#1953 fix-r1 round 16: calibrate-for-target-assignment-back-edge."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-assignment-back-edge '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -6982,6 +7089,18 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-module-loop-first-use': (
         'aggregation-audit', calibrate_for_target_module_loop_first_use,
+        False, ()),
+    'calibrate-for-target-duplicated-unpack-target': (
+        'aggregation-audit', calibrate_for_target_duplicated_unpack_target,
+        False, ()),
+    'calibrate-for-target-module-call-site-loop-edge': (
+        'aggregation-audit', calibrate_for_target_module_call_site_loop_edge,
+        False, ()),
+    'calibrate-for-target-default-value-call': (
+        'aggregation-audit', calibrate_for_target_default_value_call,
+        False, ()),
+    'calibrate-for-target-assignment-back-edge': (
+        'aggregation-audit', calibrate_for_target_assignment_back_edge,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:

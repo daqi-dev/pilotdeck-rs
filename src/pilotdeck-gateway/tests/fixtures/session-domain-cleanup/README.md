@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 310 mutants:
+`JUDGES`, keyed by the same names. The current table has 314 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -478,7 +478,11 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-class-block-alias`, `calibrate-for-target-nested-copy-alias`,
 `calibrate-for-target-module-call-before-rebind`,
 `calibrate-for-target-module-self-assignment`,
-`calibrate-for-target-module-loop-first-use`.
+`calibrate-for-target-module-loop-first-use`,
+`calibrate-for-target-duplicated-unpack-target`,
+`calibrate-for-target-module-call-site-loop-edge`,
+`calibrate-for-target-default-value-call`,
+`calibrate-for-target-assignment-back-edge`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1416,3 +1420,30 @@ Known boundary: an assignment whose right side is an *attribute*
 enclosing call site is read from the module-level definition it sits in, so a
 call made from a sibling function body is not modelled.  Both directions keep
 the round-14 answer.
+
+### Closed by `fix-r1` round 16 (codex r15 four P0)
+
+Round 15 read a module-scope call site's binding at the call, but the *shape*
+of a binding was still taken from the name alone: a bound write handle
+(`h = getattr(md, '__setattr__')`) was spelled as the unbound helper, so the
+receiver was lost and the write was not attributed.  Round 16 keeps the
+receiver in the kind (`fn:write-handle:<name>`), lets a certain overwrite by a
+fresh value clear it, and treats the module scope as a binding scope with call
+positions on loop back edges and in definition headers.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A duplicated unpack target that ends on the handle**: `h = getattr(md, '__setattr__'); f, f = None, h; f('common', ...)` writes. | `calibrate-for-target-duplicated-unpack-target`; self-test `round 16: a duplicated unpack target that ends on the handle` |
+| **A module call site on a loop back edge**: `from builtins import print as w; def f(): w(md, ...); for ...: f(); from builtins import setattr as w`. | `calibrate-for-target-module-call-site-loop-edge`; self-test `round 16: a module call site on a loop back edge` |
+| **A call in a definition header default** (evaluated in the module scope): `def g(x=f())` where `f` calls the write alias. | `calibrate-for-target-default-value-call`; self-test `round 16: a call in a definition header default` |
+| **An assignment on a loop back edge**: `for ...: x = w; x(md, ...); from builtins import setattr as w`. | `calibrate-for-target-assignment-back-edge`; self-test `round 16: an assignment on a loop back edge` |
+| **A bound handle that is certainly overwritten** (false FAIL guard): `h = getattr(md, '__setattr__'); h = lambda *a: None; h('common', ...)` calls the fresh object. | self-test `round 16: a bound handle that is certainly overwritten` |
+
+The bound-handle family was missing at every head since round 14 while
+`origin/main` caught it; the four mutants above are red at round 15 and green
+at round 16 (probe `P0-1..P0-4`: `withdrawn=[]` before, `['md']` after).
+
+Known boundary: a nested function's module call site is read from its own
+definition, so a call made from a sibling function body is not modelled; where
+the tool cannot tell, it reports the write (fail closed) instead of trusting
+the attribute.
