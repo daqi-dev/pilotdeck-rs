@@ -575,8 +575,9 @@ fn prompt_hooks_generator_writes_owned_marker() {
                 "#2116 prompt-hooks generator writes its ownership marker"
             );
         }
-        // #2116 r3: keep the success-path removability check explicit; the
-        // Drop guard above only covers the panic paths (DS r2 P2).
+        // #2116 r4: the Drop guard above swallows removal errors (it runs on
+        // both the normal and the panic path); this explicit removal asserts
+        // the scratch is reclaimable at cell end (DS r2 P2).
         fs::remove_dir_all(&root).expect("#2116 remove prompt-hooks marker scratch");
     }
 }
