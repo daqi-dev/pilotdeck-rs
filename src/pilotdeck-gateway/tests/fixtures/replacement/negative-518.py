@@ -152,10 +152,11 @@ def main():
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
             # #1908: the shared wait replaces the inline 300 s-sample /
             # 1800 s-deadline loop. The sample bounding is unchanged
-            # (one cold-bootstrap exemption), but the per-sample wait
-            # deadline narrows 1800 s -> the shared 600 s constant, which
-            # stays above the single-sample cap; exceeding it fails closed
-            # instead of retrying for 30 minutes.
+            # (one cold-bootstrap exemption); the total wait budget for
+            # the slot acquisition now comes from negative_process.py's
+            # single shared constant (see its docstring) instead of the
+            # old 1800 s; exceeding it fails closed instead of retrying
+            # for 30 minutes.
             slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             mutated = original[path].replace(before.encode(), after.encode())
