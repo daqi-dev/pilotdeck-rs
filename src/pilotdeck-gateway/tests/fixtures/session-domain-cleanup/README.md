@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 314 mutants:
+`JUDGES`, keyed by the same names. The current table has 317 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -482,7 +482,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-duplicated-unpack-target`,
 `calibrate-for-target-module-call-site-loop-edge`,
 `calibrate-for-target-default-value-call`,
-`calibrate-for-target-assignment-back-edge`.
+`calibrate-for-target-assignment-back-edge`,
+`calibrate-for-target-handle-conditional-overwrite`,
+`calibrate-for-target-scoped-handle-receiver`,
+`calibrate-for-target-shadowed-constructor`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1446,4 +1449,28 @@ at round 16 (probe `P0-1..P0-4`: `withdrawn=[]` before, `['md']` after).
 Known boundary: a nested function's module call site is read from its own
 definition, so a call made from a sibling function body is not modelled; where
 the tool cannot tell, it reports the write (fail closed) instead of trusting
-the attribute.
+the attribute.  A write handle taken from a receiver that is not a bare name
+(`getattr(md.inner, '__setattr__')`, `md[0].__setattr__`) carries no receiver
+tag, so a later two-argument call on it is not attributed; the write lands on a
+sub-object of the shared module, which the audit does not treat as a write to
+`md` itself — the same boundary as the direct spelling `md.inner.__setattr__(…)`
+(sibling r16 P2-4, registered as a known boundary; r17 leaves it unchanged).
+
+### Closed by `fix-r1` round 17 (codex r16 three P0 / boundary r16 two P0)
+
+Round 16 asked "is this name still the handle?" of the single positionally
+latest binding, with the receiver tags pooled per file.  Three shapes answered
+yes while a real write still happened, and two clean shapes answered no.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A conditional overwrite does not clear the handle**: `h = getattr(md, '__setattr__'); if flag: h = lambda *a: None; h('common', ...)` still writes on the other arm. | `calibrate-for-target-handle-conditional-overwrite`; self-tests `round 17: a bound handle overwritten only in an if arm`, `round 17: a bound handle overwritten in a try body` |
+| **A sibling function's same-named binding is not this binding**: two functions bind `h`, one to another object and one to `md`; the receiver tags are now resolved per scope instead of pooled. | `calibrate-for-target-scoped-handle-receiver`; self-tests `round 17: a bound handle another function binds elsewhere`, `round 17: a bound handle only another function binds to the receiver` |
+| **A constructor shadowed in the same scope is not the builtin**: `object = lambda: h; h = object()` re-binds the handle, so "fresh value" no longer clears it. | `calibrate-for-target-shadowed-constructor`; self-test `round 17: a bound handle recreated by a shadowed constructor` |
+| **A handle re-bound to a non-handle name** (false FAIL guard): `h = getattr(md, '__setattr__'); h = print` calls something else. | self-test `round 17: a bound handle rebound to a known non-handle` |
+| **A bound handle the status ruler must still follow**: `f = getattr(report, '__setattr__'); f('status', 'PASS')` and the attribute spelling. | self-tests `round 17: a status write through a by-name bound handle`, `round 17: a status write through an attribute bound handle` |
+| **Certainty is block ancestry, not line order** (false FAIL guard): a duplicated unpack target that ends fresh, and a relayed handle that is certainly overwritten. | self-tests `round 17: a duplicated unpack target that ends fresh`, `round 17: a relayed handle that is certainly overwritten` |
+
+The same family, one round later: the three mutants above are green at round
+16 and red at round 17 (probe `if` / sibling-scope / shadowed-constructor:
+`withdrawn=[]` before, `['md']` after).
