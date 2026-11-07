@@ -28,7 +28,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import baseline_passed
+from negative_selection import baseline_passed, registered
 from negative_process import (mutating_sources, run_owned, wait_for_slot)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -291,28 +291,27 @@ def main():
     if not os.environ.get("CARGO_TARGET_DIR"):
         print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
         return 2
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    # Refusals happen before the evidence directory is claimed: a drifted
+    # roster is a "never started" (2), which must not leave `out/` behind.
     selected = set(sys.argv[2:])
     data_names = {"memory-gateway-oracle-truncated"}
     # #1456: a row deleted from this table must not silently shrink the run.
-    roster = tuple(row[0] for row in mutations) + ("memory-gateway-oracle-truncated",)
-    if len(roster) != len(EXPECTED_NAMES) or any(
-        str(live) != pinned for live, pinned in zip(roster, EXPECTED_NAMES)
-    ):
-        # `str(live)` also covers a row whose name line was deleted: the tuple
-        # then starts with the mutated path, and the run must still be refused
-        # with this message instead of a TypeError.
-        print(
-            "mutation roster drifted from EXPECTED_NAMES: live="
-            f"{[str(name) for name in roster]}",
-            file=sys.stderr,
-        )
+    # Reuse the shared roster check (`negative_selection.registered`, the same
+    # one `memory-maintenance` uses) over the source rows; the data mutation is
+    # the last pinned name because it runs outside `mutations`.
+    try:
+        registered(mutations, EXPECTED_NAMES[:-1])
+        if EXPECTED_NAMES[-1] != "memory-gateway-oracle-truncated":
+            raise ValueError("static roster must end with the data mutation")
+    except ValueError as error:
+        print(f"mutation roster drifted: {error}", file=sys.stderr)
         return 2
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
+    out = Path(sys.argv[1]).resolve()
+    out.mkdir(parents=True, exist_ok=False)
     rows = [row for row in mutations if not selected or row[0] in selected]
     paths = sorted({row[1] for row in rows} | {ORACLE})
     results = []
@@ -438,6 +437,18 @@ def main():
     (out / "summary.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    # #1456 (codex sibling P1, second round): the roster literal alone only
+    # proves the *source* table is intact. The data mutation runs in its own
+    # branch, so deleting that branch shrank the run while the roster still
+    # matched. Require one verdict per name in the selected scope.
+    expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
+    recorded = [row["name"] for row in results if row["name"] in set(EXPECTED_NAMES)]
+    if recorded != expected:
+        print(
+            f"verdict roster mismatch: recorded={recorded} expected={expected}",
+            file=sys.stderr,
+        )
+        return 1
     counts = {
         state: sum(row["status"] == state for row in results)
         for state in ("KILLED", "SURVIVED", "INVALID")
