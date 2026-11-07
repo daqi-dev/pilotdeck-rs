@@ -1449,6 +1449,97 @@ fn unmigrated_rejection_order_is_deterministic() {
     );
 }
 
+// #1853: the fail-closed key-set trichotomy over the channel tables. Every
+// `CHANNEL_LOADER_KEYS` entry must be exactly one of: an unmigrated rejection
+// key (`UNMIGRATED_CHANNEL_KEYS`), or a loader-subset key whose implementation
+// module has landed (#1333 apiServer, #1334 webhook, #1336 wecomCallback,
+// #1339 sms, #1343 bluebubbles) while the loader-family assembly wiring is
+// still pending (`load_enabled_channels` has no production call, #1763 §1;
+// #2301 is the terminal unit). A key in neither group is silently skipped by
+// the native assembly today — not rejected, not constructed, no TS fallback —
+// which is the transition difference `A8.3-CHANNEL-LOADER-SUBSET-001`
+// registers. The silent group is pinned as data on purpose: deriving it as the
+// set difference would absorb any future loader-table key into the skip and
+// keep this test green.
+#[test]
+fn loader_keys_partition_rejected_and_silent_subset() {
+    // The silent-skip group as of this entry (decision A, 2026-11-08).
+    const SILENT_SUBSET_KEYS: [&str; 5] = [
+        "wecomCallback",
+        "sms",
+        "apiServer",
+        "webhook",
+        "bluebubbles",
+    ];
+    let rejected: Vec<&str> = CHANNEL_LOADER_KEYS
+        .iter()
+        .copied()
+        .filter(|key| UNMIGRATED_CHANNEL_KEYS.contains(key))
+        .collect();
+    crate::negative_assert_eq!(
+        rejected.len(),
+        10,
+        "#1853 ten loader keys sit in the unmigrated rejection table"
+    );
+    // Covering: every loader key belongs to exactly one of the two groups.
+    // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
+    // without joining either group lands here, not inside a silent set
+    // difference that would absorb it.
+    let mut unassigned = Vec::new();
+    for key in CHANNEL_LOADER_KEYS {
+        if !UNMIGRATED_CHANNEL_KEYS.contains(&key) && !SILENT_SUBSET_KEYS.contains(&key) {
+            unassigned.push(key);
+        }
+    }
+    crate::negative_assert!(
+        unassigned.is_empty(),
+        "#1853 every loader key is rejected or silent-subset"
+    );
+    // Reverse closure: a rejection-table entry that is neither a loader key
+    // nor one of the two bundle-built strict keys refuses configs TS accepts.
+    for key in UNMIGRATED_CHANNEL_KEYS {
+        crate::negative_assert!(
+            CHANNEL_LOADER_KEYS.contains(key) || STRICT_TRUE_CHANNEL_KEYS.contains(key),
+            "#1853 every rejection-table key is a loader key or a strict bundle key"
+        );
+    }
+    // Bundle side: the two `ChannelAdapterBundle` keys live outside the loader
+    // table; both are implemented and constructed at startup (`weixin` through
+    // `create_startup_weixin`, `feishu` since #1329), and
+    // `native_process::channels_tests::bundle_keys_match_the_assembly` pins
+    // `BUNDLE_CHANNEL_KEYS == IMPLEMENTED_BUNDLE_CHANNEL_KEYS`.
+    for key in BUNDLE_CHANNEL_KEYS {
+        crate::negative_assert!(
+            !CHANNEL_LOADER_KEYS.contains(key),
+            "#1853 bundle keys stay outside the loader table"
+        );
+    }
+    // The behavior grid the partition describes, one cell per class; the
+    // exhaustive per-key families are the tests above and the real-entrypoint
+    // suites in `native_process::channels_tests`:
+    // - rejected: enabling refuses, naming the key (also
+    //   `startup_refuses_every_unmigrated_channel`);
+    // - silent-subset: not refused today — #1853 过渡差异，终态见 #2301（also
+    //   `unmigrated_subset_channels_stay_loadable`）;
+    // - implemented: constructed at startup (`weixin` in
+    //   `startup_gate_requires_strict_boolean_true`, `feishu` in
+    //   `startup_builds_the_enabled_feishu_channel`).
+    for key in &rejected {
+        assert_rejects_unmigrated(key);
+    }
+    for key in SILENT_SUBSET_KEYS {
+        let adapters = enabled_adapters(&[key]);
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            "#1853 silent-subset key is not refused by the unmigrated gate"
+        );
+        crate::negative_assert!(
+            !BUNDLE_CHANNEL_KEYS.contains(&key),
+            "#1853 silent-subset key is not a bundle key"
+        );
+    }
+}
+
 /// #1738: `ActiveChat::admit` is the single place that decides "this turn owns
 /// the chat". The webhook path needs the decision to come from the `insert`
 /// itself (its `contains` check runs in an earlier lock section, across the
