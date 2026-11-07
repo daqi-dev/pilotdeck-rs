@@ -19,6 +19,7 @@ under the same node binary) is BLOCKED the same way.
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -59,6 +60,14 @@ def runtime_blockage():
                                    ('process.versions.uv', UV_PIN, 'libuv')):
         try:
             probe = run_owned(['node', '-p', probe_expr], timeout=60)
+        except subprocess.TimeoutExpired:
+            # #2248 review r2 (sibling#7/concurrency#1/boundary#1): a hung
+            # probe is the same failure class as an unspawnable one — the
+            # environment is unverifiable, so it is a BLOCKED, never a bare
+            # traceback that the caller would read as exit 1 "control failure".
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node -p timed out after 60s); the pinned runtime '
+                    f'is unverified, treating the environment as blocked')
         except OSError as exc:
             # #2248 review boundary#1: an unspawnable probe must fail closed —
             # "cannot verify the environment" is a BLOCKED, not a pass.
