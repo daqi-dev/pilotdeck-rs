@@ -67,7 +67,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 
     **`params` 整体为 `null` / `undefined`（本条新登记，按方法分开）**：**rename / tag** 上 TS 先求值 `input.projectKey`（`createLocalGateway.ts:1130` / `:1117` 的实参），报 `TypeError: Cannot read properties of null (reading 'projectKey')`（表达式级实测，见机器判据）；Rust 的 `require_session_key` 先跑，`input_property`（`methods/mod.rs:121-126`）读 `sessionKey`，报 `…(reading 'sessionKey')`（`session_dir.rs:892-903` 钉的是这道守卫本身），**两侧键名不同**。**delete 不同（限挂了该钩子的 `createLocalGateway` 链）**：钩子是**条件调用**——`if (this.options.deleteEphemeralSession && await …)`（`InProcessGateway.ts:2230`），而 option 本身可选（`:312`）。基线有两个 IPG 构造点：`createLocalGateway.ts:1021` 挂了钩子（实现 `:1417`），`createGateway`（`Gateway.ts:45-72`）两个 delete option **都不挂**，`deleteSession(null)` 的首错是 `CAPABILITY_UNAVAILABLE`（`InProcessGateway.ts:2234-2236`）——两种都不是 `projectKey`。在 `createLocalGateway` 链上，钩子实现是 `(input) => registry.deleteEphemeralSession(input.sessionKey)`（`createLocalGateway.ts:1417`）：`input` 为 `null` 时它先读 `input.sessionKey`，所以首错键名**与 Rust 相同**（**读码推断，未实测**；端到端未经探针覆盖）。`session_dir.rs:892-893` 的注释只描述守门自身的形状，不是 TS 端到端首错的断言。
 
-    **`resume` / `close` 的 `params=null` 单列（不在上表）**：`resumeSession` 原样 `return input`（`InProcessGateway.ts:2026-2028`），TS 这一层不回错；Rust `session_resume`（`session_dir.rs:179`）先跑守卫 → `(reading 'sessionKey')` **拒绝**——家族里**结果类别**差异最大的一格。`closeSession` 求值实参 `this.router.close(input.sessionKey)`（`:2049-2050`）时即抛 `(reading 'sessionKey')`，与 Rust `session_close`（`:214`）**同键名**。两格都**缺请求级端到端用例**：TS 半边是**读码推断**（探针只覆盖 `projectKey` / `sessionKey` 两个门表达式，未跑 `params=null` 的端到端）；Rust 半边已被守卫级用例逐字钉死（`session_dir.rs:894-903` 的 `a_null_params_object_reports_the_optional_chain_read_error` 断言 `gateway_request_failed` / `Cannot read properties of null (reading 'sessionKey')`），只是没有请求级用例钉住「派发到守卫」这一步（见 #2090）。
+    **`resume` / `close` 的 `params=null` 单列（不在上表）**：`resumeSession` 原样 `return input`（`InProcessGateway.ts:2026-2028`），TS 这一层不回错；Rust `session_resume`（`session_dir.rs:179`）先跑守卫 → `(reading 'sessionKey')` **拒绝**——家族里**结果类别**差异最大的一格。`closeSession` 求值实参 `this.router.close(input.sessionKey)`（`:2049-2050`）时即抛 `(reading 'sessionKey')`，与 Rust `session_close`（`:214`）**同键名**。两格都**缺请求级端到端用例**：TS 半边是**表达式级实测**（见机器判据的 `resume(null)` / `close(null)` 两行，照录方法体与实参求值，不是端到端）；Rust 半边已被守卫级用例逐字钉死（`session_dir.rs:894-903` 的 `a_null_params_object_reports_the_optional_chain_read_error` 断言 `gateway_request_failed` / `Cannot read properties of null (reading 'sessionKey')`），只是没有请求级用例钉住「派发到守卫」这一步（见 #2090）。
 
     与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
   - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。Rust 侧相反：`session_resume`（`session_dir.rs:179`）先跑 `require_session_key`，空白 / 缺键答 `INVALID_SESSION_KEY`（请求级用例 `resume_session_rejects_blank_session_key`，`:848-862`）。
@@ -182,11 +182,15 @@ $ node -e 'const gate=(input)=>{ const pk = input.projectKey ?? "/fb"; return pk
 ["null","TypeError","Cannot read properties of null (reading 'projectKey')"]
 ["null-sessionKey-gate","TypeError","Cannot read properties of null (reading 'sessionKey')"]
 ["delete-hook-shape","TypeError","Cannot read properties of null (reading 'sessionKey')"]
+$ node -e 'const resume=(input)=>{ return input; }; try { console.log(JSON.stringify(["resume(null)","RETURN",resume(null)])) } catch(e) { console.log(JSON.stringify(["resume(null)","THROW",e.name,e.message])) } const closeArg=(input)=>input.sessionKey; try { console.log(JSON.stringify(["close(null)","RETURN",String(closeArg(null))])) } catch(e) { console.log(JSON.stringify(["close(null)","THROW",e.name,e.message])) } console.log(process.version)'
+["resume(null)","RETURN",null]
+["close(null)","THROW","TypeError","Cannot read properties of null (reading 'sessionKey')"]
+v22.22.0
 $ python3 -I scripts/gateway-parity/check_frozen.py --base origin/main
 {"status": "PASS", "failures": [], "entries": 30}
 ```
 
-`params=null` 那一行走的是 `projectKey` 门（报文 `(reading 'projectKey')`），只是探针把它排在 `== sessionKey ==` 分节末尾；sessionKey 门与 delete 钩子形状的 `params=null` 见上面 `node -e` 段的 `null-sessionKey-gate` / `delete-hook-shape` 两行，都是**表达式级**实测（照录表达式，不是端到端）。`-R7:30` 的「同形状」只覆盖缺键 / `null` / 空白 / U+FEFF / 非字符串 / 孤立代理项六项，不含 `params=null`。
+`params=null` 那一行走的是 `projectKey` 门（报文 `(reading 'projectKey')`），只是探针把它排在 `== sessionKey ==` 分节末尾；sessionKey 门与 delete 钩子形状的 `params=null` 见上面 `node -e` 段的 `null-sessionKey-gate` / `delete-hook-shape` 两行，`resume` / `close` 两个形状见紧接的 `resume(null)` / `close(null)` 两行——都是**表达式级**实测（照录表达式，不是端到端）。`resume` 那行照录的是 `resumeSession` 的整个方法体（`InProcessGateway.ts:2026-2028`），`close` 那行照录的是 `closeSession` 求值实参那一处裸读（`:2050` 的 `input.sessionKey`），不含其后的 `router.close` 与三项清理。`-R7:30` 的「同形状」只覆盖缺键 / `null` / 空白 / U+FEFF / 非字符串 / 孤立代理项六项，不含 `params=null`。
 
 探针的 **stderr 另有两行** `ExperimentalWarning: Transform Types is an experimental feature…`（`--experimental-transform-types` 自带），与判据无关，上面只转录 stdout。探针脚本 `probe.mjs` 的 BOM 用例已从裸字面量改成 `"\uFEFF"` 转义（输出逐字节不变，实测 diff 为空），避免不可见字符在文件被改写时静默退化。脚本在 `_tmp/`，不属本 PR 补丁。
 
