@@ -97,6 +97,17 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 
 `turn-submit/negative.py` 保留 57 个变异和 `baseline`，`failure-guard/negative.py` 保留 22 个变异和 `baseline-pure/baseline-submit`。两者支持 `--check`；运行参数仍为 `output [case ...]`，抽样总带正控，重复/未知选择拒绝。旧判分器不再参与迁后 runner：`_negkit/submit.py` 只复用 `negative_process` 的 HEAD 源码守卫和进程所有权工具，不复用旧判分和摘要发布。未提交的产品改动不能用 `PDRS_NEGATIVE_BASELINE` 或其他 git 对象放行。
 
+> **现状（#2106 实测）**：`negative_process` 共享 runner 入口（如 `config-store`、`turn-runner` 等）的
+> `PDRS_NEGATIVE_BASELINE` 候选基线逃生口在**冷 `CARGO_TARGET_DIR` 上不可用**：冷 target 上
+> `negative_process._ensure_workspace_scanner` bootstrap scanner 前按字面 `HEAD` 校验
+> `src`/`.cargo`/`rust-toolchain*`，非 HEAD 候选即使已通过外层 `mutating_sources` 对其基线的
+> 逐字节校验，也在这里被 `SourceBaselineError` 拒绝（rc=1，fail-closed，不产生假 PASS）。
+> 暖 target（scanner 已预建）不受影响，逃生口可用；候选 diff 完全落在上述区域之外时冷 target
+> 也不受影响。另两项实测边界：候选必须先把改动 `git add` 进 index——`_assert_input_areas` 的
+> `--cached` 腿要求 index 等于基线提交，未暂存候选在冷、暖 target 上都会被外层基线断言拒绝；
+> `_negkit/submit.py` 本身仍然禁用该变量（本目录政策不变）。终局口径未定（放宽 bootstrap
+> 校验，或把 `PDRS_NEGATIVE_BASELINE` 限定为暖 target 专用并文档化），登记在 #2106。
+
 适配器要求三个显式绝对环境路径。`PDRS_BASELINE` 还须是 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的检出目录；保留调用方 `CARGO_HOME`、`CARGO_TARGET_DIR`，不自建构建目录。每个变异执行正控→应用变异→`cargo test --no-run`→精确测试→恢复字节→恢复正控；编译失败和普通执行异常也检查恢复正控。正控异常支配后续关联 case 为 INVALID，但其余诊断仍执行。取消交给外层 HEAD 守卫还原，恢复核验后才发布摘要。
 
 契约增加三种显式迁移形式，默认 `Case` 的严格断言规则不变：
