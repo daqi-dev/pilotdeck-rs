@@ -291,15 +291,19 @@ fn file(path: &Path, label: &str) -> Result<PathBuf, ProxyError> {
     Ok(path)
 }
 
-/// #2036: one rule for every argv path field. Node's argv is a JS string, so the
-/// TS baseline can only ever name these paths by their UTF-8 spelling; a raw
-/// byte spelling is a branch no client can reach. Worse, the gateway keeps the
-/// raw `PathBuf` while children get `to_string_lossy` (`HOME`, `PILOT_HOME`, the
-/// sidecar command line), so raw bytes silently split one path into two
-/// directories. Refuse them at parse with the field's name. Callers pass the
-/// value that actually lands in `Options` — the canonical path for the
-/// filesystem fields, since resolution can surface raw bytes even from a UTF-8
-/// argv.
+/// #2036: one rule for every argv path field that reaches a lossy consumer.
+/// Node's argv is a JS string, so the TS baseline can only ever name these
+/// paths by their UTF-8 spelling; a raw byte spelling is a branch no client can
+/// reach. Worse, the gateway keeps the raw `PathBuf` while children get
+/// `to_string_lossy` (`HOME`, `PILOT_HOME`, the sidecar command line), so raw
+/// bytes silently split one path into two directories. Refuse them at parse with
+/// the field's name. Callers pass the value that actually lands in `Options` —
+/// the canonical path for the filesystem fields, since resolution can surface
+/// raw bytes even from a UTF-8 argv.
+///
+/// `--token-file` is deliberately exempt: `run()` reads it as a raw `PathBuf`
+/// (`read_to_string`) and it never reaches a lossy consumer, so raw bytes there
+/// cannot split one path into two.
 fn utf8_argument<'a>(value: &'a std::ffi::OsStr, label: &str) -> Result<&'a str, ProxyError> {
     value
         .to_str()
