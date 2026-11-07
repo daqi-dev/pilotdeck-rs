@@ -279,10 +279,10 @@ mutations.append(('snapshot-get-provider-ignored', CAPABILITIES,
 mutations.append(('snapshot-restore-provider-ignored', CAPABILITIES,
                   'Capability { name: "snapshot_restore", methods: &[], wired: snapshots }',
                   'Capability { name: "snapshot_restore", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
-# #1352: `expected` is now derived from `contract`, so renaming a name inside
-# `contract` no longer trips the subset check (both sides move together). The
-# kill lands on the exact-set assert instead — `expected` gains the renamed
-# entry while the advertisement keeps the real one.
+# #1352: `expected` is now derived from `contract`, so a rename inside
+# `contract` moves both sides of the old subset comparison. This test's guard
+# is the exact-set assert (it also owns the `#1231 exact wired capability set`
+# marker); the disabled-state subset check belongs to the two tests below.
 mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 exact wired capability set'))
 # #1869 item 2: `assert_ts_capability_subset` also checks
 # `contract.emptyStorage` / `contract.missingStorage`, but the only ORACLE
