@@ -165,13 +165,19 @@ pub struct GatewayUserDialogBus {
     /// the same validator handle (#1599).
     next_generation: u64,
     generations: HashMap<(JsString, JsString), u64>,
-    /// Registration number the entry last consumed under a `(session,
-    /// requestId)` key belonged to (#2027). Without it a missing entry is
-    /// ambiguous: a poll cannot tell "another registration took the id" (its
-    /// waiter will never be answered, so it must be ended) from "the
-    /// registration's own consumer already took the entry and is about to
-    /// answer it" (ending it would drop that answer).
-    taken: HashMap<(JsString, JsString), u64>,
+    /// Registration numbers whose entries were consumed under a `(session,
+    /// requestId)` key and whose answers may still be in flight (#2027).
+    /// Without them a missing entry is ambiguous: a poll cannot tell "another
+    /// registration took the id" (its waiter will never be answered, so it
+    /// must be ended) from "the registration's own consumer already took the
+    /// entry and is about to answer it" (ending it would drop that answer).
+    ///
+    /// This is a set, not the last generation: a same-id registration that
+    /// publishes while an older answer is in flight can be consumed too, and
+    /// overwriting the older record would make that in-flight answer look
+    /// like a take-over. `forget_taken` drops one registration's record once
+    /// its waiter settles, so the map does not grow with dialog count.
+    taken: HashMap<(JsString, JsString), Vec<u64>>,
 }
 impl GatewayUserDialogBus {
     /// Legacy observer-coupled constructor: connected iff a change observer is
@@ -332,9 +338,16 @@ impl GatewayUserDialogBus {
             .unwrap_or_default();
         // Remember which registration owned the entry that just went away: a
         // poll that finds no entry can then tell a take-over from its own
-        // in-flight answer (#2027).
-        self.taken
-            .insert((session.clone(), request.clone()), generation);
+        // in-flight answer (#2027). Later consumes under the same id append
+        // instead of overwriting, because their answers can be in flight at
+        // the same time.
+        let taken = self
+            .taken
+            .entry((session.clone(), request.clone()))
+            .or_default();
+        if !taken.contains(&generation) {
+            taken.push(generation);
+        }
         self.emit(object([
             ("type", "settled".into()),
             ("sessionKey", JsValue::String(session.clone())),
@@ -399,8 +412,18 @@ impl GatewayUserDialogBus {
         self.generations
             .insert((session.clone(), request_id.clone()), generation);
         // The entry is back, so the rollback of a failed settle hook also
-        // rolls back the "this id was consumed" record (#2027).
-        self.taken.remove(&(session.clone(), request_id.clone()));
+        // rolls back this registration's "answer in flight" record (#2027).
+        // Only its own generation: a same-id registration consumed while the
+        // hook ran still has an answer on the way and must stay visible.
+        let key = (session.clone(), request_id.clone());
+        if let Some(taken) = self.taken.get_mut(&key) {
+            if let Some(index) = taken.iter().position(|value| *value == generation) {
+                taken.remove(index);
+            }
+            if taken.is_empty() {
+                self.taken.remove(&key);
+            }
+        }
         if let Some(lease) = lease {
             self.leases.insert((session.clone(), request_id), lease);
         }
@@ -433,15 +456,32 @@ impl GatewayUserDialogBus {
         self.peek(session, request).is_some() && !self.pending_matches(session, request, generation)
     }
 
-    /// Whether the entry last taken from `request` belonged to registration
-    /// `generation` (#2027). Only a consumer that took this registration's own
-    /// dialog will answer its waiter, so a poll that finds the id gone must
-    /// not end it; any other consumer (or another registration taking the id)
-    /// leaves the waiter with nothing to answer through.
+    /// Whether an entry taken from `request` belonged to registration
+    /// `generation` and its answer may still be in flight (#2027). Only a
+    /// consumer that took this registration's own dialog will answer its
+    /// waiter, so a poll that finds the id gone must not end it; any other
+    /// consumer (or another registration taking the id) leaves the waiter with
+    /// nothing to answer through.
     pub fn consumed_own(&self, session: &JsString, request: &JsString, generation: u64) -> bool {
         self.taken
             .get(&(session.clone(), request.clone()))
-            .is_some_and(|taken| *taken == generation)
+            .is_some_and(|taken| taken.contains(&generation))
+    }
+
+    /// Drops registration `generation`'s "answer in flight" record (#2027).
+    /// Called once its waiter has settled: from then on nothing can be
+    /// answered through that registration, and keeping the record would make
+    /// the map grow with the number of dialogs the gateway ever served.
+    pub fn forget_taken(&mut self, session: &JsString, request: &JsString, generation: u64) {
+        let key = (session.clone(), request.clone());
+        if let Some(taken) = self.taken.get_mut(&key) {
+            if let Some(index) = taken.iter().position(|value| *value == generation) {
+                taken.remove(index);
+            }
+            if taken.is_empty() {
+                self.taken.remove(&key);
+            }
+        }
     }
 
     /// As in TS this does not validate values: callers must call `accepts`
@@ -497,7 +537,10 @@ impl GatewayUserDialogBus {
         for entry in &entries {
             let key = (session.clone(), entry.request_id.clone());
             let generation = self.generations.remove(&key).unwrap_or_default();
-            self.taken.insert(key, generation);
+            let taken = self.taken.entry(key).or_default();
+            if !taken.contains(&generation) {
+                taken.push(generation);
+            }
         }
         self.generations.retain(|(key, _), _| key != session);
         entries
