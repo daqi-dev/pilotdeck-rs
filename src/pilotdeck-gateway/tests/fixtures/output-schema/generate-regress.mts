@@ -144,5 +144,8 @@ const oracle = {
 };
 fs.mkdirSync(outDir, {recursive: true});
 const target = path.join(outDir, 'regress-oracle.json');
-fs.writeFileSync(target, `${JSON.stringify(oracle, null, 2)}\n`);
+// 'wx' refuses to clobber an existing oracle, like generate.mjs: a stale or
+// half-finished run must never be mistaken for (or silently overwrite) a
+// committed golden.
+fs.writeFileSync(target, `${JSON.stringify(oracle, null, 2)}\n`, {flag: 'wx'});
 console.log(`wrote ${target}: ${observed.length} cases`);

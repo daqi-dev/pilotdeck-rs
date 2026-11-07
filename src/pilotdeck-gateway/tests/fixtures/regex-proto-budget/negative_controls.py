@@ -16,9 +16,13 @@ Commit first: mutating_sources proves engine.rs equals HEAD before anything is
 written. Every mutant must pass `cargo test --no-run` before its negative run;
 the bound test must pass before and after each mutation (restored bytes are
 re-verified by the guard). All mutants run before the summary; any verdict
-other than KILLED exits non-zero. The caller must set CARGO_TARGET_DIR (and
-the cargo slot gate's bin dir on PATH); an expired anchor fails the row as
-INVALID, which also exits non-zero.
+other than KILLED exits non-zero (verdict_exit: at least one row and all
+KILLED). Mutants are published and restored with write_source_atomic (#1903),
+never a truncating in-place write. Startup refusals -- unknown or duplicate
+mutation names, a roster that no longer matches the static EXPECTED_NAMES
+list, a missing CARGO_TARGET_DIR -- exit 2 ("never started", #1734). The
+caller must set CARGO_TARGET_DIR (and the cargo slot gate's bin dir on PATH);
+an expired anchor fails the row as INVALID, which also exits non-zero.
 
 Usage:
   negative_controls.py OUT [mutation names]
@@ -33,7 +37,8 @@ root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 from negative_process import (mutating_sources, new_output_directory,
-                              run_owned, wait_for_slot)
+                              run_owned, wait_for_slot, write_source_atomic)
+from negative_selection import refuse, registered, verdict_exit
 from negative_suite import classify, passed
 from _negative_common import mutate
 
@@ -71,14 +76,29 @@ cases = [
      '#1265 a fresh budget must not inherit the previous request\'s exhaustion'),
 ]
 
+# The denominator of this run is a static literal (#1734): deleting, renaming
+# or duplicating a row is a startup refusal, not a shorter green run.
+EXPECTED_NAMES = (
+    'interrupt-decrement-removed',
+    'exhaustion-downgraded-to-no-match',
+    'budget-unarmed-between-requests',
+)
+try:
+    registered(cases, EXPECTED_NAMES)
+except ValueError as error:
+    refuse(f'#1265 {error}')
+
 args = sys.argv[1:]
+if not args:
+    refuse('usage: negative_controls.py OUT [mutation names]')
 names = set(args[1:])
-if names - {case[0] for case in cases}:
-    raise SystemExit('unknown mutation: ' + ', '.join(sorted(names - {c[0] for c in cases})))
+unknown = names - set(EXPECTED_NAMES)
+if unknown:
+    refuse('unknown mutation: ' + ', '.join(sorted(unknown)))
 chosen = [case for case in cases if not names or case[0] in names]
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR'):
-    raise SystemExit('caller must set CARGO_TARGET_DIR')
+    refuse('#1265 caller must set CARGO_TARGET_DIR')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
            CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
 out = new_output_directory(Path(args[0]))
@@ -109,7 +129,7 @@ with mutating_sources(root, [engine]) as originals:
                 raise ValueError('mutation leaves the source unchanged')
             if not passed(run(f'{name}-positive', test), test):
                 raise RuntimeError('bound positive test failed')
-            path.write_text(changed)
+            write_source_atomic(root, path, changed.encode())
             if run(f'{name}-compile', compile_only=True).returncode:
                 raise RuntimeError('mutant compile failed')
             row['compiled'] = True
@@ -121,7 +141,7 @@ with mutating_sources(root, [engine]) as originals:
         except Exception as error:
             row.update(reason=f'{type(error).__name__}: {error}')
         finally:
-            path.write_bytes(originals[path])
+            write_source_atomic(root, path, originals[path])
             if path.read_bytes() != originals[path]:
                 raise RuntimeError(f'byte restoration failed: {path}')
         try:
@@ -134,11 +154,15 @@ with mutating_sources(root, [engine]) as originals:
         print(f"{name}: {row['status']}: {row['reason']}", flush=True)
 
 # The summary is published only after the guard has restored and re-verified
-# every byte; a cancelled window never pairs a stale all-green file with rc=0.
+# every byte, and atomically (tmp + rename): a cancelled window never pairs a
+# stale or half-written all-green file with rc=0. The verdict is verdict_exit:
+# at least one row and every row KILLED, so an empty run can never exit 0.
 counts = {status: sum(row['status'] == status for row in results)
           for status in ('KILLED', 'SURVIVED', 'INVALID')}
-with (out / 'summary.json').open('x') as summary:
+summary_tmp = out / 'summary.json.tmp'
+with summary_tmp.open('x') as summary:
     json.dump(dict(controls=results, counts=counts), summary, indent=2)
     summary.write('\n')
+os.replace(summary_tmp, out / 'summary.json')
 print(json.dumps(counts), flush=True)
-raise SystemExit(int(any(row['status'] != 'KILLED' for row in results)))
+raise SystemExit(verdict_exit(results, key='status'))

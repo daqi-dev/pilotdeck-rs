@@ -20,14 +20,17 @@ const ORACLE: &str =
 /// The only verdict divergences between QuickJS-NG 0.16.2 (the engine behind
 /// rquickjs 0.14.0) and the Node v22.22.0 / V8 oracle across all 108 cases.
 ///
-/// V8 rejects a `u`-flag pattern that contains a *raw* lone surrogate code
-/// unit with `URIError: URI malformed` (Ajv records it as a compileError),
-/// while the escaped `^\uD800$` form is accepted. QuickJS accepts both, so the
-/// two `key` cases — whose patternProperties key carries the raw unit —
-/// compile on the engine where the SDK failed. The expected verdict pins the
-/// engine's own behaviour for those patterns (measured on the full replay
-/// run, `_tmp/20261107-issue-1265/s2-engine-full-dump.txt` in the task
-/// evidence directory), so this list fails loudly if either side changes.
+/// Both cases are `patternProperties` *key* positions carrying a raw lone
+/// surrogate code unit under the `u` flag, and the oracle records them as
+/// compileError; the very same raw units as a *value* pattern stay valid in
+/// the oracle (`utf16/raw-lone-pattern/value/*` have no `compileError` key),
+/// so the divergence axis is the key position, not merely the presence of
+/// a raw unit (the escaped `^\uD800$` form is accepted everywhere). QuickJS
+/// compiles both forms, so the two `key` cases run on the engine where the
+/// SDK failed. The expected verdict pins the engine's own behaviour for
+/// those patterns (measured on the full replay run,
+/// `_tmp/20261107-issue-1265/s2-engine-full-dump.txt` in the task evidence
+/// directory), so this list fails loudly if either side changes.
 const KNOWN_COMPILE_DIVERGENCES: &[(&str, &str)] = &[
     ("utf16/raw-lone-pattern/key/positive", "matched"),
     ("utf16/raw-lone-pattern/key/negative", "no-match"),
@@ -154,8 +157,16 @@ fn replays_the_108_case_regress_oracle() {
             Ok(compiled) => {
                 if let Some((_, expected_verdict)) = known {
                     // Known divergence: the SDK rejected the raw-unit pattern
-                    // (URIError) where QuickJS compiles it. Pin the engine's
-                    // verdict so the documented difference stays measurable.
+                    // (URIError) where QuickJS compiles it. The SDK side must
+                    // still carry its compileError — if a future SDK accepts
+                    // the key pattern, the "only two divergences" claim is
+                    // stale even though the count would still be 2.
+                    if !expected_compile_error {
+                        divergences.push(format!(
+                            "{id}: known-divergence case no longer reports the SDK compile error"
+                        ));
+                        continue;
+                    }
                     let mut budget = MatchBudget::new(u64::MAX);
                     let actual = match engine
                         .exec(&compiled, &subject, &mut budget)
