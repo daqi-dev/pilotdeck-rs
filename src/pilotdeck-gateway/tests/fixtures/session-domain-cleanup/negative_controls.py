@@ -4506,6 +4506,173 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    ('calibrate-for-target-call-attribute', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _h.__call__('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-call-attribute-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = _h.__call__\n"
+      "    _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-false-filter-write', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _g = [_m for _m in (md,)"
+      " if setattr(_m, 'common', object()) if False]\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-clear', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = object()\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-with-suppress', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    with suppress(ValueError):\n"
+      "        raise ValueError()\n"
+      "        _h = object()\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-shadow', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        print = _sink\n"
+      "        print(_h)\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-lambda-default', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _f = lambda _x=_h('common', object()): None\n"
+      "    _f()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-def', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        def _h():\n"
+      "            pass\n"
+      "    _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-method-self', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    _x = _h.__self__\n"
+      "    _x.common = object()\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -5400,6 +5567,78 @@ def calibrate_for_target_comp_element_call(rows):
         'passed=False')
 
 
+def calibrate_for_target_call_attribute(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-call-attribute."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-call-attribute flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_call_attribute_alias(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-call-attribute-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-call-attribute-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_false_filter_write(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-false-filter-write."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-false-filter-write flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_clear(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-clear."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-clear flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_with_suppress(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-with-suppress."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-with-suppress flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_shadow(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-shadow."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-shadow flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_lambda_default(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-lambda-default."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-lambda-default flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_def(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-class-body-def."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-def flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_method_self(rows):
+    """#1953 fix-r1 round 10: calibrate-for-target-method-self."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-method-self flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -6144,6 +6383,24 @@ JUDGES = {
         'aggregation-audit', calibrate_for_target_ambiguous_literal, False, ()),
     'calibrate-for-target-comp-element-call': (
         'aggregation-audit', calibrate_for_target_comp_element_call, False, ()),
+    'calibrate-for-target-call-attribute': (
+        'aggregation-audit', calibrate_for_target_call_attribute, False, ()),
+    'calibrate-for-target-call-attribute-alias': (
+        'aggregation-audit', calibrate_for_target_call_attribute_alias, False, ()),
+    'calibrate-for-target-false-filter-write': (
+        'aggregation-audit', calibrate_for_target_false_filter_write, False, ()),
+    'calibrate-for-target-class-body-clear': (
+        'aggregation-audit', calibrate_for_target_class_body_clear, False, ()),
+    'calibrate-for-target-with-suppress': (
+        'aggregation-audit', calibrate_for_target_with_suppress, False, ()),
+    'calibrate-for-target-class-body-shadow': (
+        'aggregation-audit', calibrate_for_target_class_body_shadow, False, ()),
+    'calibrate-for-target-lambda-default': (
+        'aggregation-audit', calibrate_for_target_lambda_default, False, ()),
+    'calibrate-for-target-class-body-def': (
+        'aggregation-audit', calibrate_for_target_class_body_def, False, ()),
+    'calibrate-for-target-method-self': (
+        'aggregation-audit', calibrate_for_target_method_self, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')

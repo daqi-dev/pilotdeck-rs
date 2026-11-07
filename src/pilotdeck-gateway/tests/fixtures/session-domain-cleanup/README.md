@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 281 mutants:
+`JUDGES`, keyed by the same names. The current table has 290 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -454,7 +454,14 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-outer-shadow-fresh`,
 `calibrate-for-target-outer-shadow-print`,
 `calibrate-for-target-ambiguous-literal`,
-`calibrate-for-target-comp-element-call`.
+`calibrate-for-target-comp-element-call`,
+`calibrate-for-target-call-attribute`,
+`calibrate-for-target-call-attribute-alias`,
+`calibrate-for-target-false-filter-write`,
+`calibrate-for-target-class-body-clear`, `calibrate-for-target-with-suppress`,
+`calibrate-for-target-class-body-shadow`,
+`calibrate-for-target-lambda-default`, `calibrate-for-target-class-body-def`,
+`calibrate-for-target-method-self`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1271,3 +1278,24 @@ because a mutant can only prove the gate fires, never that it stays quiet.
 | Parameter shadows a module-level literal (false FAIL guard). | self-test `round 9: a parameter that shadows a module-level literal` |
 | `del h` ends the name instead of using it (false FAIL guard). | self-test `round 9: a deleted loop target` |
 | Statically false comprehension filter (false FAIL guard). | self-test `round 9: a comprehension whose filter can never hold` |
+
+### Closed by `fix-r1` round 10 (codex r6 five P0 / four P1, GLM boundary r6)
+
+Round 9's flat scan is kept; round 10 fixes the places where it confused a
+*namespace* with a scope and a *certain* statement with a reachable one.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **Attribute load that forwards the handle**: `h.__call__(<stub>)`, `f = h.__call__`. | `calibrate-for-target-call-attribute`, `calibrate-for-target-call-attribute-alias` |
+| **Statically false filter still evaluates what precedes it**: `[m for m in (md,) if setattr(m, 'common', <stub>) if False]`. | `calibrate-for-target-false-filter-write` |
+| **Class-body rebinding clears the outer handle**: `class C: h = object()` then `h(...)`. | `calibrate-for-target-class-body-clear` |
+| **`with` body is not provably executed** (the context manager may raise). | `calibrate-for-target-with-suppress` |
+| **Class body shadows a read-only builtin for its own expressions**. | `calibrate-for-target-class-body-shadow` |
+| **Lambda default writes at creation time**: `f = lambda x=h('common', <stub>): None`. | `calibrate-for-target-lambda-default` |
+| **Class-body `def` binds its name in the class namespace**, not the enclosing function. | `calibrate-for-target-class-body-def` |
+| **The bound object behind a method**: `x = h.__self__; x.common = <stub>`. | `calibrate-for-target-method-self` |
+| Literal bound in another scope does not reach the loop (false FAIL guard). | self-test `round 10: a literal bound in another function` |
+| Comprehension target shadows the handle (false FAIL guard). | self-test `round 10: a comprehension target that shadows the handle` |
+| `finally` rebinding is provably executed (false FAIL guard). | self-test `round 10: a rebinding in a finally block` |
+| Tuple unpack copies the handle instead of handing it over (false FAIL guard). | self-test `round 10: a tuple unpack that copies the handle` |
+| Assertion message is only formatted on failure (false FAIL guard). | self-test `round 10: an assertion message` |
