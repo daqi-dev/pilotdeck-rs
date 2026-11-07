@@ -128,8 +128,9 @@ fn registry_matches_current_methods() {
         "reconnect_interaction",
         "elicitation_respond",
         "permission_decide",
-        // #1316: always-on is deferred (2026-11-05 rescope); the three
-        // methods answer honestly CAPABILITY_UNAVAILABLE.
+        // #1313 r1: always-on is wired back in (2026-11-08 lift of the
+        // 2026-11-05 #1475 deferral); the three methods answer the TS
+        // not-configured result envelopes.
         "always_on_apply",
         "always_on_abort",
         "always_on_rerun_plan",
@@ -178,9 +179,10 @@ fn registry_matches_current_methods() {
 // #1316 A7.8-pr1: reconcile the assembled session domain with the delivery
 // manifest. Every A7 delivery-package method must be dispatched — by a
 // registered family, or by the connection-owned submit/abort paths — with no
-// duplicates and no silent omissions. The three deferred always-on methods
-// stay in the manifest and in the registry for their honest
-// CAPABILITY_UNAVAILABLE rejection (2026-11-05 rescope).
+// duplicates and no silent omissions. The three always-on methods stay in the
+// manifest and in the registry for their TS not-configured result envelopes
+// (#1313; the 2026-11-05 CAPABILITY_UNAVAILABLE rescope was lifted on
+// 2026-11-08).
 #[test]
 fn session_domain_reconciles_with_coverage_manifest() {
     // A plain string literal keeps the #1166 build-input scanner working.
@@ -221,7 +223,7 @@ fn session_domain_reconciles_with_coverage_manifest() {
     for method in ["always_on_apply", "always_on_abort", "always_on_rerun_plan"] {
         negative_assert!(
             a7.contains(&method),
-            "#1316 deferred always-on method {method} stays in the manifest"
+            "#1313 always-on method {method} stays in the manifest"
         );
     }
 }
