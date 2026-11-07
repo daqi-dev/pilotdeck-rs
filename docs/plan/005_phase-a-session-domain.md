@@ -50,7 +50,7 @@ related: [plan/002_phase-a-gateway, plan/001_phase-c-agent-loop-sidecar, researc
 
 **粒度铁律**：每条 issue 对应一个独立可验收结果，不按 method 建几十条 issue；工程量大仍留在同一 issue 中拆小 PR。下列估算是静态调研的规划区间，不是源码事实或工期承诺。预计超过3天的 issue 不整条无人值守发车；每次只派一个 **0.5–3天**、有自己证据与回归的小 PR。如果表内某 PR 开工细化后超过3天，就继续按 provider/操作/配置分支在原 issue 内拆分，先补具体输入、输出、负例、依赖再派工，不以“基础设施”打包无限工作。依据为共享 `dev-launch/SKILL.md` §3 粒度铁律；本轮不执行其发车、评论、提交流程。
 
-每个代码 PR 通用完成条件：冻结文件检查、受影响 contract/负例、当前已有场景回归、CI check、原始输出与进程身份归档；按 CLAUDE.md 走非作者 simplify/pr-ready 和双谱系评审，无 P0/P1。依赖上的 P2 先清，阶段结束清一次 P2-跟进。未开启的原生组件可以合并，但默认代理回归不能退步、不能声称已接管。
+每个代码 PR 通用完成条件：冻结文件检查、受影响 contract/负例、当前已有场景回归、CI check、原始输出与进程身份归档；按 CLAUDE.md 走非作者 simplify/pr-ready 和双谱系评审，无 P0/P1。依赖上的 P2 先清，阶段结束清一次 P2-跟进：到点 P2 须有明确处置（已修 / 已并入 / 判定不修+理由；处置定义见 CLAUDE.md 问题分级，#2063 B），不要求全部修完。未开启的原生组件可以合并，但默认代理回归不能退步、不能声称已接管。
 
 **冻结与小PR不能互相打架**：A5若某个PR修改已冻结脚本或新增白名单内脚本，该PR须附变更理由、受影响规则、双评审及必要的人批，获准后在同PR登记新hash并采集对应证据；未获准就保持draft。不能让A5.1–A5.3先带冻结校验失败合并，再等A5.4补登记。A5.4是完整定标与最终口径确认；D4未决的语义变更单独留draft，不混入已批准的兼容性扩展。
 
@@ -159,7 +159,7 @@ A5.2 后续发车时只读基线、不改资源源码，用独立 fixture/注入
 - [ ] 完整HTTP route manifest、内部host callback、cron/channel/background均已接管；没有因WS全绿而遗留TS HTTP/后台owner。
 - [ ] native轮只启动Rust gateway与Rust sidecar及明确外部mock，原版ui/server/测试driver可在独立角色运行；身份审计和故意fallback对照均有效。
 - [ ] 冷切换/重启/回滚在隔离数据上完成；用户18789、3001、真实home和进程从未接触。
-- [ ] E0、E1 retirement及完整 gateway 回归通过；阶段P2依赖清完。与上述 A8 条件共同形成“gateway 退役验证完成（不含 UI 自动恢复）”里程碑；只有 D5 的 A8→B3 闸门获人批准后，才可用它满足 B3 的 A 侧前置。完整 UI 门未闭合则报告“gateway退役验证完成，完整Web自动恢复验收阻塞”，不标计划done；人工实效验收与桌面边界明确。
+- [ ] E0、E1 retirement及完整 gateway 回归通过；阶段 P2 依赖到点须有明确处置（已修 / 已并入 / 判定不修+理由；处置定义见 CLAUDE.md 问题分级，#2063 B）。与上述 A8 条件共同形成“gateway 退役验证完成（不含 UI 自动恢复）”里程碑；只有 D5 的 A8→B3 闸门获人批准后，才可用它满足 B3 的 A 侧前置。完整 UI 门未闭合则报告“gateway退役验证完成，完整Web自动恢复验收阻塞”，不标计划done；人工实效验收与桌面边界明确。
 
 **验收命令**：E0；E1 `--suite retirement`，它必须包含101 coverage、生产HTTP/后台入口、无TS宿主审计、cold-restart/rollback、阳性对照。原 `run_round.py --side rust` 默认仍是Rust前置+TS上游，不得拿它作为退役证据。
 
