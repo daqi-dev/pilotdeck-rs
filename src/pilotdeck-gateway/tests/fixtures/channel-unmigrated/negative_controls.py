@@ -158,10 +158,12 @@ MUTATIONS = [
     # M16 (#1853 r2 r3 review, two families hit the same cell): the loader
     # table loses the native-mount key `slack` — the covering cell only
     # iterates the loader table, so only the native group's membership closure
-    # catches it.
+    # catches it. The array length is decremented alongside, exactly like a
+    # real regression would, so the mutant compiles (same pattern as M13).
     ('native-mount-loses-loader-key', source / 'loader.rs',
-     '    "slack",\n    "matrix",',
-     '    "matrix",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",',
      'loader_keys_partition_rejected_and_silent_subset',
      '#1853 native-mount key is a loader-table key'),
     # M17 (#1853 r2 r3 review): a silent key is duplicated into the native
