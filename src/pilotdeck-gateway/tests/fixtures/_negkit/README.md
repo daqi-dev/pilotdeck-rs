@@ -123,7 +123,7 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 > 另一项边界：候选改动落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——
 > `_assert_input_areas` 的 `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖
 > target 上都会被外层基线断言拒绝；区域外且非字面输入的候选不暂存也通过。**scanner 字面输入集**
-> （`include_str!`/`include_bytes!`/`#[path]` 连到的仓库内文件）会落在 `src` 外——实测清单共 1331 项，
+> （`include_str!`/`include_bytes!`/`#[path]` 连到的仓库内文件）会落在 `src` 外——实测清单共 1329 项，
 > 其中 `src` 外 3 项：`scripts/cli-parity/help.txt`、`scripts/cli-parity/scenarios.json`、
 > `specs/gateway-coverage/coverage-manifest.json`（`remote-verify-r4-probe/`；清单由扫描器从 include
 > 边现算，不硬编码）——这些文件未暂存的改动同样被 `--cached` 腿报 `source baseline mismatch`，
