@@ -2367,6 +2367,177 @@ fn folded_surrogate_path_routes_the_diagnostic_on_the_raw_spelling() {
     );
 }
 
+// #1461 r6 (DS r5 boundary P2 / sibling P3): the worker this launches is
+// #[cfg(unix)]; without the same gate a non-unix build would spawn a test
+// name that does not exist there.
+#[cfg(unix)]
+#[test]
+fn absolute_surrogate_diagnostic_survives_deleted_cwd_matrix() {
+    crate::test_process::run_cases(
+        "native_process::services_tests::absolute_surrogate_diagnostic_survives_deleted_cwd",
+        vec![("absolute-deleted-cwd".into(), vec![])],
+    );
+}
+
+/// #1461 r2 (DS concurrency P1 / boundary P2): an absolute lone-surrogate
+/// path never consults the process cwd — Node `path.resolve` only reads it
+/// for relative spellings (the same shape as `skills::resolve`) — so the
+/// not-found diagnostic must survive a cwd that has been deleted.
+/// Launched in an isolated worker because deleting the cwd is
+/// process-global (`matrix` above spawns this test with `--exact`).
+#[cfg(unix)]
+#[test]
+#[ignore = "isolated cwd worker launched by absolute_surrogate_diagnostic_survives_deleted_cwd_matrix"]
+fn absolute_surrogate_diagnostic_survives_deleted_cwd() {
+    let holder = Scratch::new();
+    // A doomed cwd must be an empty directory: remove_dir(2) refuses a
+    // non-empty one, and a Scratch carries the lease subtree inside, so the
+    // doomed cwd is a bare temp dir with nothing in it (cb8-measured: the
+    // Scratch shape failed with DirectoryNotEmpty before the product path
+    // ever ran).
+    let gone = std::env::temp_dir().join(format!("pdrs-1461-gone-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&gone).expect("#1461 make the doomed cwd");
+    std::env::set_current_dir(&gone).expect("#1461 enter the doomed cwd");
+    std::fs::remove_dir(&gone).expect("#1461 delete the cwd");
+    let mut raw: Vec<u16> = holder
+        .0
+        .to_str()
+        .expect("#1461 scratch path UTF-8")
+        .encode_utf16()
+        .collect();
+    raw.push(b'/' as u16);
+    raw.push(0xD800);
+    let mut fields = JsObject::new();
+    fields.insert("path".into(), JsValue::String(JsString::from_utf16(raw)));
+    fields.insert("mimeType".into(), JsValue::from("image/png"));
+    let result = compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields)])
+        .expect("#1461 an absolute lone-surrogate path composes the turn with a deleted cwd");
+    let blocks = content_blocks(&result);
+    // The outer is the absolute spelling itself — the resolve never read
+    // the (deleted) cwd — and only the fs error inside the parentheses is
+    // lossy, exactly like Probe B's relative shape.
+    let outer: Vec<u16> = holder
+        .0
+        .to_str()
+        .expect("#1461 scratch path UTF-8")
+        .encode_utf16()
+        .chain([b'/' as u16, 0xD800])
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 an absolute surrogate diagnostic must survive a deleted cwd without reading it"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1461 a lone-surrogate path must not register allowedReadFiles"
+    );
+    std::env::set_current_dir(&holder.0).expect("#1461 restore known cwd");
+    crate::test_process::receipt("absolute-deleted-cwd");
+}
+
+/// #1461 r5 (DS sibling P2 / boundary P2): a *relative* lone-surrogate
+/// spelling consults the process cwd, and the cache must behave like Node's
+/// `process.cwd()` — seeded by the first successful read, still answering
+/// after the cwd itself is deleted. The second relative diagnostic after
+/// the deletion must still carry the warm prefix; the lazy first-read
+/// residual (a cwd deleted *before* the first relative diagnostic stays
+/// silent) is documented on `cached_process_cwd`. Same worker shape as the
+/// absolute case above: deleting the cwd is process-global.
+#[cfg(unix)]
+#[test]
+#[ignore = "isolated cwd worker launched by relative_surrogate_diagnostic_uses_the_cached_first_cwd_matrix"]
+fn relative_surrogate_diagnostic_uses_the_cached_first_cwd() {
+    let holder = Scratch::new();
+    // Same constraint as the absolute worker: remove_dir(2) refuses a
+    // non-empty directory, so the warm cwd is a bare temp dir.
+    let warm = std::env::temp_dir().join(format!("pdrs-1461-warm-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&warm).expect("#1461 make the warm cwd");
+    std::env::set_current_dir(&warm).expect("#1461 enter the warm cwd");
+    // #1461 r6 (DS r5 concurrency P1 / boundary P2): the product cache
+    // seeds from `std::env::current_dir()`, which on macOS resolves the
+    // `/var` symlink to `/private/var` while `temp_dir()` keeps the
+    // literal spelling — build the expectation from the same physical
+    // read the cache sees, or the test is deterministically red on
+    // darwin (tests/native_process.rs and `path_scratch` precedent).
+    let warm_units: Vec<u16> = std::env::current_dir()
+        .expect("#1461 warm cwd readable")
+        .to_str()
+        .expect("#1461 warm path UTF-8")
+        .encode_utf16()
+        .collect();
+    // The relative spelling: a leaf that is a lone surrogate.
+    let mut raw: Vec<u16> = "rel".encode_utf16().collect();
+    raw.push(0xD800);
+    let expected_outer = |warm: &[u16]| {
+        let mut outer: Vec<u16> = warm.to_vec();
+        outer.push(b'/' as u16);
+        outer.extend_from_slice(&raw);
+        let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+        let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+        expected.extend_from_slice(&outer);
+        expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+        expected.extend_from_slice(&inner);
+        expected.extend("').".encode_utf16());
+        expected
+    };
+    let fields = || {
+        let mut fields = JsObject::new();
+        fields.insert(
+            "path".into(),
+            JsValue::String(JsString::from_utf16(raw.clone())),
+        );
+        fields.insert("mimeType".into(), JsValue::from("image/png"));
+        fields
+    };
+    // First compose while the cwd is readable: the diagnostic resolves
+    // against the live warm cwd and seeds the cache.
+    let first = compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields())])
+        .expect("#1461 a relative lone-surrogate path composes the turn on a live cwd");
+    negative_assert!(
+        content_blocks(&first)
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected_outer(&warm_units))),
+        "#1461 the first relative surrogate diagnostic seeds the cache with the warm cwd"
+    );
+    // Delete the cwd; the second relative diagnostic must still resolve
+    // against the cached first read, not drop the diagnostic.
+    std::fs::remove_dir(&warm).expect("#1461 delete the warm cwd");
+    let second =
+        compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields())])
+            .expect("#1461 a relative lone-surrogate path composes the turn with a deleted cwd");
+    negative_assert!(
+        content_blocks(&second)
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected_outer(&warm_units))),
+        "#1461 after the cwd is deleted the relative surrogate diagnostic still uses the cached first read"
+    );
+    negative_assert!(
+        second.get("allowedReadFiles").is_none(),
+        "#1461 a lone-surrogate path must not register allowedReadFiles after a cwd deletion"
+    );
+    std::env::set_current_dir(&holder.0).expect("#1461 restore known cwd");
+    crate::test_process::receipt("relative-deleted-cwd-warm");
+}
+
+// #1461 r6 (DS r5 boundary P2 / sibling P3): same gate as the absolute
+// matrix above — the launched worker is #[cfg(unix)]-only.
+#[cfg(unix)]
+#[test]
+fn relative_surrogate_diagnostic_uses_the_cached_first_cwd_matrix() {
+    crate::test_process::run_cases(
+        "native_process::services_tests::relative_surrogate_diagnostic_uses_the_cached_first_cwd",
+        vec![("relative-deleted-cwd-warm".into(), vec![])],
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn direct_content_with_an_unopenable_path_stays_silent() {
@@ -2381,10 +2552,28 @@ fn direct_content_with_an_unopenable_path_stays_silent() {
     std::fs::write(&path, b"AB").expect("#1460 lease fixture");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
         .expect("#1460 chmod fixture");
-    // A privileged runner ignores the mode bits; the case cannot be built
-    // (same shape as the #2138 unreadable-stat skip).
+    // A privileged runner ignores the mode bits; the case cannot be built.
+    // #1461 r2 (DS sibling P1, the #1900/#1525 pattern): the skip has to
+    // reach the log through the shared writer and fail when the CI switch
+    // says the permission face is mandatory — same registration as the
+    // storage/tests.rs root arms.
+    // #1461 r6 (DS r5 concurrency P2): probe the behaviour, not the uid —
+    // the native read probe alone covers every permission-blind runner
+    // (root, CAP_DAC_OVERRIDE, permission-blind mounts), and an euid
+    // shortcut would false-fail a mode-enforced root host (NFS root_squash)
+    // under PDRS_REQUIRE_PERMISSION_FAULTS=1 (probe-only shape, as
+    // tests/write_tools.rs).
     if std::fs::read(&path).is_ok() {
-        eprintln!("#1460 skipping: this test must not run as root, mode-000 is readable");
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#1460 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the open \
+             (root or a permission-blind runner); this arm needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#1460 skip: direct_content_with_an_unopenable_path_stays_silent: \
+             running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+        );
         return;
     }
     let entry = object([
