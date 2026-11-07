@@ -383,3 +383,123 @@ async fn default_channel_remote_matches_ts_recordings() {
     assert!(ok, "{stderr}");
     assert_eq!(stdout, "\n");
 }
+
+/// A rejected submit is terminal even when the peer keeps its socket open.
+/// The fixed TS ignores this response; see the isolated mbp2 rejection probe.
+#[tokio::test(flavor = "current_thread")]
+async fn rejected_submit_exits_without_waiting_for_final_or_peer_close() {
+    let _lease = Lease::acquire().await;
+    let listener = TcpListener::bind("127.0.0.1:18789")
+        .await
+        .expect("isolated channel test requires port 18789 free");
+    let base = std::env::temp_dir().join(format!("pdrs-cli-rejection-{}", uuid::Uuid::new_v4()));
+    fs::create_dir(&base).unwrap();
+    let base = fs::canonicalize(base).unwrap();
+    let _scratch = Scratch(base.clone());
+    let home = base.join("home");
+    let project = base.join("project");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&project).unwrap();
+    fs::write(home.join("server-token"), "channel-fake-token\n").unwrap();
+    fs::write(home.join("pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: fake-only\n      models: {mock: {}}\n").unwrap();
+    // A previously migrated isolated home keeps this transport test independent
+    // of the build directory's bundled-skill installation layout.
+    fs::write(
+        home.join(".legacy-bundled-skills-migrated-v1"),
+        "completed\n",
+    )
+    .unwrap();
+    for (case, error, expected) in [
+        (
+            "denied",
+            json!({"message":"FIXTURE_DENIED"}),
+            "FIXTURE_DENIED\n",
+        ),
+        ("empty", json!({"message":""}), "\n"),
+        ("missing", json!({}), "Gateway stream failed.\n"),
+        (
+            "non-string",
+            json!({"message":false}),
+            "Gateway stream failed.\n",
+        ),
+        ("surrogate", json!({}), "�\n"),
+        ("other-id", json!({"message":"must be ignored"}), ""),
+    ] {
+        // stdin has another complete line: a rejected interactive submit must
+        // stop rather than retry or submit the queued follow-up.
+        let process = if case == "denied" {
+            child(&home, &project, &[], "first\nnever-submit\n")
+        } else {
+            child(&home, &project, &["first"], "")
+        };
+        let (mut health, _) = timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            request_head(&mut health)
+                .await
+                .starts_with(b"GET /health HTTP/1.1\r\n")
+        );
+        health
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        drop(health);
+        let (socket, _) = timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let mut ws = timeout(Duration::from_secs(5), accept_async(socket))
+            .await
+            .unwrap()
+            .unwrap();
+        let hello = next(&mut ws).await;
+        assert_eq!(hello["type"], "hello");
+        send(&mut ws, json!({"type":"hello_ok"})).await;
+        let request = next(&mut ws).await;
+        assert_eq!(request["method"], "submit_turn");
+        assert_eq!(request["params"]["message"], "first");
+        let id = request["id"].as_str().unwrap();
+        if case == "surrogate" {
+            let raw = format!(
+                r#"{{"type":"response","id":{},"ok":false,"error":{{"message":"\ud800"}}}}"#,
+                serde_json::to_string(id).unwrap()
+            );
+            ws.send(Message::Text(raw.into())).await.unwrap();
+        } else {
+            send(&mut ws, json!({"type":"response","id":if case=="other-id" {"unrelated"} else {id},"ok":false,"error":error})).await;
+        }
+        if case == "other-id" {
+            // A successful acknowledgement is not a stream final either.
+            send(
+                &mut ws,
+                json!({"type":"response","id":id,"ok":true,"result":{}}),
+            )
+            .await;
+            send(&mut ws, json!({"type":"event","id":id,"final":false,"event":{"type":"assistant_text_delta","text":"EVENT_POSITIVE"}})).await;
+            send(&mut ws, json!({"type":"event","id":id,"final":true})).await;
+        }
+        // The peer sends no close or event final on rejection. Only the client
+        // can end this wait; a second request is a test failure, not swallowed.
+        let closed = timeout(Duration::from_secs(3), ws.next())
+            .await
+            .expect("rejected submit kept its connection open");
+        assert!(
+            matches!(closed, Some(Ok(Message::Close(_))) | None),
+            "{case}: {closed:?}"
+        );
+        let (success, stdout, stderr) = finish(process).await;
+        assert_eq!(success, case == "other-id", "{case}");
+        assert_eq!(
+            stdout,
+            if case == "other-id" {
+                "EVENT_POSITIVE"
+            } else {
+                ""
+            },
+            "{case}"
+        );
+        assert_eq!(stderr, expected, "{case}");
+    }
+}

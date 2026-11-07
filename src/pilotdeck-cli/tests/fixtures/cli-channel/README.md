@@ -16,3 +16,9 @@ cmp src/pilotdeck-cli/tests/fixtures/cli-channel/boundary-oracle.json "$NEW_BOUN
 边界金样覆盖裸 CR/CRLF/无终止符 EOF、仅 final、流中断和关闭 stdout 读端；其中 stderr 只保存经真 TS 原始输出验证的 EPIPE / 断线标记，完整含 Node 栈的原始记录保存在证据目录，不将环境绝对路径固化进仓库。TS 输出 EPIPE 时为 Node 堆栈，Rust 为本机 IO 错误，具体文本目前未对齐。
 
 本测试不证明本地 fallback、native provider、模型历史、A8 或阶段 D 验收。远端不可用时仍显式报告本地能力未完成；真实组合、认证 failure、复杂输入和人工使用待相应车道验证。
+
+## 拒绝响应补充
+
+`rejection-probe.mjs <fixed-ts> <node22> <rust-bin> <new-output>`在mbp2采同ID拒绝、异ID拒绝加正常event、正常event三格，两侧各一遍。它使用旧入口固定18789的独占测试锁并自行bind；不能在用户实际服务所在机器运行。所有home/project与token隔离，二秒观察期限及自有PID清理保留原方法。此脚本是观察器，不把旧TS的进程存活当作通过或永远挂起的单独证明。
+
+修复回归在`cli_channel_exit.rs::rejected_submit_exits_without_waiting_for_final_or_peer_close`：六种响应及排队stdin，peer持续开放而客户端应关闭并非零退出；异ID错误/成功ACK后仍消费正常event。精确错误输出和UTF-16异常输出按`D2-CLI-REJECTED-SUBMIT-001`登记。mbp2严格clippy、原矩阵与新进程测试通过，原件见主仓`_tmp/20261108-cli-tui/defaultremote-rejection/r1-evidence/`。

@@ -4785,3 +4785,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · TUI会话分组与导航（Codex/Terra，仅本机）
 
 项目/状态分组、折叠、选中、宽窄屏及Ctrl-E/Ctrl-S已接通，长标题单行显示、完整session用于双RPC，索引纳入状态预算。mbp2 strict clippy/28库测试与十项PTY全部通过；256长共同前缀路径显示观察0.539243秒（含固定0.5秒等待，只证显示及之后可操作），未发现可确认P0/P1。源码/bin、首编译与脚本重名失败及最终原件保留主仓 `_tmp/20261108-cli-tui/sidebar-r3-evidence/`；新差异待人复核。下一步输入编辑/粘贴、SDK token与默认remote拒绝响应处理；本机提交、无GitHub写入，完整CLI和真人实效未完成。
+
+### 2026-11-08 · 默认远端CLI拒绝响应退出（Codex，仅本机）
+
+同ID submit拒绝现经既有关闭路径报错退出，不再继续等final或提交排队第二行；异ID与成功ACK不误结束正常流。mbp2真实TS/旧Rust六格记录确认两秒持续等待及源码缺完成路径，新六格真实子进程与旧矩阵、strict clippy/build全PASS，独立审无确认P0/P1。源码/bin与日志在主仓 `_tmp/20261108-cli-tui/defaultremote-rejection/`，新差异待人复核；下一步整合SDK token本机提交、输入编辑/有界粘贴与HOME路径。未触实际服务、本机不编译、不推GitHub，完整CLI仍未完成。

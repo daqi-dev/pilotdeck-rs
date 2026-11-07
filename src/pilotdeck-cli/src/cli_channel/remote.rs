@@ -119,7 +119,24 @@ impl Remote {
                     .map_err(|_| Failure::Error("Invalid Gateway frame.".into()))?,
             )
             .map_err(|_| Failure::Error("Invalid Gateway frame.".into()))?;
-            if !is_field(&value, "type", "event") || !is_field(&value, "id", &id) {
+            if !is_field(&value, "id", &id) {
+                continue;
+            }
+            // Admission can reject submit_turn with an ordinary response and
+            // leave the connection open. Waiting for an event final after this
+            // terminal error would keep the CLI alive indefinitely.
+            if is_field(&value, "type", "response")
+                && value.get("ok").and_then(JsValue::as_bool) == Some(false)
+            {
+                let message = value
+                    .get("error")
+                    .and_then(|error| error.get("message"))
+                    .and_then(JsValue::as_string)
+                    .map(|message| String::from_utf16_lossy(message.units()))
+                    .unwrap_or_else(|| "Gateway stream failed.".into());
+                return Err(Failure::Error(message));
+            }
+            if !is_field(&value, "type", "event") {
                 continue;
             }
             if value.get("final").and_then(JsValue::as_bool) == Some(true) {
