@@ -112,8 +112,9 @@
 `sdk-settings` · `settings-gateway` · `interaction-values` · `turn-submit-admission` ·
 `turn-runner/runner_negative.py` · `cli-parity-mock-gateway`，以及后批加入的
 `memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）与
-`sdk-mcp-session-tools`（#1433，`negative_selection` 契约 + `EXPECTED_NAMES` 静态名册）。
-**其余同族入口尚未迁移**，
+#297 r6 起的 `issue-297` · `issue-297-domain-fold`（迁移自原 main 形状，启动四拒
+全走 `refuse()`）与 `sdk-mcp-session-tools`（#1433，`negative_selection` 契约 +
+`EXPECTED_NAMES` 静态名册）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。

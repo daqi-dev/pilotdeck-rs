@@ -38,22 +38,25 @@ break the all-KILLED contract this suite reports). Both raw outputs are in
 `_tmp/20261108-issue-297-r5-staging/kill-{698,1173}-evidence/` (PR #2230
 body); the validate-rollback coverage gap needs a test that observes
 post-failure state, which the plan's four rows do not include. The plan
-pins exactly these four rows for this fixture; the unmutated twins are the
-adjacent `session-domain/adapter-negative.py` rows' scope. Test names
+pins exactly these four rows for this fixture; the :1173 validate-rollback
+gap is tracked in #1657, gated on a test that observes post-failure state
+(no registerable row exists on the current test surface). Test names
 and #743 assertion anchors mirror `session-domain/schemata.py:21-23`; keep
 the two in sync when that fixture re-anchors.
 
 Each case runs through the shared executor (`negative_suite.run_cases`):
 positive -> mutate (unique-anchor text replacement) -> negative judged by
 `negative_suite.classify` -> byte-verified restore -> restored positive. A
-compile prepass proves each mutant compiles before the run (the implementer
-residency constraint); `--check` is a read-only anchor preflight. Refusals
-before the run (unknown name, roster drift, missing/unusable
-CARGO_TARGET_DIR, existing output directory) exit 2, distinct from 1
-("some control did not kill"); a source-guard failure while restoring
-revokes every recorded row and exits 2 (#979, #1076, #1734). SIGINT/SIGTERM
-raise `SystemExit` so the guard's restore window always unwinds and
-re-verifies the tree.
+compile prepass records compile evidence for every mutant and folds into the
+exit code (the implementer residency constraint: a mutant that could not be
+proved to compile is never a green run); `--check` is a read-only anchor
+preflight. Refusals before the run (unknown or repeated name, roster drift,
+missing/unusable CARGO_TARGET_DIR, existing output directory) exit 2,
+distinct from 1 ("some control did not kill"); a source-guard failure while
+restoring revokes every recorded row and exits 2 (#979, #1076, #1734).
+SIGINT/SIGTERM/SIGHUP/SIGQUIT raise `SystemExit(2)` -- a cancel is a refusal
+at every stage, the same code `run_cases` itself normalizes to -- so the
+guard's restore window always unwinds and re-verifies the tree.
 """
 import argparse
 import json
@@ -65,7 +68,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import (claim_dir, missing_target, refuse,
-                                 refuse_unusable_target, registered)
+                                 refuse_unusable_target, registered, select)
 from negative_suite import Case, invalidate_completed, run_cases
 
 root = Path(__file__).resolve().parents[5]
@@ -124,6 +127,10 @@ EXPECTED = ['advance-reclones-state', 'turn-index-never-populated',
 
 def mutate(content, scope, replacements):
     for old, new in replacements:
+        if old == new:
+            # A no-op replacement is a broken control; recording it as
+            # SURVIVED would hide that (settings/negative_controls.py:168).
+            raise ValueError('mutation leaves source unchanged')
         count = content.count(old)
         if count != 1:
             raise ValueError(f'stale anchor count={count}, expected=1: {old!r}')
@@ -137,7 +144,16 @@ def audit(rows):
 
 
 def compile_controls(rows, out, env):
+    """Compile every mutant before the run; return (all_compiled, guard_failed).
+
+    Only the source guard's enter/exit can reach the outer ``except`` (each
+    row's own failures are caught inside), so a guard that could not restore
+    or re-verify the tree is reported separately: #979/#1076/#1734 make that
+    a "never started" exit 2 with every recorded row revoked, not a judged
+    run that merely came out not-green.
+    """
     results = []
+    guard_failed = False
     try:
         with mutating_sources(root, list(dict.fromkeys(row[1] for row in rows))) as originals:
             for name, path, old, new, _, _ in rows:
@@ -158,6 +174,7 @@ def compile_controls(rows, out, env):
                     path.write_bytes(originals[path])
                 results.append(result)
     except Exception as error:
+        guard_failed = True
         reason = f'source guard: {type(error).__name__}: {error}'
         invalidate_completed(results, reason)
         for name, *_ in rows[len(results):]:
@@ -166,7 +183,8 @@ def compile_controls(rows, out, env):
     (out / 'compile-summary.json').write_text(json.dumps(results, indent=2) + '\n')
     for result in results:
         print(json.dumps(result), flush=True)
-    return all(result['compiled'] and result['status'] == 'COMPILED' for result in results)
+    return (all(result['compiled'] and result['status'] == 'COMPILED' for result in results),
+            guard_failed)
 
 
 def main():
@@ -176,16 +194,28 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    registered(cases, EXPECTED)  # roster drift is a refusal, never a shorter run
-    rows = cases
-    if args.selected:
-        unknown = set(args.selected) - {row[0] for row in rows}
-        if unknown:
-            parser.error(f'unknown mutations: {sorted(unknown)}')
-        rows = [row for row in rows if row[0] in args.selected]
-    audit(rows)  # Stale anchors are errors, never survivors.
+    # r6 (DS r5 + MM r5, both families): every "never started" refusal must
+    # reach exit 2 through refuse()/argparse, never an uncaught traceback
+    # (rc 1). The shared helpers raise ValueError; select() also refuses a
+    # repeated name before it can fold a mistyped selection into a smaller
+    # green run (#1666 / #1734).
+    try:
+        registered(cases, EXPECTED)  # roster drift is a refusal, never a shorter run
+        rows = select(cases, args.selected, always=())
+    except ValueError as error:
+        refuse(str(error))
+    # `output` is nargs='?': a bare mutation name would land there and read
+    # as an evidence directory while the intended selection shrinks silently.
+    if args.output and args.output in {row[0] for row in cases}:
+        parser.error(f'{args.output!r} is a mutation name; '
+                     'the evidence directory comes first')
+    try:
+        audit(rows)  # Stale anchors are refusals, never survivors.
+    except ValueError as error:
+        refuse(f'stale anchor: {error}')
     if args.check:
-        print(f'{len(rows)} unique anchors checked')
+        print(f'{len(rows)} rows / '
+              f'{len({(row[1], row[2]) for row in rows})} unique anchors checked')
         return 0
     if not args.output:
         parser.error('provide a fresh evidence directory')
@@ -196,21 +226,32 @@ def main():
     # Positive/compile/restored runs never inherit a stale protocol from a caller.
     env.pop('PDRS_NEGATIVE_RECEIPTS', None)
     env.pop('PDRS_NEGATIVE_PARENT_TEST', None)
+    env.pop('PDRS_MUTANT', None)  # #1616: a nested caller's mutant must not leak in
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
                CARGO_PROFILE_TEST_DEBUG='line-tables-only',
                CARGO_TERM_QUIET='false')
     out = claim_dir(args.output)  # #1734: an existing directory is "never started" (2)
     # #1076: a signal must unwind through the guard's restore/re-verify window,
-    # not kill the process with a mutated tree left behind.
+    # not kill the process with a mutated tree left behind. The four signals
+    # are the ones the shared guard itself shields in its write-back window;
+    # a cancel exits 2 at every stage, matching run_cases' own normalization.
     def stop(signum, frame):
-        raise SystemExit(f'interrupted by signal {signum}')
+        sys.stderr.write(f'interrupted by signal {signum}\n')
+        raise SystemExit(2)
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    compiled = compile_controls(rows, out, env)
+    signal.signal(signal.SIGHUP, stop)
+    signal.signal(signal.SIGQUIT, stop)
+    compiled, guard_failed = compile_controls(rows, out, env)
+    if guard_failed:
+        raise SystemExit(2)
     if args.compile_only:
         return int(not compiled)
-    return run_cases(root, [Case(*row) for row in rows], out, env, mutate,
-                    timeout=900, script=Path(__file__))
+    status = run_cases(root, [Case(*row) for row in rows], out, env, mutate,
+                       timeout=900, script=Path(__file__))
+    # transcript-trim pattern, extended: a prepass that could not prove every
+    # mutant compiles is not a green run even when all judged rows KILLED.
+    return int(not compiled or status != 0)
 
 
 if __name__ == '__main__':
