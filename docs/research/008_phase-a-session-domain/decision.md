@@ -5,7 +5,7 @@ date: 2026-10-14
 title: 阶段 A 深水区：架构与验收决策卡
 tags: [phase-a, decision, session, deadline]
 status: 技术方案形成建议；D4/D5 等人；本轮未发车或改尺子
-related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/gap, plan/005_phase-a-session-domain]
+related: [research/008_phase-a-session-domain/must-know, research/008_phase-a-session-domain/gap, research/012_phase-a-switch-matrix, plan/005_phase-a-session-domain]
 ---
 
 # 008 · 决策卡
