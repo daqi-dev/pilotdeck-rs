@@ -1232,6 +1232,12 @@ class ParityMutationLock(unittest.TestCase):
                     # `from negative_process import …` 都会落进 `co_varnames`，一并抓。
                     restore = getattr(negative_process.mutating_sources, "__wrapped__",
                                       negative_process.mutating_sources)
+                    # r3（zai boundary P3 #2）：三条与 driver 的 `restore_wiring_problems`
+                    # 对齐 —— 少的 `__globals__` 那条挡的是「`mutating_sources` 被
+                    # `from other import mutating_sources` 带进来」：它的 `co_names` 仍含
+                    # `write_source_atomic`（other 模块的全局），探针照盲。
+                    self.assertIs(restore.__globals__, vars(negative_process),
+                                  "#1903 the restore must stay defined in negative_process")
                     self.assertIn("write_source_atomic", restore.__code__.co_names,
                                   "#1903 the restore must resolve write_source_atomic as a global")
                     self.assertNotIn("write_source_atomic", restore.__code__.co_varnames,
