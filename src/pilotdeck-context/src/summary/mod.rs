@@ -91,7 +91,6 @@ pub struct CompactionInput {
     pub cache_reset: Option<bool>,
     pub attachments: Vec<JsValue>,
     pub hook_results: Vec<JsValue>,
-    pub signal: Option<()>,
     pub session_id: Option<JsString>,
     pub turn_id: Option<JsString>,
 }
@@ -109,7 +108,6 @@ impl CompactionInput {
             cache_reset: None,
             attachments: Vec::new(),
             hook_results: Vec::new(),
-            signal: None,
             session_id: None,
             turn_id: None,
         }

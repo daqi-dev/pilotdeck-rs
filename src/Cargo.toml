@@ -8,6 +8,7 @@ members = [
     "pilotdeck-context",
     "pilotdeck-transport",
     "pilotdeck-protocol",
+    "pilotdeck-module2-host",
     "pilotdeck-tokenizer",
     "pilotdeck-gateway",
     "pilotdeck-child-signals",
