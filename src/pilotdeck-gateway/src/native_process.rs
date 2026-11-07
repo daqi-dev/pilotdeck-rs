@@ -8,6 +8,10 @@ use std::{
     time::Duration,
 };
 mod assembly;
+// The advertised capability table lived as a literal inside `requests.rs`
+// until #1352; it is its own module so the table, its exception list and the
+// test that pins both to the recorded TS oracle sit next to each other.
+mod capabilities;
 // #1328 replay test (channel::weixin::replay_tests) drives the assembly
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
