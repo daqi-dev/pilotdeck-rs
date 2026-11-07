@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 299 mutants:
+`JUDGES`, keyed by the same names. The current table has 302 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -470,7 +470,10 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-enclosing-call-between-rebinds`,
 `calibrate-for-target-class-body-compound`,
 `calibrate-for-target-class-method-closure`,
-`calibrate-for-target-class-body-shadowed-constructor`.
+`calibrate-for-target-class-body-shadowed-constructor`,
+`calibrate-for-target-module-import-alias`,
+`calibrate-for-target-class-body-copy-alias`,
+`calibrate-for-target-nested-class-method`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1088,17 +1091,16 @@ against the injected tree is a full `--mode aggregation-audit` run.
 Two boundaries are accepted deliberately by `fix-r1` round 12, both fail-closed
 (they can only over-report, never let a write through):
 
-- **A literal rebound after the only call is still flagged.**  `items = (md,)`
-  followed by `def early(): for x in items: ...`, `early()`, then
-  `items = ()` is reported even though nothing is withdrawn at runtime: the
-  rule does not model call sites, so any literal that could still be live at a
-  call keeps its candidates.  Probe `r12-p0-1-enclosing-late-rebind-clean`
-  stays `caught=True` by design (the sibling `r12-p0-1-enclosing-late-rebind`
-  must stay `caught=True` too, and does).
-- **The floor from a later literal applies only inside that literal's own
-  scope.**  An outer-scope literal stays a candidate for an inner function that
-  is defined before it, which is the round-11 rule; the round-12 change only
-  stops an inner-scope literal from erasing an *outer* scope's bindings.
+- **A call between two exclusive literals is not modelled.**  `items = ()`,
+  `def early(): for x in items: ...`, `early()`, then `items = (md,)` is still
+  reported although nothing is withdrawn at runtime: without call-site
+  modelling every literal binding of the enclosing scope stays a candidate.
+  Probe `r12-p0-1-enclosing-late-rebind-clean` stays `caught=True` by design;
+  the sibling `r12-p0-1-enclosing-late-rebind` (`items = (md,)`, `early()`,
+  then `items = ()`) really does write and must stay `caught=True` too.
+- **The supersede floor applies only inside the literal's own scope.**  An
+  inner-scope literal no longer erases an *outer* scope's bindings; an outer
+  binding stays a candidate for an inner function, which is the round-11 rule.
 
 ### Closed by `fix-r35` (#1953)
 
@@ -1347,10 +1349,25 @@ pre-existing miss on the status side.
 
 | Shape | Mutant / self-test |
 |---|---|
-| **A later inner-scope literal must not erase an outer scope's candidates**: the supersede floor now applies only inside the literal's own scope. | self-test `round 12: a parameter typed by another function's import` |
+| **A later inner-scope literal must not erase an outer scope's candidates**: the supersede floor now applies only inside the literal's own scope. | `calibrate-for-target-enclosing-call-between-rebinds`; self-test `a later literal rebinding in the enclosing scope` (round 12) |
 | **A class-body write inside a compound statement**: `class _C: if flag: h('common', <stub>)`. | `calibrate-for-target-class-body-compound` |
 | **A method that closes over the outer handle**: `class _C: h = lambda *a: None` then `def m(self): h('common', <stub>)`. | `calibrate-for-target-class-method-closure` |
 | **A class body that shadows the constructor it calls**: `class _C: object = lambda: hs[0]; h = object(); h('common', <stub>)`. | `calibrate-for-target-class-body-shadowed-constructor` |
 | **A literal rebound in the enclosing scope *after* the call**: `items = (md,); def early(): for x in items: ...; early(); items = ()`. Fail-closed, see Known boundaries. | `calibrate-for-target-enclosing-call-between-rebinds` |
 | **A nested unpack copies instead of handing over** (false FAIL guard). | self-test `round 12: a nested unpack that only copies the handle` |
 | **`from builtins import setattr as alias` in the statement's own scope is the builtin**, while a parameter of the same name is not (pre-existing miss on the status side). | self-test `round 12: a parameter typed by another function's import` |
+
+### Closed by `fix-r1` round 13 (codex r9 five P0 / three P1)
+
+Round 13 fixes the import-alias resolution on both sides and the parts of the
+class-body hand-over the round-12 rewrite still dropped.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A write helper imported at module scope and called inside a function**: `from builtins import setattr as w` at module level, `w(md, 'common', <stub>)` in a body. | `calibrate-for-target-module-import-alias`; self-test `round 13: a builtin write reached through a module-level import alias` |
+| **A call before a later rebinding**: `from builtins import setattr as w; w(md, ...); w = print` still writes. | self-test `round 13: a later rebinding after the call` |
+| **A non-write import before the call** (false FAIL guard): `from builtins import print as w` after the write import makes `w(...)` a print. | self-test `round 13: a non-write import before the call` |
+| **A class body that copies the handle**: `_f = _h; _f('common', <stub>)`, including inside a compound statement. | `calibrate-for-target-class-body-copy-alias`; self-test `round 13: a class body that copies the handle into another name` |
+| **A nested class whose method closes over the outer handle**: `class C: h = lambda *a: None; class D: def m(self): h('common', <stub>)`. | `calibrate-for-target-nested-class-method`; self-test `round 13: a nested class whose method closes over the outer handle` |
+| **A method body reads the handle with the builtin `print`** (false FAIL guard): the class namespace does not reach into a method. | self-test `round 13: a method that reads the handle with the builtin print` |
+| **Status side: a module-level import alias**, a call before the rebinding, and the two false-FAIL directions. | self-tests `round 13: a module-level import alias`, `a call before the rebinding`, `a later non-write import`, `a rebinding before the call`, `a parameter that shadows the module alias` |

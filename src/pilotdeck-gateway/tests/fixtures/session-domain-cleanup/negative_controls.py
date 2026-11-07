@@ -4842,6 +4842,61 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    ('calibrate-for-target-module-import-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    from builtins import setattr as _mw\n"
+      "    def _mw_use():\n"
+      "        _mw(md, 'common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-class-body-copy-alias', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _f = _h\n"
+      "        _f('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-for-target-nested-class-method', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    _n = '__setattr__'\n"
+      "    _hs = [getattr(md, k) for k in (_n,)]\n"
+      "    for _h in _hs:\n"
+      "        pass\n"
+      "    class _C:\n"
+      "        _h = lambda *a: None\n"
+      "        class _D:\n"
+      "            def _method(self):\n"
+      "                _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -5883,6 +5938,30 @@ def calibrate_for_target_class_body_shadowed_constructor(rows):
         'passed=False')
 
 
+def calibrate_for_target_module_import_alias(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-module-import-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-module-import-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_class_body_copy_alias(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-class-body-copy-alias."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-class-body-copy-alias flagged, '
+        'passed=False')
+
+
+def calibrate_for_target_nested_class_method(rows):
+    """#1953 fix-r1 round 13: calibrate-for-target-nested-class-method."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-class-method flagged, '
+        'passed=False')
+
+
 def _unrouted_status(rows, name):
     """#892 fix-r33: a status write the slot rule no longer sees as shared."""
     ok, detail = match(rows, 'aggregation-audit', {'passed': False})
@@ -6671,6 +6750,12 @@ JUDGES = {
     'calibrate-for-target-class-body-shadowed-constructor': (
         'aggregation-audit',
         calibrate_for_target_class_body_shadowed_constructor, False, ()),
+    'calibrate-for-target-module-import-alias': (
+        'aggregation-audit', calibrate_for_target_module_import_alias, False, ()),
+    'calibrate-for-target-class-body-copy-alias': (
+        'aggregation-audit', calibrate_for_target_class_body_copy_alias, False, ()),
+    'calibrate-for-target-nested-class-method': (
+        'aggregation-audit', calibrate_for_target_nested_class_method, False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:
     raise SystemExit('JUDGES must name exactly the MUTATIONS rows')
