@@ -205,10 +205,30 @@ pub(super) fn collator(env: &Env) -> Result<CollatorBorrowed<'static>, Failure> 
             .unwrap_or_else(|_| "en-US".parse().expect("locale literal")),
     };
     let mut preferences: CollatorPreferences = locale.into();
-    Collator::try_new(preferences, Default::default())
+    let create = |preferences: CollatorPreferences| {
+        Collator::try_new(preferences, Default::default()).map(|collator| {
+            // Same measured Node/ICU 78.2 gap as gateway `node_collator`: the
+            // baked metadata omits fr-CA's backward-secondary bit. `fr-Latn-CA`
+            // resolves to `fr` in Node (no backward secondary), so the script
+            // guard is part of the boundary, not an accident.
+            if locale.id.language.as_str() == "fr"
+                && locale.id.script.is_none()
+                && locale
+                    .id
+                    .region
+                    .is_some_and(|region| region.as_str() == "CA")
+                && preferences.collation_type.is_none()
+            {
+                collator.with_backward_second_level(true)
+            } else {
+                collator
+            }
+        })
+    };
+    create(preferences)
         .or_else(|_| {
             preferences.collation_type = None;
-            Collator::try_new(preferences, Default::default())
+            create(preferences)
         })
         .or_else(|_| Collator::try_new(Default::default(), Default::default()))
         .map_err(|_| Failure::Todo("loading skill filename collation data"))
@@ -648,6 +668,36 @@ mod tests {
         let mut sorted = names;
         sorted.sort_by(|a, b| collator.compare(a, b));
         assert_eq!(serde_json::json!(sorted), probe["sorted"]);
+    }
+
+    /// #132 P2-2: the CLI skills collator needs the same fr-CA
+    /// backward-secondary repair as gateway `node_collator`. `pairs` records
+    /// real Node v22.22.0 / ICU 78.2 `localeCompare` signs under each LANG.
+    #[test]
+    fn fr_ca_secondary_matches_recorded_node_probe() {
+        let probe: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/skills-fr-ca-probe.json"))
+                .unwrap();
+        assert_eq!(probe["node"], "v22.22.0", "#132 probe Node pin");
+        assert_eq!(probe["icu"], "78.2", "#132 probe ICU pin");
+        for case in probe["cases"].as_array().unwrap() {
+            let lang = case["lang"].as_str().unwrap();
+            let collator = collator(&Env::from_pairs(&[("LANG", lang), ("LC_ALL", lang)])).unwrap();
+            for pair in case["pairs"].as_array().unwrap() {
+                let left = pair[0].as_str().unwrap();
+                let right = pair[1].as_str().unwrap();
+                let sign = match collator.compare(left, right) {
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => 0,
+                    std::cmp::Ordering::Greater => 1,
+                };
+                assert_eq!(
+                    serde_json::json!(sign),
+                    pair[2],
+                    "#132 {lang}: {left:?} vs {right:?}"
+                );
+            }
+        }
     }
 
     #[test]

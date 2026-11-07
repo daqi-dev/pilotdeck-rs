@@ -657,11 +657,6 @@ fn lowercase(value: &str, locale: &LanguageIdentifier, substring: bool) -> Strin
         .into_owned()
 }
 
-// Retained for independently scoped archive/storage host boundaries.
-pub(crate) fn has_unpaired_surrogate(value: &pilotdeck_protocol::JsString) -> bool {
-    char::decode_utf16(value.units().iter().copied()).any(|unit| unit.is_err())
-}
-
 /// Node/ICU4C collation: isolated UTF-16 units retain their own implicit CE,
 /// while valid runs use ICU4X normalization and the pinned locale data.
 pub(crate) fn node_compare_utf16(

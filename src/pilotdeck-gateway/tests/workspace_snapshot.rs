@@ -2358,12 +2358,11 @@ fn arr_panics_on_missing_or_non_array_oracle_fields() {
     }
 }
 
-/// R19 host boundary for R9's first P1: Node keeps distinct weights for
-/// unpaired surrogates (the recorded TS list is the review's B,A case), while
-/// ICU4X folds them to U+FFFD. The port must refuse the comparison instead of
-/// silently returning a different order.
+/// Node/ICU4C keeps distinct weights for unpaired surrogates, so the list order
+/// must be the recorded real-TS order (`b`, `c`, `a`, `d`), not a U+FFFD fold
+/// (`b`/`a` tie) and not a host refusal: #132 removed the collation boundary.
 #[test]
-fn unpaired_surrogate_collation_requires_host() {
+fn unpaired_surrogate_collation_matches_recorded_ts_order() {
     let oracle = oracle();
     let case = field(
         field(&oracle, "hostBoundaryCases"),
@@ -2379,33 +2378,56 @@ fn unpaired_surrogate_collation_requires_host() {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, s(field(manifest, "text"))).unwrap();
     }
-    let ts_order: Vec<String> = arr(
+    let ts_order: Vec<(String, Vec<u16>)> = arr(
         field(case, "tsList"),
         "hostBoundaryCases.unpairedSurrogateCollation.tsList",
     )
     .iter()
-    .map(|descriptor| s(field(descriptor, "snapshotId")))
+    .map(|descriptor| {
+        (
+            s(field(descriptor, "snapshotId")),
+            field(descriptor, "createdAt")
+                .as_string()
+                .expect("#132 raw createdAt")
+                .units()
+                .to_vec(),
+        )
+    })
     .collect();
     assert_eq!(
-        ts_order,
+        ts_order
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect::<Vec<_>>(),
         ["b-replacement", "c-pua", "a-lone-high", "d-supplementary"],
         "real TS keeps the lone-surrogate weight (review's B before A)"
     );
     let root_text = root.to_string_lossy().into_owned();
-    let error = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
+    let listed = create_workspace_snapshot_provider(WorkspaceSnapshotConfig {
         root: root_text.clone(),
         snapshot_root: root_text,
     })
     .list()
-    .expect_err("an unpaired surrogate sorting key must be a host boundary");
-    assert!(error.requires_host(), "callers must be able to forward it");
-    assert_eq!(
-        error.to_string(),
-        "Snapshot createdAt collation requires the Node host for unpaired surrogates."
-    );
+    .expect("#132 unpaired-surrogate createdAt sorts natively");
+    let actual: Vec<(String, Vec<u16>)> = listed
+        .iter()
+        .map(|descriptor| {
+            (
+                descriptor
+                    .snapshot_id
+                    .to_utf8()
+                    .expect("#132 snapshot id UTF-8"),
+                descriptor
+                    .created_at
+                    .as_ref()
+                    .map_or_else(Vec::new, |created| created.units().to_vec()),
+            )
+        })
+        .collect();
+    assert_eq!(actual, ts_order, "#132 snapshot list order vs real TS");
 
-    // Positive control: a single descriptor never calls the comparator, so its
-    // lone-surrogate createdAt still lists (the boundary is exact, not a ban).
+    // A single descriptor never calls the comparator, so its lone-surrogate
+    // createdAt still lists unchanged.
     let single = scratch.0.join("single-surrogate");
     let first = &arr(
         field(case, "manifests"),

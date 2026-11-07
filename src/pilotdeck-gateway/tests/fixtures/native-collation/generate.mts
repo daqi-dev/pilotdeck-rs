@@ -17,7 +17,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, [
 const keys = ['coté', 'côte', 'ax\u0301', 'a\u0301x', '\ud800\ud801\udc00', '', 'a', 'A', 'ä', 'a\u0308', '中', '𠀀', '😀', '􏿿', '\ufffd', '\ufffe', '\uffff',
   '\ud800', '\ud801', '\udbff', '\udc00', '\udc01', '\udfff', '\ue000', '\ue001', '\ue7ff',
   '\ud800\ud801', '\udc00\ud800', '\ud800\udc00', 'a\ud800b', 'a\ud801b', 'a\ue000b', 'a\ufffdb',
-  'ä\ud800a', 'a\ud800b', 'a\ud800\u0301', 'a\u0301\ud800', '\ud800\u0308a', '\ud800ä',
+  'ä\ud800a', 'a\ud800\u0301', 'a\u0301\ud800', '\ud800\u0308a', '\ud800ä',
   'c\ud800h', 'ch\ud800', 'd\ud800z', 'dz\ud800', 'e\ud800\u0301', 'é\ud800',
   'a\ud800-2', 'a\ud8002', 'a\ud80010', '2\ud8003', '23\ud800',
   'I\ud800\u0307', 'i\ud800\u0307', 'a\ud800\ufffeé', 'á\ud800\ufffee',

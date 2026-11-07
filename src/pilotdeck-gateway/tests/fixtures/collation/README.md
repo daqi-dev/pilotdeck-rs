@@ -12,7 +12,7 @@ ICU 78.2 icuexportdata 和 CLDR JSON 48.0.0 生成标准 baked 数据，使用
 测试恢复为本地响应逐字节断言；既有 JSON 原件未改，没有登记豁免。
 108 条 CJK 请求全部本地逐字节一致；内存配对通道也重放全部 108 条原始请求，
 客户端收到原件字节、上游保持静默，包含非最小 126/127 帧长度。
-config 的2,728条load诊断继续核对，wire中2,711条本地、17条孤立surrogate排序走精确宿主边界；project-files原件继续通过。
+config 的2,728条load诊断继续核对，wire中2,711条本地、17条孤立surrogate排序当时走精确宿主边界；#132 已把 catalog/session 与 archive / transcript / workspace snapshot 五处排序改为本地 `compare_utf16_preserving_surrogates`，其余仍用普通 `compare_utf16` 的排序点登记在 #132 的跟进单（前置于 A8 退役 TS gateway），因此这 17 条不能一律当作已原生化；project-files原件继续通过。
 合法Unicode/CJK的108条全部本地；非良构UTF16不属于scalar扫描覆盖，不宣称全输入原生化。
 
 全量扫描扩为 71,712 个码位（含未分配位置）和 19 个混合字符串，覆盖
@@ -197,4 +197,4 @@ ASCII、本地/转发混合同 method、汉字/重音/emoji、过滤排除非 AS
 不能仅删除所有 local flags 来验证仍有其他本地 methods 的录制。
 完整协调者回归命令见本 worktree `_tmp/RESULT.md`「第 3 轮」。尺子未修改。
 
-原生非良构UTF16排序跟进 #132，Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)。#133 的 Linux 门控测试已入库（`../project-files-linux-dirent/`，需 cb8 主机运行，证据由协调者产出后收口）；在其实跑证据落盘前，单元解码核验仍不能视为真实文件系统验收。
+原生非良构UTF16排序跟进 #132（已落地 #1235 的比较器与 catalog/session 路径、本单的 archive / transcript / workspace snapshot 三处边界；剩余排序点见 #132 跟进单），Linux真实非法UTF8 dirent端到端跟进 #133，均前置A8/#127收尾。22组Node Buffer解码原件仅证明共用CStr lossy解码结果；macOS实际建名返回EILSEQ(92)。#133 的 Linux 门控测试已入库（`../project-files-linux-dirent/`，需 cb8 主机运行，证据由协调者产出后收口）；在其实跑证据落盘前，单元解码核验仍不能视为真实文件系统验收。

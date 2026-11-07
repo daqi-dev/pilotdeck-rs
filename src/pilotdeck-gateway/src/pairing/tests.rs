@@ -1814,7 +1814,7 @@ async fn archive_security_nine_real_rpc_pairs_never_reach_upstream() {
 }
 
 #[tokio::test]
-async fn archive_host_boundary_forwards_exactly_four_lone_surrogate_ties() {
+async fn archive_lone_surrogate_ties_never_reach_upstream() {
     let (metadata, data) = crate::native_archive::tests::host_fixture();
     let (client, downstream) = tokio::io::duplex(1024 * 1024);
     let (upstream, server) = tokio::io::duplex(1024 * 1024);
@@ -1825,20 +1825,13 @@ async fn archive_host_boundary_forwards_exactly_four_lone_surrogate_ties() {
     };
     authenticate(&mut pair).await;
     let mut local = 0;
-    let mut forwarded = 0;
     for case in data["cases"].as_array().unwrap() {
         let request = case["request"].as_str().unwrap();
         let response = case["response"].as_str().unwrap();
         let wire = client_frame(0x81, 126, request.as_bytes());
         write(&mut pair.client, &wire).await;
-        if crate::native_archive::tests::host_required(case) {
-            read(&mut pair.server, &wire).await;
-            write(&mut pair.server, &server_frame(1, response.as_bytes())).await;
-            forwarded += 1
-        } else {
-            local += 1
-        }
         read(&mut pair.client, &server_frame(1, response.as_bytes())).await;
+        local += 1;
     }
     let probe = client_frame(
         0x81,
@@ -1848,7 +1841,7 @@ async fn archive_host_boundary_forwards_exactly_four_lone_surrogate_ties() {
     write(&mut pair.client, &probe).await;
     read(&mut pair.server, &probe).await;
     silent(&mut pair.server).await;
-    assert_eq!((local, forwarded), (7, 4));
+    assert_eq!(local, 11);
     pair.server.shutdown().await.unwrap();
     eof(&mut pair.client).await;
     pair.finish().await;

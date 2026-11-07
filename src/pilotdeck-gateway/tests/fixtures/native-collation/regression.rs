@@ -144,9 +144,20 @@ fn native_matrix_matches_node() {
 
 #[test]
 fn native_comparator_matches_node_all_pairs() {
-    let oracle = parse_json(include_str!("oracle.json")).expect("#132 comparator oracle JSON");
+    // Provenance is part of the replay: `test_baseline::oracle` enforces the
+    // pinned baseline commit and a non-empty, well-formed source hash table
+    // even when `PDRS_BASELINE` is unset, so a hand-edited fixture goes red.
+    let oracle = crate::test_baseline::oracle(include_str!("oracle.json"));
     let keys = array(field(&oracle, "keys"));
-    assert_eq!(keys.len(), 62, "#132 comparator key coverage");
+    assert_eq!(keys.len(), 61, "#132 comparator key coverage");
+    assert_eq!(
+        keys.iter()
+            .map(|key| encode(key))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        keys.len(),
+        "#132 comparator keys are unique"
+    );
     let rows = array(field(&oracle, "rows"));
     assert_eq!(rows.len(), 14, "#132 comparator locale coverage");
     let mut failures = Vec::new();

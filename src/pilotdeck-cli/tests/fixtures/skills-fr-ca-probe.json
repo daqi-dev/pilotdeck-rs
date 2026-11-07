@@ -1,0 +1,60 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "command": "LANG=<lang> LC_ALL=<lang> node -e 'new Intl.Collator().resolvedOptions(); pairs.map(([a,b])=>Math.sign(a.localeCompare(b)))'",
+  "note": "#132 P2-2: real Node runtime rows for the CLI skills collator; the TS entry (extension/skills/migrateSkills.ts) sorts basenames with localeCompare under the process locale.",
+  "cases": [
+    {
+      "lang": "fr_CA.UTF-8",
+      "resolved": "fr-CA",
+      "pairs": [
+        [
+          "coté",
+          "côte",
+          1
+        ],
+        [
+          "côte",
+          "coté",
+          -1
+        ],
+        [
+          "cote",
+          "côte",
+          -1
+        ],
+        [
+          "coté",
+          "cote",
+          1
+        ]
+      ]
+    },
+    {
+      "lang": "en_US.UTF-8",
+      "resolved": "en-US",
+      "pairs": [
+        [
+          "coté",
+          "côte",
+          -1
+        ],
+        [
+          "côte",
+          "coté",
+          1
+        ],
+        [
+          "cote",
+          "côte",
+          -1
+        ],
+        [
+          "coté",
+          "cote",
+          1
+        ]
+      ]
+    }
+  ]
+}

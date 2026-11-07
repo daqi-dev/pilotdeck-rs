@@ -114,37 +114,27 @@ pub(crate) fn host_fixture() -> (Metadata<Snapshot>, Value) {
     assert_eq!(ids.len(), 11);
     (metadata_from_data(&data), data)
 }
-pub(crate) fn host_required(case: &Value) -> bool {
-    let id = case["id"].as_str().unwrap();
-    id.starts_with("ties-lone-") || id.starts_with("zero-tie-")
-}
 #[test]
-fn archive_host_boundary_only_equal_sequence_lone_surrogates_forward() {
+fn archive_lone_surrogate_ties_answer_natively_with_ts_bytes() {
     let (metadata, data) = host_fixture();
     let mut local = 0;
-    let mut forwarded = 0;
     for case in data["cases"].as_array().unwrap() {
         let route = route_with_metadata(
             &parse(case["request"].as_str().unwrap().as_bytes()).unwrap(),
             Some(&metadata),
         );
-        if host_required(case) {
-            assert!(matches!(route, Route::Forward), "{}", case["id"]);
-            forwarded += 1
-        } else {
-            let Route::LocalResponse(raw) = route else {
-                panic!("unexpected forward {}", case["id"])
-            };
-            assert_eq!(
-                raw,
-                case["response"].as_str().unwrap().as_bytes(),
-                "{}",
-                case["id"]
-            );
-            local += 1;
-        }
+        let Route::LocalResponse(raw) = route else {
+            panic!("unexpected forward {}", case["id"])
+        };
+        assert_eq!(
+            raw,
+            case["response"].as_str().unwrap().as_bytes(),
+            "{}",
+            case["id"]
+        );
+        local += 1;
     }
-    assert_eq!((local, forwarded), (7, 4));
+    assert_eq!(local, 11);
 }
 #[test]
 fn production_default_archive_wire_goldens() {

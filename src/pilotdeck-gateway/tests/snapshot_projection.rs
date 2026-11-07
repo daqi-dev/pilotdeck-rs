@@ -1161,7 +1161,7 @@ fn mkdtemp_normalizes_join_before_creating_the_directory() {
 }
 
 #[test]
-fn host_required_collation_keeps_the_host_boundary_marker() {
+fn unpaired_surrogate_collation_no_longer_projects_a_host_boundary() {
     let scratch = Scratch::new();
     let root = scratch.0.join("snapshots");
     let manifest_root = root.join("workspaces/w/sessions/s/snapshots");
@@ -1191,12 +1191,26 @@ fn host_required_collation_keeps_the_host_boundary_marker() {
         "projectKey".into(),
         source.to_string_lossy().as_ref().into(),
     );
-    let error = projection
+    // #132: the unpaired surrogate sorts with its own weight. The list is
+    // createdAt-descending, so U+FFFD (`b`) precedes the lone high surrogate
+    // (`a`) — a U+FFFD fold would instead make them a stable-order tie.
+    let listed = projection
         .list(&JsValue::Object(input))
-        .expect_err("unpaired-surrogate collation is a host boundary");
-    assert_eq!(error.code(), Some("JS_HOST_REQUIRED"));
-    assert!(error.requires_host(), "A8 must be able to forward it");
-    assert_eq!(error.name(), "Error");
+        .expect("#132 unpaired-surrogate collation is native");
+    let Some(JsValue::Array(items)) = listed.get("items") else {
+        panic!("#132 snapshot list items array");
+    };
+    let ids: Vec<String> = items
+        .iter()
+        .map(|descriptor| {
+            descriptor
+                .get("snapshotId")
+                .and_then(JsValue::as_string)
+                .and_then(|id| id.to_utf8().ok())
+                .expect("#132 snapshot id is UTF-8")
+        })
+        .collect();
+    assert_eq!(ids, ["b", "a"], "#132 Node order, no host boundary");
 }
 
 fn write_manifest(directory: &Path, bytes: &[u8]) {

@@ -3,7 +3,7 @@
 //! extension points, unimplemented here (not exemptions).
 use crate::{
     metadata::{Files, Metadata, js_trim, object, resolve, resolve_process_identity, text_field},
-    project_files::{has_unpaired_surrogate, node_collator, node_locale},
+    project_files::{node_collator, node_locale},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use pilotdeck_protocol::{JsString, JsValue, parse_json, stringify_json};
@@ -443,28 +443,6 @@ fn parse_transcript(bytes: &[u8]) -> Result<Option<Vec<JsValue>>> {
             "Cannot read a native archive with invalid entries.",
         ));
     }
-    let mut counts = std::collections::HashMap::new();
-    for entry in &entries {
-        let sequence = field(entry, "sequence").as_number().unwrap();
-        *counts
-            .entry(if sequence == 0.0 {
-                0
-            } else {
-                sequence.to_bits()
-            })
-            .or_insert(0usize) += 1;
-    }
-    if entries.iter().any(|entry| {
-        let sequence = field(entry, "sequence").as_number().unwrap();
-        counts[&if sequence == 0.0 {
-            0
-        } else {
-            sequence.to_bits()
-        }] > 1
-            && has_unpaired_surrogate(field(entry, "createdAt").as_string().unwrap())
-    }) {
-        return Ok(None);
-    }
     if entries.len() > 1 {
         let locale = node_locale(|key| std::env::var(key).ok());
         let collator = node_collator(&locale).map_err(|(code, message)| error(code, &message))?;
@@ -474,7 +452,7 @@ fn parse_transcript(bytes: &[u8]) -> Result<Option<Vec<JsValue>>> {
             if left != right {
                 (left - right).partial_cmp(&0.0).unwrap_or(Ordering::Equal)
             } else {
-                collator.compare_utf16(
+                collator.compare_utf16_preserving_surrogates(
                     field(a, "createdAt").as_string().unwrap().units(),
                     field(b, "createdAt").as_string().unwrap().units(),
                 )
