@@ -179,12 +179,12 @@ KILLED / SURVIVED / INVALID。锚点失配、编译错误、非绑定消息、�
 
 两处重生成守卫 `runner_regenerates_identically`（`runtime::turn::runner::tests`）与 `stream_integrity_regenerates_identically`（`runtime::turn::live::stream_tests`）跑同一 `generate.mts`、经共享 helper 只重放 `oracle.json` 字节，marker 不进入比较面（#1500/#2116 口径）；marker 判据由专用用例 `turn_runner_generator_writes_owned_marker` 承载：成功格钉 marker 存在且内容为身份串，冲突格预置外来 `.generation-owner`，断言失败点落在独占 open（输出同时含 `EEXIST` 与 `.generation-owner`）且外来字节保留。
 
-按 #2116 两条 issue 评论的结论，本轮不为这些 `#[ignore]` marker 断言登记自动化负控变异体（不扩 `integrity_negative.py` 等既有表）；判据强度由交付证据中的手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`turn-prompt-hooks`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。钉版 Node v22.22.0 / ICU 78.2、`PDRS_BASELINE` 指向 `cc7c4e65` 检出后复跑正控：
+按 #2116 两条 issue 评论的结论，本轮不为这些 `#[ignore]` marker 断言登记自动化负控变异体（不扩 `integrity_negative.py` 等既有表）；判据强度由交付证据中的手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`turn-prompt-hooks`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。钉版 Node v22.22.0 / ICU 78.2、`PDRS_BASELINE` 指向 `cc7c4e65` 检出后从仓库根（加 `--manifest-path src/Cargo.toml`）复跑正控，`test result:` 行须为 `1 passed; 0 failed`：
 
 ```sh
-cargo test --offline -p pilotdeck-gateway --lib \
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
   runtime::turn::runner::tests::turn_runner_generator_writes_owned_marker \
   -- --exact --include-ignored
 ```
 
-手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净。
+手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言（`test result:` 行含 `1 failed`）；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净，复跑正控须回到 `1 passed; 0 failed`。
