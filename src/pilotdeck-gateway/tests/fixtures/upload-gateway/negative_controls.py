@@ -26,14 +26,19 @@ red; the pre-open identity row drops the identity term; and the approved-stat
 row restores the follow-the-link sample, which lets a link planted before the
 approved stat become the approved object.
 
-The lease-link rows pin the lease hard link: two drop the identity
-comparison or its content term, one restores the follow-the-link sample of
-the linked entry. Both are killable on every Unix: ``std::fs::hard_link`` does not follow
-a symlink source (``linkat(..., 0)`` on macOS as well as Linux), so the
-lease entry is the link itself and the follow-the-link sample accepts it.
-Measured 2026-11-06: after ``fs::hard_link(link, dest)``,
-``fs::symlink_metadata(dest)`` reports a symlink; Python's ``os.link`` is the
-one that follows, which is why the fixture does not use it.
+The lease-link rows pin the one descriptor the lease entry is checked
+through: three drop the identity comparison, its content term, or the
+non-blocking half of the open, and one drops `O_NOFOLLOW` from that open,
+which lets a link planted in the entry be followed again. All four are
+killable on every Unix: ``std::fs::hard_link`` does not follow a symlink
+source (``linkat(..., 0)`` on macOS as well as Linux), so the lease entry is
+the link itself and a follow-the-link sample accepts it. Measured 2026-11-06:
+after ``fs::hard_link(link, dest)``, ``fs::symlink_metadata(dest)`` reports a
+symlink; Python's ``os.link`` is the one that follows, which is why the
+fixture does not use it. The non-blocking row is measured 2026-11-07
+(``_tmp/20261107-issue-1887/lease-open-probe/``): a plain open of a FIFO
+never returns, and without ``O_NONBLOCK`` the named test's watchdog is what
+turns that hang into a red test.
 
 The #1887/#1888 rows pin the two halves of the shared "home" question: the
 reader's lexical prefix check refuses a `.tmp` that is a link into the same
@@ -76,6 +81,8 @@ READ_AT_PREAPPROVED = (
 LEASE_LINK = 'upload::tests::upload_lease_link_of_a_swapped_attachment_is_rejected'
 LEASE_LINK_SYMLINK = 'upload::tests::upload_lease_link_never_pins_a_symlink_source'
 LEASE_LINK_REWRITE = 'upload::tests::upload_lease_link_of_a_rewritten_attachment_is_rejected'
+LEASE_LINK_FIFO = ('upload::tests::upload_lease_link_of_a_swapped_entry_'
+                  'is_not_read_through_the_path')
 LEASE_ROOT_LINK = 'upload::tests::upload_lease_root_link_is_refused'
 READ_AT_LINKED_ANCESTOR = 'upload::tests::upload_read_at_rejects_a_linked_tmp_ancestor'
 SWEEP = 'upload::tests::upload_cleanup_bad_record_does_not_abort_the_sweep'
@@ -331,16 +338,17 @@ mutations = [
      '                if false {',
      LEASE_LINK,
      '#1494 a swapped attachment must never be pinned into the lease'),
-    # #1494 (review deepseek boundary#1): the comparison must read the entry
-    # that was actually linked. `fs::metadata` follows a symlink source, so a
-    # source swapped for a link to the approved inode compares equal while the
-    # lease holds the *link* itself — `std::fs::hard_link` goes through
-    # `linkat(..., 0)` and does not follow a symlink source on any shipping
-    # Unix (macOS measured 2026-11-06). The named test swaps the source for
-    # exactly that link and must go red.
+    # #1494 (review deepseek boundary#1) / #1889 (review concurrency#1): the
+    # comparison must read the entry that was actually linked, and it must read
+    # it through the descriptor it fstat'ed. `O_NOFOLLOW` is that second half:
+    # a source swapped for a link to the approved inode compares equal on
+    # identity and bytes while the lease holds the *link* itself —
+    # `std::fs::hard_link` goes through `linkat(..., 0)` and does not follow a
+    # symlink source on any shipping Unix (macOS measured 2026-11-06). The
+    # named test swaps the source for exactly that link and must go red.
     ('lease-link-follows-symlink-source', STORE,
-     '    match (fs::symlink_metadata(destination), expected) {',
-     '    match (fs::metadata(destination), expected) {',
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NONBLOCK);',
      LEASE_LINK_SYMLINK,
      '#1494 the lease entry must be a regular file, never a link'),
     # #1889: `(dev, inode)` does not survive an inode-reusing replacement on
@@ -352,15 +360,21 @@ mutations = [
     # length), so it is killable on every filesystem, not only where inode
     # reuse happens.
     ('lease-link-content-dropped', STORE,
-     '''    match File::open(destination) {
-        Ok(mut file) => hash_file(&mut file).is_ok_and(|digest| digest == expected_sha256),
-        // Unreadable is never a match.
-        Err(_) => false,
-    }''',
-     '''    let _ = (destination, expected_sha256);
+     '    hash_file(file).is_ok_and(|digest| digest == expected_sha256)',
+     '''    let _ = (file, expected_sha256);
     true''',
      LEASE_LINK_REWRITE,
      '#1889 a rewritten artifact must never be pinned into the lease'),
+    # #1889 (review concurrency#1, measured 2026-11-07): the lease entry is
+    # opened `O_NOFOLLOW | O_NONBLOCK`, so a FIFO swapped into it returns at
+    # once instead of blocking the acquire on a writer that never comes. This
+    # row drops only the non-blocking half; the named test's FIFO open then
+    # never returns and its watchdog trips.
+    ('lease-link-nonblock-dropped', STORE,
+     '        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);',
+     '        .custom_flags(libc::O_NOFOLLOW);',
+     LEASE_LINK_FIFO,
+     '#1889 a FIFO entry must never make the lease acquire wait'),
     # #1888: the writer's lease root goes through the same home guard as the
     # reader's. This row restores the pre-fix shape — a bare join off
     # `projectKey`, created through whatever is at that spelling — so a lease
@@ -607,9 +621,11 @@ EXPECTED_NAMES = (
     'read-at-handle-check-dropped', 'read-at-check-before-open',
     'read-at-identity-dropped', 'read-at-approved-stat-follows-link',
     'lease-link-identity-dropped', 'lease-link-follows-symlink-source',
-    # #1887/#1888/#1889 的三条（租约内容摘要 / 写侧租约根 / 读侧词法前缀）也在
-    # 同一 `registered()` 口径下：名册与运行时逐名同序，漏一条即整族 rc 2。
-    'lease-link-content-dropped', 'lease-root-link-refused',
+    # #1887/#1888/#1889 的四条（租约内容摘要 / 租约条目非阻塞打开 / 写侧租约根 /
+    # 读侧词法前缀）也在同一 `registered()` 口径下：名册与运行时逐名同序，
+    # 漏一条即整族 rc 2。
+    'lease-link-content-dropped', 'lease-link-nonblock-dropped',
+    'lease-root-link-refused',
     'read-at-upload-root-prefix-dropped',
     # main 的 #1646 清理鲁棒性十五条，rebase 后并入；同理，名册漏一条即
     # `registered()` rc 2，整族在宿主上被读成「从未开跑」。
