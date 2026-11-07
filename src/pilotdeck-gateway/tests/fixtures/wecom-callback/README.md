@@ -16,7 +16,7 @@ esbuild 转译后以受控 require 装载，只替换四类边界：`ImElicitati
 18800-18901 区间）。重放前若端口被占，测试报的是金样失败而不是被测代码
 回归，先按 `lsof -nP -iTCP:18900-18921` 核占用方。`#1941` / `#1336` 的两条单测用例
 （`wecom_callback/tests.rs` 的超限与到顶格）绑的是 **18990 / 18991**、不在该段内，
-被占时按 `lsof -nP -iTCP:18990 -iTCP:18991` 核。
+被占时按 `lsof -nP -iTCP:18990 -iTCP:18991 -sTCP:LISTEN` 核（只看监听套接字）。
 
 22 个场景的输入步骤与 TS 结果都在 `oracle.json`。覆盖：缺必填配置两条（corpId 与
 secret/agentId，监听不启动）、EADDRINUSE 与 ERR_SOCKET_BAD_PORT、GET 面
