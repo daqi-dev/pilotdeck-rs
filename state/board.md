@@ -4588,3 +4588,7 @@ Gateway 重启后没有 attached pump 时，active snapshot 现从原 root execu
 ### 2026-11-08 待审批会话索引与实际 turn 配置（lane C）
 
 Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接受回执后立即从原 root invocation/state 生成独立 fingerprint 的 metadata-only index，直接目录扫描也能发现会话；不写消息/turn_result 冒充完成。history API 的未 capture 用户输入只作为带原 root ID 的 source live 展示行，分页先合并再切片；冷重连 stream 从 journal 重建。配置侧 actual leased router pricing 按原枚举顺序传 agent.modelPricingEntries；仅 native prepare 保留验证后的 mode/basePermissionMode，managed 默认仍优先。已配置但未装配的 memory/instructions/plugin/cache 端口在 effect 前拒绝，readonly 继续可用，缺失/null/false/empty pricing 继续允许，异步检查取消不能绕过下一次检查。focused kernel 20/20 通过；增加即时 index 调用后最后 cargo check 通过，真实 UI pending Allow/reload 由总集成继续。
+
+### 2026-11-08 导入展示 ID 验证接续（lane C）
+
+新增安全的展示注释后，导入现验证 kernelMessageId/turnId 非空且显式 message ID 全会话唯一；createdAt 可解析，timeline 版本/数值/标识形状完整，同声明 turn 的重复文字 block/timeline ID 拒绝，避免 UI 静默合并。工具 call/result 合法配对可共享 tool timeline，不当重复 prose 处理。无 turn 声明的 legacy 重用 block ID 在 WebMessage 中采用确定性新 session-local namespace，原 canonical 不变；这些展示字段始终不能寻址/恢复执行或审批。focused kernel 21/21 通过；追加真实 tool timeline 正例后 history_transfer 集单 4/4 通过。

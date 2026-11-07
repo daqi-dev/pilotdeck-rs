@@ -360,7 +360,13 @@ pub(crate) fn web_messages(
                 .and_then(Value::as_str)
                 .filter(|_| kind != "tool_call" && kind != "tool_use")
             {
-                row["blockId"] = json!(block_id);
+                row["blockId"] = if message["metadata"]["turnId"].as_str().is_none()
+                    && block["timeline"]["turnId"].as_str().is_none()
+                {
+                    json!(format!("history-block:{session}:{index}:{part}:{block_id}"))
+                } else {
+                    json!(block_id)
+                };
             }
             match kind {
                 "text" => {

@@ -141,6 +141,8 @@ fn verify_media(
 }
 fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
     let mut tools = BTreeSet::new();
+    let mut message_ids = BTreeSet::new();
+    let mut block_ids = BTreeSet::new();
     let mut attachments = Vec::new();
     for (m, message) in messages
         .as_array()
@@ -172,6 +174,29 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
                 return Err(err(
                     "Only read-only display identity/model annotations are imported from message metadata.",
                 ));
+            }
+        }
+        for key in ["kernelMessageId", "turnId"] {
+            if let Some(value) = message["metadata"].get(key) {
+                if value.as_str().is_none_or(|value| value.trim().is_empty()) {
+                    return Err(err(format!("Invalid display {key}.")));
+                }
+            }
+        }
+        if let Some(id) = message["metadata"]["kernelMessageId"].as_str() {
+            if !message_ids.insert(id.to_string()) {
+                return Err(err("Duplicate canonical display message identity."));
+            }
+        }
+        if let Some(created) = message["metadata"].get("createdAt") {
+            let created = created
+                .as_str()
+                .ok_or_else(|| err("Invalid display createdAt."))?;
+            if pilotdeck_transport::system_clock::parse_node22_date(&JsString::from(created))
+                .map_err(|e| err(String::from_utf16_lossy(e.units())))?
+                .is_none_or(|value| !value.is_finite())
+            {
+                return Err(err("Invalid display timestamp."));
             }
         }
         let blocks = message["content"]
@@ -206,6 +231,78 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
                 })
             }) {
                 return Err(err("History block contains unverified runtime state."));
+            }
+            let block_id = match block.get("blockId").filter(|value| !value.is_null()) {
+                Some(value) => Some(
+                    value
+                        .as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or_else(|| err("Invalid display blockId."))?,
+                ),
+                None => None,
+            };
+            let timeline = block.get("timeline").filter(|value| !value.is_null());
+            if let Some(timeline) = timeline {
+                let object = timeline
+                    .as_object()
+                    .ok_or_else(|| err("Invalid display timeline."))?;
+                if object.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "version"
+                            | "turnId"
+                            | "id"
+                            | "previousId"
+                            | "order"
+                            | "revision"
+                            | "offset"
+                    )
+                }) || timeline["version"] != 1
+                    || ["turnId", "id"].iter().any(|key| {
+                        timeline[*key]
+                            .as_str()
+                            .is_none_or(|value| value.trim().is_empty())
+                    })
+                    || ["order", "revision"].iter().any(|key| {
+                        timeline[*key].as_f64().is_none_or(|value| {
+                            value < 0.0 || value.fract() != 0.0 || value > 9_007_199_254_740_991.0
+                        })
+                    })
+                    || timeline.get("offset").is_some_and(|value| {
+                        value.as_f64().is_none_or(|value| {
+                            value < 0.0 || value.fract() != 0.0 || value > 9_007_199_254_740_991.0
+                        })
+                    })
+                    || timeline
+                        .get("previousId")
+                        .filter(|value| !value.is_null())
+                        .is_some_and(|value| {
+                            value.as_str().is_none_or(|value| value.trim().is_empty())
+                                || value == &timeline["id"]
+                        })
+                {
+                    return Err(err("Malformed canonical display timeline."));
+                }
+                if matches!(block["type"].as_str(), Some("text" | "thinking"))
+                    && block_id.is_some_and(|id| timeline["id"] != id)
+                {
+                    return Err(err("Display blockId and timeline identity disagree."));
+                }
+            }
+            let scope = message["metadata"]["turnId"]
+                .as_str()
+                .or_else(|| timeline.and_then(|timeline| timeline["turnId"].as_str()));
+            let display_id = timeline
+                .and_then(|timeline| timeline["id"].as_str())
+                .or(block_id);
+            if !matches!(block["type"].as_str(), Some("tool_call" | "tool_result"))
+                && let (Some(scope), Some(id)) = (scope, display_id)
+            {
+                if !block_ids.insert((scope.to_string(), id.to_string())) {
+                    return Err(err(
+                        "Duplicate display block identity in one declared turn.",
+                    ));
+                }
             }
             let kind = block["type"]
                 .as_str()
@@ -587,6 +684,49 @@ mod tests {
         body.as_object_mut().unwrap().remove("sha256");
         changed["sha256"] = json!(digest(&body).unwrap());
         assert!(verify_envelope(&changed).is_err());
+    }
+    #[test]
+    fn kernel_history_transfer_rejects_ambiguous_modern_display_ids_and_malformed_timeline() {
+        let base = json!([{"role":"user","metadata":{"kernelMessageId":"user","turnId":"root","createdAt":"2026-11-08T00:00:00Z"},"content":[{"type":"text","text":"same"}]},{"role":"assistant","metadata":{"kernelMessageId":"answer","turnId":"root"},"content":[{"type":"text","text":"answer","blockId":"block","timeline":{"version":1,"turnId":"internal-root","id":"block","order":0,"revision":4}}]}]);
+        assert!(verify_messages(&base).is_ok());
+        let tools = json!([{"role":"assistant","metadata":{"turnId":"root"},"content":[{"type":"tool_call","id":"call","name":"read","input":{},"timeline":{"version":1,"turnId":"internal","id":"tool:call","order":0,"revision":1}}]},{"role":"user","metadata":{"turnId":"root"},"content":[{"type":"tool_result","toolCallId":"call","content":[{"type":"text","text":"result"}],"timeline":{"version":1,"turnId":"internal","id":"tool:call","order":0,"revision":2}}]}]);
+        assert!(verify_messages(&tools).is_ok());
+
+        let mut duplicate = base.clone();
+        duplicate[1]["metadata"]["kernelMessageId"] = json!("user");
+        assert!(verify_messages(&duplicate).is_err());
+        let mut blank = base.clone();
+        blank[0]["metadata"]["kernelMessageId"] = json!(" ");
+        assert!(verify_messages(&blank).is_err());
+        let mut time = base.clone();
+        time[0]["metadata"]["createdAt"] = json!("invalid");
+        assert!(verify_messages(&time).is_err());
+        let mut malformed = base.clone();
+        malformed[1]["content"][0]["timeline"]["revision"] = json!(-1);
+        assert!(verify_messages(&malformed).is_err());
+        let mut duplicate_block = base.clone();
+        let mut answer = base[1].clone();
+        answer["metadata"]["kernelMessageId"] = json!("other-answer");
+        duplicate_block.as_array_mut().unwrap().push(answer);
+        assert!(verify_messages(&duplicate_block).is_err());
+        duplicate_block[2]["metadata"]["turnId"] = json!("other-root");
+        assert!(verify_messages(&duplicate_block).is_ok());
+        let legacy = json!([{"role":"assistant","content":[{"type":"text","text":"one","blockId":"legacy-reused"}]},{"role":"assistant","content":[{"type":"text","text":"two","blockId":"legacy-reused"}]}]);
+        assert!(verify_messages(&legacy).is_ok());
+        #[cfg(unix)]
+        {
+            let rows = crate::runtime::session::kernel_projection::web_messages(
+                &legacy,
+                "new-target",
+                None,
+                &json!({}),
+            );
+            assert_ne!(
+                rows["messages"][0]["blockId"],
+                rows["messages"][1]["blockId"]
+            );
+            assert_eq!(legacy[0]["content"][0]["blockId"], "legacy-reused");
+        }
     }
     #[test]
     fn canonical_native_assistant_metadata_thinking_tools_and_media_roundtrip() {
