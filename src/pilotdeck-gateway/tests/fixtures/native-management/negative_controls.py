@@ -18,6 +18,7 @@ SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+ASSEMBLY_MEMORY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/memory.rs'
 ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
@@ -119,6 +120,42 @@ mutations.append(('capability-duplicate-run_get', REQUESTS, '                   
 # breaks the exact wired capability set the HOST test pins.
 mutations.append(('capability-user_dialog_list', REQUESTS, '"user_dialog_list",', '"unwired_user_dialog_list",', HOST, '#1231 exact wired capability set'))
 mutations.append(('capability-permission_list', REQUESTS, '"permission_list",', '"unwired_permission_list",', HOST, '#1231 exact wired capability set'))
+
+# #1456: the three memory-wiring P1s, one control each. The judged behavior is
+# removed without breaking compilation; the restored tree must pass again.
+mutations.append((
+    'memory-error-as-success',
+    SOURCE,
+    '            Some(MemoryDispatch::Error(cause)) => Err(error(cause.code(), cause.message().clone())),',
+    '            Some(MemoryDispatch::Error(cause)) => Ok(cause.to_js()),',
+    'native_process::management_tests::memory_management_request_disabled_gateway_returns_unavailable',
+    '#1456 a failed memory_list must not be an ok body'))
+mutations.append((
+    'memory-project-key-exact-only',
+    ASSEMBLY_MEMORY,
+    '        self.metadata\n'
+    '            .resolve_dialog_project(project_key)\n'
+    '            .map(JsString::from)\n'
+    '            .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))',
+    '        let root = self.project_root.to_str().unwrap_or_default();\n'
+    '        if project_key.equals_str(root) {\n'
+    '            Ok(project_key.clone())\n'
+    '        } else {\n'
+    '            Err(MemoryProviderError::unknown_project_key(project_key.units()))\n'
+    '        }',
+    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    'resolves to the registered project in the TS baseline'))
+mutations.append((
+    'memory-lease-dropped',
+    ASSEMBLY_MEMORY,
+    '        Ok(Some(Arc::new(LeasedMemoryManagement {\n'
+    '            management: resource.management().clone(),\n'
+    '            _lease: lease,\n'
+    '        })))',
+    '        drop(lease);\n'
+    '        Ok(Some(resource.management().clone()))',
+    'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
+    '#1456 the returned service must own a generation lease'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
 mutations.append(('capability-resolve_settings', REQUESTS, '"resolve_settings",', '"unwired_resolve_settings",', HOST, '#1231 exact wired capability set'))
@@ -310,7 +347,7 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 93
+EXPECTED_TOTAL = 96
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -366,6 +403,9 @@ EXPECTED_NAMES = (
     'capability-duplicate-run_get',
     'capability-user_dialog_list',
     'capability-permission_list',
+    'memory-error-as-success',
+    'memory-project-key-exact-only',
+    'memory-lease-dropped',
     'capability-resolve_settings',
     'submit-workspace-id-unwired',
     'submit-snapshots-unwired',
@@ -493,6 +533,7 @@ def main():
                     ORACLE.with_name('generate.mts'), ORACLE.with_name('session.jsonl'),
                     METADATA,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',
+                    ASSEMBLY_MEMORY,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()
                 changed = mutate(case, original)

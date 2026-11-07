@@ -198,6 +198,9 @@ fn gateway_replays_real_ts_wrapper_oracle() {
                 .unwrap_or_else(|| panic!("#1214 {name} step {i}: {method} must dispatch locally"));
             let actual = match dispatch {
                 MemoryDispatch::Response(value) => value,
+                // #1456: a thrown wrapper error is a request failure on the
+                // wire; the fixture records the thrown object itself.
+                MemoryDispatch::Error(error) => error.to_js(),
                 MemoryDispatch::Forward => {
                     panic!("#1214 {name} step {i}: this corpus never hits a host boundary")
                 }
