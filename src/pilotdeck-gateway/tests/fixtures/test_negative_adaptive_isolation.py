@@ -22,35 +22,27 @@ sys.path.insert(0, str(HERE))
 # loaded a HEAD-verified executor, and on a cold target that path compiles:
 # negative_process._ensure_workspace_scanner() runs
 #   cargo build --locked -p pilotdeck-gateway --example workspace_inputs
-# when $CARGO_TARGET_DIR holds no workspace_inputs yet. The old 10 s wall clock
-# was a cold-runner race: CI reported the failure exactly 10.0 s after the test
+# when $CARGO_TARGET_DIR holds no workspace_inputs yet (after a slot wait of up
+# to 900 s and with a 1800 s build cap). The old 10 s wall clock was a
+# cold-runner race: CI reported the failure exactly 10.0 s after the test
 # started (SIGTERM subtest) while the SIGKILL subtest that followed passed on
 # the target the first child had just warmed. Measured on cb8, spawn -> ready is
 # 52.4 s on a fresh CARGO_TARGET_DIR and 6.7-6.8 s once the scanner exists.
 #
-# The budget must outlast the child's own legal slowest path, which is the sum
-# of the bounds negative_process applies on the way to `ready` (that module is
-# loaded by the child from HEAD-verified bytes, so these are copied here by
-# hand instead of imported):
-#   tree_lock(root, timeout=900)          negative_process.py:872 mutating_sources
-#   wait_for_slot(..., timeout=900)       negative_process.py:479
-#   cargo build (timeout=1800)            negative_process.py:483-485
-# A smaller parent budget would re-create this very flake whenever a saturated
-# pool plus a cold build exceed it while the child is still legal.
-HOLD_TREE_LOCK_SECONDS = 900
-HOLD_SLOT_SECONDS = 900
-HOLD_BUILD_SECONDS = 1800
-# git show/ls-tree per input, the copy, plus scheduling jitter on a loaded host.
-HOLD_MARGIN_SECONDS = 300
-HOLD_READY_SECONDS = (HOLD_TREE_LOCK_SECONDS + HOLD_SLOT_SECONDS + HOLD_BUILD_SECONDS
-                      + HOLD_MARGIN_SECONDS)
+# The compile is removed from the child's path instead of budgeted for: the
+# test warms the scanner through the same HEAD guard first (see the warm-up in
+# test_term_and_kill...), so the budget only has to cover the warm path. 600 s
+# is ~40x that measured 6.7-6.8 s under a load-17 host (CI is ~2x slower), and
+# stays below the 900 s tree_lock() wait that another runner in the same tree
+# may be spending: a probe that never publishes can hold the shared tree lock
+# but cannot make a sibling's lock wait expire.
+HOLD_READY_SECONDS = 600
 # The "--hold-lock" child never builds: it imports negative_process and takes
 # the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
 # is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
-# A child that neither exits nor publishes `ready` is only caught at the
-# deadline above; that is the accepted trade for not failing a legal cold
-# build, and an exiting child is still reported at once.
+# Reading a child's pipes after a signal is bounded: a child that neither exits
+# nor publishes `ready` is caught at the deadline above instead.
 PIPE_CLOSE_SECONDS = 30
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
@@ -69,13 +61,17 @@ def read_child_output(child, seconds=PIPE_CLOSE_SECONDS):
     """Read a child's piped output once, bounded like negative_process._collect().
 
     The child does not leak these pipes to cargo: negative_process.run_owned()
-    gives cargo its own PIPE in a fresh session (negative_process.py:163-168),
+    gives cargo its own PIPE in a fresh session (negative_process.py:166-168),
     so communicate() returns as soon as the child dies. The bound is kept for
     the same reason _collect() has one: a descendant that called setsid()
     escapes the group signal and can hold a pipe open forever (#528), and
-    blocking the suite on that is worse than losing the tail. On timeout the
-    pipes are closed and the leader is reaped, so a caller's returncode stays
-    truthful rather than being rewritten by a cleanup kill.
+    blocking the suite on that is worse than losing the tail.
+
+    A timeout therefore means "the leader is still alive, or an escaped
+    descendant holds a pipe". The leader is reaped before the pipes are closed,
+    so closing them cannot turn the expected signal into SIGPIPE (-13) and hide
+    the real cause; callers assert child.poll() is not None to tell a hang from
+    the tolerated #528 case.
 
     Returns (stdout, stderr). Cached on the Popen object because a second
     communicate() would read already-closed pipe objects.
@@ -86,16 +82,36 @@ def read_child_output(child, seconds=PIPE_CLOSE_SECONDS):
     try:
         cached = child.communicate(timeout=seconds)
     except subprocess.TimeoutExpired as error:
-        for stream in (child.stdout, child.stderr):
-            if stream is not None:
-                stream.close()
         try:
             child.wait(timeout=seconds)
         except subprocess.TimeoutExpired:
             pass
+        for stream in (child.stdout, child.stderr):
+            if stream is not None:
+                stream.close()
         cached = (_as_text(child, error.output), _as_text(child, error.stderr))
     child._verified_output = cached
     return cached
+
+
+def reap_child(child, seconds=PIPE_CLOSE_SECONDS):
+    """Kill the probe's process group if it is alive, then always reap it.
+
+    The lead is waited for explicitly: read_child_output() answers from its
+    cache on a second call, so without this a leader killed in a finally block
+    would stay a zombie until the interpreter exits.
+    """
+    if child.poll() is None:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    read_child_output(child)
+    if child.poll() is None:
+        try:
+            child.wait(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def wait_for_ready(child, ready, seconds):
@@ -404,6 +420,11 @@ class IsolationTests(unittest.TestCase):
         self.assert_pristine()
 
     def test_term_and_kill_leave_real_inputs_pristine_and_next_run_passes(self):
+        # #2127: pay the cold-start cost here, through the same HEAD guard the
+        # child uses, so the child's path to `ready` is the measured warm one
+        # (6.7-6.8 s on cb8) and no cargo build sits between spawn and `ready`.
+        with self.runner.verified_inputs():
+            pass
         for signum in (signal.SIGTERM, signal.SIGKILL):
             with self.subTest(signal=signum):
                 output = self.out / str(signum)
@@ -424,6 +445,8 @@ class IsolationTests(unittest.TestCase):
                     self.assert_pristine()
                     child.send_signal(signum)
                     stdout, stderr = read_child_output(child)
+                    self.assertIsNotNone(child.poll(), '#994 child must exit on the signal, '
+                                         'not merely close its pipes')
                     self.assertEqual(child.returncode, -signum, '#994 intended signal must terminate child')
                     print(f'#994 signal={signum} rc={child.returncode} real inputs unchanged', flush=True)
                     self.assertEqual(stdout + stderr, '', '#994 signal probe has no hidden exception')
@@ -439,12 +462,7 @@ class IsolationTests(unittest.TestCase):
                     self.assertEqual(row['status'], 'KILLED', '#994 next run must use pristine executor')
                     self.assertTrue(row['restoredPass'], '#994 next restored check must pass')
                 finally:
-                    if child.poll() is None:
-                        os.killpg(child.pid, signal.SIGKILL)
-                    # Reap and drain, bounded: a cold-start build inside the
-                    # child owns its own pipes (run_owned), so this normally
-                    # returns at once.
-                    read_child_output(child)
+                    reap_child(child)
 
 
 class CandidateBaselineTests(unittest.TestCase):
@@ -546,14 +564,13 @@ class CandidateBaselineTests(unittest.TestCase):
                 constructor.assert_not_called()
                 child.terminate()
                 read_child_output(child)
+                self.assertIsNotNone(child.poll(), '#994 lock predecessor must exit on terminate')
                 self.assertEqual(child.returncode, -signal.SIGTERM, '#994 cancel lock predecessor')
                 self.assertEqual(self.fixture.baseline_only([], self.out / 'released'), 1,
                                  '#994 empty candidate remains nonpassing after cancellation')
                 constructor.assert_called_once()
         finally:
-            if child.poll() is None:
-                os.killpg(child.pid, signal.SIGKILL)
-            read_child_output(child)
+            reap_child(child)
 
     def test_failure_zero_tests_and_compile_error_continue_and_fail(self):
         first, second = self.fixture.cases[0], self.fixture.cases[3]
