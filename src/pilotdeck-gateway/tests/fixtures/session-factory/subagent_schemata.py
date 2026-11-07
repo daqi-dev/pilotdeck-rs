@@ -19,7 +19,8 @@ from _shared import mutant_switch
 ROOT = Path(__file__).resolve().parents[5]
 ADAPTER = ROOT / 'src/pilotdeck-gateway/src/storage/transcript_adapter.rs'
 # Every row binds the test that asserts the field the switch corrupts: the row
-# list for the row-dropping switches, the JS Map index for the deduplication.
+# list for the row-dropping switches, the JS Map index for the deduplication and
+# for the two index-order switches (first-wins started / last-wins completed).
 switches = [
     ('subagent-drop-started',
      ADAPTER,
@@ -33,6 +34,14 @@ switches = [
      ADAPTER,
      'storage::transcript_adapter_tests::subagent_duplicate_completed_rows_kept',
      '#2042 duplicate completed rows'),
+    ('subagent-started-index-last',
+     ADAPTER,
+     'storage::transcript_adapter_tests::subagent_duplicate_started_rows_kept',
+     '#2042 duplicate started index keeps the first entry'),
+    ('subagent-completed-index-first',
+     ADAPTER,
+     'storage::transcript_adapter_tests::subagent_duplicate_completed_rows_kept',
+     '#2042 duplicate completed index keeps the last entry'),
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [

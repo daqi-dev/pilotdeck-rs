@@ -2056,9 +2056,11 @@ fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
 /// The reducer reads only `entry.type` and `entry.subagentId` and validates
 /// nothing else: missing/`null` ids, non-string ids and truthy `errored` fields
 /// all project as-is. Shapes it ignores (`subagent_started ` with a trailing
-/// space, primitives, any other entry type) are skipped, not rejected — so the
-/// restore/list gate in `projection_supported` stays `_ => true` for these two
-/// types. The one throw is the V8 property read every reducer shares: a
+/// space, primitives, any other entry type) are skipped, not rejected — so both
+/// admission doors, `restore_entry_supported` and
+/// `list_conversation_entry_supported`, keep letting these two types through
+/// (`_ => Ok(())` / `_ => true`). The one throw is the V8 property read every
+/// reducer shares: a
 /// `null`/`undefined` log element. `validate_event_log` rejects that entry
 /// before any projection runs, so it is unreachable through restore/list and is
 /// modelled here only so a direct caller cannot silently differ from TS.
@@ -2080,7 +2082,18 @@ pub fn project_subagent_references(entries: &[JsValue]) -> AdapterResult<Subagen
                 .iter()
                 .any(|(key, _)| same_value_zero(key, &subagent_id));
             if first {
-                references.started_by_id.push((subagent_id, entry.clone()));
+                references
+                    .started_by_id
+                    .push((subagent_id.clone(), entry.clone()));
+            } else if crate::mutants::on("subagent-started-index-last") {
+                // #2042 negative control: the index keeps the last entry per id.
+                if let Some(slot) = references
+                    .started_by_id
+                    .iter_mut()
+                    .find(|(key, _)| same_value_zero(key, &subagent_id))
+                {
+                    slot.1 = entry.clone();
+                }
             }
             if crate::mutants::on("subagent-drop-started") {
                 // #2042 negative control: the row list loses every entry.
@@ -2096,12 +2109,15 @@ pub fn project_subagent_references(entries: &[JsValue]) -> AdapterResult<Subagen
                 .any(|(key, _)| same_value_zero(key, &subagent_id));
             if repeat {
                 // `Map.set` updates in place: the key keeps its first position.
-                if let Some(slot) = references
-                    .completed_by_id
-                    .iter_mut()
-                    .find(|(key, _)| same_value_zero(key, &subagent_id))
-                {
-                    slot.1 = entry.clone();
+                if !crate::mutants::on("subagent-completed-index-first") {
+                    // #2042 negative control: keep the first entry instead.
+                    if let Some(slot) = references
+                        .completed_by_id
+                        .iter_mut()
+                        .find(|(key, _)| same_value_zero(key, &subagent_id))
+                    {
+                        slot.1 = entry.clone();
+                    }
                 }
             } else {
                 references

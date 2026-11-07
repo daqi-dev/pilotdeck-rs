@@ -96,11 +96,11 @@ python3 src/pilotdeck-gateway/tests/fixtures/session-factory/negative_controls.p
 
 #2042（#1985 第 2 块）：`projections.mts` 另采集 `subagentReferences`——真实 TS `projectSubagentReferences` 的 14 格输出（正常、悬挂、重复 started/completed、缺/`null` subagentId、数字与字符串键、对象键、errored、混合条目、原始值条目、近似 type、空数组、`null` 条目）。两个索引是 JS `Map`，每行记键的 `typeof` 加键本身（`undefined` 键 JSON 载不动，只留 `typeof`）。Rust 侧 `storage::transcript_adapter::project_subagent_references` 按 `SameValueZero` 建模：`startedById` 首条胜出、`completedById` 末次值胜出、位置首现；对象/数组键视为永不相等（JSON 反序列化不可能共享引用）。金样逐字段比较 `started` / `completed` / `startedById` / `completedById`，`null` 条目格断言与 TS 同名同文案的 `TypeError`。
 
-三只编译期开关负控（`subagent_schemata.py`，绑新增具名测试；源码全部提交后在宿主运行，调用方给本树 `CARGO_TARGET_DIR`）：
+五只编译期开关负控（`subagent_schemata.py`，绑新增具名测试；源码全部提交后在宿主运行，调用方给本树 `CARGO_TARGET_DIR`）：
 
 ```sh
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.py --check
 python3 src/pilotdeck-gateway/tests/fixtures/session-factory/subagent_schemata.py "$OUT_SUBAGENT"
 ```
 
-`subagent-drop-started` 丢光行表、绑 `subagent_started_rows_match_ts`；`subagent-started-first-only` 只留每 id 首行、绑 `subagent_duplicate_started_rows_kept`；`subagent-completed-deduped` 错误去重 completed 行、绑 `subagent_duplicate_completed_rows_kept`。消费者（web `readSessionMessages` 的 sidechain 依赖 `startedById.get`）在 #2044 接线，本单只交付函数与金样。
+`subagent-drop-started` 丢光行表、绑 `subagent_started_rows_match_ts`；`subagent-started-first-only` 只留每 id 首行、绑 `subagent_duplicate_started_rows_kept`；`subagent-completed-deduped` 错误去重 completed 行、绑 `subagent_duplicate_completed_rows_kept`；`subagent-started-index-last` 把 `startedById` 改成末条胜出、绑 `subagent_duplicate_started_rows_kept` 的索引断言；`subagent-completed-index-first` 把 `completedById` 改成首条胜出、绑 `subagent_duplicate_completed_rows_kept` 的索引断言。消费者（web `readSessionMessages` 的 sidechain 依赖 `startedById.get`）在 #2044 接线，本单只交付函数与金样。
