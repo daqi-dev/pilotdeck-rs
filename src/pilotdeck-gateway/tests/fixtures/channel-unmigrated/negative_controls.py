@@ -19,7 +19,7 @@ MUTATIONS = [
      '    "telegram",\n    "qq",',
      '    "qq",',
      'rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
-    # M2: the rejection is silenced into a skip; any one of the 13 cases kills.
+    # M2: the rejection is silenced into a skip; any one of the 12 cases kills.
     ('rejection-silenced', source / 'loader.rs',
      'return Err(ChannelError::error(format!(\n'
      '                "[adapters] channel \\"{key}\\" 未迁移到 Rust，需继续使用 TS gateway"\n'
@@ -32,7 +32,6 @@ MUTATIONS = [
       ('rejects_unmigrated_mattermost', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_signal', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_whatsapp', '#1386 unmigrated channel must reject startup'),
-      ('rejects_unmigrated_bluebubbles', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_dingtalk', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_email', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_homeassistant', '#1386 unmigrated channel must reject startup'),
@@ -50,7 +49,7 @@ MUTATIONS = [
      'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
     # M5: the loader-table truthiness gate is constant-true; the falsy-enabled
     # control kills. Anchor is the `else` arm of `rejects_enabled`, which is
-    # the only place the eleven loader keys read `js_truthy`.
+    # the only place the ten loader keys read `js_truthy`.
     ('enabled-gate-always-true', source / 'loader.rs',
      '    } else {\n        js_truthy(cfg.get("enabled"))\n    }',
      '    } else {\n        true\n    }',
