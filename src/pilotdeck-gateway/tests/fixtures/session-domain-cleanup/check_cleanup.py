@@ -1719,7 +1719,15 @@ def _visible_binding_table(simple, binding_scopes, chain, before=None,
                         if isinstance(value, (ast.Tuple, ast.List, ast.Set,
                                               ast.Dict, ast.Constant))
                         and (certain is None or id(value) in certain)]
-            if literals:
+            # #1953 fix-r1 round 12 (codex r8 P0-1): the supersede rule is
+            # about *source order inside one scope*, and even there only about
+            # what the use's own scope has executed so far.  An enclosing
+            # scope is resolved when the nested function is *called*, which
+            # may be any point between its first and last rebinding:
+            # ``items = (md,); ...; items = ()`` still hands ``md`` to a
+            # nested reader that runs in between, so every literal binding of
+            # an outer scope stays a candidate (fail-closed).
+            if literals and index == 0:
                 floor = max(literals)
                 live = [value for value in live
                         if getattr(value, 'lineno', 0) >= floor]
@@ -3744,6 +3752,25 @@ def _definition_header(statement):
     return header
 
 
+def _non_copy_use(node, copies, tracked, scope_bound, aliases):
+    """True when a value expression hands on anything but the known copies.
+
+    ``copies`` holds the ids of the right-hand-side nodes that are pure
+    copies, at any depth of a literal unpack (``f, (g, x) = h, (h, None)``).
+    Everything else in the expression is still judged as an ordinary
+    expression (#1953 fix-r1 round 12, codex r8 P1-5).
+    """
+    if id(node) in copies:
+        return False
+    if isinstance(node, (ast.Tuple, ast.List)):
+        for element in node.elts:
+            inner = element.value if isinstance(element, ast.Starred) else element
+            if _non_copy_use(inner, copies, tracked, scope_bound, aliases):
+                return True
+        return False
+    return _handle_use(node, tracked, scope_bound, aliases)
+
+
 def _handle_use_in_statement(statement, tracked, scope_bound):
     """``(used, aliases, fresh)`` for one statement's own expressions."""
     aliases = set()
@@ -3782,13 +3809,12 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
                 # expression.  ``f, x = h, [h('common', <stub>)]`` calls the
                 # handle from the element that is not a copy, so the whole
                 # right-hand side may never be skipped.
-                for element in statement.value.elts:
-                    if (id(element) in copies
-                            or (isinstance(element, ast.Starred)
-                                and id(element.value) in copies)):
-                        continue
-                    if _handle_use(element, tracked, scope_bound, aliases):
-                        return True, set(), set()
+                # Round 12 (codex r8 P1-5): a copy nested one level deeper is
+                # still a copy -- ``f, (g, x) = h, (h, None)`` binds ``g`` to
+                # the handle and only prints it, which is a read.
+                if _non_copy_use(statement.value, copies, tracked,
+                                 scope_bound, aliases):
+                    return True, set(), set()
     # A truth test reads the handle: ``if _h:`` / ``while _h:`` / ``assert _h``
     # are not hand-overs (codex r5 P1-5).  Calls inside the test are still
     # inspected -- ``read_only`` stops at a non-read-only callee.
@@ -3812,7 +3838,7 @@ def _handle_use_in_statement(statement, tracked, scope_bound):
     return False, aliases, fresh
 
 
-def _class_body_use(statements, tracked, scope_bound):
+def _class_body_use(statements, tracked, scope_bound, outer=None):
     """Whether a class body hands a tracked handle on (#1953 fix-r1 r11).
 
     #1953 fix-r1 round 11 (codex r7 P1): the class namespace shadows an outer
@@ -3823,16 +3849,47 @@ def _class_body_use(statements, tracked, scope_bound):
     written directly in the body rebinds here -- one inside ``if``/``try`` may
     not run, so the outer handle stays live (fail-closed, exactly like the
     flat scope scan in :func:`_loop_target_used_after`).
+
+    #1953 fix-r1 round 12 (codex r8 P0-2 / P0-3): two things the first version
+    missed.  A compound statement written in the body runs *in* the class
+    body, so its blocks are scanned too -- ``class C: if flag: h('common',
+    <stub>)`` writes the receiver.  And the class namespace is not a closure
+    scope: a method or lambda created in the body resolves its free names in
+    the enclosing chain, so ``class C: h = lambda: None; def m(self):
+    h('common', <stub>)`` still calls the outer handle.  *outer* carries the
+    unshadowed set for exactly those nested scopes.
     """
+    outer = set(tracked) if outer is None else outer
     live = set(tracked)
     for statement in statements:
-        if _handle_use_in_statement(statement, live, scope_bound)[0]:
+        if _class_body_use_in_statement(statement, live, outer, scope_bound):
             return True
-        live -= _class_body_rebindings(statement)
+        live -= _class_body_rebindings(statement, scope_bound)
     return False
 
 
-def _class_body_rebindings(statement):
+def _class_body_use_in_statement(statement, live, outer, scope_bound):
+    """One class-body statement, including the blocks and scopes it runs."""
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for item in _definition_header(statement):
+            if _handle_use(item, live, scope_bound, set()):
+                return True
+        return _nested_scope_uses(statement, outer, scope_bound)
+    if _handle_use_in_statement(statement, live, scope_bound)[0]:
+        return True
+    for node in ast.walk(statement):
+        # A lambda written in the class body is a nested scope with the same
+        # free-name rule as a method (codex r8 P0-3).
+        if isinstance(node, ast.Lambda) and _nested_scope_uses(
+                node, outer, scope_bound):
+            return True
+    for block in _statement_blocks(statement):
+        if _class_body_use(block, live, scope_bound, outer):
+            return True
+    return False
+
+
+def _class_body_rebindings(statement, scope_bound=()):
     """Names a class-body statement provably rebinds to a fresh value."""
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
                               ast.ClassDef)):
@@ -3844,7 +3901,11 @@ def _class_body_rebindings(statement):
         targets, value = [statement.target], statement.value
     else:
         return set()
-    if value is None or not _fresh_value(value):
+    # #1953 fix-r1 round 12 (codex r8 P0-4): *scope_bound* decides whether a
+    # constructor call is still the builtin.  ``class C: object = lambda:
+    # hs[0]; h = object()`` binds ``h`` to the handle, and asking
+    # ``_fresh_value`` without the class namespace answered "fresh".
+    if value is None or not _fresh_value(value, scope_bound):
         # An alias (``_h = _h``) keeps the handle, and anything else may hold
         # it, so neither ends the outer name's life.
         return set()
@@ -4464,6 +4525,45 @@ def _receiver_attribute_writes(tree, receivers, shared):
         return ('fn:write-handle' in found
                 or any('fn:' + name in found for name in _MANAGED_WRITE_ATTRS))
 
+    import_only = {}
+
+    def _import_only_names(scope):
+        """Names *scope* binds through an import and nothing else (r12).
+
+        #1953 fix-r1 round 12 (codex r8 P1-6): the round-11 exception asked
+        # the file-wide kind table and "no assignment in this scope", so a
+        # *parameter* of one function was typed by an import written in
+        # another -- ``def other(): from builtins import setattr as w`` plus
+        # ``def main(w): w(md, 'common', <stub>)`` is a plain call with no
+        # write.  Only a name imported in this very scope, and not bound by
+        # anything else there, is the builtin.
+        """
+        if scope in import_only:
+            return import_only[scope]
+        imported = set()
+        other = set()
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef,
+                              ast.Lambda)):
+            other.update(_argument_names(scope.args))
+        for level, node in _walk_scoped(tree):
+            if (tree if level is None else level) is not scope:
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imported.update(alias.asname or alias.name.split('.')[0]
+                                for alias in node.names)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                   ast.ClassDef)):
+                other.add(node.name)
+            elif isinstance(node, ast.stmt):
+                names, _value = _local_bound_names(node)
+                other.update(names)
+            elif isinstance(node, ast.NamedExpr):
+                other.update(_target_names(node.target))
+            elif isinstance(node, ast.match_case):
+                other.update(_match_capture_names(node.pattern))
+        import_only[scope] = imported - other
+        return import_only[scope]
+
     def collect(node, scope, loops):
         written = _setattr_arguments(node, kinds)
         if written is not None and _generic_handle(node.func):
@@ -4474,9 +4574,11 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # _sa`` *is* the builtin, but an import leaves no binding for
                 # ``_resolved_write_helper`` to follow, so the guard cleared
                 # the write and ``calibrate-builtin-alias-setattr`` survived.
-                # A spelling the scope never rebinds is the import itself.
+                # A spelling this scope binds only through its own import is
+                # the import itself.
                 if not (isinstance(node.func, ast.Name)
                         and not _bindings_at(bindings, node.func.id, node)
+                        and node.func.id in _import_only_names(scope)
                         and any('fn:' + name in kinds.get(node.func.id, ())
                                 for name in _MANAGED_WRITE_ATTRS)):
                     written = None
@@ -5411,12 +5513,18 @@ class _NameBindings(dict):
     with the use.
     """
 
-    __slots__ = ('loops_of', 'comps_of', 'comp_bound')
+    __slots__ = ('loops_of', 'comps_of', 'comp_bound', 'imported')
 
     def __init__(self):
         super().__init__()
         self.loops_of = {}
         self.comps_of = {}
+        # #1953 fix-r1 round 12 (GLM sibling r8 P1): ``from builtins import
+        # setattr as _sa`` leaves no assignment binding, so the status ruler
+        # read ``_sa`` as an unknown name and a ``_sa(report, 'status',
+        # 'PASS')`` write stayed green.  The import-only spellings of this
+        # scope, mapped to the builtin they name, ride along on the table.
+        self.imported = {}
         # #1953 fix-r1 (codex r1b P1): a comprehension target lives in the
         # comprehension's own scope, but the table recorded it like any other
         # local, so ``[h for h in (operator.setitem,)]`` made an unrelated
@@ -5512,7 +5620,47 @@ def _name_bindings(function):
                 continue
             stack.append((child, inner, inner_comp))
 
+    bindings.imported = _imported_write_aliases(function)
     return bindings
+
+
+def _imported_write_aliases(function):
+    """``alias -> builtin`` for write helpers imported in *function* (r12).
+
+    ``from builtins import setattr as _sa`` leaves no assignment binding for
+    :func:`_resolved_write_helper` to follow, so the status ruler read ``_sa``
+    as an unknown name and ``_sa(report, 'status', 'PASS')`` stayed green
+    (GLM sibling r8 P1-1).  Only a spelling this very scope binds through its
+    own import counts: a parameter, a ``for`` target or a nested ``def`` of the
+    same name is a different object (codex r8 P1-6).
+    """
+    if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda)):
+        return {}
+    imported = {}
+    other = set(_argument_names(function.args))
+    for scope, node in _walk_scoped(function):
+        if (function if scope is None else scope) is not function:
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if getattr(node, 'module', None) != 'builtins':
+                continue
+            for alias in node.names:
+                if alias.name in _WRITE_HELPERS:
+                    imported[alias.asname or alias.name] = alias.name
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            other.add(node.name)
+        elif isinstance(node, ast.stmt):
+            names, _value = _local_bound_names(node)
+            other.update(names)
+        elif isinstance(node, ast.NamedExpr):
+            other.update(_target_names(node.target))
+        elif isinstance(node, ast.match_case):
+            other.update(_match_capture_names(node.pattern))
+    return {name: helper for name, helper in imported.items()
+            if name not in other}
 
 
 def _bind_values(target, value, bindings, lineno, comp=None):
@@ -6872,6 +7020,12 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
         # path also needed, so ``h = a; h = a; h(...)`` resolved to
         # ``{'setattr', None}`` and the write vanished (codex boundary r34
         # P0-2 / GLM concurrency r34 P0-1).
+        if not _bindings_at(bindings, node.id, node):
+            # #1953 fix-r1 round 12: the spelling may be a builtin write
+            # helper this scope imported under a new name.
+            imported = getattr(bindings, 'imported', None) or {}
+            if node.id in imported:
+                return imported[node.id]
         found = {_resolved_write_helper(value, bindings, depth + 1, set(seen))
                  for _line, value in _bindings_at(bindings, node.id, node)}
         if len(found) == 1:
@@ -9173,6 +9327,54 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test missed an '
                         'enclosing-scope binding written after the use '
                         '(round 11)')
+    for _label, _body, _prelude, _signature, _want in (
+            ("a class body whose compound statement writes",
+             "    class _C:\n"
+             "        if _flag:\n"
+             "            _h('common', object())\n", '', 'def main():\n', True),
+            ("a method that closes over the outer handle",
+             "    class _C:\n"
+             "        _h = lambda *a: None\n"
+             "        def _method(self):\n"
+             "            _h('common', object())\n", '', 'def main():\n', True),
+            ("a class body that shadows the constructor it calls",
+             "    class _C:\n"
+             "        object = lambda: _hs[0]\n"
+             "        _h = object()\n"
+             "        _h('common', object())\n", '', 'def main():\n', True),
+            ("a nested unpack that only copies the handle",
+             "    _f, (_g, _x) = _h, (_h, None)\n"
+             "    print(_f, _g)\n", '', 'def main():\n', False),
+            ("a parameter typed by another function's import",
+             "    def _other():\n"
+             "        from builtins import setattr as _writer\n"
+             "    def _inner(_writer):\n"
+             "        _writer(md, 'common', None)\n", '', 'def main():\n', False),
+    ):
+        _tree = _r9_probe(_body, _prelude, _signature)
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                           frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 12)')
+    # Round 12, codex r8 P0-1: the enclosing scope rebinds the name to another
+    # literal *after* the nested reader was called, so the first binding is
+    # still the one the call saw.
+    if 'md' not in _withdrawn_receivers(
+            ast.parse("_items = (md,)\n"
+                      "def _early():\n"
+                      "    for _x in _items:\n"
+                      "        _x.common = object()\n"
+                      "_early()\n"
+                      "_items = ()\n"
+                      "def reader(report):\n"
+                      "    return md.common.aggregate_status(report)[1]\n"),
+            _1953_rel, frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test missed a '
+                        'later literal rebinding in the enclosing scope '
+                        '(round 12)')
     if 'md' not in _withdrawn_receivers(getattribute_name_probe, _1953_rel,
                                         frozenset({'common'})):
         failures.append('#1953 aggregation-audit: detector self-test trusted a '
