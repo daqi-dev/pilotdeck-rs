@@ -434,12 +434,16 @@ impl Requests {
             "gateway_request_failed",
             "projectKey is required.",
         )?;
-        // A key that is not valid UTF-8 is still a missing key here: it can
-        // never name a project directory (`from_utf16_lossy` would silently
-        // rename it). Same answer as before #1604.
-        let project_key_str = project_key
-            .to_utf8()
-            .map_err(|_| RequestError::new("projectKey is required."))?;
+        // #2083: the TS baseline runs a lone-surrogate `projectKey` to
+        // completion (`closeProjectSessions` answers `{sessionKeys: []}`;
+        // real-entry probe `_tmp/20261026-issue-2083/probe.out`), so the only
+        // gate is the `?.trim()` shape above. The key converts lossily for the
+        // configured-project comparison, like TS's own path handling; the raw
+        // UTF-16 key still reaches the owner, so a session created under the
+        // same spelling closes like any other project. Residual, accepted with
+        // #2083: a key whose lossy form names the configured project (a real
+        // path containing U+FFFD) is served.
+        let project_key_str = String::from_utf16_lossy(project_key.units());
         if !self.options.serves_project(&project_key_str) {
             return Err(gateway_error(
                 "CAPABILITY_UNAVAILABLE",
@@ -944,21 +948,17 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
-    // #1604: the other half of the same gate. Missing, blank (JS trim,
-    // U+FEFF included) and non-UTF-8 keys all keep the plain `Error` shape TS
-    // produces — `gateway_request_failed` and `projectKey is required.` — and
-    // none of them reaches an owner call.
+    // #1604: the other half of the same gate. Missing and blank (JS trim,
+    // U+FEFF included) keys keep the plain `Error` shape TS produces —
+    // `gateway_request_failed` and `projectKey is required.` — and neither
+    // reaches an owner call.
     #[tokio::test]
-    async fn close_project_sessions_blank_or_surrogate_project_key_is_the_domain_error() {
+    async fn close_project_sessions_blank_project_key_is_the_domain_error() {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1310 fixture");
         for (label, value) in [
             ("blank", JsValue::from("  ")),
             ("bom-only", JsValue::from("\u{feff}")),
-            (
-                "lone-surrogate",
-                JsValue::String(JsString::from_utf16(vec![0xd800])),
-            ),
         ] {
             let error = r
                 .session_dir_request(
@@ -975,6 +975,45 @@ mod tests {
                 "projectKey is required.",
                 key_message(&error),
                 "#1604 the {label} projectKey keeps the domain message"
+            );
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2083: a lone-surrogate `projectKey` is a non-blank key, and the TS
+    // baseline runs it to completion (`closeProjectSessions` answers
+    // `{sessionKeys: []}` on both branches — real-entry probe
+    // `_tmp/20261026-issue-2083/probe.out`). It therefore passes the trim gate
+    // and reaches the same configured-project check every other foreign key
+    // fails, on both the close and the resume branch, instead of being
+    // answered the missing-key domain error.
+    #[tokio::test]
+    async fn close_project_sessions_surrogate_project_key_reaches_the_capability_gate() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        for (label, resume) in [("close", false), ("resume", true)] {
+            let error = r
+                .session_dir_request(
+                    "close_project_sessions".into(),
+                    object([
+                        (
+                            "projectKey",
+                            JsValue::String(JsString::from_utf16(vec![0xd800])),
+                        ),
+                        ("resume", JsValue::Bool(resume)),
+                    ]),
+                )
+                .await
+                .expect_err("#2083 the surrogate projectKey is not a missing key");
+            assert_eq!(
+                "CAPABILITY_UNAVAILABLE", error.code,
+                "#2083 the surrogate projectKey reaches the capability gate ({label} branch)"
+            );
+            assert_eq!(
+                "The isolated native process serves only its configured project.",
+                key_message(&error),
+                "#2083 the surrogate projectKey keeps the capability message ({label} branch)"
             );
         }
         r.owner.shutdown().await.expect("#1310 shutdown");
