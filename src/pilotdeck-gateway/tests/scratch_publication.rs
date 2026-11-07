@@ -1813,6 +1813,7 @@ enum BlindSource {
     Related,
 }
 
+#[cfg(target_os = "linux")]
 impl BlindSource {
     /// #1409: whether a source can hold a descriptor of the scanned pipe at
     /// all. This is the one place the skip set is written — the enumeration
