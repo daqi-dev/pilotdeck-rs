@@ -1275,6 +1275,113 @@ async fn stop_after_stalled_request(
     (response, complete, drained)
 }
 
+/// #1941: the `POST *` body cap. A request that declares far more than
+/// `MAX_BODY_BYTES` but sends one byte past the cap must be closed *at the
+/// cap* — the listener must not keep reading (and buffering) the declared
+/// body. The ending is the webhook precedent's zero-byte close, never a 413.
+///
+/// The declared length is 64 MiB larger than what the client sends on
+/// purpose: a listener without the cap would still be waiting for the rest
+/// (until `requestTimeout`) and this read would time out, so the cell proves
+/// the cap bounds the *buffered* bytes rather than merely rejecting the
+/// request after reading it all.
+#[tokio::test]
+async fn oversize_post_closes_at_the_cap_with_zero_bytes() {
+    // 18991 / 18990 are unused by this module; 18993 belongs to the
+    // concurrent-dispatch test's "nothing listens here" qyapi address.
+    const PORT: u16 = 18991;
+    let listener = stalled_server(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_secs(30),
+            request: Duration::from_secs(30),
+        },
+    )
+    .await;
+    let cap = MAX_BODY_BYTES as usize;
+    let declared = cap + 64 * 1024 * 1024;
+    let mut client = TcpStream::connect(("127.0.0.1", PORT))
+        .await
+        .expect("#1941 oversize connect");
+    let head = format!(
+        "POST /cb HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: {declared}\r\n\r\n"
+    );
+    // The cap closes the socket mid-write, so a write error here is expected
+    // and is not the observable under test.
+    let _ = client.write_all(head.as_bytes()).await;
+    let _ = client.write_all(&vec![b'a'; cap + 1]).await;
+    let mut buf = Vec::new();
+    let read = timeout(Duration::from_secs(3), client.read_to_end(&mut buf)).await;
+    // The connection must END (clean EOF or reset) instead of waiting for the
+    // undeclared remainder. A reset is still a zero-byte close on the wire,
+    // so only the byte count below is asserted exactly.
+    crate::negative_assert!(
+        read.is_ok(),
+        "#1941 an oversize POST ends at the cap instead of waiting for the declared body"
+    );
+    crate::negative_assert!(
+        buf.is_empty(),
+        "#1941 an oversize POST gets no response bytes (zero-byte close, not 413)"
+    );
+    let _ = client.shutdown().await;
+    drop(client);
+    let drained = timeout(Duration::from_secs(10), listener.stop())
+        .await
+        .is_ok();
+    crate::negative_assert!(drained, "#1941 the oversize connection does not pin stop()");
+    until("#1941 oversize listener teardown", || {
+        std::net::TcpListener::bind(("127.0.0.1", PORT)).is_ok()
+    })
+    .await;
+}
+
+/// #1941 boundary: exactly `MAX_BODY_BYTES` is still read and parsed (400
+/// `no Encrypt`), and a small body keeps the same path. Only a body that
+/// crosses the cap destroys the connection, so the off-by-one cannot drift.
+#[tokio::test]
+async fn post_up_to_the_cap_is_still_read() {
+    const PORT: u16 = 18990;
+    let listener = stalled_server(
+        PORT,
+        http::Timeouts {
+            headers: Duration::from_secs(30),
+            request: Duration::from_secs(30),
+        },
+    )
+    .await;
+    let at_cap = "a".repeat(MAX_BODY_BYTES as usize);
+    let response = http_request("#1941 at-cap", PORT, "POST", "/cb", Some(&at_cap)).await;
+    crate::negative_assert_eq!(
+        response["status"],
+        400,
+        "#1941 a body of exactly MAX_BODY_BYTES is still read"
+    );
+    crate::negative_assert_eq!(
+        response["body"],
+        "no Encrypt",
+        "#1941 an at-cap body reaches the XML parse like before"
+    );
+    let small = http_request("#1941 small", PORT, "POST", "/cb", Some("hello")).await;
+    crate::negative_assert_eq!(
+        small["status"],
+        400,
+        "#1941 a small body still walks the normal path"
+    );
+    crate::negative_assert_eq!(
+        small["body"],
+        "no Encrypt",
+        "#1941 a small body still reaches the XML parse"
+    );
+    let drained = timeout(Duration::from_secs(10), listener.stop())
+        .await
+        .is_ok();
+    crate::negative_assert!(drained, "#1941 the at-cap listener stops cleanly");
+    until("#1941 at-cap listener teardown", || {
+        std::net::TcpListener::bind(("127.0.0.1", PORT)).is_ok()
+    })
+    .await;
+}
+
 /// #1336 r2 (concurrency P1): the active-chat claim is one critical section —
 /// `contains`, `resolve` and `insert` under a single lock — so simultaneous
 /// POSTs for the same chat dispatch exactly one turn. The recorded case

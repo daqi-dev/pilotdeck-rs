@@ -7,18 +7,20 @@
 //! used by `channel/webhook` and `channel/api_server`) carries #1292's
 //! keep-alive/408 grid, while this module implements only what the WeCom
 //! callback needs. The differences that can reach the wire, all deliberate and
-//! both registered as unapproved draft entries:
+//! all registered as unapproved draft entries:
 //! `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-408-001.md` (the
 //! `requestTimeout` 408 is framed by hyper — `date` + `content-length: 0` —
-//! instead of Node's 51 raw bytes) and
+//! instead of Node's 51 raw bytes),
 //! `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-KEEPALIVE-001.md` (no
 //! `Keep-Alive: timeout=5` header, and an idle keep-alive connection retires on
-//! the 60 s `header_read_timeout` instead of Node's 5 s `keepAliveTimeout`).
+//! the 60 s `header_read_timeout` instead of Node's 5 s `keepAliveTimeout`) and
+//! `specs/gateway-parity/diffs/A8.3-WECOM-CALLBACK-BODY-LIMIT-001.md` (#1941:
+//! an oversize `POST` body ends the connection with zero response bytes — the
+//! `Err` from this module's service, never a 413).
 //! Moving to the shared lane is tracked as a follow-up, not done here so the
 //! channel's recorded behaviour stays what the golden fixture pins.
 
 use std::{
-    convert::Infallible,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
@@ -204,9 +206,12 @@ pub(crate) async fn listen_with(
                                 // Node's `requestTimeout`: a request that has
                                 // not completed in time is answered 408 and the
                                 // connection is closed instead of pending.
+                                // #1941: `handle_request` returns `Err` only for
+                                // an oversize body, which hyper turns into a
+                                // zero-byte close (no response is framed).
                                 match tokio::time::timeout(timeouts.request, runtime.handle_request(request)).await {
-                                    Ok(response) => Ok::<_, Infallible>(response),
-                                    Err(_) => Ok::<_, Infallible>(request_timeout_response()),
+                                    Ok(response) => response,
+                                    Err(_) => Ok(request_timeout_response()),
                                 }
                             }
                         });
