@@ -629,11 +629,11 @@ from pathlib import Path
 import sys, time
 sys.path.insert(0, sys.argv[1])
 from negative_process import mutating_sources
-root, target, control = map(Path, sys.argv[2:])
+root, target, control = (Path(value) for value in sys.argv[2:5])
 with mutating_sources(root, [target]):
     (control / 'held.tmp').write_text('held')
     (control / 'held.tmp').replace(control / 'held')
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + float(sys.argv[5])
     while not (control / 'mutate').exists():
         if time.monotonic() >= deadline: raise TimeoutError('parent absent')
         time.sleep(.005)
@@ -647,11 +647,11 @@ from pathlib import Path
 import sys
 sys.path.insert(0, sys.argv[1])
 from negative_process import mutating_sources, SourceBaselineError
-root, control = map(Path, sys.argv[2:])
+root, control = (Path(value) for value in sys.argv[2:4])
 (control / 'waiting.tmp').write_text('waiting')
 (control / 'waiting.tmp').replace(control / 'waiting')
 try:
-    with mutating_sources(root, [], lock_timeout=10): print('ACCEPTED')
+    with mutating_sources(root, [], lock_timeout=float(sys.argv[4])): print('ACCEPTED')
 except SourceBaselineError: print('REFUSED')
 '''
         def wait(name, seconds=5, child=None):
@@ -689,11 +689,15 @@ except SourceBaselineError: print('REFUSED')
         # honest bound for the whole handshake (#2127 codex
         # sibling/concurrency/boundary r14-r15 P1, zai boundary r15 P1).
         #
-        # `waiting` is published after the waiter imports negative_process and
-        # before it enters the same admission path, so the same bound covers it
-        # without a separate copied startup constant, and the waiter's final
-        # `REFUSED` line cannot be waited for with a shorter clock than the
-        # admission it reports (#2127 codex sibling r15 P1).
+        # Every handshake in this test uses that one bound -- `held`, `waiting`,
+        # `mutated` and the waiter's `REFUSED` -- and both children are given it
+        # as their own deadline: the holder waits for `mutate` for exactly as
+        # long as the parent may wait for `waiting`, and the waiter waits for
+        # the tree lock for exactly as long as the parent may keep the holder
+        # alive. Mixing a derived parent bound with a hard-coded child bound
+        # lets the child give up first on a slow host, so the parent then waits
+        # for a handshake that can no longer happen (#2127 codex
+        # sibling/concurrency/boundary r16 P1).
         lock_seconds = inspect.signature(
             api.mutating_sources).parameters['lock_timeout'].default
         api._ensure_workspace_scanner()
@@ -704,16 +708,17 @@ except SourceBaselineError: print('REFUSED')
         children = []
         try:
             children.append(subprocess.Popen([sys.executable, '-B', '-c', holder, helper,
-                                              str(self.root), str(target), str(control)],
+                                              str(self.root), str(target), str(control),
+                                              str(held_seconds)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
             wait('held', held_seconds, children[0])
             children.append(subprocess.Popen([sys.executable, '-B', '-c', waiter, helper,
-                                              str(self.root), str(control)],
+                                              str(self.root), str(control), str(held_seconds)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
             wait('waiting', held_seconds, children[1])
             (control / 'mutate.tmp').write_text('mutate')
             (control / 'mutate.tmp').replace(control / 'mutate')
-            wait('mutated')
+            wait('mutated', held_seconds, children[0])
             children[0].kill()
             children[0].communicate(timeout=5)
             stdout, stderr = children[1].communicate(timeout=held_seconds)
