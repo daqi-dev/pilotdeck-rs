@@ -6,6 +6,7 @@ import os
 from collections import Counter
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -990,6 +991,32 @@ class EnvironmentControls(unittest.TestCase):
         ('exec-of-a-literal-string',
          'exec("os.replace = __import__(\'shutil\').copyfile")\n\n'),
     )
+    # r16：r15 两家十条 P1 的共同形态 —— 静态闭集**判绿**、运行期照样把
+    # `os.replace` 换成 `shutil.copyfile`。这里逐条真跑，证明静态判绿不是放行：
+    # 每一条都必须被 `observe_publish` 的运行期观测判红。锚点同样是仓根常量行。
+    BEHAVIOURAL_ONLY_TAMPER_FORMS = (
+        ('setattr-on-builtins-through-the-module',
+         "import builtins\n\nbuiltins.setattr(os, 'replace', "
+         "__import__('shutil').copyfile)\n\n"),
+        ('builtins-reached-through-sys-modules',
+         "def _pin_namespace():\n"
+         "    b = sys.modules['builtins']\n"
+         "    b.setattr(os, 'replace', __import__('shutil').copyfile)\n\n\n"
+         "_pin_namespace()\n\n"),
+        ('module-object-mutator-through-a-function-local-alias',
+         "def _pin_namespace():\n"
+         "    d = os.__dict__\n"
+         "    d.update(replace=__import__('shutil').copyfile)\n\n\n"
+         "_pin_namespace()\n\n"),
+        ('getattr-forwarded-mutator',
+         "getattr(os.__dict__, 'update')"
+         "(replace=__import__('shutil').copyfile)\n\n"),
+        ('guarded-module-imported-through-a-function-local-alias',
+         "def _pin_namespace():\n"
+         "    m = __import__('os')\n"
+         "    m.replace = __import__('shutil').copyfile\n\n\n"
+         "_pin_namespace()\n\n"),
+    )
     SIBLING_ROOT_ANCHORS = {
         'native-config/negative_controls.py': 'ROOT = Path(__file__).resolve().parents[5]',
         'model-complete/negative-controls.py': 'ROOT = Path(__file__).resolve().parents[5]',
@@ -1650,7 +1677,21 @@ class EnvironmentControls(unittest.TestCase):
         return []
 
     def namespace_tamper_problems(self, source):
-        """判据按名字读的模块只能被**读**：命名空间的写入是一个**闭集**。
+        """静态侧的第二线判据：判据按名字读的模块，常见拼写下不许被写。
+
+        **这不是保证**。r15（zai 6 P1 + deepseek 4 P1）已经证明：只要判据读的是
+        源码文本，换个拼写就再绕开一轮（`__builtins__.str = …`、
+        `b = sys.modules['builtins']; b.str = …`、`m = __import__('os')` 后
+        `m.replace = …`、`getattr(os.__dict__, 'update')(…)`、`builtins.setattr(…)`、
+        `_d = os.__dict__; _d.update(…)`）。Python 里这条链是枚举不完的，所以
+        「不可能被绕过」的承诺**不在这里**，而在 `observe_publish` 的运行期观测：
+        真跑一次发布，看临时文件是不是从仓根暂存目录来、目标在发布后是不是**就是**
+        那个临时文件（同一 inode）。任何真改道都会在行为上现形；没有改道就没有危害。
+        下面点名的六种拼写，其中五条已在
+        `test_shared_restore_write_is_atomic` 里逐条真跑过：静态判据 `[]`，观测必红。
+
+        本判据因此只做「挡常见回归、给评审一眼能读的形态」，判红不代表一定有事，
+        判绿也不代表一定没事。
 
         r13 只钉了「模块级、属性名恰是 `Path`/`os`/`str`/`tempfile` 的赋值目标」。
         r14（zai sibling P1 #1/#2 + boundary P1 #1/#2 + concurrency P1 #1/#2，
@@ -1662,7 +1703,7 @@ class EnvironmentControls(unittest.TestCase):
         不在名单）、`os.__dict__.update(replace=…)`（写方法调用）、`import os as o`
         （别名）。每一条都让静态钉子全绿而运行期改道。
 
-        改成闭集后这些形态一并判红，且**不再需要逐个枚举**：
+        今天覆盖的形态（r14 的六类拼写各配一条存活变异）：
           * 属性 / 下标写目标（含 `del`）只有 `ALLOWED_NAMESPACE_WRITES` 里的六条；
             目标是函数内局部对象（`self.x` / `row['k']` / `state['held']`）时放行 ——
             局部对象不是判据读的命名空间。模块级绑定名、判据读的模块、以及它们的
@@ -1675,9 +1716,11 @@ class EnvironmentControls(unittest.TestCase):
             （函数体内 `import os` 之后 `os.replace = …` 同样改道）。
           * `exec(<字面量>)` / `eval(<字面量>)` 判红 —— 它们是「用字符串改命名空间」。
 
-        边界（写清楚，免得下一轮当成新洞）：`exec(<动态表达式>)` 的写入静态不可判
-        （`negative_process.py` 自己要用 `exec(compile(snapshot[path]…))` 做动态
-        pristine 模块），这一支由运行期行为检定兜底，不在本判据内。
+        已知的静态边界（不是缺陷，是这条路的尽头）：`exec(<动态表达式>)`、跨函数的
+        别名链（`b = sys.modules['builtins']` 后再写 `b.str`）、以及借白名单条目的
+        运行期重绑（`_HELD_STATE = 'os'` 之后 `globals()[_HELD_STATE] = shim`）——
+        这些都由 `observe_publish` 兜底，见
+        `test_shared_restore_write_is_atomic` 里那条「静态绿、观测红」的对杀负控。
         """
         tree = ast.parse(source)
         guarded = set(self.GUARDED_MODULES) | self.module_aliases(source)
@@ -2024,6 +2067,54 @@ class EnvironmentControls(unittest.TestCase):
                      str(path), 'exec'), namespace)
         return namespace
 
+    def observe_publish(self, publish, target, scratch):
+        """真跑一次发布，**观测**临时文件从哪个目录来 —— 判行为，不判拼写。
+
+        r15（zai 6 P1 + deepseek 4 P1）：静态判据按语法枚举一轮，评审就能用另一种
+        拼写绕开一轮（`__builtins__`、`b = sys.modules['builtins']`、
+        `m = __import__('os')`、`getattr(os.__dict__, 'update')(…)`、
+        `builtins.setattr(…)`、`_d = os.__dict__` …）。这类「换一种写法改道」在
+        Python 里是枚举不完的：只要判据读的是**源码文本**，就总有下一种拼写。
+
+        这里换成判**运行期事实**：装一个 `os.replace` 观察器，真跑一次发布，
+        记下 `(临时文件, 目标)`，然后断言临时文件的父目录正是仓根暂存目录。
+        不论源码怎么写，只要行为真被改道，观测就会看见；行为没被改道，就没有危害。
+        静态判据（`namespace_tamper_problems`）退居第二线：它挡常见回归，**不**承担
+        「不可能被绕过」的承诺。
+        """
+        observed = []
+        real_replace = os.replace
+
+        def observed_replace(source, destination, *args, **kwargs):
+            # 发布**之前**记下临时文件的身份：真 `os.replace` 会把它的 inode
+            # 原样搬到目标上；拷贝则只覆盖目标内容，目标保留自己的 inode。
+            identity = (Path(source).stat().st_dev, Path(source).stat().st_ino)
+            observed.append((Path(source), Path(destination), identity))
+            return real_replace(source, destination, *args, **kwargs)
+
+        os.replace = observed_replace
+        try:
+            publish(target, b'#1903 observed publish\n')
+        finally:
+            os.replace = real_replace
+        self.assertEqual(len(observed), 1,
+                         '#1903 the publish must reach os.replace exactly once, got '
+                         f'{observed}')
+        source, destination, identity = observed[0]
+        self.assertEqual(destination, target,
+                         '#1903 the publish must land on the target itself')
+        self.assertEqual(source.parent, scratch,
+                         '#1903 the temp file must come from the repository-root scratch '
+                         f'directory, got {source}')
+        self.assertEqual(target.read_bytes(), b'#1903 observed publish\n',
+                         '#1903 the published bytes must be the observed ones')
+        self.assertEqual((target.stat().st_dev, target.stat().st_ino), identity,
+                         '#1903 the target must BE the temp file after one rename; a copy '
+                         'would overwrite it in place and keep its own inode (not atomic)')
+        self.assertEqual(sorted(item.name for item in target.parent.iterdir()),
+                         [target.name],
+                         '#1903 a successful publish leaves no temp file beside the target')
+
     def exercise_sibling_atomic_write(self, module):
         """#1692 §9 r3：目标不存在也要能发布；已有目标的 mode 原样保留、无残留。"""
         with tempfile.TemporaryDirectory(prefix='pdrs-1692-atomic-') as directory:
@@ -2116,6 +2207,54 @@ class EnvironmentControls(unittest.TestCase):
                     self.sibling_write_guards(source.replace(old, new, 1), relative)
                 print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
                       flush=True)
+        # r15（两家 10 条 P1）：静态判据对「换一种拼写改道」永远差一步 —— 改判行为。
+        # 三处夹具各真跑一次发布，观测 `os.replace` 的**源**是不是仓根暂存目录。
+        repository_root = Path(__file__).resolve().parents[3]
+        for relative, function in self.SIBLING_ATOMIC_WRITES:
+            probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
+                                               dir=repository_root))
+            try:
+                target = probe_root / 'probe-source.rs'
+                target.write_bytes(b'#1692 probe\n')
+                module = self.sibling_module(relative)
+                self.observe_publish(
+                    lambda target, data: module[function](target, data), target,
+                    repository_root / '.negctl-publish')
+                print(f'#1692 §9 r15 observed publish {relative}: temp from the '
+                      f'repository-root scratch dir (live)', flush=True)
+            finally:
+                shutil.rmtree(probe_root, ignore_errors=True)
+        # 行为判据的对杀负控：把 scratch 派生改回目标旁边，观测必须红
+        # （静态钉子也红，但这里证明**观测本身**能判）。
+        for relative, function, old, new in (
+                ('model-complete/negative-controls.py', 'atomic_write',
+                 'scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
+                 'scratch = path.parent'),
+                ('native-config/negative_controls.py', 'write_atomic',
+                 "tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+                 "tmp = path.parent / f'.negctl-{path.name}.tmp'"),
+                ('native-stimulus-plan/negative_controls.py', 'write_atomic',
+                 "tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+                 "tmp = path.parent / f'.negctl-{path.name}.tmp'")):
+            source_text = (root / relative).read_text()
+            self.assertIn(old, source_text, f'#1692 §9 r15 {relative} anchor')
+            probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
+                                               dir=repository_root))
+            try:
+                target = probe_root / 'probe-source.rs'
+                target.write_bytes(b'#1692 probe\n')
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1692 §9 r15 {relative} the observation must '
+                                           f'see a temp beside the target'):
+                    mutant = self.sibling_module(
+                        relative, source_text.replace(old, new, 1))
+                    self.observe_publish(
+                        lambda target, data: mutant[function](target, data), target,
+                        repository_root / '.negctl-publish')
+                print(f'#1692 §9 r15 observed-publish mutant {relative} '
+                      f'temp-beside-the-target: KILLED', flush=True)
+            finally:
+                shutil.rmtree(probe_root, ignore_errors=True)
         # r3（两家 boundary/concurrency）：静态形态钉不住「目标不存在时直接崩」。
         # 真执行一次发布函数：首次创建恢复侧车必须成功，已有目标必须保留 mode。
         module = self.sibling_module('model-complete/negative-controls.py')
@@ -3129,6 +3268,98 @@ self_check_controls_run | return | return problems
                              [],
                              '#1903 the shared restore must not truncate the source in place')
         print('#1903 shared-restore guard mutant truncating-shared-restore: KILLED', flush=True)
+        # r15（两家 10 条 P1）：`write_source_atomic` 的暂存目录同样改成**观测**，
+        # 不再靠源码文本推断。
+        with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+            scratch_root = Path(scratch_root)
+            (scratch_root / 'src').mkdir()
+            target = scratch_root / 'src' / 'probed-source.rs'
+            target.write_bytes(b'#1903 probe\n')
+            shared_module = self.sibling_module('negative_process.py')
+            self.observe_publish(
+                lambda target, data: shared_module['write_source_atomic'](
+                    scratch_root, target, data),
+                target, scratch_root / '.negctl-publish')
+        print('#1903 observed publish write_source_atomic: temp from <root>/.negctl-publish '
+              '(live)', flush=True)
+        # 行为判据的对杀负控：临时文件改到目标旁边，观测必须红。
+        for label, old, new in (
+                ('temp-beside-the-target', "publish = Path(root) / PUBLISH_DIR",
+                 "publish = path.parent"),
+                # 只改运行期、静态判据**看不见**的那一类：借白名单里的
+                # `globals()[_HELD_STATE]` 写把模块全局 `os` 换成 shim（deepseek
+                # boundary P1 #1 的原始构造）。静态侧按设计全绿，观测必须红 ——
+                # 这就是「判行为」而不是「判拼写」的意义。
+                ('os-shadowed-through-the-allowlisted-held-state-write',
+                 "PUBLISH_DIR = '.negctl-publish'",
+                 "class _PinnedOs:\n"
+                 "    def __getattr__(self, item):\n"
+                 "        return getattr(__import__('os'), item)\n"
+                 "    replace = staticmethod(__import__('shutil').copyfile)\n"
+                 "_HELD_STATE = 'os'\n"
+                 "globals()[_HELD_STATE] = _PinnedOs()\n"
+                 "_HELD_STATE = '_pdrs_negative_process_held'\n"
+                 "PUBLISH_DIR = '.negctl-publish'")):
+            source_text = (Path(__file__).resolve().parent/'fixtures/negative_process.py'
+                           ).read_text()
+            self.assertIn(old, source_text, f'#1903 r15 {label} anchor')
+            mutated_source = source_text.replace(old, new, 1)
+            if label == 'os-shadowed-through-the-allowlisted-held-state-write':
+                self.assertEqual(self.namespace_tamper_problems(mutated_source), [],
+                                 '#1903 r15 the static lint is blind to this by design; '
+                                 'the observation is what must catch it')
+            with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as scratch_root:
+                scratch_root = Path(scratch_root)
+                (scratch_root / 'src').mkdir()
+                target = scratch_root / 'src' / 'probed-source.rs'
+                target.write_bytes(b'#1903 probe\n')
+                mutant = self.sibling_module('negative_process.py', mutated_source)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#1903 r15 {label} the observation must bite'):
+                    self.observe_publish(
+                        lambda target, data: mutant['write_source_atomic'](
+                            scratch_root, target, data),
+                        target, scratch_root / '.negctl-publish')
+            print(f'#1903 observed-publish mutant {label}: KILLED', flush=True)
+        # r16：把 r15 两家点名、而静态闭集**判绿**的那几种拼写逐条真跑。
+        # 每一条都只做一件事：把 `os.replace` 换成 `shutil.copyfile`（非原子发布）。
+        # 静态侧对它们全绿（这正是 r15 十条 P1 的共同点），行为侧必须红 ——
+        # 红的判据是「目标在发布后就是那个临时文件（同一 inode）」：rename 搬 inode，
+        # `copyfile` 只在原地覆盖内容、目标保留自己的 inode（先截断再写）。
+        original_replace = os.replace
+        try:
+            for label, snippet in self.BEHAVIOURAL_ONLY_TAMPER_FORMS:
+                source_text = (Path(__file__).resolve().parent/'fixtures/negative_process.py'
+                               ).read_text()
+                anchor = "PUBLISH_DIR = '.negctl-publish'"
+                self.assertEqual(source_text.count(anchor), 1,
+                                 f'#1903 r16 {label} unique anchor')
+                mutated_source = source_text.replace(anchor, snippet + anchor, 1)
+                self.assertEqual(
+                    self.namespace_tamper_problems(mutated_source), [],
+                    f'#1903 r16 {label}: the static closed set is blind to this '
+                    f'spelling by design; the observation is what must catch it')
+                with tempfile.TemporaryDirectory(prefix='pdrs-1903-root-') as root:
+                    root = Path(root)
+                    (root / 'src').mkdir()
+                    target = root / 'src' / 'probed-source.rs'
+                    target.write_bytes(b'#1903 probe\n')
+                    mutant = self.sibling_module('negative_process.py', mutated_source)
+                    self.assertIsNot(os.replace, original_replace,
+                                     f'#1903 r16 {label}: the mutant must really have '
+                                     f'redirected os.replace, else this proves nothing')
+                    with self.assertRaises(AssertionError,
+                                           msg=f'#1903 r16 {label} the observation '
+                                               f'must bite'):
+                        self.observe_publish(
+                            lambda target, data: mutant['write_source_atomic'](
+                                root, target, data),
+                            target, root / '.negctl-publish')
+                    print(f'#1903 static-blind / observation-red {label}: KILLED',
+                          flush=True)
+                os.replace = original_replace
+        finally:
+            os.replace = original_replace
 
     def test_polarity_rule_alone_catches_the_branch_swap(self):
         """r8（DeepSeek boundary P3）：极性判据要能**单独**杀掉分支对调。
