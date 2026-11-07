@@ -516,8 +516,20 @@ def main():
             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
         results.append(row)
         print(f"{case.mutation}: {row['status']}: {row['reason']}", flush=True)
+    counts = {state: sum(row['status'] == state for row in results)
+              for state in ('KILLED', 'SURVIVED', 'INVALID', 'SKIPPED')}
+    print('summary: ' + ', '.join(f'{key}={value}' for key, value in counts.items()),
+          flush=True)
     publish_summary(out, results)
-    return int(not results or any(row['status'] not in ('KILLED', 'SKIPPED') for row in results))
+    # SKIPPED (platform-absent, recorded above) is not a failure, but a run
+    # that killed nothing proved nothing: with zero KILLED rows the exit stays
+    # nonzero so a caller cannot read an all-SKIPPED selection as verified.
+    # Same rule as cron-store's LINUX_ONLY accounting and negative_selection's
+    # `verdict_exit` (#818 fix-r3 P0); the three review roles below caught the
+    # first draft dropping it.
+    return int(not results
+               or not counts['KILLED']
+               or any(row['status'] not in ('KILLED', 'SKIPPED') for row in results))
 
 
 if __name__ == '__main__':
