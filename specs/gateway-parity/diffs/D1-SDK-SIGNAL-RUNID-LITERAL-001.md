@@ -32,9 +32,9 @@ Node v22.22.0 尾段）——即**故意不归一化 UUID，按字面比较**。
 `result_unknown` 终态行的 `recovery.runId` 字段（stdout surface）。因此
 同一份代码连跑两次都与冻结金样的固定 UUID 不同，两格以
 `differing surfaces: ["stdout"]` FAIL——在「机器判据」所引正本的 28999
-独占与租约前置成立时，红格恰为 2、失败面均为 stdout 单面（28999 被并发
-占用时 `TcpListener::bind` 在比较阶段之前 panic，不满足此前置即不满足
-本句）。与 TS 行为无产品语义差异：TS 同样每轮生成新 UUID，只是金样冻结了
+独占与租约前置成立时，红格恰为 2、失败面均为 stdout 单面（前置不成立
+即本句不适用，机制见 README 正本，不在本条重复）。与 TS 行为无产品语义
+差异：TS 同样每轮生成新 UUID，只是金样冻结了
 采集那一次的值。
 
 ## 范围
@@ -65,8 +65,10 @@ merge-base `c42027366` 直接跑同样 2 failed、`differing surfaces: ["stdout"
 验收命令与全部运行前置的**正本**是
 `src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放与产品
 负控」节的登记命令块（必须恰好执行 96 个测试，0 个测试不构成验收；
-含 `scripts/cargo-slots.sh`、`PDRS_SIGNAL_RESULTS` 绝对证据路径、整批独占
-28999 mock 端口车道与 `/tmp/pdrs-parity.lock` 目录租约的跨套件串行前置）；
+含 `scripts/cargo-slots.sh` 与 `PDRS_SIGNAL_RESULTS` 绝对证据路径）。
+整批独占 28999 车道与 `/tmp/pdrs-parity.lock` 目录租约是**命令块外的
+串行前置**：宿主先取租约再执行块，锁形态与回收不自创，以
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节为正本；
 本条不再内联命令副本，以免与正本漂移。**判据钉身份与失败面，不只钉数量**：
 失败恰为 `run--unknown-cleanup` / `resume--unknown-cleanup` 两格，两格
 `differing surfaces` 均仅 `["stdout"]`，其余 94 格 `ok`——若失败面含
@@ -75,14 +77,30 @@ stderr / abort / connections 等其它面，即超出本条范围、须另开条
 `compare_surfaces` 对 stdout 是整段字节比较、只产出一个 surface 名，
 单凭 `["stdout"]` 无法区分「仅 runId 不同」与「该两格 stdout 混入其它
 回归」；验收 / 复核本条时须把该批落盘的实际 stdout
-（`evidence/<格>/stdout.bin`，已归一化）中 `recovery.runId` 的 36 字节值
+（`evidence/<格>/stdout.bin`：只剥掉精确 libtest driver 前缀，Rust 侧
+**不归一化**，`signal_replay.rs:1009-1018`；勿用含 driver 横幅的
+`stdout.raw`）中 `recovery.runId` 的 36 字节值
 替换为金样固定 UUID 后与金样 stdout 逐字节比对，相等才在本条范围内，
-否则红格不得按本条放行。本批留档证据已实测：实际值
-`run--unknown-cleanup` = `5352c21a-2910-4ffa-b1cc-caf89756edae`、
-`resume--unknown-cleanup` = `2b9b7f99-c160-44e0-ad17-a1332e665368`，
-替换后两格分别与金样 stdout（`7a0c08c8-…` / `c19fd263-…`）逐字节相等
-（`_tmp/20261107-issue-1260/matrix/evidence/<格>/stdout.bin` 对
-`source.json` 金样）。#1260
+否则红格不得按本条放行。复算命令（在仓根执行，参数为本批 evidence 根目录）：
+
+```sh
+python3 -I - <evidence-root> <<'PY'
+import json, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+caps = {c['input']['id']: c for c in json.loads(
+    pathlib.Path('src/pilotdeck-cli/tests/fixtures/sdk-signals/source.json').read_text())['captures']}
+for cid in ('run--unknown-cleanup', 'resume--unknown-cleanup'):
+    g = caps[cid]['stdout'].encode()
+    a = (root / cid / 'stdout.bin').read_bytes()
+    ar = re.search(rb'"runId":"([0-9a-f-]{36})"', a).group(1)
+    gr = re.search(rb'"runId":"([0-9a-f-]{36})"', g).group(1)
+    assert a.replace(ar, gr) == g, cid
+print('both cells: runId-substituted stdout byte-equal')
+PY
+```
+
+本批留档证据已按上式实测（`_tmp/20261107-issue-1260/matrix/evidence/`）
+输出 `both cells: runId-substituted stdout byte-equal`。#1260
 修复后全量实跑：`test result: FAILED. 94 passed; 2 failed; 0 ignored;
 0 measured; 118 filtered out`，失败恰为本条两格、surface 均为
 `["stdout"]`；原始 `test result` 行、逐格输出与实跑 HEAD 见

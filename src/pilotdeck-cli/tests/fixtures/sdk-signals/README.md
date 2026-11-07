@@ -166,18 +166,16 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行（名单用
 `grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/tests scripts` 现取：
 覆盖 `tests/common/`、fixtures 脚本与 `src/`，含仅引用不绑定者，宁多勿漏，
-不在此维护名单）——宿主按
-`mkdir /tmp/pdrs-parity.lock` 目录租约排队，批期间不得并行任何绑 28999 的套件；
-否则 `TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
-行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。租约获取已写进下方命令块
-（`trap` 退出即释放）；宿主中断残留的空目录（无 `owner.json`）由下一位宿主核无人
-持有后人工 `rmdir /tmp/pdrs-parity.lock`，该路径被建成普通文件时同样人工核现场
-再处置。
+不在此维护名单）——宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再执行本文件任何
+绑 28999 的命令块（本节 96 格矩阵与下方 pending_abort 单测两处；取不到租约即
+退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；锁的形态、
+回收与残留处置不自创，以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节
+为正本（`owner.json` + guard 互斥，空目录不等于残留）。否则
+`TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
+行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh
-mkdir /tmp/pdrs-parity.lock || { echo 'pdrs-parity.lock 被持有，稍后再试'; exit 1; }
-trap 'rmdir /tmp/pdrs-parity.lock' EXIT
 PDRS_SIGNAL_RESULTS=/absolute/new-evidence-directory \
   cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
   --test sdk_signal_exit signal_cases:: -- --ignored --skip stdin_ --test-threads=1
