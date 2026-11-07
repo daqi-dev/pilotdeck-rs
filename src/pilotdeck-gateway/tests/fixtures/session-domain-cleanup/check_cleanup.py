@@ -3489,12 +3489,23 @@ def _statements_scan(statements, tracked, scope_bound):
     live = set(tracked)
     produced = set()
     for statement in statements:
-        used, aliases, _fresh = _handle_use_in_statement(
+        used, aliases, fresh = _handle_use_in_statement(
             statement, live, scope_bound)
         if used:
             return True, set()
         live |= aliases
         produced |= aliases
+        # #1953 fix-r1 round 15 (codex r14 P1): a name certainly rebound to a
+        # value that holds no handle stops being an alias -- ``_f = _h`` then
+        # ``_f = lambda *a: None`` then ``_f('common', <stub>)`` calls the
+        # fresh object.  A conditional rebinding is not in *fresh* and keeps
+        # the alias, exactly like the flat scanner.
+        live -= fresh
+        produced -= fresh
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                  ast.ClassDef)):
+            live.discard(statement.name)
+            produced.discard(statement.name)
         for block in _statement_blocks(statement):
             block_used, inner = _statements_scan(block, live, scope_bound)
             if block_used:
@@ -4616,6 +4627,12 @@ def _receiver_attribute_writes(tree, receivers, shared):
 
     import_events = {}
     flow_marks = {}
+    module_calls = []
+
+    def _module_calls():
+        if not module_calls:
+            module_calls.append(_module_call_positions(tree))
+        return module_calls[0]
 
     def _scope_import_events(scope):
         """``name -> [event]`` for every binding in *scope* (round 12, r14).
@@ -4641,11 +4658,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
             body = scope.body
         marks = flow_marks.setdefault(scope, _flow_marks(body))
 
+        pending = []
+
         def add(name, node, helper, certain):
             conditional, loops = marks.get(id(node), (True, ()))
-            events.setdefault(name, []).append(
+            items = events.setdefault(name, [])
+            items.append(
                 (node.lineno, node.col_offset, helper, conditional, loops,
                  certain))
+            return items
 
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef,
                               ast.Lambda)):
@@ -4673,15 +4694,25 @@ def _receiver_attribute_writes(tree, receivers, shared):
                                    ast.ClassDef)):
                 add(node.name, node, None, True)
             elif isinstance(node, ast.stmt):
-                names, _value = _local_bound_names(node)
+                names, value = _local_bound_names(node)
                 for name in names:
-                    add(name, node, None, False)
+                    items = add(name, node, None, False)
+                    if value is not None:
+                        pending.append((items, len(items) - 1,
+                                        (node.lineno, node.col_offset),
+                                        items[-1][4], value))
             elif isinstance(node, ast.NamedExpr):
                 for name in _target_names(node.target):
-                    add(name, node, None, False)
+                    items = add(name, node, None, False)
+                    pending.append((items, len(items) - 1,
+                                    (node.lineno, node.col_offset),
+                                    items[-1][4], node.value))
             elif isinstance(node, ast.match_case):
                 for name in _match_capture_names(node.pattern):
                     add(name, node, None, False)
+        # Round 15 (codex r14 P0-2 / P0-3): an assignment whose right side
+        # spells a write helper keeps the spelling one on this side too.
+        _resolve_assignment_helpers(events, pending)
         import_events[scope] = events
         return events
 
@@ -4696,9 +4727,19 @@ def _receiver_attribute_writes(tree, receivers, shared):
         model: the last module binding wins, and a write binding anywhere on
         the way keeps the spelling a write helper (codex r9 P0-1 / r10 P1-5).
         """
+        # Round 15 (codex r14 P0-4): ``flow_marks`` is filled by
+        # ``_scope_import_events``; reading it first left ``loops`` empty on
+        # the very first resolution of a scope, so a module-scope loop back
+        # edge was missed until an unrelated call warmed the cache.
+        _scope_import_events(scope)
         loops = tuple(flow_marks.get(scope, {}).get(
             id(node), (True, ()))[1])
+        outer = getattr(scope, 'name', None)
         for level in _chain(scope):
+            if level is not None and level is not scope:
+                # ``_chain`` walks outward, so the last name seen is the
+                # module-level definition whose call site decides.
+                outer = getattr(level, 'name', None)
             events = _scope_import_events(level).get(name)
             if not events:
                 continue
@@ -4710,7 +4751,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     # keep looking outward.
                     continue
                 return chosen[2]
-            chosen = _binding_event_at(events, None, anywhere=True)
+            positions = (_module_calls().get(outer, ())
+                         if level is None and outer else ())
+            chosen = _binding_event_at(events, None, anywhere=True,
+                                       positions=positions)
             return None if chosen is None else chosen[2]
         return None
 
@@ -5818,7 +5862,8 @@ def _event_position(event):
     return (event[0], event[1])
 
 
-def _binding_event_at(events, position, loops=(), anywhere=False):
+def _binding_event_at(events, position, loops=(), anywhere=False,
+                      positions=()):
     """The binding event *events* put in force, or ``None`` (round 14).
 
     Events are ``(line, col, helper, conditional, loops, certain)``.  A use
@@ -5829,7 +5874,22 @@ def _binding_event_at(events, position, loops=(), anywhere=False):
     helper after the dominating binding keeps the spelling a write.  *anywhere*
     resolves a use whose position is unknown -- a nested function reading an
     enclosing import at run time -- and then every binding is in reach.
+
+    #1953 fix-r1 round 15 (codex r14 P0-1): an enclosing scope is read at
+    *call* time, not at the end of the module.  *positions* holds the
+    module-scope call sites of the function being resolved; when one of them
+    saw a write binding, that is the answer.  Without a call site the round-14
+    rule stands (the last unconditional binding decides), which is what keeps
+    an unconditional non-write import after the write import clean.
     """
+    if anywhere and positions:
+        writes = []
+        for _call in positions:
+            item = _binding_event_at(events, _call, loops)
+            if item is not None and item[2] is not None:
+                writes.append(item)
+        if writes:
+            return min(writes, key=_event_position)
     if anywhere:
         unconditional = [item for item in events if item[3] is False]
         if not unconditional:
@@ -5869,6 +5929,101 @@ def _binding_event_at(events, position, loops=(), anywhere=False):
     return chosen
 
 
+class _ModuleEvents(dict):
+    """Module binding events plus the call sites that read them (round 15).
+
+    ``calls`` maps a module-level name to the positions it is called at from
+    module scope, and ``outer_def`` maps ``id`` of every function to the name
+    of the module-level definition it ultimately sits in.  Both are needed to
+    resolve an enclosing binding at *call* time (codex r14 P0-1); a plain
+    ``dict`` of events stays valid everywhere the table is only read.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.calls = {}
+        self.outer_def = {}
+
+
+def _module_call_positions(tree):
+    """``name -> [(line, col)]`` for calls written at module scope (r15).
+
+    Decorators, defaults and annotations are not modelled: a call there is
+    rare in the audited tree and the ruler prefers the round-14 fallback over
+    guessing.  A call inside an ``if`` still counts -- fail-closed.
+    """
+    found = {}
+    stack = list(tree.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            found.setdefault(node.func.id, []).append(
+                (node.lineno, node.col_offset))
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _module_outer_def(tree):
+    """``id(function) -> module-level def name`` for every function (r15)."""
+    parents = _scope_parents(tree)
+    names = {}
+    for node in list(parents) + [
+            item for item in ast.walk(tree)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+        scope = node
+        while parents.get(scope) is not None:
+            scope = parents[scope]
+        names[id(node)] = getattr(scope, 'name', None)
+    return names
+
+
+def _helper_from_value(value, events, position, loops=()):
+    """The write helper a bound *value* denotes, or ``None`` (round 15).
+
+    ``from builtins import setattr as w`` is not the only way the spelling
+    becomes a write helper: ``w = setattr`` and even ``w = w`` keep it one
+    (codex r14 P0-2 / P0-3).  An earlier binding of the right-hand name in
+    the *same* scope decides which helper it is; a right-hand name with no
+    binding there falls back to the builtin when it spells one.  Anything
+    else -- an attribute, a call, a name bound to something unknown -- stays
+    unresolved, and the pass keeps its round-14 answer.
+    """
+    if not isinstance(value, ast.Name):
+        return None
+    earlier = [item for item in events.get(value.id, ())
+               if _event_position(item) < position]
+    chosen = _binding_event_at(earlier, position, loops)
+    if chosen is not None:
+        return chosen[2]
+    if value.id in _MANAGED_WRITE_ATTRS or value.id in _WRITE_HELPERS:
+        return value.id
+    return None
+
+
+def _resolve_assignment_helpers(events, pending):
+    """Fill in write helpers for assignments whose right side names one (r15).
+
+    *pending* holds ``(event list, index, position, loops, value)``.  A small
+    fixpoint lets a copy chain settle in any order (``a = setattr; w = a;
+    x = w``); each pass only rewrites events that are still unresolved.
+    """
+    for _pass in range(len(pending) + 1):
+        changed = False
+        for items, index, position, loops, value in pending:
+            item = items[index]
+            if item[2] is not None:
+                continue
+            helper = _helper_from_value(value, events, position, loops)
+            if helper is not None:
+                items[index] = item[:2] + (helper,) + item[3:]
+                changed = True
+        if not changed:
+            return
+
+
 def _module_binding_events(tree):
     """``name -> [event]`` for every binding at module scope (round 14).
 
@@ -5880,13 +6035,17 @@ def _module_binding_events(tree):
     is not a write helper), while a later write binding anywhere on the way
     stays fail-closed a write.
     """
-    events = {}
+    events = _ModuleEvents()
     marks = _flow_marks(tree.body)
+    pending = []
 
-    def add(name, node, helper):
+    def add(name, node, helper, certain=True):
         conditional, loops = marks.get(id(node), (True, ()))
-        events.setdefault(name, []).append(
-            (node.lineno, node.col_offset, helper, conditional, loops, True))
+        items = events.setdefault(name, [])
+        items.append(
+            (node.lineno, node.col_offset, helper, conditional, loops,
+             certain))
+        return items
 
     for level, node in _walk_scoped(tree):
         if level is not None:
@@ -5904,20 +6063,26 @@ def _module_binding_events(tree):
                                ast.ClassDef)):
             add(node.name, node, None)
         elif isinstance(node, ast.stmt):
-            names, _value = _local_bound_names(node)
+            names, value = _local_bound_names(node)
             for name in names:
-                events.setdefault(name, []).append(
-                    (node.lineno, -1, None,
-                     marks.get(id(node), (True, ()))[0],
-                     marks.get(id(node), (True, ()))[1], False))
+                items = add(name, node, None, False)
+                if value is not None:
+                    pending.append((items, len(items) - 1,
+                                    (node.lineno, node.col_offset),
+                                    items[-1][4], value))
         elif isinstance(node, ast.NamedExpr):
             for name in _target_names(node.target):
-                events.setdefault(name, []).append(
-                    (node.lineno, -1, None, True, (), False))
+                items = add(name, node, None, False)
+                pending.append((items, len(items) - 1,
+                                (node.lineno, node.col_offset),
+                                items[-1][4], node.value))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
-                events.setdefault(name, []).append(
-                    (node.lineno, -1, None, True, (), False))
+                add(name, node, None, False)
+                items[-1] = items[-1][:1] + (-1,) + items[-1][2:]
+    _resolve_assignment_helpers(events, pending)
+    events.calls = _module_call_positions(tree)
+    events.outer_def = _module_outer_def(tree)
     return events
 
 
@@ -5942,9 +6107,13 @@ def _imported_write_aliases(function, outer_imports=None):
     body = [function.body] if isinstance(function, ast.Lambda) else function.body
     marks = _flow_marks(body)
 
+    pending = []
+
     def add(name, position, helper, conditional=False, loops=(), certain=True):
-        events.setdefault(name, []).append(
+        items = events.setdefault(name, [])
+        items.append(
             (position[0], position[1], helper, conditional, loops, certain))
+        return items
 
     # #1953 fix-r1 round 13 (codex r9 P0-5): a module-level import is in force
     # at every call, so it sits before every parameter (-1) and statement:
@@ -5953,8 +6122,16 @@ def _imported_write_aliases(function, outer_imports=None):
     # (codex r10 P1-5): a later unconditional non-write import there means the
     # spelling is not a write helper, while a write binding anywhere on the way
     # stays fail-closed a write.
+    # #1953 fix-r1 round 15 (codex r14 P0-1): the module binding is read at
+    # the call, so a call that ran before a later non-write rebinding still
+    # saw the write helper.
+    calls = getattr(outer_imports, 'calls', None) or {}
+    outer_def = getattr(outer_imports, 'outer_def', None) or {}
+    positions = calls.get(
+        outer_def.get(id(function), getattr(function, 'name', None)), ())
     for name, items in (outer_imports or {}).items():
-        chosen = _binding_event_at(items, None, anywhere=True)
+        chosen = _binding_event_at(items, None, anywhere=True,
+                                   positions=positions)
         if chosen is not None:
             add(name, (-2, -2), chosen[2])
     for name in _argument_names(function.args):
@@ -5978,18 +6155,28 @@ def _imported_write_aliases(function, outer_imports=None):
             add(node.name, (node.lineno, node.col_offset), None,
                 conditional, loops)
         elif isinstance(node, ast.stmt):
-            names, _value = _local_bound_names(node)
+            names, value = _local_bound_names(node)
             for name in names:
-                add(name, (node.lineno, node.col_offset), None,
-                    conditional, loops, certain=False)
+                items = add(name, (node.lineno, node.col_offset), None,
+                            conditional, loops, certain=False)
+                if value is not None:
+                    pending.append((items, len(items) - 1,
+                                    (node.lineno, node.col_offset), loops,
+                                    value))
         elif isinstance(node, ast.NamedExpr):
             for name in _target_names(node.target):
-                add(name, (node.lineno, node.col_offset), None,
-                    conditional, loops, certain=False)
+                items = add(name, (node.lineno, node.col_offset), None,
+                            conditional, loops, certain=False)
+                pending.append((items, len(items) - 1,
+                                (node.lineno, node.col_offset), loops,
+                                node.value))
         elif isinstance(node, ast.match_case):
             for name in _match_capture_names(node.pattern):
                 add(name, (node.lineno, node.col_offset), None,
                     conditional, loops, certain=False)
+    # Round 15 (codex r14 P0-2 / P0-3): ``w = setattr`` / ``w = w`` keep the
+    # spelling a write helper.
+    _resolve_assignment_helpers(events, pending)
     return events
 
 
@@ -9800,6 +9987,52 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 14)')
+    # Round 15 (codex r14 P0-1 / P0-2 / P0-4, P1): the module binding is read
+    # at the call site, an assignment whose right side names a write helper
+    # keeps the spelling one, the first resolution of a module scope already
+    # sees its loop back edges, and a certainly overwritten copy stops being
+    # an alias.
+    for _label, _source, _want in (
+            ("a module call before the write alias is rebound",
+             "from builtins import setattr as _w22\n"
+             "def _w22_use():\n"
+             "    _w22(md, 'common', object())\n"
+             "_w22_use()\n"
+             "from builtins import print as _w22\n", True),
+            ("a module self assignment of the write alias",
+             "from builtins import setattr as _w23\n"
+             "_w23 = _w23\n"
+             "def _w23_use():\n"
+             "    _w23(md, 'common', object())\n", True),
+            ("a module loop whose first use sits on the back edge",
+             "from builtins import print as _w24\n"
+             "for _w24_x in ():\n"
+             "    _w24(md, 'common', object())\n"
+             "    from builtins import setattr as _w24\n", True),
+            ("an unconditional non-write import after the module write import",
+             "from builtins import setattr as _w25\n"
+             "from builtins import print as _w25\n"
+             "def _w25_use():\n"
+             "    _w25(md, 'common', object())\n", False)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                           frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 15)')
+    if 'md' in _withdrawn_receivers(
+            _r9_probe("    def _g():\n"
+                      "        _f = _h\n"
+                      "        _f = lambda *a: None\n"
+                      "        _f('common', object())\n"
+                      "    _g()\n"),
+            _1953_rel, frozenset({'common'})):
+        failures.append('#1953 aggregation-audit: detector self-test withdrew '
+                        'on a copy that is certainly overwritten (round 15)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (
@@ -9868,6 +10101,44 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 14)')
+    # Round 15 (codex r14 P0-1 / P0-2 / P0-3, GLM sibling r14 P2-3): the same
+    # three module shapes on the status side, plus the same-line rebinding the
+    # r14 column discipline introduced.
+    for _label, _source, _want in (
+            ("a module call before the write alias is rebound",
+             "from builtins import setattr as _sa22\n"
+             "def main(report):\n"
+             "    _sa22(report, 'status', 'PASS')\n"
+             "main(None)\n"
+             "from builtins import print as _sa22\n", True),
+            ("a module self assignment of the write alias",
+             "from builtins import setattr as _sa23\n"
+             "_sa23 = _sa23\n"
+             "def main(report):\n"
+             "    _sa23(report, 'status', 'PASS')\n", True),
+            ("a conditional assignment of the write helper",
+             "from builtins import print as _sa24\n"
+             "def main(report):\n"
+             "    if _flag:\n"
+             "        _sa24 = setattr\n"
+             "    _sa24(report, 'status', 'PASS')\n", True),
+            ("a non-write rebinding after the call on the same line",
+             "def main(report):\n"
+             "    from builtins import setattr as _sa25;"
+             " _sa25 = print; _sa25(report, 'status', 'PASS')\n", False)):
+        _tree = ast.parse(_source)
+        _function = [node for node in _tree.body
+                     if isinstance(node, (ast.FunctionDef,
+                                          ast.AsyncFunctionDef))][-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 15)')
     # Round 12, codex r8 P0-1: the enclosing scope rebinds the name to another
     # literal *after* the nested reader was called, so the first binding is
     # still the one the call saw.
