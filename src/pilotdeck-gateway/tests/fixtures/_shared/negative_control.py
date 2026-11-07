@@ -2,6 +2,7 @@
 """Bounded negative controls: mutate only disposable /tmp copies."""
 import contextlib
 import difflib
+import errno
 import hashlib
 import json
 import math
@@ -10,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -186,6 +188,24 @@ def _untracked_files(*paths):
     return files
 
 
+def _dotenv_part(path):
+    """The path component that names a dotenv file, or None.
+
+    `.env*` is the contract: `source_copy` never carries those bytes, because
+    the controls' `environment()` assumes a clean scratch tree. The match is
+    per component and case-insensitive -- `src/.ENV.production` is the same
+    file on a macOS volume, and `specs/.env.production/credentials` names a
+    dotenv *directory* whose children are dotenv content (#1570 r19 codex P0).
+    `prod.env` is included too: the suffix is how `docker --env-file` and
+    `python-dotenv` spell the same thing.
+    """
+    for part in path.parts:
+        folded = part.lower()
+        if folded.startswith('.env') or folded.endswith('.env'):
+            return part
+    return None
+
+
 def _refuse_special(source, path, kind):
     """Refuse a file whose bytes are not a plain copy of the checkout's own.
 
@@ -197,10 +217,11 @@ def _refuse_special(source, path, kind):
     instead of copied, because a leak cannot be undone after the fact
     (#1570 r16/r17/r18 codex P0).
     """
-    if path.name.startswith('.env'):
-        raise RuntimeError(f'source_copy: {path} is a dotenv file in {kind}; the control '
-                           'never copies .env* (tracked or not), so move it out of the '
-                           'workspace inputs or remove it before running')
+    part = _dotenv_part(path)
+    if part is not None:
+        raise RuntimeError(f'source_copy: {path} is a dotenv file in {kind} ({part}); the '
+                           'control never copies .env* (tracked or not), so move it out of '
+                           'the workspace inputs or remove it before running')
     try:
         links = source.stat().st_nlink
     except OSError:
@@ -250,6 +271,29 @@ def _tracked_but_deleted(relative):
     return completed.returncode == 0
 
 
+def _copyable(relative):
+    """True when `source_copy` would carry `relative` as a plain file.
+
+    Tracked files are carried, and so are untracked plain files in `src/` or
+    in a derived input directory (#1570 r18). Links, dotenv paths and hard
+    links are refused by the copy loop, so they are not copyable either: the
+    scan must not derive an input the copy would then refuse to make, and it
+    must not refuse one the copy would carry. Both directions were wrong at
+    once -- an untracked `src/data.txt` named by an untracked `src/new.rs` was
+    refused with a message about `git ls-files` that this same change had just
+    made untrue (#1570 r19 codex P1 / sibling P2).
+    """
+    path = REPO / relative
+    if path.is_symlink() or not path.is_file():
+        return False
+    if _dotenv_part(relative) is not None:
+        return False
+    try:
+        return path.stat().st_nlink == 1
+    except OSError:
+        return False
+
+
 def _indexed(path, tracked):
     """True when `path` names something in the git index, even if the tree deleted it.
 
@@ -271,10 +315,43 @@ def _indexed(path, tracked):
 
 
 def _copy_input(path, destination):
+    """Copy one workspace input from a single opened descriptor.
+
+    Checking the path and then calling `copyfile` is a check-then-use race: a
+    concurrent editor can swap `src/a.rs` for a link to `.env.local` (or add a
+    second hard-link name) after `is_symlink()` / `st_nlink` said the file was
+    clean, and the final digest check reads through that same link, so it
+    agrees with the copy instead of catching it (#1570 r19 concurrency P2).
+    `O_NOFOLLOW` makes the open itself the link check, `fstat` on the
+    descriptor reports the inode whose bytes are about to be written, and the
+    bytes copied are the ones that descriptor holds.
+    """
+    source = REPO / path
     try:
-        shutil.copyfile(REPO / path, destination)
+        descriptor = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            raise RuntimeError(f'source_copy: {path} became a symlink while the control was '
+                               'starting; the control copies the tracked file it names, never '
+                               'the bytes a link points at, so refusing to run the control'
+                               ) from error
+        raise RuntimeError(f'source_copy: cannot copy {path}: {error}') from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RuntimeError(f'source_copy: {path} is not a regular file; the control '
+                               'copies plain files only, so refusing to run the control')
+        if info.st_nlink > 1:
+            raise RuntimeError(f'source_copy: {path} is a hard link ({info.st_nlink} names); '
+                               'the control cannot tell what else it names, so replace it '
+                               'with a real file or remove it before running')
+        with os.fdopen(descriptor, 'rb', closefd=False) as handle:
+            with open(destination, 'wb') as copy:
+                shutil.copyfileobj(handle, copy)
     except OSError as error:
         raise RuntimeError(f'source_copy: cannot copy {path}: {error}') from error
+    finally:
+        os.close(descriptor)
 
 
 def root_level_inputs(directories, files):
@@ -593,8 +670,8 @@ def _path_attributes(text, limit):
     inside a comment or a raw string is still read as an edge (the tree does
     this on purpose -- `unsafe_boundary.rs` carries that text). Every invented
     edge fails loudly rather than silently: a target that does not exist is
-    left alone like fixture text, and one that exists but is untracked or
-    outside the repository refuses the run.
+    left alone like fixture text, and one that exists but is one of the shapes
+    `source_copy` refuses refuses the run too.
     """
     for match in re.finditer(r'#', text):
         index = _skip_trivia(text, match.end(), limit)
@@ -688,15 +765,19 @@ def compile_inputs(*, sources=None, read=None):
       little extra copying, nothing missed), a non-existent one stops the
       control loudly. Masking comments instead would need a Rust lexer, and a
       wrong mask copies nothing while the run still looks green.
-    * an input that exists but is not tracked cannot be copied (`git ls-files`
-      is the manifest), so it is refused instead of half-copied.
+    * an input is derived only when the copy would carry it, by one rule
+      (`_copyable`): tracked or untracked plain file, in `src/` or in a derived
+      directory, and not one of the shapes the copy refuses (a link, a hard
+      link, a dotenv path). Anything else -- a deleted file, a link -- is
+      refused here rather than half-copied. Deriving and copying from two
+      different manifests is how #1570 came back twice (#1570 r19 codex P1).
     * `include!` and `#[path = "…"]` targets are followed only when they exist
       and stay inside the repository. A missing one is fixture text in the
       workspace scanners (`unsafe_boundary.rs`) or an error every tree reports,
       so refusing there would stop controls that work today; a present one is
       copied when it lives outside `src/`, because it is just as much a
-      compile-time input. A present one under `src/` must be tracked for the
-      same reason `include_str!` targets must be.
+      compile-time input. A present one under `src/` follows the same
+      `_copyable` rule as every other input.
     * an `include!` argument that is not a plain literal is refused, because
       `include!(concat!("…"))` resolves at compile time and the scan cannot
       follow it. The one exception is an argument that could not be a string
@@ -824,21 +905,26 @@ def compile_inputs(*, sources=None, read=None):
                                    'repository only through a link; the scratch copy cannot '
                                    'name it')
             if SRC in target.parents:
-                if relative not in tracked:
-                    raise RuntimeError(f'{source}: an include reads {relative}, which is not '
-                                       'tracked; `git ls-files src` would not copy it')
+                if not _copyable(relative):
+                    raise RuntimeError(f'{source}: an include reads {relative}, which the '
+                                       'scratch copy would not carry -- it is untracked, '
+                                       'deleted from the working tree, or one of the shapes '
+                                       'the copy refuses (a link, a hard link, a dotenv '
+                                       'file); refusing to run the control')
             else:
                 if relative.parent != Path('.'):
-                    # `git ls-files` is the manifest the copy is built from,
-                    # so an untracked file in a subdirectory would be dropped
-                    # between derivation and copy and only surface later as a
-                    # misleading "missing from the copy". Refuse it here, the
-                    # same way the `src/` branch does. Root-level files are
-                    # different: they are copied by name, so an uncommitted
-                    # one still gets carried.
-                    if not _tracked_but_deleted(relative):
-                        raise RuntimeError(f'{source}: an include reads {relative}, which is '
-                                           'not tracked; `git ls-files` would not copy it')
+                    # The copy is built from `git ls-files` plus the untracked
+                    # plain files, so anything it would not carry must be
+                    # refused here: a file dropped between derivation and copy
+                    # surfaces later as a misleading "missing from the copy".
+                    # Root-level files are different -- they are copied by
+                    # name, so an uncommitted one is still carried.
+                    if not _copyable(relative):
+                        raise RuntimeError(f'{source}: an include reads {relative}, which the '
+                                           'scratch copy would not carry -- it is untracked, '
+                                           'deleted from the working tree, or one of the '
+                                           'shapes the copy refuses (a link, a hard link, a '
+                                           'dotenv file); refusing to run the control')
                     # A repository-root file has no directory worth copying:
                     # `git ls-files -- .` would drag in the whole tree.
                     directories.add(relative.parent)
@@ -866,7 +952,8 @@ def source_copy(root):
     # `include_str!` never became an input, so the copy comes up short and the
     # mutation reads INVALID (#1570 r18 codex P1).
     tracked = _tracked('src')
-    sources = tracked + [path for path in _untracked_files('src') if path not in set(tracked)]
+    sources = tracked + [path for path in _untracked_files('src')
+                         if path not in set(tracked)]
     # sha256 of every file the scan read, filled by the scan itself: comparing
     # the copy against these bytes is what proves the derivation and the copy
     # came from the same tree, including fragments outside `src/`.
@@ -878,7 +965,9 @@ def source_copy(root):
     # git for nothing lists the *whole* repository, which would copy `state/`,
     # `.github/` and tracked `.env*` into every scratch workspace (#1570 r15
     # boundary).
+    listed = set()
     for path in (_tracked(*directories) if directories else ()):
+        listed.add(path)
         if path not in seen:
             seen.add(path)
             paths.append(path)
@@ -897,6 +986,7 @@ def source_copy(root):
     if directories:
         untracked += _untracked_files(*directories)
     for path in untracked:
+        listed.add(path)
         if path not in seen:
             seen.add(path)
             paths.append(path)
@@ -953,23 +1043,26 @@ def source_copy(root):
     # `LICENSE` rides along for the same "workspace inputs" promise. Both can
     # be deleted by a pending repair like any other tracked file, so they get
     # the same skip-and-say-it-out-loud treatment as the loop above instead of
-    # a bare `FileNotFoundError` that reads as "ran and failed".
+    # a bare `FileNotFoundError` that reads as "ran and failed". A link is
+    # tested before "is it a file": `LICENSE -> /etc` is not a file, and
+    # skipping it as "missing" would give the same shape two answers in two
+    # loops (#1570 r19 concurrency P3).
     for name in ('LICENSE', 'rust-toolchain.toml'):
-        if not (REPO / name).is_file():
-            print(f'source_copy: {name} is missing from the working tree, not copied',
-                  flush=True)
-            continue
         if (REPO / name).is_symlink():
             raise RuntimeError(f'source_copy: {name} is a symlink; the control copies the '
                                'tracked file it names, never the bytes a link points at, so '
                                'replace it with the real file or remove it before running')
+        if not (REPO / name).is_file():
+            print(f'source_copy: {name} is missing from the working tree, not copied',
+                  flush=True)
+            continue
         if _escapes_repository(name, repository):
             raise RuntimeError(f'source_copy: {name} resolves outside the repository; the '
                                'scratch copy must not carry anything from outside the '
                                'checkout, so refusing to copy it')
         _refuse_special(REPO / name, Path(name), 'the workspace inputs')
-        shutil.copyfile(REPO / name, root / name)
-        written.append(name)
+        _copy_input(Path(name), root / name)
+        written.append(Path(name))
     # #1570: prove the inputs landed instead of trusting the write loop.
     verify_copy(root, files)
     copied = {path: hashlib.sha256((root / path).read_bytes()).hexdigest()
@@ -978,9 +1071,26 @@ def source_copy(root):
         raise RuntimeError('the scratch copy does not match the sources the scan read; '
                            'the tree changed while the copy was being made, so refusing '
                            'to run the control against a moving tree')
-    if set(_tracked('src')) | set(_untracked_files('src')) != set(sources):
+    if (set(_tracked('src')) | set(_untracked_files('src'))) != set(sources):
         raise RuntimeError('src/ changed while the scratch copy was being made; refusing '
                            'to run the control against a moving tree')
+    # The same check for the derived directories: a file that appears there
+    # *during* the copy window is in neither `written` nor `files`, and a
+    # run-time read of it (the `ledger.json` shape) then fails as INVALID with
+    # nothing in the log -- the #1570 symptom itself (#1570 r19 concurrency
+    # P2 / sibling P2). Re-listing also turns a link or directory that
+    # appeared mid-copy into this message instead of a confusing one from
+    # `_untracked_files`.
+    if directories:
+        try:
+            relisted = set(_tracked(*directories)) | set(_untracked_files(*directories))
+        except RuntimeError as error:
+            raise RuntimeError('an input directory changed while the scratch copy was being '
+                               f'made ({error}); refusing to run the control against a moving '
+                               'tree') from error
+        if relisted != listed:
+            raise RuntimeError('an input directory changed while the scratch copy was being '
+                               'made; refusing to run the control against a moving tree')
     if compile_inputs(sources=sources) != (directories, files):
         raise RuntimeError('the workspace inputs changed while the scratch copy was being '
                            'made; refusing to run the control against a moving tree')
