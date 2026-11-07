@@ -6487,6 +6487,10 @@ class _ModuleEvents(dict):
         # call list is not exhaustive at all there.  Round 26 keeps the sites
         # as positions instead of a flag.
         self.open_calls = []
+        # #1953 fix-r1 round 26 (self-check of codex r25 P0-2): ``name ->
+        # [call sites]`` for module-scope calls that spell the name on an
+        # attribute (``mod.main(...)``, ``getattr(mod, 'main')(...)``).
+        self.attr_calls = {}
         # #1953 fix-r1 round 26 (codex r25 P1-3): spans of ``if False:``
         # bodies, so a dead binding cannot decide a live use.
         self.dead_ranges = ()
@@ -6534,8 +6538,14 @@ def _module_call_positions(tree, direct=None):
 
 
 #: Module-scope calls that can reach a name without spelling it (round 25).
+#
+# #1953 fix-r1 round 26 (codex r25 P1-2): ``getattr(obj, 'x')`` is *not* one
+# of them -- it reaches an attribute of whatever object it is handed, not a
+# module-level name -- so it stays out of the general set.  The shapes that do
+# reach this module's own name are handled per target by
+# :func:`_module_open_calls` (``mod.main(...)``, ``getattr(mod, 'main')(...)``).
 _OPEN_CALL_HEADS = frozenset(
-    {'globals', 'locals', 'vars', 'eval', 'exec', '__import__', 'getattr'})
+    {'globals', 'locals', 'vars', 'eval', 'exec', '__import__'})
 
 
 def _module_value_uses(tree):
@@ -6685,6 +6695,40 @@ def _module_open_aliases(tree):
             if values & _OPEN_CALL_HEADS}
 
 
+def _module_definition_names(tree):
+    """Names a module-scope ``Call`` can reach through an attribute (r26)."""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                             ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                names.update(_target_names(target))
+    return names
+
+
+def _spelled_callee(node, names):
+    """The module-level name *node* calls through an attribute, or ``None``.
+
+    #1953 fix-r1 round 26 (self-check of codex r25 P0-2): ``import
+    session_domain as sd; sd.main(report)`` and
+    ``getattr(sd, 'main')(report)`` reach ``main`` without a bare ``Name``
+    call, so the recorded call list is not the whole story for it.
+    """
+    func = node.func
+    if isinstance(func, ast.Attribute) and func.attr in names:
+        return func.attr
+    if isinstance(func, ast.Call):
+        inner = func.func
+        if isinstance(inner, ast.Name) and inner.id == 'getattr':
+            if len(func.args) >= 2 and isinstance(func.args[1], ast.Constant):
+                literal = func.args[1].value
+                if isinstance(literal, str) and literal in names:
+                    return literal
+    return None
+
+
 def _module_open_calls(tree):
     """Module-scope sites that can call a name the module never spells (r25).
 
@@ -6700,7 +6744,9 @@ def _module_open_calls(tree):
     the same site.
     """
     aliases = _module_open_aliases(tree)
+    names = _module_definition_names(tree)
     sites = []
+    spelled = {}
     stack = [(child, ()) for child in reversed(tree.body)]
     while stack:
         node, loops = stack.pop()
@@ -6709,10 +6755,15 @@ def _module_open_calls(tree):
             stack.extend((item, loops)
                          for item in reversed(_definition_header(node)))
             continue
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if (node.func.id in _OPEN_CALL_HEADS
-                    or node.func.id in aliases):
-                sites.append(((node.lineno, node.col_offset), loops))
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if (node.func.id in _OPEN_CALL_HEADS
+                        or node.func.id in aliases):
+                    sites.append(((node.lineno, node.col_offset), loops))
+            target = _spelled_callee(node, names)
+            if target is not None:
+                spelled.setdefault(target, []).append(
+                    ((node.lineno, node.col_offset), loops))
         elif isinstance(node, ast.Attribute) and node.attr in (
                 'globals', 'locals', 'vars'):
             sites.append(((node.lineno, node.col_offset), loops))
@@ -6721,7 +6772,7 @@ def _module_open_calls(tree):
             inner = loops + (id(node),)
         for child in reversed(list(ast.iter_child_nodes(node))):
             stack.append((child, inner))
-    return sites
+    return sites, spelled
 
 
 def _dead_line_ranges(tree):
@@ -7011,7 +7062,7 @@ def _module_binding_events(tree):
     events.calls = _module_call_positions(tree)
     events.outer_def = _module_outer_def(tree)
     events.value_uses = _module_value_uses(tree)
-    events.open_calls = _module_open_calls(tree)
+    events.open_calls, events.attr_calls = _module_open_calls(tree)
     events.alias_calls = _module_alias_calls(tree, events.calls)
     events.dead_ranges = tuple(_dead_line_ranges(tree))
     return events
@@ -7091,8 +7142,10 @@ def _imported_write_aliases(function, outer_imports=None):
     # turns a clean module into a write, and the read stays fail-closed for a
     # site after the import.
     open_calls = list(getattr(outer_imports, 'open_calls', None) or ())
+    attr_calls = getattr(outer_imports, 'attr_calls', None) or {}
     positions = (list(calls.get(func_name, ()))
                  + list(alias_calls.get(func_name, ()))
+                 + list(attr_calls.get(func_name, ()))
                  + open_calls) if func_name is not None else []
     # #1953 fix-r1 round 24 (self-check of codex r22 P1-2): the call list only
     # describes the module-scope calls; a name the module also reads as a value
@@ -11877,6 +11930,31 @@ def aggregation_audit():
              "import builtins as _bi64\n"
              "def other():\n"
              "    getattr(str, 'upper')\n", False),
+            ("a builtins alias reached through an attribute call",
+             "import json as _bi66\n"
+             "def main(report):\n"
+             "    _f = _bi66.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi66\n"
+             "import sys\n"
+             "sys.modules['__main__'].main(object())\n", True),
+            ("a builtins alias reached through a literal getattr call",
+             "import json as _bi67\n"
+             "def main(report):\n"
+             "    _f = _bi67.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi67\n"
+             "getattr(object(), 'main')(object())\n", True),
+            ("an unrelated getattr after the later import",
+             "import json as _bi68\n"
+             "def main(report):\n"
+             "    _f = _bi68.getattr(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n"
+             "main(object())\n"
+             "import builtins as _bi68\n"
+             "getattr(str, 'upper')\n", False),
             ("a builtins import inside a statically dead branch",
              "import json as _bi65\n"
              "def main(report):\n"
