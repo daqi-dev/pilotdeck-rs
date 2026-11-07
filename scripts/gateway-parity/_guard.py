@@ -142,4 +142,7 @@ def run_entry(main, policy):
         report, code = failure
         print(json.dumps(report, ensure_ascii=False))
         raise SystemExit(code)
-    raise SystemExit(code)
+    # None and False both become process exit 0, the same false-PASS shape as
+    # a forgotten status; fail closed with exit 2.  Test identity, not equality:
+    # 0 == False is true, but 0 is not False, so a real integer 0 passes through.
+    raise SystemExit(2 if code is None or code is False else code)
