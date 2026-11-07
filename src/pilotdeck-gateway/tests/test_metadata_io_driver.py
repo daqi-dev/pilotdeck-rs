@@ -1012,6 +1012,11 @@ class EnvironmentControls(unittest.TestCase):
              '    fd, tmp = tempfile.mkstemp(dir=str(scratch), prefix=".negctl-" + path.name, '
              'suffix=".tmp")\n'
              "    tmp = ROOT / 'src' / f'.negctl-{path.name}.tmp'"),
+            # r7（DeepSeek boundary P1）：只判「表达式里出现过 PUBLISH_DIR」不判极性 ——
+            # 两支对调后判据照绿，而仓外目标反而把临时文件写进被扫的 `src/`。
+            ('scratch-branches-swapped',
+             '    scratch = PUBLISH_DIR if path.is_relative_to(ROOT) else path.parent',
+             '    scratch = path.parent if path.is_relative_to(ROOT) else PUBLISH_DIR'),
         ),
         'native-stimulus-plan/negative_controls.py': (
             ('temp-rebound-after-the-correct-derivation',
@@ -1034,6 +1039,11 @@ class EnvironmentControls(unittest.TestCase):
              "PUBLISH_DIR = root / '.negctl-publish'",
              "# PUBLISH_DIR = root / '.negctl-publish'\n"
              "PUBLISH_DIR = root / 'src' / '.negctl-publish'"),
+            # r7（zai sibling P1）：常量仍在表达式里、但已经不是除法的基 ——
+            # 「提到过」型判据全绿，临时文件其实落在目标旁边。
+            ('published-temp-mentions-the-root-without-deriving',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = path.parent / PUBLISH_DIR.name / f'.negctl-{path.name}.tmp'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1165,30 +1175,55 @@ class EnvironmentControls(unittest.TestCase):
                 return ast.unparse(value.left), value.right.value
         return None, None
 
-    def derives_from_root(self, body, name, root_constant, seen=None):
-        """`name` 的派生链能否走到 `root_constant`（换名、多跳、mkstemp 都算）。
+    def roots_at(self, body, node, root_constant, seen=None):
+        """表达式是否**以** `root_constant` 为基底派生（不是「里面提到过」）。
 
-        r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的「按名字查表」
-        仍然只认 `tmp` / `scratch` 两个拼写、且 `if bound:` 把零次命中当通过。
-        改成从**被发布的名字**出发沿绑定链回溯：每一跳都必须恰好绑一次，链尾必须
-        出现仓根常量。诱饵变量（保留旧派生行、另起一个名字直接指向 `path.parent`）、
-        整体改名、多跳中转都在同一条判据下判红。
+        r7（zai sibling P1 + DeepSeek sibling/boundary P1）：r6 的链尾判据是
+        `root_constant in self.names_in(value)` —— 遍历整棵表达式树，只要常量在**任何
+        位置**出现过就算派生。于是 `tmp = path.parent / PUBLISH_DIR.name / f'…'` 全绿，
+        而临时文件落在目标旁边；把 `scratch = PUBLISH_DIR if … else path.parent` 的两支
+        对调也照样绿（常量仍在树里）。判据必须看**极性**：
+
+        - `PUBLISH_DIR`（名字）        → 是；否则沿它的唯一绑定回溯
+        - `<X> / …`                    → 只看左侧（除法的基），右侧随便
+        - `Path(root) / PUBLISH_DIR`   → 是（共享实现的仓根派生写法）
+        - `mkstemp(dir=str(X))`        → 看 X 的绑定
+        - `<A> if path.is_relative_to(ROOT) else path.parent` → 仓内支看 A，仓外支必须
+          正是 `path.parent`（跨卷 EXDEV 例外，r3 两家评审）
+        - 其它（含 `path.parent / PUBLISH_DIR.name / …`）→ 否
         """
         seen = set() if seen is None else seen
-        if name in seen:
+        if isinstance(node, ast.Name):
+            if node.id == root_constant:
+                return True
+            if node.id in seen:
+                return False
+            seen.add(node.id)
+            values = [value for bound, value in self.bound_expressions(body)
+                      if bound == node.id]
+            return len(values) == 1 and self.roots_at(body, values[0], root_constant, seen)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            if (ast.unparse(node.left) == 'Path(root)' and isinstance(node.right, ast.Name)
+                    and node.right.id == root_constant):
+                return True
+            return self.roots_at(body, node.left, root_constant, seen)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'mkstemp'):
+            for keyword in node.keywords:
+                value = keyword.value
+                if (keyword.arg == 'dir' and isinstance(value, ast.Call)
+                        and isinstance(value.func, ast.Name) and value.func.id == 'str'
+                        and value.args and isinstance(value.args[0], ast.Name)):
+                    return self.roots_at(body, value.args[0], root_constant, seen)
             return False
-        seen.add(name)
-        values = [value for bound, value in self.bound_expressions(body) if bound == name]
-        if len(values) != 1:
-            return False
-        value = values[0]
-        if root_constant in self.names_in(value):
-            return True
-        return any(self.derives_from_root(body, candidate, root_constant, seen)
-                   for candidate in sorted(self.names_in(value)))
+        if isinstance(node, ast.IfExp):
+            return (ast.unparse(node.test) == 'path.is_relative_to(ROOT)'
+                    and ast.unparse(node.orelse) == 'path.parent'
+                    and self.roots_at(body, node.body, root_constant, seen))
+        return False
 
     def temp_derivation_problems(self, body, root_constant='PUBLISH_DIR'):
-        """被 `os.replace()` 发布的那个名字，派生链必须走到仓根 scratch。"""
+        """被 `os.replace()` 发布的那个名字，派生链必须**以**仓根 scratch 为基底。"""
         published = self.published_temp_names(body)
         if len(published) != 1:
             return [f'os.replace() must publish exactly one variable, got {published}']
@@ -1196,9 +1231,9 @@ class EnvironmentControls(unittest.TestCase):
                   if bound == published[0]]
         if len(values) != 1:
             return [f'{published[0]} must be bound exactly once, got {len(values)}']
-        if not self.derives_from_root(body, published[0], root_constant):
-            return [f'{published[0]} must derive from {root_constant} through its bindings, '
-                    f'got: {ast.unparse(values[0])[:160]}']
+        if not self.roots_at(body, ast.Name(id=published[0], ctx=ast.Load()), root_constant):
+            return [f'{published[0]} must derive FROM {root_constant} (as the base of the '
+                    f'chain), got: {ast.unparse(values[0])[:160]}']
         return []
 
     def sibling_atomic_guards(self, source, function):
