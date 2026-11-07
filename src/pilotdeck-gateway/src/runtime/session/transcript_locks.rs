@@ -196,6 +196,35 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A transcript whose canonical identity cannot be resolved is refused, and
+    /// the rejected spelling is not left fenced. A lexical fallback key would
+    /// guard one file under two names — an unresolved spelling now, the
+    /// canonical one once the path appears — which is the double-writer this
+    /// fence exists to prevent.
+    #[tokio::test]
+    async fn unresolvable_transcript_is_refused_not_keyed_on_its_spelling() {
+        let root = scratch("unresolved");
+        // A dangling leaf symlink: `lstat` succeeds, `canonicalize` fails.
+        let dangling = root.join("dangling.jsonl");
+        std::os::unix::fs::symlink(root.join("missing.jsonl"), &dangling)
+            .expect("#1860 dangling leaf");
+        assert!(
+            acquire(&dangling).await.is_err(),
+            "#1860 an unresolvable transcript must not be fenced"
+        );
+        // Nothing was registered under the spelling, so it is free right away.
+        let free = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            acquire_key(dangling.clone()),
+        )
+        .await;
+        assert!(
+            free.is_ok(),
+            "#1860 the refused spelling must not stay locked"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// The key is the canonical transcript identity, so two spellings of one
     /// file take the same fence while two files keep their own. `.` / `..`
     /// handling and a symlinked leaf are exactly what a lexical key missed: it
