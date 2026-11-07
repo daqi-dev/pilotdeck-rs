@@ -12,7 +12,9 @@ Two entries in this directory read product sources before any verdict:
   began. It is now wrapped in ``except OSError -> refuse()``.
 * ``negative_private.py`` already wraps its ``catalog`` re-read in
   ``except (OSError, ValueError, RuntimeError) -> refuse()``, but no case
-  ever exercised the ``OSError`` branch.
+  ever exercised the ``OSError`` branch. Its ``--catalog`` early exit sat
+  *outside* that block and is now covered too: the same unreadable source
+  must refuse there as well (review r1 sibling P2).
 
 Each refusal case execs the real script with exactly one injected
 source-level edit -- the same shape an accidental path edit would take --
@@ -67,7 +69,7 @@ def drive_refusal():
                if key != 'CARGO_TARGET_DIR'}
     if spec.get('target'):
         environ['CARGO_TARGET_DIR'] = spec['target']
-    argv = [str(script), spec['out'], *spec.get('names', [])]
+    argv = [str(script), *spec.get('argv', [spec['out'], *spec.get('names', [])])]
     code = 0
     failure = ''
     try:
@@ -87,8 +89,15 @@ def drive_refusal():
 class UnreadableSourceRefusal(unittest.TestCase):
     """An unreadable bound source refuses (2) and leaves no evidence directory."""
 
-    def drive(self, script, edit=None, *, names=(), target=False):
-        """Spawn ``python3 -O`` exec'ing ``script``; return (result, out path)."""
+    def drive(self, script, edit=None, *, names=(), target=False, argv=None):
+        """Spawn ``python3 -O`` exec'ing ``script``.
+
+        Returns ``(result, left_behind)``: whether the child created the
+        evidence directory. It is sampled *inside* the ``with`` block -- after
+        ``TemporaryDirectory.cleanup()`` the directory is always gone, so the
+        same assertion taken later can never fail (review r1 concurrency /
+        boundary P2).
+        """
         with tempfile.TemporaryDirectory(prefix='negctl-1922-src-') as base:
             out = Path(base) / 'out'
             unreadable = Path(base) / 'unreadable-1922.rs'
@@ -96,6 +105,8 @@ class UnreadableSourceRefusal(unittest.TestCase):
             os.chmod(unreadable, 0)
             spec = dict(script=str(script), out=str(out), names=list(names),
                        edit=edit)
+            if argv is not None:
+                spec['argv'] = list(argv)
             if target:
                 spec['target'] = str(Path(base) / 'cargo-target')
             if edit is not None:
@@ -104,14 +115,15 @@ class UnreadableSourceRefusal(unittest.TestCase):
                 [sys.executable, '-O', str(Path(__file__).resolve()), DRIVE_FLAG,
                  json.dumps(spec)],
                 cwd=str(FIXTURES), capture_output=True, text=True, timeout=180)
-        return result, out
+            left_behind = out.exists()
+        return result, left_behind
 
     def verdict(self, result):
         lines = [line for line in result.stdout.split('\n') if line.strip()]
         self.assertTrue(lines != [], '#1922 the -O driver printed no verdict')
         return lines[-1]
 
-    def assertRefused(self, result, out, needle):
+    def assertRefused(self, result, left_behind, needle):
         last = self.verdict(result)
         self.assertTrue(last == 'VERDICT 2',
                         f'#1922 an unreadable bound source must refuse (rc=2), got {last!r}; '
@@ -120,64 +132,76 @@ class UnreadableSourceRefusal(unittest.TestCase):
                       '#1922 the refusal must be labelled INVALID on stderr')
         self.assertIn(needle, result.stderr,
                       '#1922 the refusal must name the unreadable source')
-        self.assertFalse(out.exists(),
+        self.assertFalse(left_behind,
                          '#1922 a refusal before the run must not create the evidence directory')
 
     def test_controls_module_read_enoent_is_refused(self):
         # #1922 item 3: the module-level re-read of network_timing.rs.
-        result, out = self.drive(
+        result, left_behind = self.drive(
             CONTROLS_SCRIPT,
             edit=(CONTROLS_READ,
                   "test_source = (root / "
                   "'src/pilotdeck-gateway/tests/no-such-file-1922.rs').read_text()"),
             names=[UNKNOWN])
-        self.assertRefused(result, out, 'No such file or directory')
+        self.assertRefused(result, left_behind, 'No such file or directory')
 
     def test_controls_module_read_eacces_is_refused(self):
-        result, out = self.drive(
+        result, left_behind = self.drive(
             CONTROLS_SCRIPT,
             edit=(CONTROLS_READ,
                   "test_source = (root / '{unreadable}').read_text()"),
             names=[UNKNOWN])
-        self.assertRefused(result, out, 'Permission denied')
+        self.assertRefused(result, left_behind, 'Permission denied')
 
     def test_private_catalog_enoent_is_refused(self):
         # negative_private.py's OSError -> refuse() branch, never exercised
         # before: the catalog re-read hits a missing source.
-        result, out = self.drive(
+        result, left_behind = self.drive(
             PRIVATE_SCRIPT,
             edit=(PRIVATE_NETWORK,
                   "network = 'src/pilotdeck-gateway/src/runtime/no-such-1922.rs'"),
             names=[], target=True)
-        self.assertRefused(result, out, 'No such file or directory')
+        self.assertRefused(result, left_behind, 'No such file or directory')
 
     def test_private_catalog_eacces_is_refused(self):
-        result, out = self.drive(
+        result, left_behind = self.drive(
             PRIVATE_SCRIPT,
             edit=(PRIVATE_NETWORK, "network = '{unreadable}'"),
             names=[], target=True)
-        self.assertRefused(result, out, 'Permission denied')
+        self.assertRefused(result, left_behind, 'Permission denied')
+
+    def test_private_catalog_mode_enoent_is_refused(self):
+        # #1922 review r1 sibling P2: the `--catalog` early exit also re-reads
+        # every registered source, and it used to sit outside the startup
+        # try/except -- an unreadable source there was an uncaught OSError
+        # (exit 1, "ran but not green") instead of "never started" (2).
+        result, left_behind = self.drive(
+            PRIVATE_SCRIPT,
+            edit=(PRIVATE_NETWORK,
+                  "network = 'src/pilotdeck-gateway/src/runtime/no-such-1922.rs'"),
+            argv=['--catalog'])
+        self.assertRefused(result, left_behind, 'No such file or directory')
 
     def test_controls_without_target_still_refuses_first_guard(self):
         # Positive control for the harness: unedited, the module-level read
         # succeeds and the run stops at the caller target guard.
-        result, out = self.drive(CONTROLS_SCRIPT, names=[UNKNOWN])
+        result, left_behind = self.drive(CONTROLS_SCRIPT, names=[UNKNOWN])
         last = self.verdict(result)
         self.assertTrue(last == 'VERDICT 2',
                         f'#1922 the unedited script must refuse, got {last!r}')
         self.assertIn('CARGO_TARGET_DIR must be supplied by the caller', result.stderr)
-        self.assertFalse(out.exists())
+        self.assertFalse(left_behind)
 
     def test_private_unknown_name_still_refuses(self):
         # Positive control reaching the select/catalog startup block: the
         # real sources are all readable, so the unknown name refuses.
-        result, out = self.drive(PRIVATE_SCRIPT, names=[UNKNOWN], target=True)
+        result, left_behind = self.drive(PRIVATE_SCRIPT, names=[UNKNOWN], target=True)
         last = self.verdict(result)
         self.assertTrue(last == 'VERDICT 2',
                         f'#1922 the unedited script must refuse, got {last!r}')
         self.assertIn('unknown controls', result.stderr)
         self.assertIn(UNKNOWN, result.stderr)
-        self.assertFalse(out.exists())
+        self.assertFalse(left_behind)
 
 
 if __name__ == '__main__':
