@@ -117,35 +117,45 @@ def gate_errors(test_source):
     return [f'missing rejection gate from {TEST}']
 
 
+def check_errors(test_source):
+    """The `--check` verdict, returned instead of raised (#1989 r3 review).
+
+    Same reason as `negative_controls.check_errors`: the drift controls drive
+    this with a mutated source, so a runner that ignored the shared table
+    could not go red.
+    """
+    # `proved`, `restored` and the verdict are keyed by mutation name, so a
+    # duplicate row would let one run satisfy both (#1401 review P3).
+    names = [name for name, *_ in ROWS]
+    errors = []
+    if len(set(names)) != len(names):
+        errors.append(f'duplicate stub row names: {names}')
+    # Each row's proof must live in the test that row names, or the runtime
+    # verdict for that row could never be reached.
+    for name, test, _, _, payloads in ROWS:
+        body = test_body(test_source, test)
+        for payload in payloads:
+            if payload in body:
+                continue
+            # The kill markers are formatted from one template in the test, so
+            # the source carries the template, not each message.
+            if payload in MARKERS and MARKER_TEMPLATE in body:
+                continue
+            errors.append(f'row {name}: missing {test} payload: {payload}')
+    # Every binding shared with `negative_controls.py` lives in
+    # `native_entry_binding` (#1989 item 6); the gate needle is this test's
+    # own and stays here.
+    errors.extend(gate_errors(test_source))
+    errors.extend(binding_errors(test_source))
+    for marker in MARKERS:
+        if marker in EARLY_EXIT or EARLY_EXIT in marker:
+            errors.append(f'early-exit panic collides with marker {marker}')
+    return errors
+
+
 def main():
     if sys.argv[1:] == ['--check']:
-        names = [name for name, *_ in ROWS]
-        if len(set(names)) != len(names):
-            # `proved`, `restored` and the verdict are keyed by mutation name,
-            # so a duplicate row would let one run satisfy both (#1401 review
-            # P3).
-            raise SystemExit(f'#1261 duplicate stub row names: {names}')
-        test_source = TEST_FILE.read_text()
-        # Each row's proof must live in the test that row names, or the
-        # runtime verdict for that row could never be reached.
-        for name, test, _, _, payloads in ROWS:
-            body = test_body(test_source, test)
-            for payload in payloads:
-                if payload in body:
-                    continue
-                # The kill markers are formatted from one template in the
-                # test, so the source carries the template, not each message.
-                if payload in MARKERS and MARKER_TEMPLATE in body:
-                    continue
-                raise SystemExit(f'#1261 row {name}: missing {test} payload: {payload}')
-        # Every binding shared with `negative_controls.py` lives in
-        # `native_entry_binding` (#1989 item 6); the gate needle is this
-        # test's own and stays here.
-        errors = gate_errors(test_source)
-        errors.extend(binding_errors(test_source))
-        for marker in MARKERS:
-            if marker in EARLY_EXIT or EARLY_EXIT in marker:
-                errors.append(f'early-exit panic collides with marker {marker}')
+        errors = check_errors(TEST_FILE.read_text())
         if errors:
             raise SystemExit('#1261 ' + '; '.join(errors))
         print(f'#1261 {len(ROWS)} early-exit rows OK')

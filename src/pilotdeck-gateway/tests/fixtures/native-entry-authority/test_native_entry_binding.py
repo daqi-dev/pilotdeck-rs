@@ -26,6 +26,7 @@ sys.path.insert(0, str(FIXTURES))
 
 import early_exit_invalid as early
 import native_entry_binding as binding
+import negative_controls as negative
 
 ROOT = HERE.parents[4]
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
@@ -140,8 +141,19 @@ def assigned_names(text):
     for node in ast.walk(ast.parse(text)):
         if isinstance(node, ast.Assign):
             targets = node.targets
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For)):
             targets = [node.target]
+        elif isinstance(node, (ast.comprehension,)):
+            targets = [node.target]
+        elif isinstance(node, ast.With):
+            targets = [item.optional_vars for item in node.items
+                       if item.optional_vars is not None]
+        elif isinstance(node, ast.alias):
+            # `import x as MARKERS` binds the shared name just as an
+            # assignment would; a plain `from … import MARKERS` has no asname.
+            if node.asname:
+                names.add(node.asname)
+            continue
         else:
             continue
         for target in targets:
@@ -333,9 +345,35 @@ class SharedTables(unittest.TestCase):
             self.assertEqual(sorted(assigned_names(text) & set(shared)), [],
                              f'{script.name} keeps a private copy of a shared name')
 
+    def test_both_runners_consume_the_shared_table(self):
+        # Importing the table is not consuming it: a runner could keep a
+        # renamed private copy and still pass every check above (#1989 r3
+        # review, P1). Driving each runner's own `--check` body with a mutated
+        # source proves the shared needles are what it reports.
+        drifted = TEST_FILE.read_text().replace(
+            FINISHED, '    assert!(true, "finished advertisement: {collected:?}");', 1)
+        self.assertNotEqual(drifted, TEST_FILE.read_text())
+        for module in (negative, early):
+            joined = '; '.join(module.check_errors(drifted))
+            self.assertIn('finished advertisement case', joined, module.__name__)
+
+    def test_neither_runner_carries_its_own_needle_literals(self):
+        # The other half of the same rule: no needle-shaped literal may live
+        # in a runner, whatever table it is pasted into.
+        for script in (NEGATIVE, EARLY_EXIT):
+            text = script.read_text()
+            for shape in ('negative_assert!(', 'assert!(', 'if !advertised',
+                          'line.ends_with', 'read_advertisement(stderr,'):
+                self.assertNotIn(shape, text,
+                                 f'{script.name} carries a needle literal: {shape}')
+
     def test_the_private_copy_rule_sees_every_assignment_form(self):
         # The forms a `^NAME\s*=` regex missed; all three are copies.
         for text in ('if x:\n    MARKERS = ["x"]\n',
+                     'for MARKERS in (["x"],):\n    pass\n',
+                     'with open("x") as MARKERS:\n    pass\n',
+                     'import other as MARKERS\n',
+                     '[MARKERS for MARKERS in [["x"]]]\n',
                      'MARKERS: list = ["x"]\n',
                      'OTHER = 1; MARKERS = ["x"]\n',
                      'def f():\n    MARKERS = ["x"]\n'):
