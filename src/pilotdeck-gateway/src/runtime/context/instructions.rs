@@ -3,48 +3,14 @@
 //! Discovery is intentionally storage-agnostic at the boundary: missing files,
 //! directories and permission failures are all "absent layer" as in Node, while
 //! file contents are decoded with replacement like `readFile(path, "utf8")`.
-use crate::metadata::{js_trim, resolve};
+use crate::metadata::resolve;
 use std::{
-    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scope {
-    Managed,
-    User,
-    Project,
-    ProjectRules,
-    Local,
-}
-impl Scope {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Managed => "managed",
-            Self::User => "user",
-            Self::Project => "project",
-            Self::ProjectRules => "project-rules",
-            Self::Local => "local",
-        }
-    }
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::Managed => " (managed instructions, set by administrator)",
-            Self::User => " (user's global instructions for all projects)",
-            Self::Project => " (project instructions, checked into the codebase)",
-            Self::ProjectRules => " (project rule, checked into the codebase)",
-            Self::Local => " (user's private project instructions, not checked in)",
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Layer {
-    pub scope: Scope,
-    pub path: String,
-    pub content: String,
-}
-
+use pilotdeck_context::instructions::{DirectoryEntry, Discovery, EntryKind, Storage};
+pub use pilotdeck_context::instructions::{Layer, Scope};
 #[derive(Clone, Debug)]
 pub struct InstructionDiscovery {
     project_root: PathBuf,
@@ -98,135 +64,50 @@ impl InstructionDiscovery {
         &self,
         managed_environment: impl FnOnce() -> Option<PathBuf>,
     ) -> Result<Vec<Layer>, String> {
-        let mut layers = Vec::new();
-        let mut seen = HashSet::new();
         let managed_dir = match &self.managed_dir {
             ManagedDirectory::Fixed(dir) => dir.clone(),
             ManagedDirectory::Environment => managed_environment(),
         };
-        if let Some(dir) = &managed_dir {
-            self.try_add(
-                &mut layers,
-                &mut seen,
-                Scope::Managed,
-                absolute(dir)?.join("PILOTDECK.md"),
-            )?;
-        }
-        let home = absolute(&self.pilot_home)?;
-        self.try_add(
-            &mut layers,
-            &mut seen,
-            Scope::User,
-            home.join("PILOTDECK.md"),
-        )?;
-        self.try_add_rules_dir(&mut layers, &mut seen, Scope::User, home.join("rules"))?;
-        for dir in self.collect_directory_chain()? {
-            self.try_add(
-                &mut layers,
-                &mut seen,
-                Scope::Project,
-                dir.join("PILOTDECK.md"),
-            )?;
-            self.try_add(
-                &mut layers,
-                &mut seen,
-                Scope::Project,
-                dir.join(".pilotdeck").join("PILOTDECK.md"),
-            )?;
-            self.try_add_rules_dir(
-                &mut layers,
-                &mut seen,
-                Scope::ProjectRules,
-                dir.join(".pilotdeck").join("rules"),
-            )?;
-            self.try_add(
-                &mut layers,
-                &mut seen,
-                Scope::Local,
-                dir.join("PILOTDECK.local.md"),
-            )?;
-        }
-        Ok(layers)
+        let managed_dir = managed_dir.as_deref().map(absolute).transpose()?;
+        Discovery::new(
+            absolute(&self.project_root)?,
+            absolute(&self.cwd)?,
+            absolute(&self.pilot_home)?,
+            managed_dir.as_deref(),
+        )?
+        .discover(&Filesystem)
     }
+}
 
-    /// Root-first chain from `project_root` down to `cwd`, matching TS even when
-    /// cwd is outside the project (the loop then runs up to `/`).
-    fn collect_directory_chain(&self) -> Result<Vec<PathBuf>, String> {
-        let root = absolute(&self.project_root)?;
-        let current = absolute(&self.cwd)?;
-        if root == current {
-            return Ok(vec![root]);
-        }
-        let mut dirs = Vec::new();
-        let mut dir = current;
-        loop {
-            let parent = dir.parent().map_or_else(|| dir.clone(), Path::to_path_buf);
-            if dir == root || dir == parent {
-                break;
-            }
-            dirs.push(dir);
-            dir = parent;
-        }
-        dirs.push(root);
-        dirs.reverse();
-        Ok(dirs)
+struct Filesystem;
+impl Storage for Filesystem {
+    fn read(&self, path: &Path) -> Result<Option<Vec<u8>>, String> {
+        Ok(fs::read(path).ok())
     }
-
-    fn try_add(
-        &self,
-        layers: &mut Vec<Layer>,
-        seen: &mut HashSet<PathBuf>,
-        scope: Scope,
-        file_path: PathBuf,
-    ) -> Result<(), String> {
-        let resolved = absolute(&file_path)?;
-        if !seen.insert(resolved.clone()) {
-            return Ok(());
-        }
-        let Ok(bytes) = fs::read(&resolved) else {
-            return Ok(());
+    fn list(&self, path: &Path) -> Result<Option<Vec<DirectoryEntry>>, String> {
+        let Ok(entries) = fs::read_dir(path) else {
+            return Ok(None);
         };
-        // Node's UTF-8 decoder replaces ill-formed sequences and never throws.
-        let content = String::from_utf8_lossy(&bytes);
-        let trimmed = js_trim(&content);
-        if !trimmed.is_empty() {
-            layers.push(Layer {
-                scope,
-                path: resolved.to_string_lossy().into_owned(),
-                content: trimmed.to_owned(),
-            });
-        }
-        Ok(())
-    }
-
-    fn try_add_rules_dir(
-        &self,
-        layers: &mut Vec<Layer>,
-        seen: &mut HashSet<PathBuf>,
-        scope: Scope,
-        dir_path: PathBuf,
-    ) -> Result<(), String> {
-        let dir_path = absolute(&dir_path)?;
-        let Ok(entries) = fs::read_dir(&dir_path) else {
-            return Ok(());
-        };
-        let mut names = Vec::new();
-        for entry in entries.flatten() {
-            // Dirent.isFile() is false for symlinks: file_type() is lstat.
-            if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".md") && name != "SKILL.md" {
-                names.push(name);
-            }
-        }
-        // Array.prototype.sort default: UTF-16 code-unit order, not bytes.
-        names.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-        for name in names {
-            self.try_add(layers, seen, scope, dir_path.join(name))?;
-        }
-        Ok(())
+        Ok(Some(
+            entries
+                .flatten()
+                .filter_map(|entry| {
+                    let kind = entry.file_type().ok()?;
+                    Some(DirectoryEntry {
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                        kind: if kind.is_file() {
+                            EntryKind::File
+                        } else if kind.is_dir() {
+                            EntryKind::Directory
+                        } else if kind.is_symlink() {
+                            EntryKind::Symlink
+                        } else {
+                            EntryKind::Other
+                        },
+                    })
+                })
+                .collect(),
+        ))
     }
 }
 
@@ -300,5 +181,36 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn real_filesystem_rules_preserve_comma_names_utf16_order_and_exclude_symlinks() {
+        let tree =
+            std::env::temp_dir().join(format!("pdrs-instruction-port-{}", uuid::Uuid::new_v4()));
+        let project = tree.join("project");
+        let home = tree.join("home");
+        let rules = project.join(".pilotdeck/rules");
+        fs::create_dir_all(&rules).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::write(tree.join("target.txt"), "must not load rule symlink").unwrap();
+        std::os::unix::fs::symlink(tree.join("target.txt"), rules.join("linked.md")).unwrap();
+        for name in ["comma,name.md", "\u{10000}.md", "\u{e000}.md", "SKILL.md"] {
+            fs::write(rules.join(name), name).unwrap();
+        }
+        let layers = InstructionDiscovery::new(&project, &project, &home, None)
+            .discover()
+            .unwrap();
+        let names: Vec<_> = layers
+            .iter()
+            .map(|layer| {
+                Path::new(&layer.path)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(names, vec!["comma,name.md", "\u{10000}.md", "\u{e000}.md"]);
+        fs::remove_dir_all(tree).unwrap();
     }
 }

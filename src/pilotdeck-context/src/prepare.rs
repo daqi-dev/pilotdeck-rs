@@ -25,6 +25,15 @@ pub fn prepare(
     fields: &JsObject,
     environment: Environment<'_>,
 ) -> Result<JsValue, ProjectionError> {
+    prepare_with_instructions(fields, environment, None)
+}
+/// The instruction layers are a separately composed trusted port result. Input
+/// fields cannot supply them, even when the port is configured.
+pub fn prepare_with_instructions(
+    fields: &JsObject,
+    environment: Environment<'_>,
+    instruction_layers: Option<&[crate::instructions::Layer]>,
+) -> Result<JsValue, ProjectionError> {
     for key in [
         "instructionLayers",
         "memoryContext",
@@ -164,6 +173,11 @@ pub fn prepare(
             parts.push(trim(&value).to_owned());
         }
     }
+    if let Some(layers) = instruction_layers
+        && let Some(instructions) = crate::instructions::format_layers(layers)
+    {
+        parts.push(instructions);
+    }
     let mut runtime_messages = vec![];
     if surface.as_deref() == Some("user_message") {
         let context=crate::object([("role","user".into()),("content",JsValue::Array(vec![crate::text_block(format!("<runtime-context name=\"pilotdeck:user-context:0\">\n{}\n</runtime-context>",user.join("\n\n")).into())])),("metadata",crate::object([("synthetic",JsValue::Bool(true)),("purpose","runtime_context".into())]))]);
@@ -197,6 +211,23 @@ pub fn prepare(
         materialization.insert(
             "runtimeContextMessages".into(),
             JsValue::Array(runtime_messages),
+        );
+    }
+    if let Some(layers) = instruction_layers {
+        materialization.insert(
+            "instructionLayers".into(),
+            JsValue::Array(
+                layers
+                    .iter()
+                    .map(|layer| {
+                        crate::object([
+                            ("scope", layer.scope.as_str().into()),
+                            ("path", layer.path.as_str().into()),
+                            ("content", layer.content.as_str().into()),
+                        ])
+                    })
+                    .collect(),
+            ),
         );
     }
     Ok(crate::object([
