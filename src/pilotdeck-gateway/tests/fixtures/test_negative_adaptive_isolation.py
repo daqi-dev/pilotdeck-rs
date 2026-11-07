@@ -298,20 +298,31 @@ def reap_child(child):
     re-implementing it, so the macOS EPERM-on-unreaped-leader retry stays in
     one place. It is called for its side effect only: unlike the canonical
     caller this is a finally-block cleanup, so a persistent EPERM must not mask
-    the assertion that got us here. The lead is waited for explicitly because
-    read_child_output() answers from its cache on a second call.
+    the assertion that got us here -- it falls back to the leader and then, if
+    the leader still outlives SIGKILL, reports the pid rather than returning
+    silently. The lead is waited for explicitly because read_child_output()
+    answers from its cache on a second call.
     """
     if child.poll() is None:
         try:
             shared_process()._kill_group(child)
         except PermissionError:
-            pass
+            # A refused group signal would otherwise fall straight through to
+            # the bounded wait and leave a live holder of the real tree lock
+            # behind, so fall back to the leader itself. If even SIGKILL does
+            # not take, report the leak with its pid instead of returning
+            # silently; raising here would mask the assertion that brought us
+            # into this finally block (#2127 codex concurrency r15 P1).
+            child.kill()
     read_child_output(child)
     if child.poll() is None:
         try:
             child.wait(timeout=pipe_close_seconds())
         except subprocess.TimeoutExpired:
             pass
+    if child.poll() is None:
+        print(f'#2127 cleanup: pid={child.pid} survived SIGKILL and '
+              f'{pipe_close_seconds()}s of reaping', file=sys.stderr, flush=True)
 
 
 def wait_for_ready(child, ready, seconds):

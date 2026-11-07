@@ -674,16 +674,33 @@ except SourceBaselineError: print('REFUSED')
         # takes, so the handshake times the handshake and not a Cargo build.
         #
         # What is left on the holder's path to `held` is the tree lock (taken
-        # with the shared default `lock_timeout`), four git calls in
-        # _assert_workspace_sources, the scanner run, four git calls in
-        # _assert_product_pristine and the `git show` that snapshots the
-        # mutated path. Each of those has its own watchdog, so their sum --
-        # not one step's timeout -- is the honest bound for the whole
-        # handshake (#2127 codex sibling/concurrency/boundary r14 P1).
+        # with the shared default `lock_timeout`), then the post-lock git calls
+        # and the scanner run. Count the git calls the way negative_process
+        # actually makes them: `mutating_sources` calls
+        # `_assert_workspace_sources` before the scanner and
+        # `_assert_product_pristine` after it, and each of those runs one
+        # `_assert_input_areas` worth of checks -- two diffs, `ls-files -v` and
+        # `ls-files --others`, four calls -- plus the `rev-parse` inside
+        # `_workspace_literal_inputs`, four calls per 32 KiB of literal inputs
+        # (`B`, measured here with the same scanner the holder runs) and the
+        # `git show` that snapshots the mutated path. That is
+        # `(2 + B) * 4 + 2` calls, each with its own
+        # `GIT_TIMEOUT` watchdog; their sum -- not one step's timeout -- is the
+        # honest bound for the whole handshake (#2127 codex
+        # sibling/concurrency/boundary r14-r15 P1, zai boundary r15 P1).
+        #
+        # `waiting` is published after the waiter imports negative_process and
+        # before it enters the same admission path, so the same bound covers it
+        # without a separate copied startup constant, and the waiter's final
+        # `REFUSED` line cannot be waited for with a shorter clock than the
+        # admission it reports (#2127 codex sibling r15 P1).
         lock_seconds = inspect.signature(
             api.mutating_sources).parameters['lock_timeout'].default
-        held_seconds = lock_seconds + (2 * 4 + 1) * api.GIT_TIMEOUT + 60
         api._ensure_workspace_scanner()
+        literals = api._workspace_literal_inputs(self.root, 'HEAD')
+        batches = len(list(api._pathspec_batches(literals)))
+        held_seconds = (lock_seconds
+                        + ((2 + batches) * 4 + 2) * api.GIT_TIMEOUT + 60)
         children = []
         try:
             children.append(subprocess.Popen([sys.executable, '-B', '-c', holder, helper,
@@ -693,13 +710,13 @@ except SourceBaselineError: print('REFUSED')
             children.append(subprocess.Popen([sys.executable, '-B', '-c', waiter, helper,
                                               str(self.root), str(control)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
-            wait('waiting')
+            wait('waiting', held_seconds, children[1])
             (control / 'mutate.tmp').write_text('mutate')
             (control / 'mutate.tmp').replace(control / 'mutate')
             wait('mutated')
             children[0].kill()
             children[0].communicate(timeout=5)
-            stdout, stderr = children[1].communicate(timeout=12)
+            stdout, stderr = children[1].communicate(timeout=held_seconds)
             self.assertTrue(children[1].returncode == 0 and stdout.strip() == b'REFUSED',
                             '#1166 next holder must reject killed other-crate residue')
             self.assertTrue(target.read_text() == '// killed residue\n',
