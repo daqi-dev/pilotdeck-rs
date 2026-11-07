@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 302 mutants:
+`JUDGES`, keyed by the same names. The current table has 307 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -473,7 +473,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-for-target-class-body-shadowed-constructor`,
 `calibrate-for-target-module-import-alias`,
 `calibrate-for-target-class-body-copy-alias`,
-`calibrate-for-target-nested-class-method`.
+`calibrate-for-target-nested-class-method`, `calibrate-for-target-conditional-rebind`,
+`calibrate-for-target-loop-back-edge`, `calibrate-for-target-same-line-rebind`,
+`calibrate-for-target-class-block-alias`, `calibrate-for-target-nested-copy-alias`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1371,3 +1373,18 @@ class-body hand-over the round-12 rewrite still dropped.
 | **A nested class whose method closes over the outer handle**: `class C: h = lambda *a: None; class D: def m(self): h('common', <stub>)`. | `calibrate-for-target-nested-class-method`; self-test `round 13: a nested class whose method closes over the outer handle` |
 | **A method body reads the handle with the builtin `print`** (false FAIL guard): the class namespace does not reach into a method. | self-test `round 13: a method that reads the handle with the builtin print` |
 | **Status side: a module-level import alias**, a call before the rebinding, and the two false-FAIL directions. | self-tests `round 13: a module-level import alias`, `a call before the rebinding`, `a later non-write import`, `a rebinding before the call`, `a parameter that shadows the module alias` |
+
+### Closed by `fix-r1` round 14 (codex r10 four P0 / one P1)
+
+Round 13 decided which binding a use reads by source line alone. Round 14
+makes it a flow question on both sides: an event keeps its column, whether it
+is conditional and the loops it sits inside.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A rebinding inside a branch does not erase an earlier write helper**: `from builtins import setattr as w; if flag: from builtins import print as w; w(md, ...)` really writes when `flag` is false. | `calibrate-for-target-conditional-rebind`; self-test `round 14: a conditional rebinding of the write alias` |
+| **A loop back edge puts a textually later binding in reach**: `from builtins import print as w; for ...: w(md, ...); from builtins import setattr as w` writes on the second iteration. | `calibrate-for-target-loop-back-edge`; self-test `round 14: a write alias rebound after the call inside its loop` |
+| **Two bindings on one line are ordered by column**, not by walk order. | `calibrate-for-target-same-line-rebind`; self-tests `round 14: a write import rebound after the call on the same line`, `a non-write import before the call on the same line` |
+| **A class-body block hands the alias on**: `class C: if True: f = _h` followed by `f('common', <stub>)` after the block. | `calibrate-for-target-class-block-alias`; self-test `round 14: a class body that copies the handle inside a block` |
+| **A nested function hands the alias on**: `def g(): if True: f = _h` then `f('common', <stub>)`, called from the enclosing function. | `calibrate-for-target-nested-copy-alias`; self-tests `round 14: a nested function that copies the handle before the call`, `a nested function that only reads the copy` |
+| **An unconditional non-write import after the write import** (false FAIL guard): at module scope the last binding before the call is what the body reads. | self-test `round 14: an unconditional non-write import after the write import` |
