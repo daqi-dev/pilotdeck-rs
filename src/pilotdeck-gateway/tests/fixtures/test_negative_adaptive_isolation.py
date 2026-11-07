@@ -221,12 +221,16 @@ def drained_text(child, name, buffers):
 
     os.read() can stop in the middle of a multi-byte character, so decode with
     an incremental decoder that substitutes instead of raising (#2127 codex
-    boundary r10 P2). A trailing partial character is dropped, not fatal: this
-    text is diagnostic only.
+    boundary r10 P2). This is called only after collection has stopped, so the
+    buffer is final and the decoder is flushed (`final=True`): a lone leading
+    byte then yields U+FFFD instead of the empty string, which would let the
+    "no hidden output" assertion pass on a child that died mid-character
+    (#2127 codex boundary r12 P2). Truncation at DRAIN_KEEP_BYTES is safe for
+    the same reason -- 'replace' substitutes, it never raises.
     """
     encoding = getattr(child.stdout, 'encoding', None) or 'utf-8'
     decoder = codecs.getincrementaldecoder(encoding)('replace')
-    text = decoder.decode(bytes(buffers[name]), final=False)
+    text = decoder.decode(bytes(buffers[name]), final=True)
     dropped = buffers['total'][name] - len(buffers[name])
     if dropped:
         text += f'... [{dropped} bytes dropped by the #2127 drain buffer]'
