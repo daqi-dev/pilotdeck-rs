@@ -27,6 +27,8 @@ pub(crate) use methods::METHODS as SETTINGS_FAMILY_METHODS;
 mod channels_tests;
 #[cfg(test)]
 mod management_tests;
+#[cfg(test)]
+mod mcp_status_tests;
 mod requests;
 mod services;
 mod session_overrides;
