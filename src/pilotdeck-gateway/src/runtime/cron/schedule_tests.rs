@@ -249,7 +249,7 @@ fn replay_delay_cell(entry: &JsValue) {
 #[test]
 fn oracle_matrix_counts_match_generator() {
     for (section, count) in [
-        ("nextRuns", 126),
+        ("nextRuns", 128),
         ("dayOr", 13),
         ("validTimezones", 39),
         ("resolveTimezones", 12),
@@ -474,6 +474,7 @@ next_run_tests! {
     cron_leap_day_ny_midnight => "cron/leap-day-ny-midnight",
     cron_leap_day_kiritimati => "cron/leap-day-kiritimati",
     cron_leap_day_dow_breaks_shortcut => "cron/leap-day-dow-breaks-shortcut",
+    cron_leap_day_or_gate => "cron/leap-day-or-gate",
     cron_leap_day_after_year_0050 => "cron/leap-day-after-year-0050",
     cron_leap_day_after_year_0000 => "cron/leap-day-after-year-0000",
     cron_leap_day_after_year_1999 => "cron/leap-day-after-year-1999",
@@ -482,6 +483,7 @@ next_run_tests! {
     cron_after_clip_throws => "cron/after-clip-throws",
     cron_scan_past_clip_throws => "cron/scan-past-clip-throws",
     cron_never_matches => "cron/never-matches",
+    cron_scan_bound_366_found => "cron/scan-bound-366-found",
     cron_negative_epoch_alignment => "cron/negative-epoch-alignment",
     cron_pre_epoch_exact => "cron/pre-epoch-exact",
     cron_whitespace_u2028 => "cron/whitespace-u2028",

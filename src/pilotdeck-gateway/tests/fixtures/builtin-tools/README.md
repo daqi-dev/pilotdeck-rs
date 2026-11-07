@@ -13,7 +13,7 @@ PDRS_BASELINE=/abs/fixed/PilotDeck LANG=en_US.UTF-8 \
 ```
 
 每次运行在输出父目录下 `mkdtemp`，`flag:'wx'` 写入；连续两次输出字节一致才更新
-正本。场景 55 个、调用 63 次。生成器断言默认 locale 为 `en-US`（与 `skills` 夹具
+正本。场景 57 个、调用 65 次。生成器断言默认 locale 为 `en-US`（与 `skills` 夹具
 相同）。setup 使用显式 mtime（`utimes`），Rust 回放用 `File::set_modified` 设同一
 值，所以 `glob --sort=modified` 的顺序不依赖文件创建时刻。带 `modelMultimodal` 的
 调用把该 context 片段记入 `calls[].context`，回放时注入同一字段。

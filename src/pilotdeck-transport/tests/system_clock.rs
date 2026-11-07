@@ -1106,6 +1106,11 @@ fn resolver_parts_match_zoned_datetime_parts_across_zones_and_transitions() {
             0,
             5,
         ),
+        // Hour-only `+HH` / `-HH` (the #1509 P2-2c gap: only the `+HH:MM`
+        // and `+HHMM` spellings were pinned, so a dropped `body.len() == 2`
+        // branch was caught by the cron cell alone).
+        ("+05", 0, 18_000, 1970, 1, 1, 5, 0, 0, 4),
+        ("-03", 0, -10_800, 1969, 12, 31, 21, 0, 0, 3),
         ("etc/gmt+5", 0, -18_000, 1969, 12, 31, 19, 0, 0, 3),
     ];
     for &(zone, epoch, offset, year, month, day, hour, minute, second, weekday) in gold {

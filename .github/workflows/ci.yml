@@ -84,6 +84,10 @@ jobs:
             echo 'no src/pilotdeck-cli/tests/fixtures/*/negative_controls.py found; the anchor gate must not silently pass' >&2
             exit 1
           fi
+          # #1509 P2-2d：cron-schedule 的 --check 除锚点外还机检 README 段计数 / Rows 清单 /
+          # 每个 oracle 格有绑定回放 / 每条变异绑定的测试真的存在，但 #1203 的 glob 只覆盖
+          # CLI fixtures，这些手工副本此前仍无闸门（缺文件即 python3 非零，不静默通过）。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/cron-schedule/negative_controls.py --check
           # #1364 P0-a：闸门自身的负控。这两个脚本清空 mutations 后跑 --check 必须
           # 非零退出；若有人删掉 fail-closed 分支，--self-check 立即变红。
           # 今后新增带 --check 的脚本按需补同一接口，本步不强制。

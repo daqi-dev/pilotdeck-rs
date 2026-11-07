@@ -1,8 +1,22 @@
 // #1324 A8.3-CRON-TZ-ALIAS-001 evidence script (moved in-repo from the
 // round's _tmp directory so the diff entry's references persist; the
 // original run was cb8, Node v22.22.0 / ICU 78.2, tzdata 2025b).
+//
+// anchor-selfcheck: unsupported evidence probe for the A8.3-CRON-TZ-ALIAS-001 diff entry, no product mutations
+//
 // Node side: dump local parts for every recorded ICU zone x probe instants.
+// Usage: node tz_node_parts.mjs <out.tsv>
+//
+// #1509 P2-1a: the output path is a required argument and the file is
+// created exclusively (`wx`) — the old fixed `/tmp/tz_node_parts.tsv` let a
+// later round silently truncate/reuse a previous run's rows. A sidecar
+// `<out.tsv>.sha256` pins the bytes so the Python side can refuse a file it
+// did not get from this same run.
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+const out = process.argv[2];
+if (!out) throw new Error('usage: node tz_node_parts.mjs <out.tsv>');
 const zones = JSON.parse(
   readFileSync(
     new URL('../../../../src/config/timezones.json', import.meta.url),
@@ -37,6 +51,10 @@ for (const z of zones) {
     rows.push([z, t, v.month, v.day, v.hour, v.minute, WEEK[v.weekday]].join('\t'));
   }
 }
-writeFileSync('/tmp/tz_node_parts.tsv', rows.join('\n') + '\n');
+const body = rows.join('\n') + '\n';
+const digest = createHash('sha256').update(body).digest('hex');
+writeFileSync(out, body, { flag: 'wx' });
+writeFileSync(out + '.sha256', `${digest}  ${basename(out)}\n`, { flag: 'wx' });
 console.log('node rows:', rows.length, 'node', process.version,
   'icu', process.versions.icu, 'hostzone', Intl.DateTimeFormat().resolvedOptions().timeZone);
+console.log('sha256:', digest);

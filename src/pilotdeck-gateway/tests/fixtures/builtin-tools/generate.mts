@@ -417,6 +417,8 @@ const zones: [string, any, number][] = [
   ['time-chatham', 'Pacific/Chatham', fixed],
   ['time-offset-colon', '+05:30', fixed],
   ['time-offset-compact', '-0800', fixed],
+  ['time-hour-only-plus', '+05', fixed],
+  ['time-hour-only-minus', '-03', fixed],
   ['time-etc-gmt-plus', 'Etc/GMT+5', fixed],
   ['time-alias', 'US/Pacific', fixed],
   ['time-lowercase', 'asia/shanghai', fixed],

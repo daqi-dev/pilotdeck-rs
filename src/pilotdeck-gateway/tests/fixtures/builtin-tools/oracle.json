@@ -4082,6 +4082,90 @@
       ]
     },
     {
+      "name": "time-hour-only-plus",
+      "steps": [
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "get_current_time",
+          "now": 1767225600000,
+          "input": {
+            "timezone": "+05"
+          },
+          "validate": null,
+          "execute": {
+            "content": [
+              {
+                "type": "json",
+                "value": {
+                  "timezone": "+05",
+                  "iso": "2026-01-01T00:00:00.000Z",
+                  "local": "2026-01-01T05:00:00+05:00",
+                  "date": "2026-01-01",
+                  "weekday": "Thursday",
+                  "unixMs": 1767225600000
+                }
+              }
+            ],
+            "data": {
+              "timezone": "+05",
+              "iso": "2026-01-01T00:00:00.000Z",
+              "local": "2026-01-01T05:00:00+05:00",
+              "date": "2026-01-01",
+              "weekday": "Thursday",
+              "unixMs": 1767225600000
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "time-hour-only-minus",
+      "steps": [
+        {
+          "op": "call",
+          "index": 0
+        }
+      ],
+      "calls": [
+        {
+          "tool": "get_current_time",
+          "now": 1767225600000,
+          "input": {
+            "timezone": "-03"
+          },
+          "validate": null,
+          "execute": {
+            "content": [
+              {
+                "type": "json",
+                "value": {
+                  "timezone": "-03",
+                  "iso": "2026-01-01T00:00:00.000Z",
+                  "local": "2025-12-31T21:00:00-03:00",
+                  "date": "2025-12-31",
+                  "weekday": "Wednesday",
+                  "unixMs": 1767225600000
+                }
+              }
+            ],
+            "data": {
+              "timezone": "-03",
+              "iso": "2026-01-01T00:00:00.000Z",
+              "local": "2025-12-31T21:00:00-03:00",
+              "date": "2025-12-31",
+              "weekday": "Wednesday",
+              "unixMs": 1767225600000
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "time-etc-gmt-plus",
       "steps": [
         {

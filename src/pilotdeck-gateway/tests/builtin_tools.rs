@@ -122,7 +122,7 @@ fn tool_for(name: &str) -> Box<dyn ExecutableTool> {
 fn builtin_tool_outputs_match_real_ts() {
     let oracle = baseline::oracle(ORACLE);
     let scenarios = array(field(&oracle, "scenarios"));
-    assert_eq!(scenarios.len(), 55, "scenario count");
+    assert_eq!(scenarios.len(), 57, "scenario count");
     let mut calls = 0;
     let mut compared = 0;
     for scenario in scenarios {
@@ -180,8 +180,8 @@ fn builtin_tool_outputs_match_real_ts() {
             );
         }
     }
-    assert_eq!(calls, 63, "call count");
-    assert_eq!(compared, 60, "compared call count");
+    assert_eq!(calls, 65, "call count");
+    assert_eq!(compared, 62, "compared call count");
 }
 
 fn multimodal(input: &[&str], image_detail: Option<&str>) -> JsValue {
