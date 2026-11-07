@@ -62,8 +62,8 @@ if __name__ == '__main__':
         # #2228 r11+r12 (DS r10 sibling P1#3 -> DS r11 sibling P1×2 +
         # concurrency P1 + MM r11 sibling P1, both families): guard the
         # bound judge's inputs. live_session_tests.rs bakes
-        # live-session/oracle.json (:202-206 — the session_matrix expectation
-        # every row here judges by) and live.rs bakes
+        # live-session/oracle.json (:202-206 — the expectation the
+        # session_matrix rows here judge by) and live.rs bakes
         # live-e2e/terminal-boundaries/oracle.json (:2143);
         # tests/common/baseline.rs (with its #[path] regeneration_masks.rs)
         # is compiled into the same --lib binary and backs

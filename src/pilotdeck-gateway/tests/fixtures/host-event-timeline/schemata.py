@@ -180,8 +180,10 @@ GUARDED = [
     # criterion unified): runtime-read (spawned/imported) inputs are
     # registered iff this fixture's bound rows execute them — baked
     # (include_str!) inputs follow the carrier closure instead. The
-    # timeline-submit bound row runs fixture.py (host/tests.rs:291-295
-    # command()), and fixture.py imports lifetime unconditionally at its
+    # timeline-submit bound row runs fixture.py (live_stream_tests.rs:829
+    # session() -> :636-655 spawn_client_with assembles the peer command;
+    # host/tests.rs:291-295 command() is the host::tests-local helper other
+    # rows use), and fixture.py imports lifetime unconditionally at its
     # top (fixture.py:11, the #1779 parent-death/lifetime watchdog), so
     # both must be caught. The remaining a6-host scripts are dead inputs
     # here: orphan_probe.py (spawned at host/tests.rs:1219/:1270) and
