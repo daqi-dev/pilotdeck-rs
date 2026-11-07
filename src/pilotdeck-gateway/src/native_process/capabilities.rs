@@ -2,7 +2,7 @@
 //!
 //! TS baseline: `resources/PilotDeck/src/gateway/client/InProcessGateway.ts:2088-2163`
 //! builds the array from `this.options.<callback>` presence, and `hello_ok`
-//! forwards that same `describeServer()` (`server/GatewayWsConnection.ts:110-118`).
+//! forwards that same `describeServer()` (`server/GatewayWsConnection.ts:112-115`).
 //! The recorded output of the baseline for the three fixture config states is
 //! `tests/fixtures/native-management/oracle.json` (`contract.capabilities`,
 //! `contract.emptyStorage.capabilities`, `contract.missingStorage.capabilities`
@@ -138,7 +138,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "seed_read_state", methods: &[], wired: compiled_in },
     Capability { name: "supported_agents", methods: &[], wired: compiled_in },
     // TS splices these six right after the snapshot triplet, gated on
-    // `options.cron` (`InProcessGateway.ts:2114-2122`); the fixture does not
+    // `options.cron` (`InProcessGateway.ts:2114-2123`); the fixture does not
     // configure cron, which is why they are the only table names the recorded
     // state does not contain. `CRON_METHODS` owns both sides (#1325).
     Capability { name: "cron_create", methods: &[], wired: cron },
@@ -278,6 +278,25 @@ mod tests {
                 "#1352 {} promises a method the registry does not route: {:?}",
                 capability.name,
                 promised(capability).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The other half of the same rule, for the methods that *are* registered
+    /// but not served: `native_process/methods/history.rs:50-58` answers
+    /// `CAPABILITY_UNAVAILABLE` for both transcript-archive methods, which is
+    /// why `session_transcript_archive` sits in [`NOT_ADVERTISED`]. The
+    /// registry check alone cannot see that, so without this test a row
+    /// promising `export_session_transcript` would advertise a call that can
+    /// only fail.
+    #[test]
+    fn unserved_history_methods_are_not_promised() {
+        for method in ["export_session_transcript", "restore_session_transcript"] {
+            negative_assert!(
+                !CAPABILITIES
+                    .iter()
+                    .any(|capability| promised(capability).any(|declared| declared == method)),
+                "#1352 {method} answers CAPABILITY_UNAVAILABLE and must not be promised"
             );
         }
     }
