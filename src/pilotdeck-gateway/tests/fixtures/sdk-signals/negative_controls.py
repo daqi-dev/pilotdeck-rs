@@ -20,6 +20,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from negative_process import (
+    SourceBaselineError,
     _head_bytes,
     exclusive_write,
     mutating_sources,
@@ -299,13 +300,31 @@ mutations = [
 
 
 class FrozenLedgerDrift(RuntimeError):
-    """#1885 r7: a frozen ledger stopped matching HEAD under the tree lock.
+    """#1885 r7: a frozen ledger could not be proved against HEAD under the lock.
 
-    A distinct type so the rc contract in ``main`` can route *any* ledger
-    proof failure to 2 ("no verdict") without inspecting reason strings:
-    `invalidate_completed` appends its reason to rows that were already
-    recorded, so a prefix test only matched the restore phase.
+    Covers both a real drift and the proof's own infrastructure failure (git
+    timeout / non-zero `git show`, unreadable file): to the caller both mean
+    "this run has no verdict about the ledger", never "a control survived".
+    A distinct type so the rc contract in ``main`` can route them without
+    inspecting reason strings: `invalidate_completed` appends its reason to
+    rows that were already recorded, so a prefix test only matched the
+    restore phase (GLM + DeepSeek boundary r6, DeepSeek sibling r7).
     """
+
+
+def _proven_ledger_bytes(path, label):
+    """#1885 r8: prove one read-only ledger, or fail as a guard failure."""
+    relative = path.relative_to(root).as_posix()
+    try:
+        data = path.read_bytes()
+        head = _head_bytes(root, relative, "HEAD")
+    except (OSError, SourceBaselineError) as error:
+        raise FrozenLedgerDrift(
+            f"#1885 {label} proof failed: {relative}") from error
+    if head != data:
+        raise FrozenLedgerDrift(
+            f"#1885 read-only {label} must equal HEAD: {relative}")
+    return data
 
 
 def assert_close_order_ledger_matches_head():
@@ -323,12 +342,7 @@ def assert_close_order_ledger_matches_head():
     session, group kill, ``GIT_TIMEOUT``) rather than a bare
     ``subprocess.run`` (GLM simplify/boundary + DeepSeek concurrency r2).
     """
-    relative = close_order_ledger.relative_to(root).as_posix()
-    data = close_order_ledger.read_bytes()
-    if _head_bytes(root, relative, "HEAD") != data:
-        raise FrozenLedgerDrift(
-            "#1885 read-only #1382 baseline must equal HEAD: " + relative)
-    return data
+    return _proven_ledger_bytes(close_order_ledger, "#1382 baseline")
 
 
 def assert_frozen_ledgers_match_head():
@@ -343,10 +357,7 @@ def assert_frozen_ledgers_match_head():
     restores its own target before this runs.
     """
     data = assert_close_order_ledger_matches_head()
-    relative = d1_ledger.relative_to(root).as_posix()
-    if _head_bytes(root, relative, "HEAD") != d1_ledger.read_bytes():
-        raise FrozenLedgerDrift(
-            "#1885 read-only D1 rejection ledger must equal HEAD: " + relative)
+    _proven_ledger_bytes(d1_ledger, "D1 rejection ledger")
     return data
 
 
@@ -504,7 +515,20 @@ def raw_text(value):
 
 
 def main():
-    check_catalog()
+    # #1885 r8: the pre-lock catalog check proves the close-order ledger too
+    # (`registered_unordered_close_ids`), so a drift here is the same guard
+    # failure as the in-lock proofs. Uncaught it exited as an interpreter
+    # traceback (rc 1, "a control survived"); route it to 2 like the rest
+    # (GLM sibling r7, DeepSeek sibling r7).
+    try:
+        check_catalog()
+    except FrozenLedgerDrift as error:
+        print(
+            "source guard or interruption:"
+            f" {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        return 2
     args = sys.argv[1:]
     # #1382: --check is deliberately a compatibility alias for --check-anchors.
     # Both spellings are handled by this one branch, so their behavior cannot
@@ -748,10 +772,18 @@ def main():
         # proof, or the entry-phase proof added in r3/r5, left every reason
         # prefixed by the original verdict and fell through to 1 -- reporting
         # a guard fault as "a control survived" (GLM + DeepSeek boundary r6).
+        #
+        # #1885 r8: `phase != "body"` rather than the restore/exit pair. The
+        # `enter` phase is `mutating_sources.__enter__` -- tree-lock timeout,
+        # `_assert_workspace_sources` on a leftover mutant -- and every way it
+        # can escape is a guard, never a verdict about a control (DeepSeek
+        # sibling r7). Entry-phase ledger proofs inside the body raise
+        # `FrozenLedgerDrift`, which now also covers the proof's own git/file
+        # failures (GLM boundary + concurrency r7).
         guard_failure = (
             interrupted
+            or phase != "body"
             or isinstance(error, FrozenLedgerDrift)
-            or phase in ("restore", "exit")
         )
         # Completed kills become invalid if the guarded run cannot verify its
         # final state. Every unrun selected case is also explicitly accounted.
