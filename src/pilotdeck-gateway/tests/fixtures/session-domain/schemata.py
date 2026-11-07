@@ -82,6 +82,13 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 DS r3 P2 (fixed in-round, ~one line): the bound golden test bakes
+    # session-domain/oracle.json into the binary (include_str! at
+    # session_domain.rs when PDRS_SESSION_DOMAIN_ORACLE is unset), so a
+    # concurrent edit during a run must be caught by the source guard. The
+    # fixture has no regeneration binding, so generate.mts/cases.mts are never
+    # executed by the bound test and stay unregistered.
+    FIXTURES / 'session-domain/oracle.json',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',

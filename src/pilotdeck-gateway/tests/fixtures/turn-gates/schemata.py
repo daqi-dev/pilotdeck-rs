@@ -80,6 +80,19 @@ GUARDED = [
     RUNNER_TESTS,
     FACTORY_TESTS,
     PEER,
+    # #2228 DS r3 P1: gates_tests.rs compiles turn-gates/oracle.json into the
+    # binary (include_str! at both the read-back fixture and GATES_ORACLE) and
+    # runs turn-gates/peer.py as a python3 subprocess, so concurrent edits to
+    # either during a run must be caught by the source guard.
+    FIXTURES / 'turn-gates/oracle.json',
+    FIXTURES / 'turn-gates/peer.py',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the live/runner/host_factory modules the
+    # bindings resolve through (live.rs:14 `use super::runner::{...}` goes via
+    # this file), and runtime/mod.rs declares turn itself, capping the chain at
+    # the same declarator depth the project chain already registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

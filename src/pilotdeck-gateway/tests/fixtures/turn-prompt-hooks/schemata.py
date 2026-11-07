@@ -97,6 +97,18 @@ GUARDED = [
     # concurrent edits to either must be caught by the source guard.
     SRC / 'runner.rs',
     SRC / 'runner_tests.rs',
+    # #2228 DS r3 P1: the row bindings bake turn-prompt-hooks/oracle.json into
+    # the binary (include_str! via runner_prompt_tests.rs) and the
+    # prompt-regeneration binding runs turn-prompt-hooks/generate.mts through
+    # tests/common/baseline.rs, so concurrent edits to either during a run must
+    # be caught by the source guard.
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
+    FIXTURES / 'turn-prompt-hooks/generate.mts',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the runner module (and live) the bindings
+    # resolve through, capping the chain at the same declarator depth the
+    # project chain above already registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
