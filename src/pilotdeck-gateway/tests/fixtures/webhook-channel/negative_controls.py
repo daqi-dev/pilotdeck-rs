@@ -71,6 +71,14 @@ switches = [
     ('webhook-empty-text-accepted', SOURCE_WEBHOOK,
      ['no_text', 'empty_text_request_is_not_a_delivery'],
      ['#1334 webhook oracle case no-text', '#1681 the empty string is ignored']),
+    # #1682: `this.routes[routeName]` walks the prototype chain, so an
+    # `Object.prototype` own property name (`constructor`, `__proto__`, ...)
+    # resolves to a truthy value with no `secret`/`deliver`: TS authenticates
+    # it against the global secret and accepts it. The pre-fix own-key-only
+    # lookup answers 404 for every such name, which turns all four steps of
+    # the cell red.
+    ('webhook-prototype-routes-off', SOURCE_WEBHOOK, 'object_prototype_route_names',
+     '#1334 webhook oracle case object-prototype-route-names'),
     # An `s_` 36-hex session suffix is a cron chat id; without the suffix a
     # cron delivery to the new-session chat resolves no target.
     ('webhook-cron-suffix', SOURCE_CRON, 'cron_delivery_resolves_session_suffix_chat_ids', '#1334 an s_ session key is a cron target'),
