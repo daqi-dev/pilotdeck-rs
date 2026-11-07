@@ -38,7 +38,7 @@ impl Requests {
             match method.as_str() {
                 // The only arm that reads `input`: the unconfigured abort
                 // echoes `input.sessionKey` in its return object
-                // (InProcessGateway.ts:3001), so a nullish `params` throws the
+                // (InProcessGateway.ts:3003), so a nullish `params` throws the
                 // boundary TypeError — `input_property` reproduces the message
                 // and `RequestError::new` the `gateway_request_failed` wire
                 // code the TS catch-all produces (GatewayWsConnection.ts:
@@ -139,6 +139,15 @@ mod tests {
                 "{\"aborted\":false,\"sessionKey\":42,\"error\":{\"code\":\"not_configured\",\
                  \"message\":\"Always-On abort is not configured on this gateway.\"}}",
             ),
+            // A null sessionKey is echoed verbatim, not folded into the
+            // missing-key case (ts-probe output.txt L8): the filter drops only
+            // `undefined`, so this row pins the nullish-predicate boundary.
+            (
+                "always_on_abort",
+                full(&[("sessionKey", JsValue::Null)]),
+                "{\"aborted\":false,\"sessionKey\":null,\"error\":{\"code\":\"not_configured\",\
+                 \"message\":\"Always-On abort is not configured on this gateway.\"}}",
+            ),
             (
                 "always_on_rerun_plan",
                 full(&[("planId", "pl1".into())]),
@@ -199,11 +208,16 @@ mod tests {
                 let text = stringify_json(&value)
                     .expect("#1313 envelope serializes")
                     .expect("#1313 envelope is defined");
-                negative_assert_eq!(
-                    text.contains("\"code\":\"not_configured\""),
-                    true,
-                    "#1313 {method} nullish still answers the not_configured envelope"
-                );
+                // Byte for byte with the rows above: the whole envelope is
+                // the contract, not just the error code half of it.
+                let envelope = if method == "always_on_apply" {
+                    "{\"sessionKey\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
+                     \"Always-On apply is not configured on this gateway.\"}}"
+                } else {
+                    "{\"runId\":\"\",\"error\":{\"code\":\"not_configured\",\"message\":\
+                     \"Always-On rerun is not configured on this gateway.\"}}"
+                };
+                negative_assert_eq!(text, envelope, "#1313 {method} nullish message");
             }
         }
         teardown(&requests).await;

@@ -803,7 +803,8 @@ class EnvironmentControls(unittest.TestCase):
             self.fail('#1632 the fixture must define a literal mutations table')
 
         pinned = rows(source)
-        self.assertEqual(len(pinned), 13, '#1632/#1476 thirteen mutations cover the wire-up')
+        self.assertEqual(len(pinned), 14,
+                         '#1632/#1476/#1313 fourteen mutations cover the wire-up')
         # 只钉行数等于允许「换掉一条真变异、行数不变」：名字逐一钉死（GLM r7 sibling P2），
         # 换成一条平凡可杀的变异同样会红。
         self.assertEqual([ast.literal_eval(row)[0] for row in pinned],
@@ -816,16 +817,17 @@ class EnvironmentControls(unittest.TestCase):
                           'always-on-abort-copies-apply-message',
                           'always-on-rerun-copies-apply-message',
                           'always-on-apply-copies-abort-message',
-                          'always-on-code-not-capability-unavailable',
+                          'always-on-abort-skips-the-input-read',
+                          'always-on-envelope-code-rewritten',
                           'describe-advertises-always-on-apply',
                           'describe-drops-async-hook-result',
                           'describe-drops-delete-session'],
-                         '#1632/#1476 the thirteen mutations are exactly these, '
-                         'not merely thirteen rows')
+                         '#1632/#1476/#1313 the fourteen mutations are exactly these, '
+                         'not merely fourteen rows')
         dropped = ast.get_source_segment(source, pinned[0])
         mutant = source.replace(dropped + ',', '', 1)
         self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
-        self.assertEqual(len(rows(mutant)), 12,
+        self.assertEqual(len(rows(mutant)), 13,
                          '#1632 dropping a row must change the pinned count')
 
     def test_dispatch_case_table_cannot_shrink_silently(self):
