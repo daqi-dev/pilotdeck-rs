@@ -4,5 +4,4 @@ pub mod orchestrator;
 pub mod policy;
 pub mod recovery;
 pub use pilotdeck_context::*;
-use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::collections::HashSet;
+use pilotdeck_protocol::{JsObject, JsValue};

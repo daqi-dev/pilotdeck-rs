@@ -496,5 +496,9 @@ mod tests {
     }
 }
 
+pub mod orchestrator;
+pub mod prepare;
 pub mod projection;
 pub mod prompt;
+pub mod recovery;
+pub mod summary;

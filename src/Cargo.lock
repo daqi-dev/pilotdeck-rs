@@ -1033,6 +1033,8 @@ dependencies = [
  "pilotdeck-budget",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
+ "regex",
+ "uuid",
 ]
 
 [[package]]

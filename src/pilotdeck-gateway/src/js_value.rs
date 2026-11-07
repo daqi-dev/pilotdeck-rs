@@ -15,8 +15,7 @@
 //! V8's varies with the caller's stack shape, so the constant sits low and
 //! depths between it and V8's real limit throw here but convert in TS.
 //! Ledger: specs/gateway-parity/accepted-diffs.md A6-JSVALUE-DEPTH-001 (unapproved).
-use crate::metadata::js_trim;
-use pilotdeck_protocol::{JsString, JsValue, stringify_json};
+use pilotdeck_protocol::{JsString, JsValue};
 
 /// Deepest array nesting that converts; conservative against V8's 2515.
 pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;
@@ -238,83 +237,13 @@ pub(crate) fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// so the shared 2000 bound is deliberately conservative rather than an exact
 /// threshold.
 pub(crate) fn json_stringify(value: &JsValue) -> Result<Option<String>, StackOverflow> {
-    let mut pending = vec![(value, 0usize)];
-    while let Some((value, depth)) = pending.pop() {
-        if depth > MAX_ARRAY_DEPTH {
-            return Err(StackOverflow);
-        }
-        match value {
-            JsValue::Array(items) => {
-                pending.extend(items.iter().map(|item| (item, depth + 1)));
-            }
-            JsValue::Object(object) => {
-                pending.extend(object.entries().iter().map(|(_, item)| (item, depth + 1)));
-            }
-            _ => {}
-        }
-    }
-    Ok(stringify_json(value).ok().flatten())
+    pilotdeck_budget::coercion::json_stringify(value).map_err(|_| StackOverflow)
 }
-
-/// `Number(value)`.
 pub(crate) fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
-    Ok(match value {
-        JsValue::Undefined | JsValue::Object(_) => f64::NAN,
-        JsValue::Null => 0.0,
-        JsValue::Bool(b) => f64::from(u8::from(*b)),
-        JsValue::Number(n) => *n,
-        JsValue::String(s) => string_to_number(&String::from_utf16_lossy(s.units())),
-        JsValue::Array(_) => string_to_number(&display(value)?),
-    })
+    pilotdeck_budget::coercion::to_number(value).map_err(|_| StackOverflow)
 }
-
-/// ECMAScript StringToNumber.
 pub(crate) fn string_to_number(text: &str) -> f64 {
-    let t = js_trim(text);
-    if t.is_empty() {
-        return 0.0;
-    }
-    let radix = match t.get(..2) {
-        Some("0x" | "0X") => 16,
-        Some("0o" | "0O") => 8,
-        Some("0b" | "0B") => 2,
-        _ => 0,
-    };
-    if radix != 0 {
-        let digits = &t[2..];
-        if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
-            return f64::NAN;
-        }
-        // Exact up to 128 bits, then rounded once, like V8.
-        return match u128::from_str_radix(digits, radix) {
-            Ok(v) => v as f64,
-            Err(_) => digits.chars().fold(0.0, |acc, c| {
-                acc * f64::from(radix) + f64::from(c.to_digit(radix).unwrap())
-            }),
-        };
-    }
-    match t {
-        "Infinity" | "+Infinity" => return f64::INFINITY,
-        "-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
-    let (mantissa, exponent) = match body.find(['e', 'E']) {
-        Some(i) => (&body[..i], Some(&body[i + 1..])),
-        None => (body, None),
-    };
-    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |s: &str| s.bytes().all(|b| b.is_ascii_digit());
-    let mantissa_ok = digits(int) && digits(frac) && !(int.is_empty() && frac.is_empty());
-    let exponent_ok = exponent.is_none_or(|e| {
-        let e = e.strip_prefix(['+', '-']).unwrap_or(e);
-        !e.is_empty() && digits(e)
-    });
-    if mantissa_ok && exponent_ok {
-        t.parse().unwrap_or(f64::NAN)
-    } else {
-        f64::NAN
-    }
+    pilotdeck_budget::coercion::string_to_number(text)
 }
 
 #[cfg(test)]
