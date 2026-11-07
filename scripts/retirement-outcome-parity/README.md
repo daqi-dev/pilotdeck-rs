@@ -286,12 +286,14 @@ python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
 ```
 
 `--self-check-controls` 给每个能造违反样本的守卫造样本，对应检查必须**变红**：体积预算用
-超大夹具；CI 接线用**二十种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
+超大夹具；CI 接线用**二十五种**变异 workflow（删掉 retirement job / 整段注释掉 / 给 job 内闸门
 step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **job 级**（4 空格缩进）
 加 `continue-on-error` / 把闸门命令整行挪进同 step 的 `env.UNUSED: |` / 用嵌套 `env:` 下的
 `run: exit 1` 冒充聚合 Require 的执行体 / 用 `if false; then … fi` 包住整条命令 / `|| true` /
 `! ` 取反退出码 / `echo` 前缀 / 删掉一个闸门 step / 给 Require step 换掉 `if:` ·
-加 `continue-on-error` · 末尾追加 `&& false` · 把 `run: exit 1` 改成 `exit 0` / 把聚合 `check` job 的 `if:` 改成 `false` / 追加一份 `---` 之后的 YAML 文档）；输出目录锁用
+加 `continue-on-error` · 末尾追加 `&& false` · 把 `run: exit 1` 改成 `exit 0` / 把聚合 `check` job 的 `if:` 改成 `false` / 追加一份 `---` 之后的 YAML 文档 / r5 标量形态四种——`run` 行内续行、
+聚合 job `if` 续行 `&& false`、Require `if` 续行 `&& false`、块标量 `|`→`>`——加把两个 job
+整块挪到 `on:` 下冒充（行首正则会认这种假块））；输出目录锁用
 三种**预置敌意锁文件**（同名 FIFO / 目录 / 符号链接，去掉 `O_NONBLOCK` 或 `S_ISREG` 判定即
 挂起或假持锁）。`emit` / `check` / 负控没有独立违反样本：它们本身就是行为测试，控件即同一
 正向检查的重跑。守卫被拆掉时它自己变红——这就是「拆掉上限 / 锁 / CI 步骤 → 相应用例变红」
@@ -302,16 +304,21 @@ step 加 `if: false` · 引号键 `"if": false` · `continue-on-error` / 给 **j
 未变异基线必须 rc=1。样本本身不成立就不是样本（例如把 `|| true` 加在以续行反斜杠结尾的行上
 会变成 rc=127；`bash -e` 下末尾补 `exit 0` 根本走不到，同样不算假绿）。
 
-接线守卫认的是**结构**，不是文本：先剥掉整行注释，再按 YAML 缩进取真值——两个 job 的直属键
-白名单（job 级 `continue-on-error` 即红）；retirement job 的 `if:` 与聚合 `check` job 的 `if:`
-都要逐字等于登记值（GitHub 把**被跳过的 job 报成 success**，而 `check` 自己是必需检查，
-跳掉它就再没有东西挡合并）；YAML 多文档分隔符直接拒（Actions 会报错，而守卫只读第一份）；retirement job 的 step 顺序与名字按登记比对；闸门
-step 只许有 `name` + 一个**直属** `run`（`env` / `with` / `if` / `continue-on-error`、嵌套的
-`env: {run: …}` 全红）；每个闸门 step 的 `run` 体与 `GATE_SCRIPTS` **逐字相等**；聚合 Require
+接线守卫认的是 **PyYAML 解析后的完整标量**，不是源码行文本（#2017 r5py 重写）：守卫不再做任何
+行式 / 缩进式切块，也没有结构比对的兜底正则——`yaml.compose_all` 取唯一文档（多文档 / 解析失败
+即红），job 只在 `jobs:` 映射里找（挂在 `on:` 等别处的同名块不是 job）；两个 job 的直属键白名单
+（job 级 `continue-on-error` 即红，重复键也红——两个解析器可以对「哪个键活着」各执一词）；
+retirement job 的 `if:` 与聚合 `check` job 的 `if:` 归一化后逐字等于登记值（GitHub 把**被跳过的
+job 报成 success**，而 `check` 自己是必需检查，跳掉它就再没有东西挡合并）；retirement job 的
+step 顺序与名字按登记比对；闸门 step 只许有 `name` + 一个**直属** `run`（`env` / `with` /
+`if` / `continue-on-error`、嵌套的 `env: {run: …}` 全红）；每个闸门 step 的 `run` 必须是
+**literal 块标量（`|`）**且完整标量值与 `GATE_SCRIPTS` **逐字相等**——续行拼接（plain 多行
+标量，换行折叠成空格）、`>` 折叠块、引号标量**显式判红并写明是哪一种形态**；聚合 Require
 只许 `name` / `if` / `run`，`run` 恰为 `exit 1`，`if:` 归一化空白后逐字等于登记值。逐字相等
-同样意味着**等价写法会被误拒**（`if: >-` 折叠、换引号风格、重排 `--round` 参数），这是有意的
+同样意味着**等价写法会被误拒**（`run` 写成 plain / 引号标量、`if` 折叠续行、重排 `--round`
+参数），这是有意的
 fail-closed：本仓这段 YAML 只有一个写方，宁可误拒也不放过「文本活着但闸门失效」；改闸门脚本
-必须同步改 `GATE_SCRIPTS`。
+必须同步改 `GATE_SCRIPTS`。PyYAML 不可用时同样 fail-closed 判红，不降级回行式解析。
 
 ## 为什么不在 `scripts/gateway-parity/`
 
