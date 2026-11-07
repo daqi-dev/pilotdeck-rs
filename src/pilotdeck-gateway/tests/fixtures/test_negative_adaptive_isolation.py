@@ -208,6 +208,7 @@ def drain_child_output(child, buffers):
         except (BlockingIOError, InterruptedError, OSError, ValueError):
             continue
         if not chunk:
+            buffers['eof'][name] = True
             continue
         buffers['total'][name] += len(chunk)
         room = DRAIN_KEEP_BYTES - len(buffers[name])
@@ -218,9 +219,8 @@ def drain_child_output(child, buffers):
 def drained_text(child, name, buffers):
     """Decode the retained prefix without letting a split character raise.
 
-    os.read() can stop in the middle of a multi-byte character and the rest of
-    the stream is decoded separately by communicate(), so decode with an
-    incremental decoder that substitutes instead of raising (#2127 codex
+    os.read() can stop in the middle of a multi-byte character, so decode with
+    an incremental decoder that substitutes instead of raising (#2127 codex
     boundary r10 P2). A trailing partial character is dropped, not fatal: this
     text is diagnostic only.
     """
@@ -234,36 +234,46 @@ def drained_text(child, name, buffers):
 
 
 def read_child_output(child):
-    """Read a child's piped output once, bounded like negative_process._collect().
+    """Read a child's piped output once, bounded in both time and size.
 
     The child does not leak these pipes to cargo: negative_process.run_owned()
     gives cargo its own PIPE in a fresh session (negative_process.py:166-168),
-    so communicate() returns as soon as the child dies. The bound is kept for
-    the same reason _collect() has one: a descendant that called setsid()
-    escapes the group signal and can hold a pipe open forever (#528), and
-    blocking the suite on that is worse than losing the tail.
+    so this returns as soon as the child dies and its pipes reach EOF.
 
-    A timeout therefore means "the leader is still alive, or an escaped
-    descendant holds a pipe". The leader is reaped before the pipes are closed,
-    so as long as that inner wait() succeeds, closing them cannot turn the
+    The time bound exists for the same reason negative_process._collect() has
+    one: a descendant that called setsid() escapes the group signal and can
+    hold a pipe open forever (#528), and blocking the suite on that is worse
+    than losing the tail. The leader is reaped before the pipes are closed, so
+    as long as that inner wait() succeeds, closing them cannot turn the
     expected signal into SIGPIPE (-13) and hide the real cause; callers assert
     child.poll() is not None to tell a hang from the tolerated #528 case.
 
-    Returns (stdout, stderr). Cached on the Popen object because a second
-    communicate() would read already-closed pipe objects.
+    The size bound is this file's own: collection reuses the same capped drain
+    buffer as the readiness wait instead of communicate(), which accumulates
+    without limit at pipe throughput (#2127 codex concurrency r11 P0). A caller
+    that never ran wait_for_ready() gets a fresh buffer here.
+
+    Returns (stdout, stderr). Cached on the Popen object because a second read
+    would see already-closed pipes.
     """
     cached = getattr(child, '_verified_output', None)
     if cached is not None:
         return cached
     buffers = getattr(child, '_verified_drained', None)
-    if buffers is not None:
-        # wait_for_ready() made these non-blocking to poll them; communicate()
-        # below expects blocking reads.
-        set_pipe_blocking(child, True)
+    if buffers is None:
+        buffers = {'stdout': bytearray(), 'stderr': bytearray(),
+                   'total': {'stdout': 0, 'stderr': 0},
+                   'eof': {'stdout': False, 'stderr': False}}
+    set_pipe_blocking(child, False)
     seconds = pipe_close_seconds()
-    try:
-        cached = child.communicate(timeout=seconds)
-    except subprocess.TimeoutExpired as error:
+    deadline = time.monotonic() + seconds
+    while not (child.poll() is not None and all(buffers['eof'].values())):
+        if time.monotonic() > deadline:
+            break
+        drain_child_output(child, buffers)
+        time.sleep(.02)
+    drain_child_output(child, buffers)
+    if not all(buffers['eof'].values()):
         try:
             child.wait(timeout=seconds)
         except subprocess.TimeoutExpired:
@@ -271,11 +281,8 @@ def read_child_output(child):
         for stream in (child.stdout, child.stderr):
             if stream is not None:
                 stream.close()
-        api = shared_process()
-        cached = (api._as_text(child, error.output), api._as_text(child, error.stderr))
-    if buffers is not None:
-        cached = (drained_text(child, 'stdout', buffers) + (cached[0] or ''),
-                  drained_text(child, 'stderr', buffers) + (cached[1] or ''))
+    cached = (drained_text(child, 'stdout', buffers),
+              drained_text(child, 'stderr', buffers))
     child._verified_output = cached
     return cached
 
@@ -314,7 +321,8 @@ def wait_for_ready(child, ready, seconds):
     started = time.monotonic()
     deadline = started + seconds
     buffers = {'stdout': bytearray(), 'stderr': bytearray(),
-               'total': {'stdout': 0, 'stderr': 0}}
+               'total': {'stdout': 0, 'stderr': 0},
+               'eof': {'stdout': False, 'stderr': False}}
     child._verified_drained = buffers
     set_pipe_blocking(child, False)
     while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
