@@ -493,9 +493,16 @@ fn triage_probe_sorts_every_outcome_with_one_bounded_fd_retry() {
     // scratch failure whose panic message would blame the file name for a
     // process-level condition.
     for errno in [libc::EMFILE, libc::ENFILE] {
+        let mut calls = 0;
         assert!(
-            matches!(triage_probe(|| Err(error(errno))), NonUtf8Probe::FdLimit(_)),
-            "#283 errno {errno} is the process or system fd limit, not the scratch's own failure: it must reach its own retry arm, not the scratch-failure marker"
+            matches!(
+                triage_probe(|| {
+                    calls += 1;
+                    Err(error(errno))
+                }),
+                NonUtf8Probe::FdLimit(_)
+            ) && calls == 2,
+            "#283 errno {errno} is the process or system fd limit, not the scratch's own failure: it must reach its own retry arm, not the scratch-failure marker, retried exactly once"
         );
     }
     // The retry is exactly one: an fd freed after the first EMFILE lets

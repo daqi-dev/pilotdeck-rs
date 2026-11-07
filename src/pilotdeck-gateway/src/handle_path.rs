@@ -238,6 +238,85 @@ mod tests {
         let _ = child.wait();
     }
 
+    /// #1672 fix-r2 (r2 reviews — three roles, same site): the fd triage for
+    /// this file's two probe calls (`fs::write` and `fs::File::open` — the
+    /// open eats the same process fd table as the write), as a tested unit —
+    /// the same contract as the three `triage_probe` twins. `cfg(unix)`, not
+    /// `cfg(macos)`, so the synthetic-errno unit test below compiles and runs
+    /// on every unix host while its caller stays macOS-only.
+    #[cfg(unix)]
+    fn probe_hit_the_fd_limit(error: &std::io::Error) -> bool {
+        matches!(
+            error.raw_os_error(),
+            Some(libc::EMFILE) | Some(libc::ENFILE)
+        )
+    }
+
+    /// #1672 fix-r2: exactly one bounded retry for an fd-limit failure — the
+    /// one errno family whose cause (the process's or the system's fd table)
+    /// lives outside the probed file. Any other error is attempted exactly
+    /// once; the retried attempt's outcome wins.
+    #[cfg(unix)]
+    fn attempt_with_one_fd_retry<T>(
+        mut attempt: impl FnMut() -> std::io::Result<T>,
+    ) -> std::io::Result<T> {
+        let mut outcome = attempt();
+        if let Err(error) = &outcome
+            && probe_hit_the_fd_limit(error)
+        {
+            outcome = attempt();
+        }
+        outcome
+    }
+
+    /// #1672 fix-r2: the executable evidence for the two helpers above —
+    /// synthetic errnos, no filesystem, runs on every unix host (the caller
+    /// is macOS-only, where no CI and no unix sibling can execute it).
+    #[cfg(unix)]
+    #[test]
+    fn fd_limit_attempts_retry_exactly_once_and_terminal_outcome_wins() {
+        let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
+        // A non-fd error is attempted exactly once: the retry condition must
+        // not be loosened into "any error retries".
+        let mut calls = 0;
+        let outcome: std::io::Result<()> = attempt_with_one_fd_retry(|| {
+            calls += 1;
+            Err(error(libc::EILSEQ))
+        });
+        assert!(
+            outcome.is_err() && calls == 1,
+            "#1990 a non-fd error is not retried: the fd retry must stay on EMFILE/ENFILE"
+        );
+        // Both fd-limit errnos get exactly one retry, and the retried
+        // attempt's outcome wins — a later-freed fd lets the second attempt
+        // through.
+        for errno in [libc::EMFILE, libc::ENFILE] {
+            let mut calls = 0;
+            let outcome: std::io::Result<()> = attempt_with_one_fd_retry(|| {
+                calls += 1;
+                if calls == 1 {
+                    Err(error(errno))
+                } else {
+                    Ok(())
+                }
+            });
+            assert!(
+                outcome.is_ok() && calls == 2,
+                "#1990 errno {errno} gets exactly one retry: a later-freed fd must let the second attempt through"
+            );
+        }
+        // A persistent limit is retried once and then stops — never a loop.
+        let mut calls = 0;
+        let outcome: std::io::Result<()> = attempt_with_one_fd_retry(|| {
+            calls += 1;
+            Err(error(libc::EMFILE))
+        });
+        assert!(
+            matches!(&outcome, Err(error) if probe_hit_the_fd_limit(error)) && calls == 2,
+            "#1990 the fd retry is bounded: exactly one retry, then the error stands, never a loop"
+        );
+    }
+
     // #1990: the two tests below are macOS-only on purpose. `mod macos` is
     // compiled out everywhere else, so these are the only assertions that can
     // pin which step of `macos::opened_path` produced a rejection: the
@@ -299,22 +378,14 @@ mod tests {
         let file_path = scratch
             .0
             .join(std::ffi::OsStr::from_bytes(b"bad\xff\xfe.bin"));
-        // #1672 fix-r1 (DS boundary P1, sibling P2 — same site, take the
-        // higher grade): the fd limit (EMFILE/ENFILE) lives in the process
-        // or the system, not in this name. Mirror the
-        // `non_utf8_names_writable` triage: exactly one bounded retry, then
-        // fail closed with its own marker instead of blaming the file name
-        // for a process-level condition.
-        let fd_limit = |error: &std::io::Error| {
-            matches!(
-                error.raw_os_error(),
-                Some(libc::EMFILE) | Some(libc::ENFILE)
-            )
-        };
-        let mut write_outcome = fs::write(&file_path, b"non-utf8-bytes");
-        if let Err(error) = &write_outcome && fd_limit(error) {
-            write_outcome = fs::write(&file_path, b"non-utf8-bytes");
-        }
+        // #1672 fix-r1→r2 (DS boundary P1 + r2 sibling/boundary/concurrency
+        // P2): the fd limit (EMFILE/ENFILE) lives in the process or the
+        // system, not in this name. Both probe calls — the write and the
+        // open — go through the tested `attempt_with_one_fd_retry` helper
+        // above, and a persistent limit fails closed with its own marker
+        // instead of blaming the file name for a process-level condition.
+        let write_outcome =
+            attempt_with_one_fd_retry(|| fs::write(&file_path, b"non-utf8-bytes"));
         match write_outcome {
             Ok(()) => {}
             Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => {
@@ -329,7 +400,7 @@ mod tests {
                 );
                 return;
             }
-            Err(error) if fd_limit(&error) => {
+            Err(error) if probe_hit_the_fd_limit(&error) => {
                 panic!(
                     "#1990 the non-UTF-8 named scratch write hit the process fd \
                      limit, not the file name: {error}"
@@ -340,7 +411,17 @@ mod tests {
                  other than the file name: {error}"
             ),
         }
-        let file = fs::File::open(&file_path).expect("#1990 open the non-UTF-8 named scratch file");
+        let file = match attempt_with_one_fd_retry(|| fs::File::open(&file_path)) {
+            Ok(file) => file,
+            Err(error) if probe_hit_the_fd_limit(&error) => panic!(
+                "#1990 opening the non-UTF-8 named scratch file hit the process \
+                 fd limit, not the file name: {error}"
+            ),
+            Err(error) => panic!(
+                "#1990 open the non-UTF-8 named scratch file failed for a reason \
+                 other than the file name: {error}"
+            ),
+        };
         let resolved = opened_path(&file);
         negative_assert!(
             matches!(&resolved, Err(error) if error.kind() == std::io::ErrorKind::InvalidData),
