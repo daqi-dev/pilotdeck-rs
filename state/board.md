@@ -4723,3 +4723,6 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · 默认 CLI 远端片（Codex，仅本机）
 
 未知argv拼提示词、stdin逐行同session与完整旧renderer已实现；mbp2真实TS重采三格和四项边界金样可复现，Rust子进程覆盖乱序seq/final不yield、空闲stdin心跳、delta在final前flush、CR/CRLF/EOF、断管及终态退出，全PASS；all-targets clippy通过。终态关闭和资源预算独立差异均待人复核；完整本地boot/fallback与EPIPE栈文本未完成，证据主仓 `_tmp/20261108-cli-channel/`，不标完整CLI。新机器stream真实native/sidecar/假provider已通过输出、落盘和跨连接取消，仍在收尾边界与本地提交；Sol继续WeCom/Weixin。
+### 2026-11-08 · gateway setup 原子保存独立切片（Codex，本地提交）
+
+已将 setup 配置保存改为同目录独占临时文件、完整写入与 sync 后再 rename；真实 EFBIG 后旧字节保全，新文件0600，旧mode/uid/gid保留，symlink只更新目标，不支持的hardlink/断链/ACL/xattrs/BSD flags拒绝。mbp2最终27测试通过、辅助子测试由父实际调用，fmt/严格clippy通过；证据主仓 `_tmp/20261108-issue-124-setup/atomic-worker/`，差异 `D2-SETUP-ATOMIC-SAVE-001` 仍AI代批待人复核、无冻结豁免。本轮仅本机提交；下一步继续WeCom后Weixin，尚不标setup/D2完成，真人体验与真实平台登录待验。

@@ -15,7 +15,7 @@ CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --manifest-path src/Cargo
 
 这些测试使用独占临时目录、虚构凭据和进程内 fake Fetch。HTTP 生产实现的测试只连接自己绑定的 `127.0.0.1:0`：验证真实请求体、Content-Type、302 的 POST→GET、同 origin 307 保留请求体、跨 origin 307 不产生第二端请求、JSON 错误文案和非成功 HTTP 状态下的字段判断。HTTPS 降级拒绝规则另有直接 URL 判据测试。不调用真实飞书、Lark 或用户的服务，也不使用 18789。
 
-YAML 测试从原始输入生成配置并调用实际 `write_adapter`，核对输出字节和重读值。覆盖普通值、特殊字符串、键序、空容器、多行、图别名、循环、Set / Map 和字面反斜线与真实控制字符。保存拒绝路径检查原文件字节或目录内 sentinel 不变。实际 `ulimit -f 0` 子进程还验证写阶段错误准确为 `EFBIG: file too large, write`，并明确见证非原子写入会把旧文件截断；该子测试由父测试定向启动，正常列表中标为 ignored。
+YAML 测试从原始输入生成配置并调用实际 `write_adapter`，核对输出字节和重读值。覆盖普通值、特殊字符串、键序、空容器、多行、图别名、循环、Set / Map 和字面反斜线与真实控制字符。保存拒绝路径检查原文件字节或目录内 sentinel 不变。实际 `ulimit -f 0` 子进程还验证写阶段错误准确为 `EFBIG: file too large, write`，并验证原子保存下旧文件原字节保留、临时文件清理；首包曾在同一装置下实测旧文件被截断，该历史原件保留于任务目录。该子测试由父测试定向启动，正常列表中标为 ignored。
 
 ## PTY 四面复放
 
@@ -50,4 +50,10 @@ python3 src/pilotdeck-cli/tests/fixtures/gateway-setup/compare-pty.py \
 
 本切片按默认修 bug 授权，对存在但不可读 / 无效 UTF-8 / 无法解析的配置拒绝保存；root / adapters 数组等非 mapping 不再显示写入成功；带凭据 body 的跨 origin 重定向以及任何 HTTPS→HTTP 重定向被拒绝。同 origin 307 / 308 保留 body，302 / 303 转 GET 移除 body 后可以跨 origin。差异登记由 D2 持有人维护；`graph-corpus.json` 保留 TS 原始事实，Rust 的拒绝断言不篡改该 oracle。
 
-本轮仍使用原有整文件直接写入方式。写入中途失败可能已经截断旧文件；“已有无效配置写前拒绝”不等于原子保存或崩溃安全。原子保存由独立产品切片评估，本目录没有以成功测试掩盖该限制。
+## 原子保存切片
+
+配置保存先检查目标形态和读写权限，再在实际目标目录以独占 UUID 名创建临时文件。临时文件初始为 0600；检查继承元数据后才写内容。完整写入、保留受支持的旧文件 mode / uid / gid、同步文件并复核目标身份后，才以同目录 rename 发布。新配置最终保持 0600；已有配置保留原权限，无法保留则拒绝。发布前任一步失败都会清理该次临时文件，旧文件不被截断；rename 是最后一个可失败步骤，不把发布后的错误误报成旧文件仍在。
+
+已有有效符号链接会解析到实际目标，并只替换目标文件；符号链接本身与其 inode 保留。断链、hardlink、非普通文件、特殊权限位、macOS 非零 BSD flags、任何 xattrs / ACL 都明确拒绝。macOS 使用固定系统 `/bin/ls`、`LC_ALL=C` 检查 ACL，命令失败也拒绝；检查 xattrs 在先，避免 `@` 覆盖 ACL 的 `+` 标记。Linux ACL 由 xattr 拒绝路径涵盖。此实现保留上述 mode / uid / gid，**没有声称保留任意平台元数据**；不支持的形态保持原件并返回错误。
+
+真实回归包含 chmod mode、symlink、hardlink、xattr 注入、macOS ACL 与 `chflags hidden` 注入，以及实际 `ulimit -f 0` 写失败。还验证检查后目标被另一个写者改动时拒绝发布；新目标使用 NOREPLACE 避免覆盖同时出现的文件。这些检查不构成与所有旧写者的互斥锁：持有旧 inode 的写者以及最后一次检查与 rename 间的竞态仍有边界。文件 sync 不等于目录项已跨崩溃持久化，本切片不宣称完整断电耐久性。

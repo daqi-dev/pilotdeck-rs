@@ -3,6 +3,7 @@ mod config;
 mod feishu;
 mod http;
 mod prompt;
+mod save;
 mod terminal;
 
 use crate::{Failure, paths::Env};

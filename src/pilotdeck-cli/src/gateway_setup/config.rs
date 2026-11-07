@@ -7,11 +7,7 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue, number::number_to_string};
 use pilotdeck_yaml::value::{Container, Value, ValueGraph};
 use std::collections::HashMap;
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 pub(super) struct SetupPaths {
     pub config: PathBuf,
@@ -160,6 +156,7 @@ pub(super) fn fallback(value: &JsValue, default: &str) -> String {
 }
 
 pub(super) fn write_adapter(path: &Path, platform: &str, adapter: JsValue) -> SetupResult<()> {
+    let target = super::save::Target::prepare(path)?;
     let mut graph = read_graph(path)?;
     if matches!(graph.root, Value::Null | Value::Undefined) {
         let id = graph.nodes.len();
@@ -225,13 +222,7 @@ pub(super) fn write_adapter(path: &Path, platform: &str, adapter: JsValue) -> Se
         }
     }
     let yaml = emit_graph(&graph)?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|e| Failure::Error(paths::node_fs_message_or_unknown(&e, "mkdir", parent)))?;
-    let mut file =
-        fs::File::create(path).map_err(|error| crate::skills::fs_failure(error, "open", path))?;
-    file.write_all(yaml.as_bytes())
-        .map_err(|error| crate::skills::fs_failure(error, "write", path))?;
+    target.publish(yaml.as_bytes())?;
     Ok(())
 }
 fn js_type(value: &Value) -> &'static str {

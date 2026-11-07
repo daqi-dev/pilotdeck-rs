@@ -260,6 +260,12 @@ fn fake_http(responses: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Str
                     Err(e) => panic!("fake accept: {e}"),
                 }
             };
+            // BSD accept may inherit O_NONBLOCK from the readiness listener.
+            // A deadline alone does not make a nonblocking stream wait.
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_write_timeout(Some(std::time::Duration::from_secs(3)))
+                .unwrap();
             socket
                 .set_read_timeout(Some(std::time::Duration::from_secs(3)))
                 .unwrap();
@@ -462,7 +468,7 @@ fn strict_save_keeps_existing_invalid_yaml_and_unreadable_objects() {
         "feishu",
         fixture_adapter(),
     ));
-    assert!(error.starts_with("EISDIR:"), "{error}");
+    assert!(error.contains("target must be a regular file"), "{error}");
     assert_eq!(
         fs::read_to_string(paths.config.join("sentinel")).unwrap(),
         "keep"
@@ -558,7 +564,8 @@ fn setup_write_reports_descriptor_stage_under_fsize_limit() {
     let scratch = Scratch::new();
     let paths = scratch.paths();
     fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
-    fs::write(&paths.config, "keep: old\n").unwrap();
+    let original = [107u8, 101, 101, 112, 58, 32, 111, 108, 100, 10];
+    fs::write(&paths.config, original).unwrap();
     let child = concat!(module_path!(), "::setup_write_child_over_file_size_limit")
         .split_once("::")
         .expect("test module prefix")
@@ -578,8 +585,10 @@ fn setup_write_reports_descriptor_stage_under_fsize_limit() {
         .find_map(|line| line.strip_prefix("WRITE_ERROR="))
         .unwrap_or_else(|| panic!("write-stage receipt absent: {stdout}{stderr}"));
     assert_eq!(message, "EFBIG: file too large, write");
-    // This test intentionally witnesses the existing non-atomic save limit.
-    assert_eq!(fs::metadata(&paths.config).unwrap().len(), 0);
+    // The same real write failure that truncated the old implementation now
+    // leaves the original file intact and removes its exclusive temporary.
+    assert_eq!(fs::read(&paths.config).unwrap(), original);
+    assert_no_setup_temporary(paths.config.parent().unwrap());
 }
 
 #[test]
@@ -598,4 +607,222 @@ fn strict_save_preserves_existing_invalid_utf8_bytes() {
         "Cannot save setup configuration: existing YAML is invalid."
     );
     assert_eq!(fs::read(&paths.config).unwrap(), original);
+}
+
+fn assert_no_setup_temporary(directory: &Path) {
+    assert!(fs::read_dir(directory).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".pilotdeck-setup-")
+    }));
+}
+#[test]
+fn atomic_save_preserves_existing_mode_owner_and_group() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, "keep: old").unwrap();
+    fs::set_permissions(&paths.config, fs::Permissions::from_mode(0o640)).unwrap();
+    let before = fs::metadata(&paths.config).unwrap();
+    config::write_adapter(&paths.config, "feishu", fixture_adapter()).unwrap();
+    let after = fs::metadata(&paths.config).unwrap();
+    assert_eq!(
+        (after.mode(), after.uid(), after.gid()),
+        (before.mode(), before.uid(), before.gid())
+    );
+    assert_eq!(
+        config::text(config::get(&config::load(&paths.config), &["keep"])),
+        "old"
+    );
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+#[test]
+fn atomic_new_config_is_private_and_complete() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    config::write_adapter(&paths.config, "feishu", fixture_adapter()).unwrap();
+    assert_eq!(
+        fs::metadata(&paths.config).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        config::text(config::get(
+            &config::load(&paths.config),
+            &["adapters", "feishu", "appId"]
+        )),
+        "fixture-app"
+    );
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+#[test]
+fn atomic_save_follows_symbolic_link_without_replacing_it() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    let target = scratch.0.join("real.yaml");
+    fs::write(&target, "keep: old").unwrap();
+    symlink(&target, &paths.config).unwrap();
+    let before = fs::symlink_metadata(&paths.config).unwrap();
+    config::write_adapter(&paths.config, "feishu", fixture_adapter()).unwrap();
+    let after = fs::symlink_metadata(&paths.config).unwrap();
+    assert_eq!((before.dev(), before.ino()), (after.dev(), after.ino()));
+    assert!(after.file_type().is_symlink());
+    assert_eq!(fs::read_link(&paths.config).unwrap(), target);
+    assert_eq!(
+        config::text(config::get(
+            &config::load(&target),
+            &["adapters", "feishu", "appId"]
+        )),
+        "fixture-app"
+    );
+    assert_no_setup_temporary(&scratch.0);
+}
+#[test]
+fn atomic_save_refuses_hard_links_and_dangling_symbolic_links() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    let target = scratch.0.join("real.yaml");
+    fs::write(&target, "keep: old").unwrap();
+    fs::hard_link(&target, &paths.config).unwrap();
+    assert!(
+        failure_message(config::write_adapter(
+            &paths.config,
+            "feishu",
+            fixture_adapter()
+        ))
+        .contains("hard-linked")
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep: old");
+    assert_eq!(fs::read_to_string(&paths.config).unwrap(), "keep: old");
+    fs::remove_file(&paths.config).unwrap();
+    symlink("missing.yaml", &paths.config).unwrap();
+    assert!(
+        failure_message(config::write_adapter(
+            &paths.config,
+            "feishu",
+            fixture_adapter()
+        ))
+        .contains("dangling")
+    );
+    assert_eq!(
+        fs::read_link(&paths.config).unwrap(),
+        Path::new("missing.yaml")
+    );
+    assert!(!paths.config.parent().unwrap().join("missing.yaml").exists());
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+#[test]
+fn atomic_save_refuses_changed_target_and_preserves_new_writer_bytes() {
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, "keep: original").unwrap();
+    let transaction = super::save::Target::prepare(&paths.config).unwrap();
+    fs::write(&paths.config, "keep: another writer changed contents").unwrap();
+    assert!(
+        failure_message(transaction.publish(b"unexpected replacement")).contains("target changed")
+    );
+    assert_eq!(
+        fs::read_to_string(&paths.config).unwrap(),
+        "keep: another writer changed contents"
+    );
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+#[test]
+fn atomic_save_refuses_extended_attributes_without_touching_old_file() {
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, "keep: original").unwrap();
+    let file = fs::File::open(&paths.config).unwrap();
+    rustix::fs::fsetxattr(
+        &file,
+        "user.pdrs_fixture",
+        b"fixture",
+        rustix::fs::XattrFlags::empty(),
+    )
+    .unwrap();
+    assert!(
+        failure_message(config::write_adapter(
+            &paths.config,
+            "feishu",
+            fixture_adapter()
+        ))
+        .contains("extended attributes")
+    );
+    assert_eq!(fs::read_to_string(&paths.config).unwrap(), "keep: original");
+    let mut bytes = [0u8; 32];
+    let count = rustix::fs::fgetxattr(&file, "user.pdrs_fixture", &mut bytes[..]).unwrap();
+    assert_eq!(&bytes[..count], b"fixture");
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+#[cfg(target_os = "macos")]
+#[test]
+fn atomic_save_refuses_macos_acl_without_touching_original() {
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, "keep: original").unwrap();
+    let output = std::process::Command::new("/bin/chmod")
+        .arg("+a")
+        .arg("everyone allow read")
+        .arg(&paths.config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        failure_message(config::write_adapter(
+            &paths.config,
+            "feishu",
+            fixture_adapter()
+        ))
+        .contains("ACL metadata")
+    );
+    assert_eq!(fs::read_to_string(&paths.config).unwrap(), "keep: original");
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn atomic_save_refuses_bsd_flags_without_losing_them() {
+    let scratch = Scratch::new();
+    let paths = scratch.paths();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, "keep: original").unwrap();
+    let output = std::process::Command::new("/usr/bin/chflags")
+        .arg("hidden")
+        .arg(&paths.config)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let before = std::os::macos::fs::MetadataExt::st_flags(&fs::metadata(&paths.config).unwrap());
+    assert_ne!(before, 0);
+    assert!(
+        failure_message(config::write_adapter(
+            &paths.config,
+            "feishu",
+            fixture_adapter()
+        ))
+        .contains("BSD file flags")
+    );
+    let after = std::os::macos::fs::MetadataExt::st_flags(&fs::metadata(&paths.config).unwrap());
+    assert_eq!(before, after);
+    assert_eq!(fs::read_to_string(&paths.config).unwrap(), "keep: original");
+    assert_no_setup_temporary(paths.config.parent().unwrap());
+    println!("BSD_FLAGS_PRESERVED={after}");
 }
