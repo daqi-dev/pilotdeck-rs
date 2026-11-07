@@ -877,7 +877,10 @@ def take_deferred_signal():
 PUBLISH_DIR = '.negctl-publish'
 
 
-def write_source_atomic(root, path, data):
+DEFAULT_SOURCE_MODE = 0o644
+
+
+def write_source_atomic(root, path, data, *, mode=None):
     """Publish source bytes in one rename, never a truncating in-place write.
 
     #1903 (#1692 §9 residue): `path.write_text` / `write_bytes` truncate first,
@@ -903,10 +906,14 @@ def write_source_atomic(root, path, data):
     publish.mkdir(parents=True, exist_ok=True)
     temporary = publish / f'.negctl-{path.name}.tmp'
     # 目标可能在变异窗口里被删掉（变异体自己删文件是合法形态）。此时没有 mode
-    # 可继承，用 0o600 兜底 —— 无条件的 `path.stat()` 会在写第一份之前抛
-    # FileNotFoundError，而还原是**顺序循环**，一份失败会连带丢掉后面所有受守卫
-    # 文件的还原，把树留在半变异状态（比缺一个文件更糟）。
-    mode = path.stat().st_mode & 0o7777 if path.exists() else 0o600
+    # 可继承 —— 无条件的 `path.stat()` 会在写第一份之前抛 FileNotFoundError，
+    # 而还原是**顺序循环**，一份失败会连带丢掉后面所有受守卫文件的还原。
+    # 兜底取 git 记录的常规文件模式 100644：兜底成 0o600 会与 HEAD 只差 mode，
+    # `core.filemode=true` 的 `git diff --name-only` 照样列出，下一次 preflight
+    # 整树拒跑 —— 正是这个函数存在的意义（见上文的 mode 说明）。调用方知道原
+    # mode 时必须显式传 `mode=`：`mutating_sources` 在快照时就记下了它。
+    if mode is None:
+        mode = path.stat().st_mode & 0o7777 if path.exists() else DEFAULT_SOURCE_MODE
     try:
         with temporary.open('wb') as stream:
             stream.write(data)
@@ -968,6 +975,10 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
                 raise SourceBaselineError(root, relative,
                                           f"differs from {baseline}")
         snapshot = dict(baseline_bytes)
+        # 快照时就记下 mode：变异体可能把目标删掉，还原时再 stat 就没有 mode 可
+        # 继承了。传回去才不会有 mode-only `git diff` 把下一次 preflight 卡死。
+        snapshot_modes = {path: path.stat().st_mode & 0o7777
+                          for _alias, path, _relative in normalized}
         parity = any(relative.startswith("scripts/gateway-parity/")
                      for _alias, _path, relative in normalized)
         lock = (_parity_mutation_lock(root, snapshot, min(lock_timeout, 60))
@@ -978,7 +989,8 @@ def mutating_sources(root, paths, *, baseline="HEAD", lock_timeout=900):
             finally:
                 with restore_critical():
                     for _alias, path, _relative in normalized:
-                        write_source_atomic(root, path, snapshot[path])
+                        write_source_atomic(root, path, snapshot[path],
+                                            mode=snapshot_modes[path])
                     for _alias, path, relative in normalized:
                         if path.read_bytes() != snapshot[path]:
                             raise RuntimeError(f"restore failed: {relative}")
