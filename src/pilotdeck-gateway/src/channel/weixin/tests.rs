@@ -235,7 +235,7 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
 
     // Arm the rendezvous, then start a timer that parks as soon as it wakes.
     let entered = persistence.park_next_timer();
-    persistence.save(&key, state_with_value(1));
+    persistence.save(&key, state_with_value(1.0));
     tokio::task::spawn_blocking(move || {
         entered
             .recv_timeout(std::time::Duration::from_secs(10))
@@ -246,7 +246,7 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
 
     // Supersede the parked timer: `save` aborts it while it is mid-poll.
     let exits = persistence.timer_exits();
-    persistence.save(&key, state_with_value(2));
+    persistence.save(&key, state_with_value(2.0));
     persistence.release_parked_timer();
     for _ in 0..2_000 {
         if persistence.timer_exits() > exits {
@@ -274,7 +274,7 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     );
 
     // And the key must not be wedged: a later save still persists.
-    persistence.save(&key, state_with_value(3));
+    persistence.save(&key, state_with_value(3.0));
     let flushed =
         tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush()).await;
     assert!(
