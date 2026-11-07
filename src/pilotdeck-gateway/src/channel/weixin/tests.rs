@@ -255,9 +255,13 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     }
     let observed = multi_thread_runtime().block_on(async {
         let root = Root::new();
-        // Long enough that the *live* timer cannot fire while this test
-        // observes, so an early write can only come from the superseded timer.
-        let persistence = ChannelStatePersistence::with_debounce(root.path(), 500);
+        // The debounce must outlast the whole observation window below (the
+        // settle loop plus one `flush`), otherwise the *live* timer may fire
+        // legitimately and an early write would not identify the superseded
+        // timer. 5 s of debounce against a <= 3 s window keeps that margin
+        // without slowing the negative-control rows much; the park wait below
+        // is sized to cover it.
+        let persistence = ChannelStatePersistence::with_debounce(root.path(), 5_000);
         let key = js("weixin");
         let file = root.path().join("weixin.state.json");
 
@@ -266,7 +270,7 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
         persistence.save(&key, state_with_value(1.0));
         tokio::task::spawn_blocking(move || {
             entered
-                .recv_timeout(std::time::Duration::from_secs(10))
+                .recv_timeout(std::time::Duration::from_secs(30))
                 .expect("#2073 the debounce timer must reach the park point")
         })
         .await
@@ -285,22 +289,22 @@ fn superseded_debounce_timer_must_not_drop_the_newest_state() {
             settled = persistence.timer_exits() > exits;
         }
 
-        // A superseded timer must not write: the debounce still has ~500 ms to
-        // go, and TS would not have written either.
+        // A superseded timer must not write: the live timer's debounce still has
+        // seconds to go, and TS would not have written either. Sampling here is
+        // safe only because the debounce outlasts this whole window.
         let early_write = read_state(&file).is_some();
 
         // The newest state must land; pre-fix it was claimed and then dropped,
         // and `flush` waited forever on the orphaned in-flight entry.
-        let flushed =
-            tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush())
-                .await
-                .is_ok();
+        let flushed = tokio::time::timeout(std::time::Duration::from_secs(5), persistence.flush())
+            .await
+            .is_ok();
         let after_flush = read_state(&file);
 
         // And the key must not be wedged: a later save still persists.
         persistence.save(&key, state_with_value(3.0));
         let later_flushed =
-            tokio::time::timeout(std::time::Duration::from_millis(500), persistence.flush())
+            tokio::time::timeout(std::time::Duration::from_secs(5), persistence.flush())
                 .await
                 .is_ok();
         Observed {
@@ -384,7 +388,9 @@ fn abandoned_drain_restores_the_claimed_state_and_waiters_retry() {
         first.abort();
         let cancelled = matches!(first.await, Err(error) if error.is_cancelled());
         let second = match tokio::time::timeout(std::time::Duration::from_secs(5), second).await {
-            Ok(joined) => joined.ok(),
+            // A join error means the retry panicked; only the timeout is the
+            // wedge. Keep them distinguishable instead of collapsing to `None`.
+            Ok(joined) => Some(joined.unwrap_or_else(|error| Err(format!("join: {error}")))),
             Err(_) => None,
         };
         Observed {
