@@ -729,14 +729,24 @@ impl ChannelAdapter for SmsChannel {
                     // bare `tokio::spawn`s of the pre-#2026 code.
                     std::mem::forget(connections);
                 } else {
-                    // Snapshot before the drain: a connection that
-                    // completes between the bound firing and the read
-                    // would otherwise be under-reported as an abort.
-                    let remaining = connections.len();
                     let drain = async { while connections.join_next().await.is_some() {} };
                     if crate::mutants::on("sms-stop-drain-unbounded") {
                         drain.await;
                     } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
+                        // #2026 r2: read after the bound fired. Entries only
+                        // leave the set through `join_next`, so this is the
+                        // count the set's closing drop will abort — the
+                        // connections that finished during the drain were
+                        // reaped out of the set and are not counted. The
+                        // residual inaccuracy is the acceptable side: a task
+                        // that finished in the last poll before the timeout
+                        // may still be counted (an over-report bounded by one
+                        // poll window; dropping a finished task is a no-op),
+                        // whereas the pre-drain snapshot r1 used counts every
+                        // connection the whole drain retired. An
+                        // under-report cannot happen — a live task stays in
+                        // the set until it is reaped.
+                        let remaining = connections.len();
                         server_shared.log(
                             "warn",
                             format!(

@@ -519,13 +519,19 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
     );
 }
 
-/// #2026 (decision C): the drain is **bounded**. A connection that outlives
+/// #2026 (decision C): the drain is **bounded**. Connections that outlive
 /// [`STOP_DRAIN_LIMIT`] (here: an injected head deadline of 90 s, longer than
 /// the 60 s bound) must not pin `stop()` — it returns at the bound, and the
-/// truncation aborts the outlived connection (JoinSet drop) instead of
-/// letting it run to its own deadline. The TS shape (blocking until the
+/// truncation aborts the outlived connections (JoinSet drop) instead of
+/// letting them run to their own deadlines. The TS shape (blocking until the
 /// client leaves) is the mutation switch `sms-stop-drain-unbounded` and must
 /// fail this case.
+///
+/// Three connections pin the truncation warn's count (r2): one retires
+/// naturally during the drain (its client drops the socket, the task ends,
+/// and the drain loop reaps it out of the set), two outlive the bound. The
+/// warn must count exactly the two — a pre-drain snapshot counts all three
+/// and misreports the retired one as aborted.
 ///
 /// Ignored from the normal suite like the 60 s default-deadline case above:
 /// the production bound cannot be injected away, so the case costs a full
@@ -535,8 +541,33 @@ async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
 async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
     let (handle, shared) = start(PORT_STOP_BOUND, Some(BOUND_DEADLINE)).await;
     shared.runtime.lock().await.client = Some(Arc::new(NullSender) as Arc<dyn SmsSender>);
-    let mut socket = connect(PORT_STOP_BOUND).await;
-    socket
+    // Capture the channel's warnings before `stop()`: the truncation warn's
+    // count is an assertion target.
+    let warns: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = warns.clone();
+    shared
+        .boundaries
+        .lock()
+        .expect("#2026 boundaries mutex")
+        .logger = Some(Arc::new(move |level: &str, message: &str| {
+        if level == "warn" {
+            sink.lock()
+                .expect("#2026 warnings mutex")
+                .push(message.to_owned());
+        }
+    }));
+    let mut retired = connect(PORT_STOP_BOUND).await;
+    retired
+        .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .expect("#2026 write the half head");
+    let mut outlived_a = connect(PORT_STOP_BOUND).await;
+    outlived_a
+        .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .expect("#2026 write the half head");
+    let mut outlived_b = connect(PORT_STOP_BOUND).await;
+    outlived_b
         .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
         .await
         .expect("#2026 write the half head");
@@ -544,11 +575,28 @@ async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
     while shared
         .live_connections
         .load(std::sync::atomic::Ordering::SeqCst)
-        == 0
+        < 3
     {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "#2026 the accept loop never took the connection"
+            "#2026 the accept loop never took the connections"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // Retire one connection naturally: its client socket goes away, the
+    // server task completes on the EOF mid-head, and the drain loop reaps it
+    // out of the set. Waiting for the drop makes the "two truncated" count a
+    // real observation, not a timing accident.
+    drop(retired);
+    let deadline = tokio::time::Instant::now() + READ_LIMIT;
+    while shared
+        .live_connections
+        .load(std::sync::atomic::Ordering::SeqCst)
+        > 2
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "#2026 the naturally retired connection never ended"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -569,23 +617,26 @@ async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
         "#2026 stop() returned at the {STOP_DRAIN_LIMIT:?} drain bound, \
          took {elapsed:?}"
     );
-    // The connection's own 90 s head deadline has not fired, so the bound —
-    // not the deadline — is what ended the drain: the truncation drops the
-    // task's JoinSet, which aborts the remaining connection tasks and closes
-    // their sockets. The abort is scheduled on the runtime, so the EOF can
-    // land just after `stop()` returned — bounded window, still zero bytes.
-    let (bytes, closed) = read_until_close(&mut socket, DRAIN_TRUNCATED).await;
-    assert!(
-        closed,
-        "#2026 the truncation aborted the outlived connection: no EOF \
-         inside {DRAIN_TRUNCATED:?} after stop() returned"
-    );
-    assert_eq!(
-        bytes,
-        Vec::<u8>::new(),
-        "#2026 the truncated connection closed with zero bytes; its own \
-         {BOUND_DEADLINE:?} head deadline had not fired"
-    );
+    // The outlived connections' own 90 s head deadline has not fired, so the
+    // bound — not the deadline — is what ended the drain: the truncation
+    // drops the task's JoinSet, which aborts the remaining connection tasks
+    // and closes their sockets. The abort is scheduled on the runtime, so
+    // the EOF can land just after `stop()` returned — bounded window, still
+    // zero bytes.
+    for socket in [&mut outlived_a, &mut outlived_b] {
+        let (bytes, closed) = read_until_close(socket, DRAIN_TRUNCATED).await;
+        assert!(
+            closed,
+            "#2026 the truncation aborted the outlived connection: no EOF \
+             inside {DRAIN_TRUNCATED:?} after stop() returned"
+        );
+        assert_eq!(
+            bytes,
+            Vec::<u8>::new(),
+            "#2026 the truncated connection closed with zero bytes; its own \
+             {BOUND_DEADLINE:?} head deadline had not fired"
+        );
+    }
     // At the truncation the client is cleared together with the connections
     // — the bounded-ization residual of the TS ordering
     // (`A8.3-CH-SMS-014`), where `stop()` is still blocked in the close
@@ -598,6 +649,16 @@ async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
         )
         .await,
         "#2026 stop() clears the client when the bound truncates the drain"
+    );
+    // The truncation warn counted only the connections still in the set at
+    // the bound: the naturally retired one was reaped out of it, so the two
+    // outlived ones — not all three — are the aborted.
+    let recorded = std::mem::take(&mut *warns.lock().expect("#2026 warnings mutex"));
+    assert!(
+        recorded.len() == 1 && recorded[0].contains("2 in-flight connection(s) aborted"),
+        "#2026 the truncation warn counts only the connections still in the \
+         set at the bound (the naturally retired one must not be counted), \
+         saw {recorded:?}"
     );
 }
 
