@@ -68,17 +68,15 @@ MUTANT_ROWS = [
         '#1076 no summary may exist while the guard is unverified',
     ),
     (
+        # #2064: re-anchored onto `_publish_json` -- the #1579/#1694 refactor
+        # moved the summary publish there, and this row's old `publish_summary`
+        # body anchor had been stale since (count=0 at HEAD d86d1dd38).
         'runner-nonatomic-publish',
         SUITE,
-        "    temporary.write_text(json.dumps({\n"
-        "        'controls': results,\n"
-        "        'counts': pending.counts(results),\n"
-        "    }, indent=2) + '\\n')\n"
-        "    temporary.replace(target)",
-        "    target.write_text(json.dumps({\n"
-        "        'controls': results,\n"
-        "        'counts': pending.counts(results),\n"
-        "    }, indent=2) + '\\n')",
+        "        if overwrite:\n"
+        "            temporary.replace(path)",
+        "        if overwrite:\n"
+        "            path.write_text(json.dumps(payload, indent=2) + '\\n')",
         'test_negative_suite.CancellationTests.test_publish_summary_publishes_atomically',
         '#1076 an interrupted publish must preserve the previous summary',
     ),
@@ -278,8 +276,8 @@ MUTANT_ROWS = [
     (
         'audit-binding-missing-declaration-allowed',
         SUITE,
-        "    compact = ''.join(source.split())",
-        "    return True\n    compact = ''.join(source.split())",
+        "    compact = ''.join(_rust_code_only(source).split())",
+        "    return True\n    compact = ''.join(_rust_code_only(source).split())",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a missing declaration must be refused',
     ),
@@ -294,10 +292,13 @@ MUTANT_ROWS = [
         '#1890 a longer name ending in the short name must not count',
     ),
     (
+        # #2064 r10: the fn form's boundary is now a single left-lookahead in
+        # `_FN_LEFT`; removing it re-opens the embedded-fn hole (the old bare
+        # `\w$`-style acceptance) for `run_fncase_a(`.
         'audit-binding-embedded-fn-allowed',
         SUITE,
-        "        if not head or not re.search(r'\\w$', head) or head.endswith(_FN_QUALIFIERS):",
-        "        if True:",
+        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
+        "_FN_LEFT = r'(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a longer identifier must not satisfy the fn form',
     ),
@@ -309,6 +310,93 @@ MUTANT_ROWS = [
         "    return bool(macro) and macro + '(' + escaped + ',' in compact",
         'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
         '#1890 a longer macro name must not satisfy the table form',
+    ),
+    # #2064: the three audit-binding residuals plus the r10 left-boundary
+    # fix; each mutant re-opens exactly the hole its bound test pins shut.
+    (
+        # #2064-1: declares_test's own entry refused nothing, so a caller
+        # that bypasses bind_module_file could bind an empty short name.
+        'audit-binding-declares-empty-short-allowed',
+        SUITE,
+        "    if not short:\n"
+        "        raise ValueError('declares_test needs a short name')",
+        "    if not short and macro:\n"
+        "        raise ValueError('declares_test needs a short name')",
+        'test_negative_suite.AuditBindingTests.test_declares_test_empty_short_is_refused',
+        '#2064 declares_test must refuse an empty short name',
+    ),
+    (
+        # #2064-2a: deleting the qualifier whitelist strands every
+        # `async fn` / `pub fn` binding (a false stale, not a pass).
+        'audit-binding-qualifiers-dropped',
+        SUITE,
+        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
+        "_FN_LEFT = r'(?<!\\w)'",
+        'test_negative_suite.AuditBindingTests.test_declares_test_accepts_every_existing_form',
+        '#2064 an async fn declaration must satisfy the fn form',
+    ),
+    (
+        # #2064-2b: the old head.endswith() accepted any head ending in a
+        # qualifier word, so `runasyncfncase_a(`/`xpubfncase_a(` passed as a
+        # qualified declaration.
+        'audit-binding-qualifier-suffix-allowed',
+        SUITE,
+        "_FN_LEFT = r'(?<!\\w)(?:(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
+        "_FN_LEFT = r'(?<!\\w)(?:\\w*(?:' + '|'.join(_FN_QUALIFIERS) + r'))*'",
+        'test_negative_suite.AuditBindingTests.test_declares_test_needs_the_exact_name',
+        '#2064 a qualifier glued onto a longer identifier must not satisfy the fn form',
+    ),
+    (
+        # #2064 r10: comments and literals are blanked before matching; each
+        # stripping branch that stops working re-opens its carrier.
+        'audit-binding-line-comment-kept',
+        SUITE,
+        "        if source.startswith('//', i):",
+        "        if source.startswith('//', i) and False:",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a line comment must not satisfy the fn form',
+    ),
+    (
+        'audit-binding-block-comment-kept',
+        SUITE,
+        "        if source.startswith('/*', i):\n"
+        "            depth, i = 1, i + 2",
+        "        if source.startswith('/*', i) and False:\n"
+        "            depth, i = 1, i + 2",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a block comment must not satisfy the fn form',
+    ),
+    (
+        'audit-binding-string-literal-kept',
+        SUITE,
+        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"')",
+        "_STRING_START = re.compile(r'(?:br|rb|r|b)?(#*)\"\\Z')",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a string literal must not satisfy the fn form',
+    ),
+    (
+        # The char-literal branch: a `'"'` that no longer scans as one char
+        # re-opens its quote as a string opener and un-strips later code.
+        'audit-binding-char-literal-kept',
+        SUITE,
+        "        if source[i] == \"'\" or (source[i] == 'b' and _token_start(source, i)):",
+        "        if False and (source[i] == 'b' and _token_start(source, i)):",
+        'test_negative_suite.AuditBindingTests.test_declares_test_ignores_comment_and_string_carriers',
+        '#2064 a quote char literal must not open a string',
+    ),
+    (
+        # #449 / #1166: the fail-closed scan rule itself -- an unterminated
+        # literal that no longer raises audits whatever it guessed.
+        'audit-binding-unterminated-string-accepted',
+        SUITE,
+        "                while True:\n"
+        "                    if i >= length:\n"
+        "                        raise ValueError('unterminated Rust string')",
+        "                while True:\n"
+        "                    if i >= length:\n"
+        "                        break",
+        'test_negative_suite.AuditBindingTests.test_declares_test_unterminated_literal_is_refused',
+        '#2064 an unterminated literal must fail closed',
     ),
 ]
 
