@@ -46,36 +46,30 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_panic import panic_evidence
 from negative_process import new_output_directory, run_owned, tree_lock, wait_for_slot
 from negative_source import squeeze, test_body
 from negative_suite import classify, invalidate_completed, passed, publish_summary
+from native_entry_binding import (
+    MARKERS,
+    MARKER_TEMPLATE,
+    SCRUB_EARLY_EXIT,
+    SCRUB_TEST,
+    TEST,
+    binding_errors,
+)
 
 ROOT = Path(__file__).resolve().parents[5]
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
-TEST = 'native_entry_process_rejects_inherited_authority'
-SCRUB_TEST = 'native_entry_scrubs_inherited_process_environment'
-MARKERS = [
-    '#1261 native entry rejects inherited PILOTDECK_STORAGE_ROOT',
-    '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
-    '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
-]
-MARKER_TEMPLATE = '#1261 native entry rejects inherited {key}'
-# The scrub test's one kill message; `--check` binds it together with the
-# assertion head and polarity, so neither the call nor its sense can drift.
-SCRUB_MARKER = '#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH'
 # The unmarked early-exit panics must stay distinct from every kill marker:
 # the shared judge kills only on a marker inside the named test's panic
 # payload, and the INVALID branch deliberately offers none.
 EARLY_EXIT = ('#1261 native entry child exited early; no rejection and '
               'no listening advertisement for')
-SCRUB_EARLY_EXIT = ('#1261 native entry scrub child neither advertised listening '
-                    'nor exited, cannot judge')
-# The gate that separates the unmarked early-exit panic from the marked kill,
-# and the single call each test makes to observe the advertisement.
+# The gate that separates the unmarked early-exit panic from the marked kill.
+# This one is specific to the rejects test, so it stays here (#1989 item 6).
 GATE = 'if !stderr.contains(&rejection) {'
-OBSERVE = 'observe_child_stderr(stderr)'
-KEYS = ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT', 'PILOTDECK_MANAGED_CONFIG')
 # One row per stub shape *and* bound test: an environmental exit prints
 # nothing and can only be judged INVALID, while a child that advertised
 # listening before exiting proved the gate accepted the authority, so the
@@ -112,11 +106,6 @@ def main():
             # P3).
             raise SystemExit(f'#1261 duplicate stub row names: {names}')
         test_source = TEST_FILE.read_text()
-        # Whitespace-normalized bodies: the needles below are whole
-        # `negative_assert!` calls, which rustfmt may spread over lines.
-        # Literals keep their inner whitespace (negative_source.squeeze).
-        rejects = squeeze(test_body(test_source, TEST))
-        scrub = squeeze(test_body(test_source, SCRUB_TEST))
         # Each row's proof must live in the test that row names, or the
         # runtime verdict for that row could never be reached.
         for name, test, _, _, payloads in ROWS:
@@ -129,43 +118,18 @@ def main():
                 if payload in MARKERS and MARKER_TEMPLATE in body:
                     continue
                 raise SystemExit(f'#1261 row {name}: missing {test} payload: {payload}')
-        # The runtime judge matches substituted messages, so --check can only
-        # bind the shared template and the key list each test iterates; drift
-        # here fails before any cargo run is needed.
-        if MARKER_TEMPLATE not in rejects:
-            raise SystemExit(f'#1261 marker template missing from {TEST}')
-        for key in KEYS:
-            if f'"{key}"' not in rejects:
-                raise SystemExit(f'#1261 key missing from {TEST}: {key}')
-        # Each needle binds the whole assertion call -- `negative_assert!`,
-        # the condition with its polarity, and the message -- because the same
-        # template is repeated by the sibling assertions: a fragment needle
-        # still passes when the call is deleted or rewritten as
-        # `let _ = (!advertised, "…");`, and the mutant is then unkilled
-        # (#1401 review P2). The scrub's unjudgeable branch is bound the same
-        # way: an `if !advertised` guard without its panic is not the branch.
-        for needle, what in (
-                (GATE, 'rejection gate'),
-                (OBSERVE, 'listening advertisement observation'),
-                (f'negative_assert!(!advertised, "{MARKER_TEMPLATE}"',
-                 'listening advertisement assertion'),
-                (f'negative_assert!(!status.success(), "{MARKER_TEMPLATE}"',
-                 'child exit status assertion'),
-                (f'negative_assert!(leftover.is_empty(), "{MARKER_TEMPLATE}"',
-                 'home leftover assertion')):
-            if needle not in rejects:
-                raise SystemExit(f'#1261 missing {what} from {TEST}')
-        for needle, what in (
-                (OBSERVE, 'scrub listening advertisement observation'),
-                (f'negative_assert!(!leaked_parse, "{SCRUB_MARKER}"',
-                 'scrub inherited config assertion'),
-                ('if !advertised { panic!(',
-                 'scrub unjudgeable branch')):
-            if needle not in scrub:
-                raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
+        # Every binding shared with `negative_controls.py` lives in
+        # `native_entry_binding` (#1989 item 6); the gate needle is this
+        # test's own and stays here.
+        rejects = squeeze(test_body(test_source, TEST))
+        errors = binding_errors(test_source)
+        if GATE not in rejects:
+            errors.append(f'missing rejection gate from {TEST}')
         for marker in MARKERS:
             if marker in EARLY_EXIT or EARLY_EXIT in marker:
-                raise SystemExit(f'#1261 early-exit panic collides with marker {marker}')
+                errors.append(f'early-exit panic collides with marker {marker}')
+        if errors:
+            raise SystemExit('#1261 ' + '; '.join(errors))
         print(f'#1261 {len(ROWS)} early-exit rows OK')
         return 0
     if len(sys.argv) != 2:

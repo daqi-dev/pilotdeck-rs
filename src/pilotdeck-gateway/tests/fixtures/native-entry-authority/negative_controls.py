@@ -12,28 +12,27 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
-from negative_source import squeeze, test_body
 from negative_suite import Case, classify, passed, publish_summary
+from native_entry_binding import (
+    MARKERS,
+    SCRUB_MARKER,
+    SCRUB_TEST,
+    TEST,
+    binding_errors,
+)
 
 ROOT = Path(__file__).resolve().parents[5]
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
-TEST = 'native_entry_process_rejects_inherited_authority'
 # Only the three key assertions kill (the marked check after the rejection
 # gate; a child that advertises listening reaches it too). Launch, pipe,
 # decode and exit-wait failures cannot be caused by displacing the
 # validate_environment call and stay unbound (INVALID): a child that says
 # neither the rejection nor its own listening advertisement is unjudgeable.
-MARKERS = [
-    '#1261 native entry rejects inherited PILOTDECK_STORAGE_ROOT',
-    '#1261 native entry rejects inherited PILOTDECK_SNAPSHOT_ROOT',
-    '#1261 native entry rejects inherited PILOTDECK_MANAGED_CONFIG',
-]
-# The three marked assertions all format this one template, so a `--check`
-# needle has to include the call head and condition to say *which* of them it
-# bound (#1401 review P2).
-MARKER_TEMPLATE = '#1261 native entry rejects inherited {key}'
+# The marker constants and every needle shared with `early_exit_invalid.py`
+# live in `native_entry_binding` (#1989 item 6): the two copies had drifted.
 # #1401 item 6: the environment() call site has its own bound test. The
 # unit tests call options.environment() directly; only the real --native
 # child observes the call site, where a displaced call lets the inherited
@@ -42,8 +41,6 @@ MARKER_TEMPLATE = '#1261 native entry rejects inherited {key}'
 # conversion drops the diagnostics that would carry the path, so the
 # message text is the whole observation). Early exits without that message
 # and deadlines without the advertisement stay unbound (INVALID).
-SCRUB_TEST = 'native_entry_scrubs_inherited_process_environment'
-SCRUB_MARKER = '#1261 native entry scrubs inherited PILOTDECK_CONFIG_PATH'
 ANCHOR = (
     '    let inherited = capture_environment(std::env::vars_os());\n'
     '    validate_environment(&inherited)?;\n'
@@ -86,96 +83,13 @@ def main():
         test_source = TEST_FILE.read_text()
         for case in selected_rows:
             mutate(case, case.path.read_text())
-        # Whitespace-normalized bodies: the needle below is the whole
-        # `negative_assert!` call, which rustfmt may spread over several
-        # lines. Literals keep their inner whitespace (negative_source).
-        rejects = squeeze(test_body(test_source, TEST))
-        scrub = squeeze(test_body(test_source, SCRUB_TEST))
-        # The runtime judge matches substituted messages, so --check can only
-        # bind the shared template and the key list each test iterates; drift
-        # here fails before any cargo run is needed. Each needle is bound to
-        # the test that actually observes it (#1401 review P2).
-        if MARKER_TEMPLATE not in rejects:
-            raise SystemExit(f'#1261 marker template missing from {TEST}')
-        for key in ('PILOTDECK_STORAGE_ROOT', 'PILOTDECK_SNAPSHOT_ROOT',
-                    'PILOTDECK_MANAGED_CONFIG'):
-            if f'"{key}"' not in rejects:
-                raise SystemExit(f'#1261 key missing from {TEST}: {key}')
-        # #1401 item 4: the bound test's two observations beyond the
-        # rejection itself -- assembly's leftovers under home and the
-        # listening advertisement -- must stay in the source; a drift here
-        # would silently unbind the reorder and omitted mutants.
-        # Each kill binds the whole assertion call -- `negative_assert!`, the
-        # condition with its polarity, and the message -- because the same
-        # template is repeated by all three assertions: a needle that only
-        # holds a fragment still passes when the call is deleted or rewritten
-        # as `let _ = (!advertised, "…");`, which is exactly the drift that
-        # leaves the mutant unkilled (#1401 review P2).
-        for needle, what in (
-                ('observe_child_stderr(stderr)',
-                 'listening advertisement observation'),
-                (f'negative_assert!(!advertised, "{MARKER_TEMPLATE}"',
-                 'listening advertisement assertion'),
-                (f'negative_assert!(!status.success(), "{MARKER_TEMPLATE}"',
-                 'child exit status assertion'),
-                (f'negative_assert!(leftover.is_empty(), "{MARKER_TEMPLATE}"',
-                 'home leftover assertion')):
-            if needle not in rejects:
-                raise SystemExit(f'#1261 missing {what} from {TEST}')
-        # #1401 item 6: the scrub mutant's marker and the three observations
-        # its verdict rests on must stay in the scrub test, so the runtime
-        # kill cannot drift away from the anchor and an unjudgeable branch
-        # cannot be mistaken for the pass branch. The unjudgeable panic is
-        # bound too: it is what makes an early exit INVALID instead of a
-        # spurious pass or a spurious kill (#1401 review).
-        for needle, what in (
-                ('Failed to parse default config YAML.',
-                 'inherited config parse observation'),
-                ('observe_child_stderr(stderr)',
-                 'scrub listening observation'),
-                (f'negative_assert!(!leaked_parse, "{SCRUB_MARKER}"',
-                 'scrub inherited config assertion'),
-                ('if !advertised { panic!("'
-                 '#1261 native entry scrub child neither advertised listening '
-                 'nor exited, cannot judge"',
-                 'scrub unjudgeable panic')):
-            if needle not in scrub:
-                raise SystemExit(f'#1261 missing {what} from {SCRUB_TEST}')
-        # #1401 review P2: the advertisement shape and the observation edges
-        # are pinned by ordinary tests, so nothing else would notice if their
-        # case lists were trimmed. The rejects / scrub rows cannot tell a
-        # finished line from a half one (neither prints one), so a loosened
-        # shape would still pass both mutants: bind the pins themselves.
-        shape = squeeze(test_body(test_source, 'native_listening_advertisement_shape'))
-        for needle, what in (
-                ('must count as an advertisement',
-                 'accepted advertisement shape list'),
-                ('must not count as an advertisement',
-                 'rejected advertisement shape list'),
-                (r'"native listening 127.0.0.1:4321 extra\n"',
-                 'trailing junk rejection'),
-                (r'"native listening [::1]:4321\r\n"',
-                 'IPv6 advertisement acceptance')):
-            if needle not in shape:
-                raise SystemExit(f'#1261 missing {what} from the shape pin')
-        observation = squeeze(test_body(
-            test_source, 'native_listening_observation_needs_a_finished_line'))
-        for needle, what in (
-                (r'&b"native listening 127.0.0.1:4321\n"[..]',
-                 'finished advertisement case'),
-                (r'&b"native listening 127.0.0.1:4321"[..]',
-                 'EOF half-line case'),
-                ('line cut by the byte bound',
-                 'byte bound half-line case'),
-                ('CHILD_STDERR_LIMIT * 2',
-                 'unterminated line longer than the byte bound'),
-                ('"silence:', 'silence case')):
-            if needle not in observation:
-                raise SystemExit(f'#1261 missing {what} from the observation pin')
-        # The newline guard is the P0 fix itself: without it an EOF-truncated
-        # half line is accepted again.
-        if 'if !line.ends_with(b"\\n")' not in squeeze(test_source):
-            raise SystemExit('#1261 advertises lost its newline guard')
+        # Every binding shared with `early_exit_invalid.py` lives in
+        # `native_entry_binding` (#1989 item 6); each needle is the whole
+        # assertion call after whitespace folding, bound to the test that
+        # observes it, so a fragment or a rewritten call cannot satisfy it.
+        errors = binding_errors(test_source)
+        if errors:
+            raise SystemExit('#1261 ' + '; '.join(errors))
         print(f'#1261 {len(selected_rows)} mutation anchors OK')
         return 0
     if len(sys.argv) < 2:
