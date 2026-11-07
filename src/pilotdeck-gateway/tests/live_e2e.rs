@@ -1122,6 +1122,7 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
         }),
         admission: None,
         diagnostic: Arc::new(|_| {}),
+        tool_results_dir: None,
     }));
     let runs = Arc::new(
         FileRegistry::new(

@@ -1271,3 +1271,21 @@ mod review;
 
 #[path = "metadata_cwd_tests.rs"]
 mod metadata_cwd;
+
+#[test]
+fn session_tool_results_dir_layout_and_sanitization() {
+    let project = std::path::Path::new("/pdrs-897-project");
+    // ProjectSessionStorage.ts:413: resolve(projectRoot, ".pilotdeck",
+    // "tool-results", safeId) with safeId from sanitizeSessionIdForPath
+    // (ProjectSessionStorage.ts:239-245: `/` and `\` runs collapse to `-`).
+    negative_assert_eq!(
+        super::tools::session_tool_results_dir(project, &JsString::from("session-897")),
+        std::path::PathBuf::from("/pdrs-897-project/.pilotdeck/tool-results/session-897"),
+        "#897 session tool-results directory keeps the project-relative layout"
+    );
+    negative_assert_eq!(
+        super::tools::session_tool_results_dir(project, &JsString::from("team/always\\on")),
+        std::path::PathBuf::from("/pdrs-897-project/.pilotdeck/tool-results/team-always-on"),
+        "#897 session tool-results directory sanitizes the session id"
+    );
+}
