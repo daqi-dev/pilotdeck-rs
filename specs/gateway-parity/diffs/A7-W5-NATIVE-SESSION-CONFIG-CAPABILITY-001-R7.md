@@ -15,7 +15,7 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 固定基线 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`，路径 `resources/PilotDeck`（只读）。直接相关的两处源码：
 
 - `src/gateway/client/InProcessGateway.ts:2037`：`if (!input.projectKey?.trim()) throw new Error("projectKey is required.");`（`closeProjectSessions`）。
-- `src/gateway/client/InProcessGateway.ts:2049`：`closeSession` 与 `resumeSession`（:2026）、`deleteSession`（:2229）、`renameSession`（:2211）、`tagSession`（:2220）在**这一层**都**没有** `?.trim()` 门，直接把 `input` 交给下层。**但端到端不等于「TS 全链不拒」**：`deleteSession` / `renameSession` / `tagSession` 由 CLI provider 层的同名方法拒空白，答同一个 `DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`src/cli/createLocalGateway.ts:1144` / `:1118` / `:1131`；`specs/gateway-coverage/ledger.json:4111` / `:4335` / `:4406` 同锚）。`resumeSession` 直接把 `input` 原样返回（`:2026-2028`），`closeSession` 只调 `router.close`（`:2049-2053`）——只有这两条**没有任何 `INVALID_SESSION_KEY` 拒绝**。
+- `src/gateway/client/InProcessGateway.ts:2049`：`closeSession` 与 `resumeSession`（:2026）、`deleteSession`（:2229）、`renameSession`（:2211）、`tagSession`（:2220）在**这一层**都**没有** `?.trim()` 门——但两者去向不同：`resumeSession` **原样返回 `input`**（`:2026-2028`，不转发），`closeSession` 把 `input.sessionKey` 透传给 `router.close` 再做三项清理（`:2049-2054`），`delete/rename/tag` 转发给 CLI provider 层。**端到端不等于「TS 全链不拒」**：`delete/rename/tag` 的 provider 门会拒空白 sessionKey，答同一个 `DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`src/cli/createLocalGateway.ts:1144` / `:1118` / `:1131`；`specs/gateway-coverage/ledger.json:4111` / `:4335` / `:4406` 同锚），但该门**不是链上第一步**（见「仍未闭合」段）。**全链没有任何 `INVALID_SESSION_KEY` 拒绝的只有 `resumeSession` 与 `closeSession`。**
 
 只读探针（Node v22.22.0 / ICU 78.2，脚本与原始输出见 `_tmp/20261107-p2sweep/ts-probe-projectkey/`）：门与 `throw` 语句**照抄基线源码行**（`InProcessGateway.ts:2037` / `:2286`），并 `import` 基线**自己的错误类** `src/gateway/dialog/errors.ts` 的 `DialogGatewayError`——所以下表是**真实抛出的错误对象**的 `name` / `code` / `message`，不是手写标签。
 
@@ -47,12 +47,17 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 **仍未闭合（如实登记，不用跟进单冒充验收证据）**：
 
 - `session_dir` 族 `sessionKey` 的**门位置/形状**（本条新登记，未批准）：TS 基线在 **IPG 层**对这五个方法都没有 `?.trim()` 门（`InProcessGateway.ts:2026`、`:2049`、`:2229`、`:2211`、`:2220`），**但端到端必须逐方法分开说**：
-  - `renameSession` / `tagSession` / `deleteSession`：IPG 只是转发（`this.options.renameSession(input)` `InProcessGateway.ts:2211-2218`、`this.options.tagSession(input)` `:2220-2227`、`await this.options.deleteSession(input)` `:2229-2239`；`deleteSession` 之前还先试 `deleteEphemeralSession` 钩子，`:2230` —— 空白键在该钩子里命中与否本探针**未测**）。转发到的 CLI provider 门**不是链上第一步**：`resolveProjectKey(input.projectKey ?? fallbackProjectRoot)` 先跑（`createLocalGateway.ts:1117` / `:1130` / `:1143`），项目解析不了就先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:47-50`），**只有项目能解析时**才轮到 `if (!input.sessionKey?.trim()) throw new DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`:1118` / `:1131` / `:1144`，与 `ledger.json:4111` / `:4335` / `:4406` 同锚）。所以「错误码与报文相同」**只在单字段无效（projectKey 可解析）时成立**；两个字段同时无效时，TS 先报 `PROJECT_NOT_FOUND`、Rust 先报 `INVALID_SESSION_KEY`，可观测结果不同。与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
+  - `renameSession` / `tagSession` / `deleteSession`：IPG 只是转发（`this.options.renameSession(input)` `InProcessGateway.ts:2211-2218`、`this.options.tagSession(input)` `:2220-2227`、`await this.options.deleteSession(input)` `:2229-2239`；`deleteSession` 之前还先试 `deleteEphemeralSession` 钩子，`:2230` —— 空白键在该钩子里命中与否本探针**未测**）。转发到的 CLI provider 门**不是链上第一步**：`resolveProjectKey(input.projectKey ?? fallbackProjectRoot)` 先跑（`createLocalGateway.ts:1117` / `:1130` / `:1143`），项目解析不了就先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:41-59`），**只有项目能解析时**才轮到 `if (!input.sessionKey?.trim()) throw new DialogGatewayError("INVALID_SESSION_KEY", "sessionKey is required.")`（`:1118` / `:1131` / `:1144`，与 `ledger.json:4111` / `:4335` / `:4406` 同锚）。所以「错误码与报文相同」**只在「projectKey 是能解析的字符串、sessionKey 缺失/空白」这一组合下成立**。其余组合**首错不同**，`projectKey` 侧逐类如下（Node v22.22.0 实测，原始输出见机器判据）：
+    - `projectKey` 是字符串但解析不了（未注册的应用内路径）：TS 先抛 `PROJECT_NOT_FOUND`（`projectRegistry.ts:50`），Rust 先报 `INVALID_SESSION_KEY`。
+    - `projectKey` 非字符串（如数字 `7`）：`resolve(projectKey)`（`projectRegistry.ts:42`）由 Node 参数校验先抛 `TypeError` / `ERR_INVALID_ARG_TYPE`（`The "paths[0]" argument must be of type string. Received type number (7)`）；Rust 先报 `INVALID_SESSION_KEY`（`require_session_key` 在 `resolve_project` 之前）。
+    - `projectKey` 为空白串 `""`：`""` 不是 nullish，`resolve("")` = **cwd**（实测 `/Users/da/ws/pilotdeck-rs`）；cwd 恰等于 `generalProjectKey` 时 `resolveProjectKey` 直接返回，否则才走注册判定。**两种分支本探针都未测**，这里只登记「不等于 PROJECT_NOT_FOUND 的必然」。
+
+    与 Rust 的差别是**门的层、时机与前置步骤**——不能写成「TS 不拒」，也不能写成「处处等价」。
   - `resumeSession`：`async resumeSession(input) { return input; }`（`InProcessGateway.ts:2026-2028`）——**原样返回，不校验、不 trim、不转发**，`sessionKey` 是空白还是非字符串都照样放行。
   - `closeSession`：`router.close(input.sessionKey)` 之后还执行 `interactionCoordinator.closeSession` / `permissionModes.clear` / `dialogProjectKeys.delete`（`:2049-2054`），整条链**没有任何 `INVALID_SESSION_KEY` 拒绝、也没有 `trim`**；非字符串 `sessionKey` 会原样传给 router，行为本探针**未测**。
   - **非字符串的可选链 TypeError 只对「确实走到门」的路径成立**（delete/rename/tag 的 provider 门）：`resume` 不校验、`close` 只透传，两侧在非字符串上**不同形状**，不能概括成「五个方法同形状」。
 
-  **-R2:28 没有登记这条**——它登记的是「非字符串的错误形状与 TS 的 TypeError 不一致，待 #1457 装配回调时定夺」，不是门的位置差异。这条差异属 #1455 遗留、非 #1604 引入，已开 **#2090**（前置于 #1457 与 #1604 关单）。U+0085 一侧的翻转仓内**没有用例钉住**（BOM 一侧有），已开跟进单 **#2097**，前置于 #1604 关单。
+  **-R2:28 没有登记这条**——它登记的是「非字符串的错误形状与 TS 的 TypeError 不一致，待 #1457 装配回调时定夺」，不是门的位置差异。这条差异属 #1455 遗留、非 #1604 引入，已开 **#2090**（前置于 #1457 与 #1604 关单）。U+0085 一侧的翻转在 **gateway 的 `trim_guard` / `require_text` 这一层没有用例钉住**（BOM 一侧有）；`pilotdeck-cli` 的 `paths.rs:189-192` 钉的是它**自己那份** `js_trim` 拷贝，不穿透本门。已开跟进单 **#2097**，前置于 #1604 关单。
 - `session_dir` 族其余 `projectKey` 读点（`resolve_project` / `session_new`）仍是旧形状 → **#2068**。
 - 上面那条 `projectKey` 孤立代理项的残留差异要「对齐还是接受」需要人批 → **#2083**（决策单，前置于 #1604 关单）。
 
@@ -86,6 +91,11 @@ node v22.22.0 icu 78.2
 ["path.resolve(projectKey)","RETURN","/Users/da/ws/pilotdeck-rs/\ud800"]
 $ node -e 'const nel="\u0085", bom="\ufeff"; console.log(JSON.stringify({nel_blank: nel.trim()==="", bom_blank: bom.trim()==="", node: process.version}))'
 {"nel_blank":false,"bom_blank":true,"node":"v22.22.0"}
+$ node -e 'const p=require("node:path"); for (const v of [7,null,"","/nope/x"]) { try { console.log(JSON.stringify([String(v),"RETURN",p.resolve(v)])) } catch(e) { console.log(JSON.stringify([String(v),"THROW",e.name,e.code,e.message])) } }'   # \u4e3b\u4ed3\u6839\u76ee\u5f55
+["7","THROW","TypeError","ERR_INVALID_ARG_TYPE","The \"paths[0]\" argument must be of type string. Received type number (7)"]
+["null","THROW","TypeError","ERR_INVALID_ARG_TYPE","The \"paths[0]\" argument must be of type string. Received null"]
+["","RETURN","/Users/da/ws/pilotdeck-rs"]
+["/nope/x","RETURN","/nope/x"]
 $ ssh mbp2 'mkdir -p /tmp/pdrs-nel && cat > /tmp/pdrs-nel/n.rs <<"EOF"
 fn main() {
     for (name, s) in [("NEL", "\u{0085}"), ("BOM", "\u{feff}"), ("SP", " ")] {
