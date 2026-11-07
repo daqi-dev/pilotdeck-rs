@@ -8,9 +8,14 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
-//! message, #1459/#1464 the lease-root/lease-path softening) and the #1320
-//! fix-r1 F2/F3 settings-composition tests (the production stack binds no
-//! notification server; the settings store anchors at PILOT_HOME).
+//! message, #1459/#1464 the lease-root/lease-path softening), the #1460
+//! two-pass split (a direct-content attachment with a channelKey path is
+//! still registered; its path failures stay silent like the audio skip),
+//! the #1461 lone-surrogate fidelity (the outer diagnostic keeps the
+//! surrogate and the resolve prefix, only the fs error spelling is lossy),
+//! and the #1320 fix-r1 F2/F3 settings-composition tests (the production
+//! stack binds no notification server; the settings store anchors at
+//! PILOT_HOME).
 
 use super::services::{
     NativeSettingsOptions, attachment_identity_matches, canonical_upload_store,
@@ -116,6 +121,24 @@ fn block_text(block: &JsValue) -> String {
         .and_then(JsValue::as_string)
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_default()
+}
+
+/// #1461: a block's text as raw UTF-16 code units — a lone surrogate in
+/// the diagnostic text is not representable in a `String`, so the lossy
+/// `block_text` would silently erase exactly the thing being pinned.
+fn block_text_units(block: &JsValue) -> Vec<u16> {
+    block
+        .get("text")
+        .and_then(JsValue::as_string)
+        .map(|text| text.units().to_vec())
+        .unwrap_or_default()
+}
+
+fn units_contains(haystack: &[u16], needle: &[u16]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn content_blocks(result: &JsValue) -> Vec<JsValue> {
@@ -557,8 +580,12 @@ fn lone_surrogate_path_becomes_not_found_diagnostic() {
     // P1-d (codex, ts-probe/probe.out "P1-d composer lone-surrogate"): a
     // lone-surrogate path is truthy in TS; `path.resolve` keeps it, fs
     // mangles it to U+FFFD, the stat fails ENOENT and the resolver emits
-    // the image-not-found diagnostic. Rust spells the path lossily
-    // (U+FFFD); it never reaches the lease guard, an open, or
+    // the image-not-found diagnostic. #1461: the diagnostic keeps both TS
+    // spellings — the outer path is the `path.resolve` form of the raw
+    // UTF-16 (lone surrogate and absolute prefix included) and only the fs
+    // error inside the parentheses carries the replacement character
+    // (ts-probe `_tmp/20261108-issue-1460-r2/probe/composer-probe.out`
+    // "Probe B"). It never reaches the lease guard, an open, or
     // allowedReadFiles.
     let mut fields = JsObject::new();
     fields.insert(
@@ -568,16 +595,28 @@ fn lone_surrogate_path_becomes_not_found_diagnostic() {
     fields.insert("mimeType".into(), JsValue::from("image/png"));
     let result = compose_attachment_turn(&scratch.0, &message("hello"), &[JsValue::Object(fields)])
         .expect("#1321 a lone-surrogate path composes the turn");
-    let lossy = "\u{FFFD}";
     let blocks = content_blocks(&result);
+    // The expected diagnostic in UTF-16 code units, so the lone surrogate
+    // itself is pinned: `path.resolve("<project>/\u{D800}")` for the outer
+    // path, and the U+FFFD spelling only inside the ENOENT message.
+    let outer: Vec<u16> = scratch
+        .0
+        .to_str()
+        .expect("#1461 scratch UTF-8")
+        .encode_utf16()
+        .chain([u16::from(b'/'), 0xD800])
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
     negative_assert!(
-        diagnostics_block(&blocks).contains(&format!(
-            "Image attachment not found: {lossy} \
-             (ENOENT: no such file or directory, stat '{lossy}')."
-        )),
-        "#1321 P1-d: the lone-surrogate path must become the TS not-found \
-         diagnostic, got: {}",
-        diagnostics_block(&blocks)
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 the not-found diagnostic must keep the surrogate outer and the lossy inner spelling"
     );
     negative_assert!(
         result.get("allowedReadFiles").is_none(),
@@ -2107,6 +2146,175 @@ fn content_block_skips_the_path_branch() {
     negative_assert!(
         note_block(&blocks).is_empty(),
         "#1321 P1-a: the outside path must not produce a note line"
+    );
+}
+
+#[test]
+fn direct_content_with_channel_key_path_is_registered() {
+    let scratch = Scratch::new();
+    // #1460 (ts-probe `_tmp/20261108-issue-1460-r2/probe/composer-probe.out`
+    // "Probe A"): a direct-content attachment with a valid path and a
+    // channelKey gets both TS passes — the image block from the content
+    // branch (composer :211-221) and the registration collection the
+    // content `continue` never skips (composer :57/:173-193): the path note
+    // and allowedReadFiles carry the registered path.
+    let path = scratch.lease("direct.png");
+    std::fs::write(&path, [1u8, 2, 3, 4]).expect("#1460 lease fixture");
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("ABCD").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("bytes", JsValue::Number(4.0)),
+        ("path", JsValue::from(path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[entry])
+        .expect("#1460 direct content with a channelKey path composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1460 direct content with a channelKey path must keep message, image and note blocks"
+    );
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("data")
+                == Some(&JsValue::from(BASE64_STANDARD.encode("ABCD").as_str()))
+            && blocks[1].get("bytes") == Some(&JsValue::Number(4.0)),
+        "#1460 the content image block must keep the direct-content shape"
+    );
+    let note = block_text(&blocks[2]);
+    negative_assert!(
+        note == format!(
+            "\n\n[Registered attachment files in this session:]\n- direct.png: {path}\n\
+             These are path references for reuse. If an image/PDF is already visible in this \
+             turn, do not call read_file just to view it."
+        ),
+        "#1460 the note must carry the registered path, got: {note}"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(path.as_str())],
+        "#1460 allowedReadFiles must carry the registered path"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 a valid direct-content path must not diagnose"
+    );
+}
+
+#[test]
+fn direct_content_with_an_invalid_channel_key_path_stays_silent() {
+    let scratch = Scratch::new();
+    // #1460: the registration collection swallows its own failures
+    // (composer :181-189 `catch {}`) and the content `continue` keeps the
+    // entry out of the resolver's diagnostics — an unresolvable or
+    // lone-surrogate path on a content attachment keeps its block and
+    // produces neither a diagnostic, nor a note line, nor allowedReadFiles.
+    let outside = scratch.0.with_file_name("pdrs-1460-outside-content.png");
+    let outside_path = outside.to_str().expect("#1460 outside UTF-8").to_owned();
+    let mut surrogate = JsObject::new();
+    surrogate.insert("type".into(), JsValue::from("image"));
+    surrogate.insert(
+        "content".into(),
+        JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+    );
+    surrogate.insert("mimeType".into(), JsValue::from("image/png"));
+    surrogate.insert(
+        "path".into(),
+        JsValue::String(JsString::from_utf16(vec![0xD800])),
+    );
+    surrogate.insert(
+        "metadata".into(),
+        object([("channelKey", JsValue::from("chan-1"))]),
+    );
+    let outside_entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("CD").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(outside_path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[JsValue::Object(surrogate), outside_entry],
+    )
+    .expect("#1460 invalid paths on content attachments compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1460 content attachments with invalid paths must keep message and image blocks only"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an invalid path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an invalid path on a content attachment must not register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1460 an invalid path on a content attachment must not produce a note line"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_content_with_an_eloop_path_stays_silent() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1460: a P2 internal error (an ELOOP canonicalize failure of the
+    // path itself under a valid root) is swallowed for a content-produced
+    // attachment exactly like the registration pass's own `catch {}`
+    // swallows its stat error — the turn must not fail over a path the
+    // resolver projection never sees.
+    let link = scratch.lease("loop.png");
+    symlink(Path::new(&link), Path::new(&link)).expect("#1460 symlink loop fixture");
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(link.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(&scratch.0, &message("hello"), &[entry]),
+        "#1460 an ELOOP path on a content attachment must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 2,
+        "#1460 an ELOOP content attachment must keep message and image blocks only"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an ELOOP path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an ELOOP path on a content attachment must not register allowedReadFiles"
     );
 }
 
