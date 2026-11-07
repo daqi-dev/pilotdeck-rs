@@ -22,6 +22,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _negkit import non_head
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 fixture = Path(__file__).resolve().parent
@@ -227,7 +228,9 @@ selected = sys.argv[2:] or [name for name, _old, _new, _oracle in MUTANTS]
 env = dict(os.environ, CARGO_NET_OFFLINE='true')
 test = 'runtime::mcp::output_schema::tests::formats_follow_ajv_formats'
 replay = 'runtime::mcp::output_schema::tests::replays_the_ajv_oracle'
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(repo)
 failures = []
 with mutating_sources(repo, [source], baseline=baseline) as snapshots:
     original = snapshots[source]
@@ -270,3 +273,5 @@ if failures:
         print(f'NEGATIVE CONTROL FAILED: {failure}', file=sys.stderr)
     sys.exit(1)
 print(f'all {len(selected)} mutants rejected, sources restored')
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha, evidence=output))

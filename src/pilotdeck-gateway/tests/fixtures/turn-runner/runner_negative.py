@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
+from _negkit import non_head
 from _negative_common import mutate, run, check_mutations
 
 root = Path(__file__).resolve().parents[5]
@@ -102,10 +103,13 @@ try:
     run_rows = select(mutations, sys.argv[2:], always=())
 except ValueError as error:
     refuse(str(error))
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
 out = claim_dir(sys.argv[1])
 run = partial(run, root=root, out=out, command=command, env=env)
 verdicts = []
-with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:
+with mutating_sources(root, [source], baseline=baseline) as originals:
     original = originals[source].decode()
     if run('positive').returncode != 0:
         raise RuntimeError('unmutated baseline did not pass')
@@ -123,5 +127,7 @@ with mutating_sources(root, [source], baseline=os.environ.get('PDRS_NEGATIVE_BAS
         raise RuntimeError('restored baseline did not pass')
 (out / 'summary.json').write_text(json.dumps({'mutations':len(run_rows),'runtimeFailures':len(run_rows),'restoredPass':True},indent=2)+'\n')
 # Zero rows can never read as success: a run that proves nothing exits 1.
-sys.exit(verdict_exit(verdicts))
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha,
+                                code=verdict_exit(verdicts), evidence=out))
 

@@ -37,6 +37,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _negkit import non_head
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
 
@@ -51,7 +52,9 @@ refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 # the same pre-commit escape hatch used by the other fixtures' controls
 # (live-recording, turn-runner, network-timing, ...). The host runs the
 # default HEAD, i.e. the committed tree.
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
 
 # Each mutation names the test whose timing assertion it must turn red.
 LIB_DEEP_FRAME = 'runtime::tools::builtin::web::html_compat::tests::deep_frame_stack_select_end_tags_stay_within_linear_budget'
@@ -313,4 +316,7 @@ for entry in summary:
     print(f"{entry['name']}: {entry['outcome']}{reason}")
 print(f'{len(killed)}/{len(summary)} killed; every source restored byte-for-byte')
 # #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
-sys.exit(verdict_exit(summary, key='outcome'))
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha,
+                                code=verdict_exit(summary, key='outcome'),
+                                evidence=out))

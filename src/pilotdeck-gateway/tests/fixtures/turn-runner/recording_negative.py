@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from _negkit import non_head
 
 ANCHOR_COUNTS = {'blocks-shape': 2}
 from _negative_common import mutate, run
@@ -62,7 +63,10 @@ if sys.argv[2:]:
     assert selected <= {m[0] for m in mutations}
     mutations = [m for m in mutations if m[0] in selected]
 run = partial(run, root=root, out=out, command=command, env=env)
-with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD') as originals:
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
+with mutating_sources(root, [source, runner], baseline=baseline) as originals:
     assert run('positive').returncode == 0
     for name, path, old, new in mutations:
         original = originals[path].decode()
@@ -74,3 +78,5 @@ with mutating_sources(root, [source, runner], baseline=os.environ.get('PDRS_NEGA
         print(f'{name}: runtime RED; source restored', flush=True)
     assert run('restored').returncode == 0
 (out / 'summary.json').write_text(json.dumps({'mutations':len(mutations),'runtimeFailures':len(mutations),'restoredPass':True},indent=2)+'\n')
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha, evidence=out))

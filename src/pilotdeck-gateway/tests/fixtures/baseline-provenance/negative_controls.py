@@ -28,6 +28,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _negkit import non_head
 from negative_process import mutating_sources, run_owned, wait_for_slot
 
 root = Path(__file__).resolve().parents[5]
@@ -63,7 +64,9 @@ if not rows:
 env = os.environ.copy()
 if not env.get("CARGO_TARGET_DIR"):
     raise SystemExit("CARGO_TARGET_DIR must be supplied by the caller")
-baseline = env.get("PDRS_NEGATIVE_BASELINE") or "HEAD"
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
 
 
 def run(label, command, *, timeout=300):
@@ -138,4 +141,7 @@ counts = {state: sum(row["status"] == state for row in summary)
     {"controls": summary, "counts": counts}, indent=2) + "\n")
 print("summary: " + ", ".join(f"{state}={count}" for state, count in counts.items()),
       flush=True)
-raise SystemExit(int(any(row["status"] != "KILLED" for row in summary)))
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+raise SystemExit(non_head.non_head_exit(
+    baseline_source, baseline_sha,
+    code=int(any(row["status"] != "KILLED" for row in summary)), evidence=out))

@@ -18,7 +18,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 `recorder_completion.rs` 每格独立测试，逐字节比较 transcript；`turn_runner_regenerates_identically` 是显式 ignored 重生成守卫，实际运行会比较整个 oracle 字节并启动真实 TS sidecar。正常测试不要求 Node。
 
-`negative_controls.py <新证据目录>` 覆盖 10 个源码变异，要求运行时断言失败，最后恢复正控。它使用共享 `mutating_sources/run_owned/wait_for_slot`，默认要求已提交、干净的产品源码。沙箱交付时使用证据目录里的隔离 Git tree 快照作为 `PDRS_NEGATIVE_BASELINE`；不创建 commit/ref，不改主仓 Git metadata。执行负控期间同树不得并发写入或运行 cargo。
+`negative_controls.py <新证据目录>` 覆盖 10 个源码变异，要求运行时断言失败，最后恢复正控。它使用共享 `mutating_sources/run_owned/wait_for_slot`，默认要求已提交、干净的产品源码。沙箱交付时使用证据目录里的隔离 Git tree 快照作为 `PDRS_NEGATIVE_BASELINE`；不创建 commit/ref，不改主仓 Git metadata。#1540 起对这类非 HEAD 基线的全绿运行退出 42（NON-HOST EVIDENCE）而非 0，并在证据目录记录 `baseline.json`。执行负控期间同树不得并发写入或运行 cargo。
 
 ## runner 独立端口（pr2 部分交付）
 

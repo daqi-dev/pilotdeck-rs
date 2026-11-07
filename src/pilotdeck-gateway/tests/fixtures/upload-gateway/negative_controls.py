@@ -8,7 +8,7 @@ this after the coordinator commits the branch:
     CARGO_TARGET_DIR=<caller-owned cargo target directory> \
       python3 src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py <out-dir>
 
-For a pre-commit rehearsal only, set ``PDRS_NEG_BASELINE`` to a tree object with
+For a pre-commit rehearsal only, set ``PDRS_NEGATIVE_BASELINE`` to a tree object with
 the exact same bytes as the working tree (e.g. ``git stash create <label>``);
 the default remains ``HEAD`` so a stale tree is never silently accepted.
 
@@ -58,6 +58,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, select, verdict_exit
+from _negkit import non_head
 
 root = Path(__file__).resolve().parents[5]
 GATEWAY = root / 'src/pilotdeck-gateway/src/upload/gateway.rs'
@@ -680,7 +681,11 @@ if missing_target(env):  # #1666: absent, empty or blank, one shared predicate
 refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too
 out = claim_dir(sys.argv[1])
 summary = []
-baseline = os.environ.get('PDRS_NEG_BASELINE') or 'HEAD'
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0. The variable
+# was mis-spelled PDRS_NEG_BASELINE until #1540, so an override silently
+# never reached this guard.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
 with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
     for name, source, old, new, test, expected in run_rows:
         original = snapshots[source]
@@ -728,4 +733,7 @@ with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
 killed_rows = sum(1 for row in summary if row['killed'])
 print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
 # #1666: a zero-row or surviving run can never exit 0 under `-O`.
-sys.exit(verdict_exit(summary, key='killed', killed=True))
+# #1540: green but non-HEAD is NON-HOST EVIDENCE and exits 42, never 0.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha,
+                                code=verdict_exit(summary, key='killed', killed=True),
+                                evidence=out))
