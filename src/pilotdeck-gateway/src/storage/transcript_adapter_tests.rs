@@ -1159,10 +1159,10 @@ fn subagent_reference_cell(name: &str) -> serde_json::Value {
 }
 fn project_subagent_cell(row: &serde_json::Value) -> AdapterResult<SubagentReferences> {
     let entries = js(&row["entries"].to_string());
-    let JsValue::Array(entries) = entries else {
+    let JsValue::Array(ref entries) = entries else {
         panic!("#2042 subagent cell entries must be an array")
     };
-    project_subagent_references(&entries)
+    project_subagent_references(entries)
 }
 /// `JSON.stringify` of a projected value, so the comparison is field by field
 /// against the recorded TS text instead of a Rust-side paraphrase.
