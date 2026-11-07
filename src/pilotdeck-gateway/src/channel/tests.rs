@@ -1273,7 +1273,7 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
     }
 }
 
-// The other ten keys are consumed by `loadEnabledChannels`'s
+// The other nine keys are consumed by `loadEnabledChannels`'s
 // `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
 // `enabled` must still reject.
 #[test]
@@ -1407,7 +1407,7 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // All 12 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
+    // All 11 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
     // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
     // reported.
     let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
