@@ -9,7 +9,7 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 |---|---|
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
-| `negative_controls.py` | N1–N18 汇总式控件执行器（见下）。 |
+| `negative_controls.py` | N1–N18 负控 + PC1–PC2 正控汇总式执行器（见下）。 |
 
 ## 金样来源
 
@@ -96,13 +96,22 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   error 的「任意 receive 帧」更严——只落 event 帧的 stream error 会判 FAIL（响亮失败，
   非假 PASS）；放宽需另立更正件。
 
-## 负控（N1–N18）
+## 负控（N1–N18）与正控（PC1–PC2）
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输出目录> \
   [--data _tmp/20261106-issue-1477/r1/data] \
   [--oracle scripts/retirement-outcome-parity/ts-oracle.json]
 ```
+
+负控只证明装置**能抓住**注入的错误；延期这一格若被写窄（`deferred_match` 漏容忍），
+18 条负控照样全 KILLED。因此另配两条**正控**（数据变异、断言「应当 PASS 的性质」，
+判 HELD / BROKEN / INVALID）：PC1 把三个延期方法都改成 `error /
+CAPABILITY_UNAVAILABLE`，要求 checker rc=0、逐轮 `deferred == 3` 且
+`deferredMethods` 点名三条、顶层 `deferred.methods` 是登记集——漏容忍或报告丢字段
+都是 BROKEN；PC2 用未变异参考轮要求 `deferred == 0` 且零违规，钉住「不是整体豁免」。
+`summary.json` 里正控记在 `positives` / `positiveCounts`，与 `counts` 并列，任一条
+非 HELD 即整轮非零退出。
 
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
@@ -118,7 +127,9 @@ ok response 则改写成错误帧）与 N15（两个 request ok 方法共用同�
 封住 P6 的两条假 PASS：矛盾 response 被忽略、一个方法的成功 response 被另一个方法借用；
 N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响应/重复请求两条守卫配控件。
 N18 把已登记延期的方法换成别的错误码，要求 P3 + P4 **双双**点名它——延期只容忍那一格，
-写成整体豁免就会被这条控件判 SURVIVED。
+写成整体豁免就会被这条控件判 SURVIVED。凡靠「答 unavailable 必须被点名」归因的负控
+（N3、N10），探针选取都显式排除延期集并加断言：P3/P4 会按 `deferred_match` 跳过、P5 的
+集合减法也会把它吞掉，探针落在延期集里就会从 KILLED 退化成 SURVIVED（假 FAIL）。
 
 执行器**第一件事**是失效同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
 为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
