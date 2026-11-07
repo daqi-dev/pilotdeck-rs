@@ -91,6 +91,17 @@ GUARDED = [
     # above is already guarded without its input), so a concurrent edit during a
     # run must be caught by the source guard.
     FIXTURES / 'turn-runner/oracle.json',
+    # #2228 MM r6 concurrency P2 (same class as the entry above): RUNNER_TESTS
+    # also assembles runner_notice_tests.rs and runner_prompt_tests.rs
+    # (`#[path]` at runner_tests.rs:18-21), whose row() helpers bake
+    # turn-start-notices/oracle.json and turn-prompt-hooks/oracle.json into
+    # the same --lib binary (include_str! at runner_notice_tests.rs:46 and
+    # runner_prompt_tests.rs:160), so concurrent edits to the carriers or the
+    # baked inputs must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/runner_notice_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/runner_prompt_tests.rs',
+    FIXTURES / 'turn-start-notices/oracle.json',
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
     # #2228 zai r4 P1: every bound gates test executes the shared baseline
     # module — gates_tests.rs:36/:421 matrix()/gate_cases! both start with
     # crate::test_baseline::oracle, and runner_tests.rs:17 `use crate::
@@ -98,6 +109,13 @@ GUARDED = [
     # (session-domain / host-factory / turn-start-notices / turn-runner-tail /
     # turn-prompt-hooks) already register.
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 r6 (MM boundary P1 class, no regeneration binding here): the
+    # baseline module is unconditionally compiled with its #[path] submodule
+    # tests/common/regeneration_masks.rs, so a concurrent edit to it during a
+    # run must be caught by the source guard; the mask table itself stays
+    # unregistered because no gates binding runs a regeneration compare over
+    # it (the table is a dead input for this fixture).
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the live/runner/host_factory modules the
     # bindings resolve through (live.rs:14 `use super::runner::{...}` goes via

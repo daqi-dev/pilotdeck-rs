@@ -53,6 +53,14 @@ GUARDED = [
     EVENTS,
     NOTICE_TESTS,
     BASELINE,
+    # #2228 r6 (MM boundary P1 / DS sibling+concurrency P2, same class as
+    # turn-runner-tail): baseline.rs unconditionally compiles its #[path]
+    # submodule tests/common/regeneration_masks.rs, whose include_str! bakes
+    # the shared mask table; the notices-regeneration row's compare()
+    # executes that code over that table, so both are runtime judges of this
+    # fixture's verdict.
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+    FIXTURES / '_shared/regeneration-masks.tsv',
     # #1274 opus-P2 follow-along: the notices-wiring binding runs through
     # factory_tests.rs's #[path] assembly of this module (live_notice and its
     # Scratch/registry helpers live here), so a concurrent edit during a run
