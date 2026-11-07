@@ -768,9 +768,11 @@ fn request_id_matches(
 /// could kill the gateway. 256 matches the MCP schema depth cap (#1754) and
 /// is far past anything displayable: every level costs `"[\n"` plus its
 /// `2·(depth+1)` indent spaces, so a bare chain spends `format_payload`'s
-/// 800-unit budget within ~27 levels (measured Node v22.22.0: `JSON.stringify`
-/// itself throws `RangeError` only from depth 3659, and `formatPayload`'s
-/// catch then falls back to `String(payload)`, which rethrows for arrays).
+/// 800-unit budget within ~27 levels (measured Node v22.22.0 on a top-level
+/// chain: `JSON.stringify` itself throws `RangeError` only from depth 6862 —
+/// the exact depth tracks the caller's remaining stack, so it is an order of
+/// magnitude, not a constant — and `formatPayload`'s catch then falls back to
+/// `String(payload)`, which rethrows for arrays).
 const MAX_STRINGIFY_DEPTH: usize = 256;
 
 /// `JSON.stringify(payload, null, 2)` — 2-space indentation, `None` for a

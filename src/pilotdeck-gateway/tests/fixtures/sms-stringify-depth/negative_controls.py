@@ -61,9 +61,12 @@ failures = []
 
 
 def cargo(test, extra):
+    # Cargo-level flags are mutually exclusive with the libtest tail: `extra`
+    # (only `--no-run` today) must precede `--`, otherwise cargo hands it to
+    # the test binary and every mutant is judged "does not compile" (#1929).
     command = ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-               '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact']
-    command.extend(extra)
+               '-p', 'pilotdeck-gateway', '--lib']
+    command.extend(extra if extra else [test, '--', '--exact'])
     result = run_owned(command, cwd=root, env=env, timeout=600)
     return result.returncode, result.stdout + result.stderr
 
