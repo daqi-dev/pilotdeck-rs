@@ -86,17 +86,20 @@ GUARDED = [
     # #2228 r10 (MM r9 sibling P2#3 + DS r9 sibling P2, both families): LIVE
     # (registered above) assembles its two `#[path]` faces into the same --lib
     # binary — live_stream_tests.rs (live.rs:2608) and live_tail_tests.rs
-    # (live.rs:2612) — and live_stream_tests.rs bakes four more oracles
+    # (live.rs:2612) — and live_stream_tests.rs bakes five more oracles
     # (live-recording :3653/:3958, live-history :4002, sidecar-payload :4273,
-    # live-write-order :4816); this is the same entry pair the r9 round added
-    # to turn-prompt-hooks/turn-start-notices with this rationale. Concurrent
-    # edits must be caught by the source guard.
+    # live-write-order :4816, turn-runner :3056/:3265/:4389); r10 registered
+    # only the four live-* ones, r11 added turn-runner — the same entry the
+    # other five fixtures registering this carrier already had (DS r10 sibling
+    # P1 + MM r10 sibling P1/concurrency P2/boundary P2, both families).
+    # Concurrent edits must be caught by the source guard.
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_tail_tests.rs',
     FIXTURES / 'live-recording/oracle.json',
     FIXTURES / 'live-history/oracle.json',
     FIXTURES / 'sidecar-payload/oracle.json',
     FIXTURES / 'live-write-order/oracle.json',
+    FIXTURES / 'turn-runner/oracle.json',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the declarators above the
     # switch sites — runtime/turn/mod.rs declares host_factory/live, and
     # runtime/mod.rs declares turn; context/mod.rs declares tool_budget itself.

@@ -59,6 +59,14 @@ if __name__ == '__main__':
     raise SystemExit(matrix_main(root, __file__, '', cases, passed_count=1,
         child_count=0, paths=[shell, live, hooks, handle, steer, mailbox, writer, runner, cleanup,
         root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
+        # #2228 r11 (DS r10 sibling P1): host_factory_tests.rs bakes three
+        # oracles into the same --lib binary — host-factory/oracle.json
+        # (:463/:562/:614), tool-budget-cwd/oracle.json (:803) and
+        # host-manifest/oracle.json (:1495); the same set turn-gates guards
+        # for this carrier, so concurrent edits must be caught here too.
+        root / 'src/pilotdeck-gateway/tests/fixtures/host-factory/oracle.json',
+        root / 'src/pilotdeck-gateway/tests/fixtures/tool-budget-cwd/oracle.json',
+        root / 'src/pilotdeck-gateway/tests/fixtures/host-manifest/oracle.json',
         root / 'src/pilotdeck-gateway/src/runtime/turn/interaction.rs',
         root / 'src/pilotdeck-gateway/tests/fixtures/live-session/peer.py',
         root / 'src/pilotdeck-gateway/src/runtime/turn/live_session_tests.rs',
