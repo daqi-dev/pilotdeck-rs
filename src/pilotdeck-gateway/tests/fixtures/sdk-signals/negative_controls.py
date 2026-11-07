@@ -570,6 +570,13 @@ def main():
     try:
         with mutating_sources(root, guarded) as originals:
             phase = "body"
+            # #1885 r3: prove under the tree lock. `check_catalog()` already
+            # proved the frozen #1382 ledger before this block, but acquiring
+            # the source lock can wait (default 900 s while another runner
+            # holds it), and an edit landing in that gap would be the very
+            # bytes the replay then parses. Same shape as
+            # `sdk-signals-close-order-pin` (GLM sibling + DeepSeek sibling r4).
+            assert_close_order_ledger_matches_head()
             for name, path, old, new, test, assertion in selected:
                 case = Case(name, path, old, new, test, assertion)
                 status, reason, compiled = "INVALID", "not run", False
@@ -636,6 +643,13 @@ def main():
                         f"; restored: {type(error).__name__}: {error}"
                     )
                 record(name, test, assertion, status, reason, compiled)
+            # #1885 r3: re-prove on the way out, still under the tree lock.
+            # Before #1885 this ledger sat in `guarded`, so `mutating_sources`
+            # re-read it on exit; the frozen bytes are no longer written back,
+            # so the exit-side verification has to be explicit or an edit made
+            # during the run (the replay reads the same file in the child
+            # tests) would stand unnoticed.
+            assert_close_order_ledger_matches_head()
             phase = "exit"
 
     except BaseException as error:
