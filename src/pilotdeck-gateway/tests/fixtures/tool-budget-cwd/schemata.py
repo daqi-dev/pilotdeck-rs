@@ -73,6 +73,16 @@ GUARDED = [
     # it (the table is a dead input for this fixture).
     ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
+    # #2228 r9 (MM r8 sibling P2, both families): the registered carrier
+    # host_factory_tests.rs bakes host-factory/oracle.json (:463/:562/:614)
+    # and host-manifest/oracle.json (:1495) into the same --lib binary
+    # (tool-budget-cwd/oracle.json at :803 is registered above), and LIVE
+    # (registered above) bakes live-e2e/terminal-boundaries/oracle.json
+    # (live.rs:2143) — so concurrent edits to any of them during a run must
+    # be caught by the source guard.
+    FIXTURES / 'host-factory/oracle.json',
+    FIXTURES / 'host-manifest/oracle.json',
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the declarators above the
     # switch sites — runtime/turn/mod.rs declares host_factory/live, and
     # runtime/mod.rs declares turn; context/mod.rs declares tool_budget itself.

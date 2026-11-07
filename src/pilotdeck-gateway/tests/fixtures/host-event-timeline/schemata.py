@@ -98,14 +98,32 @@ GUARDED = [
     # (gates_tests.rs GATES_ORACLE), host-event-pump/oracle.json
     # (host_pump_tests.rs:4) and turn-runner/oracle.json (forward_tests.rs)
     # into the same --lib binary, so concurrent edits to the carriers or
-    # their baked inputs must be caught by the source guard. peer.py files
-    # stay out: they run as subprocesses, not compiled bytes.
+    # their baked inputs must be caught by the source guard. turn-gates/
+    # peer.py is executed only by turn-gates's own bound rows, not by this
+    # fixture's, so it stays out here; the peer.py this fixture's bound rows
+    # do run (live-session/peer.py) is registered below.
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/gates_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_pump_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/forward_tests.rs',
     FIXTURES / 'turn-gates/oracle.json',
     FIXTURES / 'host-event-pump/oracle.json',
     FIXTURES / 'turn-runner/oracle.json',
+    # #2228 r9 (DS r8 boundary P1 class + MM r8 sibling/concurrency P2, both
+    # families): the already-registered carriers bake further inputs into the
+    # same --lib binary — gates_tests.rs:753 bakes pump-order-cases/oracle.json;
+    # live_stream_tests.rs bakes live-recording/oracle.json (:3653/:3958),
+    # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
+    # and live-write-order/oracle.json (:4816); live.rs:2612 assembles
+    # live_tail_tests.rs via `#[path]`, and live.rs:2143 bakes live-e2e/
+    # terminal-boundaries/oracle.json. Concurrent edits to any of them must be
+    # caught by the source guard.
+    FIXTURES / 'pump-order-cases/oracle.json',
+    FIXTURES / 'live-recording/oracle.json',
+    FIXTURES / 'live-history/oracle.json',
+    FIXTURES / 'sidecar-payload/oracle.json',
+    FIXTURES / 'live-write-order/oracle.json',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_tail_tests.rs',
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     # #2228 zai r4 P2 (fixed in-round, same class as the turn-gates P1): the
     # bound replay test executes the shared baseline module —
     # host_timeline_tests.rs:14-15 golden() is crate::test_baseline::oracle

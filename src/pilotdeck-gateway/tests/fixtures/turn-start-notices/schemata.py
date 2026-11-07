@@ -66,9 +66,11 @@ GUARDED = [
     # #2228 MM r7 sibling P1: the regeneration row's TS-side judge closure —
     # generate.mts imports assertBaseline/baselineSourceHashes from
     # _shared/baseline.mts, which itself imports _shared/generator_guard.mjs
-    # and tests/baseline_source_guard.mjs; the regenerated oracle.json bakes
-    # their bytes, so concurrent edits during a run must be caught by the
-    # source guard (same closure as turn-runner-tail r8).
+    # and tests/baseline_source_guard.mjs; the regeneration row executes them
+    # as its judge (TS-tree clean check and hash recording; r9 reword, MM
+    # conc P3: the oracle records hashes of the TS baseline tree's files, it
+    # does not bake these Rust-tree bytes), so concurrent edits during a run
+    # must be caught by the source guard (same closure as turn-runner-tail).
     FIXTURES / '_shared/baseline.mts',
     FIXTURES / '_shared/generator_guard.mjs',
     ROOT / 'src/pilotdeck-gateway/tests/baseline_source_guard.mjs',
@@ -102,6 +104,23 @@ GUARDED = [
     # the source guard (turn-prompt-hooks registers the mirror pair).
     SRC / 'runner_prompt_tests.rs',
     FIXTURES / 'turn-prompt-hooks/oracle.json',
+    # #2228 r9 (MM r8 boundary P2 + DS r8, both families): the registered
+    # carriers bake more inputs into the same --lib binary — runner_tests.rs
+    # bakes turn-runner/oracle.json (:141/:352/:858 include_str!) and the
+    # source text of live_stream_tests.rs (:864 include_str!, consumed by the
+    # oracle_consumers_exist existence check; it also bakes runner_tests.rs
+    # itself at :863, which is registered above); live.rs (registered above)
+    # assembles live_stream_tests.rs (:2608) and live_tail_tests.rs (:2612)
+    # via `#[path]` and bakes live-e2e/terminal-boundaries/oracle.json
+    # (:2143). Concurrent edits to any of them must be caught by the source
+    # guard. Faces of these newly registered carriers (e.g. gates_tests.rs
+    # under live_stream_tests.rs) stay out — they are registered by the
+    # fixtures whose bound rows execute them, and the mechanical closure of
+    # the whole compiled chain is the #2241 consolidation target.
+    FIXTURES / 'turn-runner/oracle.json',
+    SRC / 'live_stream_tests.rs',
+    SRC / 'live_tail_tests.rs',
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     # #2228 DS r3 P1: the row bindings bake turn-start-notices/oracle.json
     # into the binary (include_str! via runner_notice_tests.rs), the
     # notices-regeneration binding runs turn-start-notices/generate.mts

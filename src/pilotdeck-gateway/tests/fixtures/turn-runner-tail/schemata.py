@@ -153,6 +153,15 @@ GUARDED = [
     # unregistered for the same reason as the prompt twin above.
     RUNNER_NOTICE_TESTS,
     FIXTURES / 'turn-start-notices/oracle.json',
+    # #2228 r9 (MM r8 sibling P2 + MM r8 boundary P2): RUNNER_TESTS bakes two
+    # more inputs into the same --lib binary — turn-runner/oracle.json
+    # (runner_tests.rs:141/:352/:858 include_str!) and the source text of
+    # live_stream_tests.rs (runner_tests.rs:864 include_str!, consumed by the
+    # oracle_consumers_exist existence check; it also bakes runner_tests.rs
+    # itself at :863, which is already registered above) — so concurrent edits
+    # during a run must be caught by the source guard.
+    FIXTURES / 'turn-runner/oracle.json',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the runner/live modules the bindings
     # resolve through, and runtime/mod.rs declares turn itself, capping the
@@ -174,13 +183,21 @@ GUARDED = [
     # generate.mts:16 imports assertBaseline/baselineSourceHashes from
     # _shared/baseline.mts, which itself imports _shared/generator_guard.mjs
     # (bindBaseline/recordedSourceHashes) and tests/baseline_source_guard.mjs
-    # (sourceClosureSha256); the regenerated oracle.json bakes their bytes via
-    # sourceCommit/sourceSha256, so concurrent edits during a run must be
-    # caught by the source guard (native-metadata-cwd / native-process /
-    # live-e2e register the same closure).
+    # (sourceClosureSha256); the regeneration row executes them as its judge
+    # (TS-tree clean check and hash recording; r9 reword, MM conc P3: the
+    # oracle records hashes of the TS baseline tree's files, it does not bake
+    # these Rust-tree bytes), so concurrent edits during a run must be caught
+    # by the source guard. r9 (DS r8 P1, in-diff): native-metadata-cwd /
+    # native-process / live-e2e register only baseline.mts of this closure —
+    # their gap is tracked in #2346, not a precedent to copy.
     FIXTURES / '_shared/baseline.mts',
     FIXTURES / '_shared/generator_guard.mjs',
     ROOT / 'src/pilotdeck-gateway/tests/baseline_source_guard.mjs',
+    # #2228 r9 (DS r8 + MM r8, both families): LIVE is registered above and
+    # bakes live-e2e/terminal-boundaries/oracle.json into the same binary
+    # (live.rs:2143), so a concurrent edit during a run must be caught by the
+    # source guard.
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

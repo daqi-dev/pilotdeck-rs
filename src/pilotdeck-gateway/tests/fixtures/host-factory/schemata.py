@@ -38,6 +38,15 @@ GUARDED = [
     # concurrent edits to either during a run must be caught by the source
     # guard.
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs',
+    # #2228 r9 (MM r8 sibling P2 + DS r8, both families): the registered
+    # carrier host_factory_tests.rs bakes three oracles into the same --lib
+    # binary — host-factory/oracle.json (:463/:562/:614, this fixture's own),
+    # tool-budget-cwd/oracle.json (:803) and host-manifest/oracle.json
+    # (:1495) — so concurrent edits to any of them during a run must be
+    # caught by the source guard.
+    FIXTURES / 'host-factory/oracle.json',
+    FIXTURES / 'tool-budget-cwd/oracle.json',
+    FIXTURES / 'host-manifest/oracle.json',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the host_factory module the bindings resolve
     # through, and runtime/mod.rs declares turn itself, capping the chain at
