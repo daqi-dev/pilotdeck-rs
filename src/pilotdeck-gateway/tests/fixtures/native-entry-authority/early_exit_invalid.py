@@ -69,7 +69,12 @@ EARLY_EXIT = ('#1261 native entry child exited early; no rejection and '
               'no listening advertisement for')
 # The gate that separates the unmarked early-exit panic from the marked kill.
 # This one is specific to the rejects test, so it stays here (#1989 item 6).
-GATE = 'if !stderr.contains(&rejection) {'
+# Bound as the whole guard -- condition, panic head and message (#1989 r2
+# review): a fragment survived short-circuiting the condition or demoting the
+# panic to `let _ = ...`, the same drift the newline guard is bound against in
+# `native_entry_binding`.
+GATE = ('if !stderr.contains(&rejection) { panic!("' + EARLY_EXIT +
+        ' {key}, cannot judge"); }')
 # One row per stub shape *and* bound test: an environmental exit prints
 # nothing and can only be judged INVALID, while a child that advertised
 # listening before exiting proved the gate accepted the authority, so the
@@ -97,6 +102,21 @@ def command(test):
             test, '--', '--exact']
 
 
+def gate_errors(test_source):
+    """The rejects test's own gate, bound as one whole guard.
+
+    Returned instead of raised so the drift controls can drive it with a
+    mutated source (#1989 r2 review).
+    """
+    try:
+        rejects = squeeze(test_body(test_source, TEST))
+    except LookupError as error:
+        return [str(error)]
+    if GATE in rejects:
+        return []
+    return [f'missing rejection gate from {TEST}']
+
+
 def main():
     if sys.argv[1:] == ['--check']:
         names = [name for name, *_ in ROWS]
@@ -121,10 +141,8 @@ def main():
         # Every binding shared with `negative_controls.py` lives in
         # `native_entry_binding` (#1989 item 6); the gate needle is this
         # test's own and stays here.
-        rejects = squeeze(test_body(test_source, TEST))
-        errors = binding_errors(test_source)
-        if GATE not in rejects:
-            errors.append(f'missing rejection gate from {TEST}')
+        errors = gate_errors(test_source)
+        errors.extend(binding_errors(test_source))
         for marker in MARKERS:
             if marker in EARLY_EXIT or EARLY_EXIT in marker:
                 errors.append(f'early-exit panic collides with marker {marker}')

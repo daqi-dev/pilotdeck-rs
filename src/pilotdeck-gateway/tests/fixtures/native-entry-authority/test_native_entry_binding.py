@@ -14,6 +14,7 @@ Cargo is never launched; the renderers and the two ``--check`` subprocesses are
 pure Python.
 """
 import subprocess
+import ast
 import sys
 import unittest
 from pathlib import Path
@@ -23,6 +24,7 @@ FIXTURES = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(FIXTURES))
 
+import early_exit_invalid as early
 import native_entry_binding as binding
 
 ROOT = HERE.parents[4]
@@ -107,6 +109,46 @@ BUDGET_ELAPSED = (
 REJECTS_ASSERTION = (
     '        negative_assert!(!advertised, "#1261 native entry rejects inherited {key}");'
 )
+# The scrub test's "cannot judge" branch and the rejects test's own gate: both
+# were fragment needles before #1989 r2 review, so each gets a drift control.
+SCRUB_BRANCH = (
+    '    if !advertised {\n'
+    '        panic!(\n'
+    '            "#1261 native entry scrub child neither advertised listening nor '
+    'exited, cannot judge"\n'
+    '        );\n'
+    '    }'
+)
+REJECTION_GATE = (
+    '        if !stderr.contains(&rejection) {\n'
+    '            panic!(\n'
+    '                "#1261 native entry child exited early; no rejection and no '
+    'listening advertisement for {key}, cannot judge"\n'
+    '            );\n'
+    '        }'
+)
+
+
+def assigned_names(text):
+    """Every name a module assigns, wherever it sits on the line.
+
+    A regex over `^NAME\\s*=` missed indented copies, annotated ones and
+    `X = 1; NAME = ...`; walking the AST sees the assignment itself, so the
+    "no private copy" rule has no layout to hide behind (#1989 r2 review).
+    """
+    names = set()
+    for node in ast.walk(ast.parse(text)):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+        else:
+            continue
+        for target in targets:
+            for leaf in ast.walk(target):
+                if isinstance(leaf, ast.Name):
+                    names.add(leaf.id)
+    return names
 
 
 class BindingDrift(unittest.TestCase):
@@ -122,6 +164,17 @@ class BindingDrift(unittest.TestCase):
         joined = '; '.join(errors)
         self.assertIn(expected, joined,
                       f'#1989 the drift was not noticed as {expected!r}: {joined}')
+
+    def assertGateDrift(self, old, new, expected):
+        # The rejects test's own gate lives in `early_exit_invalid`; driving it
+        # here proves the fragment needle no longer accepts a rewritten guard.
+        source = TEST_FILE.read_text()
+        self.assertEqual(source.count(old), 1,
+                         f'#1989 gate drift anchor is not unique: {old!r}')
+        errors = early.gate_errors(source.replace(old, new, 1))
+        joined = '; '.join(errors)
+        self.assertIn(expected, joined,
+                      f'#1989 the gate drift was not noticed as {expected!r}: {joined}')
 
     # Item 1: pin assertions bound as whole calls, head + polarity + message.
     def test_a_constant_shape_acceptance_is_unbound(self):
@@ -229,6 +282,36 @@ class BindingDrift(unittest.TestCase):
             '',
             'listening advertisement observation')
 
+    # The scrub "cannot judge" branch and the rejects test's gate were the two
+    # needles that had already drifted between the runners; both are whole
+    # guards now, so a polarity flip or a demoted panic must go red (#1989 r2
+    # review).
+    def test_a_polarity_flipped_scrub_branch_is_unbound(self):
+        self.assertDrift(SCRUB_BRANCH,
+                         SCRUB_BRANCH.replace('if !advertised', 'if advertised'),
+                         'scrub unjudgeable branch')
+
+    def test_a_rewritten_scrub_branch_message_is_unbound(self):
+        self.assertDrift(SCRUB_BRANCH,
+                         SCRUB_BRANCH.replace('cannot judge', 'cannot tell'),
+                         'scrub unjudgeable branch')
+
+    def test_a_short_circuited_rejection_gate_is_unbound(self):
+        self.assertGateDrift(
+            REJECTION_GATE,
+            REJECTION_GATE.replace('contains(&rejection) {',
+                                   'contains(&rejection) && false {'),
+            'rejection gate')
+
+    def test_a_demoted_rejection_gate_panic_is_unbound(self):
+        self.assertGateDrift(
+            REJECTION_GATE,
+            '        if !stderr.contains(&rejection) {\n'
+            '            let _ = "#1261 native entry child exited early; no '
+            'rejection and no listening advertisement for {key}, cannot judge";\n'
+            '        }',
+            'rejection gate')
+
 
 class SharedTables(unittest.TestCase):
     """Item 6: one copy of the marker constants and the shared needles."""
@@ -247,9 +330,21 @@ class SharedTables(unittest.TestCase):
         for script in (NEGATIVE, EARLY_EXIT):
             text = script.read_text()
             self.assertIn('from native_entry_binding import', text, script.name)
-            for name in shared:
-                self.assertNotRegex(text, rf'(?m)^{name}\s*=',
-                                    f'{script.name} keeps a private copy of {name}')
+            self.assertEqual(sorted(assigned_names(text) & set(shared)), [],
+                             f'{script.name} keeps a private copy of a shared name')
+
+    def test_the_private_copy_rule_sees_every_assignment_form(self):
+        # The forms a `^NAME\s*=` regex missed; all three are copies.
+        for text in ('if x:\n    MARKERS = ["x"]\n',
+                     'MARKERS: list = ["x"]\n',
+                     'OTHER = 1; MARKERS = ["x"]\n',
+                     'def f():\n    MARKERS = ["x"]\n'):
+            self.assertIn('MARKERS', assigned_names(text), text)
+        # ... and it is not a substring match: uses and imports are not copies.
+        for text in ('from native_entry_binding import MARKERS\n',
+                     'print(MARKERS)\n',
+                     'MARKERS_LIKE = 1\n'):
+            self.assertNotIn('MARKERS', assigned_names(text), text)
 
     def test_both_runners_check_passes_on_the_real_tree(self):
         for script in (NEGATIVE, EARLY_EXIT):
