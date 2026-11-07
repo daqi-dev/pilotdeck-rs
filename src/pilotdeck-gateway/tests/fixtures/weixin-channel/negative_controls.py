@@ -162,8 +162,8 @@ MUTATIONS = [
      '        if false {',
      REPLAY, '#1328 weixin replay oracle'),
     ('weixin-attachment-diagnostics-dropped', weixin / 'mod.rs',
-     '        if !diagnostics.is_empty() {',
-     '        if false {',
+     '    if diagnostics.is_empty() {\n        return;',
+     '    if true {\n        return;',
      REPLAY, '#1328 weixin replay oracle'),
     # The image item's metadata `source` branch: a `cdn_url`/`url` hit is
     # `"url"`, the `media.full_url` fallback is the other value.
@@ -186,6 +186,13 @@ MUTATIONS = [
      '        {',
      'channel::im_attachment::tests::save_from_url_guards_sizes_and_applies_the_transform',
      '#1822 declared size guard'),
+    # `page 67-72`: the second guard reads the transformed buffer. Dropping it
+    # lets a transform that inflates past the limit through.
+    ('im-attachment-post-transform-guard-dropped', attachments,
+     '        if buffer.len() > self.max_bytes {',
+     '        if buffer.len() > usize::MAX {',
+     'channel::im_attachment::tests::save_from_url_checks_the_size_limit_after_the_transform',
+     '#1822 post-transform size guard'),
     ('im-attachment-image-sniff-dropped', attachments,
      '    detect_image_mime(buffer).map(str::to_string).or(mime_type)',
      '    mime_type',

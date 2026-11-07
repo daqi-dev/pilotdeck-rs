@@ -113,6 +113,34 @@ fn safe_filename_follows_the_baseline_branches() {
         safe_filename(Some(".txt"), Some("text/plain"), AttachmentKind::File),
         ".txt.txt"
     );
+    // Names that survive `safeFilename` but still start with `..` reach the
+    // containment guard: Node's `path.relative` returns them verbatim and
+    // `startsWith("..")` rejects them.
+    assert_eq!(
+        safe_filename(Some("..foo.txt"), None, AttachmentKind::File),
+        "..foo.txt"
+    );
+}
+
+#[test]
+fn containment_matches_nodes_relative_prefix_rule() {
+    let dir = Path::new("/tmp/root/weixin/chat/msg");
+    // Inside.
+    assert!(is_path_within_directory(&dir.join("report.pdf"), dir));
+    assert!(is_path_within_directory(dir, dir));
+    // Node probe (v22.22.0) for `["..foo.txt","..","..."]`:
+    // rel = the name itself and `rel.startsWith("..")` is true for all three.
+    for name in ["..foo.txt", "..", "...", "...bin"] {
+        assert!(
+            !is_path_within_directory(&dir.join(name), dir),
+            "{name} must be rejected"
+        );
+    }
+    // A candidate outside the directory is rejected by the prefix itself.
+    assert!(!is_path_within_directory(
+        Path::new("/tmp/root/other/f.txt"),
+        dir
+    ));
 }
 
 #[test]
@@ -275,6 +303,35 @@ async fn save_from_url_guards_sizes_and_applies_the_transform() {
     shrinking.transform = Some(Arc::new(|_| Err(AttachmentError::error("boom"))));
     let error = store.save_from_url(shrinking).await.expect_err("transform");
     assert_eq!(error.formatted(), "Error: boom");
+}
+
+/// `page 67-72`: the size guard reads the *transformed* buffer, so a
+/// transform that shrinks below the limit rescues an oversized download and
+/// one that grows past it fails even though the transport stayed under.
+#[tokio::test]
+async fn save_from_url_checks_the_size_limit_after_the_transform() {
+    let root = scratch("post-transform");
+    let store = ImAttachmentStore::new(&root, "weixin", 3, FixedFetcher::new(b"12345678", None));
+    let mut shrinking = input("https://cdn.test/shrink", AttachmentKind::File);
+    shrinking.transform = Some(Arc::new(|buffer: Vec<u8>| Ok(buffer[..3].to_vec())));
+    let saved = crate::test_negative_receipt::expect_ok(
+        store.save_from_url(shrinking).await,
+        "#1822 size gate runs after the transform",
+    );
+    crate::negative_assert_eq!(saved.bytes, Some(3.0), "#1822 post-transform size");
+
+    let store = ImAttachmentStore::new(&root, "weixin", 3, FixedFetcher::new(b"ab", None));
+    let mut growing = input("https://cdn.test/grow", AttachmentKind::File);
+    growing.transform = Some(Arc::new(|_| Ok(b"abcdef".to_vec())));
+    let error = crate::test_negative_receipt::expect_err(
+        store.save_from_url(growing).await,
+        "#1822 post-transform size guard rejects",
+    );
+    crate::negative_assert_eq!(
+        error.message,
+        "Attachment is 6 bytes (limit 3).",
+        "#1822 post-transform size guard"
+    );
 }
 
 #[tokio::test]
