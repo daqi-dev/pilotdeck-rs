@@ -1010,6 +1010,25 @@ class EnvironmentControls(unittest.TestCase):
              'from pathlib import Path',
              'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
              "    return __import__('pathlib').Path('/tmp', value)"),
+            # r11（DeepSeek sibling/boundary P1）：把 import 整行**换成**一条赋值，绑定次数
+            # 仍是 1 —— 只数次数时全绿；按形态钉才判红。
+            ('path-import-replaced-by-a-single-binding',
+             'from pathlib import Path',
+             "Path = lambda value: __import__('pathlib').Path('/tmp', value)"),
+            # r11（DeepSeek sibling P1 #3）：判据读 `os.replace` 的接收者时只读属性名。
+            ('os-import-shadowed-by-a-shim',
+             'import os',
+             'import os\n\n\nclass _OsShim:\n'
+             '    def __getattr__(self, name):\n'
+             "        return getattr(__import__('os'), name)\n\n\nos = _OsShim()"),
+            # r11（zai sibling P2）：native-config 的 f-string 族与 native-stimulus-plan 成对。
+            ('temp-fstring-interpolates-a-foreign-attribute',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    class _E:\n        name = '../src'\n"
+             "    tmp = PUBLISH_DIR / f'.negctl-{_E.name}.tmp'"),
+            ('temp-fstring-uses-a-format-spec',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    tmp = PUBLISH_DIR / f'{path.name:/>100}.tmp'"),
         ),
         'model-complete/negative-controls.py': (
             ('scratch-rebound-after-the-correct-derivation',
@@ -1033,6 +1052,24 @@ class EnvironmentControls(unittest.TestCase):
             ('root-constant-rebound-to-another-tree',
              'ROOT = Path(__file__).resolve().parents[5]',
              "ROOT = Path(__file__).resolve().parents[5]\nROOT = Path('/tmp')"),
+            # r11（zai sibling P2）：三处夹具各一条模块级 `Path` 影子，与 native-config 成对。
+            ('path-callable-shadowed-at-module-level',
+             'from pathlib import Path',
+             'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
+             "    return __import__('pathlib').Path('/tmp', value)"),
+            # r11（DeepSeek sibling P1 #3）：`tempfile.mkstemp` 的接收者同样可能被顶掉。
+            ('tempfile-import-shadowed-by-a-rebind',
+             'import tempfile',
+             "import tempfile\n\n\ntempfile = __import__('tempfile')"),
+            # r11（zai sibling P1 + DeepSeek sibling P2）：prefix 是路径片段，
+            # `'../src/'` 让临时文件（与 SIGKILL 残留）落回被扫的 `src/`。
+            ('mkstemp-prefix-escapes-the-scratch-dir',
+             'prefix=".negctl-" + path.name',
+             'prefix="../src/.negctl-" + path.name'),
+            # 同族的「接收者不是被发布目标」形态：`scratch.name` 可以是任意目录名。
+            ('mkstemp-prefix-interpolates-a-foreign-attribute',
+             'prefix=".negctl-" + path.name',
+             'prefix=f"{scratch.name}-" + path.name'),
         ),
         'native-stimulus-plan/negative_controls.py': (
             ('temp-rebound-after-the-correct-derivation',
@@ -1090,6 +1127,17 @@ class EnvironmentControls(unittest.TestCase):
             ('temp-fstring-uses-a-format-spec',
              "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
              "    tmp = PUBLISH_DIR / f'{path.name:/>100}.tmp'"),
+            # r11（zai sibling P2）：三处夹具各一条模块级 `Path` 影子。
+            ('path-callable-shadowed-at-module-level',
+             'from pathlib import Path',
+             'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
+             "    return __import__('pathlib').Path('/tmp', value)"),
+            # r11（DeepSeek boundary P1）：接收者只比对**名字字符串** —— 目标名先被重绑成
+            # 伪 PathLike（`.name == '../src'`），`f'{path.name}'` 于是重新变成目录。
+            ('target-name-rebound-to-a-fake-pathlike',
+             "    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'",
+             "    class _E:\n        name = '../src'\n"
+             "    path = _E()\n    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'"),
         ),
     }
     # r5（DeepSeek boundary P1）：r4 的计数钉按 `('tmp', 'scratch')` 查表，且「零次绑定」
@@ -1255,6 +1303,10 @@ class EnvironmentControls(unittest.TestCase):
         r10（DeepSeek boundary P1）：光看属性名还不够 —— `f'{E.name}'` 里任意对象的
         `.name` 都能是 `'../src'`，`f'{path.name:/>100}'` 的 format spec 也能把填充符变成
         前导 `/`。接收者必须是**被发布目标的那个名字**，且不许带 format spec。
+        r11（zai sibling P1 + DeepSeek sibling P1）：同一条「不许变成路径」的规则还要能
+        用在 `mkstemp(prefix=…, suffix=…)` 上 —— 那里的健康形态是**字符串拼接**
+        `".negctl-" + path.name`，所以也收 `BinOp(Add)`（两侧分别判）与裸的
+        `<目标>.name/.stem/.suffix`。
         """
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             value = node.value
@@ -1264,12 +1316,15 @@ class EnvironmentControls(unittest.TestCase):
         if isinstance(node, ast.JoinedStr):
             return all(self.plain_relative_component(part, body) for part in node.values)
         if isinstance(node, ast.FormattedValue):
-            value = node.value
             return (node.format_spec is None
-                    and isinstance(value, ast.Attribute)
-                    and value.attr in ('name', 'stem', 'suffix')
-                    and isinstance(value.value, ast.Name)
-                    and value.value.id in self.replacement_target_names(body))
+                    and self.plain_relative_component(node.value, body))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return (self.plain_relative_component(node.left, body)
+                    and self.plain_relative_component(node.right, body))
+        if isinstance(node, ast.Attribute):
+            return (node.attr in ('name', 'stem', 'suffix')
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in self.replacement_target_names(body))
         return False
 
     @staticmethod
@@ -1344,6 +1399,46 @@ class EnvironmentControls(unittest.TestCase):
                     and self.roots_at(body, node.body, root_constant, seen))
         return False
 
+    def module_import_form_problems(self, source, expected):
+        """判据读到的模块名只准由**指定形态**的那一条绑定引入，不是「只数次数」。
+
+        r11（DeepSeek sibling/boundary P1）：r10 只断言 `body_binding_count(source, 'Path') == 1`
+        —— 把 `from pathlib import Path` 整行**换成**一条 `Path = lambda value: …`，计数
+        仍是 1，断言消息里那个不变量（「唯一那条是 import」）根本没被检查。形态串与
+        `fixture_bindings` 同源，`from local_impl import Path` / `import pathlib as Path` /
+        `Path = …` 都会落成别的形态。
+        r11（DeepSeek sibling P1 #3）：同一动机对 `os` / `tempfile` 也成立 —— 判据只读
+        `os.replace` / `tempfile.mkstemp` 的属性名，不读接收者，模块级 `os = _Shim()`
+        能让整条发布链改道而正文一字未动。
+        """
+        problems = []
+        for name, form in expected.items():
+            got = self.fixture_bindings(source, name)
+            if got != [form]:
+                problems.append(f'{name} must be bound only by "{form}", got {got}')
+        return problems
+
+    def mkstemp_name_problems(self, body):
+        """`mkstemp(prefix=…, suffix=…)` 的拼法也只准是相对名片段（r11 zai/DeepSeek P1）。
+
+        `dir=` 由 `roots_at` 沿绑定链回溯；prefix/suffix 同样是**路径片段**：CPython 用
+        `os.path.join(dir, prefix + … + suffix)` 拼接，prefix 里带 `'/'` 或 `'..'` 时临时
+        文件直接逃出暂存目录、落回被扫的 `src/`，SIGKILL 残留就是 untracked build input。
+        """
+        problems = []
+        for node in ast.walk(ast.parse(textwrap.dedent(body))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'mkstemp'):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg not in ('prefix', 'suffix'):
+                    continue
+                if not self.plain_relative_component(keyword.value, body):
+                    problems.append(
+                        f'mkstemp({keyword.arg}=…) may only be a relative name fragment, '
+                        f'got: {ast.unparse(keyword.value)[:120]}')
+        return problems
+
     def temp_derivation_problems(self, body, root_constant='PUBLISH_DIR'):
         """被 `os.replace()` 发布的那个名字，派生链必须**以**仓根 scratch 为基底。"""
         published = self.published_temp_names(body)
@@ -1356,6 +1451,21 @@ class EnvironmentControls(unittest.TestCase):
         if not self.roots_at(body, ast.Name(id=published[0], ctx=ast.Load()), root_constant):
             return [f'{published[0]} must derive FROM {root_constant} (as the base of the '
                     f'chain), got: {ast.unparse(values[0])[:160]}']
+        # r11（DeepSeek boundary P1）：`replacement_target_names` 只比对**名字字符串** ——
+        # 在 f-string 之前插一句 `path = _E()`（`_E.name == '../src'`）后，被发布的目标名
+        # 仍是 `path`、判据照绿，而临时文件落到 `src/`。目标名在函数体里只准出现一次绑定，
+        # 且必须是把自身规范化成 `Path` 的那一句（共享实现的 `path = Path(path)`）；
+        # 夹具里它本来就是形参，一次绑定都不该有。
+        problems = []
+        for target in sorted(self.replacement_target_names(body)):
+            sources = [ast.unparse(value) for bound, value in self.bound_expressions(body)
+                       if bound == target]
+            if sources not in ([], [f'Path({target})']):
+                problems.append(
+                    f'the published target {target} may only be rebound as '
+                    f'"Path({target})", got: {sources}')
+        if problems:
+            return problems
         return []
 
     def sibling_atomic_guards(self, source, function):
@@ -1386,11 +1496,20 @@ class EnvironmentControls(unittest.TestCase):
         # **函数体**。在 `ROOT = …` 之前补一句模块级 `Path = lambda value: Path('/tmp', value)`
         # （或干脆 `Path = pathlib.Path` 之外的自定义可调用对象），函数体里一次绑定都没有，
         # `body_binding_count(body, 'Path') == 0` 照样成立，而 `Path(root)` 走的是重绑后的
-        # 对象 —— 仓根判定与 `PUBLISH_DIR` 派生全被改掉、钉子却全绿。模块顶层 `Path` 只准有
-        # 那一条 import 绑定。
-        self.assertEqual(self.body_binding_count(source, 'Path'), 1,
-                         '#1692 §9 r10 the only module-level binding of Path is '
-                         '"from pathlib import Path"')
+        # 对象 —— 仓根判定与 `PUBLISH_DIR` 派生全被改掉、钉子却全绿。
+        # r11（DeepSeek sibling/boundary P1）：只数次数也不行 —— 把 import 整行**换成**
+        # 一条 `Path = …`，计数仍是 1。判据读到的模块名一律按**形态**钉。
+        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os'}
+        if 'tempfile.mkstemp(' in body:
+            expected_imports['tempfile'] = 'import tempfile'
+        self.assertEqual(self.module_import_form_problems(source, expected_imports), [],
+                         '#1692 §9 r11 the module names the guard reads are bound exactly '
+                         'once, by the plain import form')
+        # r11（zai sibling P1 + DeepSeek sibling P1）：mkstemp 的 prefix/suffix 同样是路径
+        # 片段，`prefix="../src/" + path.name` 会把临时文件拼到被扫的 `src/`。
+        self.assertEqual(self.mkstemp_name_problems(body), [],
+                         '#1692 §9 r11 mkstemp prefix/suffix must stay relative name '
+                         'fragments of the published target')
         # r3（MiniMax boundary P2）：只判「body 里出现过 PUBLISH_DIR」会被
         # `PUBLISH_DIR.mkdir(...)` 那一行满足——把临时文件挪回目标旁边照样过钉。
         # r6（zai sibling/boundary P1 + DeepSeek boundary P1）：r5 的派生判据还是
@@ -2132,11 +2251,18 @@ self_check_controls_run | return | return problems
         body = self.write_source_atomic_body(source)
         # r10（zai boundary P1 + DeepSeek sibling P1）：与同族夹具同口径 —— r9 只在函数体里
         # 禁止重绑 `Path`，模块另一处补 `Path = <自定义可调用对象>` 就能让 `Path(root)` 与
-        # `Path(path).resolve()` 同时改道，函数体一字未动、全部钉子绿。模块顶层 `Path`
-        # 只准有 `from pathlib import Path` 那一条绑定。
-        self.assertEqual(self.body_binding_count(source, 'Path'), 1,
-                         '#1692 §9 r10 the only module-level binding of Path is '
-                         '"from pathlib import Path"')
+        # `Path(path).resolve()` 同时改道，函数体一字未动、全部钉子绿。
+        # r11（DeepSeek sibling/boundary P1）：次数不够，形态也要钉死；`os` / `tempfile`
+        # 同理（判据只读 `os.replace` / `tempfile.mkstemp` 的属性名，模块级 shim 能整条改道）。
+        expected_imports = {'Path': 'from pathlib import Path', 'os': 'import os'}
+        if 'tempfile.mkstemp(' in body:
+            expected_imports['tempfile'] = 'import tempfile'
+        self.assertEqual(self.module_import_form_problems(source, expected_imports), [],
+                         '#1692 §9 r11 the module names the guard reads are bound exactly '
+                         'once, by the plain import form')
+        self.assertEqual(self.mkstemp_name_problems(body), [],
+                         '#1692 §9 r11 mkstemp prefix/suffix must stay relative name '
+                         'fragments of the published target')
         # r6（DeepSeek sibling P1）：r5 只在同族夹具那侧把「临时变量名」改成从
         # `os.replace()` 的 AST 实参读，共享实现这里仍把字面量 `temporary` 当判据 ——
         # 换个变量名再重绑就绕开了。这里同样从 AST 取真正被发布的名字。
@@ -2245,6 +2371,13 @@ self_check_controls_run | return | return problems
             self.assertEqual(self.fixture_bindings(source, name),
                              [f'from negative_process import {name}'],
                              f'#1903 the fixture must bind {name} only from negative_process')
+        # r11（zai sibling P2 #4）：调用方自己也算 `root = Path(__file__).resolve().parents[5]`
+        # 后把 root 交给共享实现 —— 模块级 `Path` 影子能把这个 root 指到别处，而共享那份的
+        # 钉子只看 `negative_process.py`。同一形态钉在调用方这边也补一条。
+        self.assertEqual(self.module_import_form_problems(
+            source, {'Path': 'from pathlib import Path', 'os': 'import os',
+                     'tempfile': 'import tempfile'}), [],
+            '#1903 r11 the call-site fixture binds the module names by the plain import form')
         self.assertEqual(source.count('write_source_atomic(root, path, changed.encode())'), 1,
                          '#1692 §9 the mutant is published atomically')
         self.assertEqual(source.count('write_source_atomic(root, path, original)'), 1,
@@ -2377,6 +2510,22 @@ self_check_controls_run | return | return problems
                  'from pathlib import Path',
                  'from pathlib import Path\n\n\ndef Path(value):  # noqa: N802 - 影子函数\n'
                  "    return __import__('pathlib').Path('/tmp', value)"),
+                # r11（DeepSeek sibling/boundary P1）：import 整行**换成**一条赋值，计数仍是 1。
+                ('atomic-publish-path-import-replaced-by-a-single-binding',
+                 'from pathlib import Path',
+                 "Path = lambda value: __import__('pathlib').Path('/tmp', value)"),
+                # r11（DeepSeek sibling P1 #3）：`os.replace` 的接收者没有钉，模块级 shim
+                # 可以让整条发布链改道而正文一字未动。
+                ('atomic-publish-os-import-shadowed-by-a-shim',
+                 'import os',
+                 'import os\n\n\nclass _OsShim:\n'
+                 '    def __getattr__(self, name):\n'
+                 "        return getattr(__import__('os'), name)\n\n\nos = _OsShim()"),
+                # r11（DeepSeek boundary P1）：目标名被重绑成伪 PathLike。
+                ('atomic-publish-target-name-rebound-to-a-fake-pathlike',
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'",
+                 "    path = type('E', (), {'name': '../src'})()\n"
+                 "    temporary = publish / f'.negctl-{path.name}.tmp'"),
                 # r10（DeepSeek boundary P1）：任意对象的 `.name` 都能是目录名。
                 ('atomic-publish-temp-fstring-interpolates-a-foreign-attribute',
                  "    temporary = publish / f'.negctl-{path.name}.tmp'",
