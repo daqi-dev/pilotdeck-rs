@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct Services {
     pub options: Options,
@@ -493,6 +493,39 @@ fn surrogate_path_not_found(entry: &AttachEntry, original: &JsString, cwd: &Path
     JsString::from_utf16(units)
 }
 
+/// #1461 r2 (DS concurrency P1): Node `process.cwd()` caches the first
+/// successful read (until chdir) — after the cwd is removed, `process.cwd()`
+/// and `path.resolve("rel")` keep returning the cached directory; only a
+/// failed *first* read throws `uv_cwd` (measured Node 22.22; the same cache
+/// form as `skills::process_cwd`,
+/// specs/gateway-parity/diffs/A7.4-TOOLBUDGET-CWD-001-R1.md).
+///
+/// #1461 r3 honest residual (DS boundary P1): this cache is *lazy* — it is
+/// seeded by the first relative surrogate diagnostic that finds the cwd
+/// readable, not at process start the way Node's is. The snapshot therefore
+/// covers the *second and later* diagnostics after a mid-run deletion; the
+/// FIRST relative surrogate diagnostic after the deletion still sees
+/// `current_dir()` fail, returns `None`, and stays silent where a warm TS
+/// process would resolve against its startup-seeded cache and emit the
+/// diagnostic. A cwd that was never readable (cold on both sides) stays
+/// silent either way — TS `path.resolve` throws `uv_cwd` there, and #1464
+/// keeps an attachment failure from failing the turn. Closing the gap
+/// needs a crate-level cache seeded at gateway start and shared with
+/// `skills::process_cwd` (the A7.4-TOOLBUDGET-CWD-001 area) — tracked as a
+/// followup, not changed here.
+fn cached_process_cwd() -> Option<PathBuf> {
+    static CACHED: Mutex<Option<PathBuf>> = Mutex::new(None);
+    let mut cached = CACHED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(cwd) = &*cached {
+        return Some(cwd.clone());
+    }
+    let cwd = std::env::current_dir().ok()?;
+    *cached = Some(cwd.clone());
+    Some(cwd)
+}
+
 /// TS AttachmentResolver.ts:171 — the file too-large diagnostic.
 fn file_too_large(path: &str, bytes: u64, limit: u64) -> String {
     format!("Attachment {path} is {bytes} bytes (limit {limit}); skipped.")
@@ -820,12 +853,27 @@ pub(super) fn compose_attachment_turn(
                 // explicit base resolves against the *process* cwd, not the
                 // project root — the TS probe's diagnostic prefix is
                 // `/tmp/pdrs-1460-probe-cwd/` while the project root is a
-                // different directory (composer-probe.out "Probe B"). Every
-                // other `resolve_units` call site passes the process cwd too
-                // (metadata.rs, task_budget, edgeclaw text). An unreadable
-                // cwd stays silent — the TS collection pass swallows its
-                // own failures with `catch {}`.
-                if let Ok(cwd) = std::env::current_dir() {
+                // different directory (composer-probe.out "Probe B"); the
+                // other cwd-free `resolve_units` callers (task_budget,
+                // edgeclaw text) read the process cwd the same way. r2 fix
+                // (DS concurrency P1 / boundary P2): the cwd is only
+                // consulted for *relative* spellings — Node never reads it
+                // for an absolute path (`path.resolve` stops at the first
+                // absolute segment; `skills::resolve` is the same shape),
+                // so the diagnostic must survive an unreadable cwd there —
+                // and for relative spellings Node caches the first
+                // successful read (until chdir), so a cwd deleted later
+                // still resolves against the old path (measured Node 22.22,
+                // `skills::process_cwd`,
+                // specs/gateway-parity/diffs/A7.4-TOOLBUDGET-CWD-001-R1.md):
+                // the cached snapshot covers it instead of dropping the
+                // diagnostic. A cwd deleted *before the first relative
+                // diagnostic* (or never readable) stays silent — see the
+                // honest-residual note on `cached_process_cwd`; #1464 keeps
+                // an attachment failure from failing the turn.
+                if original.units().first() == Some(&(b'/' as u16)) {
+                    diagnostics.push(surrogate_path_not_found(entry, original, Path::new("/")));
+                } else if let Some(cwd) = cached_process_cwd() {
                     diagnostics.push(surrogate_path_not_found(entry, original, &cwd));
                 }
             }

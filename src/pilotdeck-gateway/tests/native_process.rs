@@ -12,8 +12,14 @@ mod test_exact_receipt;
 #[path = "common/negative_receipt.rs"]
 mod test_negative_receipt;
 #[allow(dead_code)]
+#[path = "common/permission_faults.rs"]
+mod test_permission_faults;
+#[allow(dead_code)]
 #[path = "../src/test_process.rs"]
 mod test_process;
+#[allow(dead_code)]
+#[path = "common/skip_line.rs"]
+mod test_skip_line;
 // Kept for the `#[path]`-included test_process.rs above, whose own tests
 // resolve `crate::test_scratch` through this crate root; this file's own
 // tests stopped using it (#1401 item 5).

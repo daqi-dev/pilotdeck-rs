@@ -15,13 +15,9 @@ mod baseline;
 mod llm_stub;
 #[path = "../src/mutants.rs"]
 mod mutants;
-#[path = "common/permission_faults.rs"]
-mod permission_faults;
 #[allow(dead_code)]
 #[path = "../src/process_group.rs"]
 mod process_group;
-#[path = "common/skip_line.rs"]
-mod skip_line;
 #[allow(dead_code)]
 // Module name matters: `src/test_process.rs` calls
 // `crate::test_exact_receipt::single_pass`, and this crate `#[path]`-includes
@@ -33,10 +29,19 @@ mod test_exact_receipt;
 #[path = "common/negative_receipt.rs"]
 mod test_negative_receipt;
 #[allow(dead_code)]
+// #1461 r5: renamed to the shared `test_` names — `src/test_process.rs`
+// (#[path]-included below) calls `crate::test_permission_faults` /
+// `crate::test_skip_line` from its two #2138 root-skip arms, and loading
+// the same file twice under two names trips `clippy::duplicate_mod`.
+#[path = "common/permission_faults.rs"]
+mod test_permission_faults;
+#[allow(dead_code)]
 #[path = "../src/test_process.rs"]
 mod test_process;
 #[path = "common/scratch.rs"]
 mod test_scratch;
+#[path = "common/skip_line.rs"]
+mod test_skip_line;
 
 use llm_stub::LlmStub;
 use pilotdeck_gateway::runtime::{
@@ -3437,14 +3442,14 @@ async fn clear_failing_inside_delete_entries_rearms_indexed_rows() {
         // must be able to open the manifest for writing.
         restore_manifest_writable()
             .expect("#1207 make the workspace manifest writable again before the skip");
-        if permission_faults::require_permission_faults() {
+        if test_permission_faults::require_permission_faults() {
             panic!(
                 "#1263 PDRS_REQUIRE_PERMISSION_FAULTS is set but the 0444 probe still \
                  succeeds (root or CAP_DAC_OVERRIDE); the mid-deletion clear-failure \
                  contract needs an unprivileged host (需要非特权宿主)"
             );
         }
-        skip_line::stderr_skip_line(
+        test_skip_line::stderr_skip_line(
             "#1263 skip: 0444 does not block this caller (root or CAP_DAC_OVERRIDE); \
              the mid-deletion clear-failure contract needs an unprivileged host\n",
         );
@@ -4447,7 +4452,7 @@ fn require_permission_faults_env_child() {
     // still exits clean. `run_cases` only accepts a child that prints exactly
     // one passed test and one receipt, and an uncaught panic would be
     // indistinguishable from a crash there.
-    let parsed = std::panic::catch_unwind(permission_faults::require_permission_faults);
+    let parsed = std::panic::catch_unwind(test_permission_faults::require_permission_faults);
     match expected.as_str() {
         "true" => assert_eq!(
             parsed.ok(),

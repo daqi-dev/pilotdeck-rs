@@ -83,7 +83,10 @@ class EnvironmentControls(unittest.TestCase):
         'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key) | '
         'test(=native_process::tests::non_utf8_home_and_sidecar_are_refused) | '
         'test(=storage::tests::temporary_create_failure_reports_the_transcript_not_the_staging_name) | '
-        'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path)')
+        'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path) | '
+        'test(=native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent) | '
+        'test(=test_process::an_unreadable_stat_of_a_possible_child_fails_the_child_audit) | '
+        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -4263,7 +4266,22 @@ self_check_controls_run | return | return problems
                 f'{relative}: a crate-root or bare-`mod` file reports a name that depends '
                 f'on the module nesting, not on the path. Run `cargo nextest list` and '
                 f'paste the exact name nextest prints.')
-        if parts[-1] != 'tests':
+        # #1461 r2: the trailing-`tests` append is only right when the file
+        # really nests its tests inside an inner `mod tests` (the mod.rs
+        # shape). A `_tests.rs` module file (services_tests.rs) declares its
+        # tests directly, so the old unconditional append derived a phantom
+        # segment nextest never reports (`native_process::services_tests::
+        # tests::<leaf>`) and the guard then demanded a name that selects
+        # nothing — the same silent hole this check exists to close. The
+        # measured names come from libtest `--exact` runs (the negctl
+        # receipts print them verbatim).
+        # #1461 r3 (DS boundary P2): only the *inline* `mod tests {` shape
+        # proves the file's own fns sit under `::tests::`. A file-level
+        # `mod tests;` declaration points at a separate tests.rs — fns in
+        # THAT file derive their own path — so a top-level test fn next to a
+        # `mod tests;` would regrow the phantom segment. Require the brace.
+        text = source.read_text(errors='replace')
+        if parts[-1] != 'tests' and re.search(r'^\s*mod tests\s*\{', text, re.M):
             parts.append('tests')
         return '::'.join([*parts, leaf])
 
@@ -4799,9 +4817,17 @@ self_check_controls_run | return | return problems
         self.assertEqual(
             self.nextest_visible_name(crate, crate / 'src/skills/tests.rs', 'leaf'),
             'skills::tests::leaf')
+        # #1461 r2: this example used a hypothetical `src/grep/mod.rs` that
+        # does not exist anywhere in the crate — it only passed because the
+        # old code appended `tests` without reading the file. The guarded
+        # append needs a real `mod tests {` carrier to prove the mapping;
+        # #1461 r3 (DS boundary P2): `src/channel/mod.rs` carries the
+        # semicolon form (`mod tests;`), which does NOT nest this file's own
+        # fns — the inline-brace carrier is `src/handle_path.rs:129`
+        # (measured, `grep -n 'mod tests {'`).
         self.assertEqual(
-            self.nextest_visible_name(crate, crate / 'src/grep/mod.rs', 'leaf'),
-            'grep::tests::leaf')
+            self.nextest_visible_name(crate, crate / 'src/handle_path.rs', 'leaf'),
+            'handle_path::tests::leaf')
         self.assertEqual(
             self.nextest_visible_name(crate, crate / 'tests/live_e2e.rs', 'leaf'),
             'leaf')

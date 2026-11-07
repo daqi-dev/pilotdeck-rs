@@ -12,12 +12,16 @@ red). The four silent-failure rows pin the other half of the split: a
 content-produced attachment keeps every pinned path failure silent like the
 audio skip (unresolved, the P2 internal error, the lone-surrogate
 diagnostic, and the open failure — the arms with a bound test; the deeper
-gates share the same `no_resolver` continue). The four #1461 rows pin the
+gates share the same `no_resolver` continue). The seven #1461 rows pin the
 two spellings — the outer diagnostic keeps the lone surrogate through the
 TS-equivalent resolve while only the fs error spelling is lossy, the route
-words follow the raw spelling rather than the resolved tail, and the
+words follow the raw spelling rather than the resolved tail, the
 diagnostics note carries the raw UTF-16 (not a replacement character) into
-the block text.
+the block text, the resolve base is the process cwd (a project-root
+base breaks the outer prefix), the absolute branch never reads the
+cwd at all — a deleted cwd must not eat the diagnostic — and the
+relative branch answers from the cached first read after the cwd is
+deleted, the way Node's `process.cwd()` does.
 """
 import argparse
 import hashlib
@@ -41,12 +45,16 @@ ELOOP = 'native_process::services_tests::direct_content_with_an_eloop_path_stays
 UNOPENABLE = 'native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent'
 SURROGATE = 'native_process::services_tests::lone_surrogate_path_becomes_not_found_diagnostic'
 FOLDED = 'native_process::services_tests::folded_surrogate_path_routes_the_diagnostic_on_the_raw_spelling'
+ABSOLUTE = 'native_process::services_tests::absolute_surrogate_diagnostic_survives_deleted_cwd'
+WARM_CACHE = 'native_process::services_tests::relative_surrogate_diagnostic_uses_the_cached_first_cwd'
 GOLDEN_BLOCKS = '#1460 direct content with a channelKey path must keep message, image and note blocks'
 SILENT_BLOCKS = '#1460 content attachments with invalid paths must keep message and image blocks only'
 ELOOP_TURN = '#1460 an ELOOP path on a content attachment must not fail the turn'
 UNOPENABLE_QUIET = '#1460 an unopenable path on a content attachment must not diagnose'
 SURROGATE_SPELLING = '#1461 the not-found diagnostic must keep the surrogate outer and the lossy inner spelling'
 FOLDED_ROUTE = '#1461 the not-found words route on the raw spelling, not the resolved tail'
+ABSOLUTE_QUIET = '#1461 an absolute surrogate diagnostic must survive a deleted cwd without reading it'
+WARM_CACHE_AFTER = '#1461 after the cwd is deleted the relative surrogate diagnostic still uses the cached first read'
 
 mutations = [
     # #1460: the registration collection is a pass of its own — restoring the
@@ -151,6 +159,38 @@ mutations = [
      '    let prefix = match attachment_route(entry, &raw_lossy) {',
      '    let prefix = match attachment_route(entry, &lossy) {',
      FOLDED, FOLDED_ROUTE),
+    # #1461 r2: the resolve base is the process cwd — restoring the
+    # project-root base (the pre-r2 shape) breaks the outer prefix the
+    # lone-surrogate test pins.
+    ('surrogate-base-project-root-restored', SERVICES,
+     '''                } else if let Some(cwd) = cached_process_cwd() {
+                    diagnostics.push(surrogate_path_not_found(entry, original, &cwd));
+                }''',
+     '''                } else {
+                    diagnostics.push(surrogate_path_not_found(entry, original, project_dir));
+                }''',
+     SURROGATE, SURROGATE_SPELLING),
+    # #1461 r2 (anthropic sibling P2): the absolute branch is what keeps a
+    # deleted cwd from eating the diagnostic — folding it back into the
+    # cwd read leaves the isolated worker (its cwd is gone before the
+    # compose) silent, and its assertion fires.
+    ('surrogate-absolute-cwd-required', SERVICES,
+     '''                if original.units().first() == Some(&(b'/' as u16)) {
+                    diagnostics.push(surrogate_path_not_found(entry, original, Path::new("/")));
+                } else if let Some(cwd) = cached_process_cwd() {''',
+     '''                if let Some(cwd) = cached_process_cwd() {''',
+     ABSOLUTE, ABSOLUTE_QUIET),
+    # #1461 r5 (DS sibling P2): the cache is the point of the relative
+    # branch — never writing the first read back makes every call re-read
+    # the live cwd, and the deleted-cwd worker goes silent exactly where
+    # Node's process.cwd() would still answer from its cache.
+    ('surrogate-cwd-cache-bypassed', SERVICES,
+     '''    let cwd = std::env::current_dir().ok()?;
+    *cached = Some(cwd.clone());
+    Some(cwd)''',
+     '''    let cwd = std::env::current_dir().ok()?;
+    Some(cwd)''',
+     WARM_CACHE, WARM_CACHE_AFTER),
 ]
 
 
