@@ -5173,6 +5173,39 @@ MUTATIONS = [
       "def load_session_domain():\n"
       "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
      )),
+    # #1953 fix-r1 round 18 (codex r17 P0-1 / P0-2 / P1-3, GLM sibling r17 P2):
+    # the round-17 relay guards read a container *copy* as a fresh value, the
+    # status ruler decoded only a directly bound handle, and the freshness
+    # guard ran only on two-argument calls.  One row per spelling; the first
+    # is injected into the ruler's own source like the round-17 rows, the two
+    # status rows replace a real status write in ``session_domain.py`` like
+    # every other ``calibrate-*-status`` row.
+    ('calibrate-for-target-handle-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _hc_use():\n"
+      "        _hc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _hc = list(_hc)\n"
+      "        for _h in _hc:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
+    ('calibrate-status-bound-handle-alias-chain', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _g = getattr(report, '__setattr__')\n"
+     "                    _f = _g\n"
+     "                    _f('status', 'PASS')\n"),
+    ('calibrate-status-three-arg-handle-live', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _h = setattr\n"
+     "                    _h(report, 'status', 'PASS')\n"),
 ]
 
 
@@ -6350,6 +6383,29 @@ def calibrate_for_target_shadowed_constructor(rows):
         'flagged, passed=False')
 
 
+def calibrate_for_target_handle_container_copy(rows):
+    """#1953 fix-r1 round 18 (codex r17 P0-1): a constructor copy of a handle
+    container keeps the handles, so iterating it still hands a write over."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-handle-container-copy '
+        'flagged, passed=False')
+
+
+def calibrate_status_bound_handle_alias_chain(rows):
+    """#1953 fix-r1 round 18 (codex r17 P0-2): the status write is still a
+    write when the bound handle reaches the call through a second name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_status_three_arg_handle_live(rows):
+    """#1953 fix-r1 round 18 (codex r17 P1-3 narrow positive): the freshness
+    guard must not clear a three-argument alias that still holds ``setattr``."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _h(report, 'status', 'PASS')")
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7191,6 +7247,15 @@ JUDGES = {
         False, ()),
     'calibrate-for-target-shadowed-constructor': (
         'aggregation-audit', calibrate_for_target_shadowed_constructor,
+        False, ()),
+    'calibrate-for-target-handle-container-copy': (
+        'aggregation-audit', calibrate_for_target_handle_container_copy,
+        False, ()),
+    'calibrate-status-bound-handle-alias-chain': (
+        'aggregation-audit', calibrate_status_bound_handle_alias_chain,
+        False, ()),
+    'calibrate-status-three-arg-handle-live': (
+        'aggregation-audit', calibrate_status_three_arg_handle_live,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:

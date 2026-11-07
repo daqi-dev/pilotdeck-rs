@@ -4539,6 +4539,43 @@ def _receiver_attribute_writes(tree, receivers, shared):
             scope_slots[scope] = _scope_block_slots(scope)
         return scope_slots[scope]
 
+    def _carried_container(name, scope):
+        """Roots the name *name* carries as a handle container, or ``None``.
+
+        #1953 fix-r1 round 18 (codex r17 P0-1): a container copy keeps the
+        handles the original held, so the relay scans have to see the copy as
+        the same container.  ``handle_containers`` is filled by the fixpoint
+        below; reading it is safe because every caller runs after it.
+        """
+        for level in _chain(scope):
+            if (level, name) in handle_containers:
+                return handle_containers[(level, name)]
+        return None
+
+    def _copies_carried_container(value, scope):
+        """True when *value* is a copy of a container that carries handles.
+
+        ``hs = list(hs)`` / ``hs = tuple(hs)`` / ``hs = hs.copy()`` hand the
+        same handles on under a new object; judging the constructor call as a
+        fresh value ended the relay and a real write stayed invisible (codex
+        r17 P0-1).  The shape alone is not enough -- an unrelated ``xs =
+        list(range(3))`` stays fresh -- so the copied base must be a name the
+        alias fixpoint already tracks.
+        """
+        if not isinstance(value, ast.Call):
+            return False
+        if len(value.args) == 1 and isinstance(value.func, ast.Name):
+            if value.func.id not in _CONTAINER_WRAPPERS:
+                return False
+            base = value.args[0]
+        elif (not value.args and isinstance(value.func, ast.Attribute)
+              and value.func.attr == 'copy'):
+            base = value.func.value
+        else:
+            return False
+        return (isinstance(base, ast.Name)
+                and _carried_container(base.id, scope) is not None)
+
     def _freshly_rebound(name, scope, use, allow_container=True):
         """True when the binding *name* holds at *use* is a provably fresh value.
 
@@ -4591,6 +4628,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
         if not allow_container and isinstance(
                 last[0], (ast.List, ast.Tuple, ast.Set, ast.Dict, ast.ListComp,
                           ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return False
+        if not allow_container and _copies_carried_container(last[0], scope):
+            # Round 18 (codex r17 P0-1): a constructor copy of a tracked
+            # container keeps the handles, so it does not end the relay.
             return False
         return _fresh_value(last[0], _bound_names(scope))
 
@@ -5044,15 +5085,22 @@ def _receiver_attribute_writes(tree, receivers, shared):
     def collect(node, scope, loops):
         written = _setattr_arguments(node, kinds)
         writes = [] if written is None else [written]
-        if writes and isinstance(node.func, ast.Name) and len(node.args) == 2:
+        if writes and isinstance(node.func, ast.Name):
             # #1953 fix-r1 round 17: the *bound* spelling (two arguments:
             # key, value) writes the receiver the name holds.  The scope that
             # binds it decides which receiver that is (codex r16 P0-3/P0-4);
             # ``_freshly_rebound`` still comes first, because a certain fresh
             # overwrite means the name holds no handle at all.
+            #
+            # #1953 fix-r1 round 18 (codex r17 P1-3): the freshness guard is
+            # about the *name*, not the arity.  Guarding only the two-argument
+            # spelling kept ``h = setattr; h = lambda *a: None; h(md, 'common',
+            # object())`` red -- the call writes nothing, but the receiver was
+            # still withdrawn.  Only the receiver resolution below needs the
+            # bound-handle shape.
             if _freshly_rebound(node.func.id, scope, node):
                 writes = []
-            else:
+            elif len(node.args) == 2:
                 receivers = _handle_receivers(node.func.id, scope, node)
                 if receivers is not None:
                     # An empty set is an answer too: the bindings in force say
@@ -8041,18 +8089,34 @@ def _bound_handle_value(value):
     return False
 
 
-def _bound_handle_name(node, bindings, call):
+def _bound_handle_name(node, bindings, call, depth=0, seen=None):
     """True when the name *node* holds a receiver-bound write handle at *call*.
 
     Any visible binding that is such a handle answers yes: the status ruler's
     conservative direction is "the write happened", so an ambiguous binding
     set is read as bound (a missed status write is the false PASS this ruler
     exists to catch).
+
+    #1953 fix-r1 round 18 (codex r17 P0-2): the handle may be handed over by
+    name first -- ``g = getattr(report, '__setattr__'); f = g;
+    f('status', 'PASS')`` -- and only the direct binding was decoded, so the
+    status write vanished from the audit.  Follow name bindings recursively
+    (bounded, with a visited set so a cycle cannot spin), still taking the
+    conservative answer: any hop that is a handle makes the call bound.
     """
-    if not isinstance(node, ast.Name) or bindings is None:
+    if not isinstance(node, ast.Name) or bindings is None or depth > 8:
         return False
-    return any(_bound_handle_value(value)
-               for _line, value in _bindings_at(bindings, node.id, call))
+    seen = set() if seen is None else seen
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    for _line, value in _bindings_at(bindings, node.id, call):
+        if _bound_handle_value(value):
+            return True
+        if isinstance(value, ast.Name) and _bound_handle_name(
+                value, bindings, call, depth + 1, seen):
+            return True
+    return False
 
 
 def _call_written_values(call, bindings=None):
@@ -10540,6 +10604,69 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 17)')
+    # Round 18 (codex r17 P0-1/P0-2/P1-3): a constructor copy of a tracked
+    # container keeps the handles, a status handle survives a name-to-name
+    # hand-over, and the freshness guard judges the name, not the arity.
+    for _label, _source, _want in (
+            ("a handle container copied by list()",
+             "def _w37_use():\n"
+             "    _w37 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w37 = list(_w37)\n"
+             "    for _w37h in _w37:\n"
+             "        _w37h('common', object())\n", True),
+            ("a handle container copied by tuple()",
+             "def _w38_use():\n"
+             "    _w38 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w38 = tuple(_w38)\n"
+             "    for _w38h in _w38:\n"
+             "        _w38h('common', object())\n", True),
+            ("a handle container copied but only read",
+             "def _w39_use():\n"
+             "    _w39 = [getattr(md, '__setattr__')]\n"
+             "    _w39 = list(_w39)\n"
+             "    print(_w39)\n", False),
+            ("a live three-argument write alias",
+             "def _w40_use():\n"
+             "    _w40 = setattr\n"
+             "    _w40(md, 'common', object())\n", True),
+            ("a three-argument write alias that is certainly overwritten",
+             "def _w41_use():\n"
+             "    _w41 = setattr\n"
+             "    _w41 = lambda *a: None\n"
+             "    _w41(md, 'common', object())\n", False)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                            frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 18)')
+    for _label, _source, _want in (
+            ("a status write through a name-to-name handle",
+             "def main(report):\n"
+             "    _g = getattr(report, '__setattr__')\n"
+             "    _f = _g\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a three-hop handle",
+             "def main(report):\n"
+             "    _g = report.__setattr__\n"
+             "    _f = _g\n"
+             "    _h = _f\n"
+             "    _h('status', 'PASS')\n", True)):
+        _tree = ast.parse(_source)
+        _function = _tree.body[-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 18)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (
