@@ -136,13 +136,22 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 绑定父 source 哈希的 abort-state oracle，仍保持严格比较；原始来源与哈希见
 `_tmp/20261026-issue-1252/fix-r2/reference-refresh.json`。#1260 的当前产品差异范围应为
 那 16 个 STABLE-DIFF 格，另外两格动态 UUID 差异仍独立存在。
-修复后当前实现已重新实跑全部96格：**78 PASS / 18 FAIL**，失败恰为上述16格顺序与2格UUID，
+修复前（#1252 fix-r2）当前实现实跑全部96格：**78 PASS / 18 FAIL**，失败恰为上述16格顺序与2格UUID，
 无意外差异；原始结果见 `_tmp/20261026-issue-1252/fix-r2/matrix-final-summary.json`。
+**#1260 修复后实跑全部 96 格：94 PASS / 2 FAIL**，失败只剩上面两格动态 runId 的 stdout，
+16 格关闭顺序全部 `ok`；原始 `test result` 行与逐格输出见 `_tmp/20261107-issue-1260/matrix/`
+（mbp2，HEAD `d98cafa18`，dirty 0，持 `/tmp/pdrs-parity.lock` 目录租约）。同一 16 格在修复前后
+各重复十轮：修复前 160/160 以 `differing surfaces: ["connection closures"]` 失败，修复后 160/160 `ok`
+（`_tmp/20261107-issue-1260/pre/` 与 `post-repeat/`）。
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
 abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）在 phase4 登记为 94 PASS / 2 FAIL；
 #1252 首轮严格比较的 58 PASS / 38 FAIL 已按上述真实重复结果重新归因，不能沿用 phase4 历史结论。
-`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；16 个稳定关闭顺序差异保留 FAIL。
+`{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较；16 个稳定关闭顺序差异已由 #1260
+按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
+`signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
+逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
+产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
@@ -171,7 +180,7 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
   python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 75 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），新增 31 个精确名单项变异，以及
+产品及比较边界负控固定 76 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`），新增 31 个精确名单项变异，以及
 范围扩大、未登记条目、非数组放行三个边界变异。每个名单项独立绑定
 `signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics`
 与含完整格名的 `#1252 unordered close swap must pass: <ID>` 消息；其余完整绑定见脚本。
@@ -182,7 +191,7 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
 
-`--check-anchors` 与兼容入口 `--check` 共用同一份 75 项目录校验。#1252 修复轮只调整下列绑定：
+`--check-anchors` 与兼容入口 `--check` 共用同一份 76 项目录校验。#1252 修复轮只调整下列绑定：
 
 | 变异体 | 完整测试名 | 专属失败消息 |
 |---|---|---|
