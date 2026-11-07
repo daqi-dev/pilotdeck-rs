@@ -1251,14 +1251,13 @@ async fn superseded_batch_timer_does_not_drain() {
     // taken and dropped, which is what a turn without a gateway does).
     channel.runtime.drain_inbound_batch(CHAT, 7, 3).await;
     assert!(
-        channel
+        !channel
             .runtime
             .state
             .lock()
             .expect("#1329 state mutex")
             .batches
-            .get(CHAT)
-            .is_none(),
+            .contains_key(CHAT),
         "the live timer finishes the batch and removes the entry"
     );
 }
