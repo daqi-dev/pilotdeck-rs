@@ -84,6 +84,24 @@ const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_s
 /// (`http_proxy::NODE_HEADERS_TIMEOUT_408`, its `grid_anchor`), and the
 /// webhook channel already serves through it.
 const DEFAULT_HEADERS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// #2026 (decision C): the bound on `SmsHandle::stop()`'s drain of the
+/// connections the accept loop already handed out. The TS channel blocks
+/// inside its `server.close()` callback until every connection ends — with a
+/// half-sent request head that is *never*, because `httpServerPreClose`
+/// clears the connections checker and the stalled head no longer retires
+/// (`A8.3-CH-SMS-012-R1`: 199,001 ms unresolved, a right-censored lower
+/// bound). This port drains like the sibling `wecom_callback` lane
+/// (`wecom_callback/http.rs`: JoinSet + `join_next`), but wrapped in a
+/// `tokio::time::timeout` so the wait cannot outlive this bound. 60 s is the
+/// head deadline's own magnitude: a connection stalled while reading its
+/// head always ends within it, and the drain clock starts at `stop()` —
+/// strictly later than the connection's own accept — so a head-phase
+/// connection always reaches its natural deadline. Anything longer (a
+/// stalled body read at 300 s, a handler that never resolves) is truncated
+/// at the bound: the task's `JoinSet` is dropped, which aborts the remaining
+/// connection tasks and closes their sockets. The bounded-ization difference
+/// is registered in `specs/gateway-parity/diffs/A8.3-CH-SMS-014.md`.
+const STOP_DRAIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 const TWIML_OK: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>";
 
 /// `process.env` read through an injected lookup (the TS start reads the real
@@ -249,10 +267,11 @@ struct SmsShared {
     /// Node's server `headersTimeout`, applied to the request-head read
     /// (#1955). Immutable for the channel's lifetime, so no lock.
     headers_timeout: std::time::Duration,
-    /// #2035: detached connection tasks of **this** channel that have not
-    /// finished. Test-only bookkeeping for the `sms-stop-waits-for-connections`
-    /// mutation switch; production builds neither declare the field nor pay
-    /// for the counter.
+    /// Connection tasks of **this** channel that have not finished,
+    /// test-only bookkeeping: the drain cases wait on it until the accept
+    /// loop has handed a connection to its task, so a `stop()` issued before
+    /// the hand-off cannot measure the no-op window and call it a drain.
+    /// Production builds neither declare the field nor pay for the counter.
     #[cfg(test)]
     live_connections: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -350,23 +369,14 @@ impl ChannelHandle for SmsHandle {
             shared.log("info", format!("sms: stopping ({logged})"));
             if let Some(server) = server {
                 let _ = server.shutdown.send(true);
+                // #2026 (decision C): `server.task` does not only run the
+                // accept loop — it also drains the connections it handed out,
+                // bounded by [`STOP_DRAIN_LIMIT`]. Awaiting it here is what
+                // makes this `stop()` wait for the drain, and the client
+                // clearing below therefore lands *after* it, like the TS
+                // channel's `server.close()` callback ordering
+                // (`A8.3-CH-SMS-013-R1`).
                 let _ = server.task.await;
-            }
-            // #2035 mutation: the pre-fix shape for the detach semantics — a
-            // `stop()` that drains the detached connections before clearing
-            // the client. Production is constant-false
-            // (`mutants::on` without the feature), and this is what the
-            // paired case `stop_returns_before_the_detached_connection_ends`
-            // is killed by.
-            if crate::mutants::on("sms-stop-waits-for-connections") {
-                #[cfg(test)]
-                while shared
-                    .live_connections
-                    .load(std::sync::atomic::Ordering::SeqCst)
-                    > 0
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                }
             }
             shared.runtime.lock().await.client = None;
             Ok(())
@@ -633,18 +643,22 @@ impl ChannelAdapter for SmsChannel {
             let (shutdown, mut shutdown_rx) = watch::channel(false);
             let server_shared = shared.clone();
             let task = tokio::spawn(async move {
+                // #2026 (decision C): every connection this loop hands out
+                // lands in this set, so the drain below can wait for the
+                // in-flight ones — the `wecom_callback` lane's shape
+                // (`wecom_callback/http.rs`).
+                let mut connections = tokio::task::JoinSet::new();
                 loop {
                     tokio::select! {
                         _ = shutdown_rx.changed() => break,
                         accepted = listener.accept() => match accepted {
                             Ok((stream, _)) => {
                                 let shared = server_shared.clone();
-                                // #2035: taken before the spawn, so `stop()`'s
-                                // detach mutation counts a task that is queued
-                                // but not polled yet.
+                                // Taken before the spawn, so a task that is
+                                // queued but not polled yet is already counted.
                                 #[cfg(test)]
                                 let live = LiveConnection::track(&server_shared.live_connections);
-                                tokio::spawn(async move {
+                                connections.spawn(async move {
                                     #[cfg(test)]
                                     let _live = live;
                                     // Read before `shared` moves into the
@@ -678,6 +692,10 @@ impl ChannelAdapter for SmsChannel {
                                         .serve_connection(TokioIo::new(stream), service)
                                         .await;
                                 });
+                                // Finished connections are only reaped by
+                                // `join_next`, so without this the set would
+                                // grow with every webhook the process served.
+                                while connections.try_join_next().is_some() {}
                             }
                             // #1339 fix-r1: a persistent accept error (fd
                             // exhaustion) must not spin the worker hot — the
@@ -689,6 +707,34 @@ impl ChannelAdapter for SmsChannel {
                             }
                         }
                     }
+                }
+                // #2026 (decision C): the drain. The TS channel blocks in
+                // `server.close()` until every connection ends — unbounded,
+                // and on a half-sent request head effectively forever
+                // (`A8.3-CH-SMS-012-R1`). This port waits for the in-flight
+                // connections, but no longer than [`STOP_DRAIN_LIMIT`]; when
+                // the bound fires, the set this task still owns is dropped
+                // and a dropped `JoinSet` **aborts** its remaining tasks, so
+                // the channel's sockets are all closed once `stop()`
+                // returns instead of outliving it. The mutation switches are
+                // what prove both halves load-bearing: `sms-stop-no-drain`
+                // restores the pre-#2026 detach shape,
+                // `sms-stop-drain-unbounded` the TS unbounded shape.
+                let drain = async { while connections.join_next().await.is_some() {} };
+                if crate::mutants::on("sms-stop-no-drain") {
+                    // The pre-#2026 shape: stop the accept loop and return,
+                    // the connections run on detached.
+                } else if crate::mutants::on("sms-stop-drain-unbounded") {
+                    drain.await;
+                } else if tokio::time::timeout(STOP_DRAIN_LIMIT, drain).await.is_err() {
+                    server_shared.log(
+                        "warn",
+                        format!(
+                            "sms: stop drain exceeded the {STOP_DRAIN_LIMIT:?} bound; \
+                             {} in-flight connection(s) aborted",
+                            connections.len()
+                        ),
+                    );
                 }
             });
             Ok(Arc::new(SmsHandle {
