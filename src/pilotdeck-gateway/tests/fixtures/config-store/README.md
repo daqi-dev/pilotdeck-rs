@@ -55,7 +55,16 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
 - 时间走 Tokio 暂停时钟：`wait` 推进虚拟时间，watcher 的轮询与去抖计时确定性
   触发，不依赖真实 sleep。Rust 以轮询（默认 20 ms）代替 `fs.watch` 事件，监视
   对象的选取（存在则监视自身、否则监视父目录、父目录也不存在则不监视）与基线
-  一致，非 `NotFound` 的启动 stat 失败除外（保留该路径待首拍重探，#1792 r1）。
+  一致，非 `NotFound` 的启动 stat 失败除外（保留该路径待首拍重探，#1792 r1）；
+  同样的失败落在**父目录**的 stat 上时（配置文件缺失、走 `dirname` 回退），基线
+  `existsSync` 对 stat 错误返回 false（Node v22.22.0 实测 EACCES 下为 false），于是
+  仍 `watch(dirname)`；但该父目录不可读时 `watch()` 抛 EACCES，被基线的空 `catch`
+  吞掉——**这条路径在基线上根本没有监视器**（只剩手动 reload），不会「监视上一级
+  目录」。Rust 则保留父目录待首拍重探、探测恢复后上报期间错过的变更——这是
+  **fixture 内登记、待差异账本收录**的差异（`specs/gateway-parity/` 现无 #1987/A3
+  条目；#1987 A3 只登记不改语义，测试
+  `startup_parent_probe_failure_watches_the_parent_dir` 钉住现行为并注明对齐 TS
+  时恢复断言应变红）。
   本原件的 watch 场景写入间隔 30 ms，加一个轮询周期仍远小于 250 ms 去抖，结论不受
   下列差异影响。
 - 与 `fs.watch` 不全等的三处（不加 crate 时无法消除，已用单测钉住现行为）：
@@ -75,7 +84,10 @@ watch 场景用真实 `fs.watch` 与真实计时器；写入间隔 30 ms、等�
   的其它失败算被遮蔽采样，不提交任何指纹（含折叠指纹），只与上一遮蔽采样比较后上报可观测
   变化，读恢复后与最后一次完整采样比较、有差才报（#1792 r2，登记见
   `A6.3-CONFIG-POLL-001-R1.md`），同一不可读状态不会 reload 风暴、持续遮蔽也不会永久
-  静默。完整语义下漏检只有一格：改写后
+  静默。#1987 收窄了这段口径的三格（启动采样不提交 metadata 短路 A2；遮蔽**过渡拍**
+  另把 target 与最后一次完整采样比较 A1，与 R1 字面的差异待人批，见 issue #2094；
+  metadata 拍遮蔽而同拍折叠拍完整时按完整观测处理 A4），细节见
+  `src/config/store.rs` 模块文档。完整语义下漏检只有一格：改写后
   ctime 未跨 tick，且 len / is_dir / mtime / inode / dev 也都没变；精确表述见
   `src/config/store.rs` 模块文档。
   元数据变化后（或不完整采样重试时）才读被监视配置文件（含经父目录监视、后来出现的
@@ -94,17 +106,20 @@ cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 ## 负控本地运行
 
-`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 28 个
-源码变异（21 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
+`negative_controls.py` 在共享套件 runner（`negative_suite.run_cases`）上跑 34 个
+源码变异（27 个 distinct 锚点；#1792 r2 新增 8 行：启动探测失败后的首拍补报、
 遮蔽折叠指纹不提交、未分类模式不被 `NotFound` 定死、报变化拍不提交短路指纹、
 目录被换成文件后的类型探针、持续遮蔽仍上报可观测变更、目录消失是完整观测、
 `NotFound` stat 是完整观测；另有 #1899 的 6 行随 rebase 移植：停表证据退回
 `is_finished()`、watch 循环首拍 panic / spaw 后干净的早退 / 首拍循环内退出
 （drop 与 stop 两条路径）、以及永不停止——`#1650` 的静默死亡路径；#1946 再加 1 行：
-claiming poll 必须让出调度、就地载入即杀），名册分母是脚本里的 `EXPECTED_NAMES`
+claiming poll 必须让出调度、就地载入即杀；#1987 新增
+6 行：遮蔽过渡拍不比较 target 的自身指纹、启动采样提交 metadata 短路、混合拍
+误走遮蔽路径、启动即遮蔽把折叠值提交进完整指纹槽、`read_dir` 迭代中途错误被
+吞、父目录启动探测失败丢路径），名册分母是脚本里的 `EXPECTED_NAMES`
 静态字面量（删行 / 改名 / 换序即拒绝开跑，不再用运行期表长），要求各绑定
 测试自身 panic 载荷携带其行绑定的
-`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1946` 杀点标记（绑定测试内另含 `#1793` 的
+`#1736` / `#1739` / `#1792` / `#1794` / `#1899` / `#1946` / `#1987` 杀点标记（绑定测试内另含 `#1793` 的
 `MAX_POLL_INTERVAL == 60 s` 字面钉），每个变异前跑正控、后跑恢复正控，源码
 逐字节恢复并复核。运行时要求：
 
