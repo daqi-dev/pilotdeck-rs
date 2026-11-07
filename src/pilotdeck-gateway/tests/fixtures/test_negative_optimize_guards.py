@@ -55,6 +55,9 @@ SCRIPTS = (
     ('turn-runner/runner_negative.py', (), ()),
     ('network-timing/negative_private.py', (), ()),
     ('cli-parity-mock-gateway/negative_controls.py', (), ('-I',)),
+    # #1456: same entry shape after the r2/r4 migration to negative_selection.
+    ('memory-gateway/negative_controls.py', (), ()),
+    ('snapshot-projection/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

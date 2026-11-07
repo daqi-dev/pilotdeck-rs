@@ -24,7 +24,9 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import baseline_passed, registered, verdict_exit
+from negative_selection import (baseline_passed, claim_dir, missing_target,
+                                refuse_unusable_target, registered,
+                                verdict_exit)  # noqa: E402
 from negative_process import (mutating_sources, node_version, run_owned,
                               wait_for_slot)  # noqa: E402
 
@@ -297,11 +299,15 @@ def main():
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
-    if not os.environ.get("CARGO_TARGET_DIR"):
+    # The family contract, not a local copy: absent/empty/blank targets and the
+    # dot/root/src values are refused by the shared rule, and an already
+    # existing directory is a "never started" (2) rather than a bare traceback
+    # that reads as "it ran and did not come out green" (#1666 fix-r7/r9, #1734).
+    if missing_target():
         print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
         return 2
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    refuse_unusable_target()
+    out = claim_dir(sys.argv[1])
     env = os.environ.copy()
     paths = sorted({row[1] for row in rows} | {ORACLE, GENERATOR})
     results = []
@@ -518,6 +524,25 @@ def main():
         if not selected or "generator-guard-bypassed" in selected:
             generator_bypass()
 
+    # A lost row must not read as a clean run: every selected name has to carry
+    # a verdict, and the check runs *before* anything that reads as success is
+    # published -- a shrunken run used to leave an all-green summary.json and a
+    # green count line behind, so a consumer that only reads the artifact never
+    # saw the mismatch (r5 concurrency P1). Every non-diagnostic verdict counts,
+    # so a row recorded under an unregistered name is a mismatch too (r5
+    # boundary P2).
+    expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
+    recorded = [r["name"] for r in results if not r["name"].startswith("baseline-")]
+    if recorded != expected:
+        print(
+            f"verdict roster mismatch: recorded={recorded} expected={expected}",
+            file=sys.stderr,
+        )
+        (out / "summary.json").write_text(
+            json.dumps(results, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        return 1
     (out / "summary.json").write_text(
         json.dumps(results, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
     )
@@ -526,16 +551,6 @@ def main():
         f"{killed}/{len(results)} KILLED; see {out / 'summary.json'}",
         flush=True,
     )
-    # A lost row must not read as a clean run: every selected name has to carry
-    # a verdict before success can be reported (#1456 r4).
-    expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
-    recorded = [row["name"] for row in results if row["name"] in set(EXPECTED_NAMES)]
-    if recorded != expected:
-        print(
-            f"verdict roster mismatch: recorded={recorded} expected={expected}",
-            file=sys.stderr,
-        )
-        return 1
     # Every row must KILLED and at least one row must exist: an empty run or a
     # zero-kill run is never success (#818 fix-r3 P0).
     return verdict_exit(results, key="status")

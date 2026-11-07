@@ -146,7 +146,13 @@ mkdtemp 与目录树）和 A8.2-pr2 的 `SnapshotGateway` / `SnapshotProjects` �
 
 `negative_controls.py` 的表共 18 条裁决（16 条源码变异 + 2 条数据变异）。此前删掉
 一行、或把某个数据变异的分支整段删掉，其余行全 KILLED 时仍会 `n/n KILLED` 退 0
-（分母静默缩水）。现补两条：① `EXPECTED_NAMES` 与 `mutations` 逐项同序，导入期用
+（分母静默缩水）。现补两条：① `EXPECTED_NAMES` 与 `mutations` 逐项同序，`main()` 起跑时用
 共享 `negative_selection.registered` 核对，名册漂移 → exit 2 且**不留证据目录**
-（拒跑全部前移到 `out.mkdir` 之前）；② 跑完按选中范围核对
-「实际裁决名册 == 期望名册」，缺一行即 exit 1，不再可能把缩水的分母报成功。
+（拒跑全部前移到领目录之前）；② 跑完按选中范围核对
+「实际裁决名册 == 期望名册」，**核对在写 `summary.json` 与打印计数之前**，
+缺一行即 exit 1，不再可能把缩水的分母报成功、也不再留下全绿证据物。
+
+领目录与目标目录门一律走共享件（`claim_dir` / `missing_target` /
+`refuse_unusable_target`）：目录已存在、目标目录缺失 / 空 / 纯空白 / dot / 根 / `src` 内
+都记 exit 2（「从未开跑」），不再落成裸 traceback 的 exit 1。本入口已登记进
+`tests/fixtures/test_negative_optimize_guards.py` 的 `SCRIPTS` 矩阵。

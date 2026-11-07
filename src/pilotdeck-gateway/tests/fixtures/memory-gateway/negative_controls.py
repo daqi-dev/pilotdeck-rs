@@ -28,7 +28,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
-from negative_selection import baseline_passed, registered
+from negative_selection import (baseline_passed, claim_dir, missing_target,
+                                refuse_unusable_target, registered)
 from negative_process import (mutating_sources, run_owned, wait_for_slot)  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -288,9 +289,14 @@ def main():
     if len(sys.argv) < 2:
         print("usage: negative_controls.py <output-dir> [mutation ...]", file=sys.stderr)
         return 2
-    if not os.environ.get("CARGO_TARGET_DIR"):
+    # The family contract, not a local copy: absent/empty/blank targets and the
+    # dot/root/src values are refused by the shared rule, and an already
+    # existing directory is a "never started" (2) rather than a bare traceback
+    # that reads as "it ran and did not come out green" (#1666 fix-r7/r9, #1734).
+    if missing_target():
         print("CARGO_TARGET_DIR must be set by the caller", file=sys.stderr)
         return 2
+    refuse_unusable_target()
     # Refusals happen before the evidence directory is claimed: a drifted
     # roster is a "never started" (2), which must not leave `out/` behind.
     selected = set(sys.argv[2:])
@@ -310,8 +316,7 @@ def main():
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
         return 2
-    out = Path(sys.argv[1]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = claim_dir(sys.argv[1])
     rows = [row for row in mutations if not selected or row[0] in selected]
     paths = sorted({row[1] for row in rows} | {ORACLE})
     results = []
@@ -434,21 +439,30 @@ def main():
                 if not (restored.returncode == 0 and baseline_passed(log, TEST)):
                     record(name, "INVALID", "restored bound test did not pass")
 
-    (out / "summary.json").write_text(
-        json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
     # #1456 (codex sibling P1, second round): the roster literal alone only
     # proves the *source* table is intact. The data mutation runs in its own
     # branch, so deleting that branch shrank the run while the roster still
-    # matched. Require one verdict per name in the selected scope.
+    # matched. Require one verdict per name in the selected scope -- and check
+    # it *before* publishing anything that reads as success: a shrunken run used
+    # to leave an all-green summary.json and a green count line behind, so a
+    # consumer that only reads the artifact never saw the mismatch (r5
+    # concurrency P1). Every non-diagnostic verdict counts, so an extra row
+    # recorded under an unregistered name is a mismatch too (r5 boundary P2).
     expected = [n for n in EXPECTED_NAMES if not selected or n in selected]
-    recorded = [row["name"] for row in results if row["name"] in set(EXPECTED_NAMES)]
+    recorded = [r["name"] for r in results if not r["name"].startswith("baseline-")]
     if recorded != expected:
         print(
             f"verdict roster mismatch: recorded={recorded} expected={expected}",
             file=sys.stderr,
         )
+        (out / "summary.json").write_text(
+            json.dumps(results, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
         return 1
+    (out / "summary.json").write_text(
+        json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     counts = {
         state: sum(row["status"] == state for row in results)
         for state in ("KILLED", "SURVIVED", "INVALID")
