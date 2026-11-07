@@ -26,6 +26,7 @@ ASSEMBLY_MEMORY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/memo
 ASSEMBLY_SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/snapshot.rs'
 ENTRY = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 METHODS_TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/tools.rs'
+SDK = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/sdk.rs'
 REFRESH = ROOT / 'src/pilotdeck-gateway/src/runtime/refresh.rs'
 OWNER = ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner.rs'
 SNAPSHOT = ROOT / 'src/pilotdeck-gateway/src/runtime/snapshot.rs'
@@ -424,13 +425,16 @@ mutations.append(('mcp-status-constant-empty', METHODS_TOOLS,
                   '        Ok(crate::metadata::object([("servers", JsValue::Array(vec![]))]))',
                   'native_process::mcp_status_tests::set_then_status_reports_the_session_servers',
                   '#1432 the same session must read its stored server back as configured'))
-mutations.append(('mcp-status-disabled-constant-empty', METHODS_TOOLS,
-                  '        self.mcp\n'
-                  '            .config()\n'
-                  '            .mcp_server_status(params)\n'
-                  '            .await\n'
-                  '            .map_err(super::mcp::mcp_error)',
-                  '        Ok(crate::metadata::object([("servers", JsValue::Array(vec![]))]))',
+# #1432 r5（boundary P2）：上一行的常量空表变异对两个绑定测试都杀；disabled 行
+# 改为互异变异——status_result 的 enabled→status 投影被硬编成恒 "configured"，
+# 由 disabled 回读测试单独判杀（set→status 回读仍由上行覆盖）。
+mutations.append(('mcp-status-disabled-spelling-flattened', SDK,
+                  '                            if *configured {\n'
+                  '                                "configured"\n'
+                  '                            } else {\n'
+                  '                                "disabled"\n'
+                  '                            }',
+                  '                            "configured"',
                   'native_process::mcp_status_tests::a_toggled_server_reports_disabled',
                   '#1432 a disabled server must read back as disabled'))
 
@@ -559,7 +563,7 @@ EXPECTED_NAMES = (
     'project-storage-id-legacy-slug-omitted',
     'legacy-project-id-trim-omitted',
     'mcp-status-constant-empty',
-    'mcp-status-disabled-constant-empty',
+    'mcp-status-disabled-spelling-flattened',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
