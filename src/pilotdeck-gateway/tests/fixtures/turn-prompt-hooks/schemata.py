@@ -73,6 +73,11 @@ GUARDED = [
     PROMPT_TESTS,
     BASELINE,
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_prompt_tests.rs',
+    # #1274 opus P2: the HOST bindings run through factory_tests.rs's #[path]
+    # assembly of this module — client()/client_with_arg() (peer argument,
+    # execution_timeout) live here, so a concurrent edit during a run must be
+    # caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

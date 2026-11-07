@@ -53,6 +53,11 @@ GUARDED = [
     EVENTS,
     NOTICE_TESTS,
     BASELINE,
+    # #1274 opus-P2 follow-along: the notices-wiring binding runs through
+    # factory_tests.rs's #[path] assembly of this module (live_notice and its
+    # Scratch/registry helpers live here), so a concurrent edit during a run
+    # must be caught by the source guard.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
