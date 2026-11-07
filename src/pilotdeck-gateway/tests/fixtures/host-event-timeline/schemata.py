@@ -148,6 +148,28 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/host/mod.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/execution.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests.rs',
+    # #2228 r10 (MM r9 sibling P2#5): host/tests.rs (registered above)
+    # assembles its six `mod` faces into the same --lib binary
+    # (src/host/tests.rs:6-11) — binding.rs, cancel_exit.rs, event.rs,
+    # model.rs, modules.rs, resume.rs — and those faces bake five more
+    # oracles: host-module-binding/oracle.json (binding.rs:22),
+    # host-cancel-timeout/oracle.json (tests.rs:920), host-event/oracle.json
+    # (event.rs:12), host-model/oracle.json (model.rs:18) and
+    # host-modules/oracle.json (modules.rs:130). r9 registered
+    # sidecar-payload/oracle.json (an input of event.rs) without the face
+    # that bakes it; this closes the direct set. Faces of the faces (deeper
+    # `#[path]` levels) stay out — #2241 consolidation target.
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/binding.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/cancel_exit.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/event.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/model.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/modules.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/resume.rs',
+    FIXTURES / 'host-module-binding/oracle.json',
+    FIXTURES / 'host-cancel-timeout/oracle.json',
+    FIXTURES / 'host-event/oracle.json',
+    FIXTURES / 'host-model/oracle.json',
+    FIXTURES / 'host-modules/oracle.json',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

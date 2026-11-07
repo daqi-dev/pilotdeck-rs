@@ -196,8 +196,23 @@ GUARDED = [
     # #2228 r9 (DS r8 + MM r8, both families): LIVE is registered above and
     # bakes live-e2e/terminal-boundaries/oracle.json into the same binary
     # (live.rs:2143), so a concurrent edit during a run must be caught by the
-    # source guard.
+    # source guard. Faces of the registered carriers (e.g. gates_tests.rs
+    # under live_stream_tests.rs) stay out — they are registered by the
+    # fixtures whose bound rows execute them, and the mechanical closure of
+    # the whole compiled chain is the #2241 consolidation target.
     FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
+    # #2228 r10 (MM r9 sibling P1#2 + DS r9 concurrency P2, both families):
+    # live_stream_tests.rs (registered above) bakes four more oracles into the
+    # same --lib binary — live-recording/oracle.json (:3653/:3958),
+    # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
+    # and live-write-order/oracle.json (:4816); live_tail_tests.rs is
+    # registered above (LIVE's #[path] face, the r3 entry). Same carriers,
+    # same set as turn-prompt-hooks/turn-start-notices — concurrent edits
+    # must be caught by the source guard.
+    FIXTURES / 'live-recording/oracle.json',
+    FIXTURES / 'live-history/oracle.json',
+    FIXTURES / 'sidecar-payload/oracle.json',
+    FIXTURES / 'live-write-order/oracle.json',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
