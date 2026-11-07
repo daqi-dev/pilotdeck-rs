@@ -413,6 +413,16 @@ def check_catalog():
         raise RuntimeError(
             "#1885 restore set must not carry fixture goldens: " + ", ".join(strays)
         )
+    # #1885 r5: the stray filter above only covers the fixture trees. Aiming a
+    # mutation at the read-only close-order ledger would slip it into
+    # `guarded_paths()` and reopen the write-back window on a frozen ledger --
+    # and the entry/exit HEAD proofs would still pass, because each case
+    # restores its own target before they run. Pin it directly.
+    if close_order_ledger in guarded_paths():
+        raise RuntimeError(
+            "#1885 the read-only close-order ledger must never be a mutation"
+            " target (it is proved against HEAD, not written back)"
+        )
     stale = []
     for name, path, old, new, test, assertion in mutations:
         if not old or old == new:
@@ -549,7 +559,15 @@ def main():
             )
             raise
 
-    guarded = guarded_paths()
+    # #1885 r5: the restore set follows the *selection*, not the whole table.
+    # `mutating_sources` rewrites every guarded path on exit, so carrying the
+    # targets of controls that are not running would put untouched files (the
+    # `d1_ledger` frozen ledger, the `src/` targets) back into the truncation
+    # window on a subset run that never mutates them (DeepSeek sibling r5 P1).
+    # No leftover detection is lost: `mutating_sources` proves the whole `src/`
+    # tree against HEAD on entry, and the one `specs/` target is proved below.
+    guarded = sorted({row[1] for row in selected}, key=str)
+    unselected_ledger = d1_ledger not in set(guarded)
     results = []
     phase = "enter"
     interrupted = False
@@ -577,6 +595,16 @@ def main():
             # bytes the replay then parses. Same shape as
             # `sdk-signals-close-order-pin` (GLM sibling + DeepSeek sibling r4).
             assert_close_order_ledger_matches_head()
+            if unselected_ledger:
+                # #1885 r5: the D1 rejection ledger is only in the restore set
+                # when a control that rewrites it is selected. Prove it anyway
+                # -- read-only, no write-back -- so a killed run's leftover
+                # mutant is still refused under the lock.
+                relative = d1_ledger.relative_to(root).as_posix()
+                if _head_bytes(root, relative, "HEAD") != d1_ledger.read_bytes():
+                    raise RuntimeError(
+                        "#1885 unmutated ledger must equal HEAD: " + relative
+                    )
             for name, path, old, new, test, assertion in selected:
                 case = Case(name, path, old, new, test, assertion)
                 status, reason, compiled = "INVALID", "not run", False
@@ -647,10 +675,13 @@ def main():
             # Before #1885 this ledger sat in `guarded`, so `mutating_sources`
             # re-read it on exit; the frozen bytes are no longer written back,
             # so the exit-side verification has to be explicit or an edit made
-            # during the run (the replay reads the same file in the child
-            # tests) would stand unnoticed.
-            assert_close_order_ledger_matches_head()
+            # during the run would stand unnoticed.
+            #
+            # Enter the exit phase first: a proof failure here is a guard
+            # failure, and the rc contract below routes guard failures to 2
+            # ("no verdict") rather than 1 ("a control survived").
             phase = "exit"
+            assert_close_order_ledger_matches_head()
 
     except BaseException as error:
         interrupted = not isinstance(error, Exception)

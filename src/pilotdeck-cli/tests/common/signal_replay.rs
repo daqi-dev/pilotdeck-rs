@@ -1934,11 +1934,12 @@ mod comparison_tests {
 
     fn registered_unordered_close_ids() -> Vec<String> {
         // Like #1278, keep ledger access at runtime so src-only builds work.
-        // #1885: the ledger itself is read-only now -- the two negative
-        // controls prove it equals HEAD under the tree lock instead of
-        // rewriting it -- but the same fixture's other files (the SIGINT
-        // wrapper / `capture.py`) are still rewritten in place under the
-        // exclusive tree lock, so every read of this fixture takes the lease.
+        // #1885: this ledger is read-only -- the negative controls prove it
+        // equals HEAD under the tree lock instead of rewriting it -- so the
+        // lease is defensive: it costs nothing unless a writer holds the tree,
+        // and it keeps this read correct if a future control ever puts the
+        // ledger back into a restore set (the wrappers that read the same
+        // fixture's rewritten files take their own lease).
         let _lease = crate::read_lease::fixture_read_lease();
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
