@@ -1562,7 +1562,9 @@ fn lease_link_matches(
 /// sequential read of the attachment per lease, bounded by the length
 /// `verified` approved (see `hash_file_exact`).
 fn lease_link_content_matches(file: &mut File, expected_sha256: &str, expected_bytes: f64) -> bool {
-    if expected_sha256.is_empty() || !(expected_bytes >= 0.0) {
+    // No digest or no usable length is a refusal, not a pass: a missing
+    // record field must never turn the length term into "read to EOF".
+    if expected_sha256.is_empty() || !expected_bytes.is_finite() || expected_bytes < 0.0 {
         return false;
     }
     hash_file_exact(file, expected_bytes as u64).is_ok_and(|digest| digest == expected_sha256)
