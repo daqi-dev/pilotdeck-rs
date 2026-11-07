@@ -52,6 +52,17 @@ impl KernelProjection {
             serial: Mutex::new(()),
         }
     }
+    pub(crate) fn accepted_time(&self, run: &str) -> Option<String> {
+        let state = self.projection.snapshot().ok()?;
+        let metadata = to_json(&JsValue::Object(state.metadata)).ok()?;
+        if metadata["kernelExecution"]["runId"] == run {
+            metadata["kernelExecution"]["acceptedAt"]
+                .as_str()
+                .map(str::to_string)
+        } else {
+            None
+        }
+    }
     pub(crate) fn sync(&self, snapshot: &Value) -> Result<(), RuntimeError> {
         let _guard = self.serial.lock().map_err(error)?;
         let revision = snapshot["revision"]
@@ -63,7 +74,7 @@ impl KernelProjection {
             _ => return Err(error("history must be canonical messages")),
         };
         let sha = digest(&json!(history));
-        let index_sha = digest(&snapshot["kernelIndex"]);
+        let index_sha = digest(&json!({"schema":2,"index":snapshot["kernelIndex"]}));
         let start = self.recorder.writer().snapshot_state().sequence;
         let read = crate::storage::read_transcript(self.recorder.writer().path()).map_err(error)?;
         let previous = read
@@ -99,7 +110,23 @@ impl KernelProjection {
             .ok_or_else(|| error("invalid UI metadata"))?;
         let marker = json!({"kernelSessionId":self.kernel,"contextRef":self.context,"revision":revision,"sha256":sha,"indexSha256":index_sha});
         metadata["kernelProjection"] = marker.clone();
-        metadata["kernelExecution"] = snapshot["kernelIndex"].clone();
+        let mut index = snapshot["kernelIndex"].clone();
+        if index.is_object() {
+            if index["acceptedAt"].is_string() {
+                index["clockSource"] = json!("kernel_journal");
+            } else if metadata["kernelExecution"]["runId"] == index["runId"]
+                && metadata["kernelExecution"]["acceptedAt"].is_string()
+            {
+                index["acceptedAt"] = metadata["kernelExecution"]["acceptedAt"].clone();
+                index["clockSource"] = metadata["kernelExecution"]["clockSource"].clone();
+            } else {
+                index["acceptedAt"] = json!(String::from_utf16_lossy(
+                    SystemExecutionClock.now_iso().units()
+                ));
+                index["clockSource"] = json!("gateway_receipt_observation");
+            }
+        }
+        metadata["kernelExecution"] = index;
         let prompts = history
             .iter()
             .filter(|message| message["role"] == "user" && message["metadata"]["synthetic"] != true)
@@ -525,6 +552,16 @@ mod tests {
                 .unwrap()
                 .messages
                 .is_empty()
+        );
+        let before = to_json(read.entries[0].get("metadata").unwrap()).unwrap()["kernelExecution"]
+            ["acceptedAt"]
+            .clone();
+        assert!(before.is_string());
+        cache.sync(&json!({"revision":0,"history":[],"kernelIndex":{"executionId":"original-call","runId":"original-run","status":"needs_human","prompt":"pending original question","active":true}})).unwrap();
+        let unchanged = crate::storage::read_transcript(&path).unwrap();
+        assert_eq!(
+            to_json(unchanged.entries[0].get("metadata").unwrap()).unwrap()["kernelExecution"]["acceptedAt"],
+            before
         );
         let index = json!({"active":true,"runId":"original-run","executionId":"original-call","prompt":"pending original question"});
         let display = with_active_input(&json!([]), &index, "2026-11-08T00:00:00Z");

@@ -4596,3 +4596,7 @@ Kernel committed history 为空时的真实 UI pending 刷新缺口已修：接�
 ### 2026-11-08 Kernel admission 前取消 fence（lane C）
 
 已在 async preflight 前后及取得 RPC 锁后、写 execution.input 前检查本地取消；尚未由 Kernel 接受的新 ingress 在此结束，明确 kernelAccepted=false，不再先开新执行再补 cancel。已存在相同原 run 的 Kernel call 仍走原执行控制/观察，不冒充未执行。新增 preflight 期间取消、无 RPC/无 execution_started 正例；focused kernel 22/22 通过。limits/accepted_at_ms 正与 A 的通用公开 facade 对接，当前不提前宣称实际 deadline 验收。
+
+### 2026-11-08 原生绝对 deadline 与接受时钟（lane C）
+
+按 A 的通用 facade，只有 execution.open.features 广告 scheduler.input-limits.v1 时，产品 prepared execution.operationDeadline 才转换为 outer execution.input.limits.deadline_ms；未广告明确拒绝配置，limits 不塞 opaque input，不把模型 rounds 换成 Scheduler steps。待 capture 用户行读取 call.accepted.payload.accepted_at_ms，时钟随 Kernel journal 保留；旧 journal 使用 metadata 缓存里的首次回执观察时间，并标 clockSource，不再每次 read 使用 now。focused kernel 23/23 通过（含 exact UTC wire、旧 host 拒绝、无 rounds 映射及 pending 时间稳定）。真实 deadline 仍由总集成配 A 新 host 验收；原 retained UI activity summary 的 Processed 时间还受原 bridge replay 时间影响，未宣称完整耗时显示验收。

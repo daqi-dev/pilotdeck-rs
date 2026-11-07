@@ -58,3 +58,5 @@ Reopen 仅观察时不申请 lease；execution input/respond/import 才从公开
 实际 native turn 读取 leased router.stats.modelPricing，经 ordered entries 端口保留 JS 枚举/substring 定价顺序，None 保持 bootstrap 默认，显式 empty 保持 empty。每 turn mode/basePermissionMode 通过 native prepare，managed 配置保持原优先级。现 profile 未安装产品 memory resolver、InstructionDiscovery 与 plugin contributions；检测到实际启用/发现内容时只拒绝 effect，readonly 不被阻断。没有配置的 null/false 等不被泛化成拒绝，legacy 不执行这个检查；不以此声称这些产品端口已完成迁移。
 
 显式历史导入的 display metadata 也验证唯一性/形状：空或重复 kernelMessageId、非法 turnId/timestamp/timeline、同声明 turn 的重复 prose block identity 均拒绝。合法 call/result 共享 tool timeline 仍由完整工具配对验证允许；无声明 turn 的旧 block ID 可重用，但 UI 派生 ID 用确定性目标 session-local namespace 防止合并，原始 canonical 字节语义不改。展示标识不是可恢复执行句柄。
+
+Deadline 只经广告的 scheduler.input-limits.v1 通用面：prepared operationDeadline 的绝对 UTC 毫秒进入 execution.input outer limits，未广告即明确拒绝这项配置。模型轮数与 Scheduler step 数没有自动对应。pending 用户行时间优先原 Kernel call.accepted payload.accepted_at_ms；旧 journal 的首次 receipt observation 时间仅作 UI cache 字段持久化并标来源，刷新不改为 now。它不是执行状态权威，也不据此声称原 UI replay 的所有 activity 时长已恢复。

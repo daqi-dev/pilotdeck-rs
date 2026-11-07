@@ -317,6 +317,7 @@ struct State {
     call: Option<String>,
     call_run: Option<String>,
     input: Option<Value>,
+    accepted_at_ms: Option<u64>,
     status: String,
     cursor: u64,
     waits: BTreeMap<String, String>,
@@ -349,6 +350,9 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
             )
             .await?;
         state.call = Some(call.into());
+        state.accepted_at_ms = root["payload"]["accepted_at_ms"]
+            .as_u64()
+            .filter(|value| *value <= 9_007_199_254_740_991);
         state.input = Some(view["invocation"]["payload"].clone());
         state.call_run = view["invocation"]["correlation_id"]
             .as_str()
@@ -404,6 +408,9 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
     Ok(state)
 }
 fn with_index(mut history: Value, facts: &State) -> Value {
+    if !history.is_object() {
+        return history;
+    }
     history["kernelIndex"] = match (
         facts.call.as_ref(),
         facts.call_run.as_ref(),
@@ -412,7 +419,7 @@ fn with_index(mut history: Value, facts: &State) -> Value {
         (Some(call), Some(run), Some(input))
             if input["type"] == "text" && input["text"].is_string() =>
         {
-            json!({"executionId":call,"runId":run,"status":facts.status,"prompt":input["text"],"active":facts.run.is_some()})
+            json!({"executionId":call,"runId":run,"status":facts.status,"prompt":input["text"],"active":facts.run.is_some(),"acceptedAt":facts.accepted_at_ms.map(|ms|pilotdeck_transport::system_clock::format_epoch_iso(ms as i64))})
         }
         _ => Value::Null,
     };
@@ -437,6 +444,7 @@ impl NativePortCheck {
     }
 }
 struct KernelSession {
+    input_limits_supported: bool,
     port_check: Arc<tokio::sync::Mutex<NativePortCheck>>,
     projection: Option<Arc<super::kernel_projection::KernelProjection>>,
     rpc: Arc<tokio::sync::Mutex<Rpc>>,
@@ -450,6 +458,33 @@ struct KernelSession {
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 impl KernelSession {
+    fn input_limits(&self, options: &Value) -> Result<Option<Value>, RuntimeError> {
+        let Some(deadline) = options["execution"]
+            .get("operationDeadline")
+            .filter(|value| !value.is_null())
+        else {
+            return Ok(None);
+        };
+        if !self.input_limits_supported {
+            return Err(super::kernel_config::unavailable(
+                "scheduler.input-limits.v1",
+            ));
+        }
+        let deadline = deadline
+            .as_str()
+            .ok_or_else(|| error("Native operationDeadline must be an ISO date string."))?;
+        let millis =
+            pilotdeck_transport::system_clock::parse_node22_date(&JsString::from(deadline))
+                .map_err(|cause| error(String::from_utf16_lossy(cause.units())))?
+                .filter(|value| {
+                    value.is_finite()
+                        && *value >= 0.0
+                        && value.fract() == 0.0
+                        && *value <= 9_007_199_254_740_991.0
+                })
+                .ok_or_else(|| error("Native operationDeadline is invalid."))?;
+        Ok(Some(json!({"deadline_ms":millis as u64})))
+    }
     fn turn_permission_mode(&self, options: &Value) -> Result<JsString, RuntimeError> {
         let requested = options.get("mode").filter(|value| !value.is_null());
         if requested.is_some_and(|value| {
@@ -588,6 +623,11 @@ impl SessionBackendFactory for KernelBackendFactory {
                 }
             });
             Ok(Box::new(KernelSession {
+                input_limits_supported: opened["features"].as_array().is_some_and(|features| {
+                    features
+                        .iter()
+                        .any(|feature| feature == "scheduler.input-limits.v1")
+                }),
                 port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck {
                     pending: self.preflight.take(),
                     result: None,
@@ -630,6 +670,7 @@ impl LiveSession for KernelSession {
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         let options = json_value(&options)?;
+        let limits = self.input_limits(&options)?;
         let run = options["turnId"]
             .as_str()
             .or_else(|| options["runId"].as_str())
@@ -704,6 +745,7 @@ impl LiveSession for KernelSession {
         state.attached = true;
         self.started.store(false, Ordering::SeqCst);
         Ok(Box::new(KernelTurn {
+            limits,
             port_check: self.port_check.clone(),
             rpc: self.rpc.clone(),
             kernel_id: self.kernel_id.clone(),
@@ -831,12 +873,27 @@ impl LiveSession for KernelSession {
                             &display, &journal, &roots,
                         );
                     }
-                    let created = String::from_utf16_lossy(
-                        pilotdeck_transport::server::ExecutionClock::now_iso(
-                            &pilotdeck_transport::system_clock::SystemExecutionClock,
-                        )
-                        .units(),
-                    );
+                    let created = projection
+                        .as_ref()
+                        .and_then(|projection| {
+                            facts
+                                .call_run
+                                .as_deref()
+                                .and_then(|run| projection.accepted_time(run))
+                        })
+                        .or_else(|| {
+                            facts.accepted_at_ms.map(|ms| {
+                                pilotdeck_transport::system_clock::format_epoch_iso(ms as i64)
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            String::from_utf16_lossy(
+                                pilotdeck_transport::server::ExecutionClock::now_iso(
+                                    &pilotdeck_transport::system_clock::SystemExecutionClock,
+                                )
+                                .units(),
+                            )
+                        });
                     display = super::kernel_projection::with_active_input(
                         &display,
                         &indexed["kernelIndex"],
@@ -1057,6 +1114,7 @@ impl LiveSession for KernelSession {
     }
 }
 struct KernelTurn {
+    limits: Option<Value>,
     port_check: Arc<tokio::sync::Mutex<NativePortCheck>>,
     projection: Option<Arc<super::kernel_projection::KernelProjection>>,
     context_ref: String,
@@ -1128,7 +1186,11 @@ impl LiveTurn for KernelTurn {
                     if self.finish_unaccepted_cancellation()? {
                         continue;
                     }
-                    let accepted=rpc.call("execution.input",json!({"session_id":self.kernel_id,"idempotency_key":self.run,"input":input})).await?;
+                    let mut params = json!({"session_id":self.kernel_id,"idempotency_key":self.run,"input":input});
+                    if let Some(limits) = &self.limits {
+                        params["limits"] = limits.clone();
+                    }
+                    let accepted = rpc.call("execution.input", params).await?;
                     drop(rpc);
                     let call = accepted["call_ref"]
                         .as_str()
@@ -1384,6 +1446,7 @@ mod tests {
     }
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            input_limits_supported: false,
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
@@ -1785,6 +1848,7 @@ mod recovery_contract_tests {
     use tokio::net::UnixListener;
     fn session(socket: PathBuf) -> KernelSession {
         KernelSession {
+            input_limits_supported: false,
             port_check: Arc::new(tokio::sync::Mutex::new(NativePortCheck::default())),
             projection: None,
             rpc: Arc::new(tokio::sync::Mutex::new(Rpc {
@@ -1929,6 +1993,34 @@ mod recovery_contract_tests {
         task.await.unwrap();
         std::fs::remove_file(socket).unwrap();
     }
+    #[test]
+    fn kernel_deadline_requires_advertised_outer_limits_and_uses_exact_prepared_utc() {
+        let mut session = session(std::env::temp_dir().join("no-limit-rpc.sock"));
+        let options = json!({"execution":{"operationDeadline":"2030-01-01T00:00:00.000Z"}});
+        assert!(session.input_limits(&options).is_err());
+        session.input_limits_supported = true;
+        assert_eq!(
+            session.input_limits(&options).unwrap(),
+            Some(json!({"deadline_ms":1893456000000_u64}))
+        );
+        assert_eq!(session.input_limits(&json!({"maxTurns":5})).unwrap(), None);
+        assert!(
+            session
+                .input_limits(&json!({"execution":{"operationDeadline":"invalid"}}))
+                .is_err()
+        );
+        let facts = State {
+            call: Some("original".into()),
+            call_run: Some("run".into()),
+            input: Some(json!({"type":"text","text":"hi"})),
+            accepted_at_ms: Some(1893456000000),
+            ..Default::default()
+        };
+        assert_eq!(
+            with_index(json!({"revision":0,"history":[]}), &facts)["kernelIndex"]["acceptedAt"],
+            "2030-01-01T00:00:00.000Z"
+        );
+    }
     #[tokio::test]
     async fn kernel_abort_during_preflight_never_opens_rpc_or_admits_new_execution() {
         let mut session = session(std::env::temp_dir().join("no-kernel-rpc.sock"));
@@ -2021,6 +2113,11 @@ mod recovery_contract_tests {
                     "initialize" => json!({}),
                     "execution.events" if !accepted => json!([]),
                     "execution.input" => {
+                        assert_eq!(
+                            req["params"]["limits"],
+                            json!({"deadline_ms":1893456000000_u64})
+                        );
+                        assert!(req["params"]["input"].get("limits").is_none());
                         let agent = &req["params"]["input"]["agent"];
                         assert_eq!(agent["permissionMode"], "plan");
                         assert_eq!(
@@ -2061,10 +2158,11 @@ mod recovery_contract_tests {
         let mut session = session(socket.clone());
         session.agent_config=js(&json!({"provider":"must-not-override","model":"must-not-override","thinking":{"enabled":true,"budgetTokens":1024},"appendSystemPrompt":"write concise answers","modelPricingEntries":[{"key":"z-first","input":1},{"key":"a-second","input":2}]})).unwrap().as_object().unwrap().clone();
         session.permission_mode_source = Some(Arc::new(|| Some("bypassPermissions".into())));
+        session.input_limits_supported = true;
         let mut turn = session
             .submit(
                 js(&json!({"type":"text","text":"hello"})).unwrap(),
-                js(&json!({"turnId":"run","runMode":"plan","mode":"plan","basePermissionMode":"bypassPermissions"})).unwrap(),
+                js(&json!({"turnId":"run","runMode":"plan","mode":"plan","basePermissionMode":"bypassPermissions","execution":{"operationDeadline":"2030-01-01T00:00:00.000Z"}})).unwrap(),
             )
             .unwrap();
         while turn.next().await.unwrap().is_some() {}
