@@ -405,11 +405,7 @@ mutations = [
     # begin: the sticky flag is never set, so a suspended original mistakes the
     # finished replacement's empty table slot for "the id is still mine".
     ('supersession-flag-forgets-a-finished-replacement', 'user_dialog/channel.rs',
-     '            if let Some(previous) = requests.get(&request_id)\n'
-     '                && !Arc::ptr_eq(previous, &state)\n'
-     '            {\n'
-     '                previous.replaced.store(true, Ordering::SeqCst);\n'
-     '            }\n',
+     '                previous.replaced.store(true, Ordering::SeqCst);\n',
      '',
      STICKY_REPLACED_TEST, STICKY_REPLACED_ASSERTION),
     # persist: the pre-write check is dropped, so a replacement registered by a

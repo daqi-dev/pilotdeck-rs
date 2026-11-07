@@ -231,8 +231,37 @@ struct RequestState {
     /// "still mine", or a suspended original would publish over the
     /// replacement and settle its rows.
     replaced: AtomicBool,
+    /// Channel entry points currently running for this registration (#2027).
+    /// A later registration may only reap an *idle* superseded one: an
+    /// in-flight entry point (`begin` / `poll_once` / `cancel_owned`) re-checks
+    /// supersession itself and ends the waiter with the stage it observed.
+    /// Reaping those here would overwrite that error surface (and #1599's
+    /// pinned messages).
+    in_flight: AtomicU64,
     abort: Option<AbortSignal>,
     result: mpsc::Sender<std::result::Result<DialogAnswer, String>>,
+}
+
+/// Keeps [`RequestState::in_flight`] raised for the duration of one channel
+/// entry point (#2027). `begin` drops it explicitly before its final
+/// supersession check, so a concurrent same-id registration that publishes
+/// after that point reaps this waiter instead of missing both sides.
+///
+/// The guard owns a clone of the state rather than borrowing it: `begin` moves
+/// its `Arc` into the returned [`ChannelRequest`] from several early returns.
+struct InFlight {
+    state: Arc<RequestState>,
+}
+impl InFlight {
+    fn enter(state: Arc<RequestState>) -> Self {
+        state.in_flight.fetch_add(1, Ordering::SeqCst);
+        Self { state }
+    }
+}
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.state.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 struct PollEntry {
@@ -480,9 +509,15 @@ impl GatewayUserDialogChannel {
             generation: AtomicU64::new(0),
             registration: AtomicU64::new(0),
             replaced: AtomicBool::new(false),
+            in_flight: AtomicU64::new(0),
             abort: abort.clone(),
             result: sender,
         });
+        // #2027: mark this registration as running before it can be seen in
+        // the request table, so a concurrent same-id registration reaps it
+        // only once no entry point is left to end it itself.
+        let in_flight = InFlight::enter(state.clone());
+        let mut reaped = None;
         {
             // #1599: number the registration while the request table is held,
             // so the poll registry's order matches table ownership even when a
@@ -498,8 +533,22 @@ impl GatewayUserDialogChannel {
                 && !Arc::ptr_eq(previous, &state)
             {
                 previous.replaced.store(true, Ordering::SeqCst);
+                // #2027: a registration that already published its bus entry
+                // and is idle has no entry point left that would notice the
+                // flag, so its waiter would stay pending forever (window 1).
+                // An in-flight one re-checks supersession itself; reaping it
+                // here would replace the error surface it observed.
+                if previous.registered.load(Ordering::SeqCst)
+                    && !previous.settled.load(Ordering::SeqCst)
+                    && previous.in_flight.load(Ordering::SeqCst) == 0
+                {
+                    reaped = Some(previous.clone());
+                }
             }
             requests.insert(request_id.clone(), state.clone());
+        }
+        if let Some(previous) = reaped {
+            self.end_replaced(&previous, replaced_by_registration());
         }
 
         if let Some(signal) = &abort {
@@ -614,15 +663,41 @@ impl GatewayUserDialogChannel {
                 }))
             },
         };
-        {
+        let (taken_over, events) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
-            let generation = bus.register(&self.inner.options.session_key, pending);
-            state.generation.store(generation, Ordering::SeqCst);
-            // #1442: the change observer is host code; deliver it only after
-            // the guard drops.
-            bus.drain_events()
+            // #2027: the ownership checks above all ran outside this guard, so
+            // a registration on another thread may have published the same id
+            // since. Publishing here would replace its bus entry by id
+            // (`GatewayUserDialogBus.ts:150-160`) and leave its waiter with
+            // nothing left to answer through. The replaced flag is written
+            // before any registration publishes, and publication needs this
+            // same guard, so reading it here closes the check-then-act window
+            // (window 3 sequence B).
+            let taken_over = state.replaced.load(Ordering::SeqCst);
+            let events = if taken_over {
+                bus.drain_events()
+            } else {
+                let generation = bus.register(&self.inner.options.session_key, pending);
+                state.generation.store(generation, Ordering::SeqCst);
+                bus.drain_events()
+            };
+            (taken_over, events)
+        };
+        // #1442: the change observer is host code; deliver it only after
+        // the guard drops.
+        events.deliver();
+        if taken_over {
+            // A later registration took the id while this one was assembling
+            // itself; it owns the bus entry, so this waiter is ended instead
+            // of being published over it (#2027).
+            self.end_replaced(&state, replaced_by_registration());
+            return ChannelRequest {
+                request_id,
+                dialog_kind: dialog_kind.into(),
+                state,
+                receiver,
+            };
         }
-        .deliver();
         state.registered.store(true, Ordering::SeqCst);
 
         if let Err(error) = (self.inner.options.emit)(request_event.clone()) {
@@ -697,6 +772,22 @@ impl GatewayUserDialogChannel {
             if installed {
                 self.poll_once(&request_id, None);
             }
+        }
+
+        // #2027: drop the in-flight mark *before* the last ownership check. A
+        // registration on another thread that publishes the same id either
+        // sets the flag before this read (this waiter ends here) or reads
+        // `in_flight == 0` after it and reaps this waiter from its own insert.
+        // Both sides use SeqCst, so they cannot miss each other (window 3
+        // sequence C).
+        drop(in_flight);
+        if self.end_if_superseded(&state, "registration") {
+            return ChannelRequest {
+                request_id,
+                dialog_kind: dialog_kind.into(),
+                state,
+                receiver,
+            };
         }
 
         ChannelRequest {
@@ -802,9 +893,112 @@ impl GatewayUserDialogChannel {
         if !self.superseded(state) {
             return false;
         }
-        let _ = settle(&self.inner, state);
-        self.complete(state, Err(replaced_during(stage)));
+        self.end_replaced(state, replaced_during(stage));
         true
+    }
+
+    /// Ends a registration under a request id a later registration took over
+    /// (#2027). Whatever this registration still owns is cleaned up here: its
+    /// own bus entry (only while the bus bucket is still its generation), its
+    /// own poll entry, and its own owner lease through [`settle`]; the
+    /// journal/store rows stay with whoever owns the id now, exactly as
+    /// before (#1599).
+    fn end_replaced(&self, state: &Arc<RequestState>, message: String) {
+        self.drop_own_bucket(state);
+        stop_polling(
+            &self.inner,
+            &state.request_id,
+            state.registration.load(Ordering::SeqCst),
+        );
+        let _ = settle(&self.inner, state);
+        self.complete(state, Err(message));
+    }
+
+    /// Removes this registration's bus entry if it is still the one the bus
+    /// holds (#2027), delivering the changes the removal queued.
+    ///
+    /// `bus.consume` is keyed by request id alone: a same-id registration that
+    /// published after this one owns the entry now, and consuming it would
+    /// delete that dialog and leave its waiter with nothing to answer through.
+    /// The generation check below runs under the same guard as the consume, so
+    /// no publication can land between them.
+    fn drop_own_bucket(&self, state: &Arc<RequestState>) {
+        if !state.registered.load(Ordering::SeqCst) {
+            return;
+        }
+        let generation = state.generation.load(Ordering::SeqCst);
+        let (consumed, outbox) = {
+            let mut bus = self.inner.options.bus.lock().unwrap();
+            let own = bus.pending_matches(
+                &self.inner.options.session_key,
+                &state.request_id,
+                generation,
+            );
+            let consumed = own
+                .then(|| {
+                    bus.consume(
+                        &self.inner.options.session_key,
+                        &state.request_id,
+                        "replaced",
+                    )
+                })
+                .flatten();
+            let outbox = bus.drain_events();
+            (consumed, outbox)
+        };
+        if let Some(consumed) = consumed {
+            // The waiter is already being ended with an explicit error and
+            // `end_replaced` runs `settle` itself, so a failing settle hook
+            // must not restore a bucket nobody can answer again: keeping it is
+            // the leak this window is about (window 4).
+            let _ = consumed
+                .entry
+                .on_settled
+                .as_ref()
+                .map_or(Ok(()), |hook| hook());
+        }
+        outbox.deliver();
+    }
+
+    /// Ends a registration whose same-id replacement appeared while a host
+    /// store callback (`renew_stored_owner` / `take_stored_answer`) ran and
+    /// the poll found no answer (#2027, window 2). Without this the waiter
+    /// stays pending forever: the replacement owns the bus entry, the poll
+    /// entry belongs to its registration, and `cancel_owned` refuses a
+    /// superseded request.
+    ///
+    /// The channel's request table only sees replacements made through this
+    /// channel. A registration on another Gateway sharing the bus takes the
+    /// entry by request id without touching that table, so the bus generation
+    /// is checked as well: a poll that keeps finding no answer must not stay
+    /// pending under an id its own registration no longer owns (#2027).
+    fn end_if_replaced_while_polling(&self, state: &Arc<RequestState>) -> bool {
+        if state.settled.load(Ordering::SeqCst) {
+            return false;
+        }
+        if !self.superseded(state) && !self.bus_taken_over(state) {
+            return false;
+        }
+        // Sticky, so the settlement below keeps the rows the taker may have
+        // written under this id (same rule as `cancel_owned`).
+        state.replaced.store(true, Ordering::SeqCst);
+        self.end_replaced(state, replaced_while_taking());
+        true
+    }
+
+    /// Whether a later registration owns the bus entry under this request id
+    /// while this registration is still registered (#2027). Callers must not
+    /// hold the bus guard.
+    fn bus_taken_over(&self, state: &Arc<RequestState>) -> bool {
+        if !state.registered.load(Ordering::SeqCst) {
+            return false;
+        }
+        let bus = self.inner.options.bus.lock().unwrap();
+        bus.pending_replaced(
+            &self.inner.options.session_key,
+            &state.request_id,
+            state.generation.load(Ordering::SeqCst),
+        )
     }
 
     pub fn abort(&self, request_id: &JsString) {
@@ -840,13 +1034,14 @@ impl GatewayUserDialogChannel {
                 .store(true, Ordering::SeqCst);
             return;
         }
+        let _in_flight = InFlight::enter(state.clone());
         // #1442: the settle hook, the resolve callback and the change
         // observer are host code; none of them run under the bus guard. TS
         // `remove()` runs onSettled before its mutations, and a throw leaves
         // the dialog pending and broadcast-free (fail-closed,
         // GatewayUserDialogBus.ts:219-226), so a settle failure restores the
         // consumed entry instead of resolving.
-        let (consumed, pre, outbox) = {
+        let (consumed, pre, outbox, own) = {
             let mut bus = self.inner.options.bus.lock().unwrap();
             // `pre` holds changes queued before this consume (normally
             // empty here); a lease that expires inside `consume` lands in
@@ -854,13 +1049,29 @@ impl GatewayUserDialogChannel {
             // own "settled" broadcast, so `outbox` is delivered through
             // `without_settled` (GatewayUserDialogBus.ts:219-226).
             let pre = bus.drain_events();
-            let consumed = bus.consume(
+            // #2027: `bus.consume` is keyed by request id alone. A same-id
+            // registration published after this channel's ownership checks
+            // (another Gateway on this bus, or a replacement on another
+            // thread) owns the entry now; consuming it would delete that
+            // dialog and leave its waiter with nothing to answer through.
+            // Both calls share the guard, so no publication can land between
+            // them (window 3 sequence A).
+            let own = bus.pending_matches(
                 &self.inner.options.session_key,
                 &state.request_id,
-                "cancelled",
+                state.generation.load(Ordering::SeqCst),
             );
+            let consumed = own
+                .then(|| {
+                    bus.consume(
+                        &self.inner.options.session_key,
+                        &state.request_id,
+                        "cancelled",
+                    )
+                })
+                .flatten();
             let outbox = bus.drain_events();
-            (consumed, pre, outbox)
+            (consumed, pre, outbox, own)
         };
         match consumed {
             Some(consumed) => {
@@ -893,6 +1104,18 @@ impl GatewayUserDialogChannel {
             None => {
                 pre.deliver();
                 outbox.deliver();
+                if !own {
+                    // The bus entry under this id belongs to a different
+                    // registration, so there is nothing left for this waiter
+                    // to be cancelled through. End it explicitly instead of
+                    // leaving it pending forever (#2027). The take-over is
+                    // sticky like a same-channel replacement: the journal and
+                    // store rows under this id may already be the taker's, so
+                    // the settlement below must not delete them.
+                    state.replaced.store(true, Ordering::SeqCst);
+                    self.end_replaced(state, replaced_by_registration());
+                    return;
+                }
             }
         }
         let mut event = JsObject::new();
@@ -955,6 +1178,28 @@ impl GatewayUserDialogChannel {
             return;
         };
         drop(requests);
+        // #2027: a poll pass is an entry point like `begin`; the in-flight mark
+        // keeps a concurrent same-id registration from reaping this waiter
+        // while the pass's host callbacks are still deciding its fate, and the
+        // check below ends a waiter whose id was taken during the pass. The
+        // mark is dropped first so the check cannot lose to the taker: the
+        // taker stores `replaced` and then reads `in_flight`, this side
+        // decrements and then reads `replaced` (SeqCst on both sides).
+        let in_flight = InFlight::enter(state.clone());
+        self.poll_pass(&state, request_id, due_registration);
+        drop(in_flight);
+        self.end_if_replaced_while_polling(&state);
+    }
+
+    /// One poll pass. Every exit that does not answer the waiter leaves the
+    /// supersession check to `poll_once`, which runs it once the in-flight mark
+    /// is down (#2027, window 2).
+    fn poll_pass(
+        &self,
+        state: &Arc<RequestState>,
+        request_id: &JsString,
+        due_registration: Option<u64>,
+    ) {
         // #1599: a reentrant host callback may replace the registration while
         // this poll is in flight; every poll mutation below stays bound to the
         // registration captured here.
@@ -1007,7 +1252,9 @@ impl GatewayUserDialogChannel {
         {
             match renew(request_id, &state.owner_id) {
                 Ok(true) => {}
-                // A failed renewal stops this poll; the next tick retries.
+                // A failed renewal stops this poll; the next tick retries. A
+                // same-id replacement registered by the renewal hook will
+                // never be retried by this waiter, so end it here (#2027).
                 Ok(false) | Err(_) => {
                     finish_poll(&self.inner, request_id, registration);
                     return;
@@ -1067,15 +1314,12 @@ impl GatewayUserDialogChannel {
                     // The registration this poll answered is gone, so the
                     // taken answer has nowhere to go: fail the original waiter
                     // explicitly instead of leaving it pending forever
-                    // (#1599). The replacement keeps its own poll/answer.
-                    stop_polling(&self.inner, request_id, registration);
-                    let _ = settle(&self.inner, &state);
-                    self.complete(
-                        &state,
-                        Err("Gateway user-dialog was replaced while its \
-                             stored answer was taken."
-                            .into()),
-                    );
+                    // (#1599). The replacement keeps its own poll/answer. The
+                    // bus take-over is sticky for the same reason as in
+                    // `cancel_owned`: the rows under this id may be the
+                    // taker's (#2027).
+                    state.replaced.store(true, Ordering::SeqCst);
+                    self.end_replaced(state, replaced_while_taking());
                     return;
                 }
                 finish_poll(&self.inner, request_id, registration);
@@ -1130,8 +1374,21 @@ impl GatewayUserDialogChannel {
     }
 }
 
-/// Rejection handed to a waiter whose request id a reentrant host callback
-/// re-registered while this registration was still assembling itself (#1599).
+/// Rejection handed to a waiter whose cancel/registration found the bus entry
+/// under its request id already owned by a later registration (#2027).
+fn replaced_by_registration() -> String {
+    "Gateway user-dialog was replaced by a later registration of the same request id.".into()
+}
+
+/// Rejection handed to a waiter whose same-id replacement appeared while a
+/// stored answer was being taken, or while the poll that would have taken one
+/// stopped without an answer (#1599, #2027).
+fn replaced_while_taking() -> String {
+    "Gateway user-dialog was replaced while its stored answer was taken.".into()
+}
+
+/// Rejection handed to a waiter whose request id a later registration took
+/// over (`stage`) while this registration was still assembling itself (#1599).
 fn replaced_during(stage: &str) -> String {
     format!("Gateway user-dialog was replaced while its {stage} was running.")
 }
@@ -1187,9 +1444,12 @@ fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
     // replacement wrote under the same id (#1599). An absent entry only means
     // `complete` already removed it; the cleanup below still belongs to this
     // request.
-    if superseded_by_registration(inner, state) {
-        return Ok(());
-    }
+    let superseded = superseded_by_registration(inner, state);
+    // #2027: the owner lease is this request's own even when it was
+    // superseded. It is keyed by `(requestId, ownerId)` and a same-id
+    // replacement claims under its own owner id, so releasing this one cannot
+    // touch the replacement's lease; leaving it claimed leaked it until the
+    // TTL (windows 4 and 5). The rows below stay with the replacement.
     if state.owner_claimed.swap(false, Ordering::SeqCst)
         && let Some(release) = &inner.options.release_stored_owner
     {
@@ -1200,6 +1460,12 @@ fn settle(inner: &Inner, state: &Arc<RequestState>) -> Result<()> {
         if superseded_by_registration(inner, state) {
             return Ok(());
         }
+    }
+    // The lease above is ours either way; the rows are not. Skip them for a
+    // same-id replacement (#1599/#2027: the sticky flag is also set when a
+    // registration on another Gateway took the shared bus entry).
+    if superseded {
+        return Ok(());
     }
     if let Some(journal) = &inner.options.journal {
         journal.remove(&state.request_id)?;

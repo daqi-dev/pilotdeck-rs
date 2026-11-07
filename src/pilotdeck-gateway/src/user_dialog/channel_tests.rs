@@ -1504,11 +1504,34 @@ fn user_dialog_channel_fixtures_regenerate_identically_from_ts() {
 /// them outside the bus guard like the method layer and the bus itself. The
 /// bound negative control puts the settle hook back under a live guard; this
 /// probe is what turns red then.
+///
+/// The host callbacks a settle hook reaches are the ones observed here: the
+/// channel's own `on_settled` runs `settle`, which releases this registration's
+/// owner lease and removes its store row, and then the resolver hands the
+/// cancellation to the waiter. All three must run with the bus lock free.
+/// (#2027: the bus entry is the one this channel registered. Re-registering a
+/// same-id entry here would be a take-over, which the channel now correctly
+/// refuses to consume.)
 #[test]
 fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
     use crate::negative_assert;
 
     type ReentryLog = Arc<Mutex<Vec<(&'static str, bool)>>>;
+    struct ProbeStore {
+        bus: Arc<Mutex<GatewayUserDialogBus>>,
+        log: ReentryLog,
+    }
+    impl UserDialogStore for ProbeStore {
+        fn put(&self, _key: &StoreKey, _dialog: &StoredDialog) -> Result<()> {
+            Ok(())
+        }
+        fn remove(&self, _key: &StoreKey, _request_id: &JsString) -> Result<()> {
+            let reentered = self.bus.try_lock().is_ok();
+            self.log.lock().unwrap().push(("store.remove", reentered));
+            Ok(())
+        }
+    }
+
     let log: ReentryLog = Arc::new(Mutex::new(Vec::new()));
     let bus: Arc<Mutex<GatewayUserDialogBus>> = {
         let observer_log = log.clone();
@@ -1525,12 +1548,26 @@ fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
             ))
         })
     };
-    let channel = GatewayUserDialogChannel::new(ChannelOptions::new(
-        "session",
-        bus.clone(),
-        Arc::new(|_event| Ok(())),
-    ));
-    let request = channel.request_input(&InputRequest {
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.store = Some(Arc::new(ProbeStore {
+        bus: bus.clone(),
+        log: log.clone(),
+    }));
+    options.store_key = Some(StoreKey {
+        project_root: "project".into(),
+        pilot_home: "home".into(),
+        session_id: "session".into(),
+    });
+    options.claim_stored_owner = Some(Arc::new(|_request, _owner| Ok(true)));
+    let release_bus = bus.clone();
+    let release_log = log.clone();
+    options.release_stored_owner = Some(Arc::new(move |_request, _owner| {
+        let reentered = release_bus.try_lock().is_ok();
+        release_log.lock().unwrap().push(("release", reentered));
+        Ok(true)
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    let mut request = channel.request_input(&InputRequest {
         tool_call_id: "call-channel-cancel".into(),
         tool_name: "request_user_input".into(),
         prompt: "Channel cancel".into(),
@@ -1539,46 +1576,14 @@ fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
         abort: None,
     });
     let request_id = request.request_id().clone();
-    // Swap the channel-registered entry for one that records whether each
-    // host callback can re-acquire the bus lock (same probe shape as the
-    // method-layer tests).
-    let settle_bus = bus.clone();
-    let settle_log = log.clone();
-    let resolve_bus = bus.clone();
-    let resolve_log = log.clone();
-    bus.lock().unwrap().register(
-        &"session".into(),
-        PendingDialog {
-            request_id: request_id.clone(),
-            dialog_kind: "input".into(),
-            tool_call_id: "call-channel-cancel".into(),
-            tool_name: "request_user_input".into(),
-            event: crate::metadata::object([("requestId", JsValue::String(request_id.clone()))]),
-            accepts: Arc::new(|_value| true),
-            resolve: Box::new(move |_answer| {
-                let reentered = resolve_bus.try_lock().is_ok();
-                resolve_log.lock().unwrap().push(("resolve", reentered));
-            }),
-            reject: Box::new(|_error| {}),
-            on_settled: Some(Box::new(move || {
-                let reentered = settle_bus.try_lock().is_ok();
-                settle_log.lock().unwrap().push(("on_settled", reentered));
-                Ok(())
-            })),
-        },
-    );
     channel.abort(&request_id);
     let records = log.lock().unwrap().clone();
-    for name in ["on_settled", "resolve"] {
+    for name in ["release", "store.remove", "observer"] {
         negative_assert!(
             records.iter().any(|(recorded, _)| *recorded == name),
             "#1442 channel cancel probe: {name} must run"
         );
     }
-    negative_assert!(
-        records.iter().any(|(recorded, _)| *recorded == "observer"),
-        "#1442 channel cancel probe: the change observer must run"
-    );
     for (name, reentered) in &records {
         // `try_lock().is_ok()` means the callback could take the bus lock, so
         // it did not run under a live guard.
@@ -1587,6 +1592,13 @@ fn user_dialog_channel_cancel_reenters_the_bus_lock_free() {
             "#1442 the {name} callback re-acquired the bus lock; it must not run under the guard"
         );
     }
+    negative_assert!(
+        matches!(
+            request.try_result(),
+            Some(Ok(DialogAnswer::Cancelled(Some(_))))
+        ),
+        "#1442 channel cancel probe: the waiter must receive the cancellation"
+    );
 }
 
 #[test]
@@ -1770,9 +1782,14 @@ fn a_replaced_dialog_keeps_its_own_cross_gateway_poll() {
 struct ReentrantStore {
     dialogs: Mutex<Vec<(JsString, StoredDialog)>>,
     on_put: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Lets a test fail the next write without a reentrant hook (#2027).
+    fail_put: AtomicBool,
 }
 impl UserDialogStore for ReentrantStore {
     fn put(&self, _key: &StoreKey, dialog: &StoredDialog) -> Result<()> {
+        if self.fail_put.load(Ordering::SeqCst) {
+            return Err(DialogError::Invalid("store put failed".into()));
+        }
         let id = dialog
             .request
             .get("requestId")
@@ -2661,4 +2678,574 @@ fn a_settle_that_removes_its_journal_into_a_replacement_keeps_the_replacement_ro
             .any(|(candidate, _)| candidate == &id),
         "#1599 a superseded settle must not delete the replacement's store row"
     );
+}
+
+#[test]
+fn a_published_registration_superseded_during_uuid_is_ended_not_left_pending() {
+    use crate::negative_assert;
+
+    // #2027 window 1: `uuid` is host code and runs before `begin` inserts the
+    // registration into the request table. A hook that registers the same
+    // request id leaves a *published, idle* registration behind and the
+    // original then takes the id from it. The insert only raised the sticky
+    // `replaced` flag, so nothing ever ended the earlier waiter: its bus entry
+    // was replaced by id, its poll entry was taken over by the newer
+    // registration and `cancel_owned` refuses a superseded request.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-uuid-hook",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let earlier: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let calls = Arc::new(AtomicI64::new(0));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new({
+        let holder = holder.clone();
+        let earlier = earlier.clone();
+        let calls = calls.clone();
+        move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first uuid call");
+                let next = replacement_dialog(&channel);
+                earlier.lock().unwrap().replace(next);
+            }
+            "shared-request".to_string()
+        }
+    });
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Original that took the id back".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let mut earlier = earlier
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the uuid hook registered the earlier dialog");
+    match earlier.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("later registration"),
+            "#2027 a registration superseded during the uuid hook must end with the replacement error"
+        ),
+        other => panic!(
+            "#2027 a published registration superseded during the uuid hook must be ended, \
+             got {other:?}"
+        ),
+    }
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#2027 only the original may stay pending after the earlier registration is reaped"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-original".into()),
+            "#2027 the original must own the bus entry the earlier registration published"
+        );
+    }
+    negative_assert!(
+        original.try_result().is_none(),
+        "#2027 the original must stay pending"
+    );
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "answered")
+        .expect("the original owns the bus entry");
+    let settled = consumed
+        .entry
+        .on_settled
+        .as_ref()
+        .map_or(Ok(()), |hook| hook());
+    negative_assert!(
+        settled.is_ok(),
+        "#2027 the original's settle hook must succeed"
+    );
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match original.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the original must still be answerable after the earlier registration ends"
+        ),
+        other => panic!("#2027 the original must still be answerable, got {other:?}"),
+    }
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#2027 the answered original must leave no pending entry"
+    );
+}
+
+#[test]
+fn a_cross_gateway_poll_without_an_answer_ends_a_replaced_waiter() {
+    use crate::negative_assert;
+
+    // #2027 window 2: `take_stored_answer` is host code. A hook that registers
+    // the same request id and then reports "no answer" leaves the original
+    // with nothing: the replacement owns the bus entry and the poll entry, and
+    // `cancel_owned` refuses a superseded request. The early exits of
+    // `poll_once` must re-check supersession instead of only stopping a poll
+    // entry that already belongs to the replacement.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-poll-take",
+    ))));
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let reentered = Arc::new(AtomicBool::new(false));
+    let answer_ready = Arc::new(AtomicBool::new(false));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new(|| "shared-request".to_string());
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.take_stored_answer = Some(Arc::new({
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        let reentered = reentered.clone();
+        let answer_ready = answer_ready.clone();
+        move |request_id: &JsString| {
+            if !reentered.swap(true, Ordering::SeqCst) {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first take");
+                let next = replacement_dialog(&channel);
+                replacement.lock().unwrap().replace(next);
+                return Ok(None);
+            }
+            if answer_ready.load(Ordering::SeqCst) {
+                return Ok(Some(StoredAnswer {
+                    request_id: request_id.clone(),
+                    result: DialogAnswer::Answered(JsValue::Bool(true)),
+                    submitted_at: "2026-01-01T00:00:01.000Z".into(),
+                }));
+            }
+            Ok(None)
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Polled after its replacement registered".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("stored answer was taken"),
+            "#2027 a poll that found no answer after a replacement registered must end the original"
+        ),
+        other => panic!(
+            "#2027 a poll that found no answer after a replacement registered must end the \
+             original, got {other:?}"
+        ),
+    }
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the take hook registered the replacement");
+    negative_assert!(
+        next.try_result().is_none(),
+        "#2027 the replacement must stay pending after the original ends"
+    );
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#2027 the replacement must own the only pending entry"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-replacement".into()),
+            "#2027 the replacement must keep its own bus entry"
+        );
+    }
+    answer_ready.store(true, Ordering::SeqCst);
+    clock.fetch_add(1_000, Ordering::SeqCst);
+    channel.tick();
+    match next.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the replacement must still take its own stored answer"
+        ),
+        other => {
+            panic!("#2027 the replacement must still take its own stored answer, got {other:?}")
+        }
+    }
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#2027 the answered replacement must leave no pending entry"
+    );
+}
+
+#[test]
+fn an_abort_does_not_consume_another_registration_bucket_for_the_same_id() {
+    use crate::negative_assert;
+
+    // #2027 window 3 sequence A, reachable single-threaded: two channels share
+    // one bus and use the same request id. `bus.consume` is keyed by request id
+    // alone, so aborting the first used to consume the second's entry, resolve
+    // the second's waiter as cancelled and leave the renderer without its
+    // dialog. The consume is now bound to this registration's generation under
+    // the same bus guard.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-two-gateways",
+    ))));
+    let now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    let mut first_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    first_options.uuid = Arc::new(|| "shared-request".to_string());
+    first_options.now_ms = now_ms.clone();
+    let first = GatewayUserDialogChannel::new(first_options);
+    let mut second_options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    second_options.uuid = Arc::new(|| "shared-request".to_string());
+    second_options.now_ms = now_ms;
+    let second = GatewayUserDialogChannel::new(second_options);
+
+    let mut aborted = first.request_input(&InputRequest {
+        tool_call_id: "call-a".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "First gateway".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    let mut survivor = second.request_confirm(&ConfirmRequest {
+        tool_call_id: "call-b".into(),
+        tool_name: "request_user_confirm".into(),
+        prompt: "Second gateway".into(),
+        confirm_label: None,
+        cancel_label: None,
+        default_value: None,
+        abort: None,
+    });
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#2027 the second registration must own the only bus entry"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-b".into()),
+            "#2027 the second registration must own the bus entry for the shared id"
+        );
+    }
+    negative_assert!(
+        aborted.try_result().is_none(),
+        "#2027 another gateway's registration must not cancel this waiter"
+    );
+    first.abort(&id);
+    match aborted.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("later registration"),
+            "#2027 an abort whose bus entry belongs to another registration must end with the \
+             replacement error"
+        ),
+        other => panic!(
+            "#2027 an abort whose bus entry belongs to another registration must end with an \
+             error, got {other:?}"
+        ),
+    }
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#2027 aborting the first channel must not consume the second's bus entry"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-b".into()),
+            "#2027 the second channel's dialog must stay pending"
+        );
+    }
+    negative_assert!(
+        survivor.try_result().is_none(),
+        "#2027 the second channel's waiter must stay pending"
+    );
+    let consumed = bus
+        .lock()
+        .unwrap()
+        .consume(&session, &id, "answered")
+        .expect("the second channel still owns the bus entry");
+    let settled = consumed
+        .entry
+        .on_settled
+        .as_ref()
+        .map_or(Ok(()), |hook| hook());
+    negative_assert!(
+        settled.is_ok(),
+        "#2027 the second channel's settle hook must succeed"
+    );
+    (consumed.entry.resolve)(DialogAnswer::Answered(JsValue::Bool(true)));
+    match survivor.try_result() {
+        Some(Ok(DialogAnswer::Answered(value))) => negative_assert!(
+            value.as_bool() == Some(true),
+            "#2027 the second channel's waiter must still be answerable"
+        ),
+        other => {
+            panic!("#2027 the second channel's waiter must still be answerable, got {other:?}")
+        }
+    }
+}
+
+#[test]
+fn a_superseded_registration_that_died_frees_its_bucket_and_lease() {
+    use crate::negative_assert;
+
+    // #2027 window 4: a registration can be superseded at the request-table
+    // insert and then die before publishing anything (here its `store.put`
+    // fails). Nothing touches it again, so its already-published bus entry and
+    // its owner lease leaked until the TTL. The insert now ends an idle,
+    // published previous registration, and `settle` releases this request's
+    // own lease even though the rows belong to the replacement.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-superseded-dies",
+    ))));
+    let store = Arc::new(ReentrantStore::default());
+    let claims: Arc<Mutex<Vec<(JsString, JsString)>>> = Arc::new(Mutex::new(Vec::new()));
+    let releases: Arc<Mutex<Vec<(JsString, JsString)>>> = Arc::new(Mutex::new(Vec::new()));
+    let uuids = Arc::new(AtomicI64::new(0));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new({
+        let uuids = uuids.clone();
+        move || match uuids.fetch_add(1, Ordering::SeqCst) % 2 {
+            0 => "shared-request".to_string(),
+            call => format!("owner-{call}"),
+        }
+    });
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    options.claim_stored_owner = Some(Arc::new({
+        let claims = claims.clone();
+        move |request_id: &JsString, owner_id: &JsString| {
+            claims
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            Ok(true)
+        }
+    }));
+    options.release_stored_owner = Some(Arc::new({
+        let releases = releases.clone();
+        move |request_id: &JsString, owner_id: &JsString| {
+            releases
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            Ok(true)
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded by a replacement that dies".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    negative_assert!(
+        original.try_result().is_none(),
+        "#2027 the original must hold the id before the replacement arrives"
+    );
+    negative_assert!(
+        claims.lock().unwrap().as_slice()
+            == [(JsString::from("shared-request"), JsString::from("owner-1"))],
+        "#2027 the original must hold its own owner lease"
+    );
+
+    store.fail_put.store(true, Ordering::SeqCst);
+    let mut replacement = replacement_dialog(&channel);
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("later registration"),
+            "#2027 a published registration superseded at the insert must be ended"
+        ),
+        other => panic!(
+            "#2027 a published registration superseded at the insert must be ended, got {other:?}"
+        ),
+    }
+    negative_assert!(
+        replacement
+            .try_result()
+            .is_some_and(|result| result.is_err()),
+        "#2027 the replacement must die on its failed store write"
+    );
+    let session: JsString = "session".into();
+    negative_assert!(
+        bus.lock().unwrap().pending_count(&session) == 0,
+        "#2027 a superseded registration that died must leave no pending bus entry"
+    );
+    negative_assert!(
+        releases.lock().unwrap().as_slice()
+            == [(JsString::from("shared-request"), JsString::from("owner-1"))],
+        "#2027 a superseded registration that died must release its own owner lease"
+    );
+}
+
+#[test]
+fn a_registration_replaced_after_its_owner_claim_releases_its_lease() {
+    use crate::negative_assert;
+
+    // #2027 window 5: `claim_stored_owner` is the last host call inside
+    // `persist`, and a claim hook can register the same request id before this
+    // registration publishes. The waiter ended with the "store write" error,
+    // but `settle` used to return early on supersession *before* releasing, so
+    // the lease it had just claimed hung until the TTL.
+    let clock = Arc::new(AtomicI64::new(0));
+    let bus = Arc::new(Mutex::new(GatewayUserDialogBus::connected(runtime(
+        &clock,
+        "bus-claim-lease",
+    ))));
+    let store = Arc::new(ReentrantStore::default());
+    let holder: Arc<Mutex<Option<GatewayUserDialogChannel>>> = Arc::new(Mutex::new(None));
+    let replacement: Arc<Mutex<Option<ChannelRequest>>> = Arc::new(Mutex::new(None));
+    let claims: Arc<Mutex<Vec<(JsString, JsString)>>> = Arc::new(Mutex::new(Vec::new()));
+    let releases: Arc<Mutex<Vec<(JsString, JsString)>>> = Arc::new(Mutex::new(Vec::new()));
+    let reentered = Arc::new(AtomicBool::new(false));
+    let uuids = Arc::new(AtomicI64::new(0));
+    let mut options = ChannelOptions::new("session", bus.clone(), Arc::new(|_event| Ok(())));
+    options.uuid = Arc::new({
+        let uuids = uuids.clone();
+        move || match uuids.fetch_add(1, Ordering::SeqCst) % 2 {
+            0 => "shared-request".to_string(),
+            call => format!("owner-{call}"),
+        }
+    });
+    options.now_ms = {
+        let clock = clock.clone();
+        Arc::new(move || clock.load(Ordering::SeqCst))
+    };
+    options.store = Some(store.clone() as Arc<dyn UserDialogStore>);
+    options.store_key = Some(store_key());
+    options.claim_stored_owner = Some(Arc::new({
+        let claims = claims.clone();
+        let holder = holder.clone();
+        let replacement = replacement.clone();
+        let reentered = reentered.clone();
+        move |request_id: &JsString, owner_id: &JsString| {
+            claims
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            // Only the first claim reenters: the replacement's own claim has
+            // to run normally, or this would recurse instead of exercising the
+            // window.
+            if !reentered.swap(true, Ordering::SeqCst) {
+                let channel = holder
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("channel is installed before the first owner claim");
+                let next = replacement_dialog(&channel);
+                replacement.lock().unwrap().replace(next);
+            }
+            Ok(true)
+        }
+    }));
+    options.release_stored_owner = Some(Arc::new({
+        let releases = releases.clone();
+        move |request_id: &JsString, owner_id: &JsString| {
+            releases
+                .lock()
+                .unwrap()
+                .push((request_id.clone(), owner_id.clone()));
+            Ok(true)
+        }
+    }));
+    let channel = GatewayUserDialogChannel::new(options);
+    holder.lock().unwrap().replace(channel.clone());
+
+    let mut original = channel.request_input(&InputRequest {
+        tool_call_id: "call-original".into(),
+        tool_name: "request_user_input".into(),
+        prompt: "Superseded while its owner claim runs".into(),
+        placeholder: None,
+        allow_empty: false,
+        abort: None,
+    });
+    match original.try_result() {
+        Some(Err(message)) => negative_assert!(
+            message.contains("store write"),
+            "#2027 a registration replaced during its owner claim must end with the store write error"
+        ),
+        other => panic!(
+            "#2027 a registration replaced during its owner claim must end with the store write \
+             error, got {other:?}"
+        ),
+    }
+    let mut next = replacement
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the claim hook registered the replacement");
+    negative_assert!(
+        next.try_result().is_none(),
+        "#2027 the replacement must stay pending after the original ends"
+    );
+    negative_assert!(
+        claims.lock().unwrap().len() == 2,
+        "#2027 both registrations must reach the owner claim"
+    );
+    negative_assert!(
+        releases.lock().unwrap().as_slice()
+            == [(JsString::from("shared-request"), JsString::from("owner-1"))],
+        "#2027 the replaced registration must release its own lease and only its own"
+    );
+    let session: JsString = "session".into();
+    let id: JsString = "shared-request".into();
+    {
+        let bus = bus.lock().unwrap();
+        negative_assert!(
+            bus.pending_count(&session) == 1,
+            "#2027 the replacement must own the only pending entry"
+        );
+        negative_assert!(
+            bus.peek(&session, &id)
+                .is_some_and(|entry| entry.tool_call_id == "call-replacement".into()),
+            "#2027 the replacement must keep its own bus entry"
+        );
+    }
 }
