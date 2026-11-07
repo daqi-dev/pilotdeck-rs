@@ -29,14 +29,17 @@ FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'
 PREFIX = 'channel::sms::tests::'
 # #2133: neg-for-diff.sh finds the tables a diff needs by the literal
-# `dir/file` of every changed .rs file (`git grep -F 'sms/mod.rs'`). Rows below
+# `dir/file` of every changed file (`git grep -F 'sms/mod.rs'`). Rows below
 # concatenate a bare file name onto `SMS`, so `sms/<file>` never appears on its
 # own and a change under `channel/sms/` would schedule no mutation at all.
+# The two shared fixtures are listed for the same reason: this table imports
+# them, and the discovery loop keys on any changed file under `fixtures/**`.
 # Every bare-filename key this table mutates is declared here; the rows and
-# this tuple must agree (fixtures/test_literal_anchors.py).
-ANCHORS = (
+# this tuple must agree (fixtures/test_negative_discovery_anchors.py).
+DISCOVERY_ANCHORS = (
     'sms/mod.rs', 'sms/gateway.rs', 'sms/mapper.rs', 'sms/render.rs',
     'sms/elicitation.rs', 'sms/permission.rs', 'sms/sender.rs', 'sms/tests.rs',
+    'fixtures/negative_process.py', 'fixtures/negative_suite.py',
 )
 switches = [
     # stop reason replaced by the default: the drain stop of the stop-during-

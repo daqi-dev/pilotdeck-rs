@@ -38,8 +38,8 @@ FIXTURES = ROOT / "src/pilotdeck-gateway/tests/fixtures"
 # (`SOURCE / "runtime/snapshot.rs"`, `SOURCE / "storage/workspace_snapshot.rs"`)
 # are already discoverable; `SOURCE / "metadata.rs"` takes its directory from
 # the constant and needs the anchor below. Checked row by row by
-# fixtures/test_literal_anchors.py.
-ANCHORS = ('src/metadata.rs',)
+# fixtures/test_negative_discovery_anchors.py.
+DISCOVERY_ANCHORS = ('src/metadata.rs',)
 
 # (name, path, before, after, target, test, expected marker)
 # `target` is "lib" or the integration-test file stem. The marker is the
