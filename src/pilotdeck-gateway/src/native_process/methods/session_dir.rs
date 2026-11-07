@@ -855,13 +855,13 @@ mod tests {
     // #2090: request-level gate order for the session_dir family, measured on
     // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
     // absent key: the request-level isolated-project admission
-    // (`native_process/requests.rs:305-314`) and this family's
-    // `require_session_key` (`:179` / `:214` / `:231` / `:300`). Admission runs
+    // (`native_process/requests.rs:311-320`) and this family's
+    // `require_session_key` (`:180` / `:215` / `:232` / `:301`). Admission runs
     // before the method dispatch, so a `projectKey` the process does not serve
     // is answered as `gateway_request_failed` even when `sessionKey` is blank;
     // with the project admitted (or omitted, which falls back to the configured
     // one) the missing or blank key answers `INVALID_SESSION_KEY`. An explicit
-    // `projectKey: null` counts as "not served" here — `requests.rs:305-314`
+    // `projectKey: null` counts as "not served" here — `requests.rs:311-320`
     // only skips `undefined` — while TS reads null as nullish and falls back to
     // its project root. That shape, and the resume/close divergence, are
     // registered in
