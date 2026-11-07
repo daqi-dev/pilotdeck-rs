@@ -1,4 +1,6 @@
-//! A bounded, one-shot bridge to an explicitly selected Gateway.
+//! One-shot calls and streamed turns over an explicitly selected Gateway.
+#[path = "../control_stream.rs"]
+mod stream;
 use futures_util::{SinkExt, StreamExt};
 use pilotdeck_protocol::{JsObject, JsValue, parse_json, stringify_json};
 use std::{
@@ -69,7 +71,7 @@ fn parse_args() -> Result<Options> {
                     return Err(ControlError::new("input_error", "Repeated option."));
                 }
             }
-            "status" | "capabilities" | "call" => {
+            "status" | "capabilities" | "call" | "stream" => {
                 if command.replace(arg).is_some() {
                     return Err(ControlError::new(
                         "input_error",
@@ -80,17 +82,17 @@ fn parse_args() -> Result<Options> {
             _ => {
                 return Err(ControlError::new(
                     "input_error",
-                    "Usage: pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call> [--input-file <file>].",
+                    "Usage: pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream> [--input-file <file>].",
                 ));
             }
         }
     }
     let command =
         command.ok_or_else(|| ControlError::new("input_error", "A command is required."))?;
-    if command != "call" && input_file.is_some() {
+    if !matches!(command.as_str(), "call" | "stream") && input_file.is_some() {
         return Err(ControlError::new(
             "input_error",
-            "--input-file applies only to call.",
+            "--input-file applies only to call or stream.",
         ));
     }
     Ok(Options {
@@ -272,7 +274,7 @@ fn check_numbers(value: &JsValue) -> Result<()> {
     Ok(())
 }
 
-fn input_call(options: &Options) -> Result<(String, JsValue)> {
+fn input_value(options: &Options) -> Result<JsValue> {
     let bytes = match &options.input_file {
         Some(path) => read_regular(Path::new(path), MAX_INPUT)?,
         None => read_stdin()?,
@@ -288,6 +290,11 @@ fn input_call(options: &Options) -> Result<(String, JsValue)> {
             "Call input must be an object.",
         ));
     }
+    Ok(value)
+}
+
+fn input_call(options: &Options) -> Result<(String, JsValue)> {
+    let value = input_value(options)?;
     let method = value
         .get("method")
         .and_then(JsValue::as_string)
@@ -326,6 +333,72 @@ fn string_is(value: &JsValue, field: &str, expected: &str) -> bool {
         .is_some_and(|s| s.equals_str(expected))
 }
 
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+// Both entry points keep the same authentication and receiving policy.
+async fn open_authenticated(options: &Options, token: &str, deadline: Instant) -> Result<Socket> {
+    let (mut socket, _) = connect_async_with_config(
+        &options.url,
+        Some(pilotdeck_cli::ws_config::websocket_config()),
+        false,
+    )
+    .await
+    .map_err(|_| ControlError::new("transport_error", "Gateway connection failed."))?;
+    let hello = object(&[
+        ("type", "hello".into()),
+        (
+            "protocolVersion",
+            pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION.into(),
+        ),
+        ("clientName", "cli".into()),
+        ("clientVersion", "0.1.0".into()),
+        ("token", token.into()),
+    ]);
+    socket
+        .send(Message::Text(encode(&hello)?.into()))
+        .await
+        .map_err(|_| ControlError::new("transport_error", "Gateway connection closed."))?;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(ControlError::new(
+                "transport_error",
+                "Gateway request timed out.",
+            ));
+        }
+        let frame = socket
+            .next()
+            .await
+            .ok_or_else(|| ControlError::new("transport_error", "Gateway connection closed."))?
+            .map_err(|_| ControlError::new("transport_error", "Gateway connection closed."))?;
+        if frame.is_close() {
+            return Err(ControlError::new(
+                "transport_error",
+                "Gateway authentication or handshake failed.",
+            ));
+        }
+        if !frame.is_text() {
+            continue;
+        }
+        let value = parse_json(
+            frame
+                .to_text()
+                .map_err(|_| ControlError::new("protocol_error", "Invalid Gateway frame."))?,
+        )
+        .map_err(|_| ControlError::new("protocol_error", "Invalid Gateway frame."))?;
+        if string_is(&value, "type", "hello_ok") {
+            if Instant::now() >= deadline {
+                return Err(ControlError::new(
+                    "transport_error",
+                    "Gateway handshake timed out.",
+                ));
+            }
+            break;
+        }
+    }
+    Ok(socket)
+}
+
 async fn exchange(
     options: &Options,
     token: &str,
@@ -334,58 +407,7 @@ async fn exchange(
 ) -> Result<Option<JsValue>> {
     let deadline = Instant::now() + NETWORK_TIMEOUT;
     let run = async {
-        let (mut socket, _) = connect_async_with_config(
-            &options.url,
-            Some(pilotdeck_cli::ws_config::websocket_config()),
-            false,
-        )
-        .await
-        .map_err(|_| ControlError::new("transport_error", "Gateway connection failed."))?;
-        let hello = object(&[
-            ("type", "hello".into()),
-            (
-                "protocolVersion",
-                pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION.into(),
-            ),
-            ("clientName", "cli".into()),
-            ("clientVersion", "0.1.0".into()),
-            ("token", token.into()),
-        ]);
-        socket
-            .send(Message::Text(encode(&hello)?.into()))
-            .await
-            .map_err(|_| ControlError::new("transport_error", "Gateway connection closed."))?;
-        loop {
-            if Instant::now() >= deadline {
-                return Err(ControlError::new(
-                    "transport_error",
-                    "Gateway request timed out.",
-                ));
-            }
-            let frame = socket
-                .next()
-                .await
-                .ok_or_else(|| ControlError::new("transport_error", "Gateway connection closed."))?
-                .map_err(|_| ControlError::new("transport_error", "Gateway connection closed."))?;
-            if frame.is_close() {
-                return Err(ControlError::new(
-                    "transport_error",
-                    "Gateway authentication or handshake failed.",
-                ));
-            }
-            if !frame.is_text() {
-                continue;
-            }
-            let value = parse_json(
-                frame
-                    .to_text()
-                    .map_err(|_| ControlError::new("protocol_error", "Invalid Gateway frame."))?,
-            )
-            .map_err(|_| ControlError::new("protocol_error", "Invalid Gateway frame."))?;
-            if string_is(&value, "type", "hello_ok") {
-                break;
-            }
-        }
+        let mut socket = open_authenticated(options, token, deadline).await?;
         let id = uuid::Uuid::new_v4().to_string();
         let request = object(&[
             ("type", "request".into()),
@@ -495,7 +517,7 @@ fn scrub_units(units: &[u16], secret: &[u16]) -> Vec<u16> {
             || (unit >= b'a' as u16 && unit <= b'z' as u16)
     }
     let replacement: Vec<u16> = "[REDACTED]".encode_utf16().collect();
-    if secret.is_empty() {
+    if secret.is_empty() || units.len() < secret.len() {
         return units.to_vec();
     }
     // KMP bounds matching work even for long repeated-prefix credentials.
@@ -602,10 +624,12 @@ fn redact(value: &JsValue, token: &str) -> JsValue {
     values.pop().expect("one redacted root")
 }
 
-fn run() -> Result<JsValue> {
+fn run() -> Result<Option<JsValue>> {
     let options = parse_args()?;
     let (method, params) = if options.command == "call" {
         input_call(&options)?
+    } else if options.command == "stream" {
+        ("submit_turn".into(), stream::input(&options)?)
     } else {
         ("describe_server".into(), object(&[]))
     };
@@ -621,6 +645,11 @@ fn run() -> Result<JsValue> {
         .enable_all()
         .build()
         .map_err(|_| ControlError::new("transport_error", "Cannot start runtime."))?;
+    if options.command == "stream" {
+        return runtime
+            .block_on(stream::run(&options, &token, params))
+            .map(|()| None);
+    }
     let value = match runtime.block_on(exchange(&options, &token, &method, params)) {
         Ok(value) => value,
         Err(mut error) => {
@@ -630,7 +659,7 @@ fn run() -> Result<JsValue> {
             return Err(error);
         }
     };
-    match options.command.as_str() {
+    let output = match options.command.as_str() {
         "status" => {
             let value = value.ok_or_else(|| {
                 ControlError::new("protocol_error", "Gateway description is missing.")
@@ -655,14 +684,17 @@ fn run() -> Result<JsValue> {
             }
             Ok(JsValue::Object(result))
         }
-    }
+    };
+    output.map(Some)
 }
-const HELP: &str = "pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call> [--input-file <file>]
+
+const HELP: &str = "pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream> [--input-file <file>]
 
 call reads one JSON object from stdin or --input-file, for example:
   {\"method\":\"list_sessions\",\"params\":{}}
 Input is limited to 1 MiB; numbers must be finite and integers must be safe JS integers. Calls are not automatically retried.
-submit_turn requires a streaming client and is not supported here.
+stream reads submit_turn params with sessionKey, runId, channelKey, message, and canPrompt:false. It emits flushed JSONL frames; final:true closes the protocol, not another delta.
+call still rejects submit_turn. Streams do not reconnect or detach; closing may abort the session.
 Authentication token echoes in Gateway JSON are redacted; general business data is returned as supplied.
 This is a one-shot Gateway bridge; schema and serve are not available.";
 
@@ -681,7 +713,8 @@ fn main() -> std::process::ExitCode {
         };
     }
     match run() {
-        Ok(value) => match encode(&value) {
+        Ok(None) => std::process::ExitCode::SUCCESS,
+        Ok(Some(value)) => match encode(&value) {
             Ok(raw) => {
                 if write_output(&raw).is_ok() {
                     std::process::ExitCode::SUCCESS

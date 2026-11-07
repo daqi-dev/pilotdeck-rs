@@ -4726,3 +4726,7 @@ cron、机器入口与Feishu/Lark setup已在本地分支合并，mbp2组合100�
 ### 2026-11-08 · gateway setup 原子保存独立切片（Codex，本地提交）
 
 已将 setup 配置保存改为同目录独占临时文件、完整写入与 sync 后再 rename；真实 EFBIG 后旧字节保全，新文件0600，旧mode/uid/gid保留，symlink只更新目标，不支持的hardlink/断链/ACL/xattrs/BSD flags拒绝。mbp2最终27测试通过、辅助子测试由父实际调用，fmt/严格clippy通过；证据主仓 `_tmp/20261108-issue-124-setup/atomic-worker/`，差异 `D2-SETUP-ATOMIC-SAVE-001` 仍AI代批待人复核、无冻结豁免。本轮仅本机提交；下一步继续WeCom后Weixin，尚不标setup/D2完成，真人体验与真实平台登录待验。
+
+### 2026-11-08 · 新机器流式入口（Codex，仅本机）
+
+`pilotdeck-control stream`已实现单轮文本JSONL、严格连续seq、final闭合、结构化失败与有限输出；109旧bin+3新bin单测、cron/旧control/默认channel/3stream集成全PASS，4既有/父调用helper ignored，mbp2 fmt/all-targets clippy通过。真实native Gateway+真实Rust sidecar+假OpenAI SSE验证完成输出、run_get、transcript、另一连接请求取消和provider关闭（r8），两个独立审查收敛到本片无可确认P0/P1。原件与120项源码绑定在主仓 `_tmp/20261108-control-cli/`，取消探针明确等待CLI实际delta后才发abort，避免把provider已发当成CLI已交付。仍无恢复/detach/持久前端服务，localhost共享核心受#1959持有人并发约束；继续WeCom/Weixin与TUI产品片。只在本机提交、Rust全部mbp2，未标完整CLI或A8验收。

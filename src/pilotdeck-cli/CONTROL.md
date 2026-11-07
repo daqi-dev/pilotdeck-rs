@@ -1,6 +1,6 @@
-# pilotdeck-control：单次 Gateway 调用
+# pilotdeck-control：单次调用和流式文本轮次
 
-新入口连接显式指定的 Gateway，使用已有 hello/request/response 协议，不启动第二个宿主。它不是持久连接、事件流或恢复接口；`submit_turn` 需要流式客户端，本入口在连接前拒绝。`schema` 和 `serve` 尚未提供。
+新入口连接显式指定的 Gateway，使用已有 hello/request/response 协议，不启动第二个宿主。`call` 在连接前拒绝 `submit_turn`；`stream` 提供单轮文本事件流。它不是持久服务或恢复接口。`schema` 和 `serve` 尚未提供。
 
 ```sh
 pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token status
@@ -14,3 +14,32 @@ pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token cal
 输入 JSON 上限 1 MiB；只支持有限数，整数必须在 JavaScript 安全整数范围内。标准输入与网络等待分别有 10 秒和 30 秒预算；普通文件读取受大小限制，但文件系统卡住时同步文件 IO 无法保证完成时限。收到结果后最多再等一秒清理连接，清理超时不改变已收到的结果。请求不自动重试；连接在请求发送后失败或超时时，操作结果可能未知。URL 与 token 文件必须显式提供，不读取默认家目录。Unix 管道、socket、普通文件可用作 stdin；非 Unix 使用受时限约束的后台读取，尚未在 Windows 目标实测。
 
 调用某方法不代表该方法在目标 Gateway 已装配；以该 Gateway 的真实返回为准。真实运行时、阶段验收和人工使用证据分别记录。
+
+
+## stream 文本轮次
+
+```sh
+pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token stream --input-file /isolated/turn.json
+```
+
+输入为一个 JSON 对象，必需非空字符串 `sessionKey`、`runId`、`channelKey`、字符串 `message` 和明确的 `canPrompt:false`；`projectKey` 可省略或为字符串。本片只接受这六个字段，附件、审批、追问和其它扩展输入尚未接入。示例：
+
+```json
+{"sessionKey":"chat-1","runId":"run-1","channelKey":"cli","message":"hello","canPrompt":false}
+```
+
+stdout 是逐条 flush 的 JSONL，外层含 `version:"pilotdeck-control/1"`、`type:"event"`、请求 `id`、`seq`、`final` 和完整 `event`。序号必须从 0 连续增长；缺号、重复、倒序或缺少必要字段均非零退出，不自动重连或重发。`final:true` 是协议闭合，它的 payload 通常重复上一条终态，消费者不能把它再次当作增量应用。只有 `turn_completed` 且 `finishReason:"completed"`、全程未见 error、最终输出成功才返回 0；取消、未知结果、服务错误和不完整流均非零并在 stderr 提供结构化错误。成功的 `abort_turn` 请求也须结合流终态判断取消结果。
+
+握手与发送沿用 30 秒预算，合法业务轮次不套这个总时限。每条 JSONL（含换行）最多 8 MiB，沿用 128 MiB WS 接收上限；当前只交付一帧，输出由独立线程承担，每条写出并 flush 最多等 10 秒。超限、断管或阻塞输出导致非零退出与关闭；这不是整个进程内存预算，编码和解析仍需暂存数据。
+
+stream 的认证回显过滤保留所有 JSON 键，以及事件顶层 `type`/`finishReason` 协议标识；其它字符串值沿用前述 token 匹配规则。这些公开结构标识不属于过滤承诺，token 恰好与其同名时也保持可消费。普通 `call` 的既有键名规则不变。过滤不保证阻断服务端任意形式的凭据回显。
+
+可从另一进程通过已有 `call` 显式请求取消：
+
+```json
+{"method":"abort_turn","params":{"sessionKey":"chat-1","runId":"run-1"}}
+```
+
+关闭或丢失流连接可能按现有 Gateway 规则触发整个 session 的中止。SIGINT、输出失败、超时和进程崩溃均不意味着 detach，也不能证明副作用未执行。事件恢复、后台持久连接、审批恢复和前端 Web 传输仍未提供。
+
+真实组合探针：`tests/fixtures/control-stream/native.py`，传入刚构建的三个 Rust binary 和新的独占证据目录；它使用假 OpenAI SSE 服务、独立 home/project、动态端口，验证真实输出、run_get、transcript、另一连接取消和 provider 关闭，不访问真实用户服务。
