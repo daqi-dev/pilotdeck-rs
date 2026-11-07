@@ -653,17 +653,29 @@ try:
     with mutating_sources(root, [], lock_timeout=10): print('ACCEPTED')
 except SourceBaselineError: print('REFUSED')
 '''
-        def wait(name):
-            end = time.monotonic() + 5
+        def wait(name, seconds=5):
+            end = time.monotonic() + seconds
             while not (control / name).exists():
-                self.assertTrue(time.monotonic() < end, '#1166 handshake has a deadline')
+                self.assertTrue(time.monotonic() < end,
+                                f'#1166 handshake has a deadline ({name})')
                 time.sleep(.005)
+        # The holder publishes `held` only after mutating_sources() admits the
+        # tree, and a cold CARGO_TARGET_DIR makes that step bootstrap the
+        # shared scanner by compiling it -- measured 52 s on cb8, against the
+        # 5 s handshake, so this test false-failed whenever it ran first on a
+        # cold target (#2127 codex sibling r13 P1, #2135). Warm the scanner
+        # here first, through the same pristine lease the holder takes, so the
+        # handshake times the handshake. What is left on the holder's path to
+        # `held` is the tree lock plus the two pristine checks, i.e. only git
+        # calls; one GIT_TIMEOUT is therefore no longer a lower bound of
+        # anything legitimate but a stuck guard.
+        api._ensure_workspace_scanner()
         children = []
         try:
             children.append(subprocess.Popen([sys.executable, '-B', '-c', holder, helper,
                                               str(self.root), str(target), str(control)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
-            wait('held')
+            wait('held', api.GIT_TIMEOUT)
             children.append(subprocess.Popen([sys.executable, '-B', '-c', waiter, helper,
                                               str(self.root), str(control)],
                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE))
