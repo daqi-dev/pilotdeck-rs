@@ -100,7 +100,15 @@ EXPECTED_NAMES = (
 )
 
 if sys.argv[1:] == ['--catalog']:
-    print(json.dumps(catalog(), indent=2)); sys.exit(0)
+    # #1922 review r1 sibling P2: this early exit re-reads every registered
+    # source as well, but sat outside the startup try/except below, so an
+    # unreadable source escaped as an uncaught OSError (exit 1, "ran but not
+    # green") instead of "never started" (2).
+    try:
+        print(json.dumps(catalog(), indent=2))
+    except (OSError, ValueError, RuntimeError) as error:
+        refuse(str(error))
+    sys.exit(0)
 if missing_target():  # #1666: absent, empty or blank, one shared predicate
     refuse('caller must set CARGO_TARGET_DIR')
 refuse_unusable_target()  # #1666 fix-r9: dot / root / src are unusable too

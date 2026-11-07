@@ -161,6 +161,15 @@ SCANNED_EXTRA = (
     'negative_selection.py',
     'negative_process.py',
     '_shared/mutant_switch.py',
+    # Review r1 sibling / boundary P2: the same argument reaches the shared
+    # verdict helpers those three build on. `mutant_switch.run()` classifies
+    # through `negative_suite.passed`, `sdk-settings` and `network-timing`
+    # decide KILLED through `negative_panic`, and `negative_scope` holds the
+    # predicates both use. All three are at zero assert statements today, so
+    # registering them only shrinks the same drift surface.
+    'negative_suite.py',
+    'negative_panic.py',
+    'negative_scope.py',
 )
 _CLEANUP = []
 

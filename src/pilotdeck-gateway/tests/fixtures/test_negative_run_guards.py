@@ -24,6 +24,12 @@ guard to ``assert`` leaves exactly that case with no exception under ``-O``
 and turns it red. Two positive controls prove the harness reaches a real
 verdict (PASS / KILLED printed, nothing raised).
 
+Scope boundary (review r1 sibling P2): this file covers ``run()`` only. The
+sibling verdict guards in ``CargoTests.run`` / ``mutation_suite`` and the
+``negative_suite`` path used by ``sdk-settings`` have no ``-O`` behaviour
+case yet; they are protected by the static register in
+``test_negative_optimize_guards.py`` and by review, not by this file.
+
 Run from this directory: ``python3 -m unittest test_negative_run_guards``.
 """
 import json
