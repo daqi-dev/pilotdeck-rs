@@ -166,6 +166,9 @@ grace_unit = 'a_candidate_that_no_longer_resolves_is_evicted_by_the_grace'
 # #1409 item 1: the classification that decides whether an unreadable source
 # may be skipped — also a Linux-only unit test.
 blind_unit = 'an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe'
+# #1409 item 1/3: the one link-failure rule all three read sites share —
+# Linux-only like the sites themselves.
+link_unit = 'an_unreadable_link_is_a_release_only_when_its_holder_is_gone'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -631,8 +634,14 @@ cases = [
     # fd, so the unit test's live-fd half fails at its expect while its
     # gone-fd half pins the release side (Linux contract: /proc).
     ('boundary-fdinfo-unknown-passed', publication,
-     '''        .is_some_and(|target| target.to_string_lossy() == wanted)''',
-     '''        .is_some_and(|target| false)''',
+     '''        Ok(target) if target.to_string_lossy() == wanted => Some(io::Error::other(format!(
+            "#1155 reading the fdinfo of {}: {error}",
+            fd.display()
+        ))),''',
+     '''        Ok(target) if target.to_string_lossy() == wanted => {
+            let _ = target;
+            None
+        }''',
      publication_target, fdinfo_unit,
      '#1155 an unreadable fdinfo behind a live fd must fail the scan closed'),
     # #1155 r3 review P2-2: without the subreaper lease the orphaned
@@ -720,8 +729,14 @@ cases = [
      '''    let deadline = Instant::now() + grace;
     while !candidates.is_empty() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(25));
-        candidates
-            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));
+        candidates.retain(|fd| match fs::read_link(fd) {
+            Ok(target) => target.to_string_lossy() == wanted,
+            // #1409: an unreadable link is not a release unless its holder
+            // is gone or already dead — the same rule as the enumeration, so
+            // a descriptor hidden mid-grace stays a survivor instead of
+            // being quietly dropped from the verdict.
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+        });
     }''',
      '''    let _ = (candidates, wanted, grace);''',
      publication_target, grace_unit,
@@ -730,17 +745,61 @@ cases = [
     # keeps a released candidate for the whole grace and then reports it,
     # the same false FAIL by a slower route.
     ('boundary-grace-never-evicts', publication,
-     '''            .retain(|fd| fs::read_link(fd).is_ok_and(|target| target.to_string_lossy() == wanted));''',
-     '''            .retain(|_| true);''',
+     '''        candidates.retain(|fd| match fs::read_link(fd) {
+            Ok(target) => target.to_string_lossy() == wanted,
+            // #1409: an unreadable link is not a release unless its holder
+            // is gone or already dead — the same rule as the enumeration, so
+            // a descriptor hidden mid-grace stays a survivor instead of
+            // being quietly dropped from the verdict.
+            Err(error) => !link_failure_is_a_release(Path::new(fd), &error),
+        });''',
+     '''        candidates.retain(|_| true);''',
      publication_target, grace_unit,
      '#1409 the grace must evict'),
+    # #1409 item 1/3: the shared link rule itself, turned fail-open — every
+    # non-ENOENT errno releases the descriptor. That is the shape in which a
+    # setuid exec or an LSM that hides a live fd reads as "released", so the
+    # scan reports a clean boundary over a write end it never saw. Bound to
+    # the unit test that pins the live-holder direction; the same rule serves
+    # the enumeration, the fdinfo re-check and the grace re-check, so one
+    # mutant covers all three sites (they cannot drift apart: there is one
+    # function).
+    ('link-failure-always-release', publication,
+     '''    match holder_of(fd) {
+        Some(pid) => matches!(
+            blind_source(&pid),
+            BlindSource::Vanished | BlindSource::Terminal | BlindSource::Unrelated
+        ),
+        None => false,
+    }''',
+     '''    match holder_of(fd) {
+        Some(pid) => {
+            let _ = blind_source(&pid);
+            true
+        }
+        None => true,
+    }''',
+     publication_target, link_unit,
+     '#1409 an unreadable link of this process must never count as a release'),
+    # #1409 item 1: the exit-window settle, turned fail-open the other way —
+    # a related source that stays unreadable for the whole settle (this
+    # process, which is readable but not terminal) is declared dead and
+    # skipped, so a descendant whose descriptors the host hides stops being
+    # an unknown and the scan passes over it.
+    ('blind-source-settle-always-terminal', publication,
+     '''        if Instant::now() >= deadline {
+            return BlindSource::Related;
+        }''',
+     '''        if Instant::now() >= deadline {
+            return BlindSource::Terminal;
+        }''',
+     publication_target, blind_unit,
+     '#1409 this process is the scan\'s own source and must never be skipped'),
     # #1409 item 1: the source classification itself. Anyone unreadable is
     # skipped once the relation check is short-circuited — this process
     # included — which is the shape that would let a host hide a descendant's
     # leaked write end and still report a clean scan. Bound to the unit test
-    # that pins "related is never skipped"; the settling re-check for a
-    # task that is still exiting has no deterministic host-side trigger and
-    # stays covered by the measured exit window instead.
+    # that pins "related is never skipped".
     ('blind-source-self-unrelated', publication,
      '''    if descended_from_this_process(pid) {
         settles_into_a_terminal_source(pid)''',
@@ -775,6 +834,8 @@ INVALID_OFF_LINUX = (
     'stranger-pid-kill-removed',
     'boundary-grace-removed',
     'boundary-grace-never-evicts',
+    'link-failure-always-release',
+    'blind-source-settle-always-terminal',
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
 )
@@ -908,7 +969,9 @@ def main():
     summary = dict(
         # #1409: the platform contract as top-level metadata, which the shared
         # comparator ignores (row fields are whitelisted and must not grow).
-        platforms={row['mutation']: platform_of(row['mutation']) for row in results},
+        # Named for what it says — the expected verdict off Linux — so nobody
+        # reads it as the platform the row ran on.
+        off_linux_expectation={row['mutation']: platform_of(row['mutation']) for row in results},
         controls=results,
         counts=counts,
     )
