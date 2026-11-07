@@ -29,7 +29,6 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
-import itertools
 import json
 import os
 import re
@@ -331,14 +330,11 @@ def check_lock():
             f'non-regular lock paths rejected with rc={hostile_rcs}')
 
 
+# —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
+# 可改写的锚点。守卫本身（check_wiring）不做任何行式 / 缩进式解析——判断一律走
+# PyYAML 解析后的完整标量。 ——
 JOB_HEADER = re.compile(r'^  ([\w-]+):\s*$')
 STEP_ITEM = re.compile(r'^      - +(\S.*)$')
-# 按**缩进**取键，不按「哪一行含某个词」取：job 的直属键在 4 空格，step 的直属键在
-# 8 空格（`      - ` 之后）。`env: {run: exit 1}` 里的 run 不是这一步执行的脚本，
-# `env.UNUSED: |` 里的命令也不是——只有 step 直属的那个 `run` 会被 Actions 执行。
-JOB_KEY = re.compile(r'^ {4}([A-Za-z_][\w-]*)\s*:\s*(.*)$')
-STEP_KEY = re.compile(r'''^ {8}([A-Za-z_][\w-]*|'[^']+'|"[^"]+")\s*:\s*(.*)$''')
-BLOCK_SCALARS = ('|', '>', '|-', '>-', '|+', '>+')
 RETIREMENT_JOB = 'retirement-outcome-parity'
 AGGREGATE_JOB = 'check'
 REQUIRE_STEP_NAME = 'Require retirement outcome-parity success'
@@ -359,37 +355,34 @@ REQUIRE_CONDITION = (
     f"always() && needs.{RETIREMENT_JOB}.result != 'success' && "
     f"!(needs.{RETIREMENT_JOB}.result == 'skipped' && "
     "needs.scope.outputs.docs_only == 'true')")
-# 闸门 step 的 `run` 体必须与这里**逐字相等**（去缩进后逐行比较）。整行 `needle`
-# 只能证明「文本还在」：`echo <命令>`、`<命令> || true`、外层包一层 `if false; then … fi`、
-# 或者把命令整行挪进同一个 step 的 `env.UNUSED: |`，文本都还在而闸门已经失效。
-# 逐字相等把这些形态一次性挡掉，且不会误拒（不靠猜哪些 token 危险）。
+# 闸门 step 的 `run` 必须是 **literal 块标量（`|`）**，且解析后的**完整标量值**与
+# 这里逐字相等（含结尾换行）。只按源码行 / 行首值比对证明不了「执行的就是这段」：
+# plain 多行标量把换行折叠成空格（续行拼接）、`>` 折叠块同样改字，而 `echo` 前缀、
+# `|| true` 后缀、外层包一层 `if false; then … fi`、多一行 `set +e` 都会改掉标量值。
+# 完整标量逐字相等把这些形态一次性挡掉，且不会误拒（不靠猜哪些 token 危险）。
 GATE_SCRIPTS = {
-    'emit 复算与金样逐字节比对': (
-        'F=scripts/retirement-outcome-parity/fixtures',
-        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \\',
-        '  --oracle "$RUNNER_TEMP/ts-oracle.json" \\',
-        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\',
-        '  --round "$F/round-04" --round "$F/round-05"',
+    'emit 复算与金样逐字节比对':
+        'F=scripts/retirement-outcome-parity/fixtures\n'
+        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \\\n'
+        '  --oracle "$RUNNER_TEMP/ts-oracle.json" \\\n'
+        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\\n'
+        '  --round "$F/round-04" --round "$F/round-05"\n'
         'cmp "$RUNNER_TEMP/ts-oracle.json" '
-        'scripts/retirement-outcome-parity/ts-oracle.json',
-    ),
-    'check 5 轮': (
-        'F=scripts/retirement-outcome-parity/fixtures',
-        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \\',
-        '  --oracle scripts/retirement-outcome-parity/ts-oracle.json \\',
-        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\',
-        '  --round "$F/round-04" --round "$F/round-05"',
-    ),
-    '负控 N1–N17 全 KILLED': (
-        'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\',
-        '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"',
-    ),
-    '装置守卫自检（六项）': (
-        'python3 -I scripts/retirement-outcome-parity/self_check.py',
-    ),
-    '接线守卫变异自检': (
-        'python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls',
-    ),
+        'scripts/retirement-outcome-parity/ts-oracle.json\n',
+    'check 5 轮':
+        'F=scripts/retirement-outcome-parity/fixtures\n'
+        'python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \\\n'
+        '  --oracle scripts/retirement-outcome-parity/ts-oracle.json \\\n'
+        '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\\n'
+        '  --round "$F/round-04" --round "$F/round-05"\n',
+    '负控 N1–N17 全 KILLED':
+        'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\\n'
+        '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"\n',
+    '装置守卫自检（六项）':
+        'python3 -I scripts/retirement-outcome-parity/self_check.py\n',
+    '接线守卫变异自检':
+        'python3 -I scripts/retirement-outcome-parity/self_check.py '
+        '--self-check-controls\n',
 }
 # retirement job 的 step 列表按**顺序**登记：删一个闸门 step、插一个 `run: exit 0`
 # 的 step、或把两个 step 调换，都会让「登记的命令」与实际执行的不再对应。
@@ -410,161 +403,180 @@ def _indent_of(line):
     return len(line) - len(line.lstrip(' '))
 
 
-def _step_entries(path, step, label):
-    """step 的直属键 → [[键, 行内值, 缩进更深的子行], …]。
-
-    首行 `      - name: X` 归一化成 8 空格缩进，此后 8 空格 = 直属键、>8 = 上一条键
-    的值（块标量的脚本行）。<8 说明这个 step 的块已经结束，属解析错误而不是「没看见」。
-    """
-    header = step[0]
-    item = STEP_ITEM.match(header)
-    if item is None:
-        raise CheckFailure(f'{path}: step `{label}` has no `- ` item header')
-    entries = []
-    for line in [' ' * 8 + header[item.start(1):], *step[1:]]:
-        if not line.strip():
-            continue
-        indent = _indent_of(line)
-        if indent > 8:
-            if not entries:
-                raise CheckFailure(
-                    f'{path}: step `{label}` starts with an indented line {line!r}')
-            entries[-1][2].append(line)
-            continue
-        if indent < 8:
-            raise CheckFailure(
-                f'{path}: step `{label}` has a line at indent {indent}: {line!r}')
-        match = STEP_KEY.match(line)
-        if match is None:
-            raise CheckFailure(f'{path}: step `{label}` has an unparseable key {line!r}')
-        entries.append([match.group(1).strip('\'"'), match.group(2).strip(), []])
-    return entries
-
-
-def _step_label(entries):
-    """step 的显示名：`name` 优先，其次 `uses`。"""
-    for key in ('name', 'uses'):
-        for entry_key, inline, _ in entries:
-            if entry_key == key:
-                return inline
-    return None
-
-
-def _script_lines(path, label, entries):
-    """step **直属**的 `run` 看到的多行脚本文本（去缩进、去空行）。"""
-    runs = [entry for entry in entries if entry[0] == 'run']
-    if len(runs) != 1:
-        raise CheckFailure(
-            f'{path}: `{label}` must have exactly one top-level `run:` ({len(runs)} '
-            'found); a nested or duplicated `run` is not what the runner executes')
-    _, inline, body = runs[0]
-    if inline in BLOCK_SCALARS:
-        live = [line for line in body if line.strip()]
-        if not live:
-            raise CheckFailure(f'{path}: `{label}` has an empty `run: {inline}` body')
-        base = min(_indent_of(line) for line in live)
-        return [line[base:].rstrip() for line in live]
-    if not inline:
-        raise CheckFailure(f'{path}: `{label}` has an empty `run:`')
-    return [inline]
-
-
-def _job_entries(path, block, name):
-    entries = []
-    for line in block:
-        if not line.strip() or _indent_of(line) != 4:
-            continue
-        match = JOB_KEY.match(line)
-        if match is None:
-            raise CheckFailure(f'{path}: cannot parse a `{name}` job key from {line!r}')
-        entries.append((match.group(1), match.group(2).strip()))
-    return entries
-
-
-def _require_job_keys(path, block, name, allowed):
-    for key, _ in _job_entries(path, block, name):
-        if key not in allowed:
-            raise CheckFailure(
-                f'{path}: `{name}` job carries the unregistered key `{key}`; a job-level '
-                '`continue-on-error` / `env` / `defaults` can change or swallow the gate '
-                'without touching any step')
-
-
 def _normalised_expression(condition):
     return ' '.join(condition.removeprefix('${{').removesuffix('}}').split())
 
 
-def _needs_list(value):
-    """`needs: [a, b]` 或 `needs: a` → 逐项列表（不做子串匹配）。"""
-    inner = value.strip()
-    if inner.startswith('[') and inner.endswith(']'):
-        return [item.strip() for item in inner[1:-1].split(',') if item.strip()]
-    return [inner] if inner else []
+def _yaml_module():
+    """PyYAML 必须可用：不可用时接线守卫 fail-closed 判红，绝不降级回行式解析。"""
+    try:
+        import yaml
+    except ImportError as error:
+        raise CheckFailure(
+            f'PyYAML is not importable ({error}); the wiring guard fails closed '
+            'instead of falling back to line-based parsing') from error
+    return yaml
 
 
-def _live_lines(text):
-    """去掉整行注释后的行。YAML 的 `#` 注释里的文本不是活的配置。
-
-    不做子串匹配就分不清「活的 YAML」与「被注释/禁用掉的文本」：把整个 job 连同
-    `needs:` 条目和 Require 步骤一起注释掉，needle 仍作为子串存在，接线守卫会假 PASS
-    而闸门已被静默拆掉。
-    """
-    return [line for line in text.splitlines()
-            if not line.lstrip().startswith('#')]
+_STYLE_NAMES = {
+    None: 'plain (continuation-folding) scalar',
+    '|': 'literal block',
+    '>': 'folded block',
+    "'": 'single-quoted scalar',
+    '"': 'double-quoted scalar',
+}
 
 
-def _job_block(lines, name):
-    start = next((index for index, line in enumerate(lines)
-                  if (match := JOB_HEADER.match(line)) and match[1] == name), None)
-    if start is None:
-        raise CheckFailure(f'no `{name}:` job in the workflow')
-    end = next((index for index in range(start + 1, len(lines))
-                if JOB_HEADER.match(lines[index])), len(lines))
-    return lines[start:end]
+def _style_name(style):
+    return _STYLE_NAMES.get(style, f'`{style}` block scalar')
 
 
-def _steps(block):
-    """把 job 块切成 step 列表（每项含该 step 的全部行）。"""
-    starts = [index for index, line in enumerate(block) if STEP_ITEM.match(line)]
-    return [block[start:(starts[position + 1] if position + 1 < len(starts)
-                      else len(block))]
-            for position, start in enumerate(starts)]
-
-
-def check_wiring(workflow=None):
-    """CI 里的闸门必须**按登记的样子**接着，而不是「文本还在」。
-
-    只认活配置（整行注释先剥掉），然后按 YAML 缩进取真值逐字比对：
-
-    - 两个 job 的直属键必须在白名单内（job 级 `continue-on-error` 会让全红的 job 仍 success）；
-    - retirement job 的 step 顺序、闸门 step 的名字、直属键集合（只有 `name` + 顶层 `run`）
-      必须与登记一致——`env: {run: …}` / `env.UNUSED: |` / `if:` / `with:` 一律判红；
-    - 每个闸门 step 的 `run` 体必须与 `GATE_SCRIPTS` 逐字相等——`echo` 前缀、`|| true`
-      后缀、外层 `if false; then … fi`、多一行 `set +e` 全部逐字不等即红；
-    - 聚合 `check` job 依赖 retirement job，它的 Require step 只有 `name`/`if`/`run`
-      三个键，`run` 恰为 `exit 1`，`if:` 逐字等于登记的恒执行条件。
-
-    任一条不满足，闸门要么不执行、要么失败了不报，job 结果仍是 success，聚合闸门就放行了。
-    """
-    path = Path(workflow or WORKFLOW)
+def _workflow_root(path):
+    """唯一文档的根节点；多文档 / 解析失败 / PyYAML 缺失一律红。"""
+    yaml = _yaml_module()
     try:
         text = path.read_text(encoding='utf-8')
     except OSError as error:
         raise CheckFailure(f'cannot read {path}: {error}') from error
-    lines = _live_lines(text)
-    if any(line.rstrip() == '---' or line.startswith('%YAML') for line in lines):
+    try:
+        documents = list(yaml.compose_all(text))
+    except yaml.YAMLError as error:
+        raise CheckFailure(f'{path}: not parsable as YAML: {error}') from error
+    if len(documents) != 1:
         raise CheckFailure(
-            f'{path}: YAML document separators / directives are not accepted; the runner '
-            'rejects a multi-document workflow, and the guard would only read the first one')
+            f'{path}: expected exactly one YAML document, found {len(documents)}; '
+            'the runner rejects a multi-document workflow, and any single-document '
+            'reader would silently ignore the rest')
+    return yaml, documents[0]
 
-    retirement = _job_block(lines, RETIREMENT_JOB)
-    _require_job_keys(path, retirement, RETIREMENT_JOB, RETIREMENT_JOB_KEYS)
-    retirement_keys = dict(_job_entries(path, retirement, RETIREMENT_JOB))
-    if 'scope' not in _needs_list(retirement_keys.get('needs', '')):
+
+def _pairs(yaml, path, node, what):
+    """YAML 映射节点 → [(键文本, 值节点)]；非映射 / 非标量键 / 重复键即红。"""
+    if not isinstance(node, yaml.MappingNode):
+        raise CheckFailure(f'{path}: {what} must be a YAML mapping')
+    pairs = []
+    seen = set()
+    for key, value in node.value:
+        if not isinstance(key, yaml.ScalarNode):
+            raise CheckFailure(f'{path}: {what} has a non-scalar key {key!r}')
+        if key.value in seen:
+            raise CheckFailure(
+                f'{path}: {what} repeats the key `{key.value}`; with duplicate keys '
+                'the runner and the guard can disagree about which one is live')
+        seen.add(key.value)
+        pairs.append((key.value, value))
+    return pairs
+
+
+def _scalar_text(yaml, path, node, what):
+    if node is None:
+        raise CheckFailure(f'{path}: {what} is missing')
+    if not isinstance(node, yaml.ScalarNode):
+        raise CheckFailure(
+            f'{path}: {what} must be a scalar, found a {type(node).__name__}; an '
+            'alias or nested structure is not the value the runner would use')
+    return node.value
+
+
+def _gate_run_text(yaml, path, node, label):
+    """闸门 step 的 `run`：必须是 literal 块标量（`|`），返回其完整标量值。
+
+    非 literal 形态**显式判红并写明形态**：plain 多行标量是续行拼接产物（换行折叠成
+    空格），`>` 折叠块同样改字，引号标量是另一套转义——三者执行到的文本都不是源码行
+    的逐字内容。
+    """
+    if not isinstance(node, yaml.ScalarNode) or node.style != '|':
+        found = ('a non-scalar node'
+                 if not isinstance(node, yaml.ScalarNode)
+                 else f'a {_style_name(node.style)}')
+        raise CheckFailure(
+            f'{path}: gate step `{label}` `run` is {found}, not a literal block '
+            'scalar (`|`); plain and quoted scalars fold continuation lines into '
+            'spaces, `>` folds every newline — the executed text is not the source '
+            'lines verbatim')
+    return node.value
+
+
+def _first_line_diff(got, want):
+    got_lines, want_lines = got.split('\n'), want.split('\n')
+    for number, (line_got, line_want) in enumerate(zip(got_lines, want_lines), 1):
+        if line_got != line_want:
+            return f'line {number}: {line_got!r} != {line_want!r}'
+    if len(got_lines) != len(want_lines):
+        return f'{len(got_lines)} lines vs {len(want_lines)} lines'
+    return 'identical'
+
+
+def _needs_names(yaml, path, node, job):
+    if isinstance(node, yaml.SequenceNode):
+        return [_scalar_text(yaml, path, item, f'`{job}` needs entry')
+                for item in node.value]
+    if isinstance(node, yaml.ScalarNode):
+        return [node.value] if node.value else []
+    raise CheckFailure(f'{path}: `{job}` needs must be a list or a job name')
+
+
+def _job_map(yaml, path, jobs, name, allowed):
+    """只在 `jobs:` 映射里找 job，并核 job 直属键白名单。"""
+    if name not in jobs:
+        raise CheckFailure(
+            f'{path}: no `{name}` job under `jobs:`; a block by that name anywhere '
+            'else (e.g. under `on:` as an unknown event name) is silently ignored '
+            'by the runner')
+    pairs = _pairs(yaml, path, jobs[name], f'`{name}` job')
+    for key, _ in pairs:
+        if key not in allowed:
+            raise CheckFailure(
+                f'{path}: `{name}` job carries the unregistered key `{key}`; a '
+                'job-level `continue-on-error` / `env` / `defaults` can change or '
+                'swallow the gate without touching any step')
+    return dict(pairs)
+
+
+def _step_list(yaml, path, node, job):
+    if not isinstance(node, yaml.SequenceNode):
+        raise CheckFailure(f'{path}: `{job}` has no step list')
+    return [dict(_pairs(yaml, path, item, f'`{job}` step'))
+            for item in node.value]
+
+
+def check_wiring(workflow=None):
+    """CI 里的闸门必须**按登记的样子**接着（PyYAML 完整标量逐字比对）。
+
+    用 YAML 解析器取**解析后的完整标量值**比对，不做任何行式 / 缩进式文本切块：
+
+    - 只在 `jobs:` 映射里找两个 job（挂在 `on:` 等别处的同名块不是 job）；
+    - 两个 job 的直属键必须在白名单内（job 级 `continue-on-error` 会让全红的 job 仍
+      success）；重复键即红——两个解析器可以对「哪个键活着」各执一词；
+    - retirement job 的 step 顺序、闸门 step 的名字、直属键集合（只有 `name` + 一个
+      `run`）必须与登记一致——`env: {run: …}` / `env.UNUSED: |` / `if:` /
+      `continue-on-error` 一律判红；
+    - 每个闸门 step 的 `run` 必须是 literal 块标量（`|`）且**完整标量值**与
+      `GATE_SCRIPTS` 逐字相等——续行拼接（plain 多行标量）、`>` 折叠块、引号标量
+      **显式判红并写明形态**；`echo` 前缀、`|| true` 后缀、外层 `if false; then … fi`、
+      多一行 `set +e` 全部逐字不等即红；
+    - 聚合 `check` job 依赖 retirement job，`if` 归一化后恰为 `always()`（GitHub 把
+      被跳过的 job 报成 success，而 `check` 自己是必需检查）；Require step 只有
+      `name` / `if` / `run` 三个键，`run` 恰为 `exit 1`，`if` 归一化后逐字等于登记的
+      恒执行条件。
+
+    任一条不满足，闸门要么不执行、要么失败了不报，job 结果仍是 success，聚合闸门就放
+    行了。PyYAML 不可用时 fail-closed 判红，不降级回行式解析。
+    """
+    path = Path(workflow or WORKFLOW)
+    yaml, root = _workflow_root(path)
+    jobs_node = dict(_pairs(yaml, path, root, 'the workflow')).get('jobs')
+    if jobs_node is None:
+        raise CheckFailure(f'{path}: the workflow has no `jobs:` mapping')
+    jobs = dict(_pairs(yaml, path, jobs_node, 'jobs'))
+
+    retirement = _job_map(yaml, path, jobs, RETIREMENT_JOB, RETIREMENT_JOB_KEYS)
+    if 'scope' not in _needs_names(yaml, path, retirement.get('needs'),
+                                    RETIREMENT_JOB):
         raise CheckFailure(
             f'{path}: `{RETIREMENT_JOB}` must still need `scope` (docs-only classifier)')
-    job_condition = _normalised_expression(
-        retirement_keys.get('if', ''))
+    job_condition = _normalised_expression(_scalar_text(
+        yaml, path, retirement.get('if'), f'`{RETIREMENT_JOB}` job `if`'))
     expected_job_condition = _normalised_expression(RETIREMENT_JOB_CONDITION)
     if job_condition != expected_job_condition:
         raise CheckFailure(
@@ -572,87 +584,85 @@ def check_wiring(workflow=None):
             f'exactly `{expected_job_condition}`; any other condition can skip the job '
             'on PRs the classifier does not mark docs-only')
 
-    steps = _steps(retirement)
+    steps = _step_list(yaml, path, retirement.get('steps'), RETIREMENT_JOB)
     if len(steps) != len(RETIREMENT_STEP_ORDER):
         raise CheckFailure(
             f'{path}: `{RETIREMENT_JOB}` must keep exactly {len(RETIREMENT_STEP_ORDER)} '
             f'steps (found {len(steps)}); adding, dropping or reordering steps changes '
             'which script actually runs')
     for step, (kind, wanted) in zip(steps, RETIREMENT_STEP_ORDER):
-        entries = _step_entries(path, step, wanted)
-        label = _step_label(entries)
+        label = (_scalar_text(yaml, path, step['name'], f'`{wanted}` `name`')
+                 if 'name' in step else
+                 _scalar_text(yaml, path, step.get('uses'), f'`{wanted}` `uses`')
+                 if 'uses' in step else None)
         if label != wanted:
             raise CheckFailure(
-                f'{path}: expected the `{wanted}` step at this position, found `{label}`')
-        keys = [entry[0] for entry in entries]
+                f'{path}: expected the `{wanted}` step at this position, '
+                f'found `{label}`')
         if kind == 'gate':
-            if set(keys) != {'name', 'run'} or len(keys) != 2:
+            if set(step) != {'name', 'run'}:
                 raise CheckFailure(
                     f'{path}: gate step `{label}` may only carry `name` and one top-level '
-                    f'`run`, found {keys}; `env` / `with` / `if` / `continue-on-error` '
-                    'can disable the step or replace what it executes')
-            script = _script_lines(path, label, entries)
-            expected = list(GATE_SCRIPTS[label])
-            if script != expected:
-                first = next((f'line {number}: {got!r} != {want!r}'
-                              for number, (got, want)
-                              in enumerate(itertools.zip_longest(script, expected,
-                                                                 fillvalue='<missing>'), 1)
-                              if got != want), 'length differs')
+                    f'`run`, found {sorted(step)}; `env` / `with` / `if` / '
+                    '`continue-on-error` can disable the step or replace what it executes')
+            script = _gate_run_text(yaml, path, step['run'], label)
+            if script != GATE_SCRIPTS[label]:
                 raise CheckFailure(
                     f'{path}: gate step `{label}` does not run the registered script '
-                    f'({first}); the script is pinned verbatim, so an `echo` prefix, a '
-                    '`|| true` / `! ` suffix, an `if false; then … fi` wrapper or an '
-                    'extra line all change the text')
+                    f'({_first_line_diff(script, GATE_SCRIPTS[label])}); the parsed '
+                    'scalar is pinned verbatim, so an `echo` prefix, a `|| true` / '
+                    '`! ` suffix, an `if false; then … fi` wrapper or an extra line '
+                    'all change the text')
         else:
-            unknown = set(keys) - USE_STEP_KEYS
-            if unknown or 'uses' not in keys:
+            unknown = set(step) - USE_STEP_KEYS
+            if unknown or 'uses' not in step:
                 raise CheckFailure(
-                    f'{path}: step `{label}` must stay an action (`uses:`), found {keys}')
+                    f'{path}: step `{label}` must stay an action (`uses:`), '
+                    f'found {sorted(step)}')
 
     # 聚合闸门那一侧同样要守：Require step 被 `if: false` 挡掉、条件被改弱、或
     # `run: exit 0` 时，retirement job 照跑照过，job 结果仍是 success。
-    aggregate = _job_block(lines, AGGREGATE_JOB)
-    _require_job_keys(path, aggregate, AGGREGATE_JOB, AGGREGATE_JOB_KEYS)
-    aggregate_keys = dict(_job_entries(path, aggregate, AGGREGATE_JOB))
-    aggregate_condition = _normalised_expression(aggregate_keys.get('if', ''))
-    expected_aggregate_condition = _normalised_expression(AGGREGATE_JOB_CONDITION)
-    if aggregate_condition != expected_aggregate_condition:
-        raise CheckFailure(
-            f'{path}: `{AGGREGATE_JOB}` job condition is `{aggregate_condition}` but must '
-            f'be exactly `{expected_aggregate_condition}`; a skipped required job is '
-            "reported as success by GitHub, so nothing else would block the merge")
-    if RETIREMENT_JOB not in _needs_list(aggregate_keys.get('needs', '')):
+    aggregate = _job_map(yaml, path, jobs, AGGREGATE_JOB, AGGREGATE_JOB_KEYS)
+    if RETIREMENT_JOB not in _needs_names(yaml, path, aggregate.get('needs'),
+                                          AGGREGATE_JOB):
         raise CheckFailure(
             f'{path}: `{AGGREGATE_JOB}` no longer needs `{RETIREMENT_JOB}`; without the '
             'dependency the Require step cannot see the gate result')
+    aggregate_condition = _normalised_expression(_scalar_text(
+        yaml, path, aggregate.get('if'), f'`{AGGREGATE_JOB}` job `if`'))
+    expected_aggregate_condition = _normalised_expression(AGGREGATE_JOB_CONDITION)
+    if aggregate_condition != expected_aggregate_condition:
+        raise CheckFailure(
+            f'{path}: `{AGGREGATE_JOB}` job condition is `{aggregate_condition}` but '
+            f'must be exactly `{expected_aggregate_condition}`; a skipped required job '
+            'is reported as success by GitHub, so nothing else would block the merge')
     require = None
-    for step in _steps(aggregate):
-        entries = _step_entries(path, step, REQUIRE_STEP_NAME)
-        if _step_label(entries) == REQUIRE_STEP_NAME:
-            require = entries
+    for step in _step_list(yaml, path, aggregate.get('steps'), AGGREGATE_JOB):
+        name_node = step.get('name')
+        if name_node is not None and _scalar_text(
+                yaml, path, name_node, 'an aggregate step `name`') == REQUIRE_STEP_NAME:
+            require = step
             break
     if require is None:
         raise CheckFailure(f'{path}: `{AGGREGATE_JOB}` has no retirement Require step')
-    keys = [entry[0] for entry in require]
-    if set(keys) != {'name', 'if', 'run'} or len(keys) != 3:
+    if set(require) != {'name', 'if', 'run'}:
         raise CheckFailure(
             f'{path}: the aggregate Require step may only carry `name`, `if` and `run`, '
-            f'found {keys}; an extra key can swallow the failure')
-    script = _script_lines(path, REQUIRE_STEP_NAME, require)
-    if script != [REQUIRE_RUN]:
+            f'found {sorted(require)}; an extra key can swallow the failure')
+    if _scalar_text(yaml, path, require['run'],
+                    'the aggregate Require step `run`') != REQUIRE_RUN:
         raise CheckFailure(
-            f'{path}: the aggregate Require step must run exactly `{REQUIRE_RUN}`, '
-            f'found {script}; anything else lets a failed retirement job pass')
-    condition = next(inline for key, inline, _ in require if key == 'if')
-    expression = _normalised_expression(condition)
+            f'{path}: the aggregate Require step must run exactly `{REQUIRE_RUN}`; '
+            'anything else lets a failed retirement job pass')
+    expression = _normalised_expression(_scalar_text(
+        yaml, path, require['if'], 'the aggregate Require step `if`'))
     if expression != REQUIRE_CONDITION:
         raise CheckFailure(
             f'{path}: the aggregate Require step condition is `{expression}` but must '
             f'be exactly `{REQUIRE_CONDITION}`; a weakened condition (e.g. a trailing '
             '`&& false`) silently disables the gate')
     return (f'{len(RETIREMENT_STEP_ORDER)} registered steps + aggregate Require step '
-            f'live in {path.name}')
+            f'live in {path.name} (PyYAML scalar-exact)')
 
 
 CHECKS = {
@@ -756,7 +766,8 @@ def wiring_samples():
     `env.UNUSED: |` / 嵌套 `env: {run: …}` 冒充 Require 的执行体 / 条件块 `if false; then`
     包住整条命令 / 三种 shell 级抑制（`|| true`、`echo` 前缀、`! ` 取反退出码）/
     聚合 Require 的五种改法（禁用、改弱、忽略失败、追加 `&& false`、`exit 0`）/
-    删掉一个闸门 step。
+    删掉一个闸门 step / r5 标量形态四种（run 行内续行、聚合 job `if` 续行、Require
+    `if` 续行、`|`→`>` 折叠块）加 job 挪出 `jobs:`（行首正则会认 `on:` 下的假块）。
 
     每条样本都**真的能造成假绿**，不是语法坏掉的变异体：`bash -e` 下要么命令没执行、
     要么失败被吞、要么 step / job 被跳过，而 job 结果仍是 success。
@@ -903,6 +914,83 @@ def wiring_samples():
 
     # 多文档：守卫只读第一份，`---` 之后的文档被静默忽略。
     samples.append(('multi-document', text + '---\n  ignored: job\n'))
+
+    # —— r5：标量形态绕过。r4 的行式 / 缩进式切块在源码行层面看文本，而这四种
+    # 形态的**执行文本**（YAML 解析后的完整标量）已经不同——只有按解析后的标量
+    # 比对并显式判红形态才能抓住（#2017 P0 复现 P1-1 / P1-2a / P1-2b / P1-3 / P1-4）。——
+
+    # 行内续行：`run: |` 块改成 plain 多行标量，YAML 把换行折叠成空格，执行值变成
+    # 「登记命令 + ' || true'」；按源码行首值比对的守卫恰好等于登记脚本 → 假 PASS。
+    if ('        run: |\n'
+        '          python3 -I scripts/retirement-outcome-parity/self_check.py '
+        '--self-check-controls\n') not in text:
+        raise CheckFailure('the 接线守卫变异自检 step block is not found to mutate')
+    samples.append(('run-continuation', text.replace(
+        '        run: |\n'
+        '          python3 -I scripts/retirement-outcome-parity/self_check.py '
+        '--self-check-controls\n',
+        '        run: python3 -I scripts/retirement-outcome-parity/self_check.py '
+        '--self-check-controls\n'
+        '          || true\n', 1)))
+
+    # 聚合 job `if` 续行 `&& false`：plain 多行标量折叠后是 `${{ always() }} &&
+    # false`，job 从不执行；只收 4 空格行的守卫只看见 `${{ always() }}` → 假 PASS。
+    if '    if: ${{ always() }}\n' not in text:
+        raise CheckFailure('the aggregate job `if` line is not found to mutate')
+    samples.append(('aggregate-job-if-continuation', text.replace(
+        '    if: ${{ always() }}\n',
+        '    if: ${{ always() }}\n      && false\n', 1)))
+
+    # Require step `if` 续行 `&& false`：续行落在「缩进更深的子行」里被旧守卫
+    # 静默忽略，折叠后的条件恒假 → step 从不执行，job 仍 success。
+    require_if = ('        if: ${{ always() && '
+                  'needs.retirement-outcome-parity.result != \'success\' && '
+                  '!(needs.retirement-outcome-parity.result == \'skipped\' && '
+                  'needs.scope.outputs.docs_only == \'true\') }}\n')
+    if require_if not in text:
+        raise CheckFailure('the aggregate Require `if` line is not found to mutate')
+    samples.append(('require-if-continuation', text.replace(
+        require_if, require_if + '          && false\n', 1)))
+
+    # 块标量 `|` → `>`：源码行一字未动，而 Actions 执行的是折叠后的标量（换行全部
+    # 折成空格——多行命令变成一串参数，`bash -e` 下第一条就 rc≠0 也只是失败不绕过，
+    # 但若整块恰好折叠成可执行的等价物时闸门已非登记脚本）。
+    folded = list(lines)
+    folded[check_run] = '        run: >\n'
+    samples.append(('folded-block', ''.join(folded)))
+
+    # job 查找按行首：把两个 job 的登记样子整块挪到 `on:` 下（未知事件名被 GitHub
+    # 静默忽略），真 `jobs:` 里的 retirement job 删除、聚合 needs 与 Require step
+    # 同步摘除——按 `^  <job>:\s*$` 行首找块的守卫在 `on:` 下找到了假块 → 假 PASS。
+    fake_job_start = next(index for index, line in enumerate(lines)
+                          if line == f'  {RETIREMENT_JOB}:\n')
+    fake_job_end = next(index for index, line in enumerate(lines)
+                        if line == f'  {AGGREGATE_JOB}:\n')
+    fake_retirement = lines[fake_job_start:fake_job_end]
+    fake_require_end = require_start + 3
+    fake = (['on:\n', f'  {RETIREMENT_JOB}:\n'] + fake_retirement[1:]
+            + [f'  {AGGREGATE_JOB}:\n',
+               '    needs: [scope, metadata-observer, rust, a51-coverage, '
+               'negative-controls, retirement-outcome-parity]\n',
+               '    if: ${{ always() }}\n',
+               '    runs-on: ubuntu-latest\n',
+               '    steps:\n']
+            + lines[require_start:fake_require_end])
+    aggregate_needs = ('    needs: [scope, metadata-observer, rust, a51-coverage, '
+                       'negative-controls, retirement-outcome-parity]\n')
+    outside = []
+    for index, line in enumerate(lines):
+        if line == 'on:\n':
+            outside.extend(fake)
+        elif fake_job_start <= index < fake_job_end \
+                or require_start <= index < fake_require_end:
+            continue
+        elif line == aggregate_needs:
+            outside.append('    needs: [scope, metadata-observer, rust, a51-coverage, '
+                          'negative-controls]\n')
+        else:
+            outside.append(line)
+    samples.append(('job-outside-jobs', ''.join(outside)))
     return samples
 
 
