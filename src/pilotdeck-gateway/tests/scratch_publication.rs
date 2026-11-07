@@ -1744,7 +1744,11 @@ fn stat_fields(stat: &str) -> Option<(char, &str)> {
 /// #1409: whether `pid` is this process or one of its descendants — the only
 /// processes that can hold a copy of a descriptor this process owns. An
 /// unreadable chain is an unknown and counts as related, so it fails the scan
-/// closed rather than passing it.
+/// closed rather than passing it. Known limits, both needing pid reuse to be
+/// reached at all: a `SCM_RIGHTS` handoff is inheritance the parent chain does
+/// not show, and an ancestor reaped and its pid reused mid-walk would send the
+/// chain into an unrelated tree (the failure there is a skipped source, and
+/// only for sources already unreadable).
 #[cfg(target_os = "linux")]
 fn descended_from_this_process(pid: &str) -> bool {
     let mine = process::id().to_string();
@@ -1785,9 +1789,45 @@ fn blind_source(pid: &str) -> BlindSource {
         return BlindSource::Terminal;
     }
     if descended_from_this_process(pid) {
-        BlindSource::Related
+        settles_into_a_terminal_source(pid)
     } else {
         BlindSource::Unrelated
+    }
+}
+
+/// #1409: how long a related source may still be finishing its exit before
+/// its unreadable descriptors count as hidden while alive. `exit_files()`
+/// runs before `exit_notify()` marks the task a zombie, and in that window
+/// the fd directory already fails (cb8 6.17 answers EACCES — measured, see
+/// `_tmp/20261107-issue-1409/exit-window-probe.log`) while `/proc/<pid>/stat`
+/// still says `R`. Failing on that first read would turn a healthy run red;
+/// failing only after the source settles keeps a live descendant with hidden
+/// descriptors a hard failure.
+#[cfg(target_os = "linux")]
+const BLIND_SOURCE_SETTLE: Duration = Duration::from_millis(50);
+
+/// #1409: re-read a related source's state until it either proves terminal —
+/// a zombie, a dead task, or gone — or the settle window runs out, in which
+/// case it is still an unknown and the scan fails closed on it.
+#[cfg(target_os = "linux")]
+fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
+    let deadline = Instant::now() + BLIND_SOURCE_SETTLE;
+    loop {
+        match fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => match stat_fields(&stat) {
+                Some(('Z' | 'X', _)) => return BlindSource::Terminal,
+                Some(_) => {}
+                None => return BlindSource::Related,
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return BlindSource::Vanished;
+            }
+            Err(_) => {}
+        }
+        if Instant::now() >= deadline {
+            return BlindSource::Related;
+        }
+        thread::sleep(Duration::from_millis(2));
     }
 }
 
@@ -1808,8 +1848,19 @@ fn fds_of(pid: &str, wanted: &str) -> io::Result<Vec<(String, u32)>> {
                 "#1409 enumerating the descriptors of {pid}: {error}"
             ))
         })?;
-        let Ok(target) = fs::read_link(descriptor.path()) else {
-            continue;
+        let target = match fs::read_link(descriptor.path()) {
+            Ok(target) => target,
+            // #1409: only a link that vanished between the enumeration and
+            // the read is a release. Any other errno (EACCES from a setuid
+            // exec or an LSM, EIO) leaves a descriptor the scan cannot see
+            // — reported, so the caller classifies its source instead of
+            // passing it over.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(io::Error::other(format!(
+                    "#1409 reading the descriptors of {pid}: {error}"
+                )));
+            }
         };
         if target.to_string_lossy() != wanted {
             continue;
@@ -1956,11 +2007,16 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
         BlindSource::Related,
         "#1409 this process is the scan's own source and must never be skipped"
     );
-    assert_eq!(
-        blind_source("1"),
-        BlindSource::Unrelated,
-        "#1409 init cannot descend from this process, so it can never hold this pipe"
-    );
+    // Init cannot descend from this process — unless the test binary *is*
+    // PID 1 (a container entrypoint), in which case the self check above is
+    // the same assertion and this one must not contradict it.
+    if mine != "1" {
+        assert_eq!(
+            blind_source("1"),
+            BlindSource::Unrelated,
+            "#1409 init cannot descend from this process, so it can never hold this pipe"
+        );
+    }
     let mut child = process::Command::new("/bin/true")
         .spawn()
         .expect("#1409 spawn the vanished-source probe");
