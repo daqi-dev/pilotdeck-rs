@@ -134,7 +134,11 @@ fn budget_spans_every_exec_of_one_request() {
     // first's remainder, so the total is what the caller granted the request.
     let mut budget = MatchBudget::new(u64::MAX);
     let granted = budget.remaining_polls();
-    let fast = units(&format!("{}!", "a".repeat(4)));
+    // Measured: the engine polls its interrupt handler only about every
+    // 10 000 steps, so a fast subject below that granularity charges zero
+    // polls ("a"*12 -> after_first == granted); "a"*14 crosses it, charges
+    // a few polls and still completes (harvest-r1/exp-n12.sh evidence).
+    let fast = units(&format!("{}!", "a".repeat(14)));
     assert_eq!(
         engine.exec(&pattern, &fast, &mut budget),
         Ok(ExecOutcome::NoMatch),
