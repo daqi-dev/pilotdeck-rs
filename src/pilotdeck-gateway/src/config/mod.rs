@@ -20,7 +20,11 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_yaml::{Options, parse_document};
 use std::collections::HashMap;
 use value::*;
-pub(crate) use value::{BUILTIN_PROPERTY_NAMES, builtin_property, string_coercible};
+pub(crate) use value::{builtin_property, string_coercible};
+// Test-only: the constant is consumed by the webhook pin test, so a plain
+// re-export is an unused import in a non-test lib build (`-D warnings`).
+#[cfg(test)]
+pub(crate) use value::BUILTIN_PROPERTY_NAMES;
 // Only `valid_timezone` leaves the config tree (the #1324 cron schedule
 // validity check); the `sections` module itself stays private.
 pub(crate) use sections::valid_timezone;
