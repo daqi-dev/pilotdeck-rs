@@ -76,16 +76,29 @@ fn reuse_after_interrupt_serves_later_requests() {
 }
 
 /// After a request exhausts and is interrupted, the JS entries that run
-/// outside any request budget must stay safe: the spent allowance is
-/// disarmed on both return paths, so a poll inside the cache-size probe or
-/// a pattern's release call never sees a spent budget (the probe would
-/// panic on its `.expect`, a release failure would silently leak the JS
-/// cache entry).
+/// outside any request budget must stay safe. The probe and the drops are
+/// the only such entries ([`RegexEngine::compile`] rearms its own slot), so
+/// they are exercised *directly* in the post-interrupt window here — no
+/// `compile` may sit between the interrupt and the probe, because a compile
+/// would reset the interrupt state itself (engine.rs: the `compile` entry
+/// stores) and the probe would no longer observe the post-interrupt engine.
+///
+/// What this pins is the safety property (the probe answers, drops release
+/// their cache entries) in the real window, not a kill of the disarm: the
+/// probe (`__pdrsCacheSize`) and the release call are O(1) JS, empirically
+/// below the ~10 000-step poll granularity (`harvest-r1/exp-n12.sh`), so
+/// removing the exec-exit disarm does not deterministically redden this
+/// test. A deterministic negative control for the disarm needs a JS entry
+/// that can cross the poll granularity — tracked as the r1/r2 review
+/// follow-up, with this measurement as its basis.
 #[test]
 fn probes_and_pattern_drops_stay_safe_after_an_interrupt() {
     let engine = engine();
     let pattern = compile(&engine, "^(a+)+(?=!)$", "");
     let doom = units(&format!("{}!", "a".repeat(18)));
+    // Both patterns are compiled up front: after the interrupt the test
+    // must not call compile again before the probe and the drops.
+    let extra = compile(&engine, "^b+$", "u");
 
     let mut tiny = MatchBudget::new(1);
     assert_eq!(
@@ -95,7 +108,6 @@ fn probes_and_pattern_drops_stay_safe_after_an_interrupt() {
     );
 
     // The probe answers instead of panicking, and drops still release.
-    let extra = compile(&engine, "^b+$", "u");
     assert_eq!(
         engine.cached_pattern_count(),
         2,

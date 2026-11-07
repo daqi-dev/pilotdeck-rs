@@ -172,7 +172,9 @@ pub enum ExecOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MatchError {
     /// The budget ran out; the engine was interrupted mid-match. Never
-    /// collapses into [`ExecOutcome::NoMatch`].
+    /// collapses into [`ExecOutcome::NoMatch`]. A zero (or spent-to-zero)
+    /// allowance is also reported this way, refused at [`RegexEngine::exec`]'s
+    /// entry before any JS runs.
     Interrupted,
     /// A runtime resource limit (memory or C stack) was hit while matching.
     Resource(String),
@@ -386,7 +388,9 @@ impl RegexEngine {
     }
 
     /// Execute a compiled pattern against a subject (UTF-16 code units),
-    /// charging the shared per-request `budget`.
+    /// charging the shared per-request `budget`. A zero (or spent-to-zero)
+    /// allowance is refused here, before any JS runs; otherwise the budget
+    /// spans every exec of the request.
     pub fn exec(
         &self,
         pattern: &CompiledPattern,

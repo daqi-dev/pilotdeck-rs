@@ -58,8 +58,9 @@ SCRIPTS = (
     # #1456: same entry shape after the r2/r4 migration to negative_selection.
     ('memory-gateway/negative_controls.py', (), ()),
     ('snapshot-projection/negative_controls.py', (), ()),
-    # #1265: same entry shape after the fix-r1 migration to negative_selection
-    # (claim_dir + missing_target/refuse_unusable_target + verdict_exit).
+    # #1265: same entry shape after the fix-r1/fix-r2 migration to
+    # negative_selection (claim_dir + missing_target/refuse_unusable_target
+    # + select + registered + verdict_exit).
     ('regex-proto-budget/negative_controls.py', (), ()),
 )
 
@@ -442,7 +443,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The fifteen entries this PR migrated are not the whole family. Rather than
+    The eighteen entries migrated so far are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in
     ``PENDING_BARE_ASSERTS`` may not contain a judgment ``assert``, and each
