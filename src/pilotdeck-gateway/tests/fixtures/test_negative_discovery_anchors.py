@@ -492,6 +492,29 @@ def _rebound_elsewhere(tree):
     return names
 
 
+def _imported_names(tree):
+    """Names an ``import`` statement binds.
+
+    ``from external_config import base`` gives ``base`` a value the file text
+    does not contain. When the same name is also assigned once inside a
+    function, that assignment used to be promoted to a file-wide constant, so
+    every other site resolved to that one directory: a table importing such a
+    name and also aliasing it locally keyed the wrong directory and reported
+    nothing at the site it could not follow. An import is a binding like any
+    other — the scanner must not look past it.
+    """
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != '*':
+                    names.add(alias.asname or alias.name)
+    return names
+
+
 def _unpacked_bindings(target, value):
     """``(name, value)`` pairs for one assignment target and its expression.
 
@@ -625,6 +648,7 @@ def _constants(tree):
                 values.setdefault(name, []).append(ast.dump(value))
                 assignments.append((name, value))
     rebound = _rebound_elsewhere(tree)
+    imported = _imported_names(tree)
     unpairable = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -632,7 +656,7 @@ def _constants(tree):
             unpairable.update(name for name, _ in bad)
     bound_anywhere = set(values) | unpairable | rebound
     for name, value in assignments:
-        if name in constants or name in rebound:
+        if name in constants or name in rebound or name in imported:
             continue
         if len(values[name]) == 1:
             constants[name] = value
@@ -648,7 +672,7 @@ def _constants(tree):
     # ``_ambiguous_local_names`` — leaving them out *and* silent was the hole
     # (two functions, two directories, no key, no report).
     for name, value in assignments:
-        if name in constants or name in rebound:
+        if name in constants or name in rebound or name in imported:
             continue
         if len(set(values[name])) == 1 and _scope_free(value, constants, bound_anywhere):
             constants[name] = value
@@ -677,6 +701,12 @@ def _builds_from_root(value, constants, seen=()):
         return _builds_from_root(value.left, constants, seen)
     if isinstance(value, ast.Attribute) and value.attr in ('parent', 'resolve'):
         return _builds_from_root(value.value, constants, seen)
+    if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Attribute)
+            and value.value.attr == 'parents'):
+        # ``(ROOT / 'x/gateway.rs').parents[0]`` is the directory of a
+        # repository file: still rooted at the repository, so a local alias
+        # built this way has to seed the ambiguity net like ``.parent`` does.
+        return _builds_from_root(value.value.value, constants, seen)
     if isinstance(value, ast.JoinedStr):
         return any(isinstance(part, ast.FormattedValue)
                    and _builds_from_root(part.value, constants, seen)
@@ -707,6 +737,17 @@ def _carries_name_as_path(value, names):
         return _carries_name_as_path(value.left, names)
     if isinstance(value, ast.Attribute) and value.attr in ('parent', 'resolve'):
         return _carries_name_as_path(value.value, names)
+    if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Attribute)
+            and value.value.attr == 'parents'):
+        return _carries_name_as_path(value.value.value, names)
+    if isinstance(value, ast.JoinedStr):
+        # ``src = f'{base}'`` builds the path *from* ``base`` just as ``src =
+        # base`` does; the interpolation is not a display string when the whole
+        # value is one formatted name. Without this step the taint stopped at
+        # the f-string and every join on ``src`` stayed silent.
+        return any(isinstance(part, ast.FormattedValue)
+                   and _carries_name_as_path(part.value, names)
+                   for part in value.values)
     if isinstance(value, ast.Call):
         func = value.func
         if isinstance(func, ast.Name) and func.id in ('str', 'Path'):
@@ -715,6 +756,27 @@ def _carries_name_as_path(value, names):
                                                              'with_name'):
             return _carries_name_as_path(func.value, names)
     return False
+
+
+def _carries_name_as_path_in_unpacking(value, names):
+    """Whether an unpairable right-hand side passes a path name into a target.
+
+    ``src, *rest = (base, 1)`` binds ``src`` to ``base``, and ``base`` may be a
+    repository directory that only another scope assigns; the element-wise
+    spine test does not look inside the container, so the ambiguity of ``base``
+    never reached ``src`` and its joins stayed silent. Only unpairable
+    assignments use this: an ordinary ``command = ['node', p]`` is a container
+    that merely *holds* a path and must stay silent (it is an output directory).
+    """
+    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        return any(_carries_name_as_path(element, names)
+                   or _carries_name_as_path_in_unpacking(element, names)
+                   for element in value.elts)
+    if isinstance(value, ast.Dict):
+        return any(_carries_name_as_path(element, names)
+                   or _carries_name_as_path_in_unpacking(element, names)
+                   for element in value.values)
+    return _carries_name_as_path(value, names)
 
 
 def _scope_free(value, constants, bound_anywhere):
@@ -830,11 +892,14 @@ def _ambiguous_local_names(tree, constants):
         for name in set(values) | set(unpairable):
             if name in repo_bound:
                 continue
-            for value in values.get(name, []) + unpairable.get(name, []):
-                if _carries_name_as_path(value, repo_bound):
-                    repo_bound.add(name)
-                    grew = True
-                    break
+            # An unpairable binding hands the whole container to its targets
+            # (``src, *rest = (base, 1)``), so its *elements* have to be
+            # inspected too; a plain assignment only follows the path spine.
+            if (any(_carries_name_as_path(value, repo_bound) for value in values.get(name, []))
+                    or any(_carries_name_as_path_in_unpacking(value, repo_bound)
+                           for value in unpairable.get(name, []))):
+                repo_bound.add(name)
+                grew = True
     names = set()
     module_level = set()
     for statement in tree.body:
@@ -926,6 +991,38 @@ def _segments(node, constants, self_path, seen=()):
             return None
         drop = index.value + 1
         return base[:-drop] if drop <= len(base) else None
+    if isinstance(node, ast.Subscript):
+        return _container_segments(node, constants, self_path, seen)
+    return None
+
+
+def _container_segments(node, constants, self_path, seen):
+    """The path a literal container index names, or None.
+
+    ``CH = {'feishu': 'src/pilotdeck-gateway/src/channel/feishu'}`` then
+    ``CH['feishu'] / 'mod.rs'`` names a directory the file text spells out in
+    full; every other join spelling would be keyed, so this one must be too.
+    A key the container does not hold literally (an opaque index, a missing
+    key) is left to the callers to report.
+    """
+    container = node.value
+    if isinstance(container, ast.Name):
+        if container.id in seen or container.id not in constants:
+            return None
+        seen = seen + (container.id,)
+        container = constants[container.id]
+    index = node.slice
+    if not isinstance(index, ast.Constant):
+        return None
+    if isinstance(container, ast.Dict) and isinstance(index.value, str):
+        for key, element in zip(container.keys, container.values):
+            if isinstance(key, ast.Constant) and key.value == index.value:
+                return _segments(element, constants, self_path, seen)
+        return None
+    if isinstance(container, (ast.List, ast.Tuple)) and isinstance(index.value, int):
+        elements = container.elts
+        if -len(elements) <= index.value < len(elements):
+            return _segments(elements[index.value], constants, self_path, seen)
     return None
 
 
@@ -1088,8 +1185,10 @@ def _adds_a_runtime_file_name(node, constants, self_path):
         if (isinstance(base, ast.Call) and isinstance(base.func, ast.Name)
                 and base.func.id == 'str' and len(base.args) == 1):
             base = base.args[0]
-        if not (_segments(base, constants, self_path) is not None
-                and _is_repo_rooted(base, constants)):
+        if not ((_segments(base, constants, self_path) is not None
+                 or _indexes_a_path_container(base, constants))
+                and (_is_repo_rooted(base, constants)
+                     or _indexes_a_path_container(base, constants))):
             continue
         if (isinstance(right, ast.Name) and right.id not in ROOT_NAMES
                 and right.id != '__file__' and right.id not in constants):
@@ -1184,6 +1283,64 @@ def _is_repo_rooted(node, constants, seen=(), shadowed=()):
     for child in ast.iter_child_nodes(node):
         if _is_repo_rooted(child, constants, seen, shadowed):
             return True
+    return False
+
+
+def _is_relative_path_literal(value):
+    """Whether a string literal names a path below the repository root.
+
+    Tables keep directories in dictionaries too (``CH = {'feishu':
+    'src/pilotdeck-gateway/src/channel/feishu'}``) and index them at the join.
+    The host runs tables from the repository root, so a relative literal with
+    path separators *is* a repository path — but no ``ROOT`` or ``__file__``
+    appears in the expression, so every other test said "not a repository
+    path" and the join was neither keyed nor reported, while the identical
+    literal spelled directly is keyed. Whitespace and absolute paths stay out
+    for the same reasons as everywhere else (display strings, non-repository
+    paths).
+    """
+    if not value or value.startswith('/') or value != value.strip():
+        return False
+    if any(character.isspace() for character in value):
+        return False
+    segments = value.split('/')
+    return len(segments) > 1 and all(segment not in ('', '.', '..') for segment in segments)
+
+
+def _container_holds_a_path_literal(node, constants, seen=()):
+    """Whether a container constant holds a relative path literal."""
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _container_holds_a_path_literal(constants[node.id], constants,
+                                               seen + (node.id,))
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        elements = node.elts
+    elif isinstance(node, ast.Dict):
+        elements = node.values
+    else:
+        return False
+    return any(isinstance(element, ast.Constant) and isinstance(element.value, str)
+               and _is_relative_path_literal(element.value) for element in elements)
+
+
+def _indexes_a_path_container(node, constants):
+    """Whether ``node`` reads a directory out of a container constant.
+
+    The directory a join starts at can be written as a literal inside a dict or
+    tuple; when the index itself is opaque (``CH[name] / 'mod.rs'``) the path
+    is still a repository path and the join must be reported, not dropped.
+    """
+    if isinstance(node, ast.Subscript):
+        return _container_holds_a_path_literal(node.value, constants)
+    if isinstance(node, ast.BinOp):
+        return _indexes_a_path_container(node.left, constants)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ('str', 'Path')):
+        return bool(node.args) and _indexes_a_path_container(node.args[0], constants)
+    if isinstance(node, ast.Attribute) and node.attr in ('resolve', 'parent',
+                                                         'absolute', 'expanduser'):
+        return _indexes_a_path_container(node.value, constants)
     return False
 
 
@@ -1642,7 +1799,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         # return is still a repository path: the loop cannot key it from the
         # text either, so it has to be reported like any other unsupported base.
         return (_is_repo_rooted(node, constants, shadowed=shadowed)
-                or _carries_repository_path(node, tainted, repository_returns))
+                or _carries_repository_path(node, tainted, repository_returns)
+                or _indexes_a_path_container(node, constants))
 
     def record(segments, expression):
         # A single component is not a discovery key: the loop always keys
@@ -1706,10 +1864,11 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         ``SMS.glob('*.rs')``: the loop needs a ``dir/file`` literal the text does
         not contain. Only the outermost join of a chain reports (an inner opaque
         prefix is consumed by the join above it), and only when the directory
-        half resolves, so ``ROOT / PICK['dir'] / 'x.rs'`` still reports once, at
+        half resolves, so ``ROOT / PICK[key] / 'x.rs'`` still reports once, at
         the join that is actually opaque.
         """
-        if _segments(node.left, constants, self_path) is None:
+        if (_segments(node.left, constants, self_path) is None
+                and not _indexes_a_path_container(node.left, constants)):
             return
         if _segments(node.right, constants, self_path) is not None:
             return
@@ -1749,7 +1908,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                 return
             base, tail = elements[0], elements[-1]
             if (_is_repo_rooted(base, constants, shadowed=shadowed)
-                    or _carries_repository_path(base, tainted, repository_returns)):
+                    or _carries_repository_path(base, tainted, repository_returns)
+                    or _indexes_a_path_container(base, constants)):
                 if _segments(tail, constants, self_path) is None:
                     ambiguous = ambiguous_names(node)
                     if ambiguous:
@@ -1768,7 +1928,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if _segments(tail, constants, self_path) is not None:
             return
         if not (_is_repo_rooted(base, constants, shadowed=shadowed)
-                or _carries_repository_path(node, tainted, repository_returns)):
+                or _carries_repository_path(node, tainted, repository_returns)
+                or _indexes_a_path_container(base, constants)):
             return
         ambiguous = ambiguous_names(node)
         if ambiguous:
@@ -2232,7 +2393,8 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 "from pathlib import Path\n"
                 "ROOT = Path(__file__).resolve().parents[5]\n"
                 "PICK = {'dir': 'src/pilotdeck-gateway/src/channel/sms'}\n"
-                "rows = [('a', ROOT / PICK['dir'] / 'mod.rs', 'x')]\n",
+                "def row(key):\n"
+                "    return ROOT / PICK[key] / 'mod.rs'\n",
                 encoding='utf-8')
             blind, unresolvable = sweep(Path(workspace))
         self.assertEqual(blind, {})
@@ -2719,6 +2881,144 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "def run(baseline):\n"
             "    command = ['node', f'{baseline}/loader.mjs', str(ROOT / 'x')]\n"
             "    return execute('x', command)\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_dotted_parents_index_seeds_the_alias_net(self):
+        """``(ROOT / 'x/gateway.rs').parents[0]`` is still a repository path.
+
+        The ambiguity net only seeded from ``.parent`` / ``.resolve()``, so two
+        functions whose same-named local is built with ``.parents[0]`` seeded
+        nothing: the joins produced no key and no report.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    base = (ROOT / 'src/example/x/gateway.rs').parents[0]\n"
+            "    return base / 'mod.rs'\n"
+            "def b():\n"
+            "    base = (ROOT / 'src/example/y/gateway.rs').parents[0]\n"
+            "    return base / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('ambiguous name assigned different values' in problem
+                for problem in problems), problems)
+
+    def test_an_fstring_alias_carries_the_scope_ambiguity(self):
+        """``src = f'{base}'`` is an alias, not a display string.
+
+        Taint only followed the plain spine, so the interpolation cut it: two
+        scopes, two directories behind ``base``, one silent join on ``src``.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    base = ROOT / 'src/example/x'\n"
+            "    src = f'{base}'\n"
+            "    return Path(src) / 'mod.rs'\n"
+            "def b():\n"
+            "    base = ROOT / 'src/example/y'\n"
+            "    src = f'{base}'\n"
+            "    return Path(src) / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('ambiguous name assigned different values' in problem
+                for problem in problems), problems)
+
+    def test_an_unpairable_unpacking_carries_a_tainted_name(self):
+        """``src, *rest = (base, 1)`` hands the container to its targets.
+
+        The element-wise spine test looked at the tuple itself, not inside it,
+        so a repository directory reached the target without any report.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    base = ROOT / 'src/example/x'\n"
+            "    src, *rest = (base, 1)\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    base = ROOT / 'src/example/y'\n"
+            "    src, *rest = (base, 1)\n"
+            "    return src / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('ambiguous name assigned different values' in problem
+                for problem in problems), problems)
+
+    def test_an_imported_name_is_not_promoted_from_one_local_assignment(self):
+        """An import binds a value the file text does not contain.
+
+        ``from external_config import base`` plus one local ``base = ...`` used
+        to make that assignment a file-wide constant: the other site resolved
+        to the local directory, keyed a key it never builds, and reported
+        nothing at the site the scanner cannot follow.
+        """
+        synthetic = (
+            "from external_config import base\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def a():\n"
+            "    base = ROOT / 'src/example/x'\n"
+            "    src = base\n"
+            "    return src / 'mod.rs'\n"
+            "def b():\n"
+            "    src = base\n"
+            "    return src / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('ambiguous name assigned different values' in problem
+                for problem in problems), problems)
+
+    def test_a_container_index_of_a_path_literal_is_keyed(self):
+        """``CH['feishu'] / 'mod.rs'`` names the directory the literal spells.
+
+        No ``ROOT`` appears in the expression, so the join used to be neither
+        keyed nor reported — while the identical literal spelled directly is
+        keyed. The host runs tables from the repository root, so a relative
+        literal with separators is a repository path.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ('feishu/mod.rs',)\n"
+            "CH = {'feishu': 'src/pilotdeck-gateway/src/channel/feishu'}\n"
+            "rows = [('a', CH['feishu'] / 'mod.rs', 'x')]\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_an_opaque_container_index_fails_closed(self):
+        """A container the scanner cannot index is reported, not dropped."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "CH = {'feishu': 'src/pilotdeck-gateway/src/channel/feishu'}\n"
+            "def row(name):\n"
+            "    return CH[name] / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_container_of_plain_values_stays_silent(self):
+        """The reverse control for the container rule.
+
+        Only a *path* literal inside the container counts. A lookup table of
+        ordinary words is not a directory, and joining on it must not report.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "MODES = {'fast': 'fast', 'safe': 'safe'}\n"
+            "def row(name):\n"
+            "    return MODES['fast'] / name\n"
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
