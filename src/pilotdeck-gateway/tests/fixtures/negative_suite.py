@@ -121,6 +121,13 @@ def _rust_code_only(source):
         if start is not None:
             hashes = start.group(1) or ''
             i = start.end()
+            # #2064 r4: a raw hash delimiter with no ``r``-bearing prefix
+            # (``c#"…"#``) is not legal Rust -- rustc 1.99.0 rejects it with
+            # ``error: prefix `c` is unknown`` -- so refuse it instead of
+            # guessing a plain string whose inner quote would return the
+            # carried text to the code view (#449 / #1166 fail-closed rule).
+            if hashes and 'r' not in start.group(0):
+                raise ValueError('invalid Rust string prefix with raw hash delimiter')
             if 'r' in start.group(0):
                 close = source.find('"' + hashes, i)
                 if close < 0:
