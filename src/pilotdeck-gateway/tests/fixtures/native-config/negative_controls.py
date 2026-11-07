@@ -362,8 +362,16 @@ def _assertions(case):
     return case.assertion if isinstance(case.assertion, list) else [case.assertion]
 
 
-def check_literal_anchors(cases, pins=None):
+def check_literal_anchors(cases, pins=None, bound_rows=None):
+    """`cases` are validated; a pin may bind to any of `bound_rows`.
+
+    A targeted run selects a subset of the rows, so the subset must not be held
+    against the whole pin table: binding is judged on the full table (#2065 r5
+    review P1 -- a single-row rerun would otherwise refuse every other pin as
+    `unbound to any row`).
+    """
     pins = LITERAL_ANCHORS if pins is None else pins
+    bound_rows = cases if bound_rows is None else bound_rows
     texts = {}
     for path in SOURCE_TEXTS:
         try:
@@ -381,7 +389,7 @@ def check_literal_anchors(cases, pins=None):
         if anchor not in texts[path]:
             raise SystemExit(f'#2065 literal anchor not in {path.name}: {anchor!r}')
         if not any(anchor == assertion
-                   for case in cases for assertion in _assertions(case)):
+                   for case in bound_rows for assertion in _assertions(case)):
             raise SystemExit(f'#2065 literal anchor unbound to any row: {anchor!r}')
     pinned = set(pins)
     for case in cases:
@@ -438,11 +446,14 @@ def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
-    selected_rows = [Case(*row) for row in mutations]
+    every_row = [Case(*row) for row in mutations]
+    selected_rows = every_row
     if args == ['--check']:
+        # Guard first: it reports an unreadable scanned file as a clean refusal,
+        # while the anchor probe below would raise a bare OSError on the same tree.
+        check_literal_anchors(selected_rows)
         for case in selected_rows:
             mutate(case, case.path.read_text())
-        check_literal_anchors(selected_rows)
         print(f'#1457 {len(selected_rows)} mutation anchors OK; '
               f'#2065 {len(LITERAL_ANCHORS)} literal anchors OK')
         return 0
@@ -461,8 +472,9 @@ def main():
         selected_rows = [case for case in selected_rows if case.mutation in selected]
     # Runs the guard on the rows about to execute, so a stale anchor fails in
     # seconds instead of surfacing as an INVALID after the compile + timeout
-    # budget of every selected row.
-    check_literal_anchors(selected_rows)
+    # budget of every selected row. Binding is judged against every row: a
+    # targeted rerun selects a few rows but still owns the whole pin table.
+    check_literal_anchors(selected_rows, bound_rows=every_row)
     out = Path(args[0]).resolve()
     out.mkdir(parents=True, exist_ok=False)
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
