@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 322 mutants:
+`JUDGES`, keyed by the same names. The current table has 324 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -490,7 +490,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `calibrate-status-bound-handle-alias-chain`,
 `calibrate-status-three-arg-handle-live`,
 `calibrate-status-getattr-alias-callee`,
-`calibrate-for-target-nested-container-copy`.
+`calibrate-for-target-nested-container-copy`,
+`calibrate-status-alias-copied-before-overwrite`,
+`calibrate-for-target-container-filled-after-rebind`.
 The batch-related
 five revert the pessimistic batch aggregation, the fixture skip summary, the
 calibrate skipped-controls mapping, the controls `main()` shared exit call
@@ -1519,3 +1521,22 @@ and it read every binding a name ever had instead of the one in force.
 | **A container certainly replaced before the copy no longer carries** (false FAIL guard): `hs = [...]` handles; `hs = [lambda *a: None]`; `hs2 = list(hs)`. | self-tests `round 19: a handle container certainly replaced before the copy`, `... replaced only in an if arm before the copy` |
 | **A handle certainly overwritten in a `finally` block is gone** (false FAIL guard): `h = getattr(md, '__setattr__'); try: ... finally: h = lambda *a: None; h('common', ...)`. | self-tests `round 19: a handle certainly overwritten in a finally block`, `... in a statically true if` |
 | **A handle overwritten in an ordinary branch stays live** (fail-closed): `if object(): h = lambda *a: None` may not run. | self-test `round 19: a handle overwritten in an ordinary branch` |
+
+### Closed by `fix-r1` round 20 (codex r19 two P0 / two P1)
+
+Round 19's "binding in force" was read at the final call rather than at the
+assignment that handed the value on, and the `getattr` spelling read the whole
+binding history plus any attribute called `getattr`.  Both directions leaked:
+a handle copied before its source was overwritten stayed green, and a clean
+file using `other.getattr(...)` or an overwritten factory alias went red.  The
+container relay had the mirror-image hole: a name rebound to a fresh empty
+list and then filled in place was judged by the empty list alone.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The handle was copied before its source name was overwritten**: `g = report.__setitem__; f = g; g = print; f('status', 'PASS')` writes the status slot. | `calibrate-status-alias-copied-before-overwrite`; self-tests `round 20: a status write through an alias copied before the overwrite`, `... through a two-name relay before the overwrite` |
+| **A container filled in place after a rebinding still carries**: `hs = [...]; hs = []; hs.append(getattr(md, '__setattr__')); copy = list(hs)`. | `calibrate-for-target-container-filled-after-rebind`; self-tests `round 20: a handle container filled in place after a rebinding`, `... extended in place after a rebinding` |
+| **A factory alias overwritten before the call writes nothing** (false FAIL guard). | self-test `round 20: a status write through a factory alias overwritten before the call` |
+| **A `getattr` attribute on another object writes nothing** (false FAIL guard): `other.getattr(report, '__setitem__')`. | self-test `round 20: a status write through a getattr on another object` |
+| **A shadowed `getattr` name writes nothing** (false FAIL guard): `getattr = lambda ...` in the function. | self-test `round 20: a status write through a shadowed getattr name` |
+| **A container emptied before the copy no longer carries** (false FAIL guard). | self-tests `round 20: a handle container emptied and copied`, `... certainly replaced and copied` |
