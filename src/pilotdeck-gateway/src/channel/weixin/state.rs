@@ -69,10 +69,7 @@ pub(crate) struct TestWakeGate {
 impl TestWakeGate {
     /// Parks the first debounce task that wakes after the gate was armed.
     fn park(&self) {
-        if self
-            .claimed
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
+        if self.claimed.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
         let sender = self
@@ -85,7 +82,10 @@ impl TestWakeGate {
         }
         let mut released = self.released.lock().unwrap_or_else(|e| e.into_inner());
         while !*released {
-            released = self.resume.wait(released).unwrap_or_else(|e| e.into_inner());
+            released = self
+                .resume
+                .wait(released)
+                .unwrap_or_else(|e| e.into_inner());
         }
     }
 
@@ -222,7 +222,11 @@ impl ChannelStatePersistence {
             #[cfg(test)]
             shared.shared.park_timer_if_armed();
             {
-                let mut inner = shared.shared.inner.lock().unwrap_or_else(|e| e.into_inner());
+                let mut inner = shared
+                    .shared
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 // Superseded by a newer `save` (or by `flush`): return without
                 // deleting the live timer handle, claiming `dirty`, or touching
                 // `in_flight`. The live timer writes every queued state.

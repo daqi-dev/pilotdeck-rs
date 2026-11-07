@@ -217,8 +217,8 @@ fn state_with_value(value: f64) -> JsValue {
     JsValue::Object(state)
 }
 
-/// #2073 P0: a debounce timer that has already woken up must not be able to
-/// claim (and lose) the newest dirty state when a newer `save` supersedes it.
+/// #2073 P0: a debounce timer that has already woken up must retire itself
+/// when a newer `save` supersedes it — and must not lose the newest state.
 ///
 /// Reachable only on a multi-threaded runtime: `save` aborts the old
 /// `JoinHandle`, tokio records the cancellation, but the task is parked
@@ -229,7 +229,9 @@ fn state_with_value(value: f64) -> JsValue {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     let root = Root::new();
-    let persistence = ChannelStatePersistence::with_debounce(root.path(), 40);
+    // Long enough that the *live* timer cannot fire while this test asserts,
+    // so an early write can only come from the superseded timer.
+    let persistence = ChannelStatePersistence::with_debounce(root.path(), 500);
     let key = js("weixin");
     let file = root.path().join("weixin.state.json");
 
@@ -244,7 +246,7 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     .await
     .expect("#2073 park waiter");
 
-    // Supersede the parked timer: `save` aborts it while it is mid-poll.
+    // Supersede the parked timer and let it settle.
     let exits = persistence.timer_exits();
     persistence.save(&key, state_with_value(2.0));
     persistence.release_parked_timer();
@@ -257,6 +259,13 @@ async fn superseded_debounce_timer_must_not_drop_the_newest_state() {
     assert!(
         persistence.timer_exits() > exits,
         "#2073 the superseded timer must settle"
+    );
+
+    // A superseded timer must not write: the debounce still has ~500 ms to go,
+    // and TS would not have written either.
+    assert!(
+        std::fs::read_to_string(&file).is_err(),
+        "#2073 a superseded timer must not write before the debounce elapses"
     );
 
     // The newest state must land; pre-fix it was claimed and then dropped, and
