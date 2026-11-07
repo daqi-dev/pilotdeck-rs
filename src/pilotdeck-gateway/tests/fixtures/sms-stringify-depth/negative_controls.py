@@ -10,8 +10,9 @@ integration host). Run with CARGO_TARGET_DIR set:
 Every mutant is compiled (`cargo test --no-run`) before it is judged; a
 non-compiling mutant is INVALID, never SURVIVED, and a stale anchor aborts the
 run instead of recording a verdict. The unmutated target test must be green
-first: a red baseline is recorded as an INVALID row (so it reaches the exit
-code) and its mutants are not run at all.
+first: a red baseline is recorded as an `INVALID` row (so it reaches the exit
+code) and its mutants are not run at all. `summary.json` therefore can hold
+baseline rows besides mutant rows — the `baselines:` line separates them.
 """
 import hashlib
 import json
@@ -34,7 +35,12 @@ DEPTH_TEST = TEST_PREFIX + 'depth_past_threshold_truncates_without_panicking'
 WIDE_TEST = TEST_PREFIX + 'wide_deep_payload_stays_bounded_after_first_truncation'
 OBJECT_TEST = TEST_PREFIX + 'object_siblings_stop_after_the_first_truncation'
 BYTE_TEST = TEST_PREFIX + 'wide_shallow_payload_stays_within_the_byte_budget'
+OVERSIZED_TEST = TEST_PREFIX + 'oversized_leaf_and_key_stay_within_the_byte_budget'
 CAP = 'if depth >= MAX_STRINGIFY_DEPTH || out.len() >= MAX_STRINGIFY_BYTES {'
+STRING_PUSH = ('                push_budgeted('
+               '&pilotdeck_protocol::quote_json_string(text), out, truncated);')
+KEY_PUSH = ('                    push_budgeted('
+            '&pilotdeck_protocol::quote_json_string(key), out, truncated);')
 
 # (name, file, anchor, replacement, target test, kill marker in the payload)
 MUTATIONS = [
@@ -62,9 +68,20 @@ MUTATIONS = [
      '                    if *truncated {\n                        ();',
      OBJECT_TEST,
      '#1929 object siblings after the elided subtree must not be written'),
+    ('string-budget-dropped', 'permission.rs', STRING_PUSH,
+     '                out.push_str('
+     '&pilotdeck_protocol::quote_json_string(text));',
+     OVERSIZED_TEST,
+     '#1929 the oversized leaf must carry the truncation marker'),
+    ('key-budget-dropped', 'permission.rs', KEY_PUSH,
+     '                    out.push_str('
+     '&pilotdeck_protocol::quote_json_string(key));',
+     OVERSIZED_TEST,
+     '#1929 the oversized key must carry the truncation marker'),
 ]
 EXPECTED_NAMES = ('cap-removed', 'cap-off-by-one', 'byte-budget-removed',
-                  'truncate-flag-dropped', 'object-break-dropped')
+                  'truncate-flag-dropped', 'object-break-dropped',
+                  'string-budget-dropped', 'key-budget-dropped')
 
 try:
     registered(MUTATIONS, EXPECTED_NAMES)
@@ -100,17 +117,25 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
     # exiting 0 while nothing had been proven (#1929 review P0).
     baselines = {}
     for test in dict.fromkeys(row[4] for row in run_rows):
-        code, log = cargo(test, [])
-        (out / f'baseline-{test.split("::")[-1]}.log').write_text(log)
+        short = test.split('::')[-1]
+        reason = 'unmutated target test did not pass'
+        try:
+            code, log = cargo(test, [])
+        except Exception as error:  # a timeout must still leave a verdict
+            code, log = None, ''
+            reason = f'baseline run raised {type(error).__name__}: {error}'
+        try:
+            (out / f'baseline-{short}.log').write_text(log)
+        except OSError as error:
+            reason = f'{reason}; baseline log not written: {error}'
         baselines[test] = code == 0 and baseline_passed(log, test)
         print(f'baseline {test}: '
               f'{"PASS" if baselines[test] else "INVALID"}', flush=True)
         if not baselines[test]:
-            baseline_name = 'baseline-' + test.split('::')[-1]
+            baseline_name = 'baseline-' + short
             failures.append(baseline_name)
             summary.append(dict(name=baseline_name, test=test,
-                                status='INVALID',
-                                reason='unmutated target test did not pass'))
+                                status='INVALID', reason=reason))
 
     for name, filename, anchor, replacement, test, marker in run_rows:
         # A mutant judged against a test that is red without it proves
@@ -164,6 +189,10 @@ with mutating_sources(root, sorted({source / row[1] for row in run_rows})) as sn
 
 counts = {state: sum(row['status'] == state for row in summary)
           for state in ('KILLED', 'SURVIVED', 'INVALID')}
+baseline_invalid = sum(1 for ok in baselines.values() if not ok)
+print(f'baselines: PASS={len(baselines) - baseline_invalid} '
+      f'INVALID={baseline_invalid} (their INVALID rows are included in the '
+      'counts below)', flush=True)
 (out / 'summary.json').write_text(
     json.dumps(summary, ensure_ascii=False, indent=2) + '\n')
 print('summary: ' + ', '.join(f'{state}={count}'

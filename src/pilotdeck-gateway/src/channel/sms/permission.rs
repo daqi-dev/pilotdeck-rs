@@ -776,16 +776,36 @@ fn request_id_matches(
 const MAX_STRINGIFY_DEPTH: usize = 256;
 
 /// Hard byte budget for the rendered text (#1929). The depth cap bounds
-/// recursion, not *width*: the channel's 1 MiB frame limit (`MAX_BODY_BYTES`
-/// in `channel::sms::mod`) still allows ~524k one-digit siblings nested 255
-/// deep, which rendered ~269 MB — and again as a UTF-16 buffer in
-/// `format_payload` — before the 800-unit cut. Nothing past this budget can
-/// reach the prompt, so the writer elides there too. It is deliberately 16×
-/// the largest depth-capped chain (~`2·256²` ≈ 66 KB) so the depth cap always
-/// fires first on depth-only payloads: the two guards stay separately
-/// observable, and relaxing either one is still caught by its own test and
-/// mutant.
+/// recursion, not *width*: `MAX_BODY_BYTES` in `channel::sms::mod` allows a
+/// ~1 MiB frame, which still fits ~524k one-digit siblings nested 255 deep —
+/// each line carries its `2·(depth+1)` indent spaces, so that renders ~269 MB
+/// (and again as a UTF-16 buffer in `format_payload`) before the 800-unit cut.
+/// Nothing past this budget can reach the prompt, so the writer elides there
+/// too, including inside a single oversized string leaf or object key. It is
+/// deliberately 16× the largest depth-capped chain (`2·(1+…+256) = 256·257 ≈
+/// 66 KB`) so the depth cap always fires first on depth-only payloads: the two
+/// guards stay separately observable, and relaxing either one is still caught
+/// by its own test and mutant.
 const MAX_STRINGIFY_BYTES: usize = 1024 * 1024;
+
+/// Append `quoted` as far as the byte budget still allows, then elide
+/// (#1929 review r3 P1): the entry guard alone let one huge string leaf or
+/// object key overshoot the budget by its whole length, because a single
+/// `push_str` is not interruptible. The marker costs 4 more bytes.
+fn push_budgeted(quoted: &str, out: &mut String, truncated: &mut bool) {
+    let remaining = MAX_STRINGIFY_BYTES.saturating_sub(out.len());
+    if quoted.len() <= remaining {
+        out.push_str(quoted);
+        return;
+    }
+    let mut cut = remaining.min(quoted.len());
+    while cut > 0 && !quoted.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    out.push_str(&quoted[..cut]);
+    out.push_str("\"...\"");
+    *truncated = true;
+}
 
 /// `JSON.stringify(payload, null, 2)` — 2-space indentation, `None` for a
 /// top-level `undefined`.
@@ -806,7 +826,12 @@ fn stringify_indented(payload: &JsValue) -> Option<String> {
             JsValue::Null => out.push_str("null"),
             JsValue::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
             JsValue::Number(number) => out.push_str(&js_number(*number)),
-            JsValue::String(text) => out.push_str(&pilotdeck_protocol::quote_json_string(text)),
+            JsValue::String(text) => {
+                push_budgeted(&pilotdeck_protocol::quote_json_string(text), out, truncated);
+                if *truncated {
+                    return Some(());
+                }
+            }
             JsValue::Array(items) => {
                 if items.is_empty() {
                     out.push_str("[]");
@@ -847,7 +872,10 @@ fn stringify_indented(payload: &JsValue) -> Option<String> {
                         out.push_str(",\n");
                     }
                     out.push_str(&pad_inner);
-                    out.push_str(&pilotdeck_protocol::quote_json_string(key));
+                    push_budgeted(&pilotdeck_protocol::quote_json_string(key), out, truncated);
+                    if *truncated {
+                        break;
+                    }
                     out.push_str(": ");
                     write(value, depth + 1, out, truncated);
                     if *truncated {
@@ -1189,6 +1217,39 @@ mod tests {
             formatted.units().len() <= 803,
             "#1929 format_payload on the wide payload returned {} units",
             formatted.units().len()
+        );
+    }
+
+    #[test]
+    fn oversized_leaf_and_key_stay_within_the_byte_budget() {
+        // The budget must also bound a *single* write: one string leaf or one
+        // object key larger than the budget used to be appended whole, because
+        // the entry guard only sees the length before that write.
+        let big = "x".repeat(MAX_STRINGIFY_BYTES + 4096);
+        let leaf = stringify_indented(&JsValue::String(JsString::from(big.as_str())))
+            .expect("#1929 an oversized string must still stringify");
+        assert!(
+            leaf.contains("\"...\""),
+            "#1929 the oversized leaf must carry the truncation marker"
+        );
+        assert!(
+            leaf.len() <= MAX_STRINGIFY_BYTES + 1024,
+            "#1929 the oversized leaf produced {} bytes",
+            leaf.len()
+        );
+
+        let mut object = JsObject::new();
+        object.insert(JsString::from(big.as_str()), JsValue::Number(1.0));
+        let keyed = stringify_indented(&JsValue::Object(object))
+            .expect("#1929 an oversized key must still stringify");
+        assert!(
+            keyed.contains("\"...\""),
+            "#1929 the oversized key must carry the truncation marker"
+        );
+        assert!(
+            keyed.len() <= MAX_STRINGIFY_BYTES + 1024,
+            "#1929 the oversized key produced {} bytes",
+            keyed.len()
         );
     }
 
