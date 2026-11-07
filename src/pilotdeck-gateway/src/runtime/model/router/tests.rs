@@ -1286,6 +1286,10 @@ async fn terminal_failure_still_flushes_events_when_usage_estimation_throws() {
     let ctx = RouterExecuteContext {
         session_id: "s".into(),
         turn_id: "t".into(),
+        // #1804: no cancel in this fixture — both abort halves stay off, stated
+        // rather than left to `..Default`.
+        turn_abort: None,
+        stream_options: StreamOptions::default(),
         ..Default::default()
     };
     let mut events = Vec::new();

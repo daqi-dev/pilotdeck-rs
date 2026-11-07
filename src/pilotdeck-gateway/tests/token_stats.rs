@@ -486,6 +486,10 @@ async fn execute_once(fail: bool, home: &Path, session: &str) -> RouterRuntime {
         session_id: session.into(),
         turn_id: "t1".into(),
         project_path: Some("/pdrs/project".into()),
+        // #1804: this fixture never cancels a turn, but it states both abort
+        // fields instead of letting `..Default` hide which ones it leaves off.
+        turn_abort: None,
+        stream_options: StreamOptions::default(),
         ..Default::default()
     };
     router
@@ -526,6 +530,8 @@ async fn default_construction_observes_with_configured_stats() {
     let ctx = RouterExecuteContext {
         session_id: "s1".into(),
         turn_id: "t1".into(),
+        turn_abort: None,
+        stream_options: StreamOptions::default(),
         ..Default::default()
     };
     router
@@ -576,6 +582,8 @@ async fn default_construction_stays_disabled_when_stats_disabled() {
     let ctx = RouterExecuteContext {
         session_id: "s1".into(),
         turn_id: "t1".into(),
+        turn_abort: None,
+        stream_options: StreamOptions::default(),
         ..Default::default()
     };
     router
