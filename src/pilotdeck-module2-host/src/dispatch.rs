@@ -125,6 +125,12 @@ fn dispatch_module_call(
         Err(error) => {
             let mut response =
                 ResponseFrame::failed(response_id, request.message_id.clone(), error.code.clone());
+            if matches!(
+                error.code.as_str(),
+                "HOST_RESULT_UNKNOWN" | "CHILD_OUTCOME_UNKNOWN"
+            ) {
+                response.outcome = Some("result_unknown".into());
+            }
             response.error = Some(serde_json::json!({
                 "code": error.code,
                 "message": error.message,
@@ -182,6 +188,41 @@ mod tests {
                 .map(Vec::len),
             Some(0)
         );
+    }
+
+    #[test]
+    fn explicit_unknown_preserves_request_identity_without_reclassifying_known_failures() {
+        struct Reject(&'static str);
+        impl HostExchange for Reject {
+            fn call(&self, _: &HostCall) -> Result<Value, HostError> {
+                Err(HostError {
+                    code: self.0.into(),
+                    message: "original acceptance unresolved".into(),
+                    retryability: Retryability::Unsafe,
+                })
+            }
+        }
+        let request = module_call_request("capability", "execute");
+        for code in [
+            "HOST_RESULT_UNKNOWN",
+            "CHILD_OUTCOME_UNKNOWN",
+            "POLICY_DENIED",
+        ] {
+            let Frame::Response(response) = dispatch(&Reject(code), &request, || "response".into())
+            else {
+                panic!("expected response")
+            };
+            assert_eq!(response.in_reply_to, "m1");
+            assert_eq!(
+                response.outcome.as_deref(),
+                Some(if code == "POLICY_DENIED" {
+                    "failed"
+                } else {
+                    "result_unknown"
+                })
+            );
+            assert_eq!(response.error.unwrap()["code"], code);
+        }
     }
 
     #[test]
