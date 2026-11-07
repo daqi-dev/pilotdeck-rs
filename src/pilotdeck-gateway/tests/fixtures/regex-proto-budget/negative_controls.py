@@ -35,8 +35,10 @@ already existing output directory (the script creates OUT itself; an existing
 one means "never started") -- all exit 2 (#1734), before the evidence
 directory is claimed. One refusal happens after the claim: the engine's
 compile_fail doctests run once before the first mutation (CI cannot run
-feature-gated tests), and a red doctest baseline refuses (2) with its log
-kept in OUT. The caller must set CARGO_TARGET_DIR (and the cargo slot gate's
+feature-gated tests), inside the source guard's window, and refuse (2) on a
+non-zero run *or* on fewer than the 2 expected passing doctests (rc 0 with
+deleted or ignored doctests is NOT_RUN as PASS), with the log kept in OUT.
+The caller must set CARGO_TARGET_DIR (and the cargo slot gate's
 bin dir on PATH); an expired anchor fails the row as INVALID, which also
 exits non-zero.
 
@@ -46,6 +48,7 @@ Usage:
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from types import SimpleNamespace
 
@@ -57,7 +60,8 @@ from negative_process import (mutating_sources, run_owned, wait_for_slot,
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered,
                                 select, verdict_exit)
-from negative_suite import classify, passed
+from negative_suite import classify, passed, publish_summary
+import pending_reanchor as pending
 from _negative_common import mutate
 
 engine = root / 'src/pilotdeck-regex-proto/src/engine.rs'
@@ -166,17 +170,32 @@ def run(label, binary, arguments):
     return result
 
 
-# The engine's compile_fail doctests pin the !Send/!Sync contract but run only
-# under --features regex-proto (CI has no network for rquickjs), so the
-# fixture runs them itself, once, before its first mutation: a red doctest
-# baseline would otherwise let a mutation in that region go unjudged. This one
-# refusal happens after the claim, with the log kept in OUT.
-if run('doctests', None, ['--doc']).returncode:
-    refuse('doctest invariant failed (see doctests.log in the evidence '
-           'directory)')
-
 results = []
 with mutating_sources(root, [engine]) as originals:
+    # The engine's compile_fail doctests pin the !Send/!Sync contract but run
+    # only under --features regex-proto (CI has no network for rquickjs), so
+    # the fixture runs them itself, once, before its first mutation: a red
+    # doctest baseline would otherwise let a mutation in that region go
+    # unjudged. The run sits inside the guard's window (tree lock held,
+    # bytes verified equal to HEAD): outside it, a concurrent instance of
+    # this script could hold the lock with a mutant on disk and this run
+    # would compile mutant bytes, not HEAD. This one refusal happens after
+    # the claim, with the log kept in OUT.
+    doctests = run('doctests', None, ['--doc'])
+    if doctests.returncode:
+        refuse('doctest invariant failed (see doctests.log in the evidence '
+               'directory)')
+    # rc 0 alone is not enough: a tree whose doctests were deleted or
+    # renamed-to-ignore also exits 0, and the invariant would pass without
+    # measuring anything (NOT_RUN as PASS). Both compile_fail doctests must
+    # be counted on the result line.
+    log = doctests.stdout + doctests.stderr
+    counted = re.search(r'^test result: ok\. (\d+) passed;', log, re.M)
+    measured = int(counted.group(1)) if counted else 0
+    if measured < 2:
+        refuse(f'doctest invariant measured {measured} passed doctests '
+               '(expected the 2 compile_fail doctests; see doctests.log in '
+               'the evidence directory)')
     for name, path, old, new, scope, test, binary, assertion in chosen:
         row = dict(mutation=name, test=test, assertion=assertion,
                    status='INVALID', reason='', compiled=False)
@@ -213,15 +232,10 @@ with mutating_sources(root, [engine]) as originals:
         print(f"{name}: {row['status']}: {row['reason']}", flush=True)
 
 # The summary is published only after the guard has restored and re-verified
-# every byte, and atomically (tmp + rename): a cancelled window never pairs a
-# stale or half-written all-green file with rc=0. The verdict is verdict_exit:
-# at least one row and every row KILLED, so an empty run can never exit 0.
-counts = {status: sum(row['status'] == status for row in results)
-          for status in ('KILLED', 'SURVIVED', 'INVALID')}
-summary_tmp = out / 'summary.json.tmp'
-with summary_tmp.open('x') as summary:
-    json.dump(dict(controls=results, counts=counts), summary, indent=2)
-    summary.write('\n')
-os.replace(summary_tmp, out / 'summary.json')
-print(json.dumps(counts), flush=True)
+# every byte, and atomically, through the shared publish_summary (#1579 r5:
+# its pid+serial temp name cannot be clobbered by a concurrent writer the way
+# the fixed local name could). The verdict is verdict_exit: at least one row
+# and every row KILLED, so an empty run can never exit 0.
+publish_summary(out, results)
+print(json.dumps(pending.counts(results)), flush=True)
 raise SystemExit(verdict_exit(results, key='status'))

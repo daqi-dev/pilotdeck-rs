@@ -17,8 +17,9 @@
   5. `cross-engine-check-removed` —— 跨引擎 exec 不再拒绝 → lifecycle
      跨引擎测试失败。
 - doctest 不变量：engine.rs 的 `compile_fail,E0277` doctest 只在本特性门下
-  运行（CI 无网装不了 rquickjs），夹具在第一个变异前自己跑一遍
-  `--doc`，红即拒跑（退出 2，日志留在 OUT/doctests.log）。
+  运行（CI 无网装不了 rquickjs），夹具在源码守卫的锁窗口内、第一个变异
+  前自己跑一遍 `--doc`：红、或结果行上数不到 2 个通过的 doctest（防
+  NOT_RUN 当 PASS）即拒跑（退出 2，日志留在 OUT/doctests.log）。
 
 运行（调用方需设 `CARGO_TARGET_DIR`，PATH 含 cargo 槽位门的 bin）：
 
@@ -30,12 +31,11 @@ python3 src/pilotdeck-gateway/tests/fixtures/regex-proto-budget/negative_control
 输出 summary.json；任一非 KILLED 以非零退出。被杀断言全部带 `#1265 …`
 专属消息。证据目录 OUT 必须不存在（脚本自建，已存在即「未启动」拒绝）。
 
-退出码四分表：
+退出码四分见 `specs/negative-controls/README.md`「退出码四分」权威表
+（0=全 KILLED / 1=跑过未全绿 / 2=从未开跑 / 42=全杀但基线非 HEAD），
+本夹具特有的补充只有一条：
 
-- `0` —— 至少一行且全部 KILLED；
-- `1` —— 有 SURVIVED / INVALID 行（或零行）；
-- `2` —— 未启动的拒绝：未知/重复变异名（共享 `select`）、名册与
-  `EXPECTED_NAMES` 静态清单不符、`CARGO_TARGET_DIR` 缺失或不可用、
-  OUT 已存在、doctest 基线红（此条发生在认领 OUT 之后，日志留在
-  OUT/doctests.log）；
-- 其他 —— 脚本自身异常。
+- `2`（认领 OUT 之后）—— doctest 基线红或没量到（少于 2 个通过的
+  compile_fail doctest 也算，防 NOT_RUN 当 PASS），`OUT/doctests.log`
+  留档；这是全族唯一一次带证据目录的 2，规范表已同步登记。
+
