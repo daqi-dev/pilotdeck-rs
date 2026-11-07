@@ -29,8 +29,8 @@ original: A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001
 | 输入 | 迁移前 | 迁移后 |
 |---|---|---|
 | 非字符串（如 `7`） | `"<field> must be a string."`（tools）/ `INVALID_SESSION_KEY`（session_dir） | `gateway_request_failed` + `input.<field>?.trim is not a function` |
-| `"U+FEFF"`（BOM-only） | tools：Rust `str::trim` 不剥 BOM → 放行（漏判空白）；session_dir：已走 `js_trim` → 拒 | 一律判空白 → 域名错误 |
-| 孤立代理项 | session_dir 旧门 `to_utf8` 过滤 → 拒 | 放行并走有损转换（与 #1455 probe4 的 config 族 TS 口径一致） |
+| 只有 BOM 一个字符（`U+FEFF`） | tools：Rust `str::trim` 不剥 BOM → 放行（漏判空白）；session_dir：已走 `js_trim` → 拒 | 一律判空白 → 域名错误 |
+| 孤立代理项（`sessionKey`） | session_dir 旧门 `to_utf8` 过滤 → 拒 | 放行并走有损转换（与 #1455 probe4 的 config 族 TS 口径一致）。**`close_project_sessions` 的 `projectKey` 不走这条**：它在 `require_text` 之后仍有显式 `to_utf8` 门（`session_dir.rs` 的 `session_close_project`），非 UTF-8 仍报 `gateway_request_failed` + `projectKey is required.`，与 #1604 之前一致 |
 
 `params` 为 `null` 时报 `Cannot read properties of null (reading '<field>')`（可选链读属性的 TS 形状），不再是域名错误。
 
