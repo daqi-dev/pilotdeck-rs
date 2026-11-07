@@ -1262,6 +1262,40 @@ class Manifest(unittest.TestCase):
                 self.assertEqual(list(destination.rglob('*')), [],
                                  'the refusal happens before anything is copied')
 
+    def test_a_broken_index_is_not_read_as_untracked(self):
+        # `--error-unmatch` answers 0 (tracked) or 1 (not tracked); a corrupt
+        # index exits 128 (`fatal: .git/index: index file smaller than
+        # expected`, measured on git 2.5x). Reading that third answer as "not
+        # tracked" turned a broken git question into an answer, so a real
+        # reference could be classified as fixture text -- the #1570 shape,
+        # where the host triage goes looking for an environment problem
+        # (#1570 r26 zai boundary P1). `_ignored` already refuses on the same
+        # shape; this pins the per-path sibling.
+        self.workspace('include_str!("../specs/x.json");')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-error-unmatch-'))
+        self.roots.append(destination)
+        original = control.subprocess.run
+        asked = []
+
+        def failing(command, **kwargs):
+            if command[:3] == ['git', 'ls-files', '--error-unmatch']:
+                asked.append(command[-1])
+                return subprocess.CompletedProcess(
+                    command, 128, b'',
+                    b'fatal: .git/index: index file smaller than expected')
+            return original(command, **kwargs)
+
+        control.subprocess.run = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'cannot tell whether git tracks'):
+                control.source_copy(destination)
+        finally:
+            control.subprocess.run = original
+        self.assertEqual(sorted(asked), [':(literal)specs/x.json'],
+                         'the per-path git question must be the one that failed')
+        self.assertEqual(list(destination.rglob('*')), [],
+                         'the refusal happens before anything is copied')
+
     def test_a_swap_before_the_first_scan_is_refused_by_the_scan(self):
         # `compile_inputs(root_identity=...)` has a default, so a dropped
         # argument is silent (#1570 r23 codex P2). Swap the checkout between

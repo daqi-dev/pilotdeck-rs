@@ -264,10 +264,21 @@ def _tracked_but_deleted(relative):
     `:(literal)` matters: a plain pathspec treats `[`, `*` and `?` in a file
     name as glob syntax, so `src/a[b.rs` would silently stop matching (or
     match a sibling), and a real reference would slip through as fixture text.
+
+    `--error-unmatch` answers 0 (tracked) or 1 (not tracked); anything else is
+    a broken question, not an answer -- a corrupt index exits 128 (`fatal:
+    .git/index: index file smaller than expected`, measured) and reading that
+    as "not tracked" would drop a real reference or misclassify a deleted one.
+    Same rule as `_ignored` below, which pins the rc the same way (#1570 r26
+    zai boundary P1).
     """
     completed = subprocess.run(
         ['git', 'ls-files', '--error-unmatch', '--', f':(literal){relative.as_posix()}'],
         cwd=REPO, capture_output=True)
+    if completed.returncode not in (0, 1):
+        raise RuntimeError(f'source_copy: cannot tell whether git tracks {relative} '
+                           f'(rc={completed.returncode}): '
+                           f'{completed.stderr.decode("utf-8", "replace").strip()}')
     return completed.returncode == 0
 
 
