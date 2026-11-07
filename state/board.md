@@ -4777,3 +4777,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · TUI配置加载接入（Codex，仅本机）
 
 只读binding已与工具viewer无代码冲突整合，TUI启动在Unix选用同一bounded snapshot，非Unix保留旧loader。mbp2组合22库/132主bin测试、两个config进程测试、strict clippy/build通过；真实TUI三格FIFO/超限启动精确退出1并保留终端属性，普通mock流smoke退出0恢复正常，原件与12源文件/bin绑定在主仓 `_tmp/20261108-cli-binding/tui-r1-evidence/`。七个主bin ignored仍按五辅助父调用/两既有未跑分别计，不报全量全过。下一步继续帮助设置页、SDK token读器并整合刚fetch上游；本机提交、不推GitHub，完整CLI及阶段均未完成。
+
+### 2026-11-08 · TUI完整帮助与设置（Codex/Terra，仅本机）
+
+帮助三页、可滚动内容、设置模式循环/原子持久已接通；独审修复失败提示在视口外、文案无效mode参数，并将帮助session显示有界。mbp2 strict clippy/24库测试与七实际PTY通过（重启、窄屏、权限交织/取消、10万字session等）；追加失败后实际请求mode仍default通过，源码/bin指纹和原始帧在主仓 `_tmp/20261108-cli-tui/help-r1-evidence/`。本地20条此前提交已干净rebase到origin/main6c18d6fa8，仅board冲突保留两边；CLI/lock与rebase前逐字一致，新增A五文件同步后clippy/共享native宿主/build通过。下一步侧栏分组与SDK token读器，仍不标完整CLI/native权限/history/local fallback/真人实效；本机磁盘预算118527168KiB为ok，Rust始终只在mbp2，无GitHub写入。

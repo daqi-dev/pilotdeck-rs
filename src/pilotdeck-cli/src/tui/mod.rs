@@ -10,3 +10,6 @@ pub mod runner;
 
 #[cfg(unix)]
 mod chat_layout;
+
+#[cfg(unix)]
+mod help;

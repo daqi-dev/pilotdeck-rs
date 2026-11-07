@@ -297,6 +297,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
     let mut input_cursor = 0usize;
     let mut input_overflow = false;
     let mut help = false;
+    let mut help_state = super::help::Help::default();
     let mut exit = false;
     let mut dirty = true;
     let mut new_pending = false;
@@ -555,12 +556,12 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             let areas = Layout::vertical([Constraint::Length(3),Constraint::Min(2),Constraint::Length(if state.pending_permissions.is_empty(){3}else{5}),Constraint::Length(3)]).split(frame.area());
             frame.render_widget(Paragraph::new(format!("PilotDeck ↗  v0.1.0\nPilotDeck · {} · {} · server {}",text(Some(&state.mode)), project,url)).block(Block::default().borders(Borders::BOTTOM)),areas[0]);
             if viewer.is_some() { viewer_layout.render_top(frame, areas[1], viewer_scroll); }
-            else if !sidebar && !help { chat_layout.render(frame, areas[1], chat_scroll); }
+            else if help { help_state.render(frame, areas[1], &text(Some(&state.mode)), url, &session); }
+            else if !sidebar { chat_layout.render(frame, areas[1], chat_scroll); }
             else {
                 let mut lines: Vec<Line> = if sidebar {
                     sessions.iter().enumerate().map(|(i,s)| Line::raw(format!("{} {}  {}", if i==sidebar_index {">"} else {" "},session_key(s),text(s.get("summary"))))).collect()
                 } else { Vec::new() };
-                if help { lines.push(Line::raw("/new /mode /permissions /help /exit  |  Ctrl-C exits, Esc aborts")); }
                 let visible = areas[1].height as usize; if lines.len() > visible {lines.truncate(visible);}
                 frame.render_widget(Paragraph::new(lines).wrap(Wrap {trim:false}),areas[1]);
             }
@@ -598,6 +599,23 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                             KeyCode::Char('g')=>viewer_scroll=0,
                             KeyCode::Char('G')=>viewer_scroll=last,
                             _ => {},
+                        }
+                        continue;
+                    }
+                    if help && state.pending_permissions.is_empty()
+                        && !(key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)) {
+                        let height=terminal.size().map_err(|e|e.to_string())?.height.min(18).saturating_sub(9);
+                        match help_state.key(key, height) {
+                            super::help::Action::Close => { help=false; },
+                            super::help::Action::CycleMode if !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending => {
+                                let next=match text(Some(&state.mode)).as_str() {"default"=>"plan", "plan"=>"bypassPermissions", _=>"default"};
+                                match permission_settings::write(home, Patch { skip_permissions: Some(next=="bypassPermissions"), ..Patch::default() }) {
+                                    Ok(_)=>{state.mode=next.into();help_state.error=None;},
+                                    Err(error)=>help_state.error=Some(format!("Could not save settings: {error}")),
+                                }
+                            },
+                            super::help::Action::CycleMode => help_state.error=Some("Finish the active operation before changing mode.".into()),
+                            super::help::Action::None => {},
                         }
                         continue;
                     }

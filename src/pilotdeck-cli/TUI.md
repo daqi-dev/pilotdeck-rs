@@ -12,10 +12,12 @@ PILOT_HOME=/isolated/home /path/to/pilotdeck tui
 
 空输入时 Tab / Shift-Tab 在工具结果间切换焦点，Enter展开或折叠，Esc解除焦点。无焦点时空Enter打开最近的长工具输出，`/view [序号]`可选择结果。短输出写入终端滚动记录，长输出打开viewer：方向键或j/k滚动，PageUp/Down翻页，g/G到首尾，q/Esc返回。长行随终端宽度换行；很宽或较大的短输出也可能进入viewer。超出1MiB的输出会明确提示，无法读取的文件回退到已有预览。
 
+空输入时`?`或`/help`打开帮助，1/2/3选择快捷键、设置和说明，PageUp/Down浏览完整内容，q/Esc关闭。设置页上下选择，Enter或空格只修改Mode，依次为default、plan、bypass；只有保存成功才改变当前模式。bypass持久为skipPermissions，重启可恢复；plan不会单独持久化。命令形式使用`/mode bypassPermissions`。保存失败固定显示提示并保留旧模式。超长会话标识在设置页显示前256字符，实际请求使用完整标识。
+
 运行中 Esc 或 Ctrl-C 请求取消；取消确认前不会提交下一轮或切换会话。取消结果未知时关闭连接并要求退出后重连。空闲 Ctrl-C 退出；退出、错误和信号路径负责恢复终端模式。文字按 Unicode 字素宽度连续硬换行，显示缓存分批更新以让事件和输入继续推进；不承诺复刻旧 Ink 的像素排版。
 
 状态、显示缓存及输入合计约8MiB计数，资源不足会明确提示并中止活动回合，逐步移除最新内容，保留可显示的旧历史。它不是进程 RSS 上限。输入最多64KiB，token最多64KiB；工具输出文件最多读取1MiB。终端短暂不可写会等待，整帧一秒后仍无法写入则失败退出。具体计数与尚待人复核的行为差异见 `specs/gateway-parity/diffs/D4-TUI-*.md`。
 
-本片是远端基础交互，不代表完整 D4。完整帮助与会话分组等剩余功能继续实现；当前 native 宿主的权限发射和历史读取接线仍有限，fake WS 的权限/history 场景不能代表实际宿主已具备这些能力。真实 provider 与人眼终端体验仍需独立验收。
+本片是远端交互实现，不代表完整 D4。会话分组等剩余功能继续实现；当前 native 宿主的权限发射和历史读取接线仍有限，fake WS 的权限/history 场景不能代表实际宿主已具备这些能力。真实 provider 与人眼终端体验仍需独立验收。
 
 复现脚本见 [tui-pty README](tests/fixtures/tui-pty/README.md)。Rust 编译和 PTY 验证均在 mbp2，证据保留在主仓 `_tmp/20261108-cli-tui/`；真实执行的 bin 必须与本轮源码指纹绑定，不能仅凭增量构建退出0判断来源。
