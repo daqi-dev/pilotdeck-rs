@@ -58,6 +58,9 @@ SCRIPTS = (
     # #1456: same entry shape after the r2/r4 migration to negative_selection.
     ('memory-gateway/negative_controls.py', (), ()),
     ('snapshot-projection/negative_controls.py', (), ()),
+    # #1265: same entry shape after the fix-r1 migration to negative_selection
+    # (claim_dir + missing_target/refuse_unusable_target + verdict_exit).
+    ('regex-proto-budget/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

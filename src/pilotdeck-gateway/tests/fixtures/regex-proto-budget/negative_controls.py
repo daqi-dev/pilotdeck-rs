@@ -20,9 +20,12 @@ other than KILLED exits non-zero (verdict_exit: at least one row and all
 KILLED). Mutants are published and restored with write_source_atomic (#1903),
 never a truncating in-place write. Startup refusals -- unknown or duplicate
 mutation names, a roster that no longer matches the static EXPECTED_NAMES
-list, a missing CARGO_TARGET_DIR -- exit 2 ("never started", #1734). The
-caller must set CARGO_TARGET_DIR (and the cargo slot gate's bin dir on PATH);
-an expired anchor fails the row as INVALID, which also exits non-zero.
+list, an unusable CARGO_TARGET_DIR (absent/empty/blank, or the dot/root/src
+values the shared rule rejects), an already existing output directory --
+all exit 2 ("never started", #1734), before the evidence directory is
+claimed. The caller must set CARGO_TARGET_DIR (and the cargo slot gate's bin
+dir on PATH); an expired anchor fails the row as INVALID, which also exits
+non-zero.
 
 Usage:
   negative_controls.py OUT [mutation names]
@@ -36,9 +39,11 @@ from types import SimpleNamespace
 root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
-from negative_process import (mutating_sources, new_output_directory,
-                              run_owned, wait_for_slot, write_source_atomic)
-from negative_selection import refuse, registered, verdict_exit
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered,
+                                verdict_exit)
 from negative_suite import classify, passed
 from _negative_common import mutate
 
@@ -91,17 +96,24 @@ except ValueError as error:
 args = sys.argv[1:]
 if not args:
     refuse('usage: negative_controls.py OUT [mutation names]')
-names = set(args[1:])
-unknown = names - set(EXPECTED_NAMES)
+# The family target contract, not a local copy: absent/empty/blank targets and
+# the dot/root/src values are refused by the shared rule, and every refusal
+# is a "never started" (2) before the evidence directory is claimed
+# (#1666 fix-r7/r9, #1734).
+if missing_target():
+    refuse('CARGO_TARGET_DIR must be set by the caller')
+refuse_unusable_target()
+names = args[1:]
+if len(set(names)) != len(names):
+    refuse('duplicate mutation names: ' + ', '.join(sorted(names)))
+unknown = set(names) - set(EXPECTED_NAMES)
 if unknown:
     refuse('unknown mutation: ' + ', '.join(sorted(unknown)))
 chosen = [case for case in cases if not names or case[0] in names]
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR'):
-    refuse('#1265 caller must set CARGO_TARGET_DIR')
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only',
            CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
-out = new_output_directory(Path(args[0]))
+out = claim_dir(args[0])
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-regex-proto', '--features', 'regex-proto',
            '--test', 'budget']
