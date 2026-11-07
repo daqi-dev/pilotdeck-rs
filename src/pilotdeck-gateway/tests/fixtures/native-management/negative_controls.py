@@ -279,12 +279,19 @@ mutations.append(('snapshot-get-provider-ignored', CAPABILITIES,
 mutations.append(('snapshot-restore-provider-ignored', CAPABILITIES,
                   'Capability { name: "snapshot_restore", methods: &[], wired: snapshots }',
                   'Capability { name: "snapshot_restore", methods: &[], wired: compiled_in }', PRODUCTION, '#1231 production entry exact capability set'))
-mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 wired capabilities are TS subset'))
-# #1869 item 2: `assert_ts_capability_subset(.., include_disabled_states=true)`
-# also checks `contract.emptyStorage` / `contract.missingStorage`, but the only
-# ORACLE mutant touched the default `contract` array — deleting either disabled
+# #1352: `expected` is now derived from `contract`, so renaming a name inside
+# `contract` no longer trips the subset check (both sides move together). The
+# kill lands on the exact-set assert instead — `expected` gains the renamed
+# entry while the advertisement keeps the real one.
+mutations.append(('wired-capabilities-outside-ts', ORACLE, '\n      "run_get",', '\n      "unwired_run_get",', HOST, '#1231 exact wired capability set'))
+# #1869 item 2: `assert_ts_capability_subset` also checks
+# `contract.emptyStorage` / `contract.missingStorage`, but the only ORACLE
+# mutant touched the default `contract` array — deleting either disabled
 # branch kept every existing mutant killed. One mutant per disabled state,
 # anchored on that state's own header so the default contract stays intact.
+# #1352: the subset check no longer reads `contract` at all (a tautology now
+# that `expected` derives from it), so these two are its only remaining
+# witnesses.
 mutations.append(('empty-storage-capabilities-outside-ts', ORACLE,
                   '    "emptyStorage": {\n      "config": null,\n      "capabilities": [\n        "upload_create",',
                   '    "emptyStorage": {\n      "config": null,\n      "capabilities": [\n        "unwired_upload_create",',
