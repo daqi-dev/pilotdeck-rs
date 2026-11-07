@@ -215,11 +215,14 @@ git -C "$G/root" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit
 rm -rf "$G/origin.git"
 git clone -q --bare "$G/root" "$G/origin.git"
 git -C "$G/root" fetch -q origin
+# 负控自证比较输入真实取到：origin/main 引用在、且其 board 与工作区一致（否则「无提示」可能只是
+# git show 静默失败，负控假绿——评审 r1 P2）。git clone/fetch 失败由 set -e 兜底中止。
+git -C "$G/root" show origin/main:state/board.md >"$G/origin-board3"
 set +e
 bash "$G/root/scripts/next-task.sh" >"$G/out3" 2>"$G/err3"; rc=$?
 set -e
 check "⑭b 负控 board 与 origin/main 一致：rc 0、队首 t2、无两条提示" \
-  '[ "$rc" = 0 ] && [ "$(cut -f1 "$G/out3")" = t2 ] && ! grep -q "origin/main 不一致" "$G/err3" && ! grep -q "非主工作树" "$G/err3"'
+  '[ "$rc" = 0 ] && cmp -s "$G/origin-board3" "$G/root/state/board.md" && [ "$(cut -f1 "$G/out3")" = t2 ] && ! grep -q "origin/main 不一致" "$G/err3" && ! grep -q "非主工作树" "$G/err3"'
 # ⑭c --board 显式指定：整段跳过定位与两条提示
 set +e
 bash "$G/wt/scripts/next-task.sh" --board "$G/root/state/board.md" >"$G/out4" 2>"$G/err4"; rc=$?
