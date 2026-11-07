@@ -7,19 +7,57 @@ use super::{
         validate_compaction_started,
     },
 };
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsString, JsValue};
+use std::collections::{HashMap, HashSet};
 fn lossy(s: &pilotdeck_protocol::JsString) -> String {
     String::from_utf16_lossy(s.units())
 }
 
+/// `same_id` keys: JS Set/Map SameValueZero over fresh JSON entries, so
+/// objects and arrays never match a stored key and NaN never equals itself.
+/// `TurnKey` projects a `JsValue` into exactly those equality classes —
+/// undefined/null/bool/string/number, with `-0` folded onto `0` (f64 `==`
+/// semantics). `None` is unindexable: the value can be stored but never
+/// found, which is what `same_id` does for objects, arrays and NaN.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum TurnKey {
+    Undefined,
+    Null,
+    Bool(bool),
+    Number(u64),
+    String(JsString),
+}
+fn key_of(value: &JsValue) -> Option<TurnKey> {
+    match value {
+        JsValue::Undefined => Some(TurnKey::Undefined),
+        JsValue::Null => Some(TurnKey::Null),
+        JsValue::Bool(b) => Some(TurnKey::Bool(*b)),
+        JsValue::Number(n) if !n.is_nan() => {
+            Some(TurnKey::Number(if *n == 0.0 { 0 } else { n.to_bits() }))
+        }
+        JsValue::String(s) => Some(TurnKey::String(s.clone())),
+        _ => None,
+    }
+}
 /// TS SessionDomainValidation.ts. The shared writer publishes this candidate
 /// only after durable append succeeds; restore validates the entire log first.
+///
+/// #297 P2#2: the pre-fix `next` deep-cloned the whole state per event, and
+/// turns are never removed, so every append paid for every turn the session
+/// ever had, inside the commit mutex. The state now transitions in place
+/// (`advance`) with an undo journal instead, and the turn/used sets are keyed
+/// by `TurnKey`.
 #[derive(Clone, Default)]
 pub(super) struct DomainState {
     turns: Vec<(JsValue, DomainTurn)>,
+    /// Points at the first slot whose key equals that `TurnKey` (the Vec
+    /// `position`/`find` the pre-fix scans performed); unindexable keys are
+    /// simply absent and therefore never found, like `same_id` never matches
+    /// them.
+    turn_index: HashMap<TurnKey, usize>,
     queue: Vec<(JsValue, JsValue)>, // insertion order is the FIFO contract
-    used_items: Vec<JsValue>,
-    used_turns: Vec<JsValue>,
+    used_items: HashSet<TurnKey>,
+    used_turns: HashSet<TurnKey>,
     goal_revision: f64,
 }
 #[derive(Clone, Default)]
@@ -35,16 +73,90 @@ struct DomainTurn {
     permissions: Vec<JsValue>,
     inbox: Vec<(JsValue, &'static str)>,
 }
+/// Which per-turn lifecycle list an undo entry belongs to.
+#[derive(Clone, Copy)]
+pub(super) enum Lifecycle {
+    Compaction,
+    Question,
+    Permission,
+}
+impl Lifecycle {
+    fn vec_mut(self, turn: &mut DomainTurn) -> &mut Vec<JsValue> {
+        match self {
+            Lifecycle::Compaction => &mut turn.compactions,
+            Lifecycle::Question => &mut turn.questions,
+            Lifecycle::Permission => &mut turn.permissions,
+        }
+    }
+}
+/// One journaled state mutation; `rollback` replays the journal backwards.
+#[derive(Clone)]
+pub(super) enum Undo {
+    QueuePush,
+    QueueInsert {
+        at: usize,
+        pair: (JsValue, JsValue),
+    },
+    UsedItem(TurnKey),
+    UsedTurn(TurnKey),
+    TurnsPush,
+    InboxRemove {
+        turn: usize,
+        at: usize,
+        item: (JsValue, &'static str),
+    },
+    InboxStatus {
+        turn: usize,
+        at: usize,
+        prev: &'static str,
+    },
+    InboxPush {
+        turn: usize,
+    },
+    StepStarted {
+        turn: usize,
+        last_step: u64,
+        open_step: Option<u64>,
+        context_recorded: bool,
+        model_requested: bool,
+        open_tool_calls: Vec<JsValue>,
+    },
+    LifecyclePush {
+        turn: usize,
+        which: Lifecycle,
+    },
+    LifecycleRemove {
+        turn: usize,
+        which: Lifecycle,
+        value: JsValue,
+    },
+    OpenCallPush {
+        turn: usize,
+    },
+    OpenCallRemove {
+        turn: usize,
+        value: JsValue,
+    },
+    StepCompleted {
+        turn: usize,
+        prev: Option<u64>,
+    },
+    ContextFlag {
+        turn: usize,
+        prev: bool,
+    },
+    RequestFlag {
+        turn: usize,
+        prev: bool,
+    },
+    TurnClosed {
+        turn: usize,
+        prev: bool,
+    },
+    GoalRevision(f64),
+}
 fn contains(ids: &[JsValue], id: &JsValue) -> bool {
     ids.iter().any(|v| same_id(v, id))
-}
-fn remove(ids: &mut Vec<JsValue>, id: &JsValue) -> bool {
-    if let Some(at) = ids.iter().position(|v| same_id(v, id)) {
-        ids.remove(at);
-        true
-    } else {
-        false
-    }
 }
 fn text_is(value: &JsValue, text: &str) -> bool {
     value.as_string().is_some_and(|s| s.equals_str(text))
@@ -82,7 +194,23 @@ fn require_step(turn: &DomainTurn, entry: &JsValue, kind: &str) -> RecorderResul
     Ok(turn.open_step.unwrap())
 }
 impl DomainState {
-    pub(super) fn next(&self, entry: &JsValue) -> RecorderResult<Self> {
+    /// Oracle-harness fold entry: advance in place; an entry the validator
+    /// rejects leaves the caller's state exactly where it was (the pre-fix
+    /// implementation achieved the same by cloning and discarding).
+    pub(super) fn next(&mut self, entry: &JsValue) -> RecorderResult<()> {
+        let mut undo = Vec::new();
+        let result = self.advance(entry, &mut undo);
+        if result.is_err() {
+            self.rollback(&mut undo);
+        }
+        result
+    }
+    /// The in-place transition every commit and restore fold runs. Statement
+    /// order mirrors the pre-fix `next`: within each branch, every error
+    /// return precedes that branch's first mutation, so the journal only has
+    /// to replay when the *caller* refuses an already-validated entry — the
+    /// store-append failure in `commit_with`.
+    pub(super) fn advance(&mut self, entry: &JsValue, undo: &mut Vec<Undo>) -> RecorderResult<()> {
         let kind = (if crate::mutants::on("null-entry-property") {
             field(entry, "type")
         } else {
@@ -94,7 +222,6 @@ impl DomainState {
         let undefined = JsValue::Undefined;
         let id = field(entry, "turnId");
         let item = field(entry, "itemId");
-        let mut next = self.clone();
         if kind == "agent_turn_enqueued" {
             let input = field(entry, "input");
             let valid_input = input.as_object().is_some()
@@ -118,31 +245,42 @@ impl DomainState {
                     format!("Queued turn {subject} has invalid input."),
                 ));
             }
-            if !crate::mutants::on("queue-reused-item") && contains(&next.used_items, item) {
+            if !crate::mutants::on("queue-reused-item")
+                && key_of(item).is_some_and(|key| self.used_items.contains(&key))
+            {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!("Queued turn item {} has already been used.", display(item)?),
                 ));
             }
             if !crate::mutants::on("queue-reused-turn")
-                && (next.turns.iter().any(|(v, _)| same_id(v, id))
-                    || contains(&next.used_turns, id))
+                && (self.turn_slot(id).is_some()
+                    || key_of(id).is_some_and(|key| self.used_turns.contains(&key)))
             {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!("Queued turn id {} is already in use.", display(id)?),
                 ));
             }
-            next.queue.push((item.clone(), id.clone()));
-            next.used_items.push(item.clone());
-            next.used_turns.push(id.clone());
-            return Ok(next);
+            self.queue.push((item.clone(), id.clone()));
+            undo.push(Undo::QueuePush);
+            if let Some(key) = key_of(item)
+                && self.used_items.insert(key.clone())
+            {
+                undo.push(Undo::UsedItem(key));
+            }
+            if let Some(key) = key_of(id)
+                && self.used_turns.insert(key.clone())
+            {
+                undo.push(Undo::UsedTurn(key));
+            }
+            return Ok(());
         }
         if kind == "agent_turn_discarded" {
-            let pending = next.queue.iter().position(|(i, _)| same_id(i, item));
-            let queued_turn = pending.map(|at| &next.queue[at].1).unwrap_or(&undefined);
+            let pending = self.queue.iter().position(|(i, _)| same_id(i, item));
+            let queued_turn = pending.map(|at| &self.queue[at].1).unwrap_or(&undefined);
             let queued_mismatch = if crate::mutants::on("discard-undefined-lookup") {
-                pending.is_none_or(|at| !same_id(&next.queue[at].1, id))
+                pending.is_none_or(|at| !same_id(&self.queue[at].1, id))
             } else {
                 !same_id(queued_turn, id)
             };
@@ -163,9 +301,10 @@ impl DomainState {
                 ));
             }
             if let Some(at) = pending {
-                next.queue.remove(at);
+                let pair = self.queue.remove(at);
+                undo.push(Undo::QueueInsert { at, pair });
             }
-            return Ok(next);
+            return Ok(());
         }
         if matches!(
             kind.as_str(),
@@ -175,8 +314,9 @@ impl DomainState {
             let metadata = call_id(message, "metadata")?;
             let claimed = field(metadata, "queueItemId");
             if claimed.as_string().is_some_and(|s| !s.is_empty())
-                && let Some((_, turn)) = next.turns.iter_mut().find(|(v, _)| same_id(v, id))
+                && let Some(turn_at) = self.turn_slot(id)
             {
+                let turn = &mut self.turns[turn_at].1;
                 let at = turn.inbox.iter().position(|(v, _)| same_id(v, claimed));
                 if !crate::mutants::on("durable-inbox-claim")
                     && (turn.closed || at.is_none_or(|at| turn.inbox[at].1 != "claimed"))
@@ -190,25 +330,28 @@ impl DomainState {
                         ),
                     ));
                 }
-                turn.inbox.remove(at.unwrap());
+                let removed = turn.inbox.remove(at.unwrap());
+                undo.push(Undo::InboxRemove {
+                    turn: turn_at,
+                    at: at.unwrap(),
+                    item: removed,
+                });
             }
-            return Ok(next);
+            return Ok(());
         }
         if !super::transcript_adapter::DOMAIN_TYPES.contains(&kind.as_str())
             && kind != "turn_result"
         {
-            return Ok(next);
+            return Ok(());
         }
         if kind == "turn_started" {
-            if !crate::mutants::on("duplicate-turn")
-                && next.turns.iter().any(|(v, _)| same_id(v, id))
-            {
+            if !crate::mutants::on("duplicate-turn") && self.turn_slot(id).is_some() {
                 return Err(domain(
                     "duplicate_turn_start",
                     format!("Turn {} has already started.", display(id)?),
                 ));
             }
-            let queued = next.queue.iter().position(|(_, v)| same_id(v, id));
+            let queued = self.queue.iter().position(|(_, v)| same_id(v, id));
             let claim = field(entry, "inboxItemId");
             let must_claim = if crate::mutants::on("queue-must-claim") {
                 None
@@ -216,10 +359,10 @@ impl DomainState {
                 queued
             };
             if !claim.is_undefined() {
-                let at = next.queue.iter().position(|(v, _)| same_id(v, claim));
-                let queued_turn = at.map(|at| &next.queue[at].1).unwrap_or(&undefined);
+                let at = self.queue.iter().position(|(v, _)| same_id(v, claim));
+                let queued_turn = at.map(|at| &self.queue[at].1).unwrap_or(&undefined);
                 let claim_mismatch = if crate::mutants::on("claim-undefined-lookup") {
-                    at.is_none_or(|at| !same_id(&next.queue[at].1, id))
+                    at.is_none_or(|at| !same_id(&self.queue[at].1, id))
                 } else {
                     !same_id(queued_turn, id)
                 };
@@ -234,7 +377,7 @@ impl DomainState {
                         format!("Turn {} cannot claim queued item {subject}.", display(id)?),
                     ));
                 }
-                let queued_item = queued.map(|at| &next.queue[at].0).unwrap_or(&undefined);
+                let queued_item = queued.map(|at| &self.queue[at].0).unwrap_or(&undefined);
                 if !same_id(queued_item, claim) {
                     return Err(domain(
                         "invalid_inbox_mutation",
@@ -251,34 +394,43 @@ impl DomainState {
                         format!(
                             "Turn {} cannot bypass queued item {}.",
                             display(id)?,
-                            display(&next.queue[0].0)?
+                            display(&self.queue[0].0)?
                         ),
                     ));
                 }
-                next.queue.remove(at.unwrap());
+                let pair = self.queue.remove(at.unwrap());
+                undo.push(Undo::QueueInsert {
+                    at: at.unwrap(),
+                    pair,
+                });
             } else if let Some(at) = must_claim {
                 return Err(domain(
                     "invalid_inbox_mutation",
                     format!(
                         "Turn {} must claim its queued item {}.",
                         display(id)?,
-                        display(&next.queue[at].0)?
+                        display(&self.queue[at].0)?
                     ),
                 ));
             }
-            next.turns.push((id.clone(), DomainTurn::default()));
-            return Ok(next);
+            let slot = self.turns.len();
+            self.turns.push((id.clone(), DomainTurn::default()));
+            if let Some(key) = key_of(id) {
+                self.turn_index.entry(key).or_insert(slot);
+            }
+            undo.push(Undo::TurnsPush);
+            return Ok(());
         }
-        let Some(at) = next.turns.iter().position(|(v, _)| same_id(v, id)) else {
+        let Some(at) = self.turn_slot(id) else {
             if kind == "turn_result" {
-                return Ok(next);
+                return Ok(());
             }
             return Err(domain(
                 "event_outside_turn",
                 format!("{kind} requires an active turn {}.", display(id)?),
             ));
         };
-        let turn = &mut next.turns[at].1;
+        let turn = &mut self.turns[at].1;
         if !crate::mutants::on("closed-turn") && turn.closed {
             return Err(domain(
                 "event_outside_turn",
@@ -366,27 +518,42 @@ impl DomainState {
                         ));
                     }
                 }
-                let (ids, code, label) = match family {
-                    "compaction" => (&mut turn.compactions, "invalid_compaction", "Compaction"),
-                    "question" => (&mut turn.questions, "invalid_question", "Question"),
-                    _ => (&mut turn.permissions, "invalid_permission", "Permission"),
+                let (which, code, label) = match family {
+                    "compaction" => (Lifecycle::Compaction, "invalid_compaction", "Compaction"),
+                    "question" => (Lifecycle::Question, "invalid_question", "Question"),
+                    _ => (Lifecycle::Permission, "invalid_permission", "Permission"),
                 };
                 if phase == "started" {
-                    if !crate::mutants::on("lifecycle-duplicate") && contains(ids, operation) {
+                    if !crate::mutants::on("lifecycle-duplicate")
+                        && contains(which.vec_mut(turn), operation)
+                    {
                         return Err(domain(
                             code,
                             format!("{label} {} already started.", display(operation)?),
                         ));
                     }
-                    ids.push(operation.clone());
-                } else if !crate::mutants::on("lifecycle-terminal") && !remove(ids, operation) {
-                    return Err(domain(
-                        code,
-                        format!(
-                            "{label} {} has no open lifecycle bracket.",
-                            display(operation)?
-                        ),
-                    ));
+                    which.vec_mut(turn).push(operation.clone());
+                    undo.push(Undo::LifecyclePush { turn: at, which });
+                } else if !crate::mutants::on("lifecycle-terminal") {
+                    let Some(pos) = which
+                        .vec_mut(turn)
+                        .iter()
+                        .position(|v| same_id(v, operation))
+                    else {
+                        return Err(domain(
+                            code,
+                            format!(
+                                "{label} {} has no open lifecycle bracket.",
+                                display(operation)?
+                            ),
+                        ));
+                    };
+                    let value = which.vec_mut(turn).remove(pos);
+                    undo.push(Undo::LifecycleRemove {
+                        turn: at,
+                        which,
+                        value,
+                    });
                 }
             }
             "step_started" => {
@@ -414,11 +581,18 @@ impl DomainState {
                         format!("Turn {} already has open step {open}.", display(id)?),
                     ));
                 }
+                undo.push(Undo::StepStarted {
+                    turn: at,
+                    last_step: turn.last_step,
+                    open_step: turn.open_step,
+                    context_recorded: turn.context_recorded,
+                    model_requested: turn.model_requested,
+                    open_tool_calls: std::mem::take(&mut turn.open_tool_calls),
+                });
                 turn.last_step = step.unwrap() as u64;
                 turn.open_step = Some(turn.last_step);
                 turn.context_recorded = false;
                 turn.model_requested = false;
-                turn.open_tool_calls.clear();
             }
             "context_snapshot" | "agent_instructions" | "model_request" | "model_stream_event"
             | "tool_call" | "tool_result" | "step_completed" => {
@@ -437,6 +611,10 @@ impl DomainState {
                                 format!("Step {step} context must precede its model request."),
                             ));
                         }
+                        undo.push(Undo::ContextFlag {
+                            turn: at,
+                            prev: turn.context_recorded,
+                        });
                         turn.context_recorded = !crate::mutants::on("context-state");
                     }
                     "agent_instructions"
@@ -454,6 +632,10 @@ impl DomainState {
                                 format!("Step {step} already has a model request."),
                             ));
                         }
+                        undo.push(Undo::RequestFlag {
+                            turn: at,
+                            prev: turn.model_requested,
+                        });
                         turn.model_requested = !crate::mutants::on("request-state");
                     }
                     "model_stream_event"
@@ -484,19 +666,24 @@ impl DomainState {
                             ));
                         }
                         turn.open_tool_calls.push(call.clone());
+                        undo.push(Undo::OpenCallPush { turn: at });
                     }
                     "tool_result" => {
                         let call = call_id(field(entry, "result"), "toolCallId")?;
-                        if !crate::mutants::on("tool-result-pair")
-                            && !remove(&mut turn.open_tool_calls, call)
-                        {
-                            return Err(domain(
-                                "tool_result_without_call",
-                                format!(
-                                    "Tool result {} has no open call in step {step}.",
-                                    display(call)?
-                                ),
-                            ));
+                        if !crate::mutants::on("tool-result-pair") {
+                            let Some(pos) =
+                                turn.open_tool_calls.iter().position(|v| same_id(v, call))
+                            else {
+                                return Err(domain(
+                                    "tool_result_without_call",
+                                    format!(
+                                        "Tool result {} has no open call in step {step}.",
+                                        display(call)?
+                                    ),
+                                ));
+                            };
+                            let value = turn.open_tool_calls.remove(pos);
+                            undo.push(Undo::OpenCallRemove { turn: at, value });
                         }
                     }
                     "step_completed" => {
@@ -509,6 +696,10 @@ impl DomainState {
                                 format!("Step {step} completed with unresolved tool calls."),
                             ));
                         }
+                        undo.push(Undo::StepCompleted {
+                            turn: at,
+                            prev: turn.open_step,
+                        });
                         turn.open_step = None;
                     }
                     _ => {}
@@ -521,8 +712,8 @@ impl DomainState {
                         "Inbox mutation itemId must be non-empty.",
                     ));
                 }
-                let at = turn.inbox.iter().position(|(v, _)| same_id(v, item));
-                let current = at.map(|at| turn.inbox[at].1);
+                let slot = turn.inbox.iter().position(|(v, _)| same_id(v, item));
+                let current = slot.map(|at| turn.inbox[at].1);
                 let mutation = field(entry, "mutation");
                 let status = if text_is(mutation, "insert") {
                     if !crate::mutants::on("inbox-insert")
@@ -569,16 +760,27 @@ impl DomainState {
                             ),
                         ));
                     }
-                    turn.inbox.remove(at.unwrap());
+                    let removed = turn.inbox.remove(slot.unwrap());
+                    undo.push(Undo::InboxRemove {
+                        turn: at,
+                        at: slot.unwrap(),
+                        item: removed,
+                    });
                     None
                 } else {
                     None
                 };
                 if let Some(status) = status {
-                    if let Some(at) = at {
-                        turn.inbox[at].1 = status;
+                    if let Some(slot) = slot {
+                        undo.push(Undo::InboxStatus {
+                            turn: at,
+                            at: slot,
+                            prev: turn.inbox[slot].1,
+                        });
+                        turn.inbox[slot].1 = status;
                     } else {
                         turn.inbox.push((item.clone(), status));
+                        undo.push(Undo::InboxPush { turn: at });
                     }
                 }
             }
@@ -609,7 +811,7 @@ impl DomainState {
                     ));
                 }
             }
-            "goal_changed" => validate_goal(&mut next.goal_revision, entry)?,
+            "goal_changed" => validate_goal(&mut self.goal_revision, entry, undo)?,
             "turn_result" => {
                 let open_step = if crate::mutants::on("turn-open-step") {
                     None
@@ -661,11 +863,100 @@ impl DomainState {
                         format!("Turn {} closed with pending inbox items.", display(id)?),
                     ));
                 }
+                undo.push(Undo::TurnClosed {
+                    turn: at,
+                    prev: turn.closed,
+                });
                 turn.closed = !crate::mutants::on("closed-state");
             }
             _ => {}
         }
-        Ok(next)
+        Ok(())
+    }
+    /// First turn slot whose key equals `id` under `same_id` semantics —
+    /// exactly the `position`/`find` the pre-fix scans performed, in O(1).
+    fn turn_slot(&self, id: &JsValue) -> Option<usize> {
+        key_of(id).and_then(|key| self.turn_index.get(&key).copied())
+    }
+    /// Reverts every journaled mutation, newest first. See `advance`.
+    pub(super) fn rollback(&mut self, undo: &mut Vec<Undo>) {
+        while let Some(entry) = undo.pop() {
+            match entry {
+                Undo::QueuePush => {
+                    self.queue.pop();
+                }
+                Undo::QueueInsert { at, pair } => {
+                    self.queue.insert(at, pair);
+                }
+                Undo::UsedItem(key) => {
+                    self.used_items.remove(&key);
+                }
+                Undo::UsedTurn(key) => {
+                    self.used_turns.remove(&key);
+                }
+                Undo::TurnsPush => {
+                    if let Some((key, _)) = self.turns.pop() {
+                        let slot = self.turns.len();
+                        if let Some(key) = key_of(&key)
+                            && self.turn_index.get(&key) == Some(&slot)
+                        {
+                            self.turn_index.remove(&key);
+                        }
+                    }
+                }
+                Undo::InboxRemove { turn, at, item } => {
+                    self.turns[turn].1.inbox.insert(at, item);
+                }
+                Undo::InboxStatus { turn, at, prev } => {
+                    self.turns[turn].1.inbox[at].1 = prev;
+                }
+                Undo::InboxPush { turn } => {
+                    self.turns[turn].1.inbox.pop();
+                }
+                Undo::StepStarted {
+                    turn,
+                    last_step,
+                    open_step,
+                    context_recorded,
+                    model_requested,
+                    open_tool_calls,
+                } => {
+                    let state = &mut self.turns[turn].1;
+                    state.last_step = last_step;
+                    state.open_step = open_step;
+                    state.context_recorded = context_recorded;
+                    state.model_requested = model_requested;
+                    state.open_tool_calls = open_tool_calls;
+                }
+                Undo::LifecyclePush { turn, which } => {
+                    which.vec_mut(&mut self.turns[turn].1).pop();
+                }
+                Undo::LifecycleRemove { turn, which, value } => {
+                    which.vec_mut(&mut self.turns[turn].1).push(value);
+                }
+                Undo::OpenCallPush { turn } => {
+                    self.turns[turn].1.open_tool_calls.pop();
+                }
+                Undo::OpenCallRemove { turn, value } => {
+                    self.turns[turn].1.open_tool_calls.push(value);
+                }
+                Undo::StepCompleted { turn, prev } => {
+                    self.turns[turn].1.open_step = prev;
+                }
+                Undo::ContextFlag { turn, prev } => {
+                    self.turns[turn].1.context_recorded = prev;
+                }
+                Undo::RequestFlag { turn, prev } => {
+                    self.turns[turn].1.model_requested = prev;
+                }
+                Undo::TurnClosed { turn, prev } => {
+                    self.turns[turn].1.closed = prev;
+                }
+                Undo::GoalRevision(prev) => {
+                    self.goal_revision = prev;
+                }
+            }
+        }
     }
 }
 fn validate_todos(entry: &JsValue) -> RecorderResult<()> {
@@ -708,7 +999,7 @@ fn validate_todos(entry: &JsValue) -> RecorderResult<()> {
     }
     Ok(())
 }
-fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
+fn validate_goal(revision: &mut f64, entry: &JsValue, undo: &mut Vec<Undo>) -> RecorderResult<()> {
     let number = field(entry, "revision").as_number();
     if !crate::mutants::on("goal-revision-integer")
         && (!safe_integer(number) || number.is_some_and(|n| n < 1.0))
@@ -753,6 +1044,7 @@ fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
             return Err(domain("invalid_goal", "Blocked goals require a reason."));
         }
     }
+    undo.push(Undo::GoalRevision(*revision));
     *revision = if crate::mutants::on("goal-state") {
         0.0
     } else {
@@ -765,7 +1057,7 @@ fn validate_goal(revision: &mut f64, entry: &JsValue) -> RecorderResult<()> {
 mod tests {
     use super::*;
     use pilotdeck_protocol::{JsObject, stringify_json};
-    fn outcome(result: RecorderResult<DomainState>) -> JsValue {
+    fn outcome(result: RecorderResult<()>) -> JsValue {
         let mut value = JsObject::new();
         match result {
             Ok(_) => {
@@ -815,23 +1107,77 @@ mod tests {
             let mut state = DomainState::default();
             for (entry, expected) in entries.iter().zip(expected) {
                 let next = state.next(entry);
-                if let Ok(next) = &next {
-                    state = next.clone();
-                }
                 assert_eq!(
                     stringify_json(&outcome(next)).expect("#743 domain fixture prerequisite"),
                     stringify_json(expected).expect("#743 domain fixture prerequisite"),
                     "#743 domain transition outcome {name:?}: {entry:?}"
                 );
             }
-            let log = entries
-                .iter()
-                .try_fold(DomainState::default(), |state, e| state.next(e));
+            let mut log_state = DomainState::default();
+            let log = entries.iter().try_for_each(|e| log_state.next(e));
             assert_eq!(
                 stringify_json(&outcome(log)).expect("#743 domain fixture prerequisite"),
                 stringify_json(field(case, "log")).expect("#743 domain fixture prerequisite"),
                 "#743 domain log outcome {name:?}"
             );
         }
+    }
+    /// #297 P2#2: a commit must not deep-copy the whole DomainState per event.
+    /// Turns are never removed, so the cost of the per-event copy grows with
+    /// the cumulative turn count; the fix keeps per-event work bounded while
+    /// the TS baseline itself still pays the same cloneState cost per event
+    /// (measured on the pinned baseline: see the round's probe-clone-cost).
+    /// Trend criterion, not absolute time: the same open-step stream must cost
+    /// the same per event whether 16 or 1024 turns came before it.
+    #[test]
+    fn advance_cost_stays_flat_as_turns_accumulate() {
+        let event = |kind: &str, turn: &str, step: Option<u64>| {
+            let mut object = JsObject::new();
+            object.insert("type".into(), kind.into());
+            object.insert("turnId".into(), turn.into());
+            if let Some(step) = step {
+                object.insert("step".into(), JsValue::Number(step as f64));
+            }
+            JsValue::Object(object)
+        };
+        let build = |turns: usize| -> RecorderResult<DomainState> {
+            let mut state = DomainState::default();
+            for t in 0..turns {
+                let turn = format!("t-{t}");
+                state.next(&event("turn_started", &turn, None))?;
+                state.next(&event("step_started", &turn, Some(1)))?;
+                state.next(&event("model_request", &turn, Some(1)))?;
+                state.next(&event("step_completed", &turn, Some(1)))?;
+                state.next(&event("turn_result", &turn, None))?;
+            }
+            state.next(&event("turn_started", "t-open", None))?;
+            state.next(&event("step_started", "t-open", Some(1)))?;
+            state.next(&event("model_request", "t-open", Some(1)))?;
+            Ok(state)
+        };
+        let stream = event("model_stream_event", "t-open", Some(1));
+        let time = |turns: usize| {
+            (0..3)
+                .map(|_| {
+                    let mut state = build(turns).expect("#297 trend fixture state");
+                    let started = std::time::Instant::now();
+                    for _ in 0..10_000 {
+                        state
+                            .next(std::hint::black_box(&stream))
+                            .expect("#297 stream event advances");
+                    }
+                    std::hint::black_box(&state);
+                    started.elapsed().as_secs_f64()
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let small = time(16);
+        let large = time(1024);
+        assert!(
+            large / small < 8.0,
+            "#297 per-event domain cost grew {}x from 16 to 1024 cumulative turns; \
+             a commit must not deep-copy the whole DomainState per event",
+            large / small,
+        );
     }
 }
