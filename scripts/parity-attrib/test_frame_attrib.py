@@ -153,7 +153,7 @@ check('C2b agentScope 非 parent → 否',
 # ---- 装置自身的护栏：判据被放宽必须显式改 pin，diff 里一眼可见 ----
 # `scripts/parity/check_frozen.py` 只扫 `scripts/parity/**`，本装置在冻结范围之外，
 # 因此用这条自 pin 替代冻结登记（#1926 评审 P2：判定装置不能没有任何机器护栏）。
-PINNED_DEVICE_SHA256 = '3f95de17144c898d54b545a722ae147c9a0106bf0596221862f84dbf0d15b2e1'
+PINNED_DEVICE_SHA256 = '86dbf51cb4da74e6584b741dbc73604047040e44f0d7b6e61779b95b12f9159e'
 with open(os.path.join(HERE, 'frame_attrib.py'), 'rb') as fh:
     actual_sha = hashlib.sha256(fh.read()).hexdigest()
 check('装置自身 sha256 与 pin 一致（改判据必须显式 bump pin）',
@@ -929,6 +929,14 @@ finally:
 check('用法：argparse 缺参数 → rc=64（改前退 2，与「反证命中」撞码）',
       _code == 64 and '用法错误' in (err_txt or ''),
       f'code={_code!r} err={(err_txt or "")[:160]!r}')
+
+# ⑯ r3：module 级守卫也是「用法错误」，不得退 1（negctl 表里 1 = 「证据目录不可用」，
+#    复查会去换目录名重跑）。非 `-I` 运行必须退 64。
+_p = subprocess.run([sys.executable, fa.__file__, '/x', 'deadline'],
+                    capture_output=True, timeout=120)
+check('用法：非 -I 运行 → rc=64（改前 rc=1，与「证据目录不可用」撞码）',
+      _p.returncode == 64 and b'-I' in _p.stderr,
+      f'rc={_p.returncode} err={_p.stderr[-160:]!r}')
 
 print()
 if FAILS:
