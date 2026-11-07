@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+# #1352: the advertised capability table moved out of `requests.rs`.
+CAPABILITIES = ROOT / 'src/pilotdeck-gateway/src/native_process/capabilities.rs'
 RUNS_METHODS = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/runs.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/native_registry_switch.rs'
@@ -67,13 +69,13 @@ mutations = [
     # TS InProcessGateway.ts:2093-2095: without a registry, describeServer
     # drops the run capabilities. #1321 在 `.into_iter()` 与守卫 filter 之间插入
     # upload 能力的 `.chain([...])`；锚点改从守卫 filter 起算，变异字节不变。
-    ('registry-capabilities-ungated', REQUESTS,
-     '''.filter(|capability| {
-                            self.runs.is_some()
-                                || !matches!(*capability, "run_get" | "run_events" | "run_reattach")
-                        })
-                        .filter(|capability| {''',
-     '''.filter(|capability| {''',
+    ('registry-capabilities-ungated', CAPABILITIES,
+     '''fn runs(requests: &Requests) -> bool {
+    requests.runs.is_some()
+}''',
+     '''fn runs(_requests: &Requests) -> bool {
+    true
+}''',
      'native_process::tests::requests_registry_switch_gates_run_reads', '#1369 describe_server gates run capabilities'),
     # TS InProcessGateway.ts:2525-2544: a configured registry still serves
     # run reads; the reader must not be forced to None.
