@@ -32,6 +32,11 @@ SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_d
 # session factory and the per-turn permission-mode source on the live
 # adapter. Both are mutated below so "stored but never read" cannot come back.
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
+# #1860: hydration is a transcript writer too — the factory seeds the recorder
+# from the tail it restored and only then publishes it, so the fence has to
+# span both. FACTORY_TESTS carries the message the bound test asserts on.
+FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
+FACTORY_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs'
 LIVE = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 # #1864 fix-r2: the host session tools' admission source — `turn()` writes
 # the stored selection back into `Permissions` *and* this turn's local
@@ -44,6 +49,7 @@ TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
 LIVE_TESTS = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs'
 REVIEW_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 CFG = 'native_process::methods::config::tests::'
+FT = 'runtime::session::factory::tests::'
 DIR = 'native_process::methods::session_dir::tests::'
 mutations = [
     # ── stub reverts: the dispatch arm returns the pre-#1457 capability
@@ -132,13 +138,16 @@ mutations = [
     # puts two fresh writers back on the same tail, so the concurrent case must
     # see a duplicate `sequence` and a transcript the next restore() rejects.
     ('transcript-fence-removed-config', CONFIG,
-     '        let write_fence = super::transcript_locks::acquire(project_root, session_key).await;',
+     '        let write_fence = transcript_locks::acquire(&fence_path).await;',
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
     ('transcript-fence-removed-rename', SESSION_DIR,
-     '        let write_fence =\n'
-     '            super::transcript_locks::acquire(&project_root.to_string_lossy(), &key).await;',
+     '        let fence_path =\n'
+     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let write_fence = transcript_locks::acquire(&fence_path).await;',
+     '        let fence_path =\n'
+     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
@@ -147,8 +156,7 @@ mutations = [
     # the loaded writer's next append then duplicates `sequence + 1` and the
     # bound test's chain assertion must catch it.
     ('transcript-live-bypass-config', CONFIG,
-     '            if let Some((owner, recorder)) =\n'
-     '                super::transcript_locks::live_recorder(&recorders, &key)\n'
+     '            if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)\n'
      '            {',
      '            if let Some((owner, recorder)) = None::<(JsString, Arc<crate::storage::recorder::Recorder>)>\n'
      '            {',
@@ -167,9 +175,21 @@ mutations = [
      '        {',
      DIR + 'status_appends_through_the_loaded_writer',
      '#1457 the transcript still loads'),
+    # ── #1860: hydration itself must hold the fence across
+    # `restore()` → publish-recorder. Dropping it right after acquisition is
+    # exactly the pre-fix shape, and the bound test's waiter then gets the
+    # fence while the hydrate is still parked.
+    ('transcript-hydrate-fence-removed', FACTORY,
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path).await;',
+     '            let _write_fence = super::transcript_locks::acquire(&fence_path).await;\n'
+     '            drop(_write_fence);',
+     FT + 'hydration_holds_the_transcript_fence_until_the_recorder_is_published',
+     '#1860 hydrate holds the transcript fence until the recorder is published'),
     ('transcript-cold-lease-skipped', SESSION_DIR,
-     '            let Some(_lease) = super::transcript_locks::cold_write_lease(&storage.transcript_path)',
-     '            let Some(_lease) = Some::<()>(())',
+     '            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {\n'
+     '                // #1457 fix-r3: a session claimed the transcript after the',
+     '            let Some(_lease) = Some::<()>(()) else {\n'
+     '                // #1457 fix-r3: a session claimed the transcript after the',
      DIR + 'cold_metadata_write_reports_busy_while_a_session_holds_the_lease',
      '#1457 a cold append must not run beside a session that owns the writer'),
     ('seed-mtime-wiring', CONFIG,
@@ -298,8 +318,8 @@ mutations = [
 # string that matches no scanned file cannot be told apart from a `{...}`
 # template, so it is not refused here -- the run finds it as an INVALID.
 #
-# The table pins every anchor that is verbatim in the scanned files: 35 of the
-# 40 rows (30 distinct strings, 31 entries -- `the transcript still loads` is
+# The table pins every anchor that is verbatim in the scanned files: 36 of the
+# 41 rows (31 distinct strings, 32 entries -- `the transcript still loads` is
 # registered once per file), the remaining five rows ride a `{...}` template and
 # cannot be pinned. Row and entry counts differ on purpose: rows vs. distinct
 # strings vs. (string, file) pairs are three different numbers. Pinning is the
@@ -348,14 +368,18 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
+    (FACTORY_TESTS,
+     '#1860 hydrate holds the transcript fence until the recorder is published'),
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
-# #1864 rows assert on, and the two test files those rows bind to. A pin may not
-# name a path outside this tuple (checked below) -- a pin the completeness scan
-# does not read would be a guard with a blind spot.
-SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS, REVIEW_TESTS)
+# #1864 rows assert on, and the test files those rows bind to (the #1860 row
+# mutates `factory.rs` but asserts on a message in `factory_tests.rs`). A pin may
+# not name a path outside this tuple (checked below) -- a pin the completeness
+# scan does not read would be a guard with a blind spot.
+SOURCE_TEXTS = (CONFIG, SESSION_DIR, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS, REVIEW_TESTS,
+                FACTORY, FACTORY_TESTS)
 
 
 def _assertions(case):

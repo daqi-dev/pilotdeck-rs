@@ -14,6 +14,7 @@ use crate::{
         manager::{
             GatewaySessionCatalogConsumer, SessionCatalogListInput, TranscriptSessionCatalog,
         },
+        session::transcript_locks,
     },
     storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, SessionStorageInput},
 };
@@ -305,8 +306,9 @@ impl Requests {
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
-        let write_fence =
-            super::transcript_locks::acquire(&project_root.to_string_lossy(), &key).await;
+        let fence_path =
+            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);
+        let write_fence = transcript_locks::acquire(&fence_path).await;
         // #1457 fix-r2: a loaded session owns the transcript writer (and the
         // writer lease) with an in-memory sequence, so the metadata entry goes
         // *through* its recorder. Closing it first retired an idle session the
@@ -316,7 +318,7 @@ impl Requests {
         // writer lease a session holds, so it cannot interleave with the
         // factory's restore→publish window; a busy lease means a session owns
         // the transcript after all (use its writer or report busy).
-        let live = super::transcript_locks::live_recorder(&self.recorders, &key);
+        let live = super::super::assembly::live_recorder(&self.recorders, &key);
         let recorders = self.recorders.clone();
         let home = self.options.home.clone();
         let value_field: JsValue = params.get("value").cloned().unwrap_or(JsValue::Undefined);
@@ -382,13 +384,12 @@ impl Requests {
                     now: None,
                 })
                 .map_err(|e| RequestError::new(e.to_string()))?;
-            let Some(_lease) = super::transcript_locks::cold_write_lease(&storage.transcript_path)
-            else {
+            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {
                 // #1457 fix-r3: a session claimed the transcript after the
                 // lookup. Append through its writer if it is published;
                 // otherwise report busy instead of forking the chain.
                 if let Some((_owner, recorder)) =
-                    super::transcript_locks::live_recorder(&recorders, &key_clone)
+                    super::super::assembly::live_recorder(&recorders, &key_clone)
                 {
                     recorder
                         .writer()
@@ -396,7 +397,7 @@ impl Requests {
                         .map_err(|e| RequestError::new(e.to_string()))?;
                     return Ok(());
                 }
-                return Err(super::transcript_locks::writer_busy_error());
+                return Err(transcript_locks::writer_busy_error());
             };
             // Seed the writer's sequence from the existing transcript so the
             // metadata entry continues the chain rather than restarting at 1.
@@ -471,10 +472,13 @@ impl Requests {
         // writer for the tail it restores. Looking the recorder up first left a
         // window where a concurrent close retired it between lookup and append,
         // and the retired writer's no-op append reported `recorded: true`.
-        let write_fence =
-            super::transcript_locks::acquire(&self.options.project.to_string_lossy(), &session_key)
-                .await;
-        let live_recorder = super::transcript_locks::live_recorder(&self.recorders, &session_key);
+        let fence_path = transcript_locks::session_transcript_path(
+            &self.options.home,
+            &self.options.project,
+            &session_key,
+        );
+        let write_fence = transcript_locks::acquire(&fence_path).await;
+        let live_recorder = super::super::assembly::live_recorder(&self.recorders, &session_key);
         let recorders = self.recorders.clone();
         if let Some((_owner, recorder)) = live_recorder {
             // The live writer numbers its append from its own in-memory
@@ -526,13 +530,12 @@ impl Requests {
                 now: None,
             }) {
                 Ok(storage) => {
-                    let Some(_lease) =
-                        super::transcript_locks::cold_write_lease(&storage.transcript_path)
+                    let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path)
                     else {
                         // A session claimed the transcript after the lookup:
                         // append through its writer, or report that nothing was
                         // recorded instead of forking the chain.
-                        return super::transcript_locks::live_recorder(&recorders, &session_key)
+                        return super::super::assembly::live_recorder(&recorders, &session_key)
                             .is_some_and(|(_owner, recorder)| {
                                 recorder
                                     .writer()
@@ -756,7 +759,7 @@ mod tests {
             .expect("#1457 the transcript storage opens");
         // Stand in for `factory`: the lease is taken before restore and held
         // while the recorder is not yet in the map.
-        let lease = super::super::transcript_locks::cold_write_lease(&storage.transcript_path)
+        let lease = transcript_locks::cold_write_lease(&storage.transcript_path)
             .expect("#1457 the transcript lease is free before the session loads");
 
         let error = crate::runtime::turn::gateway::GatewayRequests::request(

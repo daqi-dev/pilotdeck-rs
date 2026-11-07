@@ -347,6 +347,22 @@ impl Harness {
                         }
                     })
                 });
+                // #1860: park the second hydration between the tail read
+                // (`restore` has already seeded the recorder's in-memory
+                // sequence) and the recorder's publication — the window the
+                // transcript fence has to cover.
+                if name == "hydrate-fence" && id == 2 {
+                    let load_checkpoint = storage.load_checkpoint.clone();
+                    let gate = gate.clone();
+                    storage.load_checkpoint = Arc::new(move || {
+                        let load_checkpoint = load_checkpoint.clone();
+                        let gate = gate.clone();
+                        Box::pin(async move {
+                            gate.wait().await;
+                            load_checkpoint().await
+                        })
+                    });
+                }
                 let close = storage.close.clone();
                 let close_obs = obs.clone();
                 let close_gate = gate.clone();
@@ -1796,6 +1812,104 @@ async fn recreate_running_before_read() {
 #[tokio::test]
 async fn recreate_running_after_publish_resume() {
     writer_interleaving(false).await;
+}
+
+/// #1860, cell "cold metadata write × hydration between the tail read and the
+/// recorder's publication": hydration numbers the recorder from the tail it
+/// restored, so a metadata request that read the same tail in that window would
+/// durably append the same `sequence + 1` and the next `restore()` would reject
+/// the transcript. The fence must therefore be held from the tail read until
+/// the recorder is published, and released after.
+///
+/// The negative control (`transcript-hydrate-fence-removed`) drops the guard
+/// right after it is taken; the assertion below then fires because the waiter
+/// gets the fence while the hydration is still parked.
+#[tokio::test]
+async fn hydration_holds_the_transcript_fence_until_the_recorder_is_published() {
+    let name = "hydrate-fence";
+    let h = Harness::new(name);
+    // Seed one durable row with a real writer: the hydrating recorder restores
+    // sequence 1, and both it and a cold writer would claim 2 next.
+    let first = h.create(name).await;
+    lock(&h.observed.bindings)[0]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"seed".into(),
+            js(r#"{"title":"seed"}"#),
+        )
+        .expect("#1860 seed durable row");
+    assert_eq!(assert_strict_transcript(&h), 1, "#1860 seeded tail");
+    bounded(name, first.dispose("seed".into()))
+        .await
+        .expect("#1860 seed session disposed");
+
+    // Second hydration: restore() reads the seeded tail, then parks before the
+    // recorder is published.
+    let creating = tokio::spawn({
+        let factory = h.factory.clone();
+        let context = h.context();
+        async move { factory.create(context, None).await }
+    });
+    bounded(name, h.gate.entered()).await;
+
+    // A metadata request's first step: take the fence for the same transcript.
+    let acquired = Arc::new(AtomicUsize::new(0));
+    let (started, started_rx) = tokio::sync::oneshot::channel();
+    let transcript = h.root.join("session-745.jsonl");
+    let mut waiter = tokio::spawn({
+        let acquired = acquired.clone();
+        async move {
+            let _ = started.send(());
+            let _fence = crate::runtime::session::transcript_locks::acquire(&transcript).await;
+            acquired.store(1, Ordering::SeqCst);
+        }
+    });
+    bounded(name, started_rx)
+        .await
+        .expect("#1860 waiter started");
+    let blocked = tokio::time::timeout(Duration::from_millis(250), &mut waiter).await;
+    crate::negative_assert!(
+        blocked.is_err(),
+        "#1860 hydrate holds the transcript fence until the recorder is published"
+    );
+
+    // Publication releases it.
+    h.gate.open();
+    let handle = bounded(name, creating)
+        .await
+        .expect("#1860 hydrate join")
+        .expect("#1860 hydrate completes");
+    bounded(name, waiter)
+        .await
+        .expect("#1860 fence waiter joins");
+    assert_eq!(
+        acquired.load(Ordering::SeqCst),
+        1,
+        "#1860 fence released after publication"
+    );
+
+    // One writer continues the tail it restored: sequence 2 is written exactly
+    // once and the file still loads.
+    lock(&h.observed.bindings)[1]
+        .recorder
+        .writer()
+        .record_session_metadata(
+            &"session-745".into(),
+            &"after".into(),
+            js(r#"{"title":"after"}"#),
+        )
+        .expect("#1860 post-publication append");
+    assert_eq!(
+        assert_strict_transcript(&h),
+        2,
+        "#1860 published recorder continues the restored tail"
+    );
+    bounded(name, handle.dispose("test".into()))
+        .await
+        .expect("#1860 session disposed");
+    h.finish(name).await;
 }
 
 #[tokio::test]

@@ -5,6 +5,7 @@ mod completion;
 pub mod factory;
 mod handle;
 mod owner;
+pub(crate) mod transcript_locks;
 
 pub use admission::{SessionAdmission, TurnReservation};
 pub use completion::{CompletionAbortReason, TurnCompletionFence, TurnCompletionHandle};

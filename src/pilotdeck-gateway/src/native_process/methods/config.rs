@@ -24,12 +24,15 @@ use crate::{
     runtime::{
         connection::{Call, RequestError},
         project::{ProjectResources, Resource, RuntimeError, plugins::PluginResources},
-        session::SessionContext,
+        session::{SessionContext, transcript_locks},
     },
     storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, SessionStorageInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 // Wire names from the gateway frames registry. All 7 pass through admission
 // as ordinary session requests.
@@ -297,7 +300,12 @@ impl Requests {
         // #1457 fix-r1: one writer at a time per session — this path numbers its
         // append from the tail it just read, so two concurrent cold writers
         // would both claim `sequence + 1` and brick the transcript.
-        let write_fence = super::transcript_locks::acquire(project_root, session_key).await;
+        let fence_path = transcript_locks::session_transcript_path(
+            &self.options.home,
+            Path::new(project_root),
+            session_key,
+        );
+        let write_fence = transcript_locks::acquire(&fence_path).await;
         // #1457 fix-r2: when the session is loaded its recorder owns the writer
         // (and the writer lease) with an in-memory sequence, so the entry is
         // appended *through* it. Closing it first aborted an admitted turn and
@@ -336,8 +344,7 @@ impl Requests {
             let _write = write_fence;
             let turn = JsString::from(turn_id);
             let entry = JsValue::Object(metadata);
-            if let Some((owner, recorder)) =
-                super::transcript_locks::live_recorder(&recorders, &key)
+            if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)
             {
                 recorder
                     .writer()
@@ -364,13 +371,12 @@ impl Requests {
                     now: None,
                 })
                 .map_err(|e| RequestError::new(e.to_string()))?;
-            let Some(_lease) = super::transcript_locks::cold_write_lease(&storage.transcript_path)
-            else {
+            let Some(_lease) = transcript_locks::cold_write_lease(&storage.transcript_path) else {
                 // A session claimed the transcript between the lookup above and
                 // here. Append through it when it is published; otherwise say
                 // busy — never write a second chain beside it.
                 if let Some((owner, recorder)) =
-                    super::transcript_locks::live_recorder(&recorders, &key)
+                    super::super::assembly::live_recorder(&recorders, &key)
                 {
                     recorder
                         .writer()
@@ -378,7 +384,7 @@ impl Requests {
                         .map_err(|e| RequestError::new(e.to_string()))?;
                     return Ok(Some(owner));
                 }
-                return Err(super::transcript_locks::writer_busy_error());
+                return Err(transcript_locks::writer_busy_error());
             };
             if matches!(storage.transcript_exists(), Some(Ok(true))) {
                 storage
