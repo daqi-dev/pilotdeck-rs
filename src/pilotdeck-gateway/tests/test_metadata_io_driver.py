@@ -2,6 +2,7 @@
 import ast
 import hashlib
 import importlib.util
+import json
 import os
 from collections import Counter
 from pathlib import Path
@@ -9,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import tomllib
@@ -988,6 +990,11 @@ class EnvironmentControls(unittest.TestCase):
          'os.__dict__.update(replace=__import__("shutil").copyfile)\n\n'),
         ('guarded-module-imported-under-another-name',
          'import os as _pin_os\n\n'),
+        # r16（zai review P2 #1）：r15 点名的 `__builtins__.str = …` 原来只写在
+        # docstring 里、零覆盖。`__builtins__` 进了 `GUARDED_NAMESPACES`，这条拼写
+        # 现在由静态闭集判红；本条变异保证它不是纸面声明。
+        ('builtins-dunder-namespace-write',
+         '__builtins__.str = lambda value: "../src"\n\n'),
         ('exec-of-a-literal-string',
          'exec("os.replace = __import__(\'shutil\').copyfile")\n\n'),
     )
@@ -1572,6 +1579,11 @@ class EnvironmentControls(unittest.TestCase):
     # 判据按**名字**在运行期读的模块。`module_import_form_problems` 钉「这个名字被绑成
     # 什么形态」，管不到「绕开名字、直接改命名空间」。
     GUARDED_MODULES = ('os', 'sys', 'tempfile', 'pathlib', 'builtins', 'shutil', 'importlib')
+    # `__builtins__` 不是一个模块对象（模块里是 dict、`__main__` 里是模块），但判据
+    # 运行期同样按名字从它读内建（`str` / `len` / `open`）。r15 的
+    # `__builtins__.str = …` 就是从这里改道的，所以它和上面几个模块一样在管辖内；
+    # 不做别名追踪（`b = __builtins__; b.str = …` 仍归行为观测兜底）。
+    GUARDED_NAMESPACES = GUARDED_MODULES + ('__builtins__',)
 
     # 健康夹具里**今天真实存在**的全部命名空间写入与写方法调用。判据是**闭集**：
     # 任何别的写入（不论语法怎么拼）都不在白名单里 —— r13/r14 那种「换一种拼写再来
@@ -1688,7 +1700,9 @@ class EnvironmentControls(unittest.TestCase):
         真跑一次发布，看临时文件是不是从仓根暂存目录来、目标在发布后是不是**就是**
         那个临时文件（同一 inode）。任何真改道都会在行为上现形；没有改道就没有危害。
         下面点名的六种拼写，其中五条已在
-        `test_shared_restore_write_is_atomic` 里逐条真跑过：静态判据 `[]`，观测必红。
+        `test_shared_restore_write_is_atomic` 里逐条真跑过：静态判据 `[]`，观测必红；
+        第六条 `__builtins__.str = …` 归静态侧管（`__builtins__` 在
+        `GUARDED_NAMESPACES` 里，变异 `builtins-dunder-namespace-write` 守着）。
 
         本判据因此只做「挡常见回归、给评审一眼能读的形态」，判红不代表一定有事，
         判绿也不代表一定没事。
@@ -1723,7 +1737,7 @@ class EnvironmentControls(unittest.TestCase):
         `test_shared_restore_write_is_atomic` 里那条「静态绿、观测红」的对杀负控。
         """
         tree = ast.parse(source)
-        guarded = set(self.GUARDED_MODULES) | self.module_aliases(source)
+        guarded = set(self.GUARDED_NAMESPACES) | self.module_aliases(source)
         module_names = self.module_scope_names(source)
         problems = []
         for node in ast.walk(tree):
@@ -2088,8 +2102,8 @@ class EnvironmentControls(unittest.TestCase):
         def observed_replace(source, destination, *args, **kwargs):
             # 发布**之前**记下临时文件的身份：真 `os.replace` 会把它的 inode
             # 原样搬到目标上；拷贝则只覆盖目标内容，目标保留自己的 inode。
-            identity = (Path(source).stat().st_dev, Path(source).stat().st_ino)
-            observed.append((Path(source), Path(destination), identity))
+            item = Path(source).stat()
+            observed.append((str(source), str(destination), item.st_dev, item.st_ino))
             return real_replace(source, destination, *args, **kwargs)
 
         os.replace = observed_replace
@@ -2097,18 +2111,77 @@ class EnvironmentControls(unittest.TestCase):
             publish(target, b'#1903 observed publish\n')
         finally:
             os.replace = real_replace
+        self.assert_observed_publish(observed, target, scratch)
+
+    # 子进程里跑一次发布并回传观测。源码经 stdin 传入（`__file__` 仍指向真实夹具，
+    # 否则夹具按 `parents[5]` 算出来的 ROOT 会跑偏），这样变异体也能原样跑。
+    OBSERVE_CHILD = textwrap.dedent(
+        r'''
+        import json, os, sys
+        from pathlib import Path
+        module_path, function, target = sys.argv[1:4]
+        namespace = {'__file__': module_path,
+                     '__name__': 'sibling_atomic_write_probe'}
+        exec(compile(sys.stdin.read(), module_path, 'exec'), namespace)
+        observed = []
+        real_replace = os.replace
+
+        def observed_replace(source, destination, *args, **kwargs):
+            item = Path(source).stat()
+            observed.append([str(source), str(destination), item.st_dev, item.st_ino])
+            return real_replace(source, destination, *args, **kwargs)
+
+        os.replace = observed_replace
+        try:
+            namespace[function](Path(target), b'#1903 observed publish\n')
+        finally:
+            os.replace = real_replace
+        print('OBSERVED ' + json.dumps(observed))
+        ''')
+
+    def observe_publish_in_child(self, relative, function, target, scratch,
+                                 source=None):
+        """在 `python3 -I` 子进程里真跑一次发布，回传 `(源, 目标, dev, ino)`。
+
+        `native-stimulus-plan/negative_controls.py` 模块级就拒绝非隔离解释器
+        （`if not sys.flags.isolated: raise SystemExit`），而 CI 跑的是
+        `python3 -m unittest`（不带 `-I`）。进程内 `exec` 会在 CI 上抛 SystemExit、
+        把整条用例打成 ERROR（r16 deepseek concurrency P1，已实测：
+        非 `-I` 下 `exec` 该文件 → `SystemExit: run with python3 -I`）。
+        这条守卫是夹具自己的运行契约，测试不去削弱它，改成按契约用 `-I` 跑。
+        """
+        path = Path(__file__).resolve().parent / 'fixtures' / relative
+        source_text = source if source is not None else path.read_text()
+        completed = subprocess.run(
+            [sys.executable, '-I', '-c', self.OBSERVE_CHILD,
+             str(path), function, str(target)],
+            input=source_text, capture_output=True, text=True, timeout=180)
+        self.assertEqual(
+            completed.returncode, 0,
+            f'#1692 §9 r16 {relative} the isolated child must publish: '
+            f'{completed.stderr[-800:]}')
+        rows = [line[len('OBSERVED '):] for line in completed.stdout.splitlines()
+                if line.startswith('OBSERVED ')]
+        self.assertEqual(len(rows), 1,
+                         f'#1692 §9 r16 {relative} the child must report one '
+                         f'observation, got {completed.stdout[-400:]}')
+        return [tuple(row) for row in json.loads(rows[0])]
+
+    def assert_observed_publish(self, observed, target, scratch):
+        """把一次发布的观测判死：源目录、落点、字节、inode、无残留。"""
         self.assertEqual(len(observed), 1,
                          '#1903 the publish must reach os.replace exactly once, got '
                          f'{observed}')
-        source, destination, identity = observed[0]
-        self.assertEqual(destination, target,
+        source, destination, device, inode = observed[0]
+        source = Path(source)
+        self.assertEqual(Path(destination), target,
                          '#1903 the publish must land on the target itself')
         self.assertEqual(source.parent, scratch,
                          '#1903 the temp file must come from the repository-root scratch '
                          f'directory, got {source}')
         self.assertEqual(target.read_bytes(), b'#1903 observed publish\n',
                          '#1903 the published bytes must be the observed ones')
-        self.assertEqual((target.stat().st_dev, target.stat().st_ino), identity,
+        self.assertEqual((target.stat().st_dev, target.stat().st_ino), (device, inode),
                          '#1903 the target must BE the temp file after one rename; a copy '
                          'would overwrite it in place and keep its own inode (not atomic)')
         self.assertEqual(sorted(item.name for item in target.parent.iterdir()),
@@ -2208,18 +2281,21 @@ class EnvironmentControls(unittest.TestCase):
                 print(f'#1692 §9 r2 sibling-write mutant {relative} {label}: KILLED',
                       flush=True)
         # r15（两家 10 条 P1）：静态判据对「换一种拼写改道」永远差一步 —— 改判行为。
-        # 三处夹具各真跑一次发布，观测 `os.replace` 的**源**是不是仓根暂存目录。
+        # 三处夹具各在 `python3 -I` 子进程里真跑一次发布，观测 `os.replace` 的**源**
+        # 是不是仓根暂存目录、目标是不是就是那个临时文件（同一 inode）。
+        # 目标名带 pid：三个夹具的临时名是 `.negctl-{目标名}.tmp`，写死会与并发跑
+        # 同一用例的另一个进程撞名（r16 deepseek concurrency P2）。
         repository_root = Path(__file__).resolve().parents[3]
+        scratch = repository_root / '.negctl-publish'
         for relative, function in self.SIBLING_ATOMIC_WRITES:
             probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
                                                dir=repository_root))
             try:
-                target = probe_root / 'probe-source.rs'
+                target = probe_root / f'probe-source-{os.getpid()}.rs'
                 target.write_bytes(b'#1692 probe\n')
-                module = self.sibling_module(relative)
-                self.observe_publish(
-                    lambda target, data: module[function](target, data), target,
-                    repository_root / '.negctl-publish')
+                self.assert_observed_publish(
+                    self.observe_publish_in_child(relative, function, target, scratch),
+                    target, scratch)
                 print(f'#1692 §9 r15 observed publish {relative}: temp from the '
                       f'repository-root scratch dir (live)', flush=True)
             finally:
@@ -2241,20 +2317,26 @@ class EnvironmentControls(unittest.TestCase):
             probe_root = Path(tempfile.mkdtemp(prefix='.negctl-probe-',
                                                dir=repository_root))
             try:
-                target = probe_root / 'probe-source.rs'
+                target = probe_root / f'probe-source-{os.getpid()}.rs'
                 target.write_bytes(b'#1692 probe\n')
                 with self.assertRaises(AssertionError,
                                        msg=f'#1692 §9 r15 {relative} the observation must '
                                            f'see a temp beside the target'):
-                    mutant = self.sibling_module(
-                        relative, source_text.replace(old, new, 1))
-                    self.observe_publish(
-                        lambda target, data: mutant[function](target, data), target,
-                        repository_root / '.negctl-publish')
+                    self.assert_observed_publish(
+                        self.observe_publish_in_child(
+                            relative, function, target, scratch,
+                            source_text.replace(old, new, 1)),
+                        target, scratch)
                 print(f'#1692 §9 r15 observed-publish mutant {relative} '
                       f'temp-beside-the-target: KILLED', flush=True)
             finally:
                 shutil.rmtree(probe_root, ignore_errors=True)
+        # 暂存目录留在工作树根（`.gitignore:51` 的 `.negctl-*` 盖住）；空了就顺手删，
+        # 非空说明有并发进程在用，留着不动。
+        try:
+            scratch.rmdir()
+        except OSError:
+            pass
         # r3（两家 boundary/concurrency）：静态形态钉不住「目标不存在时直接崩」。
         # 真执行一次发布函数：首次创建恢复侧车必须成功，已有目标必须保留 mode。
         module = self.sibling_module('model-complete/negative-controls.py')
