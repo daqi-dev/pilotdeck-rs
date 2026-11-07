@@ -178,6 +178,17 @@ class SqueezeIsLexicalNotQuoteCounting(unittest.TestCase):
         self.assertIn('"// not a comment /* nor this */"', squeezed)
         self.assertIn('let x = 1;', squeezed)
 
+    def test_a_commented_out_assertion_is_not_the_assertion(self):
+        # The needle must not be satisfiable by a line the compiler ignores.
+        squeezed = squeeze(
+            '// assert!(advertised, "#1261 native entry rejects inherited X");\n'
+            'let x = 1;')
+        self.assertNotIn('assert!(advertised', squeezed)
+
+    def test_a_block_comment_still_separates_tokens(self):
+        self.assertEqual('let x = 1; let y = 2;',
+                         squeeze('let x = 1; /* c */ let y = 2;'))
+
     def test_syntax_whitespace_still_collapses(self):
         spread = 'assert!(\n        !x,\n        "msg"\n    );'
         self.assertEqual('assert!(!x, "msg");', squeeze(spread))
