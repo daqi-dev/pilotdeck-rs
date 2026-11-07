@@ -32,34 +32,50 @@ sys.path.insert(0, str(HERE))
 #
 # The compile is removed from the child's path instead of budgeted for: the
 # test warms the scanner through the same HEAD guard first (see the warm-up in
-# test_term_and_kill...). What is left between spawn and `ready` is:
-#   * mutating_sources(root, [], baseline=...) waiting for the shared tree lock
-#     with lock_timeout=900 (negative_process.py:872, read from the signature
-#     by hold_ready_seconds() below). The child cannot wait longer than that:
-#     at 900 s it raises its own TimeoutError and exits, which the assertion
-#     reports as rc + stderr rather than as an expired budget;
-#   * the warm post-lock path, measured at 6.7-6.8 s under a load-17 host (git
-#     re-reads + copies, no compile). Its per-step caps are watchdogs for hung
-#     subprocesses, not expected durations: <=4 git calls at GIT_TIMEOUT (120 s,
-#     negative_process.py:395) plus one scanner run at 60 s (:509) is 540 s, and
-#     the allowance below is 900 s -- 1.7x that, and ~130x the measured path.
+# test_term_and_kill...). What is left between spawn and `ready` is the child's
+# own lock wait plus its post-lock verification, so the budget is derived from
+# those two terms -- both read from the shared module, neither copied:
 #
-# The budget therefore expires only after the child's own lock bound, and a
-# child that exits on its own is reported immediately. Two residuals, neither
-# introduced here: a sibling runner that holds the tree lock for the full 900 s
-# still makes this probe fail, because the child gives up on the lock by design
-# (the diagnostic names it instead of leaving a bare `rc=None`); and a host slow
-# enough to spend the per-call git watchdogs on the pre-lock reads would fail
-# dozens of other fixtures too -- that red is a broken runner, not a false one.
-# The "--hold-lock" child never builds: it imports negative_process and takes
-# the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
-# is on the critical path, so this bound stays far smaller.
+#   lock_timeout            mutating_sources' default (negative_process.py:872);
+#                           the child raises its own TimeoutError at that bound
+#                           and exits, so the assertion reports rc + stderr
+#                           instead of an expired budget.
+#   (2 + B) * 4 git calls   two _assert_input_areas runs at :905 and :538, four
+#                           git calls each (:566-584), plus B = the number of
+#                           32 KiB literal-input batches from the scanner.
+#   1 more git call         rev-parse --verify in _workspace_literal_inputs
+#                           (:508).
+#   60 s                    the scanner run itself (:509).
+#   each git call capped by negative_process.GIT_TIMEOUT (:395).
+#
+# B is measured at run time from the scanner's own output, and the whole sum is
+# computed while the HEAD guard still holds the tree lock, so no sibling can
+# move the inputs between the measurement and the spawn. On cb8 B=3 today (1315
+# literal inputs), so the budget is 900 + 21 * 120 + 60 = 3480 s against a
+# measured 6.7-6.8 s warm path: it only expires when a step sits near its own
+# watchdog, not when the path is merely slow.
+#
+# A child that exits on its own is reported immediately (rc + stderr). Two
+# residuals, neither introduced here: a sibling runner that holds the tree lock
+# for the full 900 s still makes this probe fail, because the child gives up on
+# the lock by design (the diagnostic names it instead of leaving a bare
+# `rc=None`); and a host slow enough to spend every per-call watchdog at once
+# would fail dozens of other fixtures too -- that red is a broken runner, not a
+# false one. The "--hold-lock" child never builds: it imports negative_process
+# and takes the tree lock with timeout=1 (see hold_source_lock). Only
+# interpreter startup is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
-# Allowance on top of the child's lock wait for the warm post-lock path; see the
-# cap enumeration above.
-POST_LOCK_ALLOWANCE = 900
+# Post-lock watchdog enumeration: the counts are structural facts of
+# negative_process.mutating_sources (:904-909), the durations come from it.
+AREA_CHECKS_PER_RUN = 2
+GIT_CALLS_PER_AREA_CHECK = 4
+OTHER_GIT_CALLS = 1
+SCANNER_SECONDS = 60
 # The --check-lock probe is not a build: it takes one flock and exits, so it is
 # deliberately left at subprocess.run(..., timeout=10).
+
+
+_PROCESS_API = None
 
 
 def shared_process():
@@ -67,12 +83,16 @@ def shared_process():
 
     This file is also executed as the `--hold` / `--hold-lock` child, so a
     module-level import would run the on-disk shared helper before the HEAD
-    guard has verified it (see test_bootstrap_rejects_dirty_code...). The
-    parent-only helpers below import it lazily, the way the child's
-    hold_source_lock() already imports tree_lock.
+    guard has verified it (see test_bootstrap_rejects_dirty_code...). The first
+    call is made by hold_ready_seconds(), inside that guard, and the result is
+    kept: the cleanup paths must not re-read a shared file that a sibling could
+    replace between the failed assertion and the kill (concurrency review r6).
     """
-    import negative_process
-    return negative_process
+    global _PROCESS_API
+    if _PROCESS_API is None:
+        import negative_process
+        _PROCESS_API = negative_process
+    return _PROCESS_API
 
 
 def pipe_close_seconds():
@@ -87,15 +107,29 @@ def pipe_close_seconds():
     return shared_process().KILL_TIMEOUT
 
 
-def hold_ready_seconds():
-    """Ready budget = the child's own lock wait + the warm-path allowance.
+def hold_ready_seconds(runner):
+    """Ready budget = the child's own lock wait + its post-lock watchdogs.
+
+    Call it inside the HEAD guard: the literal batch count is measured with the
+    same scanner the child runs, so the derivation uses real data rather than a
+    copied estimate, and the held tree lock keeps the inputs stable until the
+    spawn. Every term is a watchdog for one hung step, not an expected
+    duration; only a host that spends them all at once can outlast the sum.
 
     The lock wait is read from mutating_sources' signature rather than copied:
     negative_process.py belongs to the #1099 (M6) lane, so this change cannot
     lift that default to a named constant there.
     """
-    signature = inspect.signature(shared_process().mutating_sources)
-    return signature.parameters['lock_timeout'].default + POST_LOCK_ALLOWANCE
+    api = shared_process()
+    parameter = inspect.signature(api.mutating_sources).parameters.get('lock_timeout')
+    if parameter is None or parameter.default is inspect.Parameter.empty:
+        raise RuntimeError('mutating_sources no longer carries a lock_timeout default; '
+                           're-derive the #2127 ready budget')
+    commit = runner.git_bytes('rev-parse', 'HEAD').decode().strip()
+    literals = api._workspace_literal_inputs(runner.root, commit)
+    batches = len(list(api._pathspec_batches(literals)))
+    git_calls = (AREA_CHECKS_PER_RUN + batches) * GIT_CALLS_PER_AREA_CHECK + OTHER_GIT_CALLS
+    return parameter.default + git_calls * api.GIT_TIMEOUT + SCANNER_SECONDS
 
 
 def read_child_output(child):
@@ -177,7 +211,9 @@ def wait_for_ready(child, ready, seconds):
         stdout, stderr = read_child_output(child)
         diagnostic += f' stdout={stdout[-2000:]!r} stderr={stderr[-2000:]!r}'
     else:
-        diagnostic += ' (child alive: still inside verified_inputs(), most likely queued on the shared tree lock)'
+        diagnostic += (' (child alive: still inside verified_inputs() -- queued on the'
+                       ' shared tree lock, or rebuilding a workspace_inputs the warm-up'
+                       ' had already built)')
     return diagnostic
 
 
@@ -474,8 +510,10 @@ class IsolationTests(unittest.TestCase):
         # #2127: pay the cold-start cost here, through the same HEAD guard the
         # child uses, so the child's path to `ready` is the measured warm one
         # (6.7-6.8 s on cb8) and no cargo build sits between spawn and `ready`.
+        # The budget is derived here too: it runs the same scanner the child
+        # runs, and this is the only window where the inputs cannot move.
         with self.runner.verified_inputs():
-            pass
+            budget = hold_ready_seconds(self.runner)
         for signum in (signal.SIGTERM, signal.SIGKILL):
             with self.subTest(signal=signum):
                 output = self.out / str(signum)
@@ -486,7 +524,6 @@ class IsolationTests(unittest.TestCase):
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                          start_new_session=True)
                 try:
-                    budget = hold_ready_seconds()
                     diagnostic = wait_for_ready(child, ready, budget)
                     self.assertTrue(ready.exists(), '#994 child must publish mutant readiness '
                                     f'within {budget}s ({diagnostic})')
