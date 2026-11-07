@@ -52,7 +52,7 @@ mutations = [
         SOURCE / "runtime/memory/gateway.rs",
         "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() => Ok(text.clone()),\n",
         "        JsValue::String(text) => Ok(text.clone()),\n",
-        "#1214 list-project-key-validation step 1 (memory_list): wire error must match the TS fixture",
+        "#1214 list-project-key-validation step 1 (memory_list):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -60,7 +60,7 @@ mutations = [
         SOURCE / "runtime/memory/gateway.rs",
         "        JsValue::String(text) if !js_trim_units(text.units()).is_empty() => Ok(Some(text.clone())),\n",
         "        JsValue::String(text) => Ok(Some(text.clone())),\n",
-        "#1214 list-session-key-validation step 0 (memory_list): wire error must match the TS fixture",
+        "#1214 list-session-key-validation step 0 (memory_list):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -68,7 +68,7 @@ mutations = [
         SOURCE / "runtime/memory/gateway.rs",
         '        .is_some_and(|scope| scope.equals_str("session"))',
         '        .is_some_and(|scope| scope.equals_str("project"))',
-        "#1214 wipe-scope-discrimination step 2 (memory_wipe): seam calls must match the TS fixture",
+        "#1214 wipe-scope-discrimination step 2 (memory_wipe):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -86,7 +86,7 @@ mutations = [
         "            ));\n"
         "        }\n",
         "        let _ = scope_is_session(params);\n",
-        "#1214 wipe-scope-discrimination step 2 (memory_wipe): seam calls must match the TS fixture",
+        "#1214 wipe-scope-discrimination step 2 (memory_wipe):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -94,7 +94,7 @@ mutations = [
         SOURCE / "runtime/memory/gateway.rs",
         "    if let JsValue::Undefined | JsValue::Null = params {",
         "    if let JsValue::Null = params {",
-        "#1214 list-project-key-validation step 7 (memory_list): wire error must match the TS fixture",
+        "#1214 list-project-key-validation step 7 (memory_list):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -102,7 +102,7 @@ mutations = [
         SOURCE / "runtime/memory/mod.rs",
         '        object.insert("wiped".into(), JsValue::Bool(self.wiped));',
         '        object.insert("cleared".into(), JsValue::Bool(self.wiped));',
-        "#1214 wipe-scope-discrimination step 0 (memory_wipe): wire result must match the TS fixture",
+        "#1214 wipe-scope-discrimination step 0 (memory_wipe):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -110,7 +110,7 @@ mutations = [
         SOURCE / "runtime/memory/mod.rs",
         '        object.insert("items".into(), JsValue::Array(self.items.clone()));',
         '        object.insert("entries".into(), JsValue::Array(self.items.clone()));',
-        "#1214 list-session-key-validation step 7 (memory_list): wire result must match the TS fixture",
+        "#1214 list-session-key-validation step 7 (memory_list):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     (
@@ -142,7 +142,7 @@ mutations = [
         SOURCE / "runtime/memory/mod.rs",
         "            | 0xFEFF\n",
         "",
-        "#1214 whitespace-trim-boundary step 1 (memory_list): wire error must match the TS fixture",
+        "#1214 whitespace-trim-boundary step 1 (memory_list):",
         "gateway_replays_real_ts_wrapper_oracle",
     ),
     # #1226: the replay corpus only pinned 6 of the 25 trim units; these rows
@@ -213,6 +213,32 @@ mutations = [
     ),
 ]
 
+# #1456 (codex sibling P1): the runner builds its selection set and denominator
+# from `mutations` itself, so deleting a row (or a mutation silently losing its
+# anchor) shrinks the table while every remaining row still reports KILLED.
+# Pin the roster the way the native-management ledger does; `main` refuses to
+# run when the live table differs from this list.
+EXPECTED_NAMES = (
+    "project-key-validation-relaxed",
+    "session-key-validation-relaxed",
+    "scope-discrimination-wrong",
+    "wipe-scope-check-dropped",
+    "params-typeerror-dropped",
+    "wire-field-wipe-renamed",
+    "wire-field-list-renamed",
+    "forward-mapped-to-response",
+    "from_projection-disabled",
+    "whitespace-unit-dropped",
+    "whitespace-range-end-shrunk",
+    "whitespace-range-start-shrunk",
+    "whitespace-unit-1680-dropped",
+    "whitespace-unit-202f-dropped",
+    "whitespace-unit-205f-dropped",
+    "error-mapped-to-response",
+    "project-key-returned-trimmed",
+    "memory-gateway-oracle-truncated",
+)
+
 ORACLE = FIXTURES / "memory-gateway/oracle.json"
 
 
@@ -269,6 +295,20 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     selected = set(sys.argv[2:])
     data_names = {"memory-gateway-oracle-truncated"}
+    # #1456: a row deleted from this table must not silently shrink the run.
+    roster = tuple(row[0] for row in mutations) + ("memory-gateway-oracle-truncated",)
+    if len(roster) != len(EXPECTED_NAMES) or any(
+        str(live) != pinned for live, pinned in zip(roster, EXPECTED_NAMES)
+    ):
+        # `str(live)` also covers a row whose name line was deleted: the tuple
+        # then starts with the mutated path, and the run must still be refused
+        # with this message instead of a TypeError.
+        print(
+            "mutation roster drifted from EXPECTED_NAMES: live="
+            f"{[str(name) for name in roster]}",
+            file=sys.stderr,
+        )
+        return 2
     unknown = selected - ({row[0] for row in mutations} | data_names)
     if unknown:
         print(f"unknown mutation names: {sorted(unknown)}", file=sys.stderr)
