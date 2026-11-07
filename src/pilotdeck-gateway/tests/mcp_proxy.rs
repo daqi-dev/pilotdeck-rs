@@ -42,6 +42,10 @@ use tokio::io::AsyncBufReadExt;
 static UNDEFINED: JsValue = JsValue::Undefined;
 const ORACLE: &str = include_str!("fixtures/mcp-proxy/oracle.json");
 const TLS: &str = include_str!("fixtures/mcp-proxy/proxy-tls.json");
+/// #2047: upper bound on waiting for `http.jsonl` to reach the expected set.
+/// Generous next to the milliseconds a healthy case needs, tight enough that a
+/// request the mock never records still fails the case instead of hanging it.
+const REQUEST_LOG_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn oracle() -> JsValue {
     baseline::oracle(ORACLE)
@@ -542,13 +546,31 @@ async fn replays_ts_mcp_http_proxy_scenarios() {
             );
             steps_seen += 1;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
+        // #2047: the mock writes each request line from Node's event loop, so a
+        // loaded runner can land the last line well after the replay child has
+        // exited. A fixed sleep is not a timeout — it decides the answer by
+        // timing alone. Poll for the expected set instead, and fail on the
+        // bound with what is still missing (a request that never arrives keeps
+        // this red, so the wait cannot launder a dropped event into a pass).
         let expected: Vec<String> = array(field(case, "requests"), "requests")
             .iter()
             .map(text)
             .collect();
-        assert_eq!(requests, expected, "{id}: server request log");
+        let waited = std::time::Instant::now();
+        let mut requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
+        while requests != expected && waited.elapsed() < REQUEST_LOG_TIMEOUT {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            requests = json_lines(&dir.join("http.jsonl"), &replacements, false);
+        }
+        assert_eq!(
+            requests,
+            expected,
+            "{id}: server request log after waiting {:?} (bound {:?}); saw {} of {} recorded requests",
+            waited.elapsed(),
+            REQUEST_LOG_TIMEOUT,
+            requests.len(),
+            expected.len()
+        );
         // The target-side proof for the P0 fix: a caller-supplied
         // `Proxy-Authorization` is either refused before dispatch (the two
         // proxied cases, whose request log is empty) or, on the direct

@@ -859,12 +859,23 @@ impl CronRuntime {
 
     /// `createTask` (CronRuntime.ts:220-279).
     pub fn create_task(&self, input: &JsValue) -> Result<JsValue, CronError> {
+        self.create_task_at(input, (self.now)())
+    }
+
+    /// `createTask` against an already-read clock (#2047). `runTaskNow` builds
+    /// its `runAt` from the wall clock and then calls `createTask`, whose
+    /// `now` check and `createdAt`/`nextRunAt` must be the *same* instant:
+    /// reading the clock twice lets a millisecond tick in between turn a valid
+    /// run-now into the TS-faithful "One-time Cron tasks must be scheduled in
+    /// the future." rejection. TS has the identical window (`new Date()` in
+    /// `runTaskNow`, `Date.now()` in `createTask`), so this removes a
+    /// sub-millisecond race without changing any observable answer.
+    fn create_task_at(&self, input: &JsValue, now_ms: f64) -> Result<JsValue, CronError> {
         if !self.config.enabled {
             return Err(CronError::error(JsString::from(
                 "Cron is disabled. Enable it in pilotdeck.yaml to create tasks.",
             )));
         }
-        let now_ms = (self.now)();
         let task_id = (self.uuid)();
         let session_key = build_cron_session_key(&JsValue::String(task_id.clone()));
         let schedule = self.normalize_schedule(input, now_ms)?;
@@ -1212,7 +1223,16 @@ impl CronRuntime {
         }
         let mut run_at_schedule = JsObject::new();
         run_at_schedule.insert("type".into(), JsValue::from("once"));
-        run_at_schedule.insert("runAt".into(), value_string(real_now_iso()));
+        // #2047: TS reads `new Date()` here and `Date.now()` again inside
+        // `createTask`; a millisecond tick between the two makes the freshly
+        // built one-time schedule look stale and the run-now answers with
+        // "One-time Cron tasks must be scheduled in the future." instead of
+        // starting. Read the clock once and hand the same instant to
+        // `createTask` so the answer no longer depends on where the tick
+        // lands. `iso_from_epoch_ms` floors, so the schedule value is already
+        // integral and compares equal to this `now` (never "in the past").
+        let now_ms = (self.now)().floor();
+        run_at_schedule.insert("runAt".into(), value_string(iso_from_epoch_ms(now_ms)));
         let mut create_input = JsObject::new();
         create_input.insert(
             "message".into(),
@@ -1231,7 +1251,7 @@ impl CronRuntime {
                 create_input.insert(name.into(), value.clone());
             }
         }
-        let created = self.create_task(&JsValue::Object(create_input))?;
+        let created = self.create_task_at(&JsValue::Object(create_input), now_ms)?;
         let mut out = JsObject::new();
         out.insert("started".into(), JsValue::Bool(true));
         out.insert(
@@ -1803,12 +1823,6 @@ fn compute_once(run_at: &JsValue) -> Result<ComputedRunAt, CronError> {
         // Object/array: `new Date(x)` stringifies through ToPrimitive.
         other => Ok(once_computed_run_at(&to_display(other)?, &resolve_local)),
     }
-}
-
-/// `new Date().toISOString()` — the REAL wall clock (`runTaskNow`,
-/// CronRuntime.ts:396, keeps it un-injected).
-fn real_now_iso() -> String {
-    pilotdeck_transport::system_clock::format_epoch_iso(super::store::now_millis() as i64)
 }
 
 /// The schedule shape `recoverInterruptedRuns` computes over: a stored task
