@@ -1114,6 +1114,23 @@ fn factory_generators_clean_only_owned_work() {
                 "#1253 cleanup foreign marker unchanged"
             );
         }
+        // #1500 P2-2: the tail side reads the same ownership marker inside its
+        // full `names` inventory (see `tail_generator_cleans_only_owned_work`);
+        // this side only filtered `run-*`/`snapshot-contract-*`, so turning
+        // generate.mts's `.generation-owner` write into a no-op left the cell
+        // green. Pin both existence and the owner identity, like
+        // `projection_cache_tests.rs` does for its generator. generate.mts writes
+        // the marker before it enters `try`, so every generate.mts cell — plain
+        // and both collision paths — has to carry it; the assertion therefore
+        // sits outside the variant branch.
+        if script == "generate.mts" {
+            assert_eq!(
+                fs::read_to_string(root.join(".generation-owner"))
+                    .expect("#1500 factory generator ownership marker"),
+                "session-factory\n",
+                "#1500 factory generator writes its ownership marker"
+            );
+        }
         if let Variant::Collision(collision_path) = variant {
             assert_eq!(
                 fs::read_to_string(root.join(collision_path))
@@ -1122,16 +1139,6 @@ fn factory_generators_clean_only_owned_work() {
                 "#1253 cleanup preserves colliding output"
             );
         } else if script == "generate.mts" {
-            // #1500 P2-2: the tail side asserts the ownership marker inside its
-            // full `names` inventory (see `tail_generator_cleans_only_owned_work`);
-            // this side only filtered `run-*`/`snapshot-contract-*`, so turning
-            // generate.mts's `.generation-owner` write into a no-op left the cell
-            // green. Pin the marker here so the ownership claim is checked on the
-            // factory path too.
-            assert!(
-                root.join(".generation-owner").is_file(),
-                "#1500 factory generator writes its ownership marker"
-            );
             assert!(
                 root.join("raw/index.json").is_file(),
                 "#1253 cleanup preserves raw audit"
