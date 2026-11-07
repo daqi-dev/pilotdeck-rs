@@ -630,25 +630,50 @@ class _Constants(dict):
     mutated = frozenset()
 
 
+def _container_root_name(node):
+    """The name a container read or write ultimately starts from.
+
+    ``CH['a']['b'] = ...`` and ``CH['a'].update(...)`` both reach the very same
+    dictionary ``CH`` names; only the last step is an attribute or an index.
+    """
+    while True:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Subscript):
+            node = node.value
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            return None
+
+
+MUTATING_METHODS = frozenset({'append', 'extend', 'insert', 'pop', 'remove',
+                              'clear', 'update', 'setdefault', 'sort',
+                              'reverse'})
+
+
 def _mutated_containers(tree):
     """Names whose literal container some statement changes after it is built.
 
-    A name assigned from a mutated container (``ALIAS = CH``) is just as live,
-    so the set is closed over plain aliases. This is deliberately blunt: a
-    table that appends to a list of *rows* is only affected when a row of that
-    list is indexed into a repository path, and the whole point is to report
-    that shape rather than guess which element the runtime sees.
+    A name bound to a mutated container (``ALIAS = CH``) refers to the *same*
+    object, so the set is closed over plain aliases in **both** directions: a
+    write through the alias leaves the literal behind ``CH`` just as stale as a
+    write through ``CH`` itself, while ``CP = CH.copy()`` builds a different
+    object and must not taint ``CH``. Deep writes (``CH['a']['b'] = ...``) and
+    mutations of a nested container (``CH['a'].update(...)``) are attributed to
+    the outermost name. This is deliberately blunt: a table that appends to a
+    list of *rows* is only affected when a row of that list is indexed into a
+    repository path, and the whole point is to report that shape rather than
+    guess which element the runtime sees.
     """
     names = set()
 
     def collect_from_target(target):
         for child in ast.walk(target):
             if isinstance(child, ast.Subscript):
-                base = child.value
-                if isinstance(base, ast.Name):
-                    names.add(base.id)
-                elif isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name):
-                    names.add(base.value.id)
+                name = _container_root_name(child.value)
+                if name is not None:
+                    names.add(name)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -656,32 +681,33 @@ def _mutated_containers(tree):
                 collect_from_target(target)
         elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
             collect_from_target(node.target)
+            if (isinstance(node, ast.AugAssign)
+                    and isinstance(node.target, ast.Name)):
+                # ``CH |= {...}`` / ``CH += [...]`` rebinds through the same
+                # name and leaves the literal out of date.
+                names.add(node.target.id)
         elif isinstance(node, ast.Delete):
             for target in node.targets:
                 collect_from_target(target)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in ('append', 'extend', 'insert', 'pop', 'remove',
-                                  'clear', 'update', 'setdefault', 'sort',
-                                  'reverse'):
-                receiver = node.func.value
-                if isinstance(receiver, ast.Name):
-                    names.add(receiver.id)
-                elif isinstance(receiver, ast.Attribute) and isinstance(receiver.value, ast.Name):
-                    names.add(receiver.value.id)
-    assignments = []
+            if node.func.attr in MUTATING_METHODS:
+                name = _container_root_name(node.func.value)
+                if name is not None:
+                    names.add(name)
+    aliases = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             pairs, _ = _assignment_pairs(node)
-            assignments.extend(pairs)
+            for name, value in pairs:
+                if isinstance(value, ast.Name):
+                    aliases.append((name, value.id))
     grew = True
     while grew:
         grew = False
-        for name, value in assignments:
-            if name in names:
-                continue
-            if any(isinstance(child, ast.Name) and child.id in names
-                   for child in ast.walk(value)):
-                names.add(name)
+        for left, right in aliases:
+            if (left in names) != (right in names):
+                names.add(left)
+                names.add(right)
                 grew = True
     return frozenset(names)
 
@@ -1099,7 +1125,12 @@ def _segments(node, constants, self_path, seen=()):
         drop = index.value + 1
         return base[:-drop] if drop <= len(base) else None
     if isinstance(node, ast.Subscript):
-        return _container_segments(node, constants, self_path, seen)
+        marker = ('@container', id(node))
+        if marker in seen:
+            # ``CH = {'k': CH['k']}`` indexes the container it builds; the
+            # value is unknowable and following the cycle never terminates.
+            return None
+        return _container_segments(node, constants, self_path, seen + (marker,))
     return None
 
 
@@ -1123,16 +1154,23 @@ def _container_element(container, index, constants, seen=()):
         return _container_element(constants[container.id], index, constants,
                                   seen + (container.id,))
     if isinstance(container, ast.Subscript):
+        marker = ('@container', id(container))
+        if marker in seen:
+            return None
         inner = _container_element(container.value, container.slice,
-                                   constants, seen)
+                                   constants, seen + (marker,))
         if inner is None:
             return None
-        return _container_element(inner, index, constants, seen)
+        return _container_element(inner, index, constants, seen + (marker,))
     if not isinstance(index, ast.Constant):
         return None
     if isinstance(container, ast.Dict) and isinstance(index.value, str):
         found = None
         for key, value in zip(container.keys, container.values):
+            if key is None:
+                # ``{'k': 'a', **OTHER}``: the unpacking may overwrite this
+                # key at runtime, and only the runtime knows with what.
+                return None
             if isinstance(key, ast.Constant) and key.value == index.value:
                 found = value
         return found
@@ -1161,6 +1199,14 @@ def _container_segments(node, constants, self_path, seen):
 
 def _call_segments(node, constants, self_path, seen):
     func = node.func
+    if (isinstance(func, ast.Attribute) and func.attr == 'cwd'
+            and isinstance(func.value, ast.Name) and func.value.id == 'Path'
+            and not node.args):
+        # Hosts run a table from the repository root (the same premise
+        # ``_is_relative_path_literal`` rests on), so ``Path.cwd()`` names the
+        # root: ``Path.cwd() / 'sms' / 'mod.rs'`` builds the very path
+        # ``Path('sms') / 'mod.rs'`` does, and used to build no key at all.
+        return ()
     if isinstance(func, ast.Name):
         if func.id != 'Path' or not node.args:
             return None
@@ -1546,20 +1592,30 @@ def _root_definition_problems(tree, self_path, root):
         # depth when the scan really walks the fixtures tree.
         return []
     expected = len(self_path)
+    pairs, _ = _module_level_pairs(tree)
     module_values = {}
-    for name, value in _module_level_pairs(tree)[0]:
+    for name, value in pairs:
         module_values[name] = value
     problems = []
     for name in sorted(ROOT_NAMES):
-        value = module_values.get(name)
-        if value is None:
-            continue
-        levels = _levels_above_file(value, module_values)
-        if levels is not None and levels != expected:
-            problems.append(
-                f'{name} does not name the repository root (it resolves '
-                f'{levels} levels above this file, expected {expected}): '
-                f'{ast.unparse(value)}')
+        spellings = set()
+        for bound, value in pairs:
+            if bound != name:
+                continue
+            spelling = ast.unparse(value)
+            if spelling in spellings:
+                continue
+            spellings.add(spelling)
+            # **Every** binding is checked, not just the last one: a table
+            # that computes ``ROOT`` one level short and only rebinds it
+            # correctly afterwards has already built its joins against the
+            # wrong root, and the last-wins reading reported nothing.
+            levels = _levels_above_file(value, module_values)
+            if levels is not None and levels != expected:
+                problems.append(
+                    f'{name} does not name the repository root (it resolves '
+                    f'{levels} levels above this file, expected {expected}): '
+                    f'{spelling}')
     return problems
 
 
@@ -1714,6 +1770,95 @@ def _joined_elements(node):
     return [argument]
 
 
+_STDLIB_JOIN_CALLS = frozenset({'os.path.join', 'posixpath.join', 'ntpath.join'})
+
+
+def _dotted_spelling(node):
+    """The dotted name an ``os.path``-style expression spells, or None."""
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    parts.append(node.id)
+    return '.'.join(reversed(parts))
+
+
+def _joined_tail(node):
+    """The piece a join call appends: the last element when a container is passed.
+
+    ``os.sep.join(('sms', 'mod.rs'))`` joins the tuple's elements, so the file
+    name is its last one. A *name* bound to a container is deliberately not
+    followed here: ``' '.join(command)`` over a list of cargo arguments is not
+    a path build, and following it made the guard report it.
+    """
+    if not node.args:
+        return None
+    argument = node.args[-1]
+    if isinstance(argument, (ast.Tuple, ast.List)):
+        return argument.elts[-1] if argument.elts else None
+    return argument
+
+
+_FILESYSTEM_JOIN_CALLS = _STDLIB_JOIN_CALLS | {'os.sep.join'}
+
+
+def _filesystem_join_text(node, constants):
+    """The text a *filesystem* join of string literals builds, or None.
+
+    ``os.path.join('sms', 'mod.rs')`` produces ``sms/mod.rs`` from pieces the
+    table spells in full, yet the literal ``sms/mod.rs`` appears nowhere in the
+    file, so the discovery loop never schedules the table when the file
+    changes. Returning the joined text lets the caller key it and demand an
+    anchor, which is what ``Path('sms') / 'mod.rs'`` already gets.
+
+    Only the filesystem APIs count — ``os.path.join`` / ``posixpath.join`` /
+    ``ntpath.join`` / ``os.sep.join``. The *string* spellings (``+``,
+    ``'/'.join``, ``%``, f-strings) are deliberately left out of this
+    resolution: the same shape builds test-cell labels in
+    ``network-timing/negative_private.py`` (``p + '/' + phase + '/idle/' +
+    order``), and keying those would demand anchors for things that are not
+    paths at all. A string join is only followed when a repository root or a
+    repository-directory base proves it is a path. A runtime operand — the boot
+    and temp directories ``os.path.join(_boot_root, ...)`` start from — yields
+    None and stays out of the repository.
+    """
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != 'join':
+        return None
+    if _dotted_spelling(func) in _FILESYSTEM_JOIN_CALLS:
+        separator = '/'
+    else:
+        return None
+    pieces = []
+    for element in _joined_elements(node):
+        value = _string_value(element, constants)
+        if value is None:
+            return None
+        pieces.append(value)
+    return separator.join(pieces)
+
+
+def _relative_path_segments(node, constants):
+    """Segments of a repository path spelled with relative literals only.
+
+    The host runs tables from the repository root, so a path assembled with
+    ``os.path.join`` from relative literals *is* a repository path even though
+    no ``ROOT`` or ``__file__`` appears — the same premise
+    ``_is_relative_path_literal`` already applies to a container's literal
+    element. Anything that only exists at runtime returns None: it is neither
+    keyed nor guessed.
+    """
+    text = _filesystem_join_text(node, constants)
+    if not text or text.startswith('/') or any(character.isspace() for character in text):
+        return None
+    segments = tuple(part for part in text.split('/') if part not in ('', '.'))
+    return segments if len(segments) > 1 else None
+
+
 def _is_path_join_call(func, constants, aliases):
     """Whether a call is a string join, in any of the spellings tables use.
 
@@ -1780,6 +1925,9 @@ def _bare_tail(node, constants, seen=()):
         if isinstance(func, ast.Attribute):
             if func.attr in ('joinpath', 'with_name'):
                 return bool(node.args) and _bare_tail(node.args[-1], constants, seen)
+            if func.attr == 'join' and _dotted_spelling(func) in _FILESYSTEM_JOIN_CALLS:
+                tail = _joined_tail(node)
+                return tail is not None and _bare_tail(tail, constants, seen)
             if func.attr in PATH_CALL_ATTRS:
                 return _bare_tail(func.value, constants, seen)
     return False
@@ -1808,7 +1956,8 @@ def _is_path_shape(node, constants):
             if func.attr in PATH_CALL_ATTRS:
                 return _bare_tail(node, constants)
             if func.attr == 'join':
-                return bool(node.args) and _bare_tail(node.args[-1], constants)
+                tail = _joined_tail(node) if node.args else None
+                return tail is not None and _bare_tail(tail, constants)
             if func.attr in ('format', 'format_map'):
                 value = _string_value(func.value, constants)
                 return value is not None and _path_literal_ending_in_file(value)
@@ -2017,13 +2166,28 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     keys = {}
     problems = list(_root_definition_problems(tree, self_path, root))
 
+    def relative_directory(node):
+        # A directory written entirely with relative literals: the host runs
+        # tables from the repository root, so ``os.path.join('sms', name)``
+        # starts at a real repository directory even though no ``ROOT``
+        # appears in the expression.
+        segments = _segments(node, constants, self_path)
+        if segments is None:
+            segments = _relative_path_segments(node, constants)
+        # One component is a label, not a repository path the discovery loop
+        # could ever key: ``Path(MODES['fast']) / name`` names a mode, and the
+        # guard has always stayed silent on it. Only a spelled-out ``dir/…``
+        # counts as a repository directory.
+        return segments if segments and len(segments) > 1 else None
+
     def repo_rooted(node):
         # A directory that only reaches the join through a parameter or a call
         # return is still a repository path: the loop cannot key it from the
         # text either, so it has to be reported like any other unsupported base.
         return (_is_repo_rooted(node, constants, shadowed=shadowed)
                 or _carries_repository_path(node, tainted, repository_returns)
-                or _indexes_a_path_container(node, constants))
+                or _indexes_a_path_container(node, constants)
+                or relative_directory(node) is not None)
 
     def record(segments, expression):
         # A single component is not a discovery key: the loop always keys
@@ -2069,6 +2233,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     def resolve(node, expression):
         segments = _segments(node, constants, self_path)
         if segments is None:
+            segments = _relative_path_segments(node, constants)
+        if segments is None:
             ambiguous = ambiguous_names(node)
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
@@ -2095,7 +2261,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             return
         if _segments(node.right, constants, self_path) is not None:
             return
-        if not repo_rooted(node):
+        if not (repo_rooted(node) or relative_directory(node.left) is not None):
             return
         ambiguous = ambiguous_names(node)
         if ambiguous:
@@ -2132,7 +2298,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             base, tail = elements[0], elements[-1]
             if (_is_repo_rooted(base, constants, shadowed=shadowed)
                     or _carries_repository_path(base, tainted, repository_returns)
-                    or _indexes_a_path_container(base, constants)):
+                    or _indexes_a_path_container(base, constants)
+                    or relative_directory(base) is not None):
                 if _segments(tail, constants, self_path) is None:
                     ambiguous = ambiguous_names(node)
                     if ambiguous:
@@ -2152,7 +2319,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             return
         if not (_is_repo_rooted(base, constants, shadowed=shadowed)
                 or _carries_repository_path(node, tainted, repository_returns)
-                or _indexes_a_path_container(base, constants)):
+                or _indexes_a_path_container(base, constants)
+                or relative_directory(base) is not None):
             return
         ambiguous = ambiguous_names(node)
         if ambiguous:
@@ -3393,6 +3561,157 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(
             any('does not name the repository root' in problem for problem in problems),
             problems)
+
+    def test_a_self_referential_container_does_not_recurse_forever(self):
+        """``CH = {'k': CH['k']}`` must terminate, not blow the stack.
+
+        A table written that way raises ``NameError`` at import, so it can
+        never reach the host; the guard's only job here is to stay a static
+        check and leave the join unresolved instead of crashing the whole step
+        with ``RecursionError``.
+        """
+        synthetic = (
+            "from settings import CH\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'k': CH['k']}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['k']) / 'mod.rs']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_write_through_an_alias_invalidates_the_original(self):
+        """``ALIAS = CH`` names the same dictionary, so both spellings are stale."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'k': 'src/pilotdeck-gateway/src/channel/x'}\n"
+            "ALIAS = CH\n"
+            "ALIAS['k'] = 'src/pilotdeck-gateway/src/channel/y'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['k']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_copy_is_not_the_original_container(self):
+        """``CP = CH.copy()`` builds a different object; changing it leaves CH alone."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'k': 'src/pilotdeck-gateway/src/channel/x'}\n"
+            "CP = CH.copy()\n"
+            "CP['k'] = 'src/pilotdeck-gateway/src/channel/y'\n"
+            "DISCOVERY_ANCHORS = ('x/mod.rs',)\n"
+            "rows = [Path(CH['k']) / 'mod.rs']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_nested_container_mutation_is_attributed_to_the_root(self):
+        """``CH['a'].update(...)`` mutates the inner dictionary ``CH`` holds.
+
+        The receiver is a subscript, not a name, so the write used to be
+        invisible and the first-wins literal was keyed while the runtime read
+        the new value.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'a': {'b': 'src/pilotdeck-gateway/src/channel/x'}}\n"
+            "CH['a'].update({'b': 'src/pilotdeck-gateway/src/channel/y'})\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['a']['b']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_a_dict_unpack_makes_the_key_unknowable(self):
+        """``{'k': 'old', **OTHER}`` may overwrite ``k`` at runtime."""
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "CH = {'k': 'src/pilotdeck-gateway/src/channel/x',\n"
+            "      **{'k': 'src/pilotdeck-gateway/src/channel/y'}}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['k']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem for problem in problems),
+            problems)
+
+    def test_every_root_binding_is_checked_for_depth(self):
+        """A wrong ``ROOT`` used before a correct rebinding still built joins.
+
+        Only the last binding used to be checked, so ``ROOT = ...parents[4]``
+        followed by ``ROOT = ...parents[5]`` passed — while the joins written
+        between them had already used the wrong root.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[4]\n"
+            "rows = [ROOT / 'Cargo.toml']\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('does not name the repository root' in problem for problem in problems),
+            problems)
+
+    def test_filesystem_joins_of_relative_literals_are_keyed(self):
+        """``os.path.join('sms', 'mod.rs')`` hides the key the loop greps for.
+
+        These three build ``sms/mod.rs`` from pieces the table spells in full,
+        but the literal itself never occurs in the text, so the discovery loop
+        never scheduled the table when the file changed. ``Path('sms') /
+        'mod.rs'`` has been keyed since r9; the filesystem spellings had to
+        follow, and ``Path.cwd()`` is the repository root because the host runs
+        tables from there.
+        """
+        shapes = {
+            'os.path.join': "rows = [os.path.join('sms', 'mod.rs')]",
+            'os.sep.join': "rows = [os.sep.join(('sms', 'mod.rs'))]",
+            'path.cwd': "rows = [Path.cwd() / 'sms' / 'mod.rs']",
+        }
+        for label, line in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + line + "\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('missing anchor: sms/mod.rs' in problem for problem in problems),
+                    problems)
+
+    def test_string_joins_that_are_not_paths_stay_silent(self):
+        """The same shape builds labels and argument lists, so it stays out.
+
+        ``' '.join(command)`` over a list of cargo arguments and
+        ``'/'.join(('headers', 'idle'))`` building a test-cell label are not
+        path builds; keying them demanded anchors for things the discovery
+        loop never keys — the first is a real table's shape
+        (``tool-budget/negative_project.py``), the second
+        ``network-timing/negative_private.py`` writes seventeen of. A runtime
+        boot directory is not a repository path either.
+        """
+        shapes = {
+            'runtime boot dir': "rows = [os.path.join(_boot_root, 'scripts', 'cli-parity')]",
+            'argument list': ("command = ['cargo', 'test', str(ROOT / 'src/Cargo.toml')]\n"
+                              "rows = [' '.join(command)]"),
+            'cell label': "rows = ['/'.join(('headers', 'idle'))]",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "import os\n"
+                    "from pathlib import Path\n"
+                    "ROOT = Path(__file__).resolve().parents[5]\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body + "\n"
+                )
+                self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_a_top_level_table_outside_the_register_is_reported(self):
         """A table directly under ``fixtures/`` cannot be scheduled at all.
