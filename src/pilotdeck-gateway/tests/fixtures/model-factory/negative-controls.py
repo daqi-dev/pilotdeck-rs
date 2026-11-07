@@ -4,10 +4,10 @@ import hashlib
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, target_environment
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, target_environment, wait_for_slot)
 
 root = Path(__file__).resolve().parents[5]
 env = target_environment(root)
@@ -149,15 +149,11 @@ with mutating_sources(root, [registry, family, memory_mod]) as snapshots:
             original = sources[path].decode()
             if original.count(before) != 1:
                 raise RuntimeError(f'{name}: mutation anchor count {original.count(before)}')
-            slot_deadline = time.monotonic() + 1800
-            while True:
-                slot = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, timeout=300)
-                if slot.returncode in (0, 69):
-                    break
-                if slot.returncode != 1:
-                    raise RuntimeError('cargo slot preflight failed')
-                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-                time.sleep(5)
+            # #1908: the shared wait replaces the inline 300 s-sample /
+            # 1800 s-deadline loop. Same contract (bounded samples with one
+            # cold-bootstrap exemption), one shared budget above the
+            # single-sample cap instead of an equal-values dead end.
+            wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             path.write_text(original.replace(before, after))
             try:
                 try:

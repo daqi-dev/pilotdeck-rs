@@ -33,7 +33,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 if not os.environ.get("CARGO_TARGET_DIR"):
@@ -389,7 +390,10 @@ with mutating_sources(root, files) as snapshots:
             # Wait for a cargo slot, like every other cargo invocation here.
             slots = wait_for_slot(root / "scripts/cargo-slots.sh", timeout=1800)
             (out / f"{name}.slots.log").write_text(slots.stdout + slots.stderr)
-            path.write_text(changed)
+            # #1908: one rename, never a truncating in-place write; the shared
+            # publish helper (#1903) keeps a SIGKILL mid-write from leaving a
+            # source the next preflight would refuse as "differs from HEAD".
+            write_source_atomic(root, path, changed.encode())
             # Rule 10-27 #4: prove the mutant compiles before judging it.
             check = run_owned(["cargo", "test", "--manifest-path", "src/Cargo.toml",
                                "-p", "pilotdeck-gateway", "--locked", "--offline",
@@ -419,7 +423,9 @@ with mutating_sources(root, files) as snapshots:
             print(f"{name}: {status} rc={result.returncode} "
                   f"dedicated={dedicated} {failure}", flush=True)
         finally:
-            path.write_bytes(original)
+            # #1908: same rule on the way back; a truncating write_bytes
+            # restore has the same SIGKILL window as the mutation write.
+            write_source_atomic(root, path, original)
             assert hashlib.sha256(path.read_bytes()).hexdigest() == before
             (out / "summary.json").write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + "\n")

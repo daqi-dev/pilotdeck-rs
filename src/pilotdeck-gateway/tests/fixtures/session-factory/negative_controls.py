@@ -455,12 +455,28 @@ def audit():
     print(json.dumps(rows, indent=2))
     return int(any(row['status'] != 'CHECKED' for row in rows))
 
-if sys.argv[1:] == ['--audit']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let `--audit extra` fall through to the main path, which treated
+# `--audit` as an output directory; an unknown `--flag` did the same. Every
+# mode now takes an exact argument list, and only a real OUT (or the
+# `--compile OUT` form) reaches the main path.
+USAGE = 'usage: negative_controls.py --audit | [--compile] OUT [mutation names]'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--audit':
+    if arguments:
+        raise SystemExit(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
     raise SystemExit(audit())
-compile_only = len(sys.argv) > 1 and sys.argv[1] == '--compile'
-args = sys.argv[2:] if compile_only else sys.argv[1:]
+# Zero arguments and an unknown `-*` first argument are both usage errors;
+# `--compile` keeps its existing first-position contract: a prefix of the
+# main path, not a standalone mode.
+if mode is None:
+    raise SystemExit(USAGE)
+if mode != '--compile' and mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+compile_only = mode == '--compile'
+args = arguments if compile_only else [mode, *arguments]
 if not args:
-    raise SystemExit('usage: negative_controls.py [--compile] OUT [mutation names]')
+    raise SystemExit(USAGE)
 env = os.environ.copy()
 if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
     raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')

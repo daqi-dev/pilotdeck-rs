@@ -24,7 +24,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[5] / 'src/pilotdeck-gateway/tests/fixtures'))
-from negative_process import mutating_sources, run_owned, wait_for_slot  # noqa: E402
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)  # noqa: E402
 from negative_suite import Case, classify, passed  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[5]
@@ -122,7 +123,8 @@ def main():
 
     def run(label, test, compile_only=False):
         try:
-            slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=300)
+            # #1908: the wait budget must exceed the single-sample cap
+            slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--include-ignored', '--show-output']
             result = run_owned(command + suffix, cwd=REPO, env=env, timeout=600)

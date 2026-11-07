@@ -12,7 +12,8 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 from negative_suite import Case, classify, passed
 
 root = Path(__file__).resolve().parents[5]
@@ -75,7 +76,8 @@ def main():
             stream.write(value)
 
     def run(label, test, *, compile_only=False):
-        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=300)
+        # #1908: the wait budget must exceed the single-sample cap
+        slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
         write(args.out / f'{label}.slots.log', slot.stdout + slot.stderr)
         suffix = ['--no-run'] if compile_only else [test, '--', '--exact', '--show-output', '--format=pretty']
         try:
