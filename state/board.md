@@ -4641,3 +4641,11 @@ target revision>0 时只尝试完全相同的原 import key/body：Core pristine
 依据用户新指示，先验证公共契约、错误/取消/资源生命周期和真实接入，桌面保留已完成代码、安装草稿与失败证据，暂不扩大。总集成独立 core46+host27、外部SDK消费者/源同步/严格契约检查通过，发现并修正分发SDK遗漏；新Kernel实际晚模型释放后显式同会话下一输入通过，原Unknown不变、模型共2次，旧候选负控正确失败。跨组独立真实Kernel握手/跨会话/旧generation/未声明能力10项在本机及macmini均通过，装置反向控制确实能识别错误接受。两项真实工具部分批次故障（取消/provider退出）已通过：原B Completed不变、原A晚结果保留、原执行Unknown、不重派整批；不假称物理tool release。
 
 已采纳e4965df24的纯指令发现Storage接口与原gateway复用，以及integration可选SDK服务适配。原4纯测试、gateway冻结prepare及真实managed-env/逗号文件名/UTF16/符号链接用例通过；宿主文件端口尚未实现，preset未启用，不宣称native指令发现已可用。原行为oracle和旧报告不变。模型错误保真/恢复的实际组合验收另批进行，默认legacy、完整产品覆盖与真人门槛保留。
+
+### 2026-11-08 测试优先批次：固定候选7及原行为审查
+
+PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选7，release7dee85c31111d131c4c2ffaa662831f11a4493f85728e03625629db3f97a725e。安装后原gateway/CLI与两种真实loop共同文本能力通过，实际HTTP上下文恢复输出上限8192→5000（模型2次/零工具），SSE错误type优先级/raw null/一次调用保持原语义。总协调者native55回归及安装内Anthropic显式错误诊断13项通过；后者默认未启用，省略/false保留旧错误行为。纯错误映射复用原gateway代码，冻结OpenAI及Anthropic流oracle未修改。
+
+独立审查发现初版generation适配会启用原PD已忽略的temperature/topP/stop/输出别名，封包前已收窄为canonical maxOutputTokens及原nullish模型cap回退；未知扩展不获得新的wire权限或新增验证失败。不能把Kernel支持的全部参数自动当成PilotDeck原有行为。Kernel本批另修复常驻socket泄漏和已派出远端操作被误报Cancelled；同提交macmini完整host原NOFILE256下1226通过/0失败/1忽略，旧失败及生产负控均保留。
+
+本board为验收后说明；以上源码身份仍按实际build manifest固定。桌面P3暂缓，下一步优先补24项剩余组合权限/并发证据和独立能力边界；678入口、个人真实模型、完整桌面/渠道/干净安装与真人验收仍未完成，默认继续legacy。
