@@ -1235,11 +1235,10 @@ fn subagent_projection_matches_ts() {
             continue;
         };
         let error = actual.expect_err("#2042 subagent projection rejects a nullish entry");
-        assert_eq!(
-            subagent_json(&error_outcome(&error)),
-            *expected,
-            "#2042 subagent error {name}"
-        );
+        // `error_outcome` reports `{error: {name, message}}`; the fixture row
+        // records the thrown object itself.
+        let outcome = subagent_json(&error_outcome(&error));
+        assert_eq!(outcome["error"], *expected, "#2042 subagent error {name}");
     }
 }
 
