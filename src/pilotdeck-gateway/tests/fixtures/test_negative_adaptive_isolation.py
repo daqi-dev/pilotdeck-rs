@@ -32,10 +32,15 @@ sys.path.insert(0, str(HERE))
 #
 # The compile is removed from the child's path instead of budgeted for: the
 # test warms the scanner through the same HEAD guard first (see the warm-up in
-# test_term_and_kill...). What is left between spawn and `ready` is the child's
-# own lock wait plus its post-lock verification, so the budget is derived from
-# those two terms -- both read from the shared module, neither copied:
+# test_term_and_kill...). What is left between spawn and `ready` is the whole
+# child path, and every step that has a watchdog is added up here:
 #
+#   interpreter startup     LOCK_READY_SECONDS, the same 120 s this file gives
+#                           the --hold-lock probe for exactly this.
+#   (2 + N) bootstrap gits  verified_inputs() before the lock: rev-parse,
+#                           ls-tree, then one `git show` per verified input
+#                           (negative_controls.py:62-64, :181-184), each with
+#                           the runner's own 30 s timeout.
 #   lock_timeout            mutating_sources' default (negative_process.py:872);
 #                           the child raises its own TimeoutError at that bound
 #                           and exits, so the assertion reports rc + stderr
@@ -48,23 +53,30 @@ sys.path.insert(0, str(HERE))
 #   60 s                    the scanner run itself (:509).
 #   each git call capped by negative_process.GIT_TIMEOUT (:395).
 #
-# B is measured at run time from the scanner's own output, and the whole sum is
-# computed while the HEAD guard still holds the tree lock, so no sibling can
-# move the inputs between the measurement and the spawn. On cb8 B=3 today (1315
-# literal inputs), so the budget is 900 + 21 * 120 + 60 = 3480 s against a
-# measured 6.7-6.8 s warm path: it only expires when a step sits near its own
-# watchdog, not when the path is merely slow.
+# N and B are measured at run time from the same bootstrap and the same scanner
+# the child uses, and the whole sum is computed while the HEAD guard still holds
+# the tree lock, so no sibling can move the inputs between the measurement and
+# the spawn. On cb8 N=5 and B=3 today, so the budget is 120 + 210 + 900 + 2580 =
+# 3810 s against a measured 6.7-6.8 s warm path: it only expires when a step
+# sits near its own watchdog, not when the path is merely slow -- and a child
+# that hangs *inside* a watched step raises its own error and exits, which the
+# parent reports immediately, so the ceiling is not the usual cost of a failure.
+# The remaining steps (verify_bytes, the isolated-input copy, the atomic ready
+# rename) are pure-Python reads and writes over those same N files: they have no
+# watchdog to sum, and a host that stalls there stalls every other fixture too.
 #
-# A child that exits on its own is reported immediately (rc + stderr). Two
-# residuals, neither introduced here: a sibling runner that holds the tree lock
-# for the full 900 s still makes this probe fail, because the child gives up on
-# the lock by design (the diagnostic names it instead of leaving a bare
-# `rc=None`); and a host slow enough to spend every per-call watchdog at once
-# would fail dozens of other fixtures too -- that red is a broken runner, not a
-# false one. The "--hold-lock" child never builds: it imports negative_process
-# and takes the tree lock with timeout=1 (see hold_source_lock). Only
-# interpreter startup is on the critical path, so this bound stays far smaller.
+# A child that exits on its own is reported immediately (rc + stderr). One
+# residual, not introduced here: a sibling runner that holds the tree lock for
+# the full 900 s still makes this probe fail, because the child gives up on the
+# lock by design (the diagnostic names it instead of leaving a bare `rc=None`).
+# The "--hold-lock" child never builds: it imports negative_process and takes
+# the tree lock with timeout=1 (see hold_source_lock). Only interpreter startup
+# is on the critical path, so this bound stays far smaller.
 LOCK_READY_SECONDS = 120
+# Bootstrap watchdog outside the shared executor: negative_controls.py:64 runs
+# each pre-lock git call with timeout=30.
+BOOTSTRAP_GIT_SECONDS = 30
+BOOTSTRAP_GIT_CALLS_OVERHEAD = 2
 # Post-lock watchdog enumeration: the counts are structural facts of
 # negative_process.mutating_sources (:904-909), the durations come from it.
 AREA_CHECKS_PER_RUN = 2
@@ -83,10 +95,11 @@ def shared_process():
 
     This file is also executed as the `--hold` / `--hold-lock` child, so a
     module-level import would run the on-disk shared helper before the HEAD
-    guard has verified it (see test_bootstrap_rejects_dirty_code...). The first
-    call is made by hold_ready_seconds(), inside that guard, and the result is
-    kept: the cleanup paths must not re-read a shared file that a sibling could
-    replace between the failed assertion and the kill (concurrency review r6).
+    guard has verified it (see test_bootstrap_rejects_dirty_code...). Until a
+    guard runs, this is an ordinary import; hold_ready_seconds() rebinds it to
+    the verified module (bind_shared_process), and the cleanup paths use that
+    pinned object instead of re-reading a shared file a sibling could replace
+    between the failed assertion and the kill (concurrency review r6).
     """
     global _PROCESS_API
     if _PROCESS_API is None:
@@ -107,29 +120,47 @@ def pipe_close_seconds():
     return shared_process().KILL_TIMEOUT
 
 
-def hold_ready_seconds(runner):
-    """Ready budget = the child's own lock wait + its post-lock watchdogs.
+def bind_shared_process(api):
+    """Pin the HEAD-verified executor for every later call, cleanup included.
 
-    Call it inside the HEAD guard: the literal batch count is measured with the
-    same scanner the child runs, so the derivation uses real data rather than a
-    copied estimate, and the held tree lock keeps the inputs stable until the
-    spawn. Every term is a watchdog for one hung step, not an expected
-    duration; only a host that spends them all at once can outlast the sum.
+    Called from inside the guard, so the pin is the module the child itself
+    runs, and a shared file replaced afterwards cannot change what the reaper
+    does (concurrency review r6) -- nor can an earlier test's ordinary import
+    stand in for it (boundary review r7).
+    """
+    global _PROCESS_API
+    _PROCESS_API = api
+
+
+def hold_ready_seconds(runner):
+    """Ready budget = every watched step on the child's path, added up.
+
+    Call it inside the HEAD guard: the verified-input count and the literal
+    batch count are measured with the same bootstrap and the same scanner the
+    child runs, so the derivation uses real data rather than a copied estimate,
+    and the held tree lock keeps both stable until the spawn. Every term is a
+    watchdog for one hung step, not an expected duration; the steps without a
+    watchdog (byte copies) are deliberately absent -- there is nothing to sum.
 
     The lock wait is read from mutating_sources' signature rather than copied:
     negative_process.py belongs to the #1099 (M6) lane, so this change cannot
     lift that default to a named constant there.
     """
-    api = shared_process()
+    api = runner._process_api.get(None)
+    if api is None:
+        raise RuntimeError('hold_ready_seconds() must run inside verified_inputs()')
+    bind_shared_process(api)
     parameter = inspect.signature(api.mutating_sources).parameters.get('lock_timeout')
     if parameter is None or parameter.default is inspect.Parameter.empty:
         raise RuntimeError('mutating_sources no longer carries a lock_timeout default; '
                            're-derive the #2127 ready budget')
     commit = runner.git_bytes('rev-parse', 'HEAD').decode().strip()
+    bootstrap = (BOOTSTRAP_GIT_CALLS_OVERHEAD + len(runner.input_paths(commit))) * BOOTSTRAP_GIT_SECONDS
     literals = api._workspace_literal_inputs(runner.root, commit)
     batches = len(list(api._pathspec_batches(literals)))
     git_calls = (AREA_CHECKS_PER_RUN + batches) * GIT_CALLS_PER_AREA_CHECK + OTHER_GIT_CALLS
-    return parameter.default + git_calls * api.GIT_TIMEOUT + SCANNER_SECONDS
+    post_lock = git_calls * api.GIT_TIMEOUT + SCANNER_SECONDS
+    return LOCK_READY_SECONDS + bootstrap + parameter.default + post_lock
 
 
 def read_child_output(child):
