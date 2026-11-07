@@ -134,6 +134,21 @@ async fn one_native_host_is_shared_by_control_and_gateway_wire() {
         .map(PathBuf::from)
         .expect("set PDRS_NATIVE_GATEWAY_BIN to freshly built gateway");
     assert!(gateway.is_absolute() && gateway.is_file());
+    shared_host(gateway, "--native", "-TERM").await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "explicit real foreground host integration"]
+async fn one_control_serve_host_is_shared_by_control_and_gateway_wire() {
+    shared_host(
+        PathBuf::from(env!("CARGO_BIN_EXE_pilotdeck-control")),
+        "serve",
+        "-INT",
+    )
+    .await;
+}
+
+async fn shared_host(gateway: PathBuf, entry: &str, signal: &str) {
     let base = fs::canonicalize(std::env::temp_dir())
         .unwrap()
         .join(format!("pdrs-control-native-{}", uuid::Uuid::new_v4()));
@@ -152,7 +167,7 @@ async fn one_native_host_is_shared_by_control_and_gateway_wire() {
     let mut child = OwnedChild(
         Command::new(gateway)
             .env_clear()
-            .arg("--native")
+            .arg(entry)
             .arg("--home")
             .arg(&home)
             .arg("--project")
@@ -273,7 +288,7 @@ async fn one_native_host_is_shared_by_control_and_gateway_wire() {
     );
     drop(ws);
     let status = Command::new("/bin/kill")
-        .args(["-TERM", &child.0.id().to_string()])
+        .args([signal, &child.0.id().to_string()])
         .status()
         .unwrap();
     assert!(status.success());

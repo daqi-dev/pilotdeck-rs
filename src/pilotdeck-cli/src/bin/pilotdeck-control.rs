@@ -1,4 +1,6 @@
 //! One-shot calls and streamed turns over an explicitly selected Gateway.
+#[path = "../control_serve.rs"]
+mod serve;
 #[path = "../control_stream.rs"]
 mod stream;
 use futures_util::{SinkExt, StreamExt};
@@ -696,7 +698,8 @@ Input is limited to 1 MiB; numbers must be finite and integers must be safe JS i
 stream reads submit_turn params with sessionKey, runId, channelKey, message, and canPrompt:false. It emits flushed JSONL frames; final:true closes the protocol, not another delta.
 call still rejects submit_turn. Streams do not reconnect or detach; closing may abort the session.
 Authentication token echoes in Gateway JSON are redacted; general business data is returned as supplied.
-This is a one-shot Gateway bridge; schema and serve are not available.";
+serve starts the existing native Gateway in the foreground with explicit isolation options; run pilotdeck-control serve --help.
+Schema export and the new app JSON-RPC server are not available.";
 
 fn write_output(text: &str) -> io::Result<()> {
     let mut output = io::stdout().lock();
@@ -710,6 +713,22 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         } else {
             std::process::ExitCode::FAILURE
+        };
+    }
+    if args.first().is_some_and(|arg| arg == "serve") {
+        if args.len() == 2 && args[1] == "--help" {
+            return if write_output(serve::HELP).is_ok() {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            };
+        }
+        return match serve::run(args.into_iter().skip(1)) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                let _ = writeln!(io::stderr().lock(), "{error}");
+                std::process::ExitCode::FAILURE
+            }
         };
     }
     match run() {

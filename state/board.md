@@ -4757,3 +4757,7 @@ WeCom手动配置、旧凭据复用、全部平台别名/菜单3、QR生成/查�
 ### 2026-11-08 · gateway setup Weixin 与 all 菜单（Codex，本地提交）
 
 Weixin/wechat与菜单2已原生接通，all按Feishu→Weixin→WeCom顺序执行；真实TS+SDK新增14格普通/边界金样与all完整输出，凭据/配置/请求/回调时钟逐项核对。真实TS EFBIG证明旧凭据被截断，Rust复用原子保存保全旧件；独审发现的FIFO/超大凭据与响应慢流已以1MiB/30秒body绝对期限修复，35秒poll headers保持。mbp2 r3最终47通过、4辅助子测试由父实际调用，fmt/严格clippy通过；原件与hash在主仓 `_tmp/20261108-issue-124-setup/weixin-worker/`，两条D2差异仍未批准、无冻结豁免。本轮仅本机提交，真实平台登录/人眼终端待验，不标#124/D2完成；下一步独立native前台serve薄入口。
+
+### 2026-11-08 · 显式原生宿主入口（Codex，仅本机）
+
+新增 `pilotdeck-control serve` 复用现有 native Gateway 前台装配，显式 home/project/listen/token/sidecar；匿名有界 token 快照防原路径替换/FIFO/增长，真实 EFBIG 失败原件保全且清理。mbp2 r2 fmt/all-targets clippy、6 control 单测（辅助子进程实际四格）、2 serve 进程测试与旧 control/stream 回归、真实共享宿主读写全部通过；真实 Rust sidecar + fake provider TERM/INT 两轮流式/落盘/取消/退出通过，无 POST 负控确认观察并清理 sidecar。原始 r1/r2、源码快照和独审在主仓 `_tmp/20261108-control-cli/`。仅本机提交、不推 GitHub；本片未解决默认 local boot、跨宿主写锁、完整旧 server、app JSON-RPC 或真实 provider 验收，不标 A8/CLI 完成。下一片接通 CLI 已有只读 StaffDeck binding，TUI 继续独立验证。

@@ -21,3 +21,18 @@
 ## 新机器流的消费与退出约定
 
 **AI 代批，待人复核**：新增 `stream` 独立文本轮次，不修改旧 CLI/SDK 的 seq/final 语义。流序号连续且保留 final 闭合帧，完成、取消、错误分别可判；收完整输出才成功。事件键与 type/finishReason 是调用方分派所需的公开协议标识，保留；其它值沿用有限回显过滤，不作零泄漏承诺。输出一帧在途、8 MiB含换行、10秒交付预算，断线可能触发session中止，明确不承诺恢复或detach。范围局限新bin，可撤回、不动冻结尺子。断管/背压、标识同名token和非法序号均用真实子进程测试防止假成功。
+
+## 2026-11-08 · 显式 native 前台 serve 入口
+
+- 卡在哪：现有control能连接指定WS，native生产宿主只有gateway bin的显式入口；默认CLI/新app协议/发行自动安装还缺自己的边界，不能以薄包装冒称整体兼容。
+- 谁受影响：新增 `pilotdeck-control serve` 首参分流；已有call/status/capabilities/stream保留原解析与输出。
+- 能否撤回：可以，未迁移数据或改变Gateway装配；显式选用新入口者承担自己指定的数据根/sidecar权限。
+- 动不动尺子/意向：不改冻结装置或TS oracle；属于既定完整CLI目标内可撤回的原生前台入口，不声称旧server或新app JSON-RPC兼容。
+- 选项与后果：复制装配会产生第二套生命周期；直接复用native Options/run保留现有校验、依赖和drain。自动查找/安装/起第二host需其他所有权/发行合同，本片不推导授权。
+- 建议与决定：**AI代批，待人复核**，首参serve先分流、原OsString参数交既有parser；当前线程enable_all runtime内安装既有SIGXFSZ guard后调用native run。ready/stopping仍stderr，不编造stdout JSON。单值项拒重复，sidecar-arg依原合同可重复。
+- 原则与断言：薄入口必须通过真实bin证明与宿主连线，不能只用mock确认调用过run。实际参数拒绝无bind/无落盘，真实serve+独立旧WS共享状态，真实Rust sidecar/fake provider完成stream/取消/落盘，INT/TERM分别验证有界关闭及sidecar不遗留。
+- 范围：调用方显式提供home/project/listen/token-file/sidecar，不触碰用户目录，不自动发现/杀宿主。native自身cron/IM配置生命周期保持，单根写者锁、默认本地boot、自动发行安装、新app协议及A8仍需独立完成。
+
+- serve token安全增量：独审确认native原token无界同步重开可被换成FIFO。共享A文件有其他持有人，**AI代批，待人复核**采用CLI限定快照：复用既有O_NONBLOCK普通文件/64KiB读器，再以0700目录/0600匿名inode、CLOEXEC及/dev/fd交给native真实消费，原路径不再由native重开。unlink先于写secret；启动前重开正控后seek回0。仅Unix且/dev/fd可用，故障明确失败；原UTF8/CRLF/空token规则保持，不声称A全局已修、同UID/root不可读或跨写者事务。正常/失败清理由真实测试和实际serve流验证，SIGKILL可能只残空目录，不留命名token副本。
+
+- 快照写阶段护栏：runtime与既有SIGXFSZ ignore安装先于快照write，实际`ulimit -f 0`辅助子测试核明确错误、原token字节与无该进程临时目录残留。参数parse仍在runtime/快照前，非法参数不启动宿主或落盘。
