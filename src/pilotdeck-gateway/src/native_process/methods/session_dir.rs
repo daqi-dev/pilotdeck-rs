@@ -852,90 +852,106 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
-    // #2090: request-level gate order for delete / rename / tag, measured on
-    // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a blank
-    // key: the request-level isolated-project admission
-    // (`native_process/requests.rs:303-316`) and this family's
-    // `require_session_key` (`:227` / `:296`). Admission runs first, so an
-    // explicit `projectKey` outside the configured project is answered as
-    // `gateway_request_failed` even when `sessionKey` is blank; with the
-    // project admitted (or omitted, which falls back to the configured one)
-    // the blank key answers `INVALID_SESSION_KEY`. TS resolves the project
-    // first as well but reports `PROJECT_NOT_FOUND`; that code difference and
-    // the resume/close divergence are registered in
+    // #2090: request-level gate order for the session_dir family, measured on
+    // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
+    // absent key: the request-level isolated-project admission
+    // (`native_process/requests.rs:305-314`) and this family's
+    // `require_session_key` (`:179` / `:214` / `:231` / `:300`). Admission runs
+    // before the method dispatch, so a `projectKey` the process does not serve
+    // is answered as `gateway_request_failed` even when `sessionKey` is blank;
+    // with the project admitted (or omitted, which falls back to the configured
+    // one) the missing or blank key answers `INVALID_SESSION_KEY`. An explicit
+    // `projectKey: null` counts as "not served" here — `requests.rs:305-314`
+    // only skips `undefined` — while TS reads null as nullish and falls back to
+    // its project root. That shape, and the resume/close divergence, are
+    // registered in
     // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
+    const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
+    const ISOLATED_PROJECT_MESSAGE: &str =
+        "The isolated native process serves only its configured project.";
+
     async fn blank_key_gate_order(method: &str) {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2090 fixture");
-        // (1) No projectKey: the fallback is the configured project, so the
-        // family's own sessionKey gate answers.
-        let blank = object([("sessionKey", "   ".into())]);
-        let error =
-            crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), blank)
-                .await
-                .expect_err("#2090 the blank sessionKey is rejected");
-        negative_assert_eq!(
-            error.code.as_str(),
-            "INVALID_SESSION_KEY",
-            "#2090 the sessionKey gate answers a blank key under the configured project"
-        );
-        negative_assert_eq!(
-            String::from_utf16_lossy(error.message.units()),
-            "sessionKey is required.",
-            "#2090 the blank-key message matches the TS provider gate"
-        );
+        // (1) No `projectKey`: the fallback is the configured project, so the
+        // family's own sessionKey gate answers — for an absent key and for a
+        // blank one alike.
+        for (label, params) in [
+            ("missing", object([])),
+            ("blank", object([("sessionKey", "   ".into())])),
+        ] {
+            let expected = format!("#2090 a {label} sessionKey is rejected");
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err(&expected);
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#2090 the sessionKey gate answers a missing or blank key under the configured project"
+            );
+            negative_assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                BLANK_KEY_MESSAGE,
+                "#2090 the gate message matches the TS provider gate"
+            );
+        }
 
-        // (2) Explicit unserved projectKey: request admission answers before
-        // the method dispatch, so the first code is the admission one.
-        let unserved_blank = object([
-            ("sessionKey", "   ".into()),
-            ("projectKey", "/nonexistent/pdrs-2090".into()),
-        ]);
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            method.into(),
-            unserved_blank,
-        )
-        .await
-        .expect_err("#2090 an unserved project is refused");
-        negative_assert_eq!(
-            error.code.as_str(),
-            "gateway_request_failed",
-            "#2090 admission answers an unserved project before the sessionKey gate"
-        );
-        negative_assert_eq!(
-            String::from_utf16_lossy(error.message.units()),
-            "The isolated native process serves only its configured project.",
-            "#2090 the admission message is the isolated-project one"
-        );
-
-        // (3) Control: the same unserved project with a valid key answers
-        // exactly the same way, so (2) is decided by admission and not by the
-        // blank key.
-        let unserved_valid = object([
-            ("sessionKey", "pdrs-2090-control".into()),
-            ("projectKey", "/nonexistent/pdrs-2090".into()),
-        ]);
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            method.into(),
-            unserved_valid,
-        )
-        .await
-        .expect_err("#2090 an unserved project is refused for a valid key too");
-        negative_assert_eq!(
-            error.code.as_str(),
-            "gateway_request_failed",
-            "#2090 the control error is the admission one"
-        );
-        negative_assert_eq!(
-            String::from_utf16_lossy(error.message.units()),
-            "The isolated native process serves only its configured project.",
-            "#2090 the control message is the admission one"
-        );
+        // (2) Project outside the configured one: request admission answers
+        // before the method dispatch, so the first code is the admission one.
+        // The valid-key control answering identically is what proves admission
+        // — not the key — decides here; the `null` cell is the registered
+        // shape where Rust and TS part ways (`projectKey: null` is nullish for
+        // TS, "not served" for this admission).
+        for (label, params) in [
+            (
+                "blank key + unserved project",
+                object([
+                    ("sessionKey", "   ".into()),
+                    ("projectKey", "/nonexistent/pdrs-2090".into()),
+                ]),
+            ),
+            (
+                "valid key + unserved project",
+                object([
+                    ("sessionKey", "pdrs-2090-control".into()),
+                    ("projectKey", "/nonexistent/pdrs-2090".into()),
+                ]),
+            ),
+            (
+                "blank key + null project",
+                object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
+            ),
+        ] {
+            let expected = format!("#2090 admission refuses {label}");
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err(&expected);
+            negative_assert_eq!(
+                error.code.as_str(),
+                "gateway_request_failed",
+                "#2090 admission answers an unserved project before the sessionKey gate"
+            );
+            negative_assert_eq!(
+                String::from_utf16_lossy(error.message.units()),
+                ISOLATED_PROJECT_MESSAGE,
+                "#2090 the admission message is the isolated-project one"
+            );
+        }
 
         r.owner.shutdown().await.expect("#2090 shutdown");
         r.project.dispose().await.expect("#2090 dispose");
+    }
+
+    #[tokio::test]
+    async fn resume_session_blank_key_gate_order() {
+        blank_key_gate_order("resume_session").await;
+    }
+
+    #[tokio::test]
+    async fn close_session_blank_key_gate_order() {
+        blank_key_gate_order("close_session").await;
     }
 
     #[tokio::test]
