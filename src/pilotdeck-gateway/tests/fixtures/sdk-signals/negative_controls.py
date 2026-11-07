@@ -410,7 +410,9 @@ def check_catalog():
     strays = sorted(
         str(path.relative_to(root))
         for path in guarded_paths()
-        if path.parent in {fixture, abort_state}
+        # `in path.parents` rather than `path.parent in {...}` so a golden one
+        # directory deeper (`fixture/sub/oracle.json`) is caught too.
+        if any(tree in path.parents for tree in (fixture, abort_state))
         and path not in MUTABLE_FIXTURE_FILES
     )
     if strays:

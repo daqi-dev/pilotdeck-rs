@@ -58,7 +58,11 @@ from negative_suite import passed, publish_summary
 from negative_panic import named_test_failed, panic_evidence
 
 root = Path(__file__).resolve().parents[5]
-test_source = root / 'src/pilotdeck-cli/tests/sdk_signal_exit.rs'
+# #1885: the lease moved from `sdk_signal_exit.rs` into this shared module, so
+# the anchor, the marker guard and the RED mutation all follow it here. The
+# resident test that reports the marker is still `RESIDENT_TEST` below; only the
+# bytes being read/mutated moved.
+test_source = root / 'src/pilotdeck-cli/tests/common/read_lease.rs'
 capture = root / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/capture.py'
 wrapper = root / 'src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py'
 RESIDENT_TEST = 'signal_oracle_matches_recorded_source_and_local_files'
@@ -66,7 +70,7 @@ SHA_MARKER = '#1145 source file SHA256 matches disk: probeSha256/capture.py'
 # The contended-wait sleep is the whole #1662 fix: returning the file instead
 # keeps reading guarded bytes while the committed writer still holds the lock.
 LEASE_WAIT_ANCHOR = 'thread::sleep(Duration::from_millis(50));'
-LEASE_WAIT_REMOVED = 'return file;'
+LEASE_WAIT_REMOVED = 'return Some(file);'
 CAPTURE_RESIDUE = '\n# 1662 committed-mode mutant residue\n'
 # How long the writer holds the lock once its window opens. The reader is
 # launched right after the window appears (its cargo slot is taken beforehand),

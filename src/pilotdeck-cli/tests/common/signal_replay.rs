@@ -829,18 +829,24 @@ async fn capture(expected: &Value, directory: PathBuf, id: &str) -> Value {
     );
     let listener = require(listener, id, "exclusive owned mock port 28999");
     let executable = require(std::env::current_exe(), id, "same-source test executable");
-    let wrapper = std::env::var_os("PDRS_SIGINT_WRAPPER").unwrap_or_else(|| {
-        super::fixture_directory()
-            .join("sigint_default.py")
-            .into_os_string()
-    });
-    ensure(
-        Path::new(&wrapper).is_file(),
-        id,
-        "SIGINT default wrapper exists",
-    );
+    // #1885: the child *execs* this script, and the exec happens after `run()`
+    // has released its read lease, so a writer could swap the wrapper bytes in
+    // between. Snapshot them under the shared fixture lease and hand the child
+    // the snapshot: the bytes it runs are the bytes read here. Under an active
+    // negative-control bypass the read is unlocked on purpose -- there the
+    // parent is the writer and the mutant wrapper is what the control measures.
+    let wrapper = {
+        let source = std::env::var_os("PDRS_SIGINT_WRAPPER")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| super::fixture_directory().join("sigint_default.py"));
+        let _lease = super::read_lease::fixture_read_lease();
+        let bytes = require(fs::read(&source), id, "SIGINT default wrapper bytes");
+        let snapshot = directory.join("sigint_default.py");
+        private_file(&snapshot, &bytes, id);
+        snapshot
+    };
     let mut command = Command::new("/usr/bin/python3");
-    command.args(["-I", "-B"]).arg(wrapper).arg(executable);
+    command.args(["-I", "-B"]).arg(&wrapper).arg(executable);
     command
         .args([
             "signal_driver",
@@ -1111,9 +1117,10 @@ pub(super) fn run(id: &str) {
     let fixture = super::fixture_directory();
     // #1885: every cell reads `source.json` and the golden producer bytes, which
     // a committed negative control mutates in place under the exclusive tree
-    // lock. Hold the shared fixture lease for the read only: the rest of the
-    // cell touches no guarded byte, so a long replay must not keep a writer
-    // waiting. The lease is dropped before the product child runs.
+    // lock. Hold the shared fixture lease for the read only: a long replay must
+    // not keep a writer waiting. `capture()` takes the same lease again for the
+    // one fixture byte it later execs (the SIGINT wrapper), so no read here is
+    // unguarded without holding it for the whole cell.
     let source: Value = {
         let _lease = super::read_lease::fixture_read_lease();
         let source: Value = require(
