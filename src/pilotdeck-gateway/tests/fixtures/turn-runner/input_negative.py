@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from _negative_common import mutate, check_mutations
+from _negkit import non_head
 from negative_suite import Case, run_cases
 root = Path(__file__).resolve().parents[5]
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
@@ -53,5 +54,10 @@ stream = 'runtime::turn::live::stream_tests::'
 host = 'runtime::turn::host_factory::tests::'
 cases = [Case(n, p, o, v, (host if n == 'host-factory-recorder' else stream) + t, a, s)
          for n, p, s, o, v, t, a in chosen]
-raise SystemExit(run_cases(root, cases, out, env, mutate,
-                           baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))
+# #1540: a green run against a pinned non-HEAD baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
+raise SystemExit(non_head.non_head_exit(
+    baseline_source, baseline_sha,
+    code=run_cases(root, cases, out, env, mutate, baseline=baseline),
+    evidence=out))

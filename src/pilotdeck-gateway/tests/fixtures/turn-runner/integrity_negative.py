@@ -9,6 +9,7 @@ root = Path(__file__).resolve().parents[5]
 fixtures = root / 'src/pilotdeck-gateway/tests/fixtures'
 sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 from negative_suite import Case, bind_module_file, declares_test, run_cases
+from _negkit import non_head
 from _negative_common import mutate
 
 live = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
@@ -99,7 +100,13 @@ if sys.argv[2:] and sys.argv[2:] != ['--sample']:
     chosen = [row for row in cases if row[0] in names]
 out = Path(sys.argv[1])
 out.mkdir(parents=True, exist_ok=False)
-raise SystemExit(run_cases(root,
-    [Case(name, path, old, new, test, panic, scope)
-     for name, path, old, new, scope, test, panic in chosen],
-    out, env, mutate, timeout=600, baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))
+# #1540: a green run against a pinned non-HEAD baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
+raise SystemExit(non_head.non_head_exit(
+    baseline_source, baseline_sha,
+    code=run_cases(root,
+        [Case(name, path, old, new, test, panic, scope)
+         for name, path, old, new, scope, test, panic in chosen],
+        out, env, mutate, timeout=600, baseline=baseline),
+    evidence=out))

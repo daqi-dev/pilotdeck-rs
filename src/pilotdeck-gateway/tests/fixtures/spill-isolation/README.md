@@ -30,3 +30,6 @@ An uncommitted sandbox candidate can supply `PDRS_NEGATIVE_BASELINE` with its
 candidate tree object and isolated `GIT_INDEX_FILE`/object directory; the same
 byte checks remain mandatory. See the task RESULT for the exact tested command
 and isolated-index procedure. The normal repository index is never changed.
+A fully-killed run against that pinned baseline is not host evidence (#1540):
+it prints `NON-HOST EVIDENCE`, records `baseline.json` in the evidence
+directory, and exits 42 instead of 0.

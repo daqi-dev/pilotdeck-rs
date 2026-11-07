@@ -841,14 +841,42 @@ class CandidateBaselineTests(unittest.TestCase):
                              '#994 empty candidate selection cannot pass')
 
     def test_formal_mode_still_uses_head_guarded_suite(self):
+        # #1540: the override must be resolvable now (an unresolvable one is a
+        # never-started refusal), so spell a real ref; the suite still gets no
+        # alternate Git baseline kwarg.
         with patch.object(self.fixture, 'mutation_suite', return_value=7) as suite, \
-                patch.dict(os.environ, {'PDRS_NEGATIVE_BASELINE': 'not-HEAD',
+                patch.dict(os.environ, {'PDRS_NEGATIVE_BASELINE': 'HEAD',
                                         'CARGO_TARGET_DIR': str(self.out / 'target')}), \
                 patch.object(self.fixture, 'baseline_only', side_effect=AssertionError('#994 formal mode must mutate')), \
-                patch.object(sys, 'argv', ['runner', str(self.out / 'formal'), 'io-as-microtask']):
+                patch.object(sys, 'argv', ['runner', str(self.out / 'formal'), 'io-as-microtask']), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
             self.assertEqual(self.fixture.main(), 7, '#994 formal suite exit code propagates')
         self.assertEqual(suite.call_args.args[1], [self.fixture.cases[0]], '#994 formal selection preserved')
         self.assertNotIn('baseline', suite.call_args.kwargs, '#994 never supply alternate Git baseline')
+        self.assertIn('NON-HEAD BASELINE REQUEST', stdout.getvalue(),
+                      '#1540 the ignored override is announced, never honoured')
+
+    def test_formal_mode_downgrades_a_green_non_head_run_to_42(self):
+        output = self.out / 'formal42'
+        output.mkdir()
+        with patch.object(self.fixture, 'mutation_suite', return_value=0) as suite, \
+                patch.dict(os.environ, {'PDRS_NEGATIVE_BASELINE': 'HEAD',
+                                        'CARGO_TARGET_DIR': str(self.out / 'target')}), \
+                patch.object(self.fixture, 'baseline_only', side_effect=AssertionError('#994 formal mode must mutate')), \
+                patch.object(sys, 'argv', ['runner', str(output), 'io-as-microtask']), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            self.assertEqual(self.fixture.main(), 42,
+                             '#1540 a green non-HEAD run is not host evidence')
+        self.assertEqual(suite.call_args.args[0], 'network-timing',
+                         '#1540 the downgrade wraps the formal suite itself')
+        self.assertIn('NON-HOST EVIDENCE', stdout.getvalue(),
+                      '#1540 the downgrade marks stdout')
+        self.assertIn('ignores (its guard always requires HEAD)', stdout.getvalue(),
+                       '#1540 the marker says the override was ignored')
+        record = json.loads((output / 'baseline.json').read_text())
+        self.assertEqual(record['hostEvidence'], False,
+                         '#1540 the provenance record denies host evidence')
+        self.assertEqual(record['exit'], 42, '#1540 the record carries the dedicated code')
 
 
 if __name__ == '__main__':

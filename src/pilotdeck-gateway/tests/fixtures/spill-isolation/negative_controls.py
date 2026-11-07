@@ -2,17 +2,19 @@
 # anchor-selfcheck: unsupported name-dependent function slicing and sequential rewrites
 """Candidate-baseline checked regressions; compilation errors never count as red."""
 import difflib
-import os
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _negkit import non_head
 from negative_process import mutating_sources, run_owned, wait_for_slot, target_environment
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/context/tool_budget.rs'
 out = Path(sys.argv[1]).resolve()
 out.mkdir(parents=True, exist_ok=True)
-baseline = os.environ.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'
+# #1540: a fully-green run against that pinned baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
 env = target_environment(root)
 
 def mutate(text, name):
@@ -133,3 +135,6 @@ for name in names:
             if name == 'heartbeat': assert 'heartbeat starved:' in log, log[-3000:]
             print(name, test, *[line for line in log.splitlines() if line.startswith('test result:')], flush=True)
         with (out / f'{name}.log').open('x') as f: f.write('\n'.join(logs))
+# #1540: reaching here means every selected mutant ran red (an assert above
+# would have failed); green but non-HEAD is NON-HOST EVIDENCE and exits 42.
+sys.exit(non_head.non_head_exit(baseline_source, baseline_sha, evidence=out))

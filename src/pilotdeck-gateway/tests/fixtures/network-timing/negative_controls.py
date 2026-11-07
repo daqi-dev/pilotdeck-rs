@@ -14,6 +14,7 @@ import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _shared.negative_control import CargoTests, environment, mutation_suite
+from _negkit import non_head
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
 from negative_process import tree_lock
 from negative_selection import claim_dir, missing_target, refuse, refuse_unusable_target, registered, verdict_exit
@@ -402,12 +403,20 @@ def main():
                    f' duplicate={duplicated}')
     if args.baseline_only:
         return baseline_only(selected, args.output)
-    return mutation_suite('network-timing', selected, args.output, selection, passed, classify,
-                          guarded=[root / 'src/pilotdeck-gateway/tests/network_timing.rs',
-                                   root / 'src/pilotdeck-gateway/tests/web_tools.rs',
-                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_background.rs',
-                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_io.rs',
-                                   root / 'src/pilotdeck-gateway/tests/common/network_timing_registry.rs'])
+    # #1540: this suite no longer honours PDRS_NEGATIVE_BASELINE (#994 made
+    # the formal path HEAD-only), so a requested override is announced as
+    # ignored and a green run is still downgraded: it cannot certify the
+    # caller-named tree, which is the mistake exit 0 invited.
+    baseline_source, _ignored_ref, baseline_sha = non_head.gate(root, ignored=True)
+    return non_head.non_head_exit(
+        baseline_source, baseline_sha,
+        code=mutation_suite('network-timing', selected, args.output, selection, passed, classify,
+                            guarded=[root / 'src/pilotdeck-gateway/tests/network_timing.rs',
+                                     root / 'src/pilotdeck-gateway/tests/web_tools.rs',
+                                     root / 'src/pilotdeck-gateway/tests/common/network_timing_background.rs',
+                                     root / 'src/pilotdeck-gateway/tests/common/network_timing_io.rs',
+                                     root / 'src/pilotdeck-gateway/tests/common/network_timing_registry.rs']),
+        evidence=args.output, ignored=True)
 
 
 if __name__ == '__main__':
