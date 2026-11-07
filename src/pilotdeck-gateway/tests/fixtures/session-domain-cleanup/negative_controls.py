@@ -5206,6 +5206,35 @@ MUTATIONS = [
      "                    report['status'] = overall\n",
      "                    _h = setattr\n"
      "                    _h(report, 'status', 'PASS')\n"),
+    # #1953 fix-r1 round 19 (GLM boundary r17 P0-1): the callee that produces
+    # a bound handle may itself be an alias of ``getattr``.  The literal-only
+    # decode read the two-argument call as the unbound builtin and the status
+    # write vanished.
+    ('calibrate-status-getattr-alias-callee', SOURCE,
+     "                    report['status'] = overall\n",
+     "                    _ga = getattr\n"
+     "                    _f = _ga(report, '__setattr__')\n"
+     "                    _f('status', 'PASS')\n"),
+    # #1953 fix-r1 round 19 (codex r18 P0-1 / GLM boundary r18 P0-1): the
+    # copy may be wrapped twice or sliced, and the one-level decoder read it
+    # as a fresh value while the loop still called the handles.
+    ('calibrate-for-target-nested-container-copy', CHECK,
+     "def load_session_domain():\n"
+     "    spec = importlib.util.spec_from_file_location('session_domain', "
+     "SESSION_DOMAIN)",
+     (
+      "if False:\n"
+      "    def _nc_use():\n"
+      "        _nc = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+      "        _nc2 = list(tuple(_nc))\n"
+      "        for _h in _nc2:\n"
+      "            _h('common', object())\n"
+      "\n"
+      "\n"
+      "\n"
+      "def load_session_domain():\n"
+      "    spec = importlib.util.spec_from_file_location('session_domain', SESSION_DOMAIN)\n"
+     )),
 ]
 
 
@@ -6406,6 +6435,22 @@ def calibrate_status_three_arg_handle_live(rows):
         rows, "inline status/exit assignment _h(report, 'status', 'PASS')")
 
 
+def calibrate_status_getattr_alias_callee(rows):
+    """#1953 fix-r1 round 19 (GLM boundary r17 P0-1): the handle factory is
+    the builtin ``getattr`` even when it reaches the call under another name."""
+    return _calibrate_status_write_spelling(
+        rows, "inline status/exit assignment _f('status', 'PASS')")
+
+
+def calibrate_for_target_nested_container_copy(rows):
+    """#1953 fix-r1 round 19 (codex r18 P0-1 / GLM boundary r18 P0-1): a
+    container copied twice keeps the handles the original held."""
+    return _not_shared(
+        rows, CHECK_REL, 'main',
+        'aggregation-audit: calibrate-for-target-nested-container-copy '
+        'flagged, passed=False')
+
+
 def calibrate_for_target_nested_copy_alias(rows):
     """#1953 fix-r1 round 14: calibrate-for-target-nested-copy-alias."""
     return _not_shared(
@@ -7256,6 +7301,12 @@ JUDGES = {
         False, ()),
     'calibrate-status-three-arg-handle-live': (
         'aggregation-audit', calibrate_status_three_arg_handle_live,
+        False, ()),
+    'calibrate-status-getattr-alias-callee': (
+        'aggregation-audit', calibrate_status_getattr_alias_callee,
+        False, ()),
+    'calibrate-for-target-nested-container-copy': (
+        'aggregation-audit', calibrate_for_target_nested_container_copy,
         False, ()),
 }
 if set(JUDGES) != {row[0] for row in MUTATIONS}:

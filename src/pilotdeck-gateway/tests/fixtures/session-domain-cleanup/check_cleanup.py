@@ -4083,17 +4083,41 @@ def _own_expression_nodes(statement):
         stack.extend(ast.iter_child_nodes(node))
 
 
+def _certain_child_blocks(statement):
+    """Blocks of *statement* that run whenever it runs (#1953 fix-r1 round 19).
+
+    A ``finally`` body runs on every way out of its ``try``, and the taken arm
+    of a statically decided ``if`` runs with the statement.  The other arms, a
+    loop body (zero iterations), a ``with`` body (the manager may swallow the
+    exception) and a class body may all be skipped.
+    :func:`_certain_statements` already encodes that table for the flat scan
+    (codex r6 P1-8 / P0-3 / P0-4); the round-17 block table had its own,
+    narrower rule and flagged a clean file whose handle was overwritten in a
+    ``finally`` block (GLM boundary r17 P1-2).
+    """
+    if isinstance(statement, ast.If):
+        if _statically_true(statement.test):
+            return {id(statement.body)}
+        if _statically_false(statement.test):
+            return {id(statement.orelse)}
+        return set()
+    if isinstance(statement, (ast.Try, getattr(ast, 'TryStar', ()))):
+        return {id(statement.finalbody)}
+    return set()
+
+
 def _scope_block_slots(scope):
     """``(slots, parents)`` for one scope body (#1953 fix-r1 round 17).
 
     ``slots`` maps a statement, or one of its own expression nodes, to
-    ``(id(block), index, loops)``; ``parents`` maps a nested block to the
-    block that runs it.  The pair answers the question round 16 got wrong:
-    did this binding certainly run before that use?  A binding in the same
-    block at a smaller index did, and so did one in a block that encloses the
-    use; a binding in a *sibling* arm (the other ``if`` branch, a ``try``
-    body, an ``except`` handler) may simply not run, and a loop body runs
-    after every statement that precedes the loop.
+    ``(id(block), index)``; ``parents`` maps a nested block to
+    ``(id(parent block), index of the statement that runs it, always)``,
+    where *always* says whether the block runs whenever that statement runs
+    (:func:`_certain_child_blocks`).  The pair answers the question round 16
+    got wrong: did this binding certainly run before that use?  A binding in
+    the same block at a smaller index did, and so did one in a block that
+    encloses the use; a binding in a *sibling* arm (the other ``if`` branch,
+    a ``try`` body, an ``except`` handler) may simply not run.
     """
     if isinstance(scope, ast.Module):
         body = list(scope.body)
@@ -4103,20 +4127,19 @@ def _scope_block_slots(scope):
         body = list(getattr(scope, 'body', ()))
     slots = {}
     parents = {}
-    stack = [(body, ())]
+    stack = [body]
     while stack:
-        block, loops = stack.pop()
+        block = stack.pop()
         for index, statement in enumerate(block):
-            slots.setdefault(id(statement), (id(block), index, loops))
-            inner = (loops + (id(statement),)
-                     if isinstance(statement,
-                                   (ast.For, ast.AsyncFor, ast.While))
-                     else loops)
+            slots.setdefault(id(statement), (id(block), index))
             for node in _own_expression_nodes(statement):
-                slots.setdefault(id(node), (id(block), index, loops))
+                slots.setdefault(id(node), (id(block), index))
+            certain = _certain_child_blocks(statement)
             for inner_block in _statement_blocks(statement):
-                parents.setdefault(id(inner_block), id(block))
-                stack.append((inner_block, inner))
+                parents.setdefault(
+                    id(inner_block),
+                    (id(block), index, id(inner_block) in certain))
+                stack.append(inner_block)
     return slots, parents
 
 
@@ -4128,19 +4151,34 @@ def _certain_before(slots, parents, binding, use):
     by position") dropped a live write handle whenever the overwrite sat in
     an ``if`` arm or a ``try`` body and that path was not taken (boundary r16
     P0-1 / codex r16 P0-1).
+
+    #1953 fix-r1 round 19 (GLM boundary r17 P1-2): a binding inside a block
+    that always runs with its statement -- the ``finally`` body, the taken
+    arm of a statically decided ``if`` -- climbs out through that block and
+    is compared at the statement's own position.  Reading it as "may not
+    have run" flagged a clean file whose handle was overwritten in a
+    ``finally`` block.
     """
     bound = slots.get(id(binding))
     used = slots.get(id(use))
     if bound is None or used is None:
         return False
-    if bound[0] == used[0]:
-        return bound[1] < used[1]
-    block = used[0]
-    while block is not None:
-        block = parents.get(block)
-        if block == bound[0]:
+    uses = {}
+    block, index = used
+    while True:
+        uses.setdefault(block, index)
+        up = parents.get(block)
+        if up is None:
+            break
+        block, index = up[0], up[1]
+    block, index = bound
+    while True:
+        if block in uses and index < uses[block]:
             return True
-    return False
+        up = parents.get(block)
+        if up is None or not up[2]:
+            return False
+        block, index = up[0], up[1]
 
 
 def _enclosing_bound_names(tree, owner):
@@ -4552,6 +4590,59 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 return handle_containers[(level, name)]
         return None
 
+    def _value_carries(value, scope):
+        """True when *value* still hands write handles on (#1953 r19).
+
+        The same question the container fixpoint above registers by
+        (``_container_handle_roots`` / a tracked callee / a tracked alias / a
+        relay comprehension), asked of the binding in force at a copy point.
+        """
+        if _container_handle_roots(value, kinds, simple):
+            return True
+        called = _container_callee(value)
+        if called is not None and _carried_container(called, scope) is not None:
+            return True
+        if (isinstance(value, ast.Name)
+                and _carried_container(value.id, scope) is not None):
+            return True
+        if isinstance(value, (ast.ListComp, ast.SetComp, ast.DictComp,
+                              ast.GeneratorExp)):
+            return bool(_relay_handle_roots(value, scope))
+        return False
+
+    def _carries_at(name, scope, use):
+        """True when *name* still carries handles at *use* (#1953 r19).
+
+        ``handle_containers`` is a per-name history: once ``hs`` held handles
+        every later binding of that spelling looked like a handle container,
+        so ``hs = [lambda *a: None]`` followed by ``hs = list(hs)`` kept the
+        withdrawn receiver and failed a clean file (codex r18 P1-3).  Only a
+        single binding that certainly ran before the copy may speak for the
+        value in force; anything ambiguous keeps the carried answer.
+        """
+        if _carried_container(name, scope) is None:
+            return False
+        bindings = scoped_bindings.get(scope)
+        if bindings is None:
+            return True
+        values = _bindings_at(bindings, name, use)
+        if not values:
+            return True
+        limit = (getattr(use, 'lineno', 0), getattr(use, 'col_offset', -1))
+        if any((line, getattr(value, 'col_offset', -1)) > limit
+               for line, value in values):
+            return True
+        latest = max((line, getattr(value, 'col_offset', -1))
+                     for line, value in values)
+        last = [value for line, value in values
+                if (line, getattr(value, 'col_offset', -1)) == latest]
+        if len(last) != 1:
+            return True
+        slots, parents = _block_slots(scope)
+        if not _certain_before(slots, parents, last[0], use):
+            return True
+        return _value_carries(last[0], scope)
+
     def _copies_carried_container(value, scope):
         """True when *value* is a copy of a container that carries handles.
 
@@ -4559,22 +4650,22 @@ def _receiver_attribute_writes(tree, receivers, shared):
         same handles on under a new object; judging the constructor call as a
         fresh value ended the relay and a real write stayed invisible (codex
         r17 P0-1).  The shape alone is not enough -- an unrelated ``xs =
-        list(range(3))`` stays fresh -- so the copied base must be a name the
-        alias fixpoint already tracks.
+        list(range(3))`` stays fresh -- so the copied base must be a container
+        the alias fixpoint already tracks.
+
+        #1953 fix-r1 round 19 (codex r18 P0-1 / GLM boundary r18 P0-1): the
+        base is decoded with the same ``_container_callee`` the fixpoint uses,
+        so a nested copy (``list(tuple(hs))``) or a slice (``list(hs[:])``)
+        is followed too; the hand-rolled one-level decoder read those as fresh
+        and the write stayed invisible.  ``_carries_at`` then asks whether the
+        name still carries at this point (codex r18 P1-3).
         """
         if not isinstance(value, ast.Call):
             return False
-        if len(value.args) == 1 and isinstance(value.func, ast.Name):
-            if value.func.id not in _CONTAINER_WRAPPERS:
-                return False
-            base = value.args[0]
-        elif (not value.args and isinstance(value.func, ast.Attribute)
-              and value.func.attr == 'copy'):
-            base = value.func.value
-        else:
+        base = _container_callee(value)
+        if base is None:
             return False
-        return (isinstance(base, ast.Name)
-                and _carried_container(base.id, scope) is not None)
+        return _carries_at(base, scope, value)
 
     def _freshly_rebound(name, scope, use, allow_container=True):
         """True when the binding *name* holds at *use* is a provably fresh value.
@@ -6052,12 +6143,18 @@ class _NameBindings(dict):
     with the use.
     """
 
-    __slots__ = ('loops_of', 'comps_of', 'comp_bound', 'imported')
+    __slots__ = ('loops_of', 'comps_of', 'comp_bound', 'imported', 'scope',
+                 'slots')
 
     def __init__(self):
         super().__init__()
         self.loops_of = {}
         self.comps_of = {}
+        # #1953 fix-r1 round 19: the function these bindings came from, and
+        # its block table, so a by-name handle can be judged by the binding in
+        # force rather than by every binding ever made (codex r18 P1-4).
+        self.scope = None
+        self.slots = None
         # #1953 fix-r1 round 12 (GLM sibling r8 P1): ``from builtins import
         # setattr as _sa`` leaves no assignment binding, so the status ruler
         # read ``_sa`` as an unknown name and a ``_sa(report, 'status',
@@ -6161,6 +6258,10 @@ def _name_bindings(function, outer_imports=None):
             stack.append((child, inner, inner_comp))
 
     bindings.imported = _imported_write_aliases(function, outer_imports)
+    # #1953 fix-r1 round 19: the status ruler's by-name handle test has to ask
+    # "which binding is in force at the call", and that needs the block table
+    # of the scope the table was built from.
+    bindings.scope = function
     return bindings
 
 
@@ -7960,7 +8061,11 @@ def _resolved_write_helper(node, bindings, depth=0, seen=None):
     if isinstance(node, ast.Call):
         # ``getattr(obj, '__setattr__')('status', value)``
         callee = node.func
-        if isinstance(callee, ast.Name) and callee.id == 'getattr':
+        if _getattr_spelling(callee, bindings):
+            # #1953 fix-r1 round 19 (GLM boundary r17 P0-1): the callee may be
+            # an alias of ``getattr`` (``ga = getattr; ga(obj, '__setattr__')``)
+            # and the literal check let the call resolve to nothing, so the
+            # bound handle it produced wrote an invisible status slot.
             name = 'getattr'
         elif ((isinstance(callee, ast.Name) and callee.id == 'partial')
               or (isinstance(callee, ast.Attribute) and callee.attr == 'partial')):
@@ -8066,7 +8171,35 @@ def _partial_unbound_target(node, bindings):
     return isinstance(first, ast.Attribute) and _builtin_receiver(first.value, bindings)
 
 
-def _bound_handle_value(value):
+def _getattr_spelling(node, bindings, seen=None):
+    """True when *node* names the builtin ``getattr`` (#1953 fix-r1 round 19).
+
+    GLM boundary r17 P0-1: the bound-handle test accepted only the literal
+    spelling, so ``ga = getattr; f = ga(report, '__setattr__'); f('status',
+    'PASS')`` was decoded as the *unbound* builtin, its two arguments were
+    read as three-argument ones and the status write vanished -- a false
+    PASS.  ``_resolved_write_helper`` already follows these aliases for the
+    callee split; this asks the same question of the handle's value, and keeps
+    the write direction on an ambiguous binding set (any hop that is
+    ``getattr`` counts), the conservative answer for this ruler.
+    """
+    seen = set() if seen is None else seen
+    if id(node) in seen:
+        return False
+    seen.add(id(node))
+    if isinstance(node, ast.Name):
+        if node.id == 'getattr':
+            return True
+        if bindings is None:
+            return False
+        for _line, value in _bindings_at(bindings, node.id, node):
+            if _getattr_spelling(value, bindings, seen):
+                return True
+        return False
+    return isinstance(node, ast.Attribute) and node.attr == 'getattr'
+
+
+def _bound_handle_value(value, bindings=None):
     """True when *value* spells a write handle already bound to a receiver.
 
     #1953 fix-r1 round 17 (GLM sibling r16 P1-2): ``_f = report.__setattr__``
@@ -8074,14 +8207,17 @@ def _bound_handle_value(value):
     ``_f('status', 'PASS')`` carries the key and the value as its only two
     arguments exactly like the inline spelling.  The status ruler read a
     by-name handle as the unbound builtin and dropped the two-argument write.
+
+    #1953 fix-r1 round 19 (GLM boundary r17 P0-1): the callee may itself be an
+    alias of ``getattr`` (``ga = getattr; f = ga(report, '__setattr__')``);
+    :func:`_getattr_spelling` resolves it so that write is not lost.
     """
     if isinstance(value, ast.Attribute):
         return value.attr in _MANAGED_WRITE_ATTRS
     if isinstance(value, ast.Call):
-        callee = value.func
-        name = (callee.id if isinstance(callee, ast.Name)
-                else getattr(callee, 'attr', None))
-        if name != 'getattr' or len(value.args) not in (2, 3):
+        if not _getattr_spelling(value.func, bindings):
+            return False
+        if len(value.args) not in (2, 3):
             return False
         literal = value.args[1]
         return (isinstance(literal, ast.Constant)
@@ -8089,32 +8225,52 @@ def _bound_handle_value(value):
     return False
 
 
-def _bound_handle_name(node, bindings, call, depth=0, seen=None):
+def _bound_handle_name(node, bindings, call, seen=None):
     """True when the name *node* holds a receiver-bound write handle at *call*.
-
-    Any visible binding that is such a handle answers yes: the status ruler's
-    conservative direction is "the write happened", so an ambiguous binding
-    set is read as bound (a missed status write is the false PASS this ruler
-    exists to catch).
 
     #1953 fix-r1 round 18 (codex r17 P0-2): the handle may be handed over by
     name first -- ``g = getattr(report, '__setattr__'); f = g;
     f('status', 'PASS')`` -- and only the direct binding was decoded, so the
-    status write vanished from the audit.  Follow name bindings recursively
-    (bounded, with a visited set so a cycle cannot spin), still taking the
-    conservative answer: any hop that is a handle makes the call bound.
+    status write vanished from the audit.  Follow name bindings recursively,
+    with a visited set so a cycle cannot spin.
+
+    #1953 fix-r1 round 19 (codex r18 P1-4 / P0-2): every hop used to read
+    *every* binding the name ever had, which invented a write for
+    ``g = report.__setitem__; g = print; f = g; f('status', 'PASS')``, and a
+    fixed depth cap dropped a real one past eight hops.  The hop now reads the
+    binding in force: the latest one, and only when it certainly ran before the
+    call.  An ambiguous set -- a conditional overwrite, a loop back edge, a
+    scope the block table cannot place -- falls back to "any hop is a handle",
+    the conservative direction this ruler wants (the false PASS it exists to
+    catch costs more than the false FAIL).  Recursion terminates on the
+    visited set alone.
     """
-    if not isinstance(node, ast.Name) or bindings is None or depth > 8:
+    if not isinstance(node, ast.Name) or bindings is None:
         return False
     seen = set() if seen is None else seen
     if id(node) in seen:
         return False
     seen.add(id(node))
-    for _line, value in _bindings_at(bindings, node.id, call):
-        if _bound_handle_value(value):
+    values = _bindings_at(bindings, node.id, call)
+    if not values:
+        return False
+    latest = max((line, getattr(value, 'col_offset', -1))
+                 for line, value in values)
+    group = [value for line, value in values
+             if (line, getattr(value, 'col_offset', -1)) == latest]
+    scope = getattr(bindings, 'scope', None)
+    if len(group) == 1 and scope is not None:
+        slots = getattr(bindings, 'slots', None)
+        if slots is None:
+            slots = _scope_block_slots(scope)
+            bindings.slots = slots
+        if not _certain_before(slots[0], slots[1], group[0], call):
+            group = [value for _line, value in values]
+    for value in group:
+        if _bound_handle_value(value, bindings):
             return True
         if isinstance(value, ast.Name) and _bound_handle_name(
-                value, bindings, call, depth + 1, seen):
+                value, bindings, call, seen):
             return True
     return False
 
@@ -10667,6 +10823,126 @@ def aggregation_audit():
                 '#1953 aggregation-audit: detector self-test '
                 + ('missed ' if _want else 'withdrew on ')
                 + _label + ' (round 18)')
+    # Round 19 (GLM boundary r17 P0-1/P1-2): the handle factory may reach the
+    # call under another name, and a handle overwritten in a block that always
+    # runs -- a ``finally`` body, the taken arm of a statically decided
+    # ``if`` -- is really gone.
+    for _label, _source, _want in (
+            ("a status write through an aliased getattr factory",
+             "def main(report):\n"
+             "    _ga = getattr\n"
+             "    _f = _ga(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through an aliased builtins.getattr factory",
+             "import builtins\n"
+             "def main(report):\n"
+             "    _ga = builtins.getattr\n"
+             "    _f = _ga(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", True),
+            ("a status write through a factory alias that is not getattr",
+             "def main(report):\n"
+             "    _ga = dict\n"
+             "    _f = _ga(report, '__setattr__')\n"
+             "    _f('status', 'PASS')\n", False),
+            ("a status write through a nine-hop name chain",
+             "def main(report):\n"
+             "    _a0 = report.__setitem__\n"
+             + ''.join(f"    _a{i} = _a{i - 1}\n" for i in range(1, 9))
+             + "    _a8('status', 'PASS')\n", True),
+            ("a status handle certainly overwritten by another name",
+             "def main(report):\n"
+             "    _g = report.__setitem__\n"
+             "    _g = print\n"
+             "    _f = _g\n"
+             "    _f('status', 'PASS')\n", False),
+            ("a status handle overwritten only in an if arm",
+             "def main(report):\n"
+             "    _g = report.__setitem__\n"
+             "    if object():\n"
+             "        _g = print\n"
+             "    _f = _g\n"
+             "    _f('status', 'PASS')\n", True)):
+        _tree = ast.parse(_source)
+        _function = _tree.body[-1]
+        _bindings = _name_bindings(_function, _module_binding_events(_tree))
+        _wrote = [value for _node in ast.walk(_function)
+                  if isinstance(_node, ast.Call)
+                  for value in _call_written_values(_node, _bindings)]
+        if bool(_wrote) != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 19)')
+    for _label, _source, _want in (
+            ("a handle certainly overwritten in a finally block",
+             "def _w42_use():\n"
+             "    _w42 = getattr(md, '__setattr__')\n"
+             "    try:\n"
+             "        pass\n"
+             "    finally:\n"
+             "        _w42 = lambda *a: None\n"
+             "    _w42('common', object())\n", False),
+            ("a handle certainly overwritten in a statically true if",
+             "def _w43_use():\n"
+             "    _w43 = getattr(md, '__setattr__')\n"
+             "    if True:\n"
+             "        _w43 = lambda *a: None\n"
+             "    _w43('common', object())\n", False),
+            ("a handle overwritten in an ordinary branch",
+             "def _w44_use():\n"
+             "    _w44 = getattr(md, '__setattr__')\n"
+             "    if object():\n"
+             "        _w44 = lambda *a: None\n"
+             "    _w44('common', object())\n", True),
+            ("a handle overwritten in a finally block that is not reached",
+             "def _w45_use():\n"
+             "    _w45 = getattr(md, '__setattr__')\n"
+             "    try:\n"
+             "        pass\n"
+             "    finally:\n"
+             "        _w45 = lambda *a: None\n"
+             "    try:\n"
+             "        pass\n"
+             "    finally:\n"
+             "        _w45 = getattr(md, '__setattr__')\n"
+             "    _w45('common', object())\n", True),
+            ("a handle container copied through a nested constructor",
+             "def _w46_use():\n"
+             "    _w46 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w46c = list(tuple(_w46))\n"
+             "    for _w46h in _w46c:\n"
+             "        _w46h('common', object())\n", True),
+            ("a handle container copied through a slice",
+             "def _w47_use():\n"
+             "    _w47 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w47c = list(_w47[:])\n"
+             "    for _w47h in _w47c:\n"
+             "        _w47h('common', object())\n", True),
+            ("a handle container certainly replaced before the copy",
+             "def _w48_use():\n"
+             "    _w48 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    _w48 = [lambda *a: None]\n"
+             "    _w48c = list(_w48)\n"
+             "    for _w48h in _w48c:\n"
+             "        _w48h('common', object())\n", False),
+            ("a handle container replaced only in an if arm before the copy",
+             "def _w49_use():\n"
+             "    _w49 = [getattr(md, _k) for _k in ('__setattr__',)]\n"
+             "    if object():\n"
+             "        _w49 = [lambda *a: None]\n"
+             "    _w49c = list(_w49)\n"
+             "    for _w49h in _w49c:\n"
+             "        _w49h('common', object())\n", True)):
+        _tree = ast.parse(_source
+                          + "def reader(report):\n"
+                          "    return md.common.aggregate_status(report)[1]\n")
+        _got = 'md' in _withdrawn_receivers(_tree, _1953_rel,
+                                            frozenset({'common'}))
+        if _got != _want:
+            failures.append(
+                '#1953 aggregation-audit: detector self-test '
+                + ('missed ' if _want else 'withdrew on ')
+                + _label + ' (round 19)')
     # Round 13, codex r9 P0-5 / P0-6: the status ruler reads an import alias by
     # the binding in force at the use, including a module-level one.
     for _label, _source, _want in (
