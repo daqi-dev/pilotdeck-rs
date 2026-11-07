@@ -1709,3 +1709,27 @@ Like rounds 24 to 28, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 30 (codex r28 two P0s, one P1; GLM sibling r28 one P1, one P2)
+
+Codex found the round-29 ordering fix itself leaving the late dynamic pass
+holding stale list indices (P0), the carrier self-copy resolving to itself
+instead of the binding before it (P0), and a bare annotation `x: int`
+crashing the detector because it walked a `None` value (P1).  GLM found the
+function-side copy resolution still ignoring the dead spans the module-side
+twin already passed (P1), and two shapes that lived only in the PR body
+(P2).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **The late dynamic pass marks the binding it inspected, not the index it was queued with** (false FAIL guard): sort the table into source order, then run the late pass. | self-test `round 30: a carrier marked inside a conditional is not the later rebind`; the late list holds the entry object and finds it by identity |
+| **A carrier self-copy keeps the looked-up value**: `held = globals()['main']; held = held; import builtins as bi; held(...)`. | self-test `round 30: a carrier self-copy keeps the looked-up value`; `_dynamic_result_in_force` resolves a self-copy strictly before itself |
+| **A bare annotation binds nothing** (false FAIL guard): `saved: object` with no right-hand side. | self-test `round 30: a bare annotation binds nothing`; the binding walk skips annotations without a value instead of inspecting `None` |
+| **A dead function-local import does not decide a live copy** (false FAIL guard): `if False: import builtins as bi` inside the function, then `bi = bi`. | self-test `round 30: a dead function-local import does not decide a live copy`; the function-side copy resolution receives the dead spans |
+| **An attribute-form head carries a looked-up function**: `_held = _bi.vars()['main']`. | self-test `round 30: an attribute-form head carries a looked-up function` (was a PR-body probe only) |
+| **A value-side `Starred` still pairs the prefix element**: `a, b = main, *[print]`. | self-test `round 30: a value-side Starred still pairs the prefix element` (was a PR-body probe only) |
+
+Like rounds 24 to 29, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
