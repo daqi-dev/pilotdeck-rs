@@ -435,6 +435,13 @@ def _read_input(path, root_identity=None):
                                'reads plain files only, so refusing to run the control')
         with os.fdopen(descriptor, 'rb', closefd=False) as handle:
             return handle.read()
+    except OSError as error:
+        # The read itself can still fail (EIO, a revoked mount). A bare OSError
+        # reaching the caller reads as "ran and failed" in the host triage
+        # rather than "refused to start"; `_copy_input` already wraps this stage
+        # (#1570 r22 concurrency/boundary P3).
+        raise RuntimeError(f'source_copy: {path} changed while the control was starting '
+                           f'({error}); refusing to run the control') from error
     finally:
         os.close(descriptor)
 
@@ -460,6 +467,14 @@ def _source_digest(path, root_identity=None):
                                'changed while the copy was being made, so refusing to run the '
                                'control against a moving tree')
         return _sha256_of(descriptor)
+    except OSError as error:
+        # `_sha256_of`'s read is the stage `_copy_input` already wraps: an EIO
+        # here used to escape as a bare OSError, which the host triage reads as
+        # "ran and failed" instead of "refused against a moving tree"
+        # (#1570 r22 concurrency/boundary P3).
+        raise RuntimeError(f'source_copy: {path} changed while it was being copied '
+                           f'({error}); refusing to run the control against a moving tree'
+                           ) from error
     finally:
         os.close(descriptor)
 
@@ -885,7 +900,7 @@ def _path_attributes(text, limit):
             yield literal[0], literal[2]
 
 
-def compile_inputs(*, sources=None, read=None):
+def compile_inputs(*, sources=None, read=None, root_identity=None):
     """Repository paths the scratch copy needs beyond `src/` (#1570).
 
     `src/` alone is not a build: tracked sources include
@@ -949,6 +964,14 @@ def compile_inputs(*, sources=None, read=None):
     against the bytes the derivation was made from -- an index that gains a
     file after the list was taken would otherwise be scanned by nobody and
     copied unscanned.
+
+    `root_identity` is the `(st_dev, st_ino)` `source_copy` took before it
+    read anything. Without it every read here re-trusted whatever occupied the
+    root path at that moment: swapping the checkout for another real checkout
+    during the scan scanned the *impostor's* source, and its text came back
+    out in the refusal message, which the host triage writes to the log
+    (#1570 r22 codex P0). A standalone caller (a test) may leave it out; the
+    copy path never does.
     """
     tracked = set(_tracked('src'))
     repository = REPO.resolve()
@@ -966,7 +989,7 @@ def compile_inputs(*, sources=None, read=None):
         if source in scanned:
             continue
         scanned.add(source)
-        data = _read_input(source)
+        data = _read_input(source, root_identity)
         if read is not None:
             read[source] = hashlib.sha256(data).hexdigest()
         text = data.decode('utf-8', 'surrogateescape')
@@ -1104,14 +1127,28 @@ def source_copy(root):
     # them without scanning them compiles a `mod new;` edge whose own
     # `include_str!` never became an input, so the copy comes up short and the
     # mutation reads INVALID (#1570 r18 codex P1).
-    tracked = _tracked('src')
+    try:
+        tracked = _tracked('src')
+    except subprocess.SubprocessError as error:
+        # A git failure before anything is copied leaves a bare traceback,
+        # which the host triage reads as "ran and failed" instead of "refused
+        # to start" -- the #1570 shape. The re-lists after the copy already
+        # normalise theirs; this is the same failure one stage earlier
+        # (#1570 r22 boundary/concurrency P3).
+        raise RuntimeError(f'cannot list the workspace inputs ({error}); '
+                           'refusing to run the control') from error
     sources = tracked + [path for path in _untracked_files('src')
                          if path not in set(tracked)]
     # sha256 of every file the scan read, filled by the scan itself: comparing
     # the copy against these bytes is what proves the derivation and the copy
     # came from the same tree, including fragments outside `src/`.
     read = {}
-    directories, files = compile_inputs(sources=sources, read=read)
+    try:
+        directories, files = compile_inputs(sources=sources, read=read,
+                                            root_identity=root_identity)
+    except subprocess.SubprocessError as error:
+        raise RuntimeError(f'cannot derive the workspace inputs ({error}); '
+                           'refusing to run the control') from error
     paths = list(sources)
     seen = set(paths)
     # No derived directory is normal (nothing outside `src/` is read); asking
@@ -1119,7 +1156,13 @@ def source_copy(root):
     # `.github/` and tracked `.env*` into every scratch workspace (#1570 r15
     # boundary).
     listed = set()
-    for path in (_tracked(*directories) if directories else ()):
+    try:
+        tracked_inputs = _tracked(*directories) if directories else ()
+        untracked_inputs = _untracked_files(*directories) if directories else []
+    except subprocess.SubprocessError as error:
+        raise RuntimeError(f'cannot list the input directories ({error}); '
+                           'refusing to run the control') from error
+    for path in tracked_inputs:
         listed.add(path)
         if path not in seen:
             seen.add(path)
@@ -1135,9 +1178,7 @@ def source_copy(root):
     # `src/` is already covered by `sources`; the derived directories get the
     # same carry-along rule. Both are filtered by `_untracked_files`, which
     # refuses links, directories and dotenv files.
-    untracked = []
-    if directories:
-        untracked += _untracked_files(*directories)
+    untracked = list(untracked_inputs)
     for path in untracked:
         listed.add(path)
         if path not in seen:
@@ -1254,7 +1295,18 @@ def source_copy(root):
         if relisted != listed:
             raise RuntimeError('an input directory changed while the scratch copy was being '
                                'made; refusing to run the control against a moving tree')
-    if compile_inputs(sources=sources) != (directories, files):
+    # The third derivation is the same kind of re-list as the two above, so a
+    # git failure here is refused the same way instead of escaping as a bare
+    # `CalledProcessError` (#1570 r22 sibling P3). It runs against the identity
+    # taken before the scan, so a checkout swapped in the copy window refuses
+    # here even when the index it lists happens to match.
+    try:
+        unchanged = compile_inputs(sources=sources, root_identity=root_identity)
+    except (RuntimeError, subprocess.SubprocessError) as error:
+        raise RuntimeError('the workspace inputs changed while the scratch copy was being '
+                           f'made ({error}); refusing to run the control against a moving '
+                           'tree') from error
+    if unchanged != (directories, files):
         raise RuntimeError('the workspace inputs changed while the scratch copy was being '
                            'made; refusing to run the control against a moving tree')
     # Last line of defence: every file in the copy must still equal its source.

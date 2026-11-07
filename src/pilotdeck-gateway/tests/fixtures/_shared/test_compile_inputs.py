@@ -1053,7 +1053,132 @@ class Manifest(unittest.TestCase):
             control._read_input = original
             assert root.exists()
 
-    def test_no_control_brings_its_own_workspace_copy(self):
+    def test_the_scan_reads_the_tree_the_copy_was_bound_to(self):
+        # `compile_inputs` used to call `_read_input` without the identity
+        # `source_copy` took before reading anything, so the scan re-trusted
+        # whatever occupied the root path at that moment: swapping the checkout
+        # for another real checkout during the scan scanned the impostor's
+        # source, and its text came back out in the refusal message, which the
+        # host triage writes to the log (#1570 r22 codex P0). The identity is
+        # threaded through both scans now.
+        root = self.workspace('include_str!("../specs/x.json");')
+        identity = control._repository_identity()
+        impostor = Path(tempfile.mkdtemp(prefix='pdrs-1570-scan-swap-'))
+        self.roots.append(impostor)
+        (impostor / 'src').mkdir(parents=True)
+        (impostor / 'src' / 'a.rs').write_text('include_str!("OUTSIDE SECRET");\n',
+                                               encoding='utf-8')
+        subprocess.check_call(['git', 'init', '-q'], cwd=impostor)
+        subprocess.check_call(['git', 'add', '-A'], cwd=impostor)
+        subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                               'commit', '-qm', 'x'], cwd=impostor)
+        moved = root.with_name(root.name + '-moved')
+        root.rename(moved)
+        self.roots.append(moved)
+        os.rename(impostor, root)
+        with self.assertRaisesRegex(RuntimeError, 'repository root changed') as caught:
+            control.compile_inputs(root_identity=identity)
+        self.assertNotIn('OUTSIDE SECRET', str(caught.exception))
+
+    def test_source_copy_binds_the_scan_and_the_copy_to_one_tree(self):
+        # Pinning the identity at `_copy_input` alone left the wiring itself
+        # untested: dropping `root_identity` at any `source_copy` call site
+        # kept the whole suite green (#1570 r22 boundary P2). Swap the checkout
+        # after the first file is copied and the run must refuse.
+        root = self.workspace('include_str!("../specs/x.json");')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-bind-'))
+        self.roots.append(destination)
+        original = control._copy_input
+        state = {'swapped': False}
+
+        def swap_after_first(path, target, root_identity=None):
+            original(path, target, root_identity)
+            if state['swapped'] or path != Path('src/a.rs'):
+                return
+            state['swapped'] = True
+            moved = root.with_name(root.name + '-moved')
+            root.rename(moved)
+            self.roots.append(moved)
+            (root / 'src').mkdir(parents=True)
+            (root / 'src' / 'a.rs').write_text('include_str!("OUTSIDE SECRET");\n',
+                                               encoding='utf-8')
+            (root / 'specs').mkdir()
+            (root / 'specs' / 'x.json').write_text('{}\n', encoding='utf-8')
+            subprocess.check_call(['git', 'init', '-q'], cwd=root)
+            subprocess.check_call(['git', 'add', '-A'], cwd=root)
+            subprocess.check_call(['git', '-c', 'user.email=t@t', '-c', 'user.name=t',
+                                   'commit', '-qm', 'y'], cwd=root)
+
+        control._copy_input = swap_after_first
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'repository root changed'):
+                control.source_copy(destination)
+        finally:
+            control._copy_input = original
+        self.assertTrue(state['swapped'])
+
+    def test_a_read_error_is_a_refusal_not_a_traceback(self):
+        # The single-descriptor readers wrapped the open but not the read, so
+        # an EIO after the descriptor was checked escaped as a bare `OSError`;
+        # the host triage reads that as "ran and failed" instead of "refused"
+        # (#1570 r22 concurrency / boundary P3).
+        self.workspace('mod a;\n')
+        original = control._sha256_of
+
+        def failing(descriptor):
+            raise OSError(5, 'Input/output error')
+
+        control._sha256_of = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'changed while it was being copied'):
+                control._source_digest(Path('src/a.rs'))
+        finally:
+            control._sha256_of = original
+
+    def test_a_read_error_during_the_scan_is_a_refusal_too(self):
+        # The scan's reader carries the same wrapper; `os.fdopen` is the one
+        # seam below both, so patch it for the duration of one call.
+        self.workspace('mod a;\n')
+        original = control.os.fdopen
+
+        def failing(*args, **kwargs):
+            raise OSError(5, 'Input/output error')
+
+        control.os.fdopen = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'changed while the control was starting'):
+                control._read_input(Path('src/a.rs'))
+        finally:
+            control.os.fdopen = original
+
+    def test_a_git_failure_while_relisting_is_a_refusal(self):
+        # The re-lists after the copy (and the third derivation) turn a git
+        # failure into "the tree moved"; the third derivation did not, so a
+        # `CalledProcessError` escaped `source_copy` and the host triage read
+        # it as "ran and failed" (#1570 r22 sibling P3). Deleting any of those
+        # wrappers fails here.
+        self.workspace('include_str!("../specs/x.json");')
+        destination = Path(tempfile.mkdtemp(prefix='pdrs-1570-git-fail-'))
+        self.roots.append(destination)
+        original = control._tracked
+        calls = []
+
+        def failing(*directories):
+            if directories == (Path('specs'),):
+                calls.append(directories)
+                if len(calls) == 2:
+                    raise subprocess.CalledProcessError(128, ['git', 'ls-files'])
+            return original(*directories)
+
+        control._tracked = failing
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'changed while the scratch copy'):
+                control.source_copy(destination)
+        finally:
+            control._tracked = original
+        self.assertEqual(len(calls), 2)
+
+
         # The recurrence mode of #1570 is a new control carrying its own
         # `copytree(src)` inventory -- three suites had one. Enumerate the
         # fixture tree instead of naming the suites that were fixed, so the
