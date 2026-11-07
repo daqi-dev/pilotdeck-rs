@@ -138,6 +138,12 @@ GUARDED = [
     # must be caught by the source guard.
     FIXTURES / 'turn-runner-tail/oracle.json',
     FIXTURES / 'turn-runner-tail/generate.mts',
+    # #2228 DS r4 P1: the tail-empty-blocks binding's row() bakes
+    # turn-prompt-hooks/oracle.json into the binary (runner_prompt_tests.rs:161
+    # include_str! via row()), so a concurrent edit during a run must be caught
+    # by the source guard; generate.mts stays unregistered because no binding
+    # here regenerates that fixture.
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
     # runtime/turn/mod.rs declares the runner/live modules the bindings
     # resolve through, and runtime/mod.rs declares turn itself, capping the

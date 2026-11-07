@@ -60,6 +60,11 @@ GUARDED = [
     FIXTURES / 'tool-budget-cwd/regression.rs',
     FIXTURES / 'tool-budget-cwd/oracle.json',
     FIXTURES / 'tool-budget-cwd/generate.mts',
+    # #2228 zai r4 P2 (fixed in-round, same class as the turn-gates P1): every
+    # bound cwd test executes the shared baseline module — regression.rs:9-10
+    # matrix() starts with crate::test_baseline::oracle(ORACLE) — the same
+    # input the five sibling fixtures already register.
+    ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
     # #2228 DS r3 P2 / zai r3 P2 (independent hit): the declarators above the
     # switch sites — runtime/turn/mod.rs declares host_factory/live, and
