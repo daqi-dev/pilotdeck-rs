@@ -873,11 +873,15 @@ impl CronRuntime {
     /// from real TS at cc7c4e6) pins `{"started":true,…}` for this exact
     /// input, so a second read could only make the baseline contradict its own
     /// recorded behaviour — bug criterion ② in `.42cog/intent.md` §不做什么
-    /// (2026-10-14 人定「默认修」), which is why the approval for this seam is
-    /// recorded as an accepted difference rather than left implicit. Only a
-    /// clock that ticks between the two reads can observe the change; the
-    /// production clock is a single source (`store::now_millis`, whole
-    /// milliseconds), so no real request lands in that window.
+    /// (2026-10-14 人定「默认修」), which is why this seam was approved as an
+    /// accepted difference (2026-11-07, AI 代批，待人复核) rather than left
+    /// implicit; entering it in the append-only `specs/gateway-parity` ledger
+    /// is tracked by #2096. Only a clock that ticks between the two reads can
+    /// observe the change, and that tick is reachable, not theoretical: the
+    /// window is one millisecond wide and a run-now straddled it in about 2.5%
+    /// of calls on a loaded runner (see the #2047 triage). The deterministic
+    /// regression test is
+    /// `run_now_shares_one_clock_read_with_the_task_it_creates`.
     fn create_task_at(&self, input: &JsValue, now_ms: f64) -> Result<JsValue, CronError> {
         if !self.config.enabled {
             return Err(CronError::error(JsString::from(
