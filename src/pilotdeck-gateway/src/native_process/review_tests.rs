@@ -1241,14 +1241,15 @@ fn ask_tool_names(rules: &crate::config::permission::Lease) -> Vec<String> {
         .collect()
 }
 
+/// Raw outbound frames. Nothing here parses them: outbound JSON may carry a
+/// lone surrogate that `serde_json` rejects (`runtime/connection/mod.rs`), and a
+/// panic inside the writer task would poison the lock and surface as an
+/// unrelated assertion failure.
 #[derive(Default)]
-struct Frames(Mutex<Vec<Value>>);
+struct Frames(Mutex<Vec<String>>);
 impl crate::runtime::connection::GatewayTextConnection for Frames {
     fn send_text(&self, text: String) {
-        self.0
-            .lock()
-            .expect("#1429 frames lock")
-            .push(serde_json::from_str(&text).expect("#1429 frame JSON"));
+        self.0.lock().expect("#1429 frames lock").push(text);
     }
     fn close(&self, _: u16, _: &str) {}
 }
@@ -1278,6 +1279,8 @@ async fn acquiring_a_session_syncs_the_mcp_ask_rules() {
         options.clone(),
         options.environment(Env::new()),
         registry.clone(),
+        Arc::new(|message| panic!("#1429 the published config never misses: {message}")),
+        true,
         Arc::new(|_, result| Box::pin(async move { result })),
         Arc::new(|_| {}),
     )
@@ -1357,14 +1360,17 @@ async fn acquiring_a_session_syncs_the_mcp_ask_rules() {
     );
     turn.abort();
     host.request_shutdown(options.drain_budget);
-    let _ = tokio::time::timeout(Duration::from_secs(10), host.stopped()).await;
+    let _ = tokio::time::timeout(Duration::from_secs(10), host.stopped())
+        .await
+        .expect("#1429 the observed assembly stops within the drain budget");
     probe.release();
 }
 
-/// #1429: the missing publication is a signal, not a silent skip. An acquire
-/// whose forward reference was never published must report the miss and leave
-/// the live ask array untouched, so a wiring regression cannot masquerade as
-/// "there was nothing to sync".
+/// #1429: the helper draws the line the acquire path relies on — an unpublished
+/// forward reference is `false` (never a silent `true`) and leaves the live ask
+/// array untouched, so "there was nothing to sync" cannot be confused with
+/// "the publication regressed". `acquiring_a_session_reports_the_skipped_mcp_ask_sync`
+/// covers the report the production closure emits for that `false`.
 #[test]
 fn an_unpublished_mcp_config_reports_the_skipped_sync() {
     let registry: Arc<crate::config::permission::GatewaySessionPermissionRuleSetRegistry> =
@@ -1390,4 +1396,88 @@ fn an_unpublished_mcp_config_reports_the_skipped_sync() {
         "#1429 the skipped sync leaves the live ask array untouched"
     );
     lease.release();
+}
+
+/// #1429: the miss must be reported from the production prepare closure, not
+/// only by calling the helper. The seam suppresses the MCP publication, so the
+/// acquire inside a real `submit_turn` meets an unpublished forward reference:
+/// it reports the skip (once) and leaves the live ask array alone.
+#[tokio::test]
+async fn acquiring_a_session_reports_the_skipped_mcp_ask_sync() {
+    let scratch = Scratch::new();
+    let options = Options::parse(scratch.args()).expect("#1429 options");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CONFIG).expect("#1429 config");
+    let key = JsString::from("session");
+    let registry: Arc<crate::config::permission::GatewaySessionPermissionRuleSetRegistry> =
+        Arc::default();
+    // A lease of our own keeps the session's rule-set entry alive after the turn.
+    let probe = registry.acquire(&key, None);
+    probe.rules().member("ask").update_array(|ask| {
+        ask.push(PermissionRule::new("user", "ask", "kept").into());
+    });
+    let reports: Arc<Mutex<Vec<String>>> = Arc::default();
+    let sink = reports.clone();
+    let host = assembly::start_observed_with_permission_rule_sets(
+        options.clone(),
+        options.environment(Env::new()),
+        registry.clone(),
+        Arc::new(move |message: &str| {
+            sink.lock()
+                .expect("#1429 miss reports lock")
+                .push(message.to_owned());
+        }),
+        // Do not publish the MCP config: this is the wiring regression.
+        false,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|_| {}),
+    )
+    .await
+    .expect("#1429 observed assembly starts");
+    let frames = Arc::new(Frames::default());
+    let connection = host.connect(frames, "token".into(), "fixture".into());
+    connection
+        .receive(
+            json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"})
+                .to_string(),
+        )
+        .await
+        .expect("#1429 hello");
+    let submit = connection.clone();
+    let turn = tokio::spawn(async move {
+        // The turn itself may fail (the fixture model URL refuses connections);
+        // only the session acquire inside it matters here.
+        let _ = submit
+            .receive(
+                json!({"type":"request","id":"turn","method":"submit_turn","params":{"sessionKey":"session","runId":"run","message":"hello","channelKey":"test"}})
+                    .to_string(),
+            )
+            .await;
+    });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while reports.lock().expect("#1429 miss reports lock").is_empty()
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let captured = reports.lock().expect("#1429 miss reports lock").clone();
+    negative_assert_eq!(
+        captured.len(),
+        1,
+        "#1429 the acquire path reports the skipped sync exactly once"
+    );
+    negative_assert!(
+        captured[0].contains("MCP ask rule sync skipped"),
+        "#1429 the report names the skipped sync"
+    );
+    negative_assert_eq!(
+        ask_tool_names(&probe),
+        vec!["kept".to_owned()],
+        "#1429 a skipped sync leaves the live ask array untouched"
+    );
+    turn.abort();
+    host.request_shutdown(options.drain_budget);
+    let _ = tokio::time::timeout(Duration::from_secs(10), host.stopped())
+        .await
+        .expect("#1429 the observed assembly stops within the drain budget");
+    probe.release();
 }
