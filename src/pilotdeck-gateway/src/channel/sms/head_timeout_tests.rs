@@ -28,6 +28,12 @@
 //! (`PREFIX = 'channel::sms::head_timeout_tests::'`), instead of rewriting the
 //! 71 existing rows. That is also why `NullSender` is duplicated from
 //! `sms/tests.rs` instead of shared.
+//!
+//! #2026 (decision C) adds the `stop()` drain cases: `stop()` now drains the
+//! in-flight connections bounded by `STOP_DRAIN_LIMIT` (60 s) instead of
+//! detaching them, with the mutation switches `sms-stop-no-drain` (the
+//! pre-#2026 detach shape) and `sms-stop-drain-unbounded` (the TS
+//! unbounded-block shape) registered in the same table.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,7 +51,8 @@ const PORT_HALF_HEAD: u16 = 18971;
 const PORT_POSITIVE: u16 = 18972;
 const PORT_DEFAULT_WIRING: u16 = 18973;
 const PORT_DEFAULT_DEADLINE: u16 = 18974;
-const PORT_STOP_DETACH: u16 = 18975;
+const PORT_STOP_DRAIN: u16 = 18975;
+const PORT_STOP_BOUND: u16 = 18977;
 const PORT_BIND_RACE: u16 = 18976;
 
 /// The injected deadline for the fast cases. Far above scheduler jitter (the
@@ -62,16 +69,27 @@ const INJECTED: Duration = Duration::from_millis(300);
 const CLOSE_UPPER: Duration = Duration::from_millis(600);
 /// How long a client read may take before the test calls it unbounded.
 const READ_LIMIT: Duration = Duration::from_secs(5);
-/// The head deadline injected by the `stop()` detach case (#2035). Far above
-/// the 1 s bound on `stop()`, so a `stop()` that waited for the connection
-/// could not finish inside it, and far above the half-head read that proves
-/// the connection is still open afterwards.
-const DETACH_DEADLINE: Duration = Duration::from_secs(30);
-/// The bound on `stop()` returning: the TS `server.close()` blocks on the
-/// drain (#2026 residual 4), the Rust handle must not.
-const STOP_RETURN_LIMIT: Duration = Duration::from_secs(1);
-/// How long the detached connection must stay open after `stop()` returned.
-const DETACH_OBSERVE: Duration = Duration::from_millis(500);
+/// The head deadline injected by the `stop()` drain cases. The fast case
+/// reuses [`INJECTED`]; the bound case needs a connection that **outlives**
+/// the 60 s [`STOP_DRAIN_LIMIT`], so its head deadline is deliberately
+/// longer than the bound.
+const BOUND_DEADLINE: Duration = Duration::from_secs(90);
+/// The window in which the drained connection's EOF must already be pending
+/// once `stop()` returned: anything that ends the socket inside this window
+/// after a bounded drain came from the drain, not from the head deadline.
+const DRAIN_OBSERVE: Duration = Duration::from_millis(200);
+/// The window in which the **aborted** connection of the bound case must have
+/// reached EOF after `stop()` returned: the JoinSet drop aborts the task, and
+/// the runtime needs a beat to run the cancellation.
+const DRAIN_TRUNCATED: Duration = Duration::from_secs(2);
+/// The bracket for the ignored bound case: `stop()` must return at the 60 s
+/// drain bound (one tick of slack below), well before the 90 s injected head
+/// deadline could have ended the connection on its own.
+const BOUND_LOWER: Duration = Duration::from_secs(58);
+const BOUND_UPPER: Duration = Duration::from_secs(75);
+/// The outer wait for `stop()` in the ignored bound case: above
+/// [`BOUND_UPPER`] with margin, below the 90 s connection deadline.
+const BOUND_WAIT: Duration = Duration::from_secs(80);
 
 struct NullSender;
 impl SmsSender for NullSender {
@@ -361,25 +379,24 @@ async fn the_default_head_deadline_is_nodes_sixty_seconds() {
     handle.stop("test").await.expect("#1955 stop");
 }
 
-/// #2035: `SmsHandle::stop()` stops the **accept loop** and returns; the
-/// connections it already accepted keep running as detached `tokio::spawn`
-/// tasks. That is the registered shape: `specs/gateway-parity/diffs/
-/// A8.3-CH-SMS-012.md` residual 4 records that the TS `server.close()` waits
-/// for the drain while Rust does not, and decision card #2026 keeps that
-/// difference as the current semantics. This case pins the detach instead of
-/// leaving it implicit — `stop()` must come back while the connection still
-/// lives, and the client must already be cleared at that moment (read through
-/// `send_reply`, which returns false once `client` is `None`; the
-/// client-clearing order is registered in `A8.3-CH-SMS-013.md`).
+/// #2026 (decision C): `SmsHandle::stop()` drains the connections the accept
+/// loop already handed out — the `wecom_callback` lane's
+/// `stop_drains_a_half_sent_header_once_the_header_timeout_fires` shape. A
+/// half-sent request head is drained to its **natural** deadline (the
+/// injected head deadline, far shorter than the 60 s [`STOP_DRAIN_LIMIT`]
+/// here): `stop()` must not come back before that deadline retires the
+/// connection, and once it has returned the connection's EOF must already be
+/// pending. The pre-#2026 detach shape (stop returns while the connection
+/// lives) is the mutation switch `sms-stop-no-drain` and must fail this case.
 ///
-/// The other half is the mutation switch `sms-stop-waits-for-connections`: it
-/// makes `stop()` drain the detached connections, and this case must then miss
-/// the [`STOP_RETURN_LIMIT`] bound.
+/// The client clearing stays after the drain, like the TS `server.close()`
+/// callback ordering (`A8.3-CH-SMS-013-R1`): `send_reply` keeps returning
+/// true while the drain is in flight and false once `stop()` returned.
 #[tokio::test]
-async fn stop_returns_before_the_detached_connection_ends() {
-    let (handle, shared) = start(PORT_STOP_DETACH, Some(DETACH_DEADLINE)).await;
-    // A present client makes the post-`stop()` reading a real observation
-    // instead of a check on a value that was never set.
+async fn stop_drains_a_half_sent_header_once_the_header_timeout_fires() {
+    let (handle, shared) = start(PORT_STOP_DRAIN, Some(INJECTED)).await;
+    // A present client makes the during/after-`stop()` readings real
+    // observations instead of checks on a value that was never set.
     shared.runtime.lock().await.client = Some(Arc::new(NullSender) as Arc<dyn SmsSender>);
     assert!(
         super::send_reply(
@@ -388,16 +405,20 @@ async fn stop_returns_before_the_detached_connection_ends() {
             JsString::from("before")
         )
         .await,
-        "#2035 the client is usable before stop(): send_reply takes the \
+        "#2026 the client is usable before stop(): send_reply takes the \
          SmsSender path (A8.3-CH-SMS-013)"
     );
-    let mut socket = connect(PORT_STOP_DETACH).await;
+    // After `start()` the baseline strong count is the channel-less handle
+    // plus the accept loop; the connection task adds one for its lifetime.
+    let baseline = Arc::strong_count(&shared);
+    let mut socket = connect(PORT_STOP_DRAIN).await;
     socket
         .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
         .await
-        .expect("#2035 write the half head");
-    // Wait for the accept loop to hand the connection to its detached task;
-    // without this the case could stop before the connection was even taken.
+        .expect("#2026 write the half head");
+    // Wait for the accept loop to hand the connection to its task; without
+    // this the case could stop before the connection was taken, and a stop
+    // that never saw the connection cannot prove anything about the drain.
     let deadline = tokio::time::Instant::now() + READ_LIMIT;
     while shared
         .live_connections
@@ -406,25 +427,61 @@ async fn stop_returns_before_the_detached_connection_ends() {
     {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "#2035 the accept loop never took the connection"
+            "#2026 the accept loop never took the connection"
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     let started = tokio::time::Instant::now();
-    tokio::time::timeout(STOP_RETURN_LIMIT, handle.stop("test"))
+    let stopping = tokio::spawn({
+        let handle = handle.clone();
+        async move { handle.stop("test").await }
+    });
+    // While the drain is in flight (the injected deadline is 300 ms, so at
+    // 100 ms the connection is provably still draining) the client must
+    // still be usable — the clearing happens after the drain.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        super::send_reply(
+            &shared,
+            &JsString::from("+15550001"),
+            JsString::from("during")
+        )
+        .await,
+        "#2026 the Twilio client stays usable while stop() drains: a stop \
+         that returned early cleared it (A8.3-CH-SMS-013-R1)"
+    );
+    tokio::time::timeout(READ_LIMIT, stopping)
         .await
-        .expect("#2035 stop() must return while the detached connection still runs")
-        .expect("#2035 stop");
+        .expect("#2026 stop() must finish draining inside the read limit")
+        .expect("#2026 the stop task must not panic")
+        .expect("#2026 stop");
     let elapsed = started.elapsed();
 
     assert!(
-        shared
-            .live_connections
-            .load(std::sync::atomic::Ordering::SeqCst)
-            >= 1,
-        "#2035 the detached connection task is still running after stop() \
-         returned: a stop that waited for it would have left the count at zero"
+        elapsed >= INJECTED / 2,
+        "#2026 stop() waited for the in-flight connection: it returned in \
+         {elapsed:?}, before the injected {INJECTED:?} head deadline could \
+         retire it (the drain is missing)"
+    );
+    assert!(
+        elapsed < READ_LIMIT,
+        "#2026 stop() returned inside the read limit, took {elapsed:?}"
+    );
+    // The drain ran the connection to its natural deadline, so by the time
+    // stop() returned the EOF is already pending: zero bytes, immediate EOF.
+    let (bytes, closed) = read_until_close(&mut socket, DRAIN_OBSERVE).await;
+    assert!(
+        closed,
+        "#2026 the drained connection reached EOF before stop() returned: \
+         no EOF inside {DRAIN_OBSERVE:?} means stop() came back while it \
+         still lived"
+    );
+    assert_eq!(
+        bytes,
+        Vec::<u8>::new(),
+        "#2026 the drain closes the connection at its own head deadline, \
+         zero response bytes (the TS 408 residual is A8.3-CH-SMS-012)"
     );
     assert!(
         !super::send_reply(
@@ -433,47 +490,128 @@ async fn stop_returns_before_the_detached_connection_ends() {
             JsString::from("after")
         )
         .await,
-        "#2035 stop() clears the client while the detached connection still \
-         runs: TS can still send during its drain, Rust cannot \
-         (A8.3-CH-SMS-013 registers the order)"
+        "#2026 stop() clears the client once the drain is done, like the TS \
+         close-callback ordering (A8.3-CH-SMS-013-R1)"
     );
-    assert!(
-        elapsed < STOP_RETURN_LIMIT,
-        "#2035 stop() returned inside the bound, took {elapsed:?}"
-    );
-
-    // The accept loop is gone, so the port refuses new connections even
-    // though the accepted one is still served.
+    // The accept loop is gone, so the port refuses new connections.
     match tokio::time::timeout(
         Duration::from_secs(1),
-        TcpStream::connect(("127.0.0.1", PORT_STOP_DETACH)),
+        TcpStream::connect(("127.0.0.1", PORT_STOP_DRAIN)),
     )
     .await
     {
         Ok(Ok(_)) => panic!(
-            "#2035 the stopped channel still accepts connections on \
-             {PORT_STOP_DETACH}; stop() must close the listener"
+            "#2026 the stopped channel still accepts connections on \
+             {PORT_STOP_DRAIN}; stop() must close the listener"
         ),
         Ok(Err(_)) => {}
-        Err(_) => panic!("#2035 the connect to the stopped port hung"),
+        Err(_) => panic!("#2026 the connect to the stopped port hung"),
+    }
+    // The drained connection task must have released its SmsShared clone. The
+    // finished accept loop releases its own clone too, so the settled count is
+    // one below the post-`start()` baseline (which the loop was still part
+    // of); a connection task that never returned would sit above it.
+    let settled = baseline - 1;
+    let leaked = wait_for_task_release(&shared, settled).await;
+    assert_eq!(
+        leaked, settled,
+        "#2026 every drained connection task released its SmsShared clone"
+    );
+}
+
+/// #2026 (decision C): the drain is **bounded**. A connection that outlives
+/// [`STOP_DRAIN_LIMIT`] (here: an injected head deadline of 90 s, longer than
+/// the 60 s bound) must not pin `stop()` — it returns at the bound, and the
+/// truncation aborts the outlived connection (JoinSet drop) instead of
+/// letting it run to its own deadline. The TS shape (blocking until the
+/// client leaves) is the mutation switch `sms-stop-drain-unbounded` and must
+/// fail this case.
+///
+/// Ignored from the normal suite like the 60 s default-deadline case above:
+/// the production bound cannot be injected away, so the case costs a full
+/// drain-bound of wall clock.
+#[ignore = "60 s wall-clock: the production drain bound"]
+#[tokio::test]
+async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
+    let (handle, shared) = start(PORT_STOP_BOUND, Some(BOUND_DEADLINE)).await;
+    shared.runtime.lock().await.client = Some(Arc::new(NullSender) as Arc<dyn SmsSender>);
+    let mut socket = connect(PORT_STOP_BOUND).await;
+    socket
+        .write_all(b"POST /sms/incoming HTTP/1.1\r\nHost: x\r\n")
+        .await
+        .expect("#2026 write the half head");
+    let deadline = tokio::time::Instant::now() + READ_LIMIT;
+    while shared
+        .live_connections
+        .load(std::sync::atomic::Ordering::SeqCst)
+        == 0
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "#2026 the accept loop never took the connection"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
-    // The detached connection stays open and silent: no EOF, no byte. With the
-    // injected 30 s deadline, anything that ends it inside 500 ms came from
-    // stop(), not from the head timer.
-    let mut buffer = [0u8; 64];
-    match tokio::time::timeout(DETACH_OBSERVE, socket.read(&mut buffer)).await {
-        Err(_) => {}
-        Ok(Ok(0)) => panic!(
-            "#2035 stop() closed the detached connection; the registered \
-             semantics leave it running"
-        ),
-        Ok(Ok(count)) => panic!(
-            "#2035 the detached connection produced {count} bytes after \
-             stop(); the head deadline is {DETACH_DEADLINE:?}"
-        ),
-        Ok(Err(error)) => panic!("#2035 the detached connection failed after stop(): {error}"),
-    }
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(BOUND_WAIT, handle.stop("test"))
+        .await
+        .expect("#2026 the drain bound must return stop() while the connection outlives it")
+        .expect("#2026 stop");
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= BOUND_LOWER,
+        "#2026 stop() waited for the drain bound ({STOP_DRAIN_LIMIT:?}), \
+         returned in only {elapsed:?}"
+    );
+    assert!(
+        elapsed < BOUND_UPPER,
+        "#2026 stop() returned at the {STOP_DRAIN_LIMIT:?} drain bound, \
+         took {elapsed:?}"
+    );
+    // The connection's own 90 s head deadline has not fired, so the bound —
+    // not the deadline — is what ended the drain: the truncation drops the
+    // task's JoinSet, which aborts the remaining connection tasks and closes
+    // their sockets. The abort is scheduled on the runtime, so the EOF can
+    // land just after `stop()` returned — bounded window, still zero bytes.
+    let (bytes, closed) = read_until_close(&mut socket, DRAIN_TRUNCATED).await;
+    assert!(
+        closed,
+        "#2026 the truncation aborted the outlived connection: no EOF \
+         inside {DRAIN_TRUNCATED:?} after stop() returned"
+    );
+    assert_eq!(
+        bytes,
+        Vec::<u8>::new(),
+        "#2026 the truncated connection closed with zero bytes; its own \
+         {BOUND_DEADLINE:?} head deadline had not fired"
+    );
+    // At the truncation the client is cleared together with the connections
+    // — the bounded-ization residual of the TS ordering
+    // (`A8.3-CH-SMS-014`), where `stop()` is still blocked in the close
+    // callback and the client stays usable.
+    assert!(
+        !super::send_reply(
+            &shared,
+            &JsString::from("+15550001"),
+            JsString::from("after")
+        )
+        .await,
+        "#2026 stop() clears the client when the bound truncates the drain"
+    );
+}
+
+/// #2026: the drain bound is a named constant at the head deadline's
+/// magnitude, not an arbitrary literal buried in the call. Keeps a wrong
+/// constant from being catchable only by the `#[ignore]`d 60 s case above.
+#[test]
+fn the_drain_bound_is_the_head_deadlines_sixty_seconds() {
+    assert_eq!(
+        STOP_DRAIN_LIMIT,
+        Duration::from_secs(60),
+        "#2026 the drain bound stays at the head deadline's magnitude \
+         (A8.3-CH-SMS-014)"
+    );
 }
 
 /// #2020: the [`start`] helper's `Arc::strong_count` guard has to be able to

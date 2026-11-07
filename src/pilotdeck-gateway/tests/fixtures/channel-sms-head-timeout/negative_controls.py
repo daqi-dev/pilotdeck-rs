@@ -18,10 +18,13 @@ so the executor precompiles once with `--features pdrs-mutants` and runs every
 phase in its own process.
 
 `#2020` registers `sms-header-read-no-timeout` (#1955's request-head deadline,
-killed by the half-head case) and `sms-stop-waits-for-connections` (#2035's
-detach semantics, killed by the paired `stop()` case). The second switch is
-test-only bookkeeping: `SmsHandle::stop()` drains the detached connections
-under the mutation, and the paired case must then miss its 1 s bound.
+killed by the half-head case). `#2026` (decision C) replaced #2035's
+`sms-stop-waits-for-connections` — its detach semantics is now the *mutation*,
+not the production shape — with `sms-stop-no-drain` (the pre-#2026 detach
+shape, killed by the drain case's during-drain client assertion) and
+`sms-stop-drain-unbounded` (the TS unbounded-block shape, killed by the
+`#[ignore]`d bound case; the executor's `--include-ignored` runs it, one phase
+costs up to ~80 s of the 480 s budget).
 """
 import argparse
 import os
@@ -41,13 +44,22 @@ switches = [
     ('sms-header-read-no-timeout', SMS / 'mod.rs',
      'half_sent_head_is_closed_at_the_deadline_and_leaves_no_task',
      '#1955 the server retired the stalled head at the deadline'),
-    # #2035: `stop()` waits for every detached connection task before clearing
-    # the client, i.e. the pre-fix shape of the TS `server.close()` drain.
-    # Killed by the paired case, which requires `stop()` to return inside 1 s
-    # while a connection with a 30 s head deadline is still open.
-    ('sms-stop-waits-for-connections', SMS / 'mod.rs',
-     'stop_returns_before_the_detached_connection_ends',
-     '#2035 stop() must return while the detached connection still runs'),
+    # #2026 (decision C): the drain is skipped, i.e. the pre-#2026 detach
+    # shape — stop() returns while the half-head connection still lives and
+    # the client is cleared immediately. Killed by the drain case's
+    # during-drain client assertion (the first statement that can observe the
+    # early return: a stop that came back cleared the client before the
+    # 100 ms probe).
+    ('sms-stop-no-drain', SMS / 'mod.rs',
+     'stop_drains_a_half_sent_header_once_the_header_timeout_fires',
+     '#2026 the Twilio client stays usable while stop() drains'),
+    # #2026 (decision C): the drain has no bound, i.e. the TS shape — Node's
+    # `server.close()` blocks until the client leaves. Killed by the bound
+    # case, which requires stop() to return while the connection (90 s head
+    # deadline, longer than the 60 s bound) is still open.
+    ('sms-stop-drain-unbounded', SMS / 'mod.rs',
+     'stop_returns_at_the_drain_bound_when_a_connection_outlives_it',
+     '#2026 the drain bound must return stop() while the connection outlives it'),
 ]
 GUARDED = [
     SMS / 'mod.rs',
