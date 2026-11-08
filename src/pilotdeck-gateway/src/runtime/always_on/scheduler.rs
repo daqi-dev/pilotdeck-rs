@@ -390,12 +390,19 @@ impl DiscoveryScheduler {
             on_signal,
             on_error,
         ));
-        watcher.start();
+        // The TS assigns before starting (`this.watcher = new
+        // SignalWatcher(...); this.watcher.start()`), so a synchronous start
+        // failure reaches `on_error` -> `disposeWatcher()` with the slot
+        // holding the dead watcher, and `take()` empties it — the next
+        // `ensure` re-arms. Storing after `start()` would pin the dead
+        // watcher in the slot and make the `is_some()` early return above
+        // permanent (a watcher that failed to start can never recover).
         *self
             .shared
             .watcher
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(watcher);
+            .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());
+        watcher.start();
     }
 
     /// `handleSignal` (DiscoveryScheduler.ts:192-201): clear the dormancy,
@@ -1248,6 +1255,49 @@ mod tests {
             golden("d1-dormant-signal"),
             "#2294 d1-dormant-signal: the dormancy signal semantics"
         );
+        scheduler.stop().await;
+    }
+
+    // rearm (fix-r3, DiscoveryScheduler.ts:173-190): a start that fails
+    // synchronously (missing project root) must leave the slot empty —
+    // `on_error` -> `disposeWatcher()` takes the just-stored watcher out —
+    // so a later `ensure` re-arms once the root exists. Before fix-r3 the
+    // dead watcher was stored after `start()` failed and the `is_some()`
+    // early return made the failure permanent (the dormancy watcher never
+    // recovered), which the TS does not do.
+    #[tokio::test]
+    async fn a_failed_watch_start_re_arms_after_the_root_returns() {
+        let harness = Harness::new("rearm", 41);
+        let scheduler = harness.scheduler(harness.config(true, &[("tickIntervalMinutes", 0.0)]));
+        std::fs::remove_dir_all(&harness.project_root).expect("#2294 root rm");
+        scheduler.ensure_dormancy_watcher();
+        let slot_empty = scheduler
+            .shared
+            .watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none();
+        let warned = harness
+            .log()
+            .iter()
+            .any(|line| line.starts_with("warn:always-on signal watcher error:"));
+        std::fs::create_dir_all(&harness.project_root).expect("#2294 root mkdir");
+        scheduler.ensure_dormancy_watcher();
+        let re_armed = scheduler
+            .shared
+            .watcher
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        assert!(
+            slot_empty,
+            "#2294 rearm: on_error disposes the failed watcher out of the slot"
+        );
+        assert!(
+            warned,
+            "#2294 rearm: the failed start logs `always-on signal watcher error`"
+        );
+        assert!(re_armed, "#2294 rearm: a later ensure re-arms the watcher");
         scheduler.stop().await;
     }
 

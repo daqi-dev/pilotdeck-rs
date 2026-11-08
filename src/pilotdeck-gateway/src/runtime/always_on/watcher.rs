@@ -138,6 +138,7 @@ struct WatcherInner {
 /// task exits on its own once the flag is set, so a callback may dispose the
 /// watcher from inside `on_signal` — exactly what the scheduler's
 /// `handleSignal` does — without deadlocking.
+#[derive(Clone)]
 pub(crate) struct SignalWatcher {
     inner: Arc<WatcherInner>,
 }
