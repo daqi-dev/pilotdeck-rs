@@ -7775,3 +7775,113 @@ async fn production_workspace_cwd_is_storage_owned_without_extending_public_snap
     );
     h.finish("workspace-cwd").await;
 }
+
+#[tokio::test]
+async fn prepared_storage_factory_is_used_by_real_session_construction() {
+    let h = Harness::new("prepared-storage");
+    let prepare = h.factory.options.prepare.clone();
+    let selected = h.factory.options.create_storage.clone();
+    let options = &h.factory.options;
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: options.writer_busy_wait_timeout,
+        prepare: Arc::new(move |context, mcp| {
+            let preparing = prepare(context, mcp);
+            let selected = selected.clone();
+            Box::pin(async move {
+                let mut prepared = preparing.await?;
+                prepared.resources.set_storage_factory(selected)?;
+                Ok(prepared)
+            })
+        }),
+        create_storage: Arc::new(|_| {
+            Box::pin(async {
+                Err(RuntimeError::new(
+                    "unselected default storage must not execute",
+                ))
+            })
+        }),
+        admission: options.admission.clone(),
+        diagnostic: options.diagnostic.clone(),
+        tool_results_dir: options.tool_results_dir.clone(),
+    });
+    let handle = bounded("prepared storage create", factory.create(h.context(), None))
+        .await
+        .expect("prepared generation storage is the real constructor source");
+    assert_eq!(
+        handle.workspace_cwd(),
+        Some(JsString::from(h.root.to_str().unwrap()))
+    );
+    bounded(
+        "prepared storage handle drain",
+        handle.dispose("fixture_complete".into()),
+    )
+    .await
+    .unwrap();
+    drop(handle);
+    bounded("prepared storage factory drain", factory.dispose())
+        .await
+        .unwrap();
+    h.finish("prepared storage original harness").await;
+}
+struct StorageCaptureDropped(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for StorageCaptureDropped {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+fn unused_storage_capture(flag: Arc<std::sync::atomic::AtomicBool>) -> CreateStorage {
+    let capture = StorageCaptureDropped(flag);
+    Arc::new(move |_| {
+        let _capture = &capture;
+        Box::pin(async { Err(RuntimeError::new("unused callback must not run")) })
+    })
+}
+#[tokio::test]
+async fn prepared_storage_capture_drops_before_explicit_generation_release() {
+    let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = captured.clone();
+    let mut resources = PreparedResources::default();
+    resources
+        .set_storage_factory(unused_storage_capture(captured))
+        .unwrap();
+    resources.push(move || {
+        Box::pin(async move {
+            assert!(
+                observed.load(Ordering::SeqCst),
+                "unused storage cannot pin its own generation drain"
+            );
+            Ok(())
+        })
+    });
+    bounded("explicit prepared storage release", resources.release())
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn cancelled_prepared_storage_capture_drops_before_generation_release() {
+    let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let observed = captured.clone();
+    let released = completed.clone();
+    let mut resources = PreparedResources::default();
+    resources
+        .set_storage_factory(unused_storage_capture(captured))
+        .unwrap();
+    resources.push(move || {
+        Box::pin(async move {
+            assert!(
+                observed.load(Ordering::SeqCst),
+                "cancelled storage cannot pin its own generation drain"
+            );
+            released.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+    });
+    drop(resources);
+    bounded("cancelled prepared storage release", async {
+        while !completed.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+}

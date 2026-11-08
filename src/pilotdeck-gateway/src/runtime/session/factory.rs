@@ -556,6 +556,9 @@ pub struct PreparedResources {
     /// #1010 captured executor: registration happens inside async prepare,
     /// while a runtime is current. Drop may run on a thread without one.
     executor: Option<tokio::runtime::Handle>,
+    // Opt-in session composition: storage is selected from the same prepared
+    // project generation as model/tools, rather than resolving a second one.
+    storage_factory: Option<CreateStorage>,
 }
 impl PreparedResources {
     /// Register cleanup on the executor captured by the first registration.
@@ -569,15 +572,31 @@ impl PreparedResources {
         }
         self.releases.push(Box::new(release));
     }
+    /// Bind storage to this prepared generation. Generic factories that do
+    /// not opt in continue using FactoryOptions::create_storage unchanged.
+    pub fn set_storage_factory(&mut self, storage: CreateStorage) -> RuntimeResult {
+        if self.storage_factory.is_some() {
+            return Err(RuntimeError::new(
+                "Prepared session storage is already selected.",
+            ));
+        }
+        self.storage_factory = Some(storage);
+        Ok(())
+    }
     pub fn retain_lease(&mut self, mut lease: RuntimeLease) {
         self.push(move || Box::pin(async move { lease.release().await }));
     }
     pub async fn release(mut self) -> RuntimeResult {
+        // An unused callback can own a reference to a prepared generation.
+        // Drop it before release callbacks that wait for that lease to drain.
+        drop(self.storage_factory.take());
         release_all(std::mem::take(&mut self.releases)).await
     }
 }
 impl Drop for PreparedResources {
     fn drop(&mut self) {
+        // Cancellation obeys the same ordering as explicit release.
+        drop(self.storage_factory.take());
         // A runtime that rejects or drops the spawned task also drops the
         // releases inside it; their own synchronous Drop semantics (lease
         // counts, WriterCloseGuard threads) still run. The async custom
@@ -980,7 +999,12 @@ impl ProjectSessionFactory {
                 }
             }
         }
-        let storage = match (self.options.create_storage)(context.clone()).await {
+        let create_storage = prepared
+            .resources
+            .storage_factory
+            .as_ref()
+            .unwrap_or(&self.options.create_storage);
+        let storage = match create_storage(context.clone()).await {
             Ok(storage) => storage,
             Err(error) => {
                 let _ = prepared.resources.release().await;
