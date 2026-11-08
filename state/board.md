@@ -4849,3 +4849,8 @@ setup现按TS独立env||join目录规则处理HOME未设，显式PILOT_HOME保�
 ### 2026-11-08 · CLI 工作树统一与历史读取接续（Codex，仅本机）
 
 按人令统一到 `~/.codex/worktrees/cli-gateway-setup/pilotdeck-rs`，两侧原始20文件/patch/本地分支快照与bundle均保留，3af476bbc对4265个tree entry逐项核得期望并集，未遗漏或覆盖；旧8e32停在70883b759、工作区clean并锁定保留，不再开发。主仓 `_tmp/20261108-cli-consolidation/README.md` 汇总出处。mbp2 r4全CLI 505 passed/0 failed/139 ignored（含父调用helper和需外置条件项），六格旧路径消费者实际回放、handle_path7、严格clippy与构建通过；本地508514bcd收货消费者测试。native历史读取r6补真实TS消息/背景封套、cursor类型、IO与完整响应上限；独审发现的marker FIFO、后台元数据和编码许可已修候选，尚待合最新main12f919509后的mbp2编译与原生链路实测，当前提交仅可恢复检查点，不能认作CLI/A/真人实效完成。仅本机Git提交，不向GitHub写入、不在本机编译；继续验证history，再推进未接native权限/local fallback。
+
+
+### 2026-11-08 · 统一树 native history 实测收货（Codex，仅本机）
+
+最新抓取main `12f919509` 已合入 `04e32da66`；4282个tree entry中4280个无重叠路径精确符合两侧并集，native_ws逐字为上游+常量可见性，board冲突的双方完整append均保留；两个原WIP快照仍为祖先，旧8e32仍clean/锁定未删。native read_session_messages已接既有runtime/TurnGateway，实现普通/背景历史、完整投影/分页/usage/活动stream合并；真实TS99格中97格完整投影/异常与2格读前路径边界分别覆盖。mbp2 r6严格clippy通过，history12/connection25/catalog1/turn-read24/storage45/adapter13通过，CLI serve退出2/stream3/六格消费者父1及显式native共享宿主2通过（其余TS外置/helper ignored据实保留）；此前r4全CLI505通过。真实control serve+Rust sidecar+fake provider、旧SDK、PTY /switch及termios、取消、重启只读恢复、背景独有内容、越界/symlink/FIFO/超限与marker恢复全部通过，原进程/sidecar清理通过。r5最终串行构建→执行副本→运行→源/bin复核：2979源前后相同、4bin与同轮构建记录一致；前3次探针错误假设及r4中间Cargo导致的两CLI指纹变化原件不覆盖。产品、fixture与真实驱动已归入唯一树，证据主仓 `_tmp/20261108-cli-consolidation/README.md`；两个非作者静态增量审无确认P0/P1，不冒称正式双谱系合并闸门/真人实效。安全差异仍未接受/待人复核，无冻结豁免；未标完整CLI/A/native权限/local fallback完成，后续按只读分流继续独立CLI切片。仅本机提交，全部Rust在mbp2，无GitHub写入。

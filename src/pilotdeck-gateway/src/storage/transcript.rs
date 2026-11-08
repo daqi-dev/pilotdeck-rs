@@ -244,7 +244,10 @@ pub(crate) fn read_transcript_beneath(root: &Path, path: &Path) -> Result<Bounde
     let file = match crate::project_files::open_beneath(root, path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(BoundedTranscript { read: missing_transcript(path).1, snapshot: None });
+            return Ok(BoundedTranscript {
+                read: missing_transcript(path).1,
+                snapshot: None,
+            });
         }
         Err(error) => return Err(path_error(error, "open", path).into()),
     };
@@ -253,7 +256,9 @@ pub(crate) fn read_transcript_beneath(root: &Path, path: &Path) -> Result<Bounde
 
 #[cfg(not(unix))]
 pub(crate) fn read_transcript_beneath(_root: &Path, _path: &Path) -> Result<BoundedTranscript> {
-    Err(invalid("Bounded native history is unavailable on this platform."))
+    Err(invalid(
+        "Bounded native history is unavailable on this platform.",
+    ))
 }
 
 #[cfg(unix)]

@@ -8,8 +8,15 @@ pub(super) struct Budget {
 }
 impl Budget {
     pub fn reserve(&mut self, bytes: usize) -> Result<(), ProjectionError> {
-        self.bytes = self.bytes.checked_add(bytes).ok_or_else(|| ProjectionError("History output exceeds Gateway frame limit".into()))?;
-        if self.bytes > crate::native_ws::MAX_OUTPUT_PAYLOAD { return Err(ProjectionError("History output exceeds Gateway frame limit".into())); }
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or_else(|| ProjectionError("History output exceeds Gateway frame limit".into()))?;
+        if self.bytes > crate::native_ws::MAX_OUTPUT_PAYLOAD {
+            return Err(ProjectionError(
+                "History output exceeds Gateway frame limit".into(),
+            ));
+        }
         Ok(())
     }
     pub fn charge(&mut self, value: &JsValue) -> Result<(), ProjectionError> {

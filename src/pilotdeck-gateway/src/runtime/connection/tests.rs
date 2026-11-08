@@ -1669,9 +1669,26 @@ fn history_response_budget_includes_id_and_stream() {
     let text = stringify_json(&frame).unwrap().unwrap();
     assert_eq!(encode_history_response(frame.clone(), text.len()), text);
     let rejected = parse_json(&encode_history_response(frame, text.len() - 1)).unwrap();
-    assert_eq!(rejected.get("id").and_then(JsValue::as_string).unwrap().to_utf8().unwrap(), "long-id");
+    assert_eq!(
+        rejected
+            .get("id")
+            .and_then(JsValue::as_string)
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+        "long-id"
+    );
     assert_eq!(rejected.get("ok"), Some(&JsValue::Bool(false)));
-    assert_eq!(rejected.get("error").and_then(|v| v.get("message")).and_then(JsValue::as_string).unwrap().to_utf8().unwrap(), "History output exceeds Gateway frame limit");
+    assert_eq!(
+        rejected
+            .get("error")
+            .and_then(|v| v.get("message"))
+            .and_then(JsValue::as_string)
+            .unwrap()
+            .to_utf8()
+            .unwrap(),
+        "History output exceeds Gateway frame limit"
+    );
 }
 
 #[test]
@@ -1684,10 +1701,17 @@ fn history_response_without_tokio_runtime() {
     }
     let text = Arc::new(MemoryText::default());
     let gateway = Arc::new(Gateway::new(false));
-    let connection = GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
-    let hello = format!(r#"{{"type":"hello","protocolVersion":"{}","clientName":"ui","clientVersion":"test","token":"fixture-token"}}"#, GATEWAY_PROTOCOL_VERSION);
+    let connection =
+        GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
+    let hello = format!(
+        r#"{{"type":"hello","protocolVersion":"{}","clientName":"ui","clientVersion":"test","token":"fixture-token"}}"#,
+        GATEWAY_PROTOCOL_VERSION
+    );
     run_ready(connection.receive(&hello));
-    run_ready(connection.receive(r#"{"type":"request","id":"h","method":"read_session_messages","params":{}}"#));
+    run_ready(
+        connection
+            .receive(r#"{"type":"request","id":"h","method":"read_session_messages","params":{}}"#),
+    );
     let frames = text.frames.lock().unwrap();
     let response = parse_json(frames.last().unwrap()).unwrap();
     assert_eq!(response.get("ok"), Some(&JsValue::Bool(true)));

@@ -122,11 +122,22 @@ struct TurnSet<'a> {
 }
 impl<'a> TurnSet<'a> {
     fn insert(&mut self, value: &'a JsValue) -> bool {
-        if let Some(id) = value.as_string() { return self.strings.insert(id); }
-        if self.other.contains(&value) { false } else { self.other.push(value); true }
+        if let Some(id) = value.as_string() {
+            return self.strings.insert(id);
+        }
+        if self.other.contains(&value) {
+            false
+        } else {
+            self.other.push(value);
+            true
+        }
     }
     fn contains(&self, value: &JsValue) -> bool {
-        if let Some(id) = value.as_string() { self.strings.contains(id) } else { self.other.contains(&value) }
+        if let Some(id) = value.as_string() {
+            self.strings.contains(id)
+        } else {
+            self.other.contains(&value)
+        }
     }
 }
 /// Add entries after canonical messages using the TS history ordering contract.
@@ -155,10 +166,16 @@ pub(super) fn inject(
         .iter()
         .any(|t| is(typ, t))
         {
-            if durable_seen.insert(turn) { durable.push(turn.clone()); }
-            if has_tool_result(e) { tools.insert(turn); }
+            if durable_seen.insert(turn) {
+                durable.push(turn.clone());
+            }
+            if has_tool_result(e) {
+                tools.insert(turn);
+            }
         }
-        if is(typ, "turn_result") { completed.insert(turn); }
+        if is(typ, "turn_result") {
+            completed.insert(turn);
+        }
         if is(typ, "agent_status_message")
             && is(f(e, "kind"), "error")
             && f(f(e, "detail"), "visible") != &JsValue::Bool(false)

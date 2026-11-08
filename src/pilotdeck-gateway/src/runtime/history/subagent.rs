@@ -48,8 +48,11 @@ pub(super) fn inject(
         if f(entry, "errored") == &JsValue::Bool(true) {
             continue;
         }
-        let Some(&index) = attached.iter().rev().find(|&&index|
-            f(&messages[index], "subagentId") == f(entry, "subagentId")) else {
+        let Some(&index) = attached
+            .iter()
+            .rev()
+            .find(|&&index| f(&messages[index], "subagentId") == f(entry, "subagentId"))
+        else {
             continue;
         };
         let tool = &messages[index];
@@ -96,7 +99,9 @@ pub(super) fn inject(
         }
         let inserted = super::events::insert_ordered(messages, JsValue::Object(o), budget)?;
         for index in &mut attached {
-            if *index >= inserted { *index += 1; }
+            if *index >= inserted {
+                *index += 1;
+            }
         }
     }
     Ok(())

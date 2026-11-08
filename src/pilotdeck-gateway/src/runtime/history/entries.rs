@@ -16,8 +16,7 @@ fn visible(message: &JsValue) -> bool {
         JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
         JsValue::String(value) => !value.units().is_empty(),
         _ => true,
-    }
-        && field(metadata, "compactReplacement") != &JsValue::Bool(true)
+    } && field(metadata, "compactReplacement") != &JsValue::Bool(true)
 }
 fn non_text(message: &JsValue) -> Result<bool, ProjectionError> {
     let JsValue::Array(blocks) = field(message, "content") else {

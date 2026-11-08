@@ -55,8 +55,13 @@ pub fn page(
         None => total as f64,
         Some(JsValue::Number(n)) if *n == 0.0 => total as f64,
         Some(v @ (JsValue::String(_) | JsValue::Array(_) | JsValue::Object(_))) => {
-            let units = crate::js_value::to_string_units_checked(v).map_err(|e| ProjectionError(e.message().into()))?;
-            let text = format!("{}{}", crate::js_value::number_string(offset), String::from_utf16_lossy(&units));
+            let units = crate::js_value::to_string_units_checked(v)
+                .map_err(|e| ProjectionError(e.message().into()))?;
+            let text = format!(
+                "{}{}",
+                crate::js_value::number_string(offset),
+                String::from_utf16_lossy(&units)
+            );
             crate::js_value::string_to_number(&text)
         }
         Some(v) => {

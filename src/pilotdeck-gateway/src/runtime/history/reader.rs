@@ -1,7 +1,5 @@
 //! Read-only JSONL history access. Reuses the native writer's path identity.
-use crate::{
-    storage::{TranscriptRead, read_transcript_bounded, read_transcript_beneath},
-};
+use crate::storage::{TranscriptRead, read_transcript_beneath, read_transcript_bounded};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::{
     fs,
@@ -14,7 +12,9 @@ static READ_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 /// Restrict only history's marker reads; existing project lookup semantics and
 /// other NativeFiles consumers remain unchanged. Refusals must not fall back
 /// to a different project's lexical identifier.
-struct HistoryMarkerFiles { refused: std::cell::Cell<bool> }
+struct HistoryMarkerFiles {
+    refused: std::cell::Cell<bool>,
+}
 impl crate::metadata::Files for HistoryMarkerFiles {
     fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
         crate::metadata::Files::entries(&crate::metadata::NativeFiles, path)
@@ -48,43 +48,76 @@ impl crate::metadata::Files for HistoryMarkerFiles {
         {
             let _ = path;
             self.refused.set(true);
-            Err(std::io::Error::other("Bounded native history is unavailable on this platform"))
+            Err(std::io::Error::other(
+                "Bounded native history is unavailable on this platform",
+            ))
         }
     }
 }
 fn history_path(files: &HistoryFiles, session: &JsString) -> Result<PathBuf, String> {
     let lookup = crate::metadata::Metadata {
-        home: files.home.clone(), cwd: files.project.clone(),
-        files: HistoryMarkerFiles { refused: std::cell::Cell::new(false) },
+        home: files.home.clone(),
+        cwd: files.project.clone(),
+        files: HistoryMarkerFiles {
+            refused: std::cell::Cell::new(false),
+        },
     };
     let chat = lookup.chat_dir(&files.project.to_string_lossy());
-    if lookup.files.refused.get() { return Err("Unsafe history project marker".into()); }
-    Ok(chat.join(format!("{}.jsonl", crate::storage::sanitize_session_id(session))))
+    if lookup.files.refused.get() {
+        return Err("Unsafe history project marker".into());
+    }
+    Ok(chat.join(format!(
+        "{}.jsonl",
+        crate::storage::sanitize_session_id(session)
+    )))
 }
 
 /// Resolve the TS background-task relative path without allowing traversal.
 fn background_path(input: &JsValue, chat: &std::path::Path) -> Result<Option<PathBuf>, String> {
-    if !input.get("sessionKind").and_then(JsValue::as_string).is_some_and(|s| s.equals_str("background_task")) { return Ok(None); }
-    let Some(value) = input.get("relativeTranscriptPath").and_then(JsValue::as_string) else { return Ok(None); };
-    if value.units().is_empty() { return Ok(None); }
-    let text = value.to_utf8().map_err(|_| "relativeTranscriptPath is not valid UTF-8".to_owned())?;
+    if !input
+        .get("sessionKind")
+        .and_then(JsValue::as_string)
+        .is_some_and(|s| s.equals_str("background_task"))
+    {
+        return Ok(None);
+    }
+    let Some(value) = input
+        .get("relativeTranscriptPath")
+        .and_then(JsValue::as_string)
+    else {
+        return Ok(None);
+    };
+    if value.units().is_empty() {
+        return Ok(None);
+    }
+    let text = value
+        .to_utf8()
+        .map_err(|_| "relativeTranscriptPath is not valid UTF-8".to_owned())?;
     let path = std::path::Path::new(&text);
-    if path.is_absolute() { return Err("relativeTranscriptPath must be a relative path.".into()); }
+    if path.is_absolute() {
+        return Err("relativeTranscriptPath must be a relative path.".into());
+    }
     let mut relative = PathBuf::new();
     for part in path.components() {
         match part {
             std::path::Component::Normal(name) => relative.push(name),
             std::path::Component::CurDir => (),
             std::path::Component::ParentDir if relative.pop() => (),
-            _ => return Err("relativeTranscriptPath points outside the project transcript directory.".into()),
+            _ => {
+                return Err(
+                    "relativeTranscriptPath points outside the project transcript directory."
+                        .into(),
+                );
+            }
         }
     }
     if relative.as_os_str().is_empty() || !relative.to_string_lossy().ends_with(".jsonl") {
-        return Err("relativeTranscriptPath points outside the project transcript directory.".into());
+        return Err(
+            "relativeTranscriptPath points outside the project transcript directory.".into(),
+        );
     }
     Ok(Some(chat.join(relative)))
 }
-
 
 #[derive(Clone)]
 pub struct HistoryFiles {
@@ -140,38 +173,70 @@ mod tests {
     fn background_path_refuses_escape_and_ignores_normal_sessions() {
         use pilotdeck_protocol::parse_json;
         let root = std::path::Path::new("/tmp/chat");
-        for raw in [r#"{"sessionKind":"background_task","relativeTranscriptPath":"../else.jsonl"}"#, r#"{"sessionKind":"background_task","relativeTranscriptPath":"/tmp/else.jsonl"}"#, r#"{"sessionKind":"background_task","relativeTranscriptPath":"x.txt"}"#] {
+        for raw in [
+            r#"{"sessionKind":"background_task","relativeTranscriptPath":"../else.jsonl"}"#,
+            r#"{"sessionKind":"background_task","relativeTranscriptPath":"/tmp/else.jsonl"}"#,
+            r#"{"sessionKind":"background_task","relativeTranscriptPath":"x.txt"}"#,
+        ] {
             assert!(background_path(&parse_json(raw).unwrap(), root).is_err());
         }
-        let input = parse_json(r#"{"sessionKind":"background_task","relativeTranscriptPath":"sub/../task.jsonl"}"#).unwrap();
-        assert_eq!(background_path(&input, root).unwrap(), Some(root.join("task.jsonl")));
-        let input = parse_json(r#"{"sessionKind":"background_task","relativeTranscriptPath":"sub/task.jsonl/"}"#).unwrap();
-        assert_eq!(background_path(&input, root).unwrap(), Some(root.join("sub/task.jsonl")));
+        let input = parse_json(
+            r#"{"sessionKind":"background_task","relativeTranscriptPath":"sub/../task.jsonl"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            background_path(&input, root).unwrap(),
+            Some(root.join("task.jsonl"))
+        );
+        let input = parse_json(
+            r#"{"sessionKind":"background_task","relativeTranscriptPath":"sub/task.jsonl/"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            background_path(&input, root).unwrap(),
+            Some(root.join("sub/task.jsonl"))
+        );
         let input = parse_json(r#"{"relativeTranscriptPath":"../else.jsonl"}"#).unwrap();
         assert_eq!(background_path(&input, root).unwrap(), None);
     }
     #[cfg(unix)]
     #[test]
     fn marker_fifo_and_oversize_are_refused() {
-        let root = std::env::temp_dir().join(format!("pdrs-history-marker-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("pdrs-history-marker-{}", uuid::Uuid::new_v4()));
         let home = root.join("home");
         let project = root.join("project");
         let marker = home.join("projects").join("registered").join(".cwd");
         fs::create_dir_all(marker.parent().unwrap()).unwrap();
         fs::create_dir_all(&project).unwrap();
-        assert!(std::process::Command::new("mkfifo").arg(&marker).status().unwrap().success());
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&marker)
+                .status()
+                .unwrap()
+                .success()
+        );
         let files = HistoryFiles { home, project };
-        assert!(history_path(&files, &JsString::from("session")).unwrap_err().contains("Unsafe history project marker"));
+        assert!(
+            history_path(&files, &JsString::from("session"))
+                .unwrap_err()
+                .contains("Unsafe history project marker")
+        );
         fs::remove_file(&marker).unwrap();
         fs::write(&marker, vec![b'x'; 64 * 1024 + 1]).unwrap();
-        assert!(history_path(&files, &JsString::from("session")).unwrap_err().contains("Unsafe history project marker"));
+        assert!(
+            history_path(&files, &JsString::from("session"))
+                .unwrap_err()
+                .contains("Unsafe history project marker")
+        );
         fs::remove_dir_all(root).unwrap();
     }
     #[cfg(unix)]
     #[test]
     fn background_descriptor_reads_selected_file_and_refuses_symlink() {
         use std::os::unix::fs::symlink;
-        let root = std::env::temp_dir().join(format!("pdrs-history-background-{}", uuid::Uuid::new_v4()));
+        let root =
+            std::env::temp_dir().join(format!("pdrs-history-background-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(root.join("sub")).unwrap();
         let root = fs::canonicalize(root).unwrap();
         let path = root.join("sub/task.jsonl");
@@ -250,32 +315,48 @@ impl crate::runtime::turn::read::SessionHistoryReader for NativeHistoryReader {
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let default_path = history_path(&files, &key).map_err(map)?;
-                let chat = default_path.parent().ok_or_else(|| map("Invalid history directory".into()))?;
+                let chat = default_path
+                    .parent()
+                    .ok_or_else(|| map("Invalid history directory".into()))?;
                 let background = background_path(&input, chat).map_err(map)?;
                 let loaded = match &background {
                     Some(path) => read_transcript_beneath(chat, path),
                     None => read_transcript_bounded(&default_path),
-                }.map_err(|e| map(e.to_string()))?;
+                }
+                .map_err(|e| map(e.to_string()))?;
                 let safe_id = JsString::from(crate::storage::sanitize_session_id(&key));
-                let catalog = loaded.snapshot.as_ref().filter(|_| background.is_none()).and_then(|(bytes, meta)| {
-                    crate::runtime::manager::file_catalog::history_session_info(
-                        bytes,
-                        meta,
-                        &safe_id,
-                        &files.project,
-                    )
-                    .ok()
-                    .flatten()
-                });
+                let catalog = loaded
+                    .snapshot
+                    .as_ref()
+                    .filter(|_| background.is_none())
+                    .and_then(|(bytes, meta)| {
+                        crate::runtime::manager::file_catalog::history_session_info(
+                            bytes,
+                            meta,
+                            &safe_id,
+                            &files.project,
+                        )
+                        .ok()
+                        .flatten()
+                    });
                 // Read the existing project generation; do not construct a separate
                 // model or configuration snapshot for the history endpoint.
-                let lease = project_runtime.acquire(None).map_err(|e| map(e.to_string()))?;
-                let resources = lease.runtime().resources().get::<crate::runtime::project::ProjectResources>()
+                let lease = project_runtime
+                    .acquire(None)
+                    .map_err(|e| map(e.to_string()))?;
+                let resources = lease
+                    .runtime()
+                    .resources()
+                    .get::<crate::runtime::project::ProjectResources>()
                     .ok_or_else(|| map("Native project resources are missing.".into()))?;
                 let snapshot = resources.context().snapshot();
                 let agent = snapshot.get("config").and_then(|v| v.get("agent"));
-                let max_context = agent.and_then(|v| v.get("maxContextTokens")).and_then(JsValue::as_number);
-                let max_output = agent.and_then(|v| v.get("maxOutputTokens")).and_then(JsValue::as_number);
+                let max_context = agent
+                    .and_then(|v| v.get("maxContextTokens"))
+                    .and_then(JsValue::as_number);
+                let max_output = agent
+                    .and_then(|v| v.get("maxOutputTokens"))
+                    .and_then(JsValue::as_number);
                 let project = JsValue::from(files.project.to_string_lossy().as_ref());
                 let now = JsValue::from(
                     crate::storage::transcript_timestamp_for_history()

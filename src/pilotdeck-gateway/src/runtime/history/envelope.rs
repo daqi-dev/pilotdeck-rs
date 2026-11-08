@@ -39,15 +39,45 @@ pub fn project(
         .skip(range.start)
         .take(range.end.saturating_sub(range.start))
         .collect();
-    let background = f(input, "sessionKind").as_string().is_some_and(|s| s.equals_str("background_task"))
-        && f(input, "relativeTranscriptPath").as_string().is_some_and(|s| !s.units().is_empty());
-    let fallback = if background { JsValue::Undefined } else { session::fallback(entries, key, options.project_root) };
-    let source = if background { &fallback } else { options.catalog.unwrap_or(&fallback) };
+    let background = f(input, "sessionKind")
+        .as_string()
+        .is_some_and(|s| s.equals_str("background_task"))
+        && f(input, "relativeTranscriptPath")
+            .as_string()
+            .is_some_and(|s| !s.units().is_empty());
+    let fallback = if background {
+        JsValue::Undefined
+    } else {
+        session::fallback(entries, key, options.project_root)
+    };
+    let source = if background {
+        &fallback
+    } else {
+        options.catalog.unwrap_or(&fallback)
+    };
     // Reserve each copied field before constructing metadata: long transcript
     // titles and summaries can otherwise multiply beyond the frame budget.
     let mut response_budget = super::budget::Budget::default();
-    for message in &selected { response_budget.charge(message)?; }
-    for value in [f(source, "sessionId"), &JsValue::String(key.clone()), f(source, "summary"), f(source, "lastModified"), f(source, "fileSize"), f(source, "customTitle"), f(source, "aiTitle"), f(source, "firstPrompt"), f(source, "cwd"), f(source, "tag"), f(source, "createdAt"), f(source, "parentSessionId"), f(input, "parentSessionId"), f(input, "relativeTranscriptPath"), f(source, "forkedFromTurnId")] {
+    for message in &selected {
+        response_budget.charge(message)?;
+    }
+    for value in [
+        f(source, "sessionId"),
+        &JsValue::String(key.clone()),
+        f(source, "summary"),
+        f(source, "lastModified"),
+        f(source, "fileSize"),
+        f(source, "customTitle"),
+        f(source, "aiTitle"),
+        f(source, "firstPrompt"),
+        f(source, "cwd"),
+        f(source, "tag"),
+        f(source, "createdAt"),
+        f(source, "parentSessionId"),
+        f(input, "parentSessionId"),
+        f(input, "relativeTranscriptPath"),
+        f(source, "forkedFromTurnId"),
+    ] {
         response_budget.charge(value)?;
     }
     // Account for object syntax and a small RPC/stream envelope reserve.
@@ -92,7 +122,9 @@ pub fn project(
     ] {
         metadata.insert(field.into(), f(source, field).clone());
     }
-    if background { metadata.insert("sessionKind".into(), "background_task".into()); }
+    if background {
+        metadata.insert("sessionKind".into(), "background_task".into());
+    }
     let parent = f(input, "parentSessionId");
     metadata.insert(
         "parentSessionId".into(),
@@ -201,7 +233,11 @@ mod tests {
         fixture(include_str!(
             "../../../tests/fixtures/native-history/cursor-image-r1.json"
         ));
-        fixture(include_str!("../../../tests/fixtures/native-history/coercion-r2.json"));
-        fixture(include_str!("../../../tests/fixtures/native-history/background-r3.json"));
+        fixture(include_str!(
+            "../../../tests/fixtures/native-history/coercion-r2.json"
+        ));
+        fixture(include_str!(
+            "../../../tests/fixtures/native-history/background-r3.json"
+        ));
     }
 }

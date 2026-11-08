@@ -80,3 +80,10 @@
 - 建议与决定：**AI代批，待人复核**。SetupPaths只保存HOME-only输入/来源与传入cwd；默认目录需要时查询home，非空PILOT_HOME保持字面并短路账户查询，Weixin真正保存时才解析独立mkdir目录；IO以cwd定位、错误label仍用join原相对值。
 - 原则与断言：延迟行为不能被目录预备动作破坏。固定TS受控fake os.homedir十格记录真实查询时机/输出/文件/HTTP，Rust无fallback synthetic取消仍成功、保存才要求home，成功写入只发生在注入fake账户。真实OS账户只查字符串不做fs，不以“隔离PILOT_HOME”掩盖Weixin另写homedir的事实。
 - 验证与边界：所有Rust与Node运行在mbp2。r1严格clippy/49测试/build已通过，新增完整十格oracle断言后r2严格clippy/50普通+4父实际调用helper/build实际通过、非作者独审无确认P0/P1或需处置具体P2；兼容账户范围同首片，未批准任何冻结豁免。
+
+
+## 2026-11-08 · 统一工作树与 native history 接线
+
+用户明确指定 `cli-gateway-setup/pilotdeck-rs` 为唯一开发树，要求保留两侧快照和旧目录、整合最新main，只本机提交/Rust全部mbp2。按此执行；旧8e32清理为clean并锁定保留，所有原始WIP/patch/bundle与合并逐文件依据在主仓 `_tmp/20261108-cli-consolidation/`，后续不再以两棵树轮流写入。上游持续前进时按抓取的明确SHA整合，不把某次快照称为未来始终最新。
+
+**AI代批，待人复核**：native history复用既有项目runtime、JSONL decoder与TurnGateway读取合并路径；补齐TS投影而不复制宿主装配，避开其他持有人在途的LocalHost生命周期。新限定读器防止实际fd被FIFO/增长拖住，目录marker同样有界；后台路径使用已有beneath打开，完整响应沿既有WS上限显式拒绝。可撤回、不迁移原数据、不改旧通用读器或冻结尺子；具体边界和未接受差异唯一写于 `specs/gateway-parity/diffs/D2-NATIVE-HISTORY-BOUNDS-001.md`。原则：读取端不可把拒绝吞成空数据/错误项目，也不可只限制叶文件而漏掉路径选择的前置IO。断言覆盖marker FIFO、恢复后原历史、完整封套超限及背景/普通文件不同内容；实际结果按原始日志登记，未标完整CLI/native权限/local fallback或阶段完成。

@@ -324,7 +324,10 @@ pub async fn read_session_messages(
 /// history object; a `stream` key the host already returned keeps its position
 /// and gets the fresh snapshot's value.
 fn merge_history_and_stream(mut history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
-    let mut merged = match &mut history { JsValue::Object(object) => std::mem::take(object), _ => JsObject::new() };
+    let mut merged = match &mut history {
+        JsValue::Object(object) => std::mem::take(object),
+        _ => JsObject::new(),
+    };
     merged.insert("stream".into(), stream.to_json());
     JsValue::Object(merged)
 }

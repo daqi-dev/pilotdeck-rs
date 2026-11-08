@@ -87,17 +87,29 @@ pub struct GatewayConnection {
 }
 // Called on the blocking pool; only this history response uses this limit.
 fn encode_history_response(frame: JsValue, limit: usize) -> String {
-    let text = stringify_json(&frame).expect("history response is JSON").expect("history response is defined");
-    if text.len() <= limit { return text; }
+    let text = stringify_json(&frame)
+        .expect("history response is JSON")
+        .expect("history response is defined");
+    if text.len() <= limit {
+        return text;
+    }
     let mut error = JsObject::new();
     error.insert("code".into(), JsValue::from("gateway_request_failed"));
-    error.insert("message".into(), JsValue::from("History output exceeds Gateway frame limit"));
+    error.insert(
+        "message".into(),
+        JsValue::from("History output exceeds Gateway frame limit"),
+    );
     let mut rejected = JsObject::new();
     rejected.insert("type".into(), JsValue::from("response"));
-    rejected.insert("id".into(), frame.get("id").cloned().unwrap_or(JsValue::Undefined));
+    rejected.insert(
+        "id".into(),
+        frame.get("id").cloned().unwrap_or(JsValue::Undefined),
+    );
     rejected.insert("ok".into(), JsValue::Bool(false));
     rejected.insert("error".into(), JsValue::Object(error));
-    stringify_json(&JsValue::Object(rejected)).expect("history error is JSON").expect("history error is defined")
+    stringify_json(&JsValue::Object(rejected))
+        .expect("history error is JSON")
+        .expect("history error is defined")
 }
 
 impl GatewayConnection {
@@ -264,8 +276,16 @@ impl GatewayConnection {
         });
         Box::pin(async move {
             let _history_permit = if method.equals_str("read_session_messages") {
-                Some(Arc::new(HISTORY_REQUEST_SLOTS.clone().acquire_owned().await.map_err(|e| RequestError::new(e.to_string()))?))
-            } else { None };
+                Some(Arc::new(
+                    HISTORY_REQUEST_SLOTS
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .map_err(|e| RequestError::new(e.to_string()))?,
+                ))
+            } else {
+                None
+            };
             let result = if is_submit {
                 self.submit(&id, params, &input, cleanup)
                     .await
@@ -344,11 +364,16 @@ impl GatewayConnection {
                         let frame = JsValue::Object(out);
                         let encoded = if let Ok(handle) = tokio::runtime::Handle::try_current() {
                             let encoding_permit = _history_permit.clone();
-                            handle.spawn_blocking(move || {
-                                let _permit = encoding_permit;
-                                encode_history_response(frame, crate::native_ws::MAX_OUTPUT_PAYLOAD)
-                            })
-                                .await.map_err(|e| RequestError::new(e.to_string()))?
+                            handle
+                                .spawn_blocking(move || {
+                                    let _permit = encoding_permit;
+                                    encode_history_response(
+                                        frame,
+                                        crate::native_ws::MAX_OUTPUT_PAYLOAD,
+                                    )
+                                })
+                                .await
+                                .map_err(|e| RequestError::new(e.to_string()))?
                         } else {
                             // This connection is also used by transport-neutral
                             // embedders that poll the future outside Tokio.

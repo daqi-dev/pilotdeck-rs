@@ -57,3 +57,8 @@
 - [大总管会话启动](20261107-coord-session-launch.md) — 起会话用 `claude --permission-mode bypassPermissions`；`--allow-dangerously-skip-permissions` 实测落 auto mode，分类器抖动会被误读成权限被拒
 - [新增差异段名](20261108-diff-sections.md) — 六个独立段名、`check_frozen.py -I` 完整退出0后才提交；不合并 Rust 行为与范围
 - [远端源码新鲜度](20261108-remote-source-freshness.md) — 同步完成后刷新源码mtime并绑定bin哈希；库测试通过不证明实际入口已重编
+
+
+## CLI history 原生探针（2026-11-08）
+
+原生链路验收先核每一层的实际合同：WS错误帧到新control会变成exit1/空stdout/JSON stderr；Ratatui用CSI坐标绘字而非连续原始空格串；真实历史同时含text与status。测试须保留完整状态序列，用不同内容证明背景文件选择，不能只放同内容副本。跨入口驱动与复跑说明唯一见 `src/pilotdeck-gateway/tests/fixtures/native-history/README.md`；3次错误假设原件在主仓consolidation目录，不用重复的探针修复假装产品发生回归。
