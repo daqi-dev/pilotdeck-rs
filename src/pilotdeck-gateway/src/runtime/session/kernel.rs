@@ -320,7 +320,14 @@ impl Rpc {
             let mut failure =
                 error(message.clone()).with_js_error(crate::runtime::project::RuntimeJsError {
                     name: "KernelBackendError".into(),
-                    code: Some("KERNEL_EXECUTION_UNAVAILABLE".into()),
+                    code: Some(
+                        if cause.uncertain_kernel_failure().is_some() {
+                            "KERNEL_OUTCOME_UNKNOWN"
+                        } else {
+                            "KERNEL_EXECUTION_UNAVAILABLE"
+                        }
+                        .into(),
+                    ),
                     message: message.into(),
                     requires_host: false,
                 });
@@ -392,7 +399,11 @@ impl Rpc {
                 return Err(error("Kernel response identity mismatch."));
             }
             let result = if let Some(e) = reply.get("error") {
-                Err(error(format!("Kernel request failed: {e}")))
+                {
+                    let mut failure = error(format!("Kernel request failed: {e}"));
+                    failure.kernel_failure = Some(Box::new(e.clone()));
+                    Err(failure)
+                }
             } else {
                 reply
                     .get("result")
@@ -714,6 +725,7 @@ impl KernelSession {
             final_event: None,
             failure_event: false,
             accepted: false,
+            call_ref: None,
             interactions: self.interactions.clone(),
             projection: self.projection.clone(),
             context_ref: self.context_ref.clone(),
@@ -1461,6 +1473,7 @@ struct KernelTurn {
     final_event: Option<Value>,
     failure_event: bool,
     accepted: bool,
+    call_ref: Option<String>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 }
 impl KernelTurn {
@@ -1484,8 +1497,8 @@ impl KernelTurn {
         Ok(true)
     }
 }
-impl LiveTurn for KernelTurn {
-    fn next(&mut self) -> SessionNext<'_> {
+impl KernelTurn {
+    fn poll_next(&mut self) -> SessionNext<'_> {
         Box::pin(async move {
             loop {
                 if let Some(event) = self.queue.pop_front() {
@@ -1538,6 +1551,7 @@ impl LiveTurn for KernelTurn {
                         .ok_or_else(|| error("Kernel input omitted execution identity."))?
                         .to_string();
                     self.accepted = true;
+                    self.call_ref = Some(call.clone());
                     {
                         let mut state = self.state.lock().unwrap();
                         state.call = Some(call.clone());
@@ -1741,8 +1755,8 @@ impl LiveTurn for KernelTurn {
                         self.queue.push_back(js(&json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":"result_unknown","nativeCode":"KERNEL_OUTCOME_UNKNOWN","message":"Execution stopped waiting; an external effect may still have happened. Inspect the original execution before retrying.","details":{"kernelSessionId":self.kernel_id,"executionId":root,"outcome":"unknown"}}}))?);
                     }
                     let mut final_event = self.final_event.take().unwrap_or_else(|| {
-                        json!({"type":"turn_completed","sessionId":self.session,"turnId":self.run,"result":{"type":if outcome=="completed"{"success"}else if outcome=="cancelled"{"aborted"}else{"error"},"stopReason":if outcome=="completed"{"completed"}else if outcome=="unknown"{"kernel_outcome_unknown"}else{outcome},"usage":{},"permissionDenials":[],"turns":0}})
-                    });
+                            json!({"type":"turn_completed","sessionId":self.session,"turnId":self.run,"result":{"type":if outcome=="completed"{"success"}else if outcome=="cancelled"{"aborted"}else{"error"},"stopReason":if outcome=="completed"{"completed"}else if outcome=="unknown"{"kernel_outcome_unknown"}else{outcome},"usage":{},"permissionDenials":[],"turns":0}})
+                        });
                     if outcome == "unknown" {
                         final_event["result"]["type"] = json!("error");
                         final_event["result"]["stopReason"] = json!("kernel_outcome_unknown");
@@ -1762,6 +1776,47 @@ impl LiveTurn for KernelTurn {
         })
     }
 }
+
+impl LiveTurn for KernelTurn {
+    fn next(&mut self) -> SessionNext<'_> {
+        Box::pin(async move {
+            match self.poll_next().await {
+                Err(error) if !self.done && error.uncertain_kernel_failure().is_some() => {
+                    let failure = error.uncertain_kernel_failure().unwrap().clone();
+                    let (call, current) = {
+                        let mut state = self.state.lock().unwrap();
+                        let call = self.call_ref.clone();
+                        let current = state.run.as_deref() == Some(self.run.as_str());
+                        if current {
+                            state.status = "unknown".into();
+                            state.run = None;
+                            state.attached = false;
+                            state.waits.clear();
+                        }
+                        (call, current)
+                    };
+                    if current && let Some(interactions) = &self.interactions {
+                        interactions
+                            .reconnect_port()
+                            .set_external_pending(&JsString::from(self.session.clone()), false);
+                    }
+                    // This is an unconfirmed persistence boundary, not a
+                    // fabricated Kernel response. Keep the original run/key
+                    // and failure facts; never retry execution.input here.
+                    self.done = true;
+                    self.queue.clear();
+                    let details = json!({"kernelSessionId":self.kernel_id,"executionId":call,"idempotencyKey":self.run,"outcome":"unknown","kernelFailure":failure});
+                    self.queue.push_back(js(&json!({"type":"turn_completed","sessionId":self.session,"turnId":self.run,"kernelOutcomeConfirmed":false,"result":{"type":"error","stopReason":"kernel_outcome_unknown","usage":{},"permissionDenials":[],"turns":0},"uncertainty":details}))?);
+                    Ok(Some(js(
+                        &json!({"type":"turn_failed","sessionId":self.session,"turnId":self.run,"error":{"code":"result_unknown","nativeCode":"KERNEL_OUTCOME_UNKNOWN","message":"Kernel persistence outcome is unknown. Inspect the original session and execution before retrying; do not replay this input.","details":details}}),
+                    )?))
+                }
+                result => result,
+            }
+        })
+    }
+}
+
 impl Drop for KernelTurn {
     fn drop(&mut self) {
         if !self.done {
@@ -1820,6 +1875,193 @@ mod tests {
         )
         .unwrap()
     }
+    #[tokio::test]
+    async fn kernel_persistence_failure_keeps_original_identity_and_never_replays_input() {
+        for (code, persistence_uncertain, unknown, input_failure, late) in [
+            ("OUTCOME_UNKNOWN", false, true, false, false),
+            ("OUTCOME_UNKNOWN", true, true, true, false),
+            ("OUTCOME_UNKNOWN", true, true, false, true),
+            ("COMMIT_FAILED", true, true, false, false),
+            ("REVISION_CONFLICT", false, false, false, false),
+        ] {
+            let socket =
+                std::env::temp_dir().join(format!("pd-fence-{}.sock", uuid::Uuid::new_v4()));
+            let listener = UnixListener::bind(&socket).unwrap();
+            let failure = json!({"code":-32000,"message":"journal append acknowledgement unavailable","data":{"domain":"scheduler","reason":code,"diagnostic":{"code":code,"message_key":"scheduler.journal.append_unconfirmed","params":{"persistence_uncertain":persistence_uncertain,"session_ref":"kernel-s","candidate_sequence":17,"transaction_digest":"original-digest"}}}});
+            let expected = failure.clone();
+            let session = session(socket.clone());
+            let late_state = session.state.clone();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                let mut inputs = 0;
+                loop {
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap() == 0 {
+                        break;
+                    }
+                    let req: Value = serde_json::from_str(&line).unwrap();
+                    let response = match req["method"].as_str().unwrap() {
+                        "initialize" => json!({"result":{}}),
+                        "execution.input" => {
+                            inputs += 1;
+                            assert_eq!(inputs, 1, "original input must never be replayed");
+                            assert_eq!(req["params"]["idempotency_key"], "turn-1");
+                            if input_failure {
+                                json!({"error":failure})
+                            } else {
+                                json!({"result":{"call_ref":"original-loop"}})
+                            }
+                        }
+                        "execution.events" if inputs == 0 => json!({"result":[]}),
+                        "execution.events" => {
+                            if late {
+                                let mut state = late_state.lock().unwrap();
+                                state.run = Some("new-run".into());
+                                state.call_run = Some("new-run".into());
+                                state.call = Some("new-call".into());
+                                state.status = "running".into();
+                                state.waits.insert("new-wait".into(), "new-call".into());
+                            }
+                            json!({"error":failure})
+                        }
+                        method => {
+                            panic!("unexpected mutation after uncertain persistence: {method}")
+                        }
+                    };
+                    let mut reply = response;
+                    reply["jsonrpc"] = json!("2.0");
+                    reply["id"] = req["id"].clone();
+                    stream
+                        .get_mut()
+                        .write_all(format!("{reply}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+                assert_eq!(inputs, 1);
+            });
+            let mut turn = session
+                .submit(
+                    js(&json!({"type":"text","text":"original input"})).unwrap(),
+                    js(&json!({"turnId":"turn-1"})).unwrap(),
+                )
+                .unwrap();
+            if unknown {
+                let failed = next(turn.as_mut()).await;
+                assert_eq!(failed["type"], "turn_failed");
+                assert_eq!(failed["error"]["code"], "result_unknown");
+                assert_eq!(failed["error"]["details"]["kernelSessionId"], "kernel-s");
+                assert_eq!(
+                    failed["error"]["details"]["executionId"],
+                    if input_failure {
+                        Value::Null
+                    } else {
+                        json!("original-loop")
+                    }
+                );
+                assert_eq!(failed["error"]["details"]["idempotencyKey"], "turn-1");
+                assert_eq!(failed["error"]["details"]["kernelFailure"], expected);
+                let final_event = next(turn.as_mut()).await;
+                assert_eq!(
+                    final_event["result"]["stopReason"],
+                    "kernel_outcome_unknown"
+                );
+                assert_eq!(final_event["kernelOutcomeConfirmed"], false);
+                assert!(
+                    final_event.get("status").is_none(),
+                    "uncertainty is not a fabricated authoritative root response"
+                );
+                assert!(turn.next().await.unwrap().is_none());
+                let state = session.state.lock().unwrap();
+                if late {
+                    assert_eq!(state.status, "running");
+                    assert_eq!(state.run.as_deref(), Some("new-run"));
+                    assert_eq!(state.call.as_deref(), Some("new-call"));
+                    assert!(state.waits.contains_key("new-wait"));
+                } else {
+                    assert_eq!(state.status, "unknown");
+                    assert_eq!(
+                        state.call.as_deref(),
+                        if input_failure {
+                            None
+                        } else {
+                            Some("original-loop")
+                        }
+                    );
+                }
+            } else {
+                let error = turn.next().await.unwrap_err();
+                assert!(error.uncertain_kernel_failure().is_none());
+                assert!(error.to_string().contains("REVISION_CONFLICT"));
+            }
+            drop(turn);
+            drop(session);
+            server.await.unwrap();
+            std::fs::remove_file(socket).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn kernel_read_methods_keep_real_scheduler_unknown_diagnostic() {
+        let socket =
+            std::path::PathBuf::from("/tmp").join(format!("pd-rf-{}.sock", uuid::Uuid::new_v4()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        let failure = json!({"code":-32000,"message":"Journal outcome is unknown","data":{"domain":"scheduler","reason":"OUTCOME_UNKNOWN","diagnostic":{"code":"OUTCOME_UNKNOWN","message_key":"scheduler.journal.append_unconfirmed","params":{"persistence_uncertain":true,"session_ref":"kernel-s","candidate_sequence":17,"candidate_call_refs":["original-loop"],"transaction_digest":"original-digest"}}}});
+        let expected = failure.clone();
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = BufReader::new(stream);
+                for _ in 0..2 {
+                    let mut line = String::new();
+                    stream.read_line(&mut line).await.unwrap();
+                    let req: Value = serde_json::from_str(&line).unwrap();
+                    let reply = match req["method"].as_str().unwrap() {
+                        "initialize" => json!({"jsonrpc":"2.0","id":req["id"],"result":{}}),
+                        "execution.events" | "execution.history.snapshot" => {
+                            assert_eq!(req["params"]["session_id"], "kernel-s");
+                            json!({"jsonrpc":"2.0","id":req["id"],"error":failure})
+                        }
+                        method => panic!("read must not replay or mutate: {method}"),
+                    };
+                    stream
+                        .get_mut()
+                        .write_all(format!("{reply}\n").as_bytes())
+                        .await
+                        .unwrap();
+                }
+            }
+        });
+        let session = session(socket.clone());
+        for method in [
+            "active_turn_snapshot",
+            "read_session_messages",
+            "reconnect_interaction",
+        ] {
+            let error = session
+                .backend_request(method.into(), js(&json!({"sessionKey":"pd-s"})).unwrap())
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.js_error().and_then(|e| e.code.as_deref()),
+                Some("KERNEL_OUTCOME_UNKNOWN")
+            );
+            assert_eq!(error.uncertain_kernel_failure(), Some(&expected));
+            let public = crate::runtime::connection::RequestError::from_runtime(error);
+            assert_eq!(public.code, "KERNEL_OUTCOME_UNKNOWN");
+            let details = json_value(public.details.as_deref().unwrap()).unwrap();
+            assert_eq!(details["outcome"], "unknown");
+            assert_eq!(details["kernelFailure"], expected);
+            assert!(
+                session.state.lock().unwrap().call.is_none(),
+                "read failure does not invent an execution identity"
+            );
+        }
+        drop(session);
+        server.await.unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
+
     #[tokio::test]
     async fn kernel_compact_uses_private_command_and_original_durable_terminal() {
         let socket = std::env::temp_dir().join(format!("pd-compact-{}.sock", uuid::Uuid::new_v4()));

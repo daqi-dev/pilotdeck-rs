@@ -3932,6 +3932,7 @@ async fn stale_handoff_retry_is_limited_to_one() {
                     } else {
                         Err(RuntimeError {
                             message: "second stale rejection".into(),
+                            kernel_failure: None,
                             causes: vec![RuntimeError::new("second stale cause")],
                             js_error: Some(Box::new(crate::runtime::project::RuntimeJsError {
                                 name: "Error".into(),

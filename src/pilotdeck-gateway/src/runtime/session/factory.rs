@@ -1165,6 +1165,7 @@ impl ProjectSessionFactory {
                         ),
                         causes: vec![error, rollback],
                         js_error: None,
+                        kernel_failure: None,
                     }),
                 }
             }

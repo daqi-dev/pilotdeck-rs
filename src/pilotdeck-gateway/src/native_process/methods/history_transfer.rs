@@ -565,7 +565,7 @@ impl Requests {
             let facts = handle
                 .backend_request("active_turn_snapshot".into(), params.clone())
                 .await
-                .map_err(|e| err(e.message))?
+                .map_err(RequestError::from_runtime)?
                 .ok_or_else(|| err("Kernel state unavailable."))?;
             let status = facts
                 .get("status")
@@ -592,7 +592,7 @@ impl Requests {
             return handle
                 .backend_request("read_session_messages".into(), params.clone())
                 .await
-                .map_err(|e| err(e.message))?
+                .map_err(RequestError::from_runtime)?
                 .ok_or_else(|| err("Kernel history unavailable."));
         }
         let path = super::super::assembly::transcript_path(&self.options, &session);
@@ -645,7 +645,7 @@ impl Requests {
                 let history = handle
                     .backend_request("read_session_messages".into(), params.clone())
                     .await
-                    .map_err(|e| err(e.message))?
+                    .map_err(RequestError::from_runtime)?
                     .ok_or_else(|| err("Kernel history unavailable."))?;
                 let history = to_json(&history)?;
                 (
@@ -767,7 +767,7 @@ impl Requests {
         let replay = handle
             .backend_request("history_import_receipt".into(), params.clone())
             .await
-            .map_err(|error| err(error.message))?
+            .map_err(RequestError::from_runtime)?
             .ok_or_else(|| err("Kernel import receipt observation unavailable."))?;
         if replay.get("found") == Some(&JsValue::Bool(true)) {
             return Ok(replay
@@ -786,7 +786,7 @@ impl Requests {
                     crate::metadata::object([("sessionKey", JsValue::String(source_key.clone()))]),
                 )
                 .await
-                .map_err(|error| err(error.message))?
+                .map_err(RequestError::from_runtime)?
                 .ok_or_else(|| err("Kernel source history unavailable."))?;
             to_json(&history)?["canonicalMessages"].clone()
         };
@@ -802,7 +802,7 @@ impl Requests {
         let result = handle
             .backend_request("restore_session_transcript".into(), params.clone())
             .await
-            .map_err(|e| err(e.message))?
+            .map_err(RequestError::from_runtime)?
             .ok_or_else(|| err("Kernel import unavailable."))?;
         Ok(result)
     }

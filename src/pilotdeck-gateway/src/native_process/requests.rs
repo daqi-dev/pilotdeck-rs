@@ -377,12 +377,12 @@ impl GatewayRequests for Requests {
                             disallowed_tools: None,
                         })
                         .await
-                        .map_err(|e| RequestError::new(e.message))?
+                        .map_err(RequestError::from_runtime)?
                 };
                 let snapshot = handle
                     .backend_request("active_turn_snapshot".into(), params.clone())
                     .await
-                    .map_err(|e| RequestError::new(e.message))?
+                    .map_err(RequestError::from_runtime)?
                     .ok_or_else(|| RequestError::new("Kernel state is unavailable."))?;
                 if snapshot
                     .get("status")
@@ -436,7 +436,7 @@ impl GatewayRequests for Requests {
                                     disallowed_tools: None,
                                 })
                                 .await
-                                .map_err(|e| RequestError::new(e.message))?,
+                                .map_err(RequestError::from_runtime)?,
                         )
                     } else {
                         None
@@ -491,7 +491,7 @@ impl GatewayRequests for Requests {
                     && let Some(mut value) = handle
                         .backend_request(method.clone(), params.clone())
                         .await
-                        .map_err(|e| RequestError::new(e.message))?
+                        .map_err(RequestError::from_runtime)?
                 {
                     if method == "reconnect_interaction" {
                         if let JsValue::Object(ref mut output) = value {
@@ -550,7 +550,7 @@ impl GatewayRequests for Requests {
                         let native = handle
                             .backend_request("active_turn_snapshot".into(), params.clone())
                             .await
-                            .map_err(|error| RequestError::new(error.message))?
+                            .map_err(RequestError::from_runtime)?
                             .ok_or_else(|| {
                                 RequestError::new("Native active state is unavailable.")
                             })?;
@@ -568,7 +568,7 @@ impl GatewayRequests for Requests {
                                 &String::from_utf16_lossy(session.units()),
                                 &self.options.home,
                             )
-                            .map_err(|error| RequestError::new(error.message))?
+                            .map_err(RequestError::from_runtime)?
                         };
                         if let JsValue::Object(ref mut history) = value {
                             history.insert("stream".into(), stream);

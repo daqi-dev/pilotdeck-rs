@@ -660,6 +660,7 @@ pub(super) fn aggregate(message: &str, failures: Vec<RuntimeError>) -> RuntimeRe
             message: message.into(),
             causes: failures,
             js_error: None,
+            kernel_failure: None,
         })
     }
 }

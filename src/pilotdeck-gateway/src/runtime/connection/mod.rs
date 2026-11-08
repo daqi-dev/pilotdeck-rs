@@ -33,6 +33,18 @@ pub struct RequestError {
     pub validation: Option<Box<JsValue>>,
 }
 impl RequestError {
+    /// Preserve an explicit Scheduler uncertainty across product read methods.
+    pub fn from_runtime(error: crate::runtime::project::RuntimeError) -> Self {
+        if let Some(failure) = error.uncertain_kernel_failure() {
+            return Self {
+                code: "KERNEL_OUTCOME_UNKNOWN".into(),
+                message: "Kernel persistence outcome is unknown. Inspect the original session and execution before retrying.".into(),
+                details: pilotdeck_protocol::parse_json(&serde_json::json!({"outcome":"unknown","kernelFailure":failure}).to_string()).ok().map(Box::new),
+                validation: None,
+            };
+        }
+        Self::new(error.message)
+    }
     pub fn new(message: impl Into<JsString>) -> Self {
         Self {
             code: "gateway_request_failed".into(),
