@@ -27,10 +27,13 @@ write-back window is a refusal, the same code `run_cases` itself
 normalizes to. A cancel landing inside the restore window still unwinds
 and re-verifies the tree first; the guard raises `SystemExit(128+signum)`
 on exit (the `negative_process.mutating_sources` deferred-signal
-contract) and `run_cases` normalizes that back to 2 with an all-INVALID
-summary -- both phases of this family exit 2
-(`test_negative_suite.test_guard_systemexit_256_voids_last_kill_and_exits_2`
-locks the normalization in).
+contract). In the judging phase `run_cases` normalizes that back to 2
+with an all-INVALID summary (both windows of that phase exit 2;
+`test_negative_suite.test_guard_systemexit_256_voids_last_kill_and_exits_2`
+locks the normalization in). The compile preflight's own guard window is
+not normalized: `SystemExit(128+signum)` passes `compile_controls`'
+`except Exception` and becomes the process exit code, with no
+compile-summary written.
 """
 import argparse
 import json
@@ -195,8 +198,10 @@ def main():
     # are the ones the shared guard itself shields in its write-back window;
     # a cancel outside that window exits 2, matching run_cases' own
     # normalization. Inside the shared write-back window the guard defers
-    # the signal, finishes the restore/verify, then exits 128+signum
-    # (negative_process contract -- r7: docstring states the same split).
+    # the signal, finishes the restore/verify, then raises
+    # SystemExit(128+signum) (negative_process contract); run_cases
+    # normalizes that back to 2 in the judging phase, while the compile
+    # preflight's `except Exception` lets it through as the exit code.
     def stop(signum, frame):
         sys.stderr.write(f'interrupted by signal {signum}\n')
         raise SystemExit(2)

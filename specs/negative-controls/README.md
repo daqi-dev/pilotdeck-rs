@@ -155,18 +155,22 @@
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
 被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；没装取消处理器的入口（如
 `settings-gateway`）按信号默认处置退出：守卫回写窗口外被 SIGTERM 当场杀死、退出码
-143（SIGHUP 129 / SIGQUIT 131 同理），树可能停在变异中、证据不完整；落在回写窗口
-内则先完成还原与复核再退 143（守卫对 SIG_DFL 同样换 handler 延迟）。装了取消处理器
-的自管脚本分两族：`issue-297` 两入口（`issue-297`、`issue-297-domain-fold`）把守卫
-回写窗口外的取消当「从未开跑」拒跑，退 2；`same-json-surfaces` 与 `mode-routing`
-的 `terminate_cleanly`（session-domain-cleanup #892 r23 镜像）窗口外只对它注册的
-三个信号（SIGTERM / SIGHUP / SIGQUIT）退 128+signum，SIGINT 不在其列。落在共享
-守卫回写窗口内的取消一律先完成还原与复核，随后按入口分码：直接调用
-`negative_process.mutating_sources` 的入口（same-json / mode-routing / 无处理器
-入口）在守卫退出时抛 `SystemExit(128+signum)`；经 `negative_suite.run_cases` 的
-入口（issue-297 两入口）把该退出归一化回 2、发布全 INVALID 总结——该族窗外、
-窗内都是 2。经共享执行器 `mutation_suite` 的入口（如 `network-timing`）不套用
-本段三分，窗外取消记 rc=1（见 `tests/fixtures/README.md` 的执行器既有语义）。
+143（SIGHUP 129 / SIGQUIT 131 同理），树可能停在变异中、证据不完整；SIGINT 由
+解释器自身转成 KeyboardInterrupt、未捕获退 130；落在回写窗口内则先完成还原与复核
+再退 128+signum（守卫对 SIG_DFL 同样换 handler 延迟）。装了取消处理器的自管脚本
+分两族：`issue-297` 两入口（`issue-297`、`issue-297-domain-fold`）在处理器装好
+之后、守卫回写窗口外的取消当「从未开跑」拒跑，退 2（处理器安装前的启动段仍按
+默认处置）；`same-json-surfaces` 与 `mode-routing` 的 `terminate_cleanly`
+（session-domain-cleanup #892 r23 镜像）窗口外只对它注册的三个信号
+（SIGTERM / SIGHUP / SIGQUIT）退 128+signum，SIGINT 不在其列。落在共享守卫回写
+窗口内的取消一律先完成还原与复核，随后按相位分码：issue-297 的编译预检
+（`compile_controls` 自己的 `mutating_sources` 窗口）让守卫退出抛的
+`SystemExit(128+signum)` 穿过 `except Exception` 成为进程退出码，且不写
+compile-summary；same-json / mode-routing / 无处理器入口同样在守卫退出时抛
+`SystemExit(128+signum)`；issue-297 的判定段（`negative_suite.run_cases`）则把
+该退出归一化回 2、发布全 INVALID 总结——判定段窗外、窗内都是 2。经共享执行器
+`mutation_suite` 的入口（如 `network-timing`）不套用本段规则，窗外取消记 rc=1
+（见 `tests/fixtures/README.md` 的执行器既有语义）。
 这套分界不依赖 `assert`，所以 `-O` 下不变。已知的唯一例外是 `regex-proto-budget`（#1265）：
 它在 `claim_dir` 之后、第一个变异之前自己跑一遍 crate 的 compile_fail doctest 基线（CI 跑不了
 特性门测试），红了也以 2 拒跑、`OUT/doctests.log` 留档——这一次 2 带证据目录，是刻意的。
