@@ -350,6 +350,9 @@ impl TurnGateway {
     /// plus [`INITIALIZATION_TEARDOWN_SLACK`], so a cleanup that legitimately
     /// runs to its own budget is never cut mid-poll by a shorter host bound.
     /// The refused-owner shutdown that runs before it is bounded separately.
+    /// A `teardown_budget` too large for the clock (`Duration::MAX`) is
+    /// equivalent to none: #1949 waives the bound and the cleanup is awaited
+    /// without one.
     pub fn start_with_cleanup_budget(
         options: TurnReplayOptions,
         teardown_budget: Duration,
@@ -461,10 +464,13 @@ impl TurnGateway {
                 };
                 // Preserve the original implicit-drop drain. Only an explicit
                 // embedding shutdown opts into a deadline.
-                // #1949: the same clock bound the initialization teardown got —
-                // a bound too large for the clock is equivalent to none, so an
-                // embedding that declared MAX explicitly waived the deadline
-                // instead of overflowing the host thread into an opaque hang.
+                // #1949: a bound too large for the clock is equivalent to
+                // none, so the embedding that declared MAX explicitly waived
+                // the deadline and the drain is awaited without scheduling
+                // one. (tokio's own `timeout` saturates the same case into a
+                // far-future timer; this spells the waiver out instead of
+                // relying on that — behavior-equivalent, kept for symmetry
+                // with `dispose_initialization`'s explicit bound.)
                 let result = match budget.and_then(|budget| tokio::time::Instant::now().checked_add(budget)) {
                     Some(deadline) => tokio::time::timeout_at(deadline, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
                     None => drain.await,

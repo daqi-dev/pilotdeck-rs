@@ -1,6 +1,6 @@
 # #749 原生 WS 监听层
 
-`NativeWsServer::bind(address, host, token, version)` 是显式库入口：调用者提供已经装配的 `TurnGateway`、127.0.0.1 高位端口（测试用 0）、token；不读取默认 home，也不访问 TS gateway upstream。`run(stop, budget)` 停止接纳后排空连接，最后关闭 serial host。取消 `run`（包括尚未 poll 的 future）也会请求宿主关闭。`TurnGateway::start_with_cleanup` 让 factory/project 清理发生在宿主 executor 退出之前；初始化失败时宿主先跑自己的拆除再报错（coordinator 处置、embedding cleanup 在宿主线程上 poll，等待以 `start_with_cleanup_budget` 传入的 embedding 自身预算为界）。工厂/项目两资源另有按「是否已完成」记账的兜底（#1959）：cleanup 被预算截断或宿主线程根本没起时，兜底补齐未完成的那部分；cron 与 channels 仍只由 cleanup 自身负责。
+`NativeWsServer::bind(address, host, token, version)` 是显式库入口：调用者提供已经装配的 `TurnGateway`、127.0.0.1 高位端口（测试用 0）、token；不读取默认 home，也不访问 TS gateway upstream。`run(stop, budget)` 停止接纳后排空连接，最后关闭 serial host。取消 `run`（包括尚未 poll 的 future）也会请求宿主关闭。`TurnGateway::start_with_cleanup` 让 factory/project 清理发生在宿主 executor 退出之前；初始化失败时宿主先跑自己的拆除再报错（coordinator 处置、embedding cleanup 在宿主线程上 poll，等待以 `start_with_cleanup_budget` 传入的 embedding 自身预算为界）。工厂/项目两资源另有按「是否已完成」记账的兜底（#1959）：宿主线程未起或启动失败（Err 路径）时，兜底补齐 cleanup 未完成的那部分；正常关停 drain 的预算截断不在兜底范围（与 TS 金样 never 行一致）。cron 与 channels 仍只由 cleanup 自身负责。
 
 本目录不是可启动的生产 bin 装配。默认 `main.rs` 保持原字节；生产 `GatewayRequests`、`SubmitHostServices` 与资源族装配仍待补齐，因此本补丁本身不能解除 #590 的原生进程前置。
 
