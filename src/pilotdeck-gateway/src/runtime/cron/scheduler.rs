@@ -100,10 +100,14 @@ impl CronScheduler {
     /// `start` (CronScheduler.ts:31-41). The disabled/stopped/running gates
     /// are early `return`s in TS; the recalculation runs on the caller before
     /// the first arm, and a recalculation failure rejects `start()` with
-    /// `running` already set — exactly the TS state after the reject. A
-    /// thread-spawn failure (EAGAIN) instead resets `running` before
-    /// rejecting, so a later `start()` retries instead of early-returning a
-    /// spurious Ok.
+    /// `running` already set — exactly the TS state after the reject
+    /// (`timer` undefined, nothing armed), because the timer seat is spawned
+    /// *before* the recalculation: the thread waits unarmed, so a later
+    /// `poke()` revives the scheduler like TS's `scheduleNextTick(0)`
+    /// (CronScheduler.ts:55-64) instead of writing a deadline nobody
+    /// consumes. A thread-spawn failure (EAGAIN) instead resets `running`
+    /// before rejecting, so a later `start()` retries instead of
+    /// early-returning a spurious Ok.
     pub fn start(&self) -> Result<(), CronError> {
         let enabled = self.inner.deps.config.enabled;
         {
@@ -112,41 +116,42 @@ impl CronScheduler {
                 return Ok(());
             }
             state.running = true;
+            // The seat spawns before the recalculation (the stopped gate
+            // above just ran under the same lock, so no join can be missed);
+            // a stop that lands while the lock is down for the recalculation
+            // takes this handle with it and joins it, so no seat is leaked.
+            if state.thread.is_none() {
+                let inner = self.inner.clone();
+                match thread::Builder::new()
+                    .name("cron-scheduler".into())
+                    .spawn(move || scheduler_thread(inner))
+                {
+                    Ok(handle) => state.thread = Some(handle),
+                    Err(error) => {
+                        // A spawn failure (EAGAIN/resource exhaustion)
+                        // must not latch `running`: the gate above would
+                        // swallow every later start() retry with a
+                        // spurious Ok.
+                        state.running = false;
+                        drop(state);
+                        self.inner.signal.notify_all();
+                        return Err(CronError::error(JsString::from(error.to_string())));
+                    }
+                }
+            }
         }
         let recalc = recalculate_all_next_runs(&self.inner.deps);
         let mut state = lock(&self.inner.state);
         match recalc {
+            // The rejected start leaves the seat waiting unarmed — the exact
+            // TS state, revived by a later poke.
             Err(error) => Err(error),
             Ok(()) => {
-                // A stop that completed while the lock was down for the
-                // recalculation took the thread handle with it; spawning
-                // here would leak a handle nobody joins again (the thread
-                // exits immediately on its own stopped check).
-                if state.thread.is_none() && !state.stopped {
-                    let inner = self.inner.clone();
-                    match thread::Builder::new()
-                        .name("cron-scheduler".into())
-                        .spawn(move || scheduler_thread(inner))
-                    {
-                        Ok(handle) => state.thread = Some(handle),
-                        Err(error) => {
-                            // A spawn failure (EAGAIN/resource exhaustion)
-                            // must not latch `running`: the gate above would
-                            // swallow every later start() retry with a
-                            // spurious Ok.
-                            state.running = false;
-                            drop(state);
-                            self.inner.signal.notify_all();
-                            return Err(CronError::error(JsString::from(error.to_string())));
-                        }
-                    }
-                }
                 // `scheduleNextTick()` — arm only when nothing is armed: a
                 // poke during the recalc already set a closer deadline (TS
                 // would leak both timers; the port keeps the earlier one).
                 if !state.stopped && state.running && enabled && state.deadline.is_none() {
-                    state.deadline =
-                        Some(Instant::now() + Duration::from_millis(self.inner.deps.idle_poll_ms));
+                    state.deadline = next_tick_deadline(self.inner.deps.idle_poll_ms);
                 }
                 self.inner.signal.notify_all();
                 Ok(())
@@ -209,6 +214,16 @@ impl CronScheduler {
     }
 }
 
+/// `scheduleNextTick`'s wait computation (CronScheduler.ts:73): every arm
+/// floors at `MIN_TIMER_MS` — an injected poll below the floor must not
+/// re-arm at "now" and hot-loop `listTasks` — and an unrepresentable
+/// `Instant + Duration` (std: "may panic" on overflow) is skipped instead of
+/// panicking, mirroring TS's never-throwing `setTimeout`: the seat stays
+/// unarmed until the next poke or start re-arms.
+fn next_tick_deadline(idle_poll_ms: u64) -> Option<Instant> {
+    Instant::now().checked_add(Duration::from_millis(idle_poll_ms.max(MIN_TIMER_MS)))
+}
+
 /// The timer seat: waits until the deadline, runs a tick, re-arms
 /// (`scheduleNextTick`, CronScheduler.ts:71-86), forever until stopped or
 /// unowned.
@@ -257,8 +272,7 @@ fn scheduler_thread(inner: Arc<SchedulerInner>) {
                 && inner.deps.config.enabled
                 && state.deadline.is_none()
             {
-                state.deadline =
-                    Some(Instant::now() + Duration::from_millis(inner.deps.idle_poll_ms));
+                state.deadline = next_tick_deadline(inner.deps.idle_poll_ms);
             }
             continue;
         };
