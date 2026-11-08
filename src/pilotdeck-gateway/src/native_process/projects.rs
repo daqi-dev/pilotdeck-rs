@@ -3,23 +3,44 @@
 use super::Options;
 use crate::{
     config::Env,
-    runtime::project::{ProjectRuntimeFactory, ResourceBundle, RuntimeResult},
+    runtime::project::{
+        ProjectRuntimeFactory, ResourceBundle, ResourceFamilySource, RuntimeResult,
+    },
 };
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 pub(super) struct NativeProjectFactory {
     options: Options,
     env: Env,
+    background: Option<Arc<dyn ResourceFamilySource>>,
 }
 impl NativeProjectFactory {
     pub(super) fn new(options: Options, env: Env) -> Self {
-        Self { options, env }
+        Self {
+            options,
+            env,
+            background: {
+                #[cfg(unix)]
+                {
+                    Some(super::background::native_background_family())
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            },
+        }
     }
 }
 impl ProjectRuntimeFactory for NativeProjectFactory {
     fn stage(&self, root: &Path, resources: &mut ResourceBundle) -> RuntimeResult {
-        super::assembly::project_resources_factory(&self.options, &self.env, root)
-            .stage(root, resources)
+        super::assembly::project_resources_factory(
+            &self.options,
+            &self.env,
+            root,
+            self.background.clone(),
+        )
+        .stage(root, resources)
     }
 }
 

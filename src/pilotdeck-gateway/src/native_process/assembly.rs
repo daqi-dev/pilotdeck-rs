@@ -1957,6 +1957,7 @@ pub(super) fn project_resources_factory(
     options: &Options,
     env: &Env,
     project_root: &Path,
+    background: Option<Arc<dyn crate::runtime::project::ResourceFamilySource>>,
 ) -> ProjectResourcesFactory {
     ProjectResourcesFactory::new(ProjectResourcesOptions {
         pilot_home: options.home.clone(),
@@ -1976,7 +1977,7 @@ pub(super) fn project_resources_factory(
         .with_native_models()
         .with_context_memory()
         .with_tools_mcp()
-        .with_native_background_tasks()
+        .with_shared_native_background_tasks(background)
         .with_native_style_plugins(crate::runtime::plugins::PluginRuntimeOptions {
             project_root: project_root.to_path_buf(),
             pilot_home: options.home.clone(),

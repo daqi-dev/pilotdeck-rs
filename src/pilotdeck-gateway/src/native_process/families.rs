@@ -308,7 +308,10 @@ fn parse_title(response: &JsValue) -> Option<JsString> {
 
 #[cfg(not(unix))]
 impl crate::runtime::project::Families {
-    pub(crate) fn with_native_background_tasks(self) -> Self {
+    pub(super) fn with_shared_native_background_tasks(
+        self,
+        _family: Option<Arc<dyn crate::runtime::project::ResourceFamilySource>>,
+    ) -> Self {
         self
     }
 }

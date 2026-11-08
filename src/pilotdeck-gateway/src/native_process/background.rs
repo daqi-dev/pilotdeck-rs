@@ -73,9 +73,16 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
         Ok(())
     }
 }
+pub(super) fn native_background_family() -> Arc<dyn ResourceFamilySource> {
+    Arc::new(NativeExecutionWorldFamily::default())
+}
+
 impl Families {
-    pub(crate) fn with_native_background_tasks(mut self) -> Self {
-        self.execution_world = Arc::new(NativeExecutionWorldFamily::default());
+    pub(super) fn with_shared_native_background_tasks(
+        mut self,
+        family: Option<Arc<dyn ResourceFamilySource>>,
+    ) -> Self {
+        self.execution_world = family.unwrap_or_else(native_background_family);
         self
     }
 }
