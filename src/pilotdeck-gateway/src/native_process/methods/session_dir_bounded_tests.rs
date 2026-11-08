@@ -207,3 +207,80 @@ fn session_marker_limits_fail_closed_before_repeated_io() {
     assert!(files.read(&root.join("item")).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Reproduction of writer identity disagreement when a legacy marker is relative.
+/// Each case runs in a child because cwd is process-global and one case deletes it.
+#[test]
+fn relative_marker_writer_identity_disagreement_subprocess() {
+    for case in ["different-cwd", "deleted-cwd"] {
+        let root = std::env::temp_dir().join(format!("pdrs-fence-identity-{}-{case}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let project = root.join("project");
+        let legacy = home.join("projects/000-fixture");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::create_dir_all(project.join("project")).unwrap();
+        let marker: &[u8] = if case == "different-cwd" { b"project" } else { b"../project" };
+        std::fs::write(legacy.join(".cwd"), marker).unwrap();
+        let cwd = if case == "different-cwd" { root.clone() } else {
+            let cwd = root.join("vanishing-cwd");
+            std::fs::create_dir(&cwd).unwrap();
+            cwd
+        };
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--nocapture", "relative_marker_writer_identity_child"])
+            .current_dir(&cwd).env("PDRS_IDENTITY_ROOT", &root).env("PDRS_IDENTITY_CASE", case)
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(status.success(), "{case}: {}", String::from_utf8_lossy(&output.stderr));
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!("{case}: blocked: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+#[ignore = "run by bounded parent"]
+fn relative_marker_writer_identity_child() {
+    let root = std::path::PathBuf::from(std::env::var_os("PDRS_IDENTITY_ROOT").unwrap());
+    let case = std::env::var("PDRS_IDENTITY_CASE").unwrap();
+    let home = root.join("home");
+    let project = root.join("project");
+    let options = crate::native_process::Options {
+        home: home.clone(), project: project.clone(),
+        listen: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+        token_file: root.join("unused-token"), sidecar: root.join("unused-sidecar"),
+        sidecar_args: Vec::new(), drain_budget: Duration::from_secs(1), storage_root: None,
+    };
+    // Exercise real startup registration first, while cwd is still valid.
+    crate::native_process::assembly::register_project(&options).unwrap();
+    if case == "deleted-cwd" {
+        std::fs::remove_dir(root.join("vanishing-cwd")).unwrap();
+        assert!(std::env::current_dir().is_err());
+    }
+    let request = bounded_chat_dir(&home, &project).unwrap();
+    let assembly = crate::session_chat_dir(&home, &project, &project.to_string_lossy());
+    let legacy = home.join("projects/000-fixture/chats");
+    if case == "different-cwd" {
+        assert_eq!(request, legacy);
+        assert_ne!(assembly, legacy);
+    } else {
+        assert_ne!(request, legacy);
+        assert_eq!(assembly, legacy);
+    }
+    let request_file = request.join("same-session.jsonl");
+    let assembly_file = assembly.join("same-session.jsonl");
+    let request_key = crate::storage::canonical_transcript_path(&request_file).unwrap();
+    let assembly_key = crate::storage::canonical_transcript_path(&assembly_file).unwrap();
+    assert_ne!(request_key, assembly_key, "independent fence keys leave one logical session in different storage");
+}
