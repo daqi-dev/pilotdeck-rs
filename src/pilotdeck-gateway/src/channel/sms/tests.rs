@@ -18,7 +18,7 @@ use super::super::loader::{
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 56;
+const EXPECTED_CASE_COUNT: usize = 57;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaaaaaa-1111-2222-3333-444444444444";
 
@@ -625,6 +625,38 @@ fn recorded_path_rejects_wrong_type() {
 #[should_panic(expected = "#1339 path must be a string")]
 fn recorded_path_panics_on_wrong_type() {
     recorded_path(&json!({"path": []}));
+}
+
+/// #1913: every pre-existing step was an HTTP/1.1 client, so the request
+/// version was implicit in `build_raw`; the `http10` cell records its own
+/// `HTTP/1.0` request line, and this reader keeps that field honest.
+fn recorded_version_checked(value: &Value) -> Result<Option<&str>, String> {
+    recorded_checked(
+        value.get("version"),
+        "version",
+        "a string",
+        Value::as_str,
+        false,
+        crate::mutants::on("sms-oracle-recorded-version"),
+    )
+}
+
+fn recorded_version(value: &Value) -> Option<&str> {
+    recorded_version_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_version_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_version_checked(&json!({"version": []})).is_err(),
+        "#1913 rejects version type drift"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 version must be a string")]
+fn recorded_version_panics_on_wrong_type() {
+    recorded_version(&json!({"version": []}));
 }
 
 fn recorded_body_repeat_checked(value: &Value) -> Result<Option<&str>, String> {
@@ -1819,13 +1851,28 @@ fn assert_boundary_body_len(name: &str, case: &Value) {
 
 fn build_raw(step: &Value) -> Vec<u8> {
     let body = recorded_body(step);
+    let headers = recorded_headers(step);
+    // #1913: `Connection: close` was hardcoded with the 1.1 request line;
+    // the `http10` cell records its own `Connection: keep-alive`, so the
+    // header follows the recorded map and the response is what must decide
+    // the close — a replay that silently closed would keep passing with the
+    // finalize gone, which is exactly what the cell exists to catch.
+    let connection = if headers
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("connection"))
+    {
+        ""
+    } else {
+        "Connection: close\r\n"
+    };
     let mut raw = format!(
-        "{} {} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n",
+        "{} {} {}\r\nHost: 127.0.0.1\r\n{connection}",
         recorded_method(step).unwrap_or("POST"),
         recorded_path(step).unwrap_or("/sms/incoming"),
+        recorded_version(step).unwrap_or("HTTP/1.1"),
     )
     .into_bytes();
-    for (key, value) in recorded_headers(step) {
+    for (key, value) in headers {
         raw.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
     raw.extend_from_slice(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
@@ -3454,6 +3501,116 @@ replay_cases! {
     // #1901: replayed by `replay_body_read_timeout` (Node's 300 s deadline is
     // shortened through the injected option instead of being waited out).
     "body-read-timeout" => body_read_timeout,
+    // #1913: the generic replay is the guard — the recorded step is a 1.0
+    // keep-alive request, and `raw_request` only returns on the connection
+    // close, so a lost finalize (the socket stays open waiting out the
+    // keep-alive) times out at the `bounded` 5 s probe deadline.
+    "http10" => http10,
+}
+
+/// #1913: an HTTP/1.0 request — even one asking for `Connection: keep-alive`
+/// — draws a close-delimited response and a closed socket, as Node does (the
+/// pinned Node v22.22.0 measurement lives in
+/// `_tmp/20261108-sms-residual/probe-sms-http10.out`). Only the status line
+/// differs: Node answers `HTTP/1.1`, hyper writes its own `HTTP/1.0` (the
+/// accepted-diff entry A8.3-CH-SMS-015, the same class as the webhook lane's
+/// A8.3-CH-WEBHOOK-004). The replay cell above cannot see any of this — the
+/// oracle records only status/content-type/body, so the status-line version
+/// and the framing would drift silently — this test reads the raw wire.
+#[tokio::test]
+async fn http10_request_closes_the_connection() {
+    const PORT: u16 = 18904;
+    let case = case_by_name("http10");
+    let steps = recorded_steps(&case).expect("#1339 steps validated array");
+    let request = build_raw(
+        steps
+            .first()
+            .expect("#1913 the http10 case carries one request step"),
+    );
+    assert!(
+        request.starts_with(b"POST /sms/incoming HTTP/1.0\r\n")
+            && request
+                .windows(b"Connection: keep-alive".len())
+                .any(|window| window == b"Connection: keep-alive"),
+        "#1913 pin http10: the oracle step stays an HTTP/1.0 keep-alive request: {request:?}"
+    );
+    // The recorded case's own options, not a hand-built twin: a regenerated
+    // cell that changes the account or the path must fail here too. The port
+    // is the pin's own — the replay cell owns the recorded 18856 — and with
+    // no gateway the dispatched turn dies in its spawned task (logged into
+    // the void, the recorder is absent) long after the 200 TWIML is already
+    // on the wire.
+    let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
+    extra["webhookPort"] = json!(PORT);
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&extra)),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#1913 start for the http10 pin");
+    let raw = bounded("http10 pin response", raw_until_close(PORT, &request)).await;
+    settle().await;
+    bounded("http10 pin cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#1913 http10 pin cleanup stop");
+
+    assert!(
+        raw.starts_with(b"HTTP/1.0 200 OK\r\n"),
+        "#1913 pin http10: hyper answers with its own 1.0 status line (Node's 1.1 line is the accepted-diff entry A8.3-CH-SMS-015): {raw:?}"
+    );
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .expect("#1913 pin http10: the response carries a header end");
+    let framed = head.split("\r\n").skip(1).any(|line| {
+        line.split_once(':').is_some_and(|(name, _)| {
+            name.trim().eq_ignore_ascii_case("content-length")
+                || name.trim().eq_ignore_ascii_case("transfer-encoding")
+        })
+    });
+    assert!(
+        !framed,
+        "#1913 pin http10: the 1.0 response is close-delimited like Node's, no content-length and no chunking: {raw:?}"
+    );
+    crate::negative_assert_eq!(
+        body,
+        TWIML_OK,
+        "#1913 pin http10: the 1.0 response replays the TWIML body unchanged"
+    );
+}
+
+/// Raw-wire twin of `raw_request` (#1913): the parsed probe cannot see the
+/// status-line version or the framing, so the http10 pin reads the bytes.
+async fn raw_until_close(port: u16, request: &[u8]) -> Vec<u8> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#1913 connect for the http10 pin");
+    stream
+        .write_all(request)
+        .await
+        .expect("#1913 write the http10 request");
+    // `read_to_end` only returns when the server closes: a lost finalize
+    // holds the socket open and the `bounded` deadline turns that into the
+    // test failure.
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .await
+        .expect("#1913 the 1.0 response must close the connection");
+    raw
 }
 
 #[test]

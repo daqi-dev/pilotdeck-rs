@@ -32,7 +32,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
-const EXPECTED_CASE_COUNT = 56;
+const EXPECTED_CASE_COUNT = 57;
 // #1901: the stalled-body cell can only end at Node's default `requestTimeout`
 // (300 s), whose 408 lands on the 30 s connections-checker grid — worst case
 // just under 330 s. The generator runs every case twice, so this cell alone
@@ -234,14 +234,22 @@ const REQUEST = (
   method: string,
   path: string,
   truncate = 0,
+  // #1913: every pre-existing step was an HTTP/1.1 client, so the version was
+  // implicit; the HTTP/1.0 cell records it explicitly instead of hardcoding
+  // 1.1 and silently recording a different client than it claims.
+  version: string = 'HTTP/1.1',
 ) => {
   const bytes = typeof body === 'string' ? body : body.repeat.repeat(body.count);
   // `truncate` keeps the full Content-Length but sends fewer bytes, so the
   // server sees a request body cut short by the client (the half-close of
   // the `halfClose` step op finishes it).
   const wire = truncate > 0 ? bytes.slice(0, Math.max(0, bytes.length - truncate)) : bytes;
+  // `Connection: close` is the replay default every pre-existing step
+  // carries; the 1.0 cell spells its own `Connection: keep-alive`, so the
+  // response is what must decide the close.
+  const connection = 'Connection' in headers ? '' : 'Connection: close\r\n';
   return (
-    `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n` +
+    `${method} ${path} ${version}\r\nHost: 127.0.0.1\r\n${connection}` +
     Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') +
     `Content-Length: ${Buffer.byteLength(bytes)}\r\n\r\n${wire}`
   );
@@ -900,6 +908,26 @@ scenario({
     connect(), stop(),
   ],
 });
+scenario({
+  // #1913: an HTTP/1.0 client asking to keep alive. Node answers its own
+  // HTTP/1.1 status line with `Connection: close` on a closed socket, and
+  // the body is close-delimited (no content-length — the same 1.0 shape the
+  // webhook lane recorded for #1684, measured for this handler in
+  // `_tmp/20261108-sms-residual/probe-sms-http10.out`). hyper answers its
+  // own 1.0 status line (the accepted-diff entry A8.3-CH-SMS-015) and,
+  // before the finalize, kept the socket open waiting out the keep-alive
+  // the request carried.
+  name: 'http10', port: port(56),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({
+      body: 'From=%2B15550001&Body=hello',
+      headers: { ...FORM, Connection: 'keep-alive' },
+      method: 'POST', path: '/sms/incoming', version: 'HTTP/1.0',
+    }),
+    waitSends(1), stop(),
+  ],
+  turn: { events: [textDelta('1.0 reply')] },
+});
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1339 generator case count');
 
 // ---------------------------------------------------------------------------
@@ -938,7 +966,7 @@ async function run(definition: Definition) {
     for (const step of steps) {
       switch (step.op) {
         case 'request': {
-          const raw = REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0);
+          const raw = REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0, step.version);
           record.responses.push(step.stall === true
             // #1901: only the server's own deadline can finish this request.
             ? await stalledRequest(definition.port, raw, STALLED_PROBE_DEADLINE_MS)

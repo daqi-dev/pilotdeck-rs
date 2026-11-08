@@ -687,7 +687,7 @@
   },
   "node": "v22.22.0",
   "icu": "78.2",
-  "expectedCaseCount": 56,
+  "expectedCaseCount": 57,
   "cases": [
     {
       "name": "start-missing-config",
@@ -6248,6 +6248,95 @@
         "responses": [
           {
             "refused": true
+          }
+        ],
+        "unhandled": [],
+        "cronResults": []
+      }
+    },
+    {
+      "name": "http10",
+      "port": 18856,
+      "env": {},
+      "extra": {
+        "webhookHost": "127.0.0.1",
+        "webhookPort": 18856,
+        "accountSid": "AC1",
+        "authToken": "tok",
+        "phoneNumber": "+15550000"
+      },
+      "sign": false,
+      "turn": {
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "1.0 reply"
+          }
+        ]
+      },
+      "permissionDelivered": true,
+      "permissionError": null,
+      "permissionGate": null,
+      "sendFailAt": [],
+      "sendBlockAt": null,
+      "sendError": null,
+      "steps": [
+        {
+          "op": "request",
+          "body": "From=%2B15550001&Body=hello",
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Connection": "keep-alive"
+          },
+          "method": "POST",
+          "path": "/sms/incoming",
+          "version": "HTTP/1.0"
+        },
+        {
+          "op": "wait-sends",
+          "count": 1
+        },
+        {
+          "op": "stop"
+        }
+      ],
+      "expected": {
+        "logs": [
+          [
+            "info",
+            "sms: Twilio webhook http://127.0.0.1:18856/sms/incoming"
+          ],
+          [
+            "info",
+            "sms: stopping (no reason)"
+          ],
+          [
+            "info",
+            "sms: stopping (cleanup)"
+          ]
+        ],
+        "sends": [
+          {
+            "body": "1.0 reply",
+            "from": "+15550000",
+            "to": "+15550001"
+          }
+        ],
+        "rpcs": [
+          {
+            "rpc": "submitTurn",
+            "request": {
+              "sessionKey": "sms:chat=+15550001:general",
+              "channelKey": "sms",
+              "message": "hello"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "status": 200,
+            "contentType": "text/xml",
+            "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>"
           }
         ],
         "unhandled": [],
