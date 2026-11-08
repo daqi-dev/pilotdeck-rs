@@ -82,13 +82,9 @@ cases = [
      "    need(contract.get('connections') == 1, 'session profile connections')",
      'test_session_profile_connections_drift_is_not_coerced'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(),
-     '        if memory:\n            lock = tree_' + 'lock(root, timeout=900)\n'
-     '            try:\n                lock.__enter__()\n'
-     '            except Exception as error:\n                startup_refusal(error)\n'
-     '            try:\n                for row in selected:\n                    one(row)\n'
-     '            finally:\n                lock.__exit__(None, None, None)\n        else:',
-     '        if memory:\n            try:\n                for row in selected:\n                    one(row)\n'
-     '            finally:\n                pass\n        else:',
+     '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n'
+     '                started = True\n                for row in selected:\n                    one(row)\n        else:',
+     '        if memory:\n            for row in selected:\n                one(row)\n        else:',
      'test_memory_rehearsal_holds_tree_lock'),
 ]
 
@@ -266,45 +262,35 @@ def main():
             pass
         refuse('guard refused to start: ' + repr(error))
 
+    # Startup is everything the guard does before the first mutation: baseline
+    # checks, scanner staging, lease and lock acquisition.  Any exception from
+    # that phase is a startup refusal regardless of class -- _git timeouts
+    # raise RuntimeError, the workspace scanner raises subprocess.TimeoutExpired
+    # / CalledProcessError, tree_lock can raise OSError on top of the
+    # TimeoutError already covered -- so the with body's first statement flips
+    # ``started`` and the handler below refuses (rc 2) only when the body never
+    # began.  Failures after mutations started (body, restore, __exit__)
+    # re-raise past the refusal and stay a red run (rc 1), so a restore-phase
+    # RuntimeError("restore failed") is never misread as a startup refusal.
+    started = False
     try:
-        # Startup is everything __enter__ does before the first mutation:
-        # baseline checks, scanner staging, lease and lock acquisition.  Any
-        # exception from that phase is a startup refusal regardless of class --
-        # _git timeouts raise RuntimeError, the workspace scanner raises
-        # subprocess.TimeoutExpired / CalledProcessError, tree_lock can raise
-        # OSError on top of the TimeoutError already covered -- so the entry
-        # is split from the run loop instead of widening the catch below:
-        # restore-phase RuntimeError("restore failed") happens after mutations
-        # began and must stay a red run (rc 1).
         if memory:
-            lock = tree_lock(root, timeout=900)
-            try:
-                lock.__enter__()
-            except Exception as error:
-                startup_refusal(error)
-            try:
+            with tree_lock(root, timeout=900):
+                started = True
                 for row in selected:
                     one(row)
-            finally:
-                lock.__exit__(None, None, None)
         else:
             # The fixture guards its own bytes too: the memory-rehearsal case
             # mutates this file, so it must be snapshotted for restore.
             install_terminate_handlers()
-            guard = mutating_sources(root, [session, native, common,
-                                             Path(__file__).resolve()])
-            try:
-                originals = guard.__enter__()
-            except Exception as error:
-                startup_refusal(error)
-            try:
+            with mutating_sources(root, [session, native, common,
+                                         Path(__file__).resolve()]) as originals:
+                started = True
                 for row in selected:
                     one(row, True)
-            finally:
-                # Hand the in-flight exception (if any) to __exit__ so the
-                # generator's restore finally runs and re-raises afterwards.
-                guard.__exit__(*sys.exc_info())
     except Exception as error:
+        if not started:
+            startup_refusal(error)
         results = [{'name': row[0], 'status': 'INVALID', 'reason': 'guard: ' + repr(error)} for row in selected]
     summary = {'mode': 'memory-only' if memory else 'guarded-source', 'results': results,
                'counts': {key: sum(row['status'] == key for row in results) for key in ('KILLED', 'SURVIVED', 'INVALID')}}
