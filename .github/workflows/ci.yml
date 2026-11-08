@@ -206,6 +206,13 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-mcp-session-tools/negative_controls.py --check
           # #1354（minimax r2 P2，同一先例）：入口路由负控夹具的 --check 同理进 CI。
           python3 -I src/pilotdeck-gateway/tests/fixtures/mode-routing/negative_controls.py --check
+      # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
+      # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
+      # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零
+      # 退出；此前只靠宿主链，CI 上一条都不跑。
+      - name: 槽位探针残余负控全量（#2516）
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
+        run: python3 -I src/pilotdeck-gateway/tests/fixtures/slot-probe-residual/negative-controls.py
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         shell: bash
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
