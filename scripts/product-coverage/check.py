@@ -29,6 +29,16 @@ def read(path):
     return json.loads(Path(path).read_text(), object_pairs_hook=unique)
 
 
+def split_lines(text):
+    # "\n"-only splitting: splitlines() would also break on U+2028/U+2029/
+    # U+0085/\x0b/\x0c (real case: channel/sms/mod.rs) and desynchronize
+    # evidence line numbers from editor numbering.
+    lines = text.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def enumeration(baseline):
     cmd = ["node", str(Path(__file__).with_name("enumerate.mjs")), str(baseline)]
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -57,7 +67,7 @@ def local_ref(ref):
         return False
     if not fragment and not line:
         return True
-    lines = path.read_text().splitlines()
+    lines = split_lines(path.read_text())
     if line and (not line.isdecimal() or not 1 <= int(line) <= len(lines)):
         return False
     if fragment:
@@ -66,6 +76,68 @@ def local_ref(ref):
         if fragment not in {slug(text.lstrip('#').strip()) for text in lines if text.startswith('#')}:
             return False
     return True
+
+
+def literal_member(text):
+    return re.fullmatch(r'"[^"\\]*",?', text.strip()) is not None
+
+
+def literal_table_lines(lines):
+    # 1-based line numbers inside Rust string-literal tables (e.g.
+    # UNMIGRATED_CHANNEL_KEYS): every member line plus the closing bracket
+    # line. Opening lines stay out — sidecar:* entries legitimately anchor
+    # a whole guarded block at its `for option in [` header.
+    inside = set()
+    index = 0
+    while index < len(lines):
+        if literal_member(lines[index]):
+            end = index
+            while end + 1 < len(lines) and literal_member(lines[end + 1]):
+                end += 1
+            if index > 0 and lines[index - 1].rstrip().endswith("[") \
+                    and end + 1 < len(lines) and lines[end + 1].lstrip().startswith("]"):
+                inside.update(range(index + 1, end + 3))
+            index = end + 1
+        else:
+            index += 1
+    return inside
+
+
+def key_literal_error(key, ref, tables=None):
+    # Strong anchor assertion for evidence pointing into a Rust string-
+    # literal table: the entry's own key (last ':'-separated segment of its
+    # id) must be the literal on the evidence line, so a stale line number
+    # after table edits (each entry pointing at the adjacent key, wecom at
+    # `];` — #2283/#2286) fails instead of passing range-only validation.
+    # Every other evidence form has no single mechanically checkable key
+    # literal (code bodies, match arms, doc headers, table-opening block
+    # anchors, non-bare key segments, literals with escapes) and stays
+    # range-only. `tables` optionally caches {path: (lines, table lines)}
+    # across one check() pass.
+    if not isinstance(ref, str):
+        return None
+    file, _, fragment = ref.partition("#")
+    file, _, line = file.partition(":")
+    if fragment or not file.endswith(".rs") or not line.isdecimal():
+        return None
+    path = (ROOT / file).resolve()
+    if not path.is_relative_to(ROOT) or not path.is_file():
+        return None
+    if tables is None:
+        tables = {}
+    if path not in tables:
+        lines = split_lines(path.read_text())
+        tables[path] = (lines, literal_table_lines(lines))
+    lines, inside = tables[path]
+    number = int(line)
+    if number > len(lines) or number not in inside:
+        return None
+    token = key.rsplit(":", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        return None
+    if lines[number - 1].strip() not in {'"%s"' % token, '"%s",' % token}:
+        return "evidence key literal mismatch: " + key
+    return None
 
 
 def plan_ref(ref, *, acceptance=False):
@@ -108,6 +180,7 @@ def check(data, baseline):
         return errors + ["missing entries"]
     seen = set()
     used = set()
+    tables = {}
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             errors.append("invalid entry")
@@ -127,6 +200,8 @@ def check(data, baseline):
                 errors.append("entry assigned to apparatus: " + key)
         if not isinstance(row.get("status"), str) or row["status"] not in STATUSES or not valid_ref(row.get("evidence")):
             errors.append("missing status/evidence: " + key)
+        elif (literal := key_literal_error(key, row.get("evidence"), tables)):
+            errors.append(literal)
         if key in expected and row.get("sources") != expected[key]["sources"]:
             errors.append("baseline source mismatch: " + key)
     errors.extend("missing entry: " + key for key in sorted(expected.keys() - seen))
