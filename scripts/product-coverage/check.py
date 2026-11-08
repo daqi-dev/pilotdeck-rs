@@ -219,7 +219,13 @@ def plan_ref(ref, *, acceptance=False):
     return allowed and file.endswith(".md") and local_ref(ref)
 
 
-def check(data, baseline):
+def check(data, baseline, tables=None):
+    # `tables` optionally seeds the {path: (lines, table lines)} cache
+    # key_literal_error shares across one pass, so callers holding a
+    # snapshot (the drift negative controls) can validate against the
+    # exact version they derived their line numbers from instead of a
+    # mid-test re-read (#2286 fix-r7, DS concurrency P2#2 — the fix-r3
+    # single-snapshot discipline extended to the check() path).
     errors = []
     refs = {}
     def valid_ref(ref):
@@ -251,7 +257,8 @@ def check(data, baseline):
         return errors + ["missing entries"]
     seen = set()
     used = set()
-    tables = {}
+    if tables is None:
+        tables = {}
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             errors.append("invalid entry")
