@@ -147,11 +147,15 @@ mutations = [
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),
     ('transcript-fence-removed-rename', SESSION_DIR,
-     '        let fence_path =\n'
-     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let fence_path = chat_dir.join(format!(\n'
+     '            "{}.jsonl",\n'
+     '            crate::storage::sanitize_session_id(&key)\n'
+     '        ));\n'
      '        let write_fence = transcript_locks::acquire(&fence_path).await?;',
-     '        let fence_path =\n'
-     '            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);\n'
+     '        let fence_path = chat_dir.join(format!(\n'
+     '            "{}.jsonl",\n'
+     '            crate::storage::sanitize_session_id(&key)\n'
+     '        ));\n'
      '        let write_fence = ();',
      CFG + 'concurrent_transcript_writers_keep_the_chain_loadable',
      '#1457 transcript sequences strictly increase'),

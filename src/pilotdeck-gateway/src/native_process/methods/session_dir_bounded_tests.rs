@@ -319,6 +319,8 @@ fn relative_marker_writer_identity_disagreement_subprocess() {
             "pdrs-fence-identity-{}-{case}",
             uuid::Uuid::new_v4()
         ));
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
         let home = root.join("home");
         let project = root.join("project");
         let legacy = home.join("projects/000-fixture");
