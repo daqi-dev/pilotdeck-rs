@@ -427,6 +427,7 @@ impl Requests {
             let entry = JsValue::Object(metadata);
             if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)
             {
+                transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
                     .record_session_metadata_checked(&key, &turn, entry)
@@ -452,6 +453,7 @@ impl Requests {
                 if let Some((owner, recorder)) =
                     super::super::assembly::live_recorder(&recorders, &key)
                 {
+                    transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                     recorder
                         .writer()
                         .record_session_metadata_checked(&key, &turn, entry)

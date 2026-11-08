@@ -584,18 +584,29 @@ impl LedgerLock {
     /// The retained canonical path lets a transfer verify the fence really
     /// guards the path the holder resolved (#1019).
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
+        Self::acquire_with_policy(supplied, false)
+    }
+
+    pub(crate) fn acquire_bounded(supplied: &Path) -> Result<(PathBuf, Self)> {
+        Self::acquire_with_policy(supplied, true)
+    }
+
+    fn acquire_with_policy(supplied: &Path, bounded: bool) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let lock_path = PathBuf::from(lock_path);
-        let lock = private_open()
-            .read(true)
-            .write(true)
-            .create(true)
-            // Rust-only fence inode: TS has no lock syscall. Keep the errno out
-            // of the error so the wire layer cannot blame the transcript for a
-            // failure that belongs to `<transcript>.lock`; Rust text is honest.
-            .open(&lock_path)
+        let mut options = private_open();
+        options.read(true).write(true).create(true);
+        if bounded {
+            #[cfg(unix)]
+            {
+                options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+            }
+            #[cfg(not(unix))]
+            return Err(invalid("Bounded native ledger lock is unavailable on this platform."));
+        }
+        let lock = options.open(&lock_path)
             .map_err(|error| {
                 io::Error::new(
                     error.kind(),
@@ -605,6 +616,9 @@ impl LedgerLock {
                     ),
                 )
             })?;
+        if bounded && !lock.metadata().map_err(|error| descriptor_error(error, "fstat"))?.is_file() {
+            return Err(invalid("Native session ledger lock is not a regular file."));
+        }
         // Rust-only single-writer fence: TS has no lock syscall, and the
         // WouldBlock rejection is synthetic, so neither is rendered as a
         // Node fs error.

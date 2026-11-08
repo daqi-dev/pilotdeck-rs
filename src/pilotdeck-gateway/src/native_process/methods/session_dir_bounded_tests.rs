@@ -310,7 +310,7 @@ fn session_marker_limits_fail_closed_before_repeated_io() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-/// Reproduction of writer identity disagreement when a legacy marker is relative.
+/// A relative marker must resolve to one identity for native factory and cold writers.
 /// Each case runs in a child because cwd is process-global and one case deletes it.
 #[test]
 fn relative_marker_writer_identity_disagreement_subprocess() {
@@ -401,21 +401,18 @@ fn relative_marker_writer_identity_child() {
         assert!(std::env::current_dir().is_err());
     }
     let request = bounded_chat_dir(&home, &project).unwrap();
-    let assembly = crate::session_chat_dir(&home, &project, &project.to_string_lossy());
+    // This is the same native bounded resolver used by the RecordingPlan;
+    // host-probe exercises the plan and recorder with a real model turn.
+    let assembly = bounded_chat_dir_at(&home, &project, std::path::Path::new("")).unwrap();
     let legacy = home.join("projects/000-fixture/chats");
     if case == "different-cwd" {
         assert_eq!(request, legacy);
-        assert_ne!(assembly, legacy);
     } else {
         assert_ne!(request, legacy);
-        assert_eq!(assembly, legacy);
     }
     let request_file = request.join("same-session.jsonl");
     let assembly_file = assembly.join("same-session.jsonl");
     let request_key = crate::storage::canonical_transcript_path(&request_file).unwrap();
     let assembly_key = crate::storage::canonical_transcript_path(&assembly_file).unwrap();
-    assert_ne!(
-        request_key, assembly_key,
-        "independent fence keys leave one logical session in different storage"
-    );
+    assert_eq!(request_key, assembly_key, "native factory and cold writer must share a fence");
 }

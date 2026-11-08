@@ -448,7 +448,13 @@ async fn start_assembly(
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
     let prepare_deployment = super::deployment::resolve(&options, &env)?;
-    register_project(&options)?;
+    let registration_permit = super::methods::session_dir::session_io_permit()
+        .await.map_err(|error| String::from_utf16_lossy(error.message.units()))?;
+    let registration_options = options.clone();
+    tokio::task::spawn_blocking(move || {
+        let _permit = registration_permit;
+        register_project(&registration_options)
+    }).await.map_err(|error| format!("Native project registration task failed: {error}"))??;
     let project = project_registry(&options, &env);
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -1097,12 +1103,32 @@ async fn start_assembly(
                     .context()
                     .resource(Resource::Persistence)
                     .ok_or_else(|| RuntimeError::new("Native persistence is missing."))?;
-                let path = transcript_path(&options, &context.session_key);
+                let (chat_dir, permit) = super::methods::session_dir::resolve_chat_dir(
+                    options.home.clone(), options.project.clone()
+                ).await.map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
+                let path = chat_dir.join(format!(
+                    "{}.jsonl", crate::storage::sanitize_session_id(&context.session_key)
+                ));
                 let open_path = path.clone();
+                let check_home = options.home.clone();
+                let check_project = options.project.clone();
+                let permit = Arc::new(permit);
                 Ok(SessionStorage::Recording(RecordingPlan {
                     transcript_path: path,
                     open: Arc::new(move || {
+                        let _permit = &permit;
                         let _lease = &lease;
+                        // A marker may change after lookup while waiting for the
+                        // writer lease. Refuse opening a different identity.
+                        let current = super::methods::session_dir::bounded_chat_dir(&check_home, &check_project)
+                            .map_err(|error| crate::storage::recorder::RecorderError::Type(
+                                String::from_utf16_lossy(error.message.units())
+                            ))?;
+                        if current != chat_dir {
+                            return Err(crate::storage::recorder::RecorderError::Type(
+                                "Native session project marker changed while opening.".into()
+                            ));
+                        }
                         let persistence = resource
                             .as_any()
                             .downcast_ref::<PersistenceResources>()
@@ -1112,7 +1138,7 @@ async fn start_assembly(
                                 )
                             })?;
                         persistence
-                            .create_session(context.session_key.clone(), Some(open_path.clone()))
+                            .create_session_bounded(context.session_key.clone(), Some(open_path.clone()))
                     }),
                 }))
             })
@@ -1625,17 +1651,6 @@ async fn start_assembly(
         }
     }
 }
-pub fn transcript_path(options: &Options, session: &JsString) -> std::path::PathBuf {
-    // #1860: one derivation, shared with the transcript write fence — a second
-    // copy could drift and leave the fence guarding a file the store never
-    // opens.
-    crate::runtime::session::transcript_locks::session_transcript_path(
-        &options.home,
-        &options.project,
-        session,
-    )
-}
-
 /// #1864 (a): the pure compose step for the three session selections —
 /// extracted from the prepare closure so the read-back tests exercise the
 /// same logic the next session runs. Mirrors
@@ -1710,18 +1725,19 @@ pub(super) fn register_project_at(
     options: &Options,
     cwd: &std::path::Path,
 ) -> Result<(), ProxyError> {
-    let chats = crate::session_chat_dir(
-        &options.home,
-        &options.project,
-        &options.project.to_string_lossy(),
-    );
+    let chats = super::methods::session_dir::bounded_chat_dir_at(
+        &options.home, &options.project, cwd,
+    ).map_err(|error| String::from_utf16_lossy(error.message.units()))?;
     let directory = chats
         .parent()
         .ok_or("Native project storage has no parent.")?;
     std::fs::create_dir_all(directory)?;
     let marker = directory.join(".cwd");
     if marker.exists() {
-        let existing = std::fs::read_to_string(&marker)?;
+        let files = super::methods::session_dir::BoundedSessionMarkers::new();
+        let bytes = crate::metadata::Files::read(&files, &marker)?;
+        let existing = String::from_utf8(bytes)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
         let existing = crate::metadata::js_trim(&existing);
         // TS registration lookup rejects blank markers before resolving paths.
         // Resolving "" when cwd is the project would otherwise manufacture ownership.

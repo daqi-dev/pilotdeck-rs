@@ -30,13 +30,14 @@
 //! Keys are the canonical transcript path, not the request spelling. That is
 //! the identity the writer lease ([`crate::runtime::session::factory::
 //! WriterLease`] and its `LedgerLock`) already uses, so one file cannot end up
-//! with two fences; and the path itself is derived in one place
-//! ([`session_transcript_path`]) that `native_process::assembly` also uses.
+//! with two fences. Native assembly and cold operations resolve the same
+//! bounded project marker before deriving the transcript path.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
+#[cfg(test)]
 use pilotdeck_protocol::JsString;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
@@ -48,14 +49,8 @@ use crate::runtime::session::factory::WriterLease;
 static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// The transcript file one session id maps to under one project.
-///
-/// This is the single derivation of that path: the fence keys on it and
-/// `native_process::assembly::transcript_path` builds storage paths from it, so
-/// a change here can never leave the fence guarding a file the store does not
-/// open. The chat directory comes from the project marker lookup and the file
-/// name from `sanitize_session_id` (which folds `/` and `\` to `-`), so `/p`
-/// and `/p/.` are one directory and `a/b` / `a-b` are one file.
+/// Legacy project path resolution retained for its existing test contract.
+#[cfg(test)]
 pub(crate) fn session_transcript_path(
     home: &Path,
     project_root: &Path,
@@ -80,6 +75,17 @@ pub(crate) fn session_transcript_path(
 fn fence_key(transcript_path: &Path) -> Result<PathBuf, RequestError> {
     crate::storage::canonical_transcript_path(transcript_path)
         .map_err(|error| RequestError::new(format!("Session transcript cannot be fenced: {error}")))
+}
+
+/// Reject a live writer resolved under a different project marker identity.
+pub(crate) fn ensure_recorder_matches(
+    fence_path: &Path,
+    recorder: &crate::storage::recorder::Recorder,
+) -> Result<(), RequestError> {
+    if fence_key(fence_path)? != fence_key(recorder.writer().path())? {
+        return Err(RequestError::new("Session transcript identity changed; retry after closing the session."));
+    }
+    Ok(())
 }
 
 /// The session writer lease for a transcript no session owns right now.

@@ -101,6 +101,24 @@ impl PersistenceResources {
         session_id: JsString,
         transcript_path: Option<PathBuf>,
     ) -> RecorderResult<SessionRecording> {
+        self.create_session_with_policy(session_id, transcript_path, false)
+    }
+
+    /// Native public host variant; rejects unsafe lock and transcript files.
+    pub(crate) fn create_session_bounded(
+        &self,
+        session_id: JsString,
+        transcript_path: Option<PathBuf>,
+    ) -> RecorderResult<SessionRecording> {
+        self.create_session_with_policy(session_id, transcript_path, true)
+    }
+
+    fn create_session_with_policy(
+        &self,
+        session_id: JsString,
+        transcript_path: Option<PathBuf>,
+        bounded: bool,
+    ) -> RecorderResult<SessionRecording> {
         let persistent = transcript_path.is_some();
         let (store, locked, transcript_path): (
             Arc<dyn TranscriptStore>,
@@ -110,8 +128,11 @@ impl PersistenceResources {
             Some(path) => {
                 // The store retains this spelling for diagnostics while the
                 // key uses the canonical path protected by its writer lock.
-                let (store, path) =
-                    JsonlTranscriptStore::open_locked(&path).map_err(RecorderError::Store)?;
+                let (store, path) = if bounded {
+                    JsonlTranscriptStore::open_locked_bounded(&path)
+                } else {
+                    JsonlTranscriptStore::open_locked(&path)
+                }.map_err(RecorderError::Store)?;
                 let locked = Arc::new(store);
                 (
                     locked.clone() as Arc<dyn TranscriptStore>,

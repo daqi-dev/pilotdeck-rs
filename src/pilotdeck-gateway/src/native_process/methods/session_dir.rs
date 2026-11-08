@@ -176,9 +176,17 @@ pub(in crate::native_process) fn bounded_chat_dir(
     home: &std::path::Path,
     project: &std::path::Path,
 ) -> Result<std::path::PathBuf, RequestError> {
+    bounded_chat_dir_at(home, project, std::path::Path::new(""))
+}
+
+pub(in crate::native_process) fn bounded_chat_dir_at(
+    home: &std::path::Path,
+    project: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Result<std::path::PathBuf, RequestError> {
     let metadata = crate::metadata::Metadata {
         home: home.to_path_buf(),
-        cwd: std::path::PathBuf::new(),
+        cwd: cwd.to_path_buf(),
         files: BoundedSessionMarkers::new(),
     };
     let result = metadata
@@ -190,7 +198,7 @@ pub(in crate::native_process) fn bounded_chat_dir(
     result
 }
 
-async fn resolve_chat_dir(
+pub(in crate::native_process) async fn resolve_chat_dir(
     home: std::path::PathBuf,
     project: std::path::PathBuf,
 ) -> Result<(std::path::PathBuf, tokio::sync::OwnedSemaphorePermit), RequestError> {
@@ -501,6 +509,7 @@ impl Requests {
             let turn_id = JsString::from(if is_tag { "sdk-tag" } else { "sdk-rename" });
             let entry = JsValue::Object(meta);
             if let Some((_owner, recorder)) = live {
+                transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
                     .record_session_metadata_checked(&key_clone, &turn_id, entry)
@@ -526,6 +535,7 @@ impl Requests {
                 if let Some((_owner, recorder)) =
                     super::super::assembly::live_recorder(&recorders, &key_clone)
                 {
+                    transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                     recorder
                         .writer()
                         .record_session_metadata_checked(&key_clone, &turn_id, entry)
@@ -643,14 +653,15 @@ impl Requests {
             let recorded = tokio::task::spawn_blocking(move || {
                 let _permit = permit;
                 let _write = write_fence;
+                transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
                     .record_agent_status_message_checked(&session_key2, &turn_id2, &status2)
                     .map(|()| true)
+                    .map_err(|e| RequestError::new(e.to_string()))
             })
             .await
-            .map_err(|e| RequestError::new(e.to_string()))?
-            .map_err(|e| RequestError::new(e.to_string()))?;
+            .map_err(|e| RequestError::new(e.to_string()))??;
             return Ok(object([("recorded", JsValue::Bool(recorded))]));
         }
 
@@ -682,6 +693,9 @@ impl Requests {
                         // recorded instead of forking the chain.
                         return super::super::assembly::live_recorder(&recorders, &session_key)
                             .is_some_and(|(_owner, recorder)| {
+                                if transcript_locks::ensure_recorder_matches(&fence_path, &recorder).is_err() {
+                                    return false;
+                                }
                                 recorder
                                     .writer()
                                     .record_agent_status_message_checked(

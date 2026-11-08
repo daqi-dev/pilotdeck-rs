@@ -263,6 +263,21 @@ impl JsonlTranscriptStore {
             path,
         ))
     }
+    /// Native-only variant: bound lock acquisition and subsequent reads/writes.
+    pub(crate) fn open_locked_bounded(path: &Path) -> StoreResult<(Self, PathBuf)> {
+        let diagnostic_path = path.to_path_buf();
+        let (path, owner) = LedgerLock::acquire_bounded(path)?;
+        Ok((
+            Self {
+                bounded: true,
+                owner: Mutex::new(Some(owner)),
+                diagnostic_path: Some(diagnostic_path),
+                ..Self::with_stimulus(super::stimulus::StorageStimulus::global())
+            },
+            path,
+        ))
+    }
+
     /// Move this store's ledger fence out (#1019). The caller owns the fence
     /// from here on, so its release can be tied to the writer drain instead
     /// of this store's Arc lifetime.
