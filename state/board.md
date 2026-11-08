@@ -4649,3 +4649,7 @@ PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选
 独立审查发现初版generation适配会启用原PD已忽略的temperature/topP/stop/输出别名，封包前已收窄为canonical maxOutputTokens及原nullish模型cap回退；未知扩展不获得新的wire权限或新增验证失败。不能把Kernel支持的全部参数自动当成PilotDeck原有行为。Kernel本批另修复常驻socket泄漏和已派出远端操作被误报Cancelled；同提交macmini完整host原NOFILE256下1226通过/0失败/1忽略，旧失败及生产负控均保留。
 
 本board为验收后说明；以上源码身份仍按实际build manifest固定。桌面P3暂缓，下一步优先补24项剩余组合权限/并发证据和独立能力边界；678入口、个人真实模型、完整桌面/渠道/干净安装与真人验收仍未完成，默认继续legacy。
+
+### 2026-11-08 Kernel 原审批期限终态的产品投影（接入 lane B）
+
+真实 installed8 原gateway在pending Ask到parent期限时，Kernel原root已Cancelled/B Failed，但产品只收到“Gateway stream ended without a terminal result.”。定位为submit pump先按本地timed_out丢原Kernel终态，timer又按legacy分支提前关闭delivery。此次仅Kernel分支请求原取消后在原abort预算内drain：原root response派生且已排队的status/executionId completion独立于worker结束事实；断线、workerpanic或无权威completion仍明确Unknown，已排队真实终态不被晚panic覆盖。timer等flush而不重复poll JoinHandle，sender-drop/timeout有界finish再close；原completion围栏及observe await后复核拒绝旧run晚事件。新增snapshot committed下六种终态/故障分支与超时后新completion拒绝旧observer，原生产负控确实失败；完整submit10 PASS/1原TS再生ignored，冻结submit/UTF16 oracle不改。gateway strict Clippy检查暴露29个既有其他文件诊断，保留FAIL并对照基线，未放宽。新固定gateway真实三态组合待复验，不能用fixture通过代替；默认legacy/桌面P3/M5门槛不变。

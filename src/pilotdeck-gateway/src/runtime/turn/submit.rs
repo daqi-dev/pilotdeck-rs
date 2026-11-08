@@ -160,6 +160,8 @@ struct PumpContext<'a> {
     publisher: &'a TurnPublisher,
     progress: &'a Mutex<SnapshotProgress>,
     timed_out: &'a AtomicBool,
+    kernel_backend: &'a AtomicBool,
+    kernel_terminal_enqueued: &'a AtomicBool,
     terminal: &'a TerminalClaim,
     ready: oneshot::Sender<(tokio::time::Instant, LiveSessionHandle)>,
     workspace_id: Option<JsString>,
@@ -569,6 +571,10 @@ impl TurnSubmitter {
         let progress = Arc::new(Mutex::new(SnapshotProgress::default()));
         let timed_out = Arc::new(AtomicBool::new(false));
         let terminal = Arc::new(TerminalClaim::default());
+        let kernel_backend = Arc::new(AtomicBool::new(false));
+        // Only set after a product terminal derived from the original Kernel
+        // response is queued. Worker completion alone is not such evidence.
+        let kernel_terminal_enqueued = Arc::new(AtomicBool::new(false));
         let (ready, timer_ready) = oneshot::channel();
         let (timeout_settled, timeout_settlement) = oneshot::channel();
         let (worker_flushed, flush_wait) = oneshot::channel();
@@ -582,6 +588,8 @@ impl TurnSubmitter {
         let worker_progress = progress.clone();
         let worker_timeout = timed_out.clone();
         let worker_terminal = terminal.clone();
+        let worker_kernel = kernel_backend.clone();
+        let worker_enqueued = kernel_terminal_enqueued.clone();
         let recorder = workspace.recorder.clone();
         let workspace_id = workspace.id.clone();
         let mut worker = tokio::spawn(async move {
@@ -593,6 +601,8 @@ impl TurnSubmitter {
                     publisher: &worker_publisher,
                     progress: &worker_progress,
                     timed_out: &worker_timeout,
+                    kernel_backend: &worker_kernel,
+                    kernel_terminal_enqueued: &worker_enqueued,
                     terminal: &worker_terminal,
                     ready,
                     workspace_id,
@@ -622,6 +632,17 @@ impl TurnSubmitter {
                         .publish_failure(&worker_run, &worker_publisher, &error)
                         .await;
                 }
+            }
+            if worker_timeout.load(Ordering::SeqCst)
+                && worker_kernel.load(Ordering::SeqCst)
+                && !worker_enqueued.load(Ordering::SeqCst)
+                && submitter
+                    .owner
+                    .is_current_completion(&worker_run.session_key, &worker_completion)
+                && worker_terminal.claim()
+            {
+                worker_publisher.gateway_event(error_event(&worker_run, "result_unknown",
+                    "Kernel stream ended before confirming the original execution outcome after the timeout. Inspect that execution before retrying.", false));
             }
             let _ = submitter.host.finish_pump(&worker_run).await;
             // After a takeover, finish only once the deadline's terminal write,
@@ -676,6 +697,36 @@ impl TurnSubmitter {
                     // Losing the claim means the pump already recorded a terminal
                     // during this tick; keep its events live and let its worker
                     // close delivery after the settlement below.
+                    if handle.backend_kind() == "kernel" {
+                        // Kernel owns the original execution's outcome. A local
+                        // timer requests cancellation, then drains only that
+                        // execution's authoritative terminal under the existing
+                        // abort budget; it cannot manufacture Cancelled.
+                        timed_out.store(true, Ordering::SeqCst);
+                        let _ = handle.abort(&format!("timeout:{}", display(&run.run_id)).into());
+                        let _ = timeout_settled.send(());
+                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000));
+                        match tokio::time::timeout(budget, flush_wait).await {
+                            Ok(Ok(())) => {}
+                            // A dropped sender means the worker panicked; it
+                            // could not finish the publisher. Timeout likewise
+                            // cannot establish the Kernel execution's outcome.
+                            Ok(Err(_)) | Err(_) => {
+                                if !kernel_terminal_enqueued.load(Ordering::SeqCst)
+                                    && self.owner.is_current_completion(&run.session_key, &completion)
+                                    && terminal.claim()
+                                {
+                                    publisher.gateway_event(error_event(&run, "result_unknown",
+                                        "Kernel has not confirmed the original execution outcome after the timeout. Inspect that execution before retrying.", false));
+                                }
+                                // gateway_event owns an asynchronous durable
+                                // append. Flush its queued original terminal or
+                                // Unknown before closing, under the same bound.
+                                let _ = tokio::time::timeout(budget, publisher.finish()).await;
+                                publisher.close_live();
+                            }
+                        }
+                    } else {
                     timed_out.store(true, Ordering::SeqCst);
                     let owns_terminal = terminal.claim();
                     let ms = timeout.expect("timer only fires with a timeout");
@@ -719,6 +770,7 @@ impl TurnSubmitter {
                                 publisher.close_live();
                             }
                         });
+                    }
                     }
                 }
             }
@@ -933,6 +985,8 @@ impl TurnSubmitter {
             publisher,
             progress,
             timed_out,
+            kernel_backend,
+            kernel_terminal_enqueued,
             terminal,
             ready,
             workspace_id,
@@ -966,6 +1020,7 @@ impl TurnSubmitter {
             publisher.gateway_event(aborted(run));
             return Ok(());
         }
+        kernel_backend.store(handle.backend_kind() == "kernel", Ordering::SeqCst);
         if recorder.is_some()
             && let Some(workspace) = &workspace_id
         {
@@ -1046,7 +1101,7 @@ impl TurnSubmitter {
             .submit(prepared.input, prepared.options)
             .map_err(session_submit_error)?;
         while let Some(event) = stream.next().await.map_err(session_submit_error)? {
-            if timed_out.load(Ordering::SeqCst)
+            if (timed_out.load(Ordering::SeqCst) && handle.backend_kind() != "kernel")
                 || !self
                     .owner
                     .is_current_completion(&run.session_key, completion)
@@ -1054,6 +1109,13 @@ impl TurnSubmitter {
                 break;
             }
             self.host.observe_event(input, &event).await?;
+            if handle.backend_kind() == "kernel"
+                && !self
+                    .owner
+                    .is_current_completion(&run.session_key, completion)
+            {
+                break;
+            }
             if handle.backend_kind() == "kernel" && is(&event, "type", "permission_request") {
                 // Permission prompts are Gateway frames, like the existing
                 // interaction emit port, not AgentEvent projector variants.
@@ -1188,6 +1250,23 @@ impl TurnSubmitter {
                     self.record_context_budget(run, &status).await;
                 }
                 publisher.gateway_event(event);
+            }
+            if handle.backend_kind() == "kernel"
+                && is(&event, "type", "turn_completed")
+                && matches!(
+                    field(&event, "status")
+                        .as_string()
+                        .and_then(|s| s.to_utf8().ok())
+                        .as_deref(),
+                    Some("completed" | "failed" | "cancelled" | "unknown")
+                )
+                && field(&event, "executionId")
+                    .as_string()
+                    .is_some_and(|id| !id.is_empty())
+            {
+                // KernelTurn withholds provider completion events until the
+                // original root response supplies this status and identity.
+                kernel_terminal_enqueued.store(true, Ordering::SeqCst);
             }
             if let Some(guard) = &mut failure_guard
                 && !timed_out.load(Ordering::SeqCst)
