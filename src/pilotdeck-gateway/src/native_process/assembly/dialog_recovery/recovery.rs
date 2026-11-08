@@ -117,7 +117,7 @@ impl NativeDialogRecovery {
             let now = pilotdeck_transport::system_clock::format_epoch_iso(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64);
             if prior.is_none() {
                 let message = object([("role", "user".into()), ("content", JsValue::Array(vec![object([("type", "text".into()), ("text", JsValue::String(format_answer(request, &answer)))])])),
-                    ("metadata", object([("synthetic", true.into()), ("purpose", JsValue::String(purpose)),
+                    ("metadata", object([("synthetic", JsValue::Bool(true)), ("purpose", JsValue::String(purpose)),
                         ("toolCallId", request.get("toolCallId").cloned().unwrap_or(JsValue::Undefined))]))]);
                 let mut draft = JsObject::new(); draft.insert("type".into(), "durable_message".into()); draft.insert("message".into(), message);
                 writer.record_session_event_checked(&session, &turn, draft).map_err(error)?;
@@ -127,7 +127,7 @@ impl NativeDialogRecovery {
             if !entries.iter().any(|v| v.get("type") == Some(&"turn_result".into()) && v.get("turnId") == Some(&JsValue::String(turn.clone()))) {
                 let result = object([("type", "aborted".into()), ("sessionId", JsValue::String(session.clone())), ("turnId", JsValue::String(turn.clone())),
                     ("stopReason", "aborted_tools".into()), ("usage", object([])), ("permissionDenials", JsValue::Array(vec![])),
-                    ("turns", 0.0.into()), ("startedAt", now.as_str().into()), ("completedAt", now.as_str().into())]);
+                    ("turns", JsValue::Number(0.0)), ("startedAt", now.as_str().into()), ("completedAt", now.as_str().into())]);
                 let mut draft = JsObject::new(); draft.insert("type".into(), "turn_result".into()); draft.insert("result".into(), result);
                 writer.record_session_event_checked(&session, &turn, draft).map_err(error)?;
             }
@@ -197,13 +197,13 @@ mod tests {
         let input = object([("sessionKey", JsValue::String(session.clone())), ("requestId", "dialog".into()),
             ("result", object([("behavior", "answered".into()), ("value", JsValue::String(answer.clone()))]))]);
         let delivered = requests.user_dialog_request("user_dialog_respond".into(), input.clone()).await.unwrap();
-        assert_eq!(delivered, object([("delivered", true.into()), ("recovered", true.into()), ("reason", "gateway_restarted".into())]));
+        assert_eq!(delivered, object([("delivered", JsValue::Bool(true)), ("recovered", JsValue::Bool(true)), ("reason", "gateway_restarted".into())]));
         assert_eq!(requests.user_dialog_request("user_dialog_list".into(), params).await.unwrap(), object([("dialogs", JsValue::Array(vec![]))]));
-        assert_eq!(requests.user_dialog_request("user_dialog_respond".into(), input).await.unwrap(), object([("delivered", false.into())]));
+        assert_eq!(requests.user_dialog_request("user_dialog_respond".into(), input).await.unwrap(), object([("delivered", JsValue::Bool(false))]));
         let bytes = std::fs::read_to_string(chat.join("recovery-native.jsonl")).unwrap();
         let rows: Vec<_> = bytes.lines().map(|line| pilotdeck_protocol::parse_json(line).unwrap()).collect();
         assert_eq!(rows.len(), 2, "exactly one durable answer and its recovery turn result");
-        assert_eq!(rows[0].get("sequence"), Some(&1.0.into())); assert_eq!(rows[1].get("sequence"), Some(&2.0.into()));
+        assert_eq!(rows[0].get("sequence"), Some(&JsValue::Number(1.0))); assert_eq!(rows[1].get("sequence"), Some(&JsValue::Number(2.0)));
         let text = rows[0].get("message").unwrap().get("content").unwrap();
         let JsValue::Array(blocks) = text else { panic!("message blocks") };
         assert!(blocks[0].get("text").and_then(JsValue::as_string).unwrap().units().ends_with(answer.units()));
@@ -221,10 +221,10 @@ mod tests {
         assert_eq!(failure.code, "INVALID_USER_DIALOG_RESPONSE"); assert_eq!(journal.recover().unwrap().len(), 1);
         let path = chat.join("blocked-recovery.jsonl");
         let lease = transcript_locks::cold_write_lease(&path).unwrap();
-        let failure = port.recover_answer(&requests, &params, &session, &"dialog".into(), &DialogAnswer::Answered(true.into())).await.unwrap_err();
+        let failure = port.recover_answer(&requests, &params, &session, &"dialog".into(), &DialogAnswer::Answered(JsValue::Bool(true))).await.unwrap_err();
         assert_eq!(failure.code, "SESSION_WRITER_BUSY"); assert_eq!(journal.recover().unwrap().len(), 1);
         drop(lease);
-        assert!(port.recover_answer(&requests, &params, &session, &"dialog".into(), &DialogAnswer::Answered(true.into())).await.unwrap());
+        assert!(port.recover_answer(&requests, &params, &session, &"dialog".into(), &DialogAnswer::Answered(JsValue::Bool(true))).await.unwrap());
         cleanup(&requests).await;
     }
     #[test]
@@ -233,6 +233,6 @@ mod tests {
         assert_eq!(format_answer(&input, &DialogAnswer::Cancelled(None)).to_utf8().unwrap(),
             "[Gateway restart dialog recovery]\nThe Gateway restarted while waiting for request_user_input.\nQuestion: Question?\nThe user cancelled the dialog.");
         assert!(format_answer(&request("select"), &DialogAnswer::Answered("choice".into())).to_utf8().unwrap().ends_with("The user selected: choice"));
-        assert!(format_answer(&request("form"), &DialogAnswer::Answered(object([("value", true.into())]))).to_utf8().unwrap().ends_with("The user submitted: {\"value\":true}"));
+        assert!(format_answer(&request("form"), &DialogAnswer::Answered(object([("value", JsValue::Bool(true))]))).to_utf8().unwrap().ends_with("The user submitted: {\"value\":true}"));
     }
 }

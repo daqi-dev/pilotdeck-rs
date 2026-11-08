@@ -66,7 +66,7 @@ pub(super) mod automation;
 mod automation_lifetime;
 mod always_on;
 mod cron;
-mod dialog_recovery;
+pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
@@ -75,7 +75,7 @@ pub(super) mod sdk_hooks;
 pub(crate) mod snapshot;
 mod steer;
 mod style_reload;
-mod user_dialog;
+pub(super) mod user_dialog;
 
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
 

@@ -261,6 +261,14 @@ mod tests {
         assert_eq!(count,15);
     }
     #[test]
+    fn unique_items_comparisons_are_bounded_and_fail_closed() {
+        let schema=pilotdeck_protocol::parse_json(r#"{"type":"object","properties":{"items":{"type":"array","uniqueItems":true}}}"#).unwrap();
+        let make = |count| { let mut object=JsObject::new(); object.insert("items".into(),
+            JsValue::Array((0..count).map(|n|JsValue::Number(f64::from(n))).collect())); JsValue::Object(object) };
+        assert!(accepts_form_dialog_answer(&schema,&make(100)));
+        assert!(!accepts_form_dialog_answer(&schema,&make(1000)));
+    }
+    #[test]
     fn draft2020_is_not_silently_interpreted_as_legacy() {
         let s=pilotdeck_protocol::parse_json(r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}"#).unwrap();
         assert!(validate_schema(&s).unwrap_err().contains("not available"));

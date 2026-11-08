@@ -408,7 +408,7 @@ impl Requests {
                     if snapshot.is_none() {
                         if let Some(recovery) = &self.dialog_recovery
                             && recovery.recover_answer(self, &params, &session_key, &request_id, &answer).await? {
-                            return Ok(crate::metadata::object([("delivered", true.into()), ("recovered", true.into()), ("reason", "gateway_restarted".into())]));
+                            return Ok(crate::metadata::object([("delivered", JsValue::Bool(true)), ("recovered", JsValue::Bool(true)), ("reason", "gateway_restarted".into())]));
                         }
                         // TS validates on the peeked entry and delivers
                         // nothing when there is none (InProcessGateway.ts:2668-2674).
