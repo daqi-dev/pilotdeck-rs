@@ -1067,18 +1067,28 @@ literal (`BLOCKED`/`FAIL`/`NOT_RUN`/…) is legal, an unconditional clean litera
 is a `nested status slot` bypass.  A *constant* conditional is not a branch
 (fix-r2, anthropic boundary P0): `'PASS' if True else 'FAIL'` is judged by the
 arm the interpreter can take alone, in both `_exit_arms` and the nested walk —
-the dead fail-closed arm no longer excuses the live clean one.  A `Starred`
+the dead fail-closed arm no longer excuses the live clean one.  fix-r4 (DS
+boundary P0) grew the constant fold to the whole literal grammar —
+``not False``, ``1 == 1``, ``True and True`` and ``'x' in 'abc'`` are constant
+by the interpreter's own semantics and ``ast.literal_eval`` rejected exactly
+those, so each spelling kept its dead fail-closed arm; a test with a runtime
+operand (a name, a call, a subscript) keeps both arms, and a pure-literal test
+outside the foldable grammar produces *no* certified arm in `_exit_arms`
+(fail-closed) while the nested walk keeps both sides visible.  A `Starred`
 literal spread (`[*[{'status': 'PASS'}]]`) is walked into its payload (fix-r2,
 DS boundary observation); spreading a name stays opaque.  Names, calls and
 comprehensions stay opaque
 to the recursion — a Name is resolved by the write families, a callee by the
 delegation registries, and a comprehension body is its own scope; walking them
-here would double-judge the shapes those families already own.  Six probes pin
+here would double-judge the shapes those families already own.  Nine probes pin
 it: a clean status inside a returned face, one inside a list element of a
-returned face, one behind a constant condition, one inside a starred literal
-spread, and the legal pair — an `IfExp` face that keeps its fail-closed
-arm, and a bare fail-closed literal.  The `nested-status-slot-bypass` and
-`nested-constant-conditional-bypass` mutants
-(the retirement report's `cleanupAudit` face hard-written to `PASS`, and the
-same face written as `'PASS' if True else 'FAIL'`) pin the
+returned face, one behind a constant condition, one behind each literal-grammar
+spelling (``not False`` / a comparison / a boolean chain), one inside a starred
+literal spread, and the legal pair — an `IfExp` face that keeps its fail-closed
+arm, and a bare fail-closed literal.  The `nested-status-slot-bypass`,
+`nested-constant-conditional-bypass` and `nested-not-false-conditional-bypass`
+mutants
+(the retirement report's `cleanupAudit` face hard-written to `PASS`, the
+same face written as `'PASS' if True else 'FAIL'`, and the same face written as
+`'PASS' if not False else 'FAIL'`) pin the
 detector from the mutation side.
