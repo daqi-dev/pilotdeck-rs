@@ -232,7 +232,7 @@ pub fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// so the shared 2000 bound is deliberately conservative rather than an exact
 /// threshold.
 fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    text.trim_matches(|c: char| matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'))
 }
 pub fn json_stringify(value: &JsValue) -> Result<Option<String>, StackOverflow> {
     let mut pending = vec![(value, 0usize)];
@@ -263,6 +263,30 @@ pub fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
         JsValue::String(s) => string_to_number(&String::from_utf16_lossy(s.units())),
         JsValue::Array(_) => string_to_number(&display(value)?),
     })
+}
+
+/// The error `Number(value)` raises when the value's coercion throws —
+/// `TypeError: Cannot convert object to primitive value` (toPrimitive finds
+/// nothing usable: the inherited `valueOf` returns the object itself, and the
+/// only `toString` is one that is not callable) or `RangeError: Maximum call
+/// stack size exceeded` (a too-deep array join). Node v22.22.0 probes:
+/// `_tmp/20261026-issue-2301/fix-r1/node-probe/probe1.out` (own `toString`
+/// shadowing the inherited callable) and `fix-r2/node-probe/probe1.out`
+/// (array element, nested array, prototype-carried `toString` via the real
+/// `mergeConfigSources`, deep array → RangeError). This is the same walk
+/// `String(value)` takes (`validate_coercion`): `Number([x])` joins the
+/// array first, so an element's failed toPrimitive and a too-deep nesting
+/// throw exactly like the scalar case, and the prototype chain a config
+/// merge installed is visible to `get_property`. The loader mounts run this
+/// at construction, where the TS constructors' `Number(options.port ?? …)`
+/// throws and the loader's catch records the key and continues (#2301 fix-r1;
+/// fix-r2 review P1 #3 closed the array / prototype-chain gaps, fix-r3 review
+/// P1 #2 the `__proto__: null` / `Object.create(null)` family — a chain that
+/// terminates at null finds neither `valueOf` nor `toString` at all).
+pub fn number_conversion_error(value: &JsValue) -> Option<String> {
+    validate_coercion(value)
+        .err()
+        .map(|error| format!("{}: {}", error.name(), error.message()))
 }
 
 /// ECMAScript StringToNumber.
@@ -439,5 +463,16 @@ mod tests {
         assert_eq!(to_number(&nested(MAX_ARRAY_DEPTH + 1)), Err(StackOverflow));
         // Far past the limit: still an error, never a Rust stack overflow.
         assert_eq!(to_string_units(&nested(1_000_000)), Err(StackOverflow));
+    }
+}
+
+#[cfg(test)]
+mod whitespace_boundary_tests {
+    #[test]
+    fn number_coercion_keeps_ecmascript_whitespace_boundary() {
+        assert!(super::string_to_number("\u{85}7\u{85}").is_nan());
+        assert!(super::string_to_number("\u{85}").is_nan());
+        assert_eq!(super::string_to_number("\u{feff}7\u{feff}"), 7.0);
+        assert_eq!(super::string_to_number("\u{feff}"), 0.0);
     }
 }

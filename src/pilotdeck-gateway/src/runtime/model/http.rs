@@ -53,6 +53,7 @@ mod sse;
 mod tls;
 pub use complete::complete_model;
 pub use errors::NetworkFetchError;
+#[cfg(test)]
 pub(crate) use errors::retry_after_from_message;
 
 /// `parseRetryAfterHeader(value)` against the system clock (`Date.now()`).

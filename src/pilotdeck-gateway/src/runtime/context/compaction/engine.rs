@@ -562,9 +562,7 @@ impl CompactionEngine {
     ) -> Result<(usize, Vec<JsValue>), HostError> {
         pilotdeck_context::summary::plan_messages(messages, budget, protected, floor, &|messages| {
             self.estimate(messages)
-                .map_err(|error| pilotdeck_context::summary::SummaryError::new(error.message))
         })
-        .map_err(|error| failure(&error.message))
     }
 }
 
