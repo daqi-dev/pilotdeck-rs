@@ -27,6 +27,14 @@ for name in ['src/cli/pilotdeck.ts', 'src/cli/createLocalGateway.ts', 'src/pilot
     sources[name] = hashlib.sha256(original).hexdigest()
 version = json.loads(subprocess.check_output([str(node), '-p', 'JSON.stringify({node:process.version,icu:process.versions.icu})']))
 assert version == {'node': 'v22.22.0', 'icu': '78.2'}
+ink = (base / 'node_modules/ink').resolve()
+yoga = (ink.parent / 'yoga-layout').resolve()
+yoga_hash = hashlib.sha256((yoga / 'dist/binaries/yoga-wasm-base64-esm.js').read_bytes()).hexdigest()
+assert json.loads((ink / 'package.json').read_text())['version'] == '7.0.4'
+assert json.loads((yoga / 'package.json').read_text())['version'] == '3.2.1'
+assert yoga_hash == '2cfeda49ae87f57bcd4a5fe433940edefc531a69bd0f83e32759fb5837df205c'
+dependencies = {'ink': '7.0.4', 'yoga-layout': '3.2.1', 'yogaWasmSha256': yoga_hash}
+
 valid = '---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n'
 legacy = '---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n'
 chat = json.dumps({'type': 'accepted_input', 'sessionId': 'session', 'turnId': 'turn', 'sequence': 1,
@@ -62,7 +70,7 @@ for kind in ['legacy', 'migrate', 'chat']:
                'PILOTDECK_CONFIG_PATH': str(root / 'blocked.yaml'),
                'PILOTDECK_BUNDLED_SKILLS_DIR': str(root / 'bundled'),
                'LANG': 'C', 'LC_ALL': 'C', 'TZ': 'UTC', 'NO_COLOR': '1',
-               'TSX_DISABLE_CACHE': '1', 'TMPDIR': str(root / 'tmp'),
+               'TSX_DISABLE_CACHE': '1', 'NODE_NO_WARNINGS': '1', 'TMPDIR': str(root / 'tmp'),
                'FIXTURE_NETWORK_EVENTS': str(root / 'network-events.json')}
         command = [str(node), '--import', str(base / 'node_modules/tsx/dist/loader.mjs'),
                    str(Path(__file__).with_name('consumers-driver.mjs').resolve()), str(data),
@@ -76,7 +84,10 @@ for kind in ['legacy', 'migrate', 'chat']:
             timeout = True
             child.kill()
             stdout, stderr = child.communicate(timeout=3)
-        network = json.loads((root / 'network-events.json').read_text()) if (root / 'network-events.json').exists() else None
+        events = json.loads((root / 'network-events.json').read_text()) if (root / 'network-events.json').exists() else {}
+        network = events.get('networkAttempts')
+        local = events.get('blockedDependencyDataFetches')
+        local_summary = [{key: event[key] for key in ['protocol', 'bytes', 'sha256']} for event in local] if local is not None else None
         after = {}
         for file in root.rglob('*'):
             relative = file.relative_to(root)
@@ -85,9 +96,10 @@ for kind in ['legacy', 'migrate', 'chat']:
             if file.is_file():
                 after[str(relative)] = file.read_text()
         row = dict(case, inputs=inputs, after=after, stdout=stdout.decode(), stderr=stderr.decode(),
-                   code=child.returncode, timeout=timeout, networkAttempts=network)
+                   code=child.returncode, timeout=timeout, networkAttempts=network, blockedDependencyDataFetches=local_summary)
         (root / 'raw.json').write_text(json.dumps(row, ensure_ascii=False, indent=2) + '\n')
         assert not timeout and network == [], case['id']
+        assert local_summary == [{'protocol': 'data:', 'bytes': 95685, 'sha256': '2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87'}], case['id']
         assert child.returncode == (1 if kind == 'legacy' else 0), case['id']
         if kind == 'chat':
             assert len(json.loads(stdout)['matches']) == 1, case['id']
@@ -98,5 +110,5 @@ for kind in ['legacy', 'migrate', 'chat']:
             assert home_path('skills/docx/SKILL.md') not in after, case['id']
             assert after[home_path('.legacy-bundled-skills-migrated-v1')] == 'completed\n', case['id']
         rows.append(json.loads(json.dumps(row, ensure_ascii=False).replace(str(root), '<CASE>')))
-(out / 'consumers-oracle.json').write_text(json.dumps(dict(baseline=sha, sources=sources, **version, cases=rows), ensure_ascii=False, indent=2) + '\n')
+(out / 'consumers-oracle.json').write_text(json.dumps(dict(baseline=sha, sources=sources, dependencies=dependencies, nodeWarnings='suppressed by NODE_NO_WARNINGS=1 before startup', **version, cases=rows), ensure_ascii=False, indent=2) + '\n')
 print('recorded', len(rows), 'real CLI consumer cases')

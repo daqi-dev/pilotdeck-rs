@@ -1,0 +1,225 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sources": {
+    "src/cli/pilotdeck.ts": "88c672b94f32c53d7bf5f188c62ef82965291aa55156e9032a43ae44198c8182",
+    "src/cli/createLocalGateway.ts": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+    "src/pilot/paths.ts": "6766426f9c8310e8a17fb0338319a4c4a1574c54a0b66690cdf609f2846c5a2a",
+    "src/extension/skills/migrateLegacyBundledSkills.ts": "876fa8db1c5d135778a22da0c557e284b19854e35d5cc993d57139e59c10a8b0",
+    "src/extension/skills/migrateSkills.ts": "96205a4d6c97c3aade59f129ba310be4db4f58e54f0a5d7f2b03f8113bda9226",
+    "src/session/search/NodeSessionSearchPort.ts": "a3ebaeb9f51d6deaa4cb1c3dca0e21d471821ac05e7a7686cb54d7bf68212b4f"
+  },
+  "dependencies": {
+    "ink": "7.0.4",
+    "yoga-layout": "3.2.1",
+    "yogaWasmSha256": "2cfeda49ae87f57bcd4a5fe433940edefc531a69bd0f83e32759fb5837df205c"
+  },
+  "nodeWarnings": "suppressed by NODE_NO_WARNINGS=1 before startup",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "legacy-empty",
+      "kind": "legacy",
+      "HOME": "",
+      "PILOT_HOME": "~",
+      "argv": [],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "skills/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        ".legacy-bundled-skills-migrated-v1": "completed\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "skill-backups/legacy-bundled-v1/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n"
+      },
+      "stdout": "[pilotdeck] Activated bundled skills directly; moved 1 unchanged legacy copy to skill-backups/legacy-bundled-v1.\n",
+      "stderr": "Failed to parse default config YAML.\n",
+      "code": 1,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    },
+    {
+      "id": "legacy-relative",
+      "kind": "legacy",
+      "HOME": "relative-home",
+      "PILOT_HOME": "~",
+      "argv": [],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/skills/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/.legacy-bundled-skills-migrated-v1": "completed\n",
+        "relative-home/skill-backups/legacy-bundled-v1/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n"
+      },
+      "stdout": "[pilotdeck] Activated bundled skills directly; moved 1 unchanged legacy copy to relative-home/skill-backups/legacy-bundled-v1.\n",
+      "stderr": "Failed to parse default config YAML.\n",
+      "code": 1,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    },
+    {
+      "id": "migrate-empty",
+      "kind": "migrate",
+      "HOME": "",
+      "PILOT_HOME": "~",
+      "argv": [
+        "skills",
+        "migrate",
+        "--from",
+        "claude-code",
+        "--execute",
+        "--json"
+      ],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        ".claude/skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        ".claude/skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n"
+      },
+      "stdout": "{\n  \"mode\": \"execute\",\n  \"targetRoot\": \"<CASE>/skills\",\n  \"sources\": [\n    {\n      \"kind\": \"claude-code\",\n      \"label\": \"Claude Code user skills\",\n      \"path\": \"<CASE>/.claude/skills\"\n    }\n  ],\n  \"summary\": {\n    \"migrated\": 1,\n    \"would_migrate\": 0,\n    \"skipped\": 0,\n    \"conflict\": 0,\n    \"error\": 0\n  },\n  \"items\": [\n    {\n      \"sourceKind\": \"claude-code\",\n      \"sourceLabel\": \"Claude Code user skills\",\n      \"sourcePath\": \"<CASE>/.claude/skills/sample\",\n      \"destinationPath\": \"<CASE>/skills/sample\",\n      \"slug\": \"sample\",\n      \"status\": \"migrated\",\n      \"reason\": \"Copied skill.\",\n      \"validation\": {\n        \"ok\": true,\n        \"hardFails\": [],\n        \"warnings\": [],\n        \"stats\": {\n          \"fileCount\": 1,\n          \"totalBytes\": 84\n        },\n        \"frontmatter\": {\n          \"name\": \"sample\",\n          \"description\": \"A sample skill for testing local migration.\"\n        }\n      }\n    }\n  ]\n}\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    },
+    {
+      "id": "migrate-relative",
+      "kind": "migrate",
+      "HOME": "relative-home",
+      "PILOT_HOME": "~",
+      "argv": [
+        "skills",
+        "migrate",
+        "--from",
+        "claude-code",
+        "--execute",
+        "--json"
+      ],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/.claude/skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/.claude/skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n",
+        "relative-home/skills/sample/SKILL.md": "---\nname: sample\ndescription: A sample skill for testing local migration.\n---\nBody.\n"
+      },
+      "stdout": "{\n  \"mode\": \"execute\",\n  \"targetRoot\": \"<CASE>/relative-home/skills\",\n  \"sources\": [\n    {\n      \"kind\": \"claude-code\",\n      \"label\": \"Claude Code user skills\",\n      \"path\": \"<CASE>/relative-home/.claude/skills\"\n    },\n    {\n      \"kind\": \"claude-code\",\n      \"label\": \"Claude Code project skills\",\n      \"path\": \"<CASE>/.claude/skills\"\n    }\n  ],\n  \"summary\": {\n    \"migrated\": 1,\n    \"would_migrate\": 0,\n    \"skipped\": 1,\n    \"conflict\": 0,\n    \"error\": 0\n  },\n  \"items\": [\n    {\n      \"sourceKind\": \"claude-code\",\n      \"sourceLabel\": \"Claude Code user skills\",\n      \"sourcePath\": \"<CASE>/relative-home/.claude/skills/sample\",\n      \"destinationPath\": \"<CASE>/relative-home/skills/sample\",\n      \"slug\": \"sample\",\n      \"status\": \"migrated\",\n      \"reason\": \"Copied skill.\",\n      \"validation\": {\n        \"ok\": true,\n        \"hardFails\": [],\n        \"warnings\": [],\n        \"stats\": {\n          \"fileCount\": 1,\n          \"totalBytes\": 84\n        },\n        \"frontmatter\": {\n          \"name\": \"sample\",\n          \"description\": \"A sample skill for testing local migration.\"\n        }\n      }\n    },\n    {\n      \"sourceKind\": \"claude-code\",\n      \"sourceLabel\": \"Claude Code project skills\",\n      \"sourcePath\": \"<CASE>/.claude/skills\",\n      \"destinationPath\": null,\n      \"slug\": \"\",\n      \"status\": \"skipped\",\n      \"reason\": \"Source directory does not exist.\"\n    }\n  ]\n}\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    },
+    {
+      "id": "chat-empty",
+      "kind": "chat",
+      "HOME": "",
+      "PILOT_HOME": "~",
+      "argv": [
+        "chat",
+        "search",
+        "needle",
+        "--all-projects",
+        "--json"
+      ],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "projects/p/chats/session.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"session\", \"turnId\": \"turn\", \"sequence\": 1, \"createdAt\": \"2026-01-02T13:04:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"fixture needle text\"}]}]}\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        "projects/p/chats/session.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"session\", \"turnId\": \"turn\", \"sequence\": 1, \"createdAt\": \"2026-01-02T13:04:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"fixture needle text\"}]}]}\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n"
+      },
+      "stdout": "{\n  \"query\": \"needle\",\n  \"matches\": [\n    {\n      \"sessionId\": \"session\",\n      \"role\": \"user\",\n      \"text\": \"fixture needle text\",\n      \"snippet\": \"fixture needle text\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"session\",\n      \"projectKey\": \"p\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    },
+    {
+      "id": "chat-relative",
+      "kind": "chat",
+      "HOME": "relative-home",
+      "PILOT_HOME": "~",
+      "argv": [
+        "chat",
+        "search",
+        "needle",
+        "--all-projects",
+        "--json"
+      ],
+      "inputs": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/projects/p/chats/session.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"session\", \"turnId\": \"turn\", \"sequence\": 1, \"createdAt\": \"2026-01-02T13:04:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"fixture needle text\"}]}]}\n"
+      },
+      "after": {
+        "blocked.yaml": "gateway: [\n",
+        "bundled/docx/SKILL.md": "---\nname: docx\ndescription: Fixture bundled skill.\n---\nBody.\n",
+        "relative-home/projects/p/chats/session.jsonl": "{\"type\": \"accepted_input\", \"sessionId\": \"session\", \"turnId\": \"turn\", \"sequence\": 1, \"createdAt\": \"2026-01-02T13:04:00.000Z\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"fixture needle text\"}]}]}\n"
+      },
+      "stdout": "{\n  \"query\": \"needle\",\n  \"matches\": [\n    {\n      \"sessionId\": \"session\",\n      \"role\": \"user\",\n      \"text\": \"fixture needle text\",\n      \"snippet\": \"fixture needle text\",\n      \"createdAt\": \"2026-01-02T13:04:00.000Z\",\n      \"lineNumber\": 1,\n      \"sessionTitle\": \"session\",\n      \"projectKey\": \"p\"\n    }\n  ],\n  \"truncated\": false,\n  \"sessionsScanned\": 1\n}\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "networkAttempts": [],
+      "blockedDependencyDataFetches": [
+        {
+          "protocol": "data:",
+          "bytes": 95685,
+          "sha256": "2a3af1723c9ab5dd5a0bf6ac4440cee82a86d74bb1de1b5ed95c75ef7ce05f87"
+        }
+      ]
+    }
+  ]
+}
