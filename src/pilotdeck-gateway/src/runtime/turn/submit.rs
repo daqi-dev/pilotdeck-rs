@@ -176,6 +176,9 @@ struct PumpContext<'a> {
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host lives in [`super::submit_host`].
 pub trait SubmitHost: Send + Sync {
+    fn bound_project_key(&self) -> Option<JsString> {
+        None
+    }
     /// Optional immutable host binding, selected once after input validation.
     /// Default embeddings preserve the old host and all existing error order.
     fn bind_project<'a>(
@@ -427,7 +430,10 @@ impl TurnSubmitter {
         }
         let run = RunRef {
             session_key: string(field(&input, "sessionKey")),
-            project_key: field(&input, "projectKey").as_string().cloned(),
+            project_key: self
+                .host
+                .bound_project_key()
+                .or_else(|| field(&input, "projectKey").as_string().cloned()),
             run_id: field(&input, "runId")
                 .as_string()
                 .cloned()
@@ -1041,7 +1047,14 @@ impl TurnSubmitter {
                 disallowed_tools: strings(field(input, "disallowedTools")),
             })
             .await
-            .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
+            .map_err(|error| {
+                let code = if error.message.starts_with("PROJECT_SESSION_MISMATCH:") {
+                    "PROJECT_SESSION_MISMATCH"
+                } else {
+                    "gateway_submit_failed"
+                };
+                SubmitError::new(code, error.message)
+            })?;
         if completion.is_cancelled() {
             publisher.gateway_event(aborted(run));
             return Ok(());

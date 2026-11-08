@@ -21,6 +21,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub struct Services {
     pub options: Options,
     pub project: Arc<ProjectRuntimeRegistry>,
@@ -1403,6 +1404,27 @@ impl SubmitCwdService for Cwd {
     }
 }
 impl SubmitHostServices for Services {
+    fn bind_project<'a>(
+        &'a self,
+        input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async move {
+            let selected = super::project_scope::select(&self.owner, &self.options, input, false)
+                .map_err(|error| {
+                SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
+            })?;
+            let mut services = self.clone();
+            services.options = selected.options;
+            // Persistence snapshots use only the shared captured storage-root
+            // environment. The project identity is resolved by workspace_id
+            // against this selected view, while the one provider stays shared.
+            Ok(Some(Arc::new(ScopedServices {
+                services,
+                _reservation: selected.reservation,
+            }) as Arc<dyn SubmitHostServices>))
+        })
+    }
+
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
         if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {
             let project = project
@@ -1467,7 +1489,7 @@ impl SubmitHostServices for Services {
                 .map_err(|e| failure(e.to_string()))?;
             let lease = self
                 .project
-                .acquire(None)
+                .acquire(Some(&self.options.project))
                 .map_err(|e| failure(e.to_string()))?;
             let staged = lease
                 .runtime()
@@ -1477,18 +1499,18 @@ impl SubmitHostServices for Services {
                 .context()
                 .snapshot();
             if fresh.get("config") != staged.get("config") {
-                self.project
-                    .reload()
-                    .await
-                    .map_err(|e| failure(e.to_string()))?;
+                self.project.invalidate(Some(&self.options.project));
                 use crate::runtime::refresh::RefreshRouter;
-                self.owner.mark_all_dirty("config_changed");
+                self.owner.mark_project_dirty(
+                    &self.options.project.to_string_lossy().into_owned().into(),
+                    "config_changed",
+                );
             }
             Ok(())
         })
     }
     fn run_policy(&self) -> Option<JsValue> {
-        let lease = self.project.acquire(None).ok()?;
+        let lease = self.project.acquire(Some(&self.options.project)).ok()?;
         lease
             .runtime()
             .resources()
@@ -2141,5 +2163,78 @@ pub(super) mod swap_test_hook {
                     .retain(|(window, _)| *window != self.window)
             });
         }
+    }
+}
+
+struct ScopedServices {
+    services: Services,
+    _reservation: Option<crate::runtime::session::SessionProjectScope>,
+}
+impl SubmitHostServices for ScopedServices {
+    fn bound_project_key(&self) -> Option<JsString> {
+        Some(
+            self.services
+                .options
+                .project
+                .to_string_lossy()
+                .into_owned()
+                .into(),
+        )
+    }
+    fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
+        self.services.workspace_id(input)
+    }
+    fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
+        self.services.snapshots()
+    }
+    fn snapshots_required(&self) -> bool {
+        self.services.snapshots_required()
+    }
+    fn cwd(&self) -> Option<Arc<dyn SubmitCwdService>> {
+        self.services.cwd()
+    }
+    fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
+        self.services.refresh()
+    }
+    fn run_policy(&self) -> Option<JsValue> {
+        self.services.run_policy()
+    }
+    fn resolve_attachments<'a>(
+        &'a self,
+        input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
+        self.services.resolve_attachments(input)
+    }
+    fn prepare_attachment_turn<'a>(
+        &'a self,
+        message: &'a JsValue,
+        attachments: Vec<JsValue>,
+        project: Option<&JsString>,
+        session: Option<&JsString>,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.services
+            .prepare_attachment_turn(message, attachments, project, session)
+    }
+    fn resolve_model_selection<'a>(
+        &'a self,
+        input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        self.services.resolve_model_selection(input)
+    }
+    fn record_failure<'a>(
+        &'a self,
+        run: &'a RunRef,
+        status: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        self.services.record_failure(run, status)
+    }
+    fn after_turn(&self, run: &RunRef) -> Result<(), SubmitError> {
+        self.services.after_turn(run)
+    }
+    fn now_ms(&self) -> f64 {
+        self.services.now_ms()
+    }
+    fn abort_turn_timeout_ms(&self) -> u64 {
+        self.services.abort_turn_timeout_ms()
     }
 }

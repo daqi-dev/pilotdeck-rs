@@ -191,46 +191,30 @@ impl GatewayRequests for Requests {
             // createLocalGateway's archive callbacks use the configured fallback
             // project for nullish keys. Fill it before isolated admission, while
             // leaving Metadata's cwd lazy for explicit paths and other RPCs.
+            let selected = super::project_scope::select(
+                &self.owner,
+                &self.options,
+                &params,
+                method.equals_str("reload_output_styles"),
+            )?;
+            let _reservation = selected.reservation;
+            let mut view = self.clone();
+            view.options = selected.options;
             let mut params = params;
             if let Ok(name) = method.to_utf8()
                 && crate::native_archive::ARCHIVE_METHODS.contains(&name.as_str())
             {
-                crate::native_archive::fill_default_project_key(&mut params, &self.options.project);
+                crate::native_archive::fill_default_project_key(&mut params, &view.options.project);
             }
             if let Ok(name) = method.to_utf8()
-                && let Some(result) = methods::before_admission(self, &name, &params).await
+                && let Some(result) = methods::before_admission(&view, &name, &params).await
             {
                 return result;
-            }
-            // #2083 r1: this admission gate is the same source as the
-            // handler's configured-project check (`session_close_project`),
-            // so the key converts lossily here too. A lone-surrogate
-            // `projectKey` is refused as any other unserved key, and the
-            // registered residual — a lossy form naming a configured path
-            // that contains U+FFFD — is admitted on both layers alike.
-            // reloadOutputStylesForSdk uses a truthy projectKey filter; an
-            // empty string selects the configured project rather than escaping
-            // the single-project admission boundary.
-            if let Some(project) = params
-                .get("projectKey")
-                .filter(|v| !v.is_undefined())
-                .filter(|value| {
-                    !(method.equals_str("reload_output_styles")
-                        && value.as_string().is_some_and(JsString::is_empty))
-                })
-                && !project.as_string().is_some_and(|key| {
-                    let lossy = String::from_utf16_lossy(key.units());
-                    self.options.serves_project(&lossy)
-                })
-            {
-                return Err(RequestError::new(
-                    "The isolated native process serves only its configured project.",
-                ));
             }
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;
-            methods::request(self, method, params).await
+            methods::request(&view, method, params).await
         })
     }
 }

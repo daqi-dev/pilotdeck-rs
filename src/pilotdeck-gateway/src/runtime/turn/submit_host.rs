@@ -40,6 +40,9 @@ pub type SubmitLeaseRelease =
 /// attachment lease and turn composition, model selection, status recording,
 /// after-turn, clock and abort budget.
 pub trait SubmitHostServices: Send + Sync {
+    fn bound_project_key(&self) -> Option<JsString> {
+        None
+    }
     fn bind_project<'a>(
         &'a self,
         _input: &'a mut JsValue,
@@ -251,6 +254,9 @@ impl GatewaySubmitHost {
     }
 }
 impl SubmitHost for GatewaySubmitHost {
+    fn bound_project_key(&self) -> Option<JsString> {
+        self.services.bound_project_key()
+    }
     fn bind_project<'a>(
         &'a self,
         input: &'a mut JsValue,

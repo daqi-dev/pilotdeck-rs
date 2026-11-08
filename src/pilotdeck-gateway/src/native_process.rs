@@ -19,6 +19,7 @@ mod deployment;
 mod local_host;
 #[cfg(test)]
 mod multi_project_history_tests;
+mod project_scope;
 mod project_storage;
 mod projects;
 mod server_host;

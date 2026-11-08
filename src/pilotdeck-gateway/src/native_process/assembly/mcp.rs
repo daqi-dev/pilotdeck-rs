@@ -11,21 +11,23 @@ use std::sync::Arc;
 
 // ── U6 MCP resolver / session-plugins for the native process (#1319) ────────
 
-/// The native process serves exactly one project. The SDK MCP resolver resolves
-/// any `projectKey` (or no key) to that project's plugin runtime. This mirrors
-/// `ProjectRuntimeRegistry.resolve` without exposing the full SDK session layer.
+/// Resolve each explicit project on the same shared registry and retain its lease.
 struct NativeMcpResolver {
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
 }
 impl SdkMcpProjectResolver for NativeMcpResolver {
     fn resolve<'a>(
         &'a self,
-        _project_key: Option<&'a JsString>,
+        project_key: Option<&'a JsString>,
     ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
+        let root = project_key.map(|key| super::super::project_scope::resolve(key));
         let project = self.project.clone();
         Box::pin(async move {
+            let root = root
+                .transpose()
+                .map_err(|error| SdkMcpError::plain("Error", error.message))?;
             let lease = project
-                .acquire(None)
+                .acquire(root.as_deref())
                 .map_err(|e| SdkMcpError::plain("Error", JsString::from(e.to_string())))?;
             let resources = lease
                 .runtime()

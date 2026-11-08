@@ -1200,33 +1200,9 @@ async fn start_assembly(
                 ..Default::default()
             },
         )?);
-        // U1 upload store: resolves the configured project only.
-        let upload_project = options.project.clone();
-        let upload_store = Arc::new(crate::upload::UploadStore::new(
-            crate::upload::UploadStoreOptions::new(
-                move |key: &pilotdeck_protocol::JsString| {
-                    // Shared helper `Unknown projectKey: <raw UTF-16>`
-                    // (UploadStore.ts:63, #865 frozen behavior): the other
-                    // 15+ call sites already report the exact UTF-16 units.
-                    let path = match key.to_utf8() {
-                        Ok(utf8) => std::path::PathBuf::from(utf8),
-                        Err(_) => return Err(crate::upload::unknown_project_key(key)),
-                    };
-                    // Accept both the canonical path and the logical path.
-                    let canonical = std::fs::canonicalize(&upload_project)
-                        .unwrap_or_else(|_| upload_project.clone());
-                    let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
-                    if requested != canonical && path != upload_project {
-                        return Err(crate::upload::unknown_project_key(key));
-                    }
-                    Ok(upload_project.clone())
-                },
-                {
-                    let p = options.project.clone();
-                    move || Ok(vec![p.clone()])
-                },
-            ),
-        ));
+        // One store keeps upload identities/leases; project admission resolves
+        // through the same bounded registered-project metadata as dialog IO.
+        let upload_store = super::project_scope::upload_store(options.home.clone());
         let upload_gateway = Arc::new(crate::upload::gateway::UploadGateway::new(
             upload_store.clone(),
         ));

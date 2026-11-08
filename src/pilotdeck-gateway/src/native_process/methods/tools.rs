@@ -111,7 +111,7 @@ impl Requests {
         let session_key = optional_session_key(params);
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&self.options.project))
             .map_err(|e| RequestError::new(e.to_string()))?;
         let router_arc = lease
             .runtime()
@@ -133,7 +133,7 @@ impl Requests {
         let session_key = optional_session_key(params);
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&self.options.project))
             .map_err(|e| RequestError::new(e.to_string()))?;
         let router_arc = lease
             .runtime()

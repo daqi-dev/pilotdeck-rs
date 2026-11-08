@@ -25,12 +25,15 @@ pub(super) struct NativeSdkResolver {
 impl SdkRuntimeResolver for NativeSdkResolver {
     fn resolve(
         &self,
-        _project_key: Option<&JsString>,
+        project_key: Option<&JsString>,
     ) -> Result<ResolvedSdkRuntime, SdkSessionError> {
-        // Native workspace admission already rejects projects outside the served project.
+        let root = project_key
+            .map(|key| super::super::project_scope::resolve(key))
+            .transpose()
+            .map_err(|error| SdkSessionError::raw("Error", error.message))?;
         let lease = self
             .project
-            .acquire(None)
+            .acquire(root.as_deref())
             .map_err(|e| SdkSessionError::raw("Error", e.to_string()))?;
         let root = lease.runtime().project_root().to_path_buf();
         let resources = lease
