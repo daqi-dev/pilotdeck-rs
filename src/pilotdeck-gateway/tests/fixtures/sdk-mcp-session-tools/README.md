@@ -5,7 +5,7 @@
 `session_mcp_tools` / `native_tools` 的 MCP 注册），逐条验证：正向先行通过、
 变异体可编译、绑定的 `#1433 …` 断言以本轮 nonce receipt 失败、还原后复通过。
 
-绑定关系（8 条）：
+绑定关系（9 条）：
 
 | 变异 | 语义（TS 基线） | 绑定测试 | 绑定断言 |
 |---|---|---|---|
@@ -14,6 +14,7 @@
 | `per-session-replace-lost` | per-session 工具 `has ? replace : register`（:140） | 同上 | `#1433 a per-session MCP tool replaces the same-name builtin` |
 | `release-order-swapped` | 释放序 per-session → shared（组合序的逆） | `…::session_mcp_release_stops_per_session_before_shared` | `#1433 release order: per-session MCP before shared MCP` |
 | `per-session-limit-off` | `size >= max` 超限跳过（SessionMcpRuntimeBundle.ts:70） | `…::session_mcp_tools_respects_the_per_session_limit` | `#1433 the limit skips the per-session server` |
+| `per-session-limit-truncated` | 小数上限不截断（`size as f64 >= max`，f64 比较同 TS；`as usize` 截断即本变异形态，SessionMcpRuntimeBundle.ts:70 + parseGatewayConfig 不取整） | `…::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit` | `#1433 a 2.5 cap still admits the third per-session runtime` |
 | `start-failure-propagated` | 启动失败降级为诊断（:147） | `…::session_mcp_tools_degrades_per_session_start_failures` | `#1433 composition survives the start failure` |
 | `turn-registry-drops-mcp` | 组合工具进 turn 注册表（#1433 原始缺陷） | `…::native_turn_registry_carries_the_session_mcp_tools` | `#1433 the turn registry carries the session MCP tool` |
 | `composition-reads-no-servers` | 组合读 enabled 表（生产读面） | `tests/sdk_mcp_session_tools.rs::discovery_composes_shared_and_per_session_tools` | `#1433 the shared lease tool is discovered` |
