@@ -160,6 +160,9 @@ impl TcpExecutionServer {
         failure.map_or(Ok(()), Err)
     }
     fn connection(&self, socket: TcpStream, grace: Duration) -> io::Result<ConnectionTask> {
+        // BSD accept inherits the listener's O_NONBLOCK; each connection uses
+        // independent blocking reader/writer threads after nonblocking accept.
+        socket.set_nonblocking(false)?;
         socket.set_nodelay(true)?;
         socket.set_write_timeout(Some(grace))?;
         let input = socket.try_clone()?;

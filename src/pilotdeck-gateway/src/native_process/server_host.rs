@@ -100,11 +100,13 @@ pub(super) async fn run_embedding(
 ) -> Result<HostExit, ProxyError> {
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(options.clone(), env).await?;
-    let server = match crate::native_ws::NativeWsServer::bind_with_policy(
+    let api_web = super::production_api_web(embedding.token.clone(), options.home.clone());
+    let server = match super::production_listener(
         options.listen,
         host.clone(),
         embedding.token,
-        env!("CARGO_PKG_VERSION").into(),
+        feishu_webhook,
+        api_web,
         embedding.loopback,
     )
     .await
@@ -112,7 +114,6 @@ pub(super) async fn run_embedding(
         // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
         // registers it on the HTTP server, after `/auth/local-token`).
         Ok(mut server) => {
-            server = server.with_webhook(feishu_webhook);
             if let Some(root) = embedding.static_assets {
                 server = server.with_static_root(root);
             }

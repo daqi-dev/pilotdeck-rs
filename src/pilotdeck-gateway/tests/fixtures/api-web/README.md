@@ -30,7 +30,7 @@ cd src && cargo test -p pilotdeck-gateway --lib api_web
 
 ## Rust 重放规则
 
-- 重放在 `src/api_web/tests.rs`：同一请求字节经真实 TCP 监听器打到 `http_proxy::serve_connection_native_with_shutdown`，api-web 组件前置、`native_http::serve` 兜底；响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 删除、chunk 大小写小写），`closed` 标志另比。
+- 重放在 `src/api_web/tests.rs`：同一请求字节经真实 TCP 监听器打到 WS 数据面共用的生产入口 `native_http::serve_with_body`（#2354 把 `/api/web/` 分支装进该入口，重放以 `Config { api_web: Some(...) }` 挂载本组、`api_web::serve` 落在分支内），每个 cell 因此同时覆写 #1765 的准入闸与生产分派顺序；响应按 #1209 规则归一化（Date 掩码、头名小写、空 `content-length: 0` 删除、chunk 大小写小写）——归一化解析器是 #1766 抽出的共享模块 `tests/common/replay_normalize.rs`（api-web 侧的目录 size / 根路径掩码仍在调用点注入），`closed` 标志另比。
 - `http10` 为字节 pin（hyper 写 `HTTP/1.0` 状态行，Node 写 `HTTP/1.1`，已登记在 `specs/gateway-parity/diffs/A8.4-API-WEB-001.md`），不进归一化比对；`replay_cells_cover_exactly_the_oracle` 断言重放列表 + pin 列表 = oracle cell 全集。
 - 不在金样里的一格：files 分支上 **项目 key** 的坏百分号（`decodeURIComponent` 在 try 外）。TS 侧是 unhandled rejection——零字节、连接保持打开，客户端只能等超时。Rust 不回零字节挂起，改为 500 `internal_error` "URI malformed"，差异登记在 A8.4-API-WEB-001.md 并用独立测试 pin 住。
 
@@ -40,4 +40,4 @@ cd src && cargo test -p pilotdeck-gateway --lib api_web
 
 ## 负控
 
-`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器）：鉴权闸、边界闸（`isAbsolute` / `..` 检查）、`project_describe` 的 catch、文本扩展名判定、方法闸、`maxReadBytes` 上限、#1675 的 NOFOLLOW 句柄加固共七个开关，每个绑定专属 replay cell 或边界探针的单行断言，去掉后必须变红（KILLED）。`api-web-nofollow-off` 绑定 #1675 的八条探针：写侧五条（确定性中间段目录链接、中间段目录竞态换链、整根竞态换链、末段叶竞态换链、缺根时祖先竞态换链）、读侧两条（末段叶竞态换链、中间段目录竞态换链）、枚举一条（目录竞态换链），去掉加固后八条都必须变红。新增 cell 时同步更新 `src/api_web/tests.rs` 的 `replay_tests!` 表与开关绑定。
+`negative_controls.py`（`_shared/mutant_switch.py` 编译开关执行器）：鉴权闸、边界闸（`isAbsolute` / `..` 检查）、`project_describe` 的 catch、文本扩展名判定、方法闸、`maxReadBytes` 上限、#1675 的 NOFOLLOW 句柄加固，加上 #2354 装配后引入的三个新闸（`native-http-api-web-off`：生产分派里的整条 `/api/web/` 分支，绑定 `projects_ok`；`api-web-admission-off`：#1765 的 llhttp 等价准入闸，绑定坏方法 bare 400 探针；`api-web-node-write-refusal-off`：#1764 的写侧 Node 文本对齐——去掉后 NUL 路径落到写自身的 open，EINVAL 文本顶替参数校验文本，绑定 NUL 写探针）共十个开关，每个绑定专属 replay cell 或边界探针的单行断言，去掉后必须变红（KILLED）。`api-web-nofollow-off` 绑定 #1675 的九条探针：写侧六条（确定性中间段目录链接、中间段目录竞态换链、整根竞态换链、末段叶竞态换链、缺根时祖先竞态换链、#2354 fix-r1 的中间段竞态换链指向根外**目录**叶——去加固后回落 EISDIR 500 而非 403）、读侧两条（末段叶竞态换链、中间段目录竞态换链）、枚举一条（目录竞态换链），去掉加固后九条都必须变红。新增 cell 时同步更新 `src/api_web/tests.rs` 的 `replay_tests!` 表与开关绑定。

@@ -1,5 +1,14 @@
 name: ci
 
+# r7（#1809 评审 P0）：本文件**每个** run step 都显式 `shell: bash`。step 级
+# `shell:` 优先于 workflow / job 级 `defaults.run.shell`（GitHub workflow syntax：
+# "You can override the default shell settings … using the `shell` keyword"），
+# 因此往任何层级塞 `defaults.run.shell: /bin/true {0}` 都废不掉任何一个检测步——
+# 尤其是必需检查 `check` 的 Require 步与各闸门步。接线守卫
+# （scripts/retirement-outcome-parity/self_check.py 的 check_wiring）与兄弟守卫
+# （src/pilotdeck-gateway/tests/test_metadata_io_driver.py）都断言「每个 run step
+# 必须带 `shell: bash`」，删掉或换值即红。
+
 on:
   pull_request:
   push:
@@ -22,6 +31,7 @@ jobs:
           # base..head 两点 diff 要 PR / merge group 的历史，浅克隆没有
           fetch-depth: 0
       - name: 分类器自测（正负例与内存内变异负控）
+        shell: bash
         run: python3 -I scripts/test-ci-scope.py
       - name: 分类改动范围（docs-only 判定，fail-closed）
         id: classify
@@ -31,6 +41,7 @@ jobs:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           MG_BASE: ${{ github.event.merge_group.base_sha }}
           MG_HEAD: ${{ github.event.merge_group.head_sha }}
+        shell: bash
         run: python3 -I scripts/ci_scope.py
 
   metadata-observer:
@@ -42,12 +53,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.22.0
+      # #2017-A：下方聚合门控守卫自 r6 起按 PyYAML 解析后的完整标量判（job 级 /
+      # 聚合 step 级 `if:` / `needs:`），解析器版本钉死 6.0.3，与
+      # retirement-outcome-parity 装置同一登记。显式用 venv 解释器跑本步，不影响
+      # 本 job 其它步骤的 `python3`。
+      - name: 安装钉死 PyYAML（#2017-A）
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyyaml-pinned"
+          "$RUNNER_TEMP/pyyaml-pinned/bin/pip" install --disable-pip-version-check pyyaml==6.0.3
       - name: CI 聚合门控与各 job 的 Node 前置守卫
         working-directory: src/pilotdeck-gateway/tests
-        run: python3 -m unittest -v test_metadata_io_driver.EnvironmentControls
+        shell: bash
+        run: '"$RUNNER_TEMP/pyyaml-pinned/bin/python" -m unittest -v test_metadata_io_driver.EnvironmentControls'
       - name: metadata observer generation 正负控（自有文件）
+        shell: bash
         run: node src/pilotdeck-gateway/tests/test_metadata_observer.mjs
       - name: 共享执行器隔离与候选正控回归（#994）
+        shell: bash
         run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py
       # #1666 / #1734：负控脚本的守卫不得依赖 assert —— `python3 -O` /
       # `PYTHONOPTIMIZE=1` 会把 assert 整条剥离，靠 assert 的守卫在优化解释器下静默
@@ -57,6 +80,7 @@ jobs:
       # 结论无意义）；另有一条只减不增的裸 assert 存量登记。两者都不需要 cargo。
       - name: 网关负控守卫 -O 不变性自测（#1666/#1734）
         working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
           python3 -B -m unittest -v settings-gateway/test_negative_controls.py
@@ -71,6 +95,7 @@ jobs:
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
       - name: 共享副本清单推导自测（#1570）
         working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: python3 -B -m unittest -v _shared.test_compile_inputs
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
@@ -79,6 +104,7 @@ jobs:
       # （闸门不允许静默通过）。本地负控：故意改坏 transport.rs 的 stream-event-field 锚点
       # 后 --check 报 5/6 valid、rc=1（_tmp/20261026-issue-1053/neg-1203/）。
       - name: CLI fixtures 负控 --check 锚点自检（#1203）
+        shell: bash
         run: |
           found=0
           for script in src/pilotdeck-cli/tests/fixtures/*/negative_controls.py; do
@@ -107,6 +133,7 @@ jobs:
       # 造「恰等于 / 含但不等于」样本）在有 gitleaks 的机器上由 `--static` 之外的模式执行，
       # CI runner 不带 gitleaks（红线：不下载预编译二进制）。
       - name: gitleaks 放行口径静态检查（#1595/#1594，含变异负控）
+        shell: bash
         run: python3 -I scripts/check-gitleaks-allowlist.py --static --self-check
 
   # #1632：session-assembly-1316 负控夹具此前只在本机与宿主链跑，CI 里没有任何闸门——
@@ -139,6 +166,7 @@ jobs:
           # 变异前要按 git show HEAD:<path> 证明源码未被改动
           fetch-depth: 0
       - name: 锁定工具链
+        shell: bash
         run: rustup show active-toolchain
       # 只缓存 cargo 注册表 / git 源，不缓存 target：夹具的护身扫描器
       # （`negative_process._ensure_workspace_scanner`）见到现有可执行文件就直接复用、
@@ -156,6 +184,7 @@ jobs:
         # --self-check 证明槽位守卫在 python3 -O 下仍有界退出（旧 assert 版在 -O 下无界等待）；
         # --self-check-controls 逐条删掉自检里的守卫（截止拒绝 / 进度落盘 / 树锁持有 /
         # 空 gates 表）再跑一遍副本，全部必须变红，否则打印 SURVIVED 并非零退出（#1692）。
+        shell: bash
         run: |
           python3 -I src/pilotdeck-gateway/tests/fixtures/anchor_selfcheck.py --anchors-only
           python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py --self-check
@@ -165,6 +194,7 @@ jobs:
       # 报错——「把断言改成 assert!(true) / 删掉上限断言 / 改掉换行守卫的返回动作」
       # 三种已实测的假绿都在这里变红。
       - name: 绑定漂移自检（#1989）
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: |
           python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_source.py
           python3 -I src/pilotdeck-gateway/tests/fixtures/native-entry-authority/test_native_entry_binding.py
@@ -175,6 +205,7 @@ jobs:
           # 不再只靠宿主链；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-mcp-session-tools/negative_controls.py --check
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
+        shell: bash
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
       # 夹具为每条变异写了 .patch / .log / summary.json；job 红了才最需要它们，所以
       # 用 `if: always()` 上传（失败也要传）。#1632 评审：否则 runner 结束时证据全丢，
@@ -187,30 +218,124 @@ jobs:
           path: ${{ runner.temp }}/negctl-1316
           if-no-files-found: warn
 
+  # retirement outcome-parity 装置（#1809）：把「判据还能不能用」接进 CI。
+  # 纯 Python（无 Rust / Node 依赖），几秒钟跑完，因此不做 paths 过滤——多跑不可漏跑；
+  # 与其它重 job 一样只受 scope 的 docs_only 分类控制（#1199 口径）。
+  # 数据是**入库**的切片夹具 scripts/retirement-outcome-parity/fixtures（干净检出可复现），
+  # 不再依赖未跟踪的 _tmp/。
+  retirement-outcome-parity:
+    needs: [scope]
+    if: ${{ needs.scope.outputs.docs_only != 'true' }}
+    runs-on: ubuntu-latest
+    # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：self_check.py
+    # 遍历实际 steps 求和，并与 RETIREMENT_STEP_ORDER 双向互证；未知贡献规则即红。
+    # 直跑 emit/check 各有声明上限 5 min；直跑负控按其模块登记推导：
+    # (参考轮数 5 + 跨轮 1 + 负控 18 + 正控 2) × 600 s = 15600 s 原始上限，
+    # 再由该 step 的 30 min 声明限到 1800 s（与自检 NEGCTL 上限同源）。
+    # 七项自检 3260 s + 变异自检 4200 s（沿用 _assert_pass_counting 互证）
+    # → 全有效内部和 9860 s ≈ 164.3 min；checkout/setup/upload 显式共享 300 s
+    # overhead 桶并核覆盖。170 min = 10200 s > 9860 + 300 s，低于托管 job 6 h 上限。
+    # r9 85 min / r10 130 min 的不完整和均被替代，不改严格大于的派生判据。
+    timeout-minutes: 170
+    steps:
+      - uses: actions/checkout@v4
+      # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死
+      # 6.0.3（装置 README 登记）。`python3 -I` 不读 user site，但 venv 的 site-packages
+      # 属解释器自身配置、`-I` 下仍可见（本机实测）；GITHUB_PATH 让后续闸门步的
+      # `python3` 落在这个 venv 上，self_check 里另有版本 fail-closed 断言。
+      - name: 安装钉死 PyYAML（#2017-A）
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pyyaml-pinned"
+          "$RUNNER_TEMP/pyyaml-pinned/bin/pip" install --disable-pip-version-check pyyaml==6.0.3
+          echo "$RUNNER_TEMP/pyyaml-pinned/bin" >> "$GITHUB_PATH"
+      # ① 金样可复现：emit 从入库夹具复算，必须与已提交 ts-oracle.json 逐字节相同。
+      #    不一致 = 夹具或金样有一个被改过而另一个没跟上（或有人手改金样）。
+      - name: emit 复算与金样逐字节比对
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          F=scripts/retirement-outcome-parity/fixtures
+          python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \
+            --oracle "$RUNNER_TEMP/ts-oracle.json" \
+            --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \
+            --round "$F/round-04" --round "$F/round-05"
+          cmp "$RUNNER_TEMP/ts-oracle.json" scripts/retirement-outcome-parity/ts-oracle.json
+      # ② 判据 5 轮全 PASS（含 P7 跨轮稳定性——单轮时 P7 是空判，报告会写 p7Evaluated）。
+      - name: check 5 轮
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          F=scripts/retirement-outcome-parity/fixtures
+          python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
+            --oracle scripts/retirement-outcome-parity/ts-oracle.json \
+            --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \
+            --round "$F/round-04" --round "$F/round-05"
+      # ③ 负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD（任一非 KILLED / 非 HELD
+      #    即非零退出；正控断言「应当 PASS 的性质」没被写窄，#2143）。
+      #    默认 --data 指向入库夹具；输出目录在 RUNNER_TEMP，供下一步上传。
+      - name: 负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD
+        shell: bash
+        run: |
+          python3 -I scripts/retirement-outcome-parity/negative_controls.py \
+            --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"
+        timeout-minutes: 30
+      # ④ 装置守卫自检：七项全跑（体积预算 / emit 复算 / 5 轮判据 / 负控 / 输出目录锁 /
+      #    敌意写目标 / CI 接线）。前四项与 ①–③ 重叠是**有意**的：那三条分支只有在 self_check 里被
+      #    真正执行过才算数（否则它们只是没人跑的死代码），整套约 5 s。后三项是「守卫本身
+      #    还在不在」——拆掉任一处（删体积上限 / 删 flock / 删敌意目标判定 / 删上面的步骤）本步即红。
+      - name: 装置守卫自检（七项）
+        shell: bash
+        run: |
+          python3 -I scripts/retirement-outcome-parity/self_check.py
+      # ⑤ 接线守卫自身的变异自检：把本文件按「删行/注释掉/禁用 step」三种方式变异，
+      #    每种都必须被 check_wiring 判红。少了这一步，接线守卫退化成常量比对也没人知道。
+      - name: 接线守卫变异自检
+        shell: bash
+        run: |
+          python3 -I scripts/retirement-outcome-parity/self_check.py --self-check-controls
+      # 红了才最需要逐条证据（summary.json 里每条 KILLED / SURVIVED / INVALID + 原因）。
+      - name: 上传负控证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: retirement-outcome-parity-negctl
+          path: ${{ runner.temp }}/retirement-outcome-parity-negctl
+          if-no-files-found: warn
+
   # 保留必需检查名。#1199 后合并闸门语义：scope 非 success 一律拒绝；各重 job 的结果
   # 「非 success 且不是（skipped 且 docs_only=true）」才拒绝——即分类器确定纯文档改动才
   # 接受 skipped，取消 / 其他跳过照旧拒绝（#904 的有意放宽，边界见 state/decisions-20261031-ci-docs-scope.md）。
   check:
-    needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]
+    needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, retirement-outcome-parity]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
       - name: Require scope success
         if: ${{ always() && needs.scope.result != 'success' }}
         working-directory: .
+        shell: bash
         run: exit 1
       - name: Require metadata observer success
         if: ${{ always() && needs.metadata-observer.result != 'success' && !(needs.metadata-observer.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
         working-directory: .
+        shell: bash
         run: exit 1
       - name: Require Rust success
         if: ${{ always() && needs.rust.result != 'success' && !(needs.rust.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
+        shell: bash
         run: exit 1
       - name: Require A5.1 coverage success
         if: ${{ always() && needs.a51-coverage.result != 'success' && !(needs.a51-coverage.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
+        shell: bash
         run: exit 1
       - name: Require negative control success
         if: ${{ always() && needs.negative-controls.result != 'success' && !(needs.negative-controls.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
+        shell: bash
+        run: exit 1
+      - name: Require retirement outcome-parity success
+        if: ${{ always() && needs.retirement-outcome-parity.result != 'success' && !(needs.retirement-outcome-parity.result == 'skipped' && needs.scope.outputs.docs_only == 'true') }}
+        shell: bash
         run: exit 1
 
   rust:
@@ -230,15 +355,18 @@ jobs:
           # --base needs merge-base history for PRs and merge queue commits.
           fetch-depth: 0
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
-      - run: rustup show active-toolchain
+      - shell: bash
+        run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: src -> target
           # rg / cargo-nextest 沿用下方独立缓存，避免重复缓存 ~/.cargo/bin。
           cache-bin: false
       - name: 格式
+        shell: bash
         run: cargo fmt --all --check
       - name: lint
+        shell: bash
         run: cargo clippy --all-targets -- -D warnings
       # grep 金样对拍要真实 rg（版本对齐基线 @vscode/ripgrep 1.18.0 自带的 15.0.0，金样即以此录制）；从源码编译（不下载预编译二进制，人定 2026-10-22），按版本缓存
       - uses: actions/cache@v4
@@ -247,6 +375,7 @@ jobs:
           key: ripgrep-15.0.0-${{ runner.os }}
       - name: ripgrep（cargo install 源码编译）
         # 镜像可能自带其他版本的 rg：只认 ~/.cargo/bin/rg 且版本须为 15.0.0，否则强制重装
+        shell: bash
         run: |
           "$HOME/.cargo/bin/rg" --version 2>/dev/null | grep -qx 'ripgrep 15.0.0' \
             || cargo install ripgrep --locked --version 15.0.0 --force
@@ -259,6 +388,7 @@ jobs:
           path: ~/.cargo/bin/cargo-nextest
           key: cargo-nextest-0.9.148-${{ runner.os }}-${{ runner.arch }}
       - name: cargo-nextest（cargo install 源码编译）
+        shell: bash
         run: |
           "$HOME/.cargo/bin/cargo-nextest" --version 2>/dev/null | grep -qx 'cargo-nextest 0.9.148' \
             || cargo install cargo-nextest --locked --version 0.9.148 --force
@@ -270,26 +400,32 @@ jobs:
           # 用例只能跳过、却被记成 PASS。CI 与正式宿主开这个开关，把「跳过」变成硬失败；
           # 需要保留跳过的 root 宿主在配方里显式不要导出它。回归：tests/common/permission_faults.rs。
           PDRS_REQUIRE_PERMISSION_FAULTS: "1"
+        shell: bash
         run: cargo nextest run --workspace --no-fail-fast --profile ci --config-file ../.config/nextest.toml
       # nextest 不运行 doctest；单列一步保留原 cargo test --all 的检查范围。
       - name: 文档测试
+        shell: bash
         run: cargo test --workspace --doc
       - name: smoke provider 装置正负控（含 Rust probe）
         working-directory: .
+        shell: bash
         run: python3 -I scripts/test-smoke-real-provider.py
       - name: C · parity 冻结装置（干净检出）
         working-directory: .
+        shell: bash
         run: python3 -I scripts/parity/check_frozen.py
       # A3 · gateway 协议 schema 静态断言：CI 没有基线目录（resources/ 不入库），
       # check_schema.py 自动退回「快照 × method-inventory.md × schema」三方比对；
       # 基线侧一致性由下方 gateway-schema-baseline job 按冻结 commit 克隆基线钉死。
       - name: gateway 协议 schema 静态断言（A3）
         working-directory: .
+        shell: bash
         run: python3 -I scripts/gateway-parity/check_schema.py
       - name: 三套冻结账本（静态规则与只追加）
         working-directory: .
         env:
           LEDGER_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        shell: bash
         run: |
           python3 -I scripts/test-gateway-ledger.py -v
           python3 -I src/pilotdeck-gateway/tests/fixtures/ledger-diffs/test_ledger.py parity -v
@@ -314,11 +450,13 @@ jobs:
           node-version: 20
       - name: upgrade 异常结束状态正负对照
         working-directory: .
+        shell: bash
         run: node --test src/pilotdeck-gateway/tests/upgrade/check_suffix.test.mjs
       # A3 · schema 正负例（ajv draft-07）：正例必须过、负例必须拒——含 run_get 省略 result 的线上语义。
       # 依赖钉在 scripts/gateway-parity/package.json（ajv/ts-json-schema-generator/typescript），npm ci 可复现。
       - name: gateway 协议 schema 正负例（ajv）
         working-directory: scripts/gateway-parity
+        shell: bash
         run: |
           npm ci --ignore-scripts --no-fund
           node validate_fixtures.mjs
@@ -333,6 +471,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: B2 冻结与批准依据（干净检出）
         working-directory: .
+        shell: bash
         run: |
           python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_entry_guard.py
           python3 -I src/pilotdeck-gateway/tests/fixtures/frozen-reinsert-guard/test_negative_controls.py
@@ -351,12 +490,14 @@ jobs:
       # 独立成一步：B2 步骤的命令序被 test_metadata_io_driver.py 逐字钉死，且失败归因要能一眼看出是装置自测。
       - name: 归因装置自测（scripts/parity-attrib）
         working-directory: .
+        shell: bash
         run: python3 -I scripts/parity-attrib/test_frame_attrib.py
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: 安装 A5.1 钉死依赖
         working-directory: scripts/gateway-parity
+        shell: bash
         run: npm ci --ignore-scripts --no-fund
       # CI 没有 resources/ 基线；按冻结 commit 浅克隆，并使用上一步
       # 安装的 TypeScript 5.9.3。三条原命令保留默认内存/磁盘负例。
@@ -364,6 +505,7 @@ jobs:
         working-directory: .
         env:
           PILOTDECK_BASELINE_REF: cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 # schema-FROZEN.md
+        shell: bash
         run: |
           git init pilotdeck-baseline
           git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
@@ -373,6 +515,7 @@ jobs:
         working-directory: .
         env:
           PDRS_BASELINE: ${{ github.workspace }}/pilotdeck-baseline
+        shell: bash
         run: |
           python3 -I scripts/gateway-coverage/check_ledger.py
           python3 -I scripts/gateway-coverage/check_coverage_manifest.py
@@ -393,6 +536,7 @@ jobs:
         with:
           node-version: 20
       - name: 浅克隆基线 OpenBMB/PilotDeck（冻结 commit）
+        shell: bash
         run: |
           git init pilotdeck-baseline
           git -C pilotdeck-baseline remote add origin https://github.com/OpenBMB/PilotDeck.git
@@ -401,15 +545,20 @@ jobs:
           echo "基线 commit: $(git -C pilotdeck-baseline rev-parse HEAD)"
       - name: 安装钉死依赖
         working-directory: scripts/gateway-parity
+        shell: bash
         run: npm ci --ignore-scripts --no-fund
       - name: 再生成检查（冻结基线 × 已提交产物，字节一致）
+        shell: bash
         run: node scripts/gateway-parity/export_schema.mjs --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline" --check
       - name: 基线核对 L1–L3（缺基线即 FAIL）
+        shell: bash
         run: |
           PDRS_REQUIRE_BASELINE=1 \
           PDRS_BASELINE="$GITHUB_WORKSPACE/pilotdeck-baseline" \
           python3 -I scripts/gateway-parity/check_schema.py
       - name: 产品入口覆盖总账（独立枚举 × 任务归属）
+        shell: bash
         run: python3 scripts/product-coverage/check.py --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline"
       - name: 入口漏项/重复/无主负对照及 UI runtime 对账
+        shell: bash
         run: python3 scripts/product-coverage/test_check.py --baseline "$GITHUB_WORKSPACE/pilotdeck-baseline" -v

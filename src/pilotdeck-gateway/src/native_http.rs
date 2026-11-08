@@ -1,8 +1,9 @@
 //! Non-upgrade HTTP routing for the native listener: `/health`, loopback
-//! `/auth/local-token`, static fallback, and the plain 404, aligned with the
-//! TS `GatewayServer.handleHttpRequest` (fixture `native-http-basic`).
-//! `/api/web`, public approvals, and module-host stay with TS, and the
-//! default proxy routing is untouched. Transport byte-level divergences
+//! `/auth/local-token`, the `/api/web` route group (#2354), static fallback,
+//! and the plain 404, aligned with the TS `GatewayServer.handleHttpRequest`
+//! (fixtures `native-http-basic` and `api-web`). Public approvals and
+//! module-host stay with TS, and the default proxy routing is untouched.
+//! Transport byte-level divergences
 //! (header name case, chunk-size case, the bare 400's `content-length: 0`,
 //! the HTTP/1.0 status line echo) and parse-layer divergences (target
 //! charset, the fragment-stripping under-count of hyper's `Uri`, the
@@ -108,11 +109,16 @@ pub(crate) struct Config {
     /// `readBody(request)` + `await options.feishuWebhook(...)`.
     pub webhook: Option<WebhookResolver>,
     pub control: Option<control::ControlHandler>,
+    /// #2354: the `/api/web` route group (TS `handleWebApiRequest` +
+    /// `options.gateway`). `None` keeps the pre-#2354 surface, the shape
+    /// every non-gateway listener and frozen fixture still pins.
+    pub api_web: Option<crate::api_web::Config>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
 /// Only method, version, headers, and URI are consulted, never the body; the
-/// body-carrying entry is [`serve_with_body`], which only the listener uses.
+/// body-carrying entries are [`serve_with_body`] (the listener, whose
+/// `/api/web` write route also reads its body), which only the listener uses.
 pub(crate) async fn serve<B>(
     request: &hyper::Request<B>,
     config: &Config,
@@ -120,12 +126,13 @@ pub(crate) async fn serve<B>(
     finish(request.version(), route(request, config, None).await?)
 }
 
-/// Route one request whose body may belong to `/feishu/webhook`, collecting
-/// it only when that route is live. Every other path is served exactly like
-/// [`serve`] and its body is never read — the streaming request body stays
-/// untouched for the routes that do not look at it.
+/// Route one request whose body may belong to `/feishu/webhook` or the
+/// `/api/web` write route, collecting it only when one of them is live.
+/// Every other path is served exactly like [`serve`] and its body is never
+/// read — the streaming request body stays untouched for the routes that do
+/// not look at it.
 pub(crate) async fn serve_with_body(
-    request: hyper::Request<hyper::body::Incoming>,
+    mut request: hyper::Request<hyper::body::Incoming>,
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
@@ -139,6 +146,33 @@ pub(crate) async fn serve_with_body(
             return finish(version, rejection);
         }
         return control::serve(request, config).await;
+    }
+    // #2354: the `/api/web` route group, exactly where TS's router mounts it —
+    // after the `/feishu/webhook` prefix check, before static and the plain
+    // 404 (GatewayServer.ts). The path prefixes are disjoint, so testing this
+    // branch first is behaviorally identical to the TS order. TS checks
+    // `url.pathname.startsWith("/api/web/")` before calling
+    // `handleWebApiRequest`, and that handler re-checks its own prefix; both
+    // checks are mirrored (`request_path` here, `serve` inside the group).
+    if let Some(api_web) = &config.api_web
+        && !crate::mutants::on("native-http-api-web-off")
+        && request_path(&request).starts_with("/api/web/")
+    {
+        // #1765 hard constraint: the llhttp-equivalent admission gates run
+        // before any route handler in TS (the parser is under the whole
+        // server), so the group answers a bare 400 / headless 400, never its
+        // own JSON. The fallthrough `serve` below re-runs the same pure check
+        // for requests the group declines, exactly like the webhook branch.
+        if !crate::mutants::on("api-web-admission-off")
+            && let Some(rejection) = node_parser_admission(&request)?
+        {
+            return finish(version, rejection);
+        }
+        // `None` means "not for this surface" (a WHATWG-normalized path the
+        // prefix check above did not catch); the caller keeps routing.
+        if let Some(answer) = crate::api_web::serve(&mut request, api_web).await {
+            return finish(version, answer?);
+        }
     }
     let wants_body = config.webhook.is_some() && request_path(&request) == FEISHU_WEBHOOK_PATH;
     if !wants_body {

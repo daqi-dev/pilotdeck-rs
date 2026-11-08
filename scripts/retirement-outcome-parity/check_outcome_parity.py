@@ -23,11 +23,26 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
+
+# `fcntl` 只在 POSIX 有。Windows 缺 `O_NOFOLLOW` 时本装置本来就拒跑（差异条目
+# 已知边界⑳，平台支持另立单），这里同样按「跑不了」收口成 rc2，不做降级。
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - 非 POSIX 平台
+    fcntl = None
+
+# 输出目录互斥（#1809 条目 4）。同一个输出根被两个进程同时写时，
+# `N*/driver/*` 会被原地交错截断，审计者可据此拼出「N10 KILLED」而本轮并没有
+# 真正跑完任何控件。锁文件放在被写的目录**里面**：跟着目录走，不需要调用方
+# 另记一个路径；名字带点前缀，不与控件目录 `N1..N17` / `summary.json` 冲突。
+LOCK_BASENAME = '.retirement-outcome-parity.lock'
 
 # 同族装置口径（scripts/gateway-parity/*、scripts/parity/* 均成对设置）：不写也
 # **不读**缓存字节码。只设 dont_write_bytecode 挡不住读取已有的
@@ -57,6 +72,15 @@ except OSError:
 sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
+
+# 负控件条数（N1–N18）与正控件条数（PC1–PC2）：本文件是三件套共享的**单一登记点**
+# ——negative_controls 的执行器（run_locked 拿到 controls / positives 后核数量）与
+# self_check 的 check_negctl（钉 KILLED / HELD 数）都从这里读，不各抄一份（评审
+# r7 P1：控件集被删到 0 条时执行器自己判 PASS rc=0 的空真；r9 合并补全：#2143 的
+# N18 与 PC1–PC2 进来后正控同样需要条数守卫——build_positives 被删空时
+# positiveCounts 全 0，status 仍 PASS）。
+EXPECTED_CONTROLS = 18
+EXPECTED_POSITIVES = 2
 
 # —— 登记事实（diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md「基线依据」）——
 SCHEMA = 'retirement-outcome-parity/ts-oracle v1'
@@ -100,6 +124,91 @@ FROZEN_METHODS = (Path(__file__).resolve().parent.parent
 
 class InputError(Exception):
     """输入不可用 —— fail-closed，退出码 2，绝不当 PASS。"""
+
+
+@contextlib.contextmanager
+def output_lock(root):
+    """对 ``root`` 目录加**独占** flock（跨进程，释放即解锁）。
+
+    * 被占时**阻塞等待**，不是失败：并发跑两次是本装置的合法用法（CI 与本机各一次、
+      或审计者边跑边看），明确失败会让人误判成数据问题；等锁期间在 stderr 打一行
+      提示，观测上不静默。
+    * 锁文件 ``<root>/.retirement-outcome-parity.lock`` 用 ``O_NOFOLLOW`` 打开：
+      预置成指向别处的符号链接直接 ``ELOOP`` 失败（与负控 `driver/*` 同一写盘模型），
+      绝不顺着链接去锁别人。
+    * ``flock`` 锁是**打开文件描述**的属性，不经由 fd 继承传给子进程时不生效；
+      本装置只在进程内直接调用，不经 sh -c。
+    * 缺 ``fcntl``（非 POSIX）或 ``O_NOFOLLOW`` 时按 rc2 收口——不静默退化成「没锁」。
+    """
+    if fcntl is None:  # pragma: no cover - 非 POSIX 平台
+        raise InputError('flock is unavailable on this platform; refusing to write '
+                         f'{root} without output-directory mutual exclusion')
+    if not hasattr(os, 'O_NOFOLLOW'):  # pragma: no cover - 非 POSIX 平台
+        raise InputError('O_NOFOLLOW is unavailable on this platform; refusing to '
+                         f'lock {root} (see diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md)')
+    root = Path(root)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / LOCK_BASENAME
+        # `O_RDONLY` 足够：`flock` 只要求一个打开的文件描述，不看读写模式。用只读打开
+        # 是为了让**别人**建在共享临时目录（`/tmp`、`$TMPDIR`）里的 0644 锁文件也能被
+        # 本进程取到——`O_RDWR` 会在跨账号共享目录上直接 `EACCES`，把「等锁」变成
+        # 「跑不了」。`O_NOFOLLOW` 挡住预置成指向别处的链接。
+        # `O_NONBLOCK`：预置同名 **FIFO** 时，不带它的只读打开会一直等写端（`O_NOFOLLOW`
+        # 拦不住 FIFO），整个装置挂死；加它后 FIFO 打开立即返回，再由下面的 `fstat`
+        # 判成非普通文件 → rc2。普通文件上 `O_NONBLOCK` 是空操作。
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+                     | getattr(os, 'O_CLOEXEC', 0), 0o644)
+    except OSError as error:
+        raise InputError(f'cannot open lock {root / LOCK_BASENAME}: {error}') from error
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            # 目录 / FIFO / 设备：都不是锁文件。目录虽然 `flock` 也能锁，但那是另一套
+            # 语义（谁建的目录谁以为在被锁），一律拒跑更安全。
+            raise InputError(f'lock {path} is not a regular file '
+                             f'(mode {info.st_mode:o}); refusing to use it as a lock')
+    except BaseException:
+        os.close(fd)
+        raise
+    locked = False
+    try:
+        # 创建时的 `0o644` 会被 umask 折损（`umask 077` 得 0600），跨账号共享临时目录里
+        # 后来者再 `O_RDONLY` 打开就 `EACCES`。显式 `fchmod` 一次，让注释里「共享目录
+        # 也能等锁」的承诺真正成立。`fchmod` 失败不改变互斥语义（同账号场景照常工作），
+        # 因此只吞掉，不把「能锁但改不了权限」误判成输入不可用。
+        try:
+            os.fchmod(fd, 0o644)
+        except OSError:  # pragma: no cover - 极少数 FS 不支持 fchmod
+            pass
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(f'retirement-outcome-parity: waiting for output lock {path} '
+                  '(held by another process)', file=sys.stderr)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            except OSError as error:
+                raise InputError(f'cannot take lock {path}: {error}') from error
+        except OSError as error:
+            # `ENOLCK` / `EOPNOTSUPP`（异构 FS 上 flock 不可用）与「缺 fcntl」「缺
+            # O_NOFOLLOW」同一口径：rc2「跑不了」，不是裸 traceback 冒充判据 FAIL。
+            raise InputError(f'cannot take lock {path}: {error}') from error
+        locked = True
+        yield path
+    finally:
+        # 只在**真的取到锁**之后解锁：取锁失败时 `LOCK_UN` 也会以同一个 errno 失败，
+        # 抛出来就是裸 OSError 覆盖上面刚折好的 InputError（负控入口只捕 InputError）。
+        # 清理本身的失败一律吞掉——`close(fd)` 无论如何都会释放 flock。
+        if locked:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:  # pragma: no cover - 解锁失败只影响提示，不影响正确性
+                pass
+        try:
+            os.close(fd)
+        except OSError:  # pragma: no cover - 同上
+            pass
 
 
 def error_value(response):
@@ -690,21 +799,26 @@ def run_emit(args):
     # 不接住就是裸 traceback → rc1。
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
+        # 与负控共用同一把输出目录锁（`output_lock`）：并发两次 `emit` 写同一目录
+        # 时后到者等前一个发布完，不会读到半写的金样再 `os.replace` 覆盖。
         # 原子发布（与负控 summary.json 同一口径）：中断不留截断的金样。tmp 名取
         # 不可预测的（`<name>.<pid>.tmp` 在世界可写目录里可被预置符号链接，写入会
         # 跟随它截断目标）；任何失败都先删 tmp，再按输入不可用收口（两家评审 r10）。
-        handle, tmp_name = tempfile.mkstemp(
-            dir=target.parent, prefix=target.name + '.', suffix='.tmp')
-        tmp = Path(tmp_name)
-        try:
-            with os.fdopen(handle, 'w', encoding='utf-8') as stream:
-                stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
-            os.replace(tmp, target)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
-        # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。
-        digest = sha256_file(target)
+        with output_lock(target.parent):
+            handle, tmp_name = tempfile.mkstemp(
+                dir=target.parent, prefix=target.name + '.', suffix='.tmp')
+            tmp = Path(tmp_name)
+            try:
+                with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+                    stream.write(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+                os.replace(tmp, target)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+            # 摘要也算写金样的一部分：读到 OSError 同样不是判据 FAIL。必须在**锁内**
+            # 算——出了锁再读，排队的下一个 `emit` 可能已 `os.replace` 成自己的产物，
+            # 报告的 `sha256` 就会归因到别人的写入。
+            digest = sha256_file(target)
     except (OSError, ValueError) as error:
         raise InputError(f'cannot write oracle {args.oracle!r}: {error}') from error
     print(json.dumps({'status': 'PASS', 'command': 'emit', 'oracle': str(target),

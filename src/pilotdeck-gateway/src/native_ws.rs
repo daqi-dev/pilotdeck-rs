@@ -107,6 +107,7 @@ impl NativeWsServer {
             static_root: None,
             webhook: None,
             control: None,
+            api_web: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -153,6 +154,14 @@ impl NativeWsServer {
 
     pub(crate) fn with_control(mut self, handler: native_http::control::ControlHandler) -> Self {
         self.http.control = Some(handler);
+        self
+    }
+
+    /// Mount the `/api/web` route group on this listener (#2354): the token
+    /// is the same bearer the WS lane checks, and the catalog is the native
+    /// metadata registry over the same home the WS lane reads.
+    pub(crate) fn with_api_web(mut self, config: crate::api_web::Config) -> Self {
+        self.http.api_web = Some(config);
         self
     }
 

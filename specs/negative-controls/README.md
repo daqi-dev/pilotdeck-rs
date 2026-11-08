@@ -111,7 +111,8 @@
 `node-io` · `project-files-linux-dirent` · `network-timing`（含 `negative_private.py`）·
 `sdk-settings` · `settings-gateway` · `interaction-values` · `turn-submit-admission` ·
 `turn-runner/runner_negative.py` · `cli-parity-mock-gateway`，以及后批加入的
-`memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）。
+`memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）与
+`sdk-mcp-session-tools`（#1433，`negative_selection` 契约 + `EXPECTED_NAMES` 静态名册）。
 **其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，

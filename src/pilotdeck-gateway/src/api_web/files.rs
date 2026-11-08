@@ -10,7 +10,8 @@
 //! A4-FILE-TOCTOU-001 NOFOLLOW descriptor walk once the realpath gate passes,
 //! so a component swapped inside the window fails closed instead of carrying
 //! the request out of the workspace. Registered in
-//! `specs/gateway-parity/diffs/A8.4-API-WEB-002.md`.
+//! `specs/gateway-parity/diffs/A8.4-API-WEB-002.md` (approved by its R1
+//! correction, `A8.4-API-WEB-002-R1`).
 use base64::Engine;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -84,24 +85,7 @@ impl ProjectFileService {
         #[cfg(test)]
         test_hook::notify("tree");
         let mut rows = self.tree_rows(relative, &target)?;
-        let collator =
-            crate::project_files::node_collator(&crate::node_locale::node_locale(|key| {
-                std::env::var(key).ok()
-            }))
-            .map_err(|_| FilesError::Message("Collation data unavailable.".to_owned()))?;
-        rows.sort_by(|(left_dir, left_name, _), (right_dir, right_name, _)| {
-            match (left_dir, right_dir) {
-                (true, false) => Ordering::Less,
-                (false, true) => Ordering::Greater,
-                // localeCompare keeps unpaired-surrogate order through the
-                // shared comparator's unit remap.
-                _ => crate::project_files::node_compare_utf16(
-                    &collator,
-                    &JsString::from(left_name.as_str()),
-                    &JsString::from(right_name.as_str()),
-                ),
-            }
-        });
+        sort_tree_rows(&mut rows)?;
         let entries = rows
             .into_iter()
             .map(|(_, _, entry)| JsValue::Object(entry))
@@ -184,7 +168,7 @@ impl ProjectFileService {
         content: &JsString,
         base64: bool,
     ) -> Result<(), FilesError> {
-        let target = self.resolve_safe_writing(relative)?;
+        let (literal, target) = self.resolve_safe_writing(relative)?;
         let bytes = if base64 {
             node_base64_decode(content.units())
         } else {
@@ -194,7 +178,11 @@ impl ProjectFileService {
         // have run, so a test may replace a component before the write.
         #[cfg(test)]
         test_hook::notify("write");
-        self.write_bytes(relative, &target, &bytes)
+        // #1764: Node's own write-path argument validation, in TS order.
+        if !crate::mutants::on("api-web-node-write-refusal-off") {
+            node_write_refusal(&literal)?;
+        }
+        self.write_bytes(relative, &literal, &target, &bytes)
     }
 
     /// One `readTree` entry: the directory-first flag, the collation key and
@@ -217,9 +205,14 @@ impl ProjectFileService {
         entry.insert("type".into(), JsValue::from(kind.name()));
         if let Some((size, mtime)) = stats {
             entry.insert("size".into(), JsValue::Number(size as f64));
+            // #1691: `Date#toISOString` of the stat mtime is the transport's
+            // shared `format_epoch_iso` (Node v22.22.0-equivalent for the
+            // whole epoch domain, extended years included — the local copy
+            // this file used to carry is deleted; the equivalence is pinned
+            // in the transport's own tests and below).
             entry.insert(
                 "modifiedAt".into(),
-                JsValue::from(to_iso_string(mtime).as_str()),
+                JsValue::from(pilotdeck_transport::system_clock::format_epoch_iso(mtime).as_str()),
             );
         }
         (kind == EntryKind::Directory, name.to_owned(), entry)
@@ -337,27 +330,42 @@ impl ProjectFileService {
     }
 
     /// Write the bytes: the #1675 descriptor mkdir + inode-checked overwrite
-    /// when it is armed, the measured path form otherwise.
-    fn write_bytes(&self, relative: &str, target: &Path, bytes: &[u8]) -> Result<(), FilesError> {
+    /// when it is armed, the measured path form otherwise. `literal` is TS's
+    /// argument spelling — every Node diagnostic below names it, never the
+    /// canonical form the armed walk resolves in-root links to (Node opens the
+    /// literal path and reports that one).
+    fn write_bytes(
+        &self,
+        relative: &str,
+        literal: &Path,
+        target: &Path,
+        bytes: &[u8],
+    ) -> Result<(), FilesError> {
         #[cfg(unix)]
         if let Some(beneath) = self.beneath(target) {
-            return self.write_beneath(relative, target, beneath, bytes);
+            return self.write_beneath(relative, literal, beneath, bytes);
         }
         let _ = relative;
-        if let Some(parent) = target.parent() {
+        let _ = target;
+        if let Some(parent) = literal.parent() {
             fs::create_dir_all(parent).map_err(|error| sys_error(&error, "mkdir", parent))?;
         }
-        fs::write(target, bytes).map_err(|error| sys_error(&error, "open", target))
+        fs::write(literal, bytes).map_err(|error| sys_error(&error, "open", literal))
     }
 
     /// `createDirectories` + `overwrite` relative to one pinned root
     /// descriptor: no component is ever followed, and the leaf is only
-    /// truncated after its inode proves a private regular file.
+    /// truncated after its inode proves a private regular file. A directory
+    /// target is Node's own EISDIR refusal from the write's `open` — the leaf
+    /// `openat(O_WRONLY)` below returns it naturally — so the #1675 window
+    /// never re-introduces a follow-stat that could classify a raced component
+    /// (a swapped link to an outside directory answers the boundary refusal,
+    /// not an EISDIR oracle on the outside leaf).
     #[cfg(unix)]
     fn write_beneath(
         &self,
         relative: &str,
-        target: &Path,
+        literal: &Path,
         beneath: &Path,
         bytes: &[u8],
     ) -> Result<(), FilesError> {
@@ -370,10 +378,20 @@ impl ProjectFileService {
                 parent,
                 rustix::fs::Mode::from_raw_mode(0o777),
             )
-            .map_err(|error| self.refusal("mkdir", relative, target, error))?;
+            .map_err(|error| self.refusal("mkdir", relative, literal, error))?;
+        }
+        // `path: "."` (or a spelling that normalizes to it) targets the
+        // pinned root itself: the leaf open below has no relative name to
+        // open, and the pinned root is a directory by construction.
+        if beneath.as_os_str().is_empty() {
+            return Err(sys_error(
+                &io::Error::from_raw_os_error(libc::EISDIR),
+                "open",
+                literal,
+            ));
         }
         crate::project_files::overwrite_at(&root, beneath, bytes)
-            .map_err(|error| self.refusal("open", relative, target, error))
+            .map_err(|error| self.refusal("open", relative, literal, error))
     }
 
     /// Pin the project root itself for the write walk. The root is opened by
@@ -496,11 +514,14 @@ impl ProjectFileService {
     /// deepest existing ancestor when the #1675 walk is armed. TS never
     /// realpaths here, so an **in-root** link keeps its write-through; only a
     /// link that lands outside the root (or a raced replacement) is refused.
-    /// The realpath never loosens the lexical gate above.
-    fn resolve_safe_writing(&self, raw: &str) -> Result<PathBuf, FilesError> {
+    /// The realpath never loosens the lexical gate above. The answer is
+    /// `(literal, resolved)`: the literal target is TS's argument spelling
+    /// (what Node's write-path diagnostics report), the resolved one is where
+    /// the armed walk writes; unarmed the two are the same lexical path.
+    fn resolve_safe_writing(&self, raw: &str) -> Result<(PathBuf, PathBuf), FilesError> {
         let lexical = self.lexical_target(raw)?;
         if !self.armed() {
-            return Ok(lexical);
+            return Ok((lexical.clone(), lexical));
         }
         let resolved = canonical_prefix(&lexical);
         if self.boundary && !self.is_inside_root(&resolved) {
@@ -508,7 +529,7 @@ impl ProjectFileService {
                 raw: raw.to_owned(),
             });
         }
-        Ok(resolved)
+        Ok((lexical, resolved))
     }
 
     /// The shared lexical gate of both resolve forms: `isAbsolute`, a
@@ -696,39 +717,42 @@ fn node_relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-/// `Date#toISOString` of a stat mtime: UTC, milliseconds always three
-/// digits, the nanosecond stat truncated to whole milliseconds.
-fn to_iso_string(ms: i64) -> String {
-    let seconds = ms.div_euclid(1000);
-    let millis = ms.rem_euclid(1000);
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    // Howard Hinnant's civil-from-days, the standard days-to-ymd form.
-    let shifted = days + 719_468;
-    let era = if shifted >= 0 {
-        shifted
-    } else {
-        shifted - 146_096
-    } / 146_097;
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_shift = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_shift + 2) / 5 + 1;
-    let month = if month_shift < 10 {
-        month_shift + 3
-    } else {
-        month_shift - 9
-    };
-    let year = if month <= 2 { year + 1 } else { year };
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
-        day_seconds / 3600,
-        (day_seconds % 3600) / 60,
-        day_seconds % 60
-    )
+/// `name.localeCompare` ordering of the tree rows: directories first, then
+/// the shared comparator's unit remap. #1740: the locale-resolved collator is
+/// cached per thread per locale — `node_collator`'s value holds only baked
+/// `'static` ICU data, so it stashes whole in a thread-local map. The locale
+/// itself is still resolved from the environment on every call, so a `LANG`
+/// change takes effect on the next tree; the sort answers are unchanged, only
+/// the per-request rebuild goes away.
+fn sort_tree_rows(rows: &mut [(bool, String, JsObject)]) -> Result<(), FilesError> {
+    thread_local! {
+        static COLLATORS: std::cell::RefCell<
+            std::collections::HashMap<icu_locale_core::Locale, icu_collator::CollatorBorrowed<'static>>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    COLLATORS.with_borrow_mut(|cache| {
+        let locale = crate::node_locale::node_locale(|key| std::env::var(key).ok());
+        if !cache.contains_key(&locale) {
+            let collator = crate::project_files::node_collator(&locale)
+                .map_err(|_| FilesError::Message("Collation data unavailable.".to_owned()))?;
+            cache.insert(locale.clone(), collator);
+        }
+        let collator = cache.get(&locale).expect("the locale was just inserted");
+        rows.sort_by(|(left_dir, left_name, _), (right_dir, right_name, _)| {
+            match (left_dir, right_dir) {
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+                // localeCompare keeps unpaired-surrogate order through the
+                // shared comparator's unit remap.
+                _ => crate::project_files::node_compare_utf16(
+                    collator,
+                    &JsString::from(left_name.as_str()),
+                    &JsString::from(right_name.as_str()),
+                ),
+            }
+        });
+        Ok(())
+    })
 }
 
 fn mtime_ms(stats: &fs::Metadata) -> i64 {
@@ -808,6 +832,45 @@ fn sys_error(error: &io::Error, syscall: &str, path: &Path) -> FilesError {
     FilesError::Message(
         crate::node_io::diagnostic_or_unknown(error, syscall, Some(&path.to_string_lossy())).1,
     )
+}
+
+/// #1764: the argument validation Node's write path runs before any syscall,
+/// in TS order. TS writes run `mkdir(dirname(target), {recursive: true})`
+/// first and `writeFile(target)` second, and both calls validate their own
+/// path argument (no NUL bytes) before touching the filesystem. A directory
+/// target is NOT pre-checked here: Node's EISDIR is the write's own `open`
+/// refusal, so this replica answers it from the same place — the armed walk's
+/// leaf `openat(O_WRONLY)` (or the plain path open below it) returns EISDIR
+/// naturally, on the literal path. Measured against node v22.22.0
+/// (`_tmp/20261026-issue-2354/ts-probe/probe-output.txt` and
+/// `_tmp/20261026-issue-2354/fix-r1/ts-probe/node-write-refusal.txt`): the
+/// old replica answered a bare InvalidInput for the root itself and an EINVAL
+/// for a NUL.
+fn node_write_refusal(target: &Path) -> Result<(), FilesError> {
+    // The mkdir's argument is checked first: a NUL in a directory component
+    // of the target is refused with the parent path as received.
+    if let Some(parent) = target.parent() {
+        let parent = parent.to_string_lossy();
+        if parent.contains('\0') {
+            return Err(null_byte_refusal(&parent));
+        }
+    }
+    let text = target.to_string_lossy();
+    if text.contains('\0') {
+        return Err(null_byte_refusal(&text));
+    }
+    Ok(())
+}
+
+/// Node's ERR_INVALID_ARG_VALUE text for a NUL-bearing path argument: the
+/// shared `node_io::path_error` renderer — `util.inspect`'s quoting (the
+/// backtick tier for a value with both quote kinds included) and the error
+/// constructor's 128 UTF-16 unit cut, not a local subset copy. The value is a
+/// Rust string here, so it holds no lone surrogates (the JSON boundary
+/// already replaced them with U+FFFD, like Node's own JS-to-fs boundary).
+fn null_byte_refusal(path: &str) -> FilesError {
+    let message = crate::node_io::nul_message_for(&JsString::from(path), "path");
+    FilesError::Message(String::from_utf16_lossy(message.units()))
 }
 
 #[cfg(test)]

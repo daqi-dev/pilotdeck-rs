@@ -61,6 +61,44 @@ class EnvironmentControls(unittest.TestCase):
     # switch; replaying the output of tests that can skip), never to the
     # scheduler — the drift guards below pin their full text, not just a prefix.
     permission_faults_env = ['PDRS_REQUIRE_PERMISSION_FAULTS: "1"']
+    # #2017（#1809 r6，DS/MM 两家 r5 撞报）：job 级与聚合 step 级的 `if:` / `needs:`
+    # 必须按 PyYAML 解析后的**完整标量**钉死（与 self_check 的 r5 判据同口径）。行式
+    # 正则只收键所在的那一行：4 空格 job 级键的 plain 续行把条件折叠成恒假（job 被跳过
+    # → GitHub 把被跳过的必需检查报成 success → 合并放行），对它完全不可见；
+    # `gateway-schema-baseline` 是必需检查且此前没有任何 job 级键断言。解析器版本
+    # 钉死（ci.yml 两个 job 的「安装钉死 PyYAML」步骤与装置 README 同步登记）。
+    pinned_pyyaml_version = '6.0.3'
+    parsed_docs_only_if = "${{ needs.scope.outputs.docs_only != 'true' }}"
+    ci_job_level_registry = {
+        'scope': ({'outputs', 'runs-on', 'steps'}, None, None),
+        'metadata-observer': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
+        'negative-controls': ({'env', 'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+                              ['scope'], parsed_docs_only_if),
+        'retirement-outcome-parity': ({'if', 'needs', 'runs-on', 'steps', 'timeout-minutes'},
+                                      ['scope'], parsed_docs_only_if),
+        'check': ({'if', 'needs', 'runs-on', 'steps'},
+                  ['scope', 'metadata-observer', 'rust', 'a51-coverage',
+                   'negative-controls', 'retirement-outcome-parity'],
+                  '${{ always() }}'),
+        'rust': ({'defaults', 'env', 'if', 'needs', 'runs-on', 'steps'},
+                 ['scope'], parsed_docs_only_if),
+        'a51-coverage': ({'if', 'needs', 'runs-on', 'steps'}, ['scope'], parsed_docs_only_if),
+        # 必需检查必须无条件跑：`if` / `needs` 都不在白名单里。
+        'gateway-schema-baseline': ({'env', 'runs-on', 'steps'}, None, None),
+    }
+    # #1809 r8（评审 P1-1）：uses step 的 `with` 键集合按 action 逐键钉死——与
+    # self_check.WORKFLOW_USE_WITH_KEYS 同一登记（兄弟守卫两处同步）。给
+    # `actions/checkout@v4` 加 `with: {ref: …}` 会让该 job 的闸门跑另一棵树的
+    # 脚本，而每个被比对的 `run` 标量逐字不变；r7 只钉了 retirement job 的两个
+    # uses step。checkout 有两种合法形态（深克隆 `fetch-depth: 0` 与默认检出），
+    # 登记为「允许的键集合族」。
+    ci_use_with_registry = {
+        'actions/checkout@v4': {frozenset(), frozenset({'fetch-depth'})},
+        'actions/setup-node@v4': {frozenset({'node-version'})},
+        'actions/cache@v4': {frozenset({'path', 'key'})},
+        'Swatinem/rust-cache@v2.9.2': {frozenset({'workspaces', 'cache-bin'})},
+        'actions/upload-artifact@v4': {frozenset({'name', 'path', 'if-no-files-found'})},
+    }
     nextest_success_output_filter = (
         'test(=case_insensitive_cwd_spelling_writes_and_edits) | '
         'test(=nfd_directory_with_nfc_cwd_writes_and_edits) | '
@@ -235,11 +273,55 @@ class EnvironmentControls(unittest.TestCase):
         # scope runs Python/git only and gates the four heavy jobs (#1199);
         # metadata-observer/rust/a51-coverage need their own Node and check gates;
         # negative-controls is Python/cargo only (#1632) and is gated like a heavy job;
+        # retirement-outcome-parity is pure Python (#1809) and is gated the same way;
         # check only aggregates; gateway-schema-baseline has Node and its own required check.
         self.assertEqual(set(jobs), {'scope', 'metadata-observer', 'check', 'rust', 'a51-coverage',
-                                    'negative-controls', 'gateway-schema-baseline'},
+                                    'negative-controls', 'retirement-outcome-parity',
+                                    'gateway-schema-baseline'},
                          f'{issue} exact CI job inventory')
         return jobs
+
+    def ci_parsed_jobs(self, issue='#2017'):
+        """按 PyYAML 解析后的节点取 `jobs:`（单文档、无重复键）：job → {键: 值节点}。
+
+        只在构造变异样本时用行式锚点；**判定**一律走解析后的完整标量（r5 判据）。
+        PyYAML 缺失 / 版本不符时 fail-closed（self.fails），绝不降级回行式解析。
+        """
+        try:
+            import yaml
+        except ImportError as error:
+            self.fail(f'{issue} PyYAML is required for the parsed gate guards (pinned '
+                      f'{self.pinned_pyyaml_version}, installed by the CI step '
+                      f'安装钉死 PyYAML): {error}')
+        self.assertEqual(yaml.__version__, self.pinned_pyyaml_version,
+                         f'{issue} PyYAML version is pinned (CI step 安装钉死 PyYAML '
+                         'and the device README register it); a different YAML build may '
+                         'parse the workflow differently')
+        text = (Path(__file__).resolve().parents[3]/'.github/workflows/ci.yml').read_text()
+        documents = list(yaml.compose_all(text))
+        self.assertEqual(len(documents), 1, f'{issue} exactly one YAML document')
+        root = documents[0]
+        self.assertIsInstance(root, yaml.MappingNode, f'{issue} the workflow is a mapping')
+        root_keys = [key.value for key, _ in root.value]
+        self.assertEqual(len(root_keys), len(set(root_keys)), f'{issue} no duplicate root keys')
+        jobs_node = next((value for key, value in root.value if key.value == 'jobs'), None)
+        self.assertIsInstance(jobs_node, yaml.MappingNode, f'{issue} jobs is a mapping')
+        job_names = [key.value for key, _ in jobs_node.value]
+        self.assertEqual(len(job_names), len(set(job_names)), f'{issue} no duplicate job keys')
+        parsed = {}
+        for key, value in jobs_node.value:
+            self.assertIsInstance(value, yaml.MappingNode,
+                                  f'{issue} the {key.value} job is a mapping')
+            fields, names = {}, []
+            for field, node in value.value:
+                self.assertIsInstance(field, yaml.ScalarNode,
+                                      f'{issue} the {key.value} job has scalar keys')
+                names.append(field.value)
+                fields[field.value] = node
+            self.assertEqual(len(names), len(set(names)),
+                             f'{issue} the {key.value} job has no duplicate job-level keys')
+            parsed[key.value] = fields
+        return yaml, parsed
 
     def ci_steps(self, name, body, issue='#904'):
         self.assertEqual(len(re.findall(r'^    steps:$', body, re.M)), 1,
@@ -323,7 +405,8 @@ class EnvironmentControls(unittest.TestCase):
 
     def test_required_check_gates_observer_failure_instead_of_skipping(self):
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         for name in jobs:
             self.assertIn(name, jobs, f'#904 required job {name} exists')
             self.assertNotRegex(jobs[name], r'''(?m)^\s*(?:continue-on-error|'continue-on-error'|"continue-on-error")\s*:''',
@@ -334,7 +417,7 @@ class EnvironmentControls(unittest.TestCase):
         self.assertEqual(re.findall(r'^    if: (.*)$', check, re.M),
                          ['${{ always() }}'], '#904 check always runs')
         steps = self.ci_steps('check', check)
-        self.assertEqual(len(steps), 5, '#904 exactly five rejection steps')
+        self.assertEqual(len(steps), 6, '#904 exactly six rejection steps')
 
         def gate_steps(condition):
             return [step for step in steps
@@ -370,10 +453,548 @@ class EnvironmentControls(unittest.TestCase):
                             == ['node src/pilotdeck-gateway/tests/test_metadata_observer.mjs']
                             for step in observer_steps), '#904 observer generation control runs')
 
+    def test_ci_job_level_gates_are_pinned_by_parsed_yaml(self):
+        # #2017（#1809 r6）：上面的行式断言只收键所在的那一行，对 plain 续行折叠不可见；
+        # 这里按 PyYAML 解析后的完整标量把每个 job 的 job 级键白名单与 `if:` / `needs:`
+        # 值一并钉死（gateway-schema-baseline 首次纳入），聚合 Require step 的 `if:` 同口径。
+        yaml, parsed = self.ci_parsed_jobs()
+        self.assertEqual(set(parsed), set(self.ci_job_level_registry),
+                         '#904 exact CI job inventory (parsed)')
+        for name, (allowed, needs, condition) in self.ci_job_level_registry.items():
+            fields = parsed[name]
+            self.assertEqual(set(fields), allowed,
+                             f'#2017 the {name} job-level keys are exactly the registered set '
+                             '(a job-level if/needs/continue-on-error/env/defaults can skip '
+                             'the job or swallow its gates without touching any step)')
+            if needs is not None:
+                node = fields['needs']
+                self.assertIsInstance(node, yaml.SequenceNode,
+                                      f'#2017 the {name} job needs is the parsed registered list')
+                self.assertEqual([item.value for item in node.value], needs,
+                                 f'#2017 the {name} job needs is the parsed registered list')
+            if condition is not None:
+                node = fields['if']
+                self.assertIsInstance(node, yaml.ScalarNode,
+                                      f'#2017 the {name} job if is the parsed registered condition')
+                self.assertEqual(node.value, condition,
+                                 f'#2017 the {name} job if is the parsed registered condition')
+        # 聚合 `check` job 的六个 Require step：键集合与 `run: exit 1` 逐字钉死，
+        # `if:` 按**解析后**的完整标量与登记集比对——step 级续行把恒执行条件折叠成
+        # 恒假（step 从不执行，job 仍 success）只有这里能看见。
+        expected = {"${{ always() && needs.scope.result != 'success' }}"}
+        for job in ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                    'retirement-outcome-parity'):
+            expected.add('${{ always() && needs.' + job + ".result != 'success' && !(needs."
+                         + job + ".result == 'skipped' && needs.scope.outputs.docs_only "
+                         "== 'true') }}")
+        steps_node = parsed['check']['steps']
+        self.assertIsInstance(steps_node, yaml.SequenceNode,
+                              '#2017 the check job steps is a sequence')
+        seen = []
+        for item in steps_node.value:
+            self.assertIsInstance(item, yaml.MappingNode,
+                                  '#2017 every aggregate step is a mapping')
+            step = {}
+            for field, node in item.value:
+                step[field.value] = node
+            self.assertLessEqual(set(step), {'if', 'name', 'run', 'shell', 'working-directory'},
+                                 '#2017 aggregate Require step keys are exactly the registered set')
+            run = step.get('run')
+            self.assertIsInstance(run, yaml.ScalarNode,
+                                 '#904 rejection steps exit one (parsed)')
+            self.assertEqual(run.value, 'exit 1', '#904 rejection steps exit one (parsed)')
+            shell = step.get('shell')
+            self.assertIsInstance(shell, yaml.ScalarNode,
+                                  '#1809 aggregate Require steps pin their shell (parsed)')
+            self.assertEqual(shell.value, 'bash',
+                             '#1809 aggregate Require steps pin their shell (parsed)')
+            if 'working-directory' in step:
+                self.assertEqual(step['working-directory'].value, '.',
+                                 '#904 rejection steps run from the repository root (parsed)')
+            self.assertIn('if', step,
+                          '#2017 aggregate Require step if conditions are the parsed registered set')
+            seen.append(step['if'].value)
+            self.assertIn(step['if'].value, expected,
+                          '#2017 aggregate Require step if conditions are the parsed registered set')
+        self.assertEqual(sorted(seen), sorted(expected),
+                         '#2017 all six parsed Require conditions appear exactly once')
+
+    def test_ci_rejects_parsed_job_level_gate_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#2017 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # job 级 `if:` plain 续行折叠成恒假：只收键所在行的行式断言（上面那组）看不见，
+        # 解析后的条件已经不等——job 永远被跳过，必需检查被 GitHub 报成 success。
+        docs_only_line = "    if: ${{ needs.scope.outputs.docs_only != 'true' }}\n"
+        change_job('metadata-observer-job-if-continuation', 'metadata-observer',
+                   docs_only_line, docs_only_line + '      && false\n',
+                   '#2017 the metadata-observer job if is the parsed registered condition')
+        change_job('check-job-if-continuation', 'check',
+                   '    if: ${{ always() }}\n',
+                   '    if: ${{ always() }}\n      && false\n',
+                   '#2017 the check job if is the parsed registered condition')
+        # 聚合 Require step 的 `if:` 续行折叠成恒假：step 从不执行，job 仍 success。
+        change_job('require-scope-if-continuation', 'check',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n",
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '          && false\n',
+                   '#2017 aggregate Require step if conditions are the parsed registered set')
+        # 必需检查 gateway-schema-baseline 加 job 级条件：被跳过即报 success，合并放行
+        # （#2017 场景 A：此前该 job 没有任何 job 级键断言）。
+        change_job('baseline-job-conditional', 'gateway-schema-baseline',
+                   '    steps:\n', '    if: false\n    steps:\n',
+                   '#2017 the gateway-schema-baseline job-level keys are exactly the registered set')
+        self.check_ci_mutations(cases, 'test_ci_job_level_gates_are_pinned_by_parsed_yaml', '#2017')
+
+    def test_ci_every_run_step_pins_bash_shell(self):
+        # #1809 r7（MM boundary P0）：`defaults.run.shell` 会替换每个不带自身 `shell:` 的
+        # run step 的 shell（`/bin/true {0}` 让必需检查无条件 rc=0），而全部检测点都住在
+        # 可被同一键废掉的 run step 里。执行层解是给**每个** run step 显式
+        # `shell: bash`（step 级 shell 优先于任何层级的 defaults，GitHub workflow syntax
+        # 明文）。这里是 gateway 侧的镜像守卫：与 retirement-outcome-parity 装置
+        # self_check.check_wiring 的全 workflow 巡走同口径——任何 job 的任何 run step
+        # 裸奔（缺 shell / 值不是 bash）都必须红，不限于退休装置那几个 step。
+        yaml, parsed = self.ci_parsed_jobs(issue='#1809')
+        checked = {}
+        for name, fields in parsed.items():
+            steps_node = fields.get('steps')
+            self.assertIsInstance(steps_node, yaml.SequenceNode,
+                                  f'#1809 the {name} job has a step sequence')
+            for item in steps_node.value:
+                self.assertIsInstance(item, yaml.MappingNode,
+                                      f'#1809 every {name} step is a mapping')
+                step = {}
+                for field, node in item.value:
+                    step[field.value] = node
+                if 'run' not in step:
+                    continue
+                shell = step.get('shell')
+                self.assertIsInstance(shell, yaml.ScalarNode,
+                                      f'#1809 the {name} run step pins `shell: bash` (parsed); '
+                                      'missing or non-scalar shell key')
+                self.assertEqual(shell.value, 'bash',
+                                 f'#1809 the {name} run step pins `shell: bash` (parsed); '
+                                 'a bare run step inherits any defaults.run.shell (e.g. '
+                                 '`/bin/true {0}`), which silently disables that step')
+                checked[name] = checked.get(name, 0) + 1
+        # 每个 job 都至少有一个 run step 被巡到：某 job 的 run step 被整体删空不能让
+        # 本守卫对着剩余 job 空转（job 清单另由 exact job inventory 钉死）。
+        self.assertEqual(sorted(checked), sorted(parsed),
+                         '#1809 every CI job has run steps under the shell guard')
+
+    def test_ci_rejects_run_step_shell_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#1809 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # 闸门 step 删掉 `shell: bash`：裸 run step 继承任何 defaults.run.shell。
+        change_job('retirement-gate-shell-removed', 'retirement-outcome-parity',
+                   '      - name: check 5 轮\n        shell: bash\n'
+                   '        timeout-minutes: 5\n        run: |\n',
+                   '      - name: check 5 轮\n        timeout-minutes: 5\n'
+                   '        run: |\n',
+                   '#1809 the retirement-outcome-parity run step pins `shell: bash` (parsed)')
+        # 必需检查的聚合 Require step 换 shell 值：`/bin/true {0}` 把 exit 1 变 rc=0。
+        change_job('require-scope-shell-swapped', 'check',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '        working-directory: .\n        shell: bash\n        run: exit 1\n',
+                   "        if: ${{ always() && needs.scope.result != 'success' }}\n"
+                   '        working-directory: .\n        shell: /bin/true {0}\n        run: exit 1\n',
+                   '#1809 the check run step pins `shell: bash` (parsed)')
+        # 非闸门 job（rust 的 fmt 是必需检查 `rust` 的一环）删 shell：只有全 workflow
+        # 巡走能看见——这条样本专测巡走本身。
+        change_job('rust-fmt-shell-removed', 'rust',
+                   '      - name: 格式\n        shell: bash\n        run: cargo fmt --all --check\n',
+                   '      - name: 格式\n        run: cargo fmt --all --check\n',
+                   '#1809 the rust run step pins `shell: bash` (parsed)')
+        # metadata-observer 的守卫步（跑本文件的 unittest）同样必须显式钉 shell。
+        change_job('observer-driver-shell-removed', 'metadata-observer',
+                   '      - name: CI 聚合门控与各 job 的 Node 前置守卫\n'
+                   '        working-directory: src/pilotdeck-gateway/tests\n'
+                   '        shell: bash\n',
+                   '      - name: CI 聚合门控与各 job 的 Node 前置守卫\n'
+                   '        working-directory: src/pilotdeck-gateway/tests\n',
+                   '#1809 the metadata-observer run step pins `shell: bash` (parsed)')
+        self.check_ci_mutations(cases, 'test_ci_every_run_step_pins_bash_shell', '#1809')
+
+    def test_ci_uses_steps_pin_their_with_keys(self):
+        # #1809 r8（评审 P1-1）：uses step 的 `with` 逐键钉死的镜像守卫（与 self_check
+        # 的全 workflow 巡走同口径）。同一攻击换一个 job 照样成立：checkout 加
+        # `with: {ref: …}` 让该 job 的闸门跑另一棵树的脚本，而所有被比对的 `run`
+        # 标量与 job 级键逐字不变——必须逐个 uses step 巡走，不限于 retirement job。
+        yaml, parsed = self.ci_parsed_jobs(issue='#1809')
+        checked = {}
+        for name, fields in parsed.items():
+            steps_node = fields.get('steps')
+            self.assertIsInstance(steps_node, yaml.SequenceNode,
+                                  f'#1809 the {name} job has a step sequence')
+            for item in steps_node.value:
+                self.assertIsInstance(item, yaml.MappingNode,
+                                      f'#1809 every {name} step is a mapping')
+                step = {}
+                for field, node in item.value:
+                    step[field.value] = node
+                if 'uses' not in step:
+                    continue
+                uses = step['uses']
+                self.assertIsInstance(uses, yaml.ScalarNode,
+                                     f'#1809 the {name} uses step is a scalar action')
+                families = self.ci_use_with_registry.get(uses.value)
+                self.assertIsNotNone(
+                    families,
+                    f'#1809 the {name} uses step `{uses.value}` is in the registered '
+                    'action registry; `with` content is only pinned for registered '
+                    'actions')
+                with_node = step.get('with')
+                if with_node is None:
+                    with_keys = frozenset()
+                else:
+                    self.assertIsInstance(with_node, yaml.MappingNode,
+                                         f'#1809 the {name} uses step `{uses.value}` '
+                                         'has a mapping `with`')
+                    with_keys = frozenset(
+                        key.value for key, _ in with_node.value)
+                self.assertIn(
+                    with_keys, families,
+                    f'#1809 the {name} uses step `{uses.value}` carries the '
+                    f'unregistered `with` keys {sorted(with_keys)} (registered '
+                    f'families: {sorted(sorted(f) for f in families)}); an added '
+                    '`with: ref/repository` on a checkout makes the gates run '
+                    'scripts from a different tree while every pinned `run` scalar '
+                    'stays verbatim-identical')
+                checked[name] = checked.get(name, 0) + 1
+        # 除聚合 `check` job（只有 Require step，无任何 uses step）外，每个 job 都
+        # 至少有一个 uses step 被巡到：某 job 的 uses step 被整体删空不能让本守卫
+        # 对着剩余 job 空转（job 清单另由 exact job inventory 钉死）。
+        self.assertEqual(sorted(checked),
+                         sorted(name for name in parsed if name != 'check'),
+                         '#1809 every CI job except the aggregate check has uses '
+                         'steps under the with-key guard')
+
+    def test_ci_rejects_uses_with_key_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#1809 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # 三个此前无人拦截的 job（r7 只钉了 retirement job）：同一手法换一个 job 的
+        # checkout 加 `with: {ref: …}`——闸门跑另一棵树的脚本，被比对标量逐字不变。
+        # negative-controls 的 checkout 本就带 `fetch-depth: 0`，往那个 `with` 块里加。
+        change_job('observer-checkout-with-ref', 'metadata-observer',
+                   '      - uses: actions/checkout@v4\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '      - uses: actions/checkout@v4\n'
+                   '        with:\n          ref: attacker-branch\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '#1809 the metadata-observer uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        change_job('negative-controls-checkout-with-ref', 'negative-controls',
+                   '          # 变异前要按 git show HEAD:<path> 证明源码未被改动\n'
+                   '          fetch-depth: 0\n',
+                   '          # 变异前要按 git show HEAD:<path> 证明源码未被改动\n'
+                   '          fetch-depth: 0\n          ref: attacker-branch\n',
+                   '#1809 the negative-controls uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        change_job('baseline-checkout-with-ref', 'gateway-schema-baseline',
+                   '      - uses: actions/checkout@v4\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '      - uses: actions/checkout@v4\n'
+                   '        with:\n          ref: attacker-branch\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '#1809 the gateway-schema-baseline uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        self.check_ci_mutations(cases, 'test_ci_uses_steps_pin_their_with_keys', '#1809')
+
+    def pr_gate_parsed(self, issue='#1809'):
+        """PyYAML 解析后的 pr-gate.yml 根节点（单文档、无重复根键）。
+
+        #1809 r9（评审 P0）：合并闸门本体 pr-gate.yml 此前在本守卫侧零覆盖
+        （r7/r8 的巡走只读 ci.yml）。与 self_check._check_pr_gate_wiring 同一
+        口径：只在构造变异样本时用行式锚点，**判定**一律走解析后的完整标量。
+        """
+        try:
+            import yaml
+        except ImportError as error:
+            self.fail(f'{issue} PyYAML is required for the parsed gate guards (pinned '
+                      f'{self.pinned_pyyaml_version}, installed by the CI step '
+                      '安装钉死 PyYAML): {error}')
+        self.assertEqual(yaml.__version__, self.pinned_pyyaml_version,
+                         f'{issue} PyYAML version is pinned (see ci_parsed_jobs); '
+                         'a different YAML build may parse the workflow differently')
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/pr-gate.yml').read_text()
+        documents = list(yaml.compose_all(text))
+        self.assertEqual(len(documents), 1, f'{issue} exactly one YAML document')
+        root = documents[0]
+        self.assertIsInstance(root, yaml.MappingNode, f'{issue} the workflow is a mapping')
+        root_keys = [key.value for key, _ in root.value]
+        self.assertEqual(len(root_keys), len(set(root_keys)), f'{issue} no duplicate root keys')
+        return yaml, root
+
+    def test_pr_gate_wiring_is_pinned_by_parsed_yaml(self):
+        # #1809 r9（评审 P0）：pr-gate.yml 承载合并闸门第 2、3 步（git fetch 基线
+        # / check-pr-gate.py），三种静默废闸门的手法此前在本守卫侧全绿——step
+        # `continue-on-error: true`（步全红而 job 仍 success）、job `if: false`
+        # （被跳过的必需检查被 GitHub 报成 success）、`run: exit 0`（换壳）。
+        # 判定镜像 self_check._check_pr_gate_wiring：根键白名单、唯一 job、job
+        # 直属键恰等、job `if` 逐字、step 顺序与条数、逐 step 键集/env 键集/
+        # continue-on-error 登记值/shell/run 标量逐字。
+        yaml, root = self.pr_gate_parsed()
+        root_keys = [key.value for key, _ in root.value]
+        # 根键白名单：workflow 级 `defaults.run.shell` 会替换每个不带自身 `shell:`
+        # 的 run step 的 shell（r7 P0 的执行层手法），白名单外出现即红。
+        self.assertLessEqual(set(root_keys),
+                             {'name', 'on', 'jobs', 'permissions', 'concurrency',
+                              'run-name'},
+                             '#1809 the pr-gate root keys are inside the registered '
+                             'whitelist; a workflow-level `defaults.run.shell` '
+                             're-shells every run step and neither the ci.yml '
+                             'guards nor a job-level scan would see it')
+        self.assertIn('jobs', root_keys, '#1809 the pr-gate workflow has a `jobs:` mapping')
+        jobs_node = next(value for key, value in root.value if key.value == 'jobs')
+        self.assertIsInstance(jobs_node, yaml.MappingNode,
+                              '#1809 the pr-gate `jobs:` is a mapping')
+        job_names = [key.value for key, _ in jobs_node.value]
+        self.assertEqual(job_names, ['pr-gate'],
+                         '#1809 the pr-gate workflow carries only the registered '
+                         '`pr-gate` job')
+        job = next(value for key, value in jobs_node.value if key.value == 'pr-gate')
+        self.assertIsInstance(job, yaml.MappingNode, '#1809 the pr-gate job is a mapping')
+        fields = {}
+        for field, node in job.value:
+            self.assertNotIn(field.value, fields, '#1809 no duplicate pr-gate job keys')
+            fields[field.value] = node
+        self.assertEqual(set(fields), {'if', 'runs-on', 'steps'},
+                          '#1809 the pr-gate job keys are exactly the registered set')
+        # P0 形态②：job `if` 逐字。draft 判断是登记过的唯一条件，`if: false`
+        # 之外任何漂移（如 draft 反转）都让合并闸门换了一个世界。
+        self.assertIsInstance(fields['if'], yaml.ScalarNode,
+                              '#1809 the pr-gate job condition is a scalar')
+        self.assertEqual(fields['if'].value, 'github.event.pull_request.draft == false',
+                         '#1809 the pr-gate job condition is the registered draft '
+                         'guard; a skipped required job is reported as success by '
+                         'GitHub, so nothing else would block the merge')
+        steps_node = fields['steps']
+        self.assertIsInstance(steps_node, yaml.SequenceNode,
+                              '#1809 the pr-gate job has a step sequence')
+        steps = []
+        for item in steps_node.value:
+            self.assertIsInstance(item, yaml.MappingNode,
+                                  '#1809 every pr-gate step is a mapping')
+            step = {}
+            for field, node in item.value:
+                self.assertNotIn(field.value, step, '#1809 no duplicate step keys')
+                step[field.value] = node
+            steps.append(step)
+        self.assertEqual(len(steps), 3,
+                         '#1809 the pr-gate job keeps exactly the registered three '
+                         'steps (checkout / fetch / gate)')
+        checkout, fetch, gate = steps
+        # step 1：uses checkout——键只许 uses/with（加 name），uses 值逐字，with
+        # 键集合恰为 {fetch-depth}（加 ref/repository 会让闸门跑另一棵树）。
+        self.assertLessEqual(set(checkout), {'name', 'uses', 'with'},
+                             '#1809 the pr-gate checkout step keys are inside the '
+                             'registered set')
+        self.assertIn('uses', checkout,
+                      '#1809 the pr-gate checkout step stays an action (`uses:`)')
+        self.assertEqual(checkout['uses'].value, 'actions/checkout@v4',
+                         '#1809 the pr-gate checkout step pins the registered action')
+        with_node = checkout.get('with')
+        self.assertIsInstance(with_node, yaml.MappingNode,
+                              '#1809 the pr-gate checkout `with` is a mapping')
+        with_keys = frozenset(key.value for key, _ in with_node.value)
+        self.assertEqual(with_keys, {'fetch-depth'},
+                         '#1809 the pr-gate checkout `with` keys are exactly the '
+                         'registered set; the merge fingerprint needs a full clone '
+                         '(fetch-depth: 0) and any other key changes which tree the '
+                         'gate reads')
+        # steps 2/3：run step 直属键集合恰等（分步登记）——P0 形态①（闸门步加
+        # `continue-on-error: true`）与删 shell 都先红在这里。
+        self.assertEqual(set(fetch), {'name', 'continue-on-error', 'env', 'shell', 'run'},
+                         '#1809 the fetch step keys are exactly the registered set')
+        self.assertEqual(set(gate), {'name', 'env', 'shell', 'run'},
+                         '#1809 the gate step keys are exactly the registered set')
+        self.assertEqual(fetch['name'].value,
+                         '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）',
+                         '#1809 the fetch step keeps its registered name')
+        self.assertEqual(gate['name'].value, '角色审计结果块与 issue 关联',
+                         '#1809 the gate step keeps its registered name')
+        self.assertIsInstance(fetch['continue-on-error'], yaml.ScalarNode,
+                              '#1809 the fetch `continue-on-error` is a scalar')
+        self.assertEqual(fetch['continue-on-error'].value, 'true',
+                         '#1809 the fetch step `continue-on-error` stays exactly '
+                         '`true`; it is a registered design decision (a missing base '
+                         'only downgrades fingerprinting, it must not gate the job)')
+        fetch_env = frozenset(key.value for key, _ in fetch['env'].value)
+        self.assertEqual(fetch_env, {'BASE_REF', 'PR_HEAD'},
+                         '#1809 the fetch step env keys are exactly the registered set')
+        gate_env = frozenset(key.value for key, _ in gate['env'].value)
+        self.assertEqual(gate_env, {'PR_BODY', 'PR_HEAD', 'PR_BASE'},
+                         '#1809 the gate step env keys are exactly the registered '
+                         'set; a dropped or added key silently hands check-pr-gate.py '
+                         'a different world while every pinned `run` scalar stays '
+                         'verbatim-identical')
+        for label, step in (('fetch', fetch), ('gate', gate)):
+            self.assertIsInstance(step['shell'], yaml.ScalarNode,
+                                  f'#1809 the pr-gate {label} step shell is a scalar')
+            self.assertEqual(step['shell'].value, 'bash',
+                             f'#1809 the pr-gate {label} step pins `shell: bash` '
+                             '(parsed); any other value (e.g. `/bin/true {0}`) '
+                             'replaces what actually executes')
+        # run 标量逐字（literal 块按解析后的完整值比对，不认行式巧合）。
+        self.assertEqual(fetch['run'].value,
+                         'git fetch --no-tags origin '
+                         '"+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" '
+                         '"${PR_HEAD}"\n'
+                         'git rev-parse --verify "origin/${BASE_REF}^{commit}"\n'
+                         'git rev-parse --verify "${PR_HEAD}^{commit}"\n',
+                         '#1809 the fetch step runs the registered fetch script')
+        self.assertEqual(gate['run'].value, 'python3 -I scripts/check-pr-gate.py',
+                         '#1809 the gate step runs the registered gate script; the '
+                         'parsed scalar is pinned verbatim, so an `exit 0` swap, an '
+                         '`|| true` suffix or a folded block all change the text')
+
+    def test_pr_gate_rejects_wiring_drift(self):
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/pr-gate.yml').read_text()
+        gate_name = '      - name: 角色审计结果块与 issue 关联\n'
+        fetch_coe = ('        continue-on-error: true  # 取不到只影响「沿用」'
+                     '（指纹算不出 → 拒收旧块），不挡 head 一致的 PR\n')
+        cases = []
+
+        def mutate(label, old, new, message):
+            self.assertEqual(text.count(old), 1, f'#1809 unique pr-gate anchor: {label}')
+            cases.append((label, text.replace(old, new, 1), message))
+
+        # 根级 defaults.run.shell：根键白名单判定在 pr-gate.yml 上的落点。
+        mutate('pr-gate-root-defaults-shell', '\njobs:\n',
+               '\ndefaults:\n  run:\n    shell: /bin/true {0}\njobs:\n',
+               '#1809 the pr-gate root keys are inside the registered whitelist')
+        # P0 形态②：job `if: false`——job `if` 逐字判定的落点。
+        mutate('pr-gate-job-if-false', '    if: github.event.pull_request.draft == false\n',
+               '    if: false\n',
+               '#1809 the pr-gate job condition is the registered draft guard')
+        # P0 形态①：闸门步加 step 级 `continue-on-error: true`——步全红而 job 仍
+        # success。键集恰等判定当场红。
+        mutate('pr-gate-gate-continue-on-error', gate_name,
+               gate_name + '        continue-on-error: true\n',
+               '#1809 the gate step keys are exactly the registered set')
+        # r8 样本删错步的修正：闸门步的 shell 行带行尾注释（pr-gate.yml:37），
+        # 旧字面量 `'        shell: bash'` 匹配不到它、`shells[-1]` 落在 fetch 步
+        # ——docstring 声称删 check 步、实际删的是 fetch 步。r9 起键集恰等先行
+        # 拦下（found 缺 `shell`），shell 值钉死是兜底。
+        mutate('pr-gate-step-shell-removed',
+               '        shell: bash  # r8 P1-2：合并闸门本体——check-pr-gate step '
+               '不许被 defaults 换壳\n',
+               '',
+               '#1809 the gate step keys are exactly the registered set')
+        # P0 形态③：闸门步 run 换壳 `exit 0`——run 标量逐字判定的落点。
+        mutate('pr-gate-run-exit-0', '        run: python3 -I scripts/check-pr-gate.py\n',
+               '        run: exit 0\n',
+               '#1809 the gate step runs the registered gate script')
+        # fetch 基线步的登记键被删 / 登记值被换：键集恰等与值钉死两个判定各
+        # 自要有违反路径，删错方向才看得见。
+        mutate('pr-gate-fetch-continue-on-error-removed', fetch_coe, '',
+               '#1809 the fetch step keys are exactly the registered set')
+        mutate('pr-gate-fetch-continue-on-error-swapped', fetch_coe,
+               '        continue-on-error: false\n',
+               '#1809 the fetch step `continue-on-error` stays exactly `true`')
+        # env 键集：闸门步 env 加未登记键。
+        mutate('pr-gate-env-key-added', gate_name + '        env:\n',
+               gate_name + '        env:\n          EXTRA: drift\n',
+               '#1809 the gate step env keys are exactly the registered set')
+        # 整步删除：step 顺序/条数钉死的落点。
+        self.assertEqual(text.count(gate_name), 1, '#1809 unique gate step anchor')
+        cases.append(('pr-gate-gate-step-removed', text.split(gate_name, 1)[0],
+                      '#1809 the pr-gate job keeps exactly the registered three steps'))
+        self.check_ci_mutations(cases, 'test_pr_gate_wiring_is_pinned_by_parsed_yaml',
+                                '#1809', mutated='pr-gate.yml')
+
+    def retirement_budget_constants(self, issue='#1809'):
+        """#1632 / #1692 §1 的推导范式：预算常量从装置源码**同源**读，不手抄第二份。
+
+        r10 P0（评审）：r9 的兄弟断言手抄 `85×60 > 4580 + 300`，装置侧重算后
+        这边不会跟着红——第二份裸数字只会静默漂移。subprocess 按 spec 加载
+        self_check.py（模块体从实际 job steps 遍历推导完整和，不跑 main），打印
+        RETIREMENT_JOB_TIMEOUT_MINUTES / INTERNAL_WORST_CASE_SECONDS /
+        JOB_OVERHEAD_MARGIN_SECONDS 三个登记值。
+        """
+        source = (Path(__file__).resolve().parents[3]
+                  / 'scripts/retirement-outcome-parity/self_check.py')
+        loader = (
+            'import importlib.util, json\n'
+            'spec = importlib.util.spec_from_file_location("self_check", '
+            f'{str(source)!r})\n'
+            'module = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(module)\n'
+            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
+            'print(json.dumps([module.RETIREMENT_JOB_TIMEOUT_MINUTES, '
+            'module.INTERNAL_WORST_CASE_SECONDS, '
+            'module.JOB_OVERHEAD_MARGIN_SECONDS]))\n')
+        result = subprocess.run([sys.executable, '-I', '-c', loader],
+                                capture_output=True, text=True, timeout=120,
+                                check=False)
+        self.assertEqual(result.returncode, 0,
+                         f'{issue} cannot load the retirement budget constants '
+                         f'from self_check.py: {result.stderr.strip()[:400]}')
+        minutes, internal, margin = json.loads(result.stdout)
+        return minutes, internal, margin
+
+    def test_retirement_job_bounds_its_wall_clock(self):
+        # #1809 r11 P0：导出和遍历实际 job steps，包含三个直跑 gate、七项与
+        # 变异自检；checkout/setup/upload 显式共享 margin 桶。兄弟断言不再继承
+        # 只含两个自检 step 的不完整和。外层先到会硬杀步骤、截断证据。
+        minutes, internal, margin = self.retirement_budget_constants()
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        self.assertIn(f'    timeout-minutes: {minutes}\n', body,
+                      '#1809 the retirement job bounds its own wall clock above the '
+                      'internal worst case')
+        self.assertGreater(minutes * 60, internal + margin,
+                            '#1809 the job budget stays above the internal worst '
+                            'case sum plus job overhead')
+
+    def test_retirement_job_timeout_regressions_are_rejected(self):
+        minutes, _, _ = self.retirement_budget_constants()
+        timeout_line = f'    timeout-minutes: {minutes}\n'
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(body.count(old), 1, f'#1809 unique job anchor: {label}')
+            cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1),
+                          message))
+
+        change('retirement-job-timeout-removed', timeout_line, '',
+               '#1809 the retirement job bounds its own wall clock above the '
+               'internal worst case')
+        change('retirement-job-timeout-lowered', timeout_line,
+               '    timeout-minutes: 55\n',
+               '#1809 the retirement job bounds its own wall clock above the '
+               'internal worst case')
+        self.check_ci_mutations(cases, 'test_retirement_job_bounds_its_wall_clock',
+                                '#1809')
+
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
-        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls')
+        heavy = ('metadata-observer', 'rust', 'a51-coverage', 'negative-controls',
+                 'retirement-outcome-parity')
         cases = []
 
         def change(label, old, new, message):
@@ -397,16 +1018,21 @@ class EnvironmentControls(unittest.TestCase):
                    + job + ".result == 'skipped') }}",
                    f'#904 {job} rejects every non-success beyond the docs-only skip')
         # #1199 规格 4：scope 失败时 check 仍通过 → 必须失败。
+        # #1809 r7：Require step 登记键含 `shell: bash`（step 级 shell 优先于任何
+        # defaults.run.shell，聚合 job 的 exit 1 靠它才废不掉）。
         scope_step = ('      - name: Require scope success\n'
                       "        if: ${{ always() && needs.scope.result != 'success' }}\n"
                       '        working-directory: .\n'
+                      '        shell: bash\n'
                       '        run: exit 1\n')
-        change('scope-gate-removed', scope_step, '', '#904 exactly five rejection steps')
+        change('scope-gate-removed', scope_step, '', '#904 exactly six rejection steps')
         change('scope-gate-relaxed', "needs.scope.result != 'success'",
                "needs.scope.result == 'failure'", '#904 scope failure must reject the merge')
         change('check-needs-drops-scope',
-               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-               'needs: [metadata-observer, rust, a51-coverage, negative-controls]',
+               'needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
+               'needs: [metadata-observer, rust, a51-coverage, negative-controls, '
+               'retirement-outcome-parity]',
                '#904 exact required needs')
         # #1199 规格 4：重 job 加 continue-on-error → 必须失败。
         for owner in heavy:
@@ -480,8 +1106,9 @@ class EnvironmentControls(unittest.TestCase):
                '#1199 scope checkout keeps full history')
         change('checkout-filter', 'fetch-depth: 0', 'fetch-depth: 0\n          filter: blob:none',
                '#1199 scope checkout keeps full history')
-        # 自测步与分类步都不许跳过或忽略失败。
+        # 自测步与分类步都不许跳过或忽略失败（#1809 r7：run step 登记键含 shell）。
         selftest = ('      - name: 分类器自测（正负例与内存内变异负控）\n'
+                    '        shell: bash\n'
                     '        run: python3 -I scripts/test-ci-scope.py\n')
         change('selftest-removed', selftest, '', '#1199 scope runs the self-test then the classifier')
         change('selftest-conditional', selftest, selftest + '        if: false\n',
@@ -551,8 +1178,11 @@ class EnvironmentControls(unittest.TestCase):
                       source.replace(anchor, b'return bool(paths) and all(path.startswith('
                                              b'DOCS_ONLY_PATH) for path in paths)\n', 1),
                       '#1199 board.md.bak prefix path is not docs-only'))
+        # #1809 r9：read_bytes 补丁同 check_ci_mutations 的按文件名路由——变异对象
+        # 是 scripts/ci_scope.py，不是 ci.yml（r9 前全局 return_value 对任何路径都
+        # 喂变异字节，目标测试恰好只读它才没穿帮）。
         self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_single_board_path',
-                                '#1199', reader='read_bytes')
+                                '#1199', reader='read_bytes', mutated='ci_scope.py')
 
     def test_required_job_runs_shared_isolation_regressions(self):
         command = 'python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -670,7 +1300,7 @@ class EnvironmentControls(unittest.TestCase):
             cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1), message))
 
         change('fixture-step-removed',
-               run_step + '        run: ' + self.negative_controls_command
+               run_step + '        shell: bash\n        run: ' + self.negative_controls_command
                + ' "$RUNNER_TEMP/negctl-1316"\n', '',
                '#1632 the fixture itself runs in CI')
         change('fixture-step-conditional', run_step, run_step + '        if: false\n',
@@ -688,8 +1318,8 @@ class EnvironmentControls(unittest.TestCase):
                'CARGO_TARGET_DIR: ${{ github.workspace }}/src/target',
                '#1632 the scanner builds into the in-tree _build target')
         change('target-cache-reintroduced',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n'
                '      - uses: Swatinem/rust-cache@v2.9.2\n'
                '        with:\n'
                '          workspaces: src -> ../_build/cargo-target\n',
@@ -705,8 +1335,8 @@ class EnvironmentControls(unittest.TestCase):
                "          key: negctl-cargo-${{ runner.os }}-${{ hashFiles('src/Cargo.lock') }}\n",
                '', '#1632 exactly one cache action feeds the job')
         change('cache-restore-action-added',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n',
-               '      - name: 锁定工具链\n        run: rustup show active-toolchain\n'
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n',
+               '      - name: 锁定工具链\n        shell: bash\n        run: rustup show active-toolchain\n'
                '      - uses: actions/cache/restore@v4\n        with:\n'
                '          path: _build/cargo-target\n          key: negctl-restore\n',
                '#1632 exactly one cache action feeds the job')
@@ -770,8 +1400,10 @@ class EnvironmentControls(unittest.TestCase):
         workflow = self.ci_workflow_fixture()
         cases = []
         for name, body in self.ci_jobs().items():
-            if name in ('check', 'scope', 'negative-controls'):
-                continue  # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑 Python/cargo（#1632）
+            if name in ('check', 'scope', 'negative-controls', 'retirement-outcome-parity'):
+                # check 只聚合；scope 只跑 Python/git（#1199）；negative-controls 只跑
+                # Python/cargo（#1632）；retirement-outcome-parity 只跑 Python（#1809）。
+                continue
             setups = re.findall(r'      - uses: actions/setup-node@v4\n'
                                 r'(?:        .*\n|          .*\n)*', body)
             self.assertEqual(len(setups), 1, f'#909 {name} unique setup anchor')
@@ -4133,10 +4765,15 @@ self_check_controls_run | return | return problems
             positions.append(index)
             fields = self.ci_step_fields(step)
             # #1525: only 测试 may carry a step-level env block, and only for the
-            # permission-faults switch (#1263). if/shell/timeout/env could all
-            # override execution or ignore failure.
-            self.assertEqual(set(fields), {'name', 'run'} | ({'env'} if title == '测试' else set()),
+            # permission-faults switch (#1263). if/timeout/env could all override
+            # execution or ignore failure; #1809 r7 adds `shell` as a REGISTERED key —
+            # the step-level shell outranks any defaults.run.shell, so its value is
+            # pinned to `bash` (fail-fast: GitHub runs it as `bash -e` semantics,
+            # a custom template like `bash {0}` silently drops fail-fast).
+            self.assertEqual(set(fields), {'name', 'run', 'shell'} | ({'env'} if title == '测试' else set()),
                              f'#922 {title} cannot override execution or ignore failure')
+            self.assertEqual(fields['shell'], ('bash', []),
+                             f'#922 {title} pins the fail-fast shell `bash`')
             if title == '测试':
                 value, block = fields['env']
                 self.assertEqual((value, [line for line in block if not line.startswith('#')]),
@@ -4854,12 +5491,17 @@ self_check_controls_run | return | return problems
             change(f'{title}-missing', raw, '', f'#922 {title} occurs once in rust')
             change(f'{title}-duplicate', raw, raw + raw, f'#922 {title} occurs once in rust')
             fields = ('if: false', "'if': false", '"continue-on-error": true',
-                      'shell: bash {0}', 'timeout-minutes: 1', 'working-directory: .')
+                      'timeout-minutes: 1', 'working-directory: .')
             if title != '测试':
                 fields += ('env: {NEXTEST_RETRIES: 2}',)
             for field in fields:
                 change(f'{title}-{field}', raw, raw + f'        {field}\n',
                        f'#922 {title} cannot override execution or ignore failure')
+            # #1809 r7：`shell` 已是登记键，注入重复键只会红在 #919——变异改成
+            # 「换值」：换成自定义模板 `bash {0}` 后失去 fail-fast，仍必须被拒。
+            change(f'{title}-shell-swapped', raw,
+                   raw.replace('        shell: bash\n', '        shell: bash {0}\n', 1),
+                   f'#922 {title} pins the fail-fast shell `bash`')
             change(f'{title}-extra-run', raw, raw + f'      - run: {command}\n',
                    '#922 workspace test invocations are unique and complete')
             if title != '测试':
@@ -4920,8 +5562,10 @@ self_check_controls_run | return | return problems
         cases.append(('doctest-in-other-job', workflow.replace(doc, '', 1).replace('    steps:\n', '    steps:\n' + doc, 1),
                       '#922 文档测试 occurs once in rust'))
         for old, new, message in (
-                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls]',
-                 'needs: [scope, metadata-observer, a51-coverage, negative-controls]',
+                ('needs: [scope, metadata-observer, rust, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
+                 'needs: [scope, metadata-observer, a51-coverage, negative-controls, '
+                 'retirement-outcome-parity]',
                  '#904 exact required needs'),
                 ("needs.rust.result != 'success'", "needs.rust.result == 'failure'",
                  '#904 rust rejects every non-success beyond the docs-only skip')):
@@ -4965,8 +5609,10 @@ self_check_controls_run | return | return problems
         cases.append(('override-filter-widened',
                       config.replace(b'test(=grep_outputs_match_real_ts) | ', b'', 1),
                       '#922 ci profile preserves'))
+        # #1809 r9：变异对象是 .config/nextest.toml（read_bytes 按文件名路由，见
+        # check_ci_mutations 的注释）。
         self.check_ci_mutations(cases, 'test_nextest_ci_profile_has_no_retries_filters_or_kill_timeout',
-                                '#922 profile', reader='read_bytes')
+                                '#922 profile', reader='read_bytes', mutated='nextest.toml')
 
     def test_rust_job_uses_line_tables_only_debug(self):
         rust = self.ci_jobs()['rust']
@@ -5268,8 +5914,17 @@ self_check_controls_run | return | return problems
             self.assertNotRegex(step, r"""(?m)^(?:        |)['"]?(?:if|continue-on-error)['"]?:""",
                                 f'#918 {label} step cannot skip or ignore failure')
             prefix = jobs[owner].split('    steps:\n', 1)[0]
-            self.assertNotRegex(step + prefix, shell_key,
-                                f'#918 {label} preserves default fail-fast shell')
+            # #1809 r7：`shell: bash` 成为登记键（step 级 shell 优先于任何
+            # defaults.run.shell，值恰为 `bash` 时 GitHub 以 fail-fast 语义执行；
+            # 自定义模板如 `bash {0}` 会丢掉 fail-fast）。判定从「不许有 shell」改成
+            # 「恰一条、值恰为 bash」；job 级前缀（含 defaults）仍然一个 shell 模板
+            # 都不许有。
+            self.assertEqual(re.findall(r"""(?m)^        ['"]?shell['"]?\s*:\s*(.+?)\s*$""",
+                                        step), ['bash'],
+                             f'#918 {label} pins the fail-fast shell `bash`')
+            self.assertNotRegex(prefix, shell_key,
+                                f'#918 {label} job carries no shell template '
+                                '(defaults.run.shell)')
             # #1199：这两个 job 现在经由 scope 门控跳过，但 needs / if 仍是精确字符串，
             # 不许再加别的条件（原来的「无条件」断言放宽到这一对）。
             gating = re.findall(r"""(?m)^    ['"]?(if|needs|continue-on-error)['"]?\s*:\s*(.*)$""",
@@ -5401,9 +6056,11 @@ self_check_controls_run | return | return problems
                        checkout.replace('fetch-depth: 0', 'fetch-depth: 1', 1),
                        '#918 rust checkout preserves clean root defaults')
             for key in ('shell', "'shell'", '"shell"'):
+                # #1809 r7：shell 已是登记键，注入重复键只会红在 #919——变异改成
+                # 「换值 / 换键拼写」，让失败落在 shell 值钉死那条判定上。
                 change(f'{label}-step-{key}', owner, raw,
-                       raw.replace('        working-directory:', f'        {key}: bash {{0}}\n        working-directory:', 1),
-                       f'#918 {label} preserves default fail-fast shell')
+                       raw.replace('        shell: bash\n', f'        {key}: bash {{0}}\n', 1),
+                       f'#918 {label} pins the fail-fast shell `bash`')
                 if owner == 'rust':
                     old = '    defaults:\n      run:\n'
                     new = old + f'        {key}: bash {{0}}\n'
@@ -5411,7 +6068,7 @@ self_check_controls_run | return | return problems
                     old = '    steps:\n'
                     new = f'    defaults:\n      run:\n        {key}: bash {{0}}\n' + old
                 change(f'{label}-job-default-{key}', owner, old, new,
-                       f'#918 {label} preserves default fail-fast shell')
+                       f'#918 {label} job carries no shell template')
         for defaults in ('defaults:\n  run:\n    shell: bash {0}\n',
                          'defaults: {run: {shell: "bash {0}"}}\n',
                          "defaults:\n  run:\n    'shell': bash {0}\n"):
@@ -5423,7 +6080,8 @@ self_check_controls_run | return | return problems
         self.check_ci_mutations(self.ci_b2_smoke_mutations(),
                                 'test_b2_and_smoke_keep_commands_in_their_own_jobs', '#918')
 
-    def check_ci_mutations(self, cases, target, issue, reader='read_text'):
+    def check_ci_mutations(self, cases, target, issue, reader='read_text',
+                           mutated='ci.yml'):
         full_name = f'{__name__}.EnvironmentControls.{target}'
         results = []
         # The shared negative_suite runs Rust source mutations; these are only in-memory YAML.
@@ -5434,7 +6092,17 @@ self_check_controls_run | return | return problems
             try:
                 getattr(self, target)()
                 positive = True
-                with patch.object(Path, reader, return_value=workflow):
+                # #1809 r9：按文件名路由——变异文本只喂给被变异的 workflow，其余
+                # 路径回真实文件。旧的全局 return_value 会把 ci.yml 文本喂给任何
+                # read_text：pr-gate.yml 的镜像守卫（r9）读它时拿到的是 ci.yml 的
+                # 内容，变异根本没被测到。普通函数存进类属性仍走描述符协议，实例
+                # 调用照常拿到 path。
+                real = getattr(Path, reader)
+
+                def routed(path, *args, **kwargs):
+                    return (workflow if path.name == mutated
+                            else real(path, *args, **kwargs))
+                with patch.object(Path, reader, routed):
                     try:
                         getattr(self, target)()
                     except AssertionError as error:
@@ -5455,10 +6123,15 @@ self_check_controls_run | return | return problems
         self.assertTrue(results and all(status == 'KILLED' for _, status in results),
                         f'{issue} every mutation must fail its bound assertion: {results}')
 
-    def assert_ci_rejects(self, workflow, test_name, message):
+    def assert_ci_rejects(self, workflow, test_name, message, mutated='ci.yml'):
         # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
         # subTest callers continue through every case even if one mutation survives.
-        with patch.object(Path, 'read_text', return_value=workflow):
+        # #1809 r9：与 check_ci_mutations 同口径按文件名路由（见其注释）。
+        real = Path.read_text
+
+        def routed(path, *args, **kwargs):
+            return workflow if path.name == mutated else real(path, *args, **kwargs)
+        with patch.object(Path, 'read_text', routed):
             with self.assertRaisesRegex(AssertionError, re.escape(message),
                                         msg=f'#904 {test_name} must reject at {message}'):
                 getattr(self, test_name)()
@@ -5481,7 +6154,8 @@ self_check_controls_run | return | return problems
     def test_ci_run_blocks_preserve_commands_and_require_prior_node(self):
         workflow = self.ci_workflow_fixture()
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#904 block control has one rust step anchor')
         for scalar in ('|', '>', '|-', '>-', '|+', '>+', '|2', '>2-', ' |', '| ', '>- # comment', '|2+ # comment'):
             for indent in (9, 10, 12):
@@ -5502,7 +6176,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_unrecognized_and_empty_run_values_fail_closed(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
         self.assertEqual(workflow.count(anchor), 1, '#904 invalid run control has one rust step anchor')
         for value in ('', '# comment', '|bad', '>-2', '[]', '{command: npm test}',
@@ -5523,7 +6198,8 @@ self_check_controls_run | return | return problems
     def test_ci_quoted_run_keys_and_sequence_spacing_cannot_hide_node(self):
         workflow = self.ci_workflow_fixture()
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#919 unique run key mutation anchor')
         cases = []
         for spaces in (1, 2, 4):
@@ -5548,7 +6224,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_unknown_step_key_shapes_fail_closed(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         self.assertEqual(workflow.count(anchor), 1, '#919 unique unknown key mutation anchor')
         cases = []
         for body in ('"r\\u0075n": npm test', '? run\n        : npm test',
@@ -5575,7 +6252,8 @@ self_check_controls_run | return | return problems
 
     def test_ci_node_command_family_requires_setup_for_every_invocation(self):
         workflow = self.ci_workflow_fixture()
-        anchor = '      - run: rustup show active-toolchain\n'
+        # #1809 r7：run step 现登记 `shell: bash`（变异时整步替换，含 shell 行）。
+        anchor = '      - shell: bash\n        run: rustup show active-toolchain\n'
         target = 'test_each_npm_job_sets_up_its_own_node_before_installing'
         self.assertEqual(workflow.count(anchor), 1, '#904 Node control has one rust step anchor')
         for command in ('npm ci', 'npm install', 'npm i', 'npm run generate', 'npm test', 'npm exec tool',
