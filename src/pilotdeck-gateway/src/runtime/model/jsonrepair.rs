@@ -3,8 +3,6 @@ fn units(text: &str) -> Vec<u16> {
 }
 use pilotdeck_model_anthropic::jsonrepair::{MAX_DEPTH, RepairError, jsonrepair};
 #[cfg(test)]
-use pilotdeck_protocol::{JsString, JsValue, stringify_json};
-#[cfg(test)]
 #[path = "jsonrepair_tests.rs"]
 mod replay;
 

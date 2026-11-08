@@ -1,7 +1,7 @@
 //! Shared ECMAScript wire coercions.
-pub(crate) use pilotdeck_protocol::coercion::*;
 #[cfg(test)]
-use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_protocol::JsValue;
+pub(crate) use pilotdeck_protocol::coercion::*;
 #[cfg(test)]
 mod tests {
     use super::*;
