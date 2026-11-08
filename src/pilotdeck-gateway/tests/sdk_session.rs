@@ -794,6 +794,7 @@ impl SdkRuntimeResolver for FixedResolver {
             project_root: self.project_root.clone(),
             snapshot: self.snapshot.clone(),
             plugin_runtime: Arc::clone(&self.plugin_runtime),
+            lease: None,
         })
     }
 }

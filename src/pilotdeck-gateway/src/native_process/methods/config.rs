@@ -734,9 +734,40 @@ fn validate_selection<F: Files>(
     metadata: &Metadata<F>,
     env: &Env,
 ) -> Result<(), RequestError> {
+    validate_selection_shape(selection)?;
+    let catalog =
+        crate::model_catalog::execute(metadata, &object([]), env).map_err(config_error)?;
+    validate_selection_catalog(selection, &catalog)
+}
+/// Shape is validated before loading the catalog, as in TypeScript.
+pub(in crate::native_process) fn validate_selection_shape(
+    selection: &JsValue,
+) -> Result<(), RequestError> {
+    if is(selection.get("mode"), "auto")
+        || (is(selection.get("mode"), "model")
+            && selection
+                .get("provider")
+                .and_then(JsValue::as_string)
+                .is_some()
+            && selection
+                .get("model")
+                .and_then(JsValue::as_string)
+                .is_some())
+    {
+        Ok(())
+    } else {
+        Err(gateway_error(
+            "INVALID_MODEL_OVERRIDE",
+            "A model selection requires mode, provider, and model.",
+        ))
+    }
+}
+/// Reuse session-model policy against a caller-supplied project catalog.
+pub(in crate::native_process) fn validate_selection_catalog(
+    selection: &JsValue,
+    catalog: &JsValue,
+) -> Result<(), RequestError> {
     if is(selection.get("mode"), "auto") {
-        let catalog =
-            crate::model_catalog::execute(metadata, &object([]), env).map_err(config_error)?;
         let available = catalog
             .get("router")
             .and_then(|router| router.get("autoAvailable"))
@@ -760,8 +791,6 @@ fn validate_selection<F: Files>(
             "A model selection requires mode, provider, and model.",
         ));
     }
-    let catalog =
-        crate::model_catalog::execute(metadata, &object([]), env).map_err(config_error)?;
     let item = match catalog.get("items") {
         Some(JsValue::Array(items)) => items
             .iter()
@@ -842,7 +871,7 @@ fn unavailable_message(provider: &JsString, model: &JsString) -> JsString {
 }
 
 /// modelCatalog.ts:92-100 `normalizeSessionModelSelection`.
-fn normalize_selection(selection: &JsValue) -> JsValue {
+pub(in crate::native_process) fn normalize_selection(selection: &JsValue) -> JsValue {
     if is(selection.get("mode"), "auto") {
         return object([("mode", "auto".into())]);
     }

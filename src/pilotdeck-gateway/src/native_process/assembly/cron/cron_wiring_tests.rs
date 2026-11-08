@@ -13,6 +13,37 @@ use std::sync::{Arc, Mutex};
 /// `ProjectAutomationBundle.createCron` turns into a manager.
 const CRON_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\ncron:\n  enabled: true\n";
 
+#[tokio::test]
+async fn startup_failure_finishes_each_resource_after_any_stalled_observer() {
+    for stalled in ["channels", "session", "project"] {
+        let (_scratch, fixture) = crate::native_process::management_tests::setup();
+        let mut options = fixture.options.clone();
+        options.drain_budget = std::time::Duration::from_millis(50);
+        fixture.owner.shutdown().await.unwrap();
+        fixture.project.dispose().await.unwrap();
+        std::fs::write(options.home.join("pilotdeck.yaml"), CRON_CONFIG).unwrap();
+        std::fs::create_dir_all(options.home.join("cron/projects/broken/.cwd")).unwrap();
+        let seen: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+        let completed = seen.clone();
+        let observer: crate::native_process::assembly::CleanupObserver = Arc::new(move |phase, result| {
+            let completed = completed.clone();
+            Box::pin(async move {
+                assert!(result.is_ok(), "disposal of {phase} failed");
+                completed.lock().unwrap().push(phase);
+                if phase == stalled { std::future::pending::<()>().await; }
+                result
+            })
+        });
+        let started = std::time::Instant::now();
+        let result = crate::native_process::assembly::start_observed(
+            options, fixture.env.clone(), observer, Arc::new(|_| {}),
+        ).await;
+        assert!(result.err().unwrap().to_string().contains(".cwd"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(*seen.lock().unwrap(), ["channels", "session", "project"], "{stalled}");
+    }
+}
+
 /// #1325's restart-unrecorded golden (tests/fixtures/native-cron/): a TS-era
 /// task store whose last run was interrupted mid-flight — the exact state a
 /// host carries across the switch into native mode.

@@ -1,4 +1,10 @@
 //! One-shot calls and streamed turns over an explicitly selected Gateway.
+#[path = "../control_connect.rs"]
+mod connect;
+#[path = "../control_install.rs"]
+mod install;
+#[path = "../control_machine.rs"]
+mod machine;
 #[path = "../control_serve.rs"]
 mod serve;
 #[path = "../control_stream.rs"]
@@ -73,7 +79,7 @@ fn parse_args() -> Result<Options> {
                     return Err(ControlError::new("input_error", "Repeated option."));
                 }
             }
-            "status" | "capabilities" | "call" | "stream" => {
+            "status" | "capabilities" | "call" | "stream" | "schema" | "watch" | "connect" => {
                 if command.replace(arg).is_some() {
                     return Err(ControlError::new(
                         "input_error",
@@ -84,17 +90,17 @@ fn parse_args() -> Result<Options> {
             _ => {
                 return Err(ControlError::new(
                     "input_error",
-                    "Usage: pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream> [--input-file <file>].",
+                    "Usage: pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream|schema|watch|connect> [--input-file <file>].",
                 ));
             }
         }
     }
     let command =
         command.ok_or_else(|| ControlError::new("input_error", "A command is required."))?;
-    if !matches!(command.as_str(), "call" | "stream") && input_file.is_some() {
+    if !matches!(command.as_str(), "call" | "stream" | "watch") && input_file.is_some() {
         return Err(ControlError::new(
             "input_error",
-            "--input-file applies only to call or stream.",
+            "--input-file applies only to call, stream, or watch.",
         ));
     }
     Ok(Options {
@@ -340,6 +346,14 @@ type Socket =
 
 // Both entry points keep the same authentication and receiving policy.
 async fn open_authenticated(options: &Options, token: &str, deadline: Instant) -> Result<Socket> {
+    open_authenticated_policy(options, token, deadline, false).await
+}
+async fn open_authenticated_policy(
+    options: &Options,
+    token: &str,
+    deadline: Instant,
+    classify_auth: bool,
+) -> Result<Socket> {
     let (mut socket, _) = connect_async_with_config(
         &options.url,
         Some(pilotdeck_cli::ws_config::websocket_config()),
@@ -374,6 +388,14 @@ async fn open_authenticated(options: &Options, token: &str, deadline: Instant) -
             .ok_or_else(|| ControlError::new("transport_error", "Gateway connection closed."))?
             .map_err(|_| ControlError::new("transport_error", "Gateway connection closed."))?;
         if frame.is_close() {
+            if classify_auth
+                && matches!(&frame, Message::Close(Some(value)) if matches!(u16::from(value.code), 4001 | 4003))
+            {
+                return Err(ControlError::new(
+                    "authentication_error",
+                    "Gateway authentication or protocol handshake was rejected.",
+                ));
+            }
             return Err(ControlError::new(
                 "transport_error",
                 "Gateway authentication or handshake failed.",
@@ -389,6 +411,18 @@ async fn open_authenticated(options: &Options, token: &str, deadline: Instant) -
         )
         .map_err(|_| ControlError::new("protocol_error", "Invalid Gateway frame."))?;
         if string_is(&value, "type", "hello_ok") {
+            if classify_auth
+                && !string_is(
+                    &value,
+                    "protocolVersion",
+                    pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,
+                )
+            {
+                return Err(ControlError::new(
+                    "protocol_error",
+                    "Gateway watch protocol version is missing or unsupported.",
+                ));
+            }
             if Instant::now() >= deadline {
                 return Err(ControlError::new(
                     "transport_error",
@@ -628,6 +662,11 @@ fn redact(value: &JsValue, token: &str) -> JsValue {
 
 fn run() -> Result<Option<JsValue>> {
     let options = parse_args()?;
+    let watch = if options.command == "watch" {
+        Some(machine::input(&options)?)
+    } else {
+        None
+    };
     let (method, params) = if options.command == "call" {
         input_call(&options)?
     } else if options.command == "stream" {
@@ -647,6 +686,16 @@ fn run() -> Result<Option<JsValue>> {
         .enable_all()
         .build()
         .map_err(|_| ControlError::new("transport_error", "Cannot start runtime."))?;
+    if options.command == "connect" {
+        return runtime
+            .block_on(connect::run(&options, &token))
+            .map(|()| None);
+    }
+    if let Some(selection) = watch {
+        return runtime
+            .block_on(machine::run(&options, &token, selection))
+            .map(|()| None);
+    }
     if options.command == "stream" {
         return runtime
             .block_on(stream::run(&options, &token, params))
@@ -661,6 +710,12 @@ fn run() -> Result<Option<JsValue>> {
             return Err(error);
         }
     };
+    if options.command == "schema" {
+        let value = value.ok_or_else(|| {
+            ControlError::new("protocol_error", "Gateway description is missing.")
+        })?;
+        return machine::write_schema(Some(redact(&value, &token))).map(|()| None);
+    }
     let output = match options.command.as_str() {
         "status" => {
             let value = value.ok_or_else(|| {
@@ -690,7 +745,7 @@ fn run() -> Result<Option<JsValue>> {
     output.map(Some)
 }
 
-const HELP: &str = "pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream> [--input-file <file>]
+const HELP: &str = "pilotdeck-control --url <ws-url> --token-file <file> <status|capabilities|call|stream|schema|watch|connect> [--input-file <file>]
 
 call reads one JSON object from stdin or --input-file, for example:
   {\"method\":\"list_sessions\",\"params\":{}}
@@ -699,7 +754,10 @@ stream reads submit_turn params with sessionKey, runId, channelKey, message, and
 call still rejects submit_turn. Streams do not reconnect or detach; closing may abort the session.
 Authentication token echoes in Gateway JSON are redacted; general business data is returned as supplied.
 serve starts the existing native Gateway in the foreground with explicit isolation options; run pilotdeck-control serve --help.
-Schema export and the new app JSON-RPC server are not available.";
+schema without options emits compiled command/method discovery; with --url/--token-file it adds live capabilities.
+watch emits JSONL notifications and selected state snapshots; optional --input-file selects sessionKey/runId/projectKey/intervalMs. Reconnect emits explicit resync_required and independent snapshots; missed notifications are not replayed. Ctrl-C stops watching.
+connect reads JSON-RPC 2.0 NDJSON requests: initialize, gateway.call, run.submit, run.cancel, permission.respond. Concurrent calls share one authenticated connection; EOF closes it. Run events are notifications followed by a final response.
+This Gateway bridge does not claim the new app/v1 service or atomic snapshot/subscription recovery.";
 
 fn write_output(text: &str) -> io::Result<()> {
     let mut output = io::stdout().lock();
@@ -713,6 +771,49 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         } else {
             std::process::ExitCode::FAILURE
+        };
+    }
+    if args.first().is_some_and(|arg| arg == "install") {
+        if args.len() == 2 && args[1] == "--help" {
+            return if write_output(install::HELP).is_ok() {
+                std::process::ExitCode::SUCCESS
+            } else {
+                std::process::ExitCode::FAILURE
+            };
+        }
+        return match install::run(args.into_iter().skip(1)) {
+            Ok(value) => {
+                if write_output(&value.to_string()).is_ok() {
+                    std::process::ExitCode::SUCCESS
+                } else {
+                    std::process::ExitCode::FAILURE
+                }
+            }
+            Err(error) => {
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "{}",
+                    serde_json::json!({"kind":error.reason,"message":error.message})
+                );
+                std::process::ExitCode::FAILURE
+            }
+        };
+    }
+    if args.len() == 1 && args[0] == "schema" {
+        return match machine::write_schema(None) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                let _ = writeln!(
+                    io::stderr().lock(),
+                    "{}",
+                    encode(&object(&[
+                        ("kind", error.kind.into()),
+                        ("message", error.message.into())
+                    ]))
+                    .unwrap_or_else(|_| "{\"kind\":\"output_error\"}".into())
+                );
+                std::process::ExitCode::FAILURE
+            }
         };
     }
     if args.first().is_some_and(|arg| arg == "serve") {

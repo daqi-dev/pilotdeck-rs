@@ -58,9 +58,9 @@ pub(super) fn input(options: &Options) -> Result<JsValue> {
 }
 
 type Delivery = (String, tokio::sync::oneshot::Sender<io::Result<()>>);
-struct Output(mpsc::SyncSender<Delivery>);
+pub(super) struct Output(mpsc::SyncSender<Delivery>);
 impl Output {
-    fn new() -> Result<Self> {
+    pub(super) fn new() -> Result<Self> {
         let (send, receive) = mpsc::sync_channel::<Delivery>(1);
         // No runtime blocking task or join: a stalled consumer cannot keep the
         // process alive after the asynchronous output deadline has expired.
@@ -79,7 +79,7 @@ impl Output {
             .map_err(|_| output_error())?;
         Ok(Self(send))
     }
-    async fn deliver(&self, value: &JsValue) -> Result<()> {
+    pub(super) async fn deliver(&self, value: &JsValue) -> Result<()> {
         let raw = encode(value)?;
         if raw.len() >= MAX_LINE {
             return Err(ControlError::new(
@@ -275,7 +275,7 @@ async fn receive(socket: &mut Socket, id: &str, token: &str, output: &Output) ->
 // Streaming consumers need stable property names and terminal discriminators.
 // These protocol identifiers are public metadata, excluded from echo filtering.
 // Other string values follow the ordinary token echo policy, without mutating keys.
-fn redact_event(value: &JsValue, token: &str) -> JsValue {
+pub(super) fn redact_event(value: &JsValue, token: &str) -> JsValue {
     enum Task<'a> {
         Value(&'a JsValue, bool),
         Array(usize),

@@ -572,6 +572,7 @@ async fn start_router(slot: Arc<FeishuWebhookSlot>, port: u16) -> tokio::task::J
             loopback: false,
             static_root: None,
             webhook: Some(FeishuWebhookSlot::resolver(&slot)),
+            control: None,
         };
         loop {
             let Ok((stream, _)) = listener.accept().await else {

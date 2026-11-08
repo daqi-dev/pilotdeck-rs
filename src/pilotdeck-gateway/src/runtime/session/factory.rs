@@ -1246,6 +1246,32 @@ impl LiveSession for OwnedSession {
             finished: false,
         }))
     }
+    fn submit_with_authority(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: crate::runtime::turn::interaction::TurnInteractionAuthority,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        // AgentSession owns session identity; submit options only identify the turn.
+        let mut options = options
+            .as_object()
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("#748 session submit options must be an object"))?;
+        options.insert(
+            "sessionId".into(),
+            JsValue::String(self.reload_source.session_id.clone()),
+        );
+        let turn =
+            self.adapter
+                .submit_with_authority(input, JsValue::Object(options), authority)?;
+        Ok(Box::new(OwnedTurn {
+            turn,
+            checkpoint: self.checkpoint.clone(),
+            saved: self.saved_files.clone(),
+            started: self.adapter.reload_execution_started(),
+            finished: false,
+        }))
+    }
     fn snapshot(&self) -> JsValue {
         self.adapter.snapshot()
     }

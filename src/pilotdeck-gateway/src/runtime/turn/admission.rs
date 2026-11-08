@@ -94,6 +94,9 @@ pub trait SubmitCompactionRouter: Send + Sync {
 /// set time (7b wires the native validator behind `validate`).
 pub trait SubmitSdkSessionConfig: Send + Sync {
     fn validate(&self, config: &JsValue) -> Result<(), SubmitError>;
+    fn permission_mode<'a>(&'a self, _session: &'a JsString) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async { None })
+    }
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -725,6 +728,17 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         _: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async { Ok(()) })
+    }
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.permission_mode(session).await,
+                None => None,
+            }
+        })
     }
     fn has_sdk_config(&self) -> bool {
         self.options.sdk_config.is_some()

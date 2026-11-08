@@ -29,6 +29,16 @@ use pilotdeck_protocol::{JsObject, JsValue, admission::ExecutionIdentity};
 use std::sync::{Arc, Mutex};
 use tokio::{runtime::Handle, sync::watch};
 
+/// Host-owned delivery authority for one admitted Gateway turn. It is never
+/// serialized to the sidecar or retained as mutable session state.
+#[derive(Clone)]
+pub struct TurnInteractionAuthority {
+    pub can_prompt: Option<bool>,
+    pub policy_can_prompt: Option<bool>,
+    pub sdk_permission_mode: Option<pilotdeck_protocol::JsString>,
+    pub emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+}
+
 /// Session authority; none of these fields are read from the sidecar payload.
 pub struct InteractionTurnInput {
     /// profile is overwritten with the leased generation's actual profile.
@@ -110,6 +120,7 @@ impl InteractionTurn {
             .ok_or_else(|| ModuleError::new("Leased project resources are missing."))?
             .context();
         input.permission.profile = context.profile().interaction;
+        input.permission.context.can_prompt &= input.permission.profile.can_prompt;
         input.permission.context.rules = input.permission.rules.snapshot();
         let turn_ports = std::mem::take(&mut input.turn_ports);
         let permission_context = input.permission.context.clone();
@@ -154,13 +165,15 @@ impl InteractionTurn {
         if let Some(resource) =
             resource::<InteractionPermission>(&context, Resource::InteractionPermission)?
         {
-            turn.ports.permission = Some(resource.bind_turn(
+            let permission = resource.bind_turn(
                 identity.session_id.clone(),
                 identity.run_id.clone(),
                 input.permission,
                 catalog.clone(),
                 router,
-            )?);
+            )?;
+            turn.ports.permission = Some(permission.clone());
+            router.capability.bind_turn_permission(permission)?;
         }
         if let Some(resource) = resource::<InteractionHooks>(&context, Resource::InteractionHooks)?
         {

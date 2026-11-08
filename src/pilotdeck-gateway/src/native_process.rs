@@ -9,8 +9,14 @@ use std::{
     time::Duration,
 };
 mod assembly;
+#[cfg(unix)]
+mod background;
 mod local_host;
+mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};
+pub use server_host::{
+    ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, run_server,
+};
 // The advertised capability table lived as a literal inside `requests.rs`
 // until #1352; it is its own module so the table, its exception list and the
 // test that pins both to the recorded TS oracle sit next to each other.
@@ -44,8 +50,7 @@ mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod tools;
 
-/// Start the real serial host, bind WS, then drain on either supported signal.
-/// The listener never starts an upstream gateway/helper.
+/// Start the isolated native entry through the same host as `pilotdeck server`.
 pub async fn run(options: Options) -> Result<(), ProxyError> {
     let token = std::fs::read_to_string(&options.token_file)?;
     let token = token.trim_end_matches(['\r', '\n']).to_owned();
@@ -55,92 +60,21 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let inherited = capture_environment(std::env::vars_os());
     validate_environment(&inherited)?;
     let env = options.environment(inherited);
-    let (host, feishu_webhook, switch_handles) =
-        assembly::start_with_webhook(options.clone(), env).await?;
-    let server = match crate::native_ws::NativeWsServer::bind(
-        options.listen,
-        host.clone(),
-        token,
-        env!("CARGO_PKG_VERSION").into(),
+    server_host::run_embedding(
+        options,
+        env,
+        server_host::Embedding {
+            token,
+            loopback: None,
+            static_assets: None,
+            control: None,
+            restart: None,
+            ready: Arc::new(|address| eprintln!("native listening {address}")),
+            native_diagnostics: true,
+        },
     )
     .await
-    {
-        // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
-        // registers it on the HTTP server, after `/auth/local-token`).
-        Ok(server) => server.with_webhook(feishu_webhook),
-        Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
-            return Err(error);
-        }
-    };
-    #[cfg(unix)]
-    let signals = (|| -> std::io::Result<_> {
-        Ok((
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?,
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?,
-        ))
-    })();
-    #[cfg(unix)]
-    let (mut terminate, mut interrupt) = match signals {
-        Ok(signals) => signals,
-        Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
-            return Err(error.into());
-        }
-    };
-    let address = match server.local_addr() {
-        Ok(address) => address,
-        Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
-            return Err(error.into());
-        }
-    };
-    // #1353 A8.5-pr2: the signal starts the switch machine instead of the
-    // raw WS drain — the matrix §二 sequence (stop automation → stop
-    // accepting + drain → flush → stop owner → recovery) owns the order,
-    // and a failing or hung step halts the switch before the next one runs
-    // (A2/A3). The machine's entry and owner bounds are the `--drain-ms`
-    // budget plus slack (a backstop for a hung face, not a second copy of
-    // the faces' own internal deadlines).
-    //
-    // The phased run, the faces, and the machine are constructed *before*
-    // the signal wait: the accept loop runs from the run's construction, so
-    // steady state is served exactly like the awaited `run()` future was —
-    // the signal only triggers the switch (`native_ws.rs::run_phased`).
-    let (trigger, trigger_rx) = tokio::sync::watch::channel(false);
-    let phased = Arc::new(server.run_phased(
-        switch_wiring::trigger_stop(trigger_rx),
-        options.drain_budget,
-    ));
-    let faces = switch_wiring::ProductionFaces::new(
-        switch_handles.cron,
-        switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
-        phased,
-    );
-    let machine = crate::switch::SwitchMachine::new(
-        faces.clone(),
-        crate::switch::SwitchTimeouts::production(options.drain_budget),
-    );
-    eprintln!("native listening {address}");
-    #[cfg(unix)]
-    tokio::select! { _ = terminate.recv() => {}, _ = interrupt.recv() => {} }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
-    eprintln!("native stopping");
-    match machine.run().await {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            // The machine's halt is the reported failure and the exit status:
-            // the death march below still terminates the process (a
-            // registered difference — the matrix's surviving-owner semantics
-            // cannot outlive SIGTERM), but a halt never exits 0 (D1).
-            eprintln!("native switch halted: {error}");
-            faces.finish_after_halt().await.map_err(|teardown| {
-                crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
-            })?;
-            Err(crate::ProxyError::from(error.to_string()))
-        }
-    }
+    .map(|_| ())
 }
 
 fn capture_environment(

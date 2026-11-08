@@ -195,6 +195,28 @@ impl Target {
         }
         Ok(())
     }
+    /// Read the already-pinned original without following a replaced pathname.
+    pub fn read_existing_bounded(&self, limit: usize) -> Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let existing = self
+            .existing
+            .as_ref()
+            .ok_or_else(|| fail("target does not exist"))?;
+        let mut file = existing
+            .try_clone()
+            .map_err(|error| io(error, "dup", &self.target))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| io(error, "seek", &self.target))?;
+        let mut bytes = Vec::new();
+        file.take(limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| io(error, "read", &self.target))?;
+        if bytes.len() > limit {
+            return Err(fail("target exceeds the read limit"));
+        }
+        Ok(bytes)
+    }
+
     pub fn publish(self, bytes: &[u8]) -> Result<()> {
         let name = OsString::from(format!(".pilotdeck-setup-{}.tmp", uuid::Uuid::new_v4()));
         let temporary_directory = self

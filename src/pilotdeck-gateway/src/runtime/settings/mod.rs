@@ -49,11 +49,20 @@
 //! per-project branch and broadcast/response keep `1`/`true`/`null`/`[]`
 //! as-is); those cells are outside the golden's string-only contract.
 
+#[cfg(unix)]
+mod edit;
 mod gateway;
+#[cfg(unix)]
+mod normalize;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 #[path = "gateway_tests.rs"]
 mod tests;
+#[cfg(unix)]
+mod writer;
 
 pub use gateway::*;
+
+#[cfg(unix)]
+pub(crate) use writer::NativeLocalSettingsWriter;

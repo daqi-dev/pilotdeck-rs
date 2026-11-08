@@ -56,7 +56,10 @@ pub struct SessionTools {
     config: JsObject,
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
+    permission_rules: crate::config::permission::RuleSetHandle,
     lsp: Arc<super::families::DefaultLsp>,
+    #[cfg(unix)]
+    background_tasks: Option<crate::runtime::background::BackgroundTaskRuntime>,
     /// #1864 (b): re-read on every turn, like InProcessGateway.ts:1443 —
     /// the host-side permission context follows the stored selection so the
     /// same turn never runs one mode for the sidecar and another for native
@@ -76,6 +79,7 @@ impl SessionTools {
             permission::create_default_permission_context(DefaultPermissionContextOptions {
                 cwd: options.project.to_string_lossy().into_owned().into(),
                 can_prompt: Some(false),
+                bypass_available: Some(true),
                 ..Default::default()
             });
         Ok(Self {
@@ -86,7 +90,10 @@ impl SessionTools {
             interactions,
             lsp,
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
+            permission_rules: crate::config::permission::RuleSetHandle::empty(),
             permission_mode_source: None,
+            #[cfg(unix)]
+            background_tasks: None,
         })
     }
 
@@ -101,11 +108,38 @@ impl SessionTools {
         self
     }
 
+    pub fn with_permission_rules(
+        mut self,
+        rules: crate::config::permission::RuleSetHandle,
+    ) -> Self {
+        self.permission_rules = rules;
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_background_tasks(
+        mut self,
+        tasks: crate::runtime::background::BackgroundTaskRuntime,
+    ) -> Self {
+        self.background_tasks = Some(tasks);
+        self
+    }
+
     pub fn turn(
         &self,
         identity: &ExecutionIdentity,
         recorder: Arc<Recorder>,
         signal: Cancellation,
+    ) -> SessionPorts {
+        self.turn_with_authority(identity, recorder, signal, None)
+    }
+
+    pub fn turn_with_authority(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: Cancellation,
+        authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
     ) -> SessionPorts {
         // #1864 (b): the effective mode — a non-empty
         // `managedPermissions.defaultMode` wins, else the stored selection —
@@ -115,7 +149,7 @@ impl SessionTools {
         // (`tool_context` and `resolve_workspace_path` read that copy) all
         // agree with the sidecar's payload this turn. A `None` source leaves
         // the previous mode and the plan-round-trip stack below untouched.
-        let (permission_context, permission_mode) = {
+        let (mut turn_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
                 self.permission_mode_source
@@ -124,18 +158,59 @@ impl SessionTools {
             }) {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
             }
-            (state.0.to_value(), state.0.mode.as_js_string().clone())
+            (state.0.clone(), state.0.mode.as_js_string().clone())
         };
+        // These flags belong to this invocation, never the session's shared
+        // permission-mode state. A managed false remains a policy ceiling.
+        let policy_disabled = self
+            .config
+            .get("managedPermissions")
+            .and_then(|v| v.get("canPrompt"))
+            == Some(&JsValue::Bool(false))
+            || authority
+                .as_ref()
+                .is_some_and(|a| a.policy_can_prompt == Some(false));
+        let sdk_mode = authority
+            .as_ref()
+            .and_then(|a| a.sdk_permission_mode.as_ref());
+        turn_context.accept_edits = sdk_mode.map(|m| m.equals_str("acceptEdits"));
+        turn_context.can_prompt = authority
+            .as_ref()
+            .is_some_and(|a| a.can_prompt.unwrap_or(true))
+            && !policy_disabled
+            && !sdk_mode.is_some_and(|m| m.equals_str("dontAsk"));
+        turn_context.policy_can_prompt = policy_disabled.then_some(false);
+        turn_context.rules = self.permission_rules.snapshot();
+        let permission_context = turn_context.to_value();
+        let permission_emit = authority
+            .map(|a| a.emit)
+            .unwrap_or_else(|| Arc::new(|_| false));
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
         );
-        let execution = Arc::new(ToolRuntime::new(
-            tools,
-            self.permission.clone(),
-            SchedulerMode::Concurrent,
-        ));
+        #[cfg(unix)]
+        if let Some(tasks) = &self.background_tasks {
+            for tool in builtin::task::task_tools(Some(tasks.clone())) {
+                tools.register(tool).expect("native task names are unique");
+            }
+        }
+        let execution = Arc::new(
+            ToolRuntime::new(
+                tools,
+                // Even a profile without an interaction resource keeps this turn's
+                // policy/flags/rules; session mode observation is a separate port.
+                Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
+                SchedulerMode::Concurrent,
+            )
+            .with_native_sandbox(
+                self.config
+                    .get("sandboxMode")
+                    .and_then(JsValue::as_string)
+                    .cloned(),
+            ),
+        );
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
@@ -192,16 +267,10 @@ impl SessionTools {
                         &RuntimeProfileOverrides::default(),
                     )
                     .interaction,
-                    context: self
-                        .permission
-                        .0
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .0
-                        .clone(),
-                    rules: crate::config::permission::RuleSetHandle::empty(),
+                    context: turn_context,
+                    rules: self.permission_rules.clone(),
                     coordinator: self.interactions.clone(),
-                    emit: Arc::new(|_| false),
+                    emit: permission_emit,
                     timeout: Duration::from_secs(30),
                 },
                 hooks: vec![],
@@ -474,9 +543,13 @@ pub(super) fn native_tools(
                 && !denied.as_ref().is_some_and(|names| names.contains(name))
         })),
     );
-    // The isolated entry advertises the native read-only family. Mutating
-    // tools, subagents and integrations are not implied by an empty port.
-    for tool in builtin::read_only_tools() {
+    // Workspace mutation and foreground shell execution share the same host
+    // permission gate as read tools; registration never authorizes execution.
+    let mut definitions = builtin::read_only_tools();
+    definitions.extend(builtin::write_tools());
+    #[cfg(unix)]
+    definitions.extend(builtin::shell_tools());
+    for tool in definitions {
         tools
             .register(tool)
             .expect("native builtin names are unique");
@@ -486,3 +559,7 @@ pub(super) fn native_tools(
         .expect("native LSP name is unique");
     tools
 }
+
+#[cfg(test)]
+#[path = "tools_permission_tests.rs"]
+mod permission_turn_tests;

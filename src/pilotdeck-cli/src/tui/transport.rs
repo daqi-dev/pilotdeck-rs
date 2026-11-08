@@ -11,7 +11,7 @@ use std::{
 };
 use tokio::{
     net::TcpStream,
-    sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot},
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch},
     time::{Instant, timeout, timeout_at},
 };
 use tokio_tungstenite::{
@@ -83,7 +83,7 @@ enum Command {
         reply: oneshot::Sender<Result<EventStream>>,
     },
     Close {
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<()>>,
     },
 }
 #[derive(Clone)]
@@ -108,6 +108,130 @@ fn encoded(value: &JsValue) -> Result<String> {
     stringify_json(value)
         .map_err(|e| Error::Connection(e.to_string()))?
         .ok_or_else(|| Error::Connection("Invalid Gateway frame.".into()))
+}
+struct LocalFrame {
+    text: String,
+    _permit: OwnedSemaphorePermit,
+}
+struct LocalSink {
+    sender: mpsc::Sender<LocalFrame>,
+    bytes: Arc<Semaphore>,
+    failed: watch::Sender<Option<Error>>,
+}
+impl pilotdeck_gateway::runtime::connection::GatewayTextConnection for LocalSink {
+    fn send_text(&self, text: String) {
+        let size = u32::try_from(text.len().max(1)).unwrap_or(u32::MAX);
+        let Ok(permit) = self.bytes.clone().try_acquire_many_owned(size) else {
+            self.failed.send_replace(Some(Error::ResourceLimit));
+            return;
+        };
+        if self
+            .sender
+            .try_send(LocalFrame {
+                text,
+                _permit: permit,
+            })
+            .is_err()
+        {
+            self.failed.send_replace(Some(Error::ResourceLimit));
+        }
+    }
+    fn close(&self, _: u16, _: &str) {
+        self.failed.send_replace(Some(closed()));
+    }
+}
+enum Endpoint {
+    WebSocket(Box<Socket>),
+    Hosted {
+        host: pilotdeck_gateway::native_process::LocalHost,
+        connection: pilotdeck_gateway::runtime::turn::gateway::HostedConnection,
+        output: mpsc::Receiver<LocalFrame>,
+        failed: watch::Receiver<Option<Error>>,
+        fail_tx: watch::Sender<Option<Error>>,
+        jobs: Arc<Semaphore>,
+    },
+}
+impl Endpoint {
+    async fn send(&mut self, frame: String, permit: OwnedSemaphorePermit) -> Result<()> {
+        match self {
+            Self::WebSocket(socket) => {
+                let result = send(socket, frame).await;
+                drop(permit);
+                result
+            }
+            Self::Hosted {
+                connection,
+                jobs,
+                fail_tx,
+                ..
+            } => {
+                let job = jobs
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| Error::ResourceLimit)?;
+                let completion = timeout(
+                    SEND_TIMEOUT,
+                    connection.enqueue_with_input_and_job_permit(frame, Some(permit), Some(job)),
+                )
+                .await
+                .map_err(|_| Error::Connection("Gateway send timed out.".into()))?
+                .map_err(|e| Error::Connection(String::from_utf16_lossy(e.message.units())))?;
+                let failure = fail_tx.clone();
+                tokio::spawn(async move {
+                    if completion.await.is_err() {
+                        failure.send_replace(Some(closed()));
+                    }
+                });
+                Ok(())
+            }
+        }
+    }
+    async fn next(
+        &mut self,
+    ) -> Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>> {
+        match self {
+            Self::WebSocket(socket) => socket.next().await,
+            Self::Hosted { output, failed, .. } => {
+                if failed.borrow().is_some() {
+                    return None;
+                }
+                tokio::select! {
+                    item = output.recv() => item.map(|v| Ok(Message::Text(v.text.into()))),
+                    _ = failed.changed() => None,
+                }
+            }
+        }
+    }
+    async fn flush(&mut self) -> Result<()> {
+        match self {
+            Self::WebSocket(socket) => flush(socket).await,
+            Self::Hosted { .. } => Ok(()),
+        }
+    }
+    async fn close(&mut self) -> Result<()> {
+        match self {
+            Self::WebSocket(socket) => {
+                let _ = timeout(Duration::from_secs(1), socket.close(None)).await;
+                Ok(())
+            }
+            Self::Hosted {
+                host, connection, ..
+            } => {
+                let closed_result = timeout(SEND_TIMEOUT, connection.closed()).await;
+                let shutdown_result = host.shutdown().await;
+                shutdown_result.map_err(Error::Connection)?;
+                closed_result
+                    .map_err(|_| Error::Connection("Gateway close timed out.".into()))?
+                    .map_err(|e| Error::Connection(String::from_utf16_lossy(e.message.units())))
+            }
+        }
+    }
+    fn failure(&self) -> Error {
+        match self {
+            Self::Hosted { failed, .. } => failed.borrow().clone().unwrap_or_else(closed),
+            _ => closed(),
+        }
+    }
 }
 async fn send(socket: &mut Socket, frame: String) -> Result<()> {
     timeout(SEND_TIMEOUT, socket.send(Message::Text(frame.into())))
@@ -188,7 +312,63 @@ impl Client {
         }
         let (sender, receiver) = mpsc::channel(COMMANDS);
         let budget = Arc::new(Semaphore::new(QUEUED_BYTES));
-        tokio::spawn(pump(socket, receiver, Arc::clone(&budget)));
+        tokio::spawn(pump(
+            Endpoint::WebSocket(Box::new(socket)),
+            receiver,
+            Arc::clone(&budget),
+        ));
+        Ok(Self { sender, budget })
+    }
+    /// Attach to the in-process native owner without a listener or token file.
+    pub async fn local(
+        options: pilotdeck_gateway::native_process::LocalHostOptions,
+        env: pilotdeck_gateway::config::Env,
+    ) -> Result<Self> {
+        let host = pilotdeck_gateway::native_process::LocalHost::start(options, env)
+            .await
+            .map_err(|e| Error::Connection(e.to_string()))?;
+        let (out_tx, mut output) = mpsc::channel(EVENTS);
+        let (fail_tx, failed) = watch::channel(None);
+        let sink = Arc::new(LocalSink {
+            sender: out_tx,
+            bytes: Arc::new(Semaphore::new(QUEUED_BYTES)),
+            failed: fail_tx.clone(),
+        });
+        let connection = match host.connect(sink, "cli").await {
+            Ok(connection) => connection,
+            Err(error) => {
+                let _ = host.shutdown().await;
+                return Err(Error::Connection(String::from_utf16_lossy(
+                    error.message.units(),
+                )));
+            }
+        };
+        let hello = match timeout(SEND_TIMEOUT, output.recv()).await {
+            Ok(Some(first)) => parse_json(&first.text).ok(),
+            _ => None,
+        };
+        if !hello
+            .as_ref()
+            .is_some_and(|hello| equals(&field(hello, "type"), "hello_ok"))
+        {
+            let _ = timeout(SEND_TIMEOUT, connection.closed()).await;
+            let _ = host.shutdown().await;
+            return Err(closed());
+        }
+        let (sender, receiver) = mpsc::channel(COMMANDS);
+        let budget = Arc::new(Semaphore::new(QUEUED_BYTES));
+        tokio::spawn(pump(
+            Endpoint::Hosted {
+                host,
+                connection,
+                output,
+                failed,
+                fail_tx,
+                jobs: Arc::new(Semaphore::new(PENDING)),
+            },
+            receiver,
+            budget.clone(),
+        ));
         Ok(Self { sender, budget })
     }
     fn frame(
@@ -243,23 +423,30 @@ impl Client {
             })?;
         response.await.map_err(|_| closed())?
     }
+    pub async fn wait_closed(&self) {
+        self.sender.closed().await;
+    }
     pub async fn close(&self) -> Result<()> {
         let (reply, response) = oneshot::channel();
         timeout(SEND_TIMEOUT, self.sender.send(Command::Close { reply }))
             .await
             .map_err(|_| Error::Connection("Gateway close timed out.".into()))?
             .map_err(|_| closed())?;
-        timeout(SEND_TIMEOUT + Duration::from_secs(1), response)
+        timeout(SEND_TIMEOUT * 2 + Duration::from_secs(1), response)
             .await
             .map_err(|_| Error::Connection("Gateway close timed out.".into()))?
-            .map_err(|_| closed())
+            .map_err(|_| closed())?
     }
 }
 enum Input {
     Command(Option<Command>),
     Socket(Option<std::result::Result<Message, tokio_tungstenite::tungstenite::Error>>),
 }
-async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget: Arc<Semaphore>) {
+async fn pump(
+    mut endpoint: Endpoint,
+    mut receiver: mpsc::Receiver<Command>,
+    budget: Arc<Semaphore>,
+) {
     let mut pending: HashMap<String, oneshot::Sender<Result<Reply>>> = HashMap::new();
     let mut streams: HashMap<String, StreamSink> = HashMap::new();
     let mut prefer_socket = false;
@@ -268,12 +455,12 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
         streams.retain(|_, stream| !stream.sender.is_closed());
         // Alternate which ready future wins, so command floods cannot starve ping/events.
         let input = if prefer_socket {
-            match select(Box::pin(socket.next()), Box::pin(receiver.recv())).await {
+            match select(Box::pin(endpoint.next()), Box::pin(receiver.recv())).await {
                 Either::Left((v, _)) => Input::Socket(v),
                 Either::Right((v, _)) => Input::Command(v),
             }
         } else {
-            match select(Box::pin(receiver.recv()), Box::pin(socket.next())).await {
+            match select(Box::pin(receiver.recv()), Box::pin(endpoint.next())).await {
                 Either::Left((v, _)) => Input::Command(v),
                 Either::Right((v, _)) => Input::Socket(v),
             }
@@ -281,7 +468,10 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
         prefer_socket = !prefer_socket;
         match input {
             Input::Command(Some(Command::Request {
-                id, frame, reply, ..
+                id,
+                frame,
+                reply,
+                _permit: permit,
             })) => {
                 if reply.is_closed() {
                     continue;
@@ -293,14 +483,17 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
                     let _ = reply.send(Err(Error::ResourceLimit));
                     continue;
                 }
-                if let Err(error) = send(&mut socket, frame).await {
+                if let Err(error) = endpoint.send(frame, permit).await {
                     let _ = reply.send(Err(error.clone()));
                     break error;
                 }
                 pending.insert(id, reply);
             }
             Input::Command(Some(Command::Stream {
-                id, frame, reply, ..
+                id,
+                frame,
+                reply,
+                _permit: permit,
             })) => {
                 if reply.is_closed() {
                     continue;
@@ -312,7 +505,7 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
                 }
                 let (sender, receiver) = mpsc::channel(EVENTS);
                 let terminal = Arc::new(Mutex::new(None));
-                if let Err(error) = send(&mut socket, frame).await {
+                if let Err(error) = endpoint.send(frame, permit).await {
                     let _ = reply.send(Err(error.clone()));
                     break error;
                 }
@@ -326,23 +519,23 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
                 let _ = reply.send(Ok(EventStream { receiver, terminal }));
             }
             Input::Command(Some(Command::Close { reply })) => {
-                let _ = timeout(Duration::from_secs(1), socket.close(None)).await;
-                let _ = reply.send(());
+                let result = endpoint.close().await;
+                let _ = reply.send(result);
                 break closed();
             }
             Input::Command(None) => {
-                let _ = timeout(Duration::from_secs(1), socket.close(None)).await;
+                let _ = endpoint.close().await;
                 break closed();
             }
             Input::Socket(message) => {
                 let Some(Ok(message)) = message else {
-                    break closed();
+                    break endpoint.failure();
                 };
                 if message.is_close() {
                     break closed();
                 }
                 if message.is_ping() {
-                    if let Err(error) = flush(&mut socket).await {
+                    if let Err(error) = endpoint.flush().await {
                         break error;
                     }
                     continue;
@@ -425,6 +618,7 @@ async fn pump(mut socket: Socket, mut receiver: mpsc::Receiver<Command>, budget:
             _permit: None,
         });
     }
+    let _ = endpoint.close().await;
 }
 
 #[cfg(test)]
@@ -433,6 +627,55 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
 
+    #[test]
+    fn local_sink_reports_queue_and_byte_overflow() {
+        let (sender, mut output) = mpsc::channel(1);
+        let (failed, receiver) = watch::channel(None);
+        let sink = LocalSink {
+            sender,
+            bytes: Arc::new(Semaphore::new(3)),
+            failed,
+        };
+        use pilotdeck_gateway::runtime::connection::GatewayTextConnection;
+        sink.send_text("abc".to_owned());
+        sink.send_text("x".to_owned());
+        assert!(matches!(&*receiver.borrow(), Some(Error::ResourceLimit)));
+        assert_eq!(output.try_recv().unwrap().text, "abc");
+    }
+    #[tokio::test]
+    async fn local_client_uses_shared_gateway_and_closes_owner() {
+        let root = std::env::temp_dir().join(format!("pdrs-local-client-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home");
+        let project = root.join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(home.join("pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n").unwrap();
+        let mut env = pilotdeck_gateway::config::Env::new();
+        env.insert("HOME".into(), home.to_string_lossy().into_owned());
+        env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
+        let options = pilotdeck_gateway::native_process::LocalHostOptions {
+            home: home.clone(),
+            project,
+            sidecar: root.join("unused-sidecar"),
+            sidecar_args: Vec::new(),
+            drain_budget: Duration::from_secs(2),
+        };
+        let client = timeout(Duration::from_secs(10), Client::local(options, env))
+            .await
+            .unwrap()
+            .unwrap();
+        let result = timeout(
+            Duration::from_secs(10),
+            client.request("describe_server", JsValue::Object(JsObject::new())),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(result.get("capabilities").is_some());
+        client.close().await.unwrap();
+        assert!(!home.join("server-token").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[tokio::test(start_paused = true)]
     async fn blocked_hello_flush_cannot_extend_original_deadline() {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -476,10 +719,14 @@ mod tests {
                 .unwrap();
             let (done, finished) = oneshot::channel();
             sender.send(Command::Close { reply: done }).await.unwrap();
-            tokio::spawn(pump(socket, receiver, budget));
+            tokio::spawn(pump(
+                Endpoint::WebSocket(Box::new(socket)),
+                receiver,
+                budget,
+            ));
             let frame = peer.next().await.unwrap().unwrap();
             assert!(frame.is_close(), "cancelled command leaked a frame");
-            finished.await.unwrap();
+            finished.await.unwrap().unwrap();
         })
         .await
         .unwrap();

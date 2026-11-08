@@ -27,7 +27,7 @@ pub struct LocalHostOptions {
 }
 
 impl LocalHostOptions {
-    fn into_assembly_options(self) -> Result<Options, ProxyError> {
+    pub(super) fn into_assembly_options(self) -> Result<Options, ProxyError> {
         for (name, path) in [
             ("home", &self.home),
             ("project", &self.project),

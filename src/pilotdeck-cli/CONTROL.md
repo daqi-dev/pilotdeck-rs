@@ -1,6 +1,6 @@
 # pilotdeck-control：调用、流式文本轮次与显式宿主
 
-`status`、`capabilities`、`call` 和 `stream` 连接显式指定的 Gateway，使用已有 hello/request/response 协议，不自动启动宿主。`call` 在连接前拒绝 `submit_turn`；`stream` 提供单轮文本事件流。`serve` 显式启动现有原生 Gateway 前台宿主。`schema`、新的 app JSON-RPC 服务及事件恢复尚未提供。
+`status`、`capabilities`、`call` 和 `stream` 连接显式指定的 Gateway，使用已有 hello/request/response 协议，不自动启动宿主。`call` 在连接前拒绝 `submit_turn`；`stream` 提供单轮文本事件流。`serve` 显式启动现有原生 Gateway 前台宿主。`schema` 提供编译登记与可选实时能力发现；`watch` 提供通知与指定状态快照重同步。两者仍为Gateway机器桥，不表示独立/app/v1服务或全局持久事件回放。
 
 ```sh
 pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token status
@@ -57,3 +57,24 @@ home、project、配置、token 和 sidecar 需事先准备，home 与 project �
 token 必须为不超过 64 KiB 的普通文件；CLI 以同一描述符有界读取，再经私有匿名文件描述符交给宿主，避免宿主重新打开被替换的原路径。此入口目前要求 Unix 和可用的 `/dev/fd`。它复用已有服务端装配，配置可能启动 cron/IM；调用方负责独占所选数据根。本片没有自动安装或发现 sidecar、跨进程写锁、默认 CLI 本地 fallback 或完整旧 `pilotdeck server` 的 UI 编排。
 
 参数、token 隔离与真实 Rust sidecar 的验证说明见 [control-stream README](tests/fixtures/control-stream/README.md)。上述真实组合探针的 `--host-mode control-serve --signal TERM|INT` 分别验证两种正常退出；假 provider 结果不等于真实 provider 或人工验收。
+
+
+## schema 与 watch 机器观察
+
+`pilotdeck-control schema` 离线输出versioned描述，不要求URL/token、不读取stdin。带既有URL/token选项时追加真实describe_server原值；registered_methods只表示编译登记，provider能否调用仍以目标capabilities及实际RPC结果为准。开放params/result Schema不是完整逐字段验证器。
+
+```sh
+pilotdeck-control --url ws://127.0.0.1:19000/ws --token-file /isolated/token watch --input-file /isolated/watch.json
+```
+
+watch文件可含sessionKey/runId/projectKey和100..60000的intervalMs（默认1000）；runId需sessionKey。无文件时仅服务状态及该认证连接实际通知，不读取stdin。JSONL含version/type/epoch/seq/cursor:null；通知payload和快照沿既有脱敏。每次附着/重连显式resync_required，刷新独立describe_server/active_turn_snapshot/run_get快照，再resync_complete；duringResync、snapshotsAtomic:false和notificationReplay:false明确交接边界。没有全局持久notification cursor；cursor输入拒绝，run_events的run局部游标不冒充它。当前状态去重，断线只重试只读查询，绝不重放写请求。
+
+SIGINT/SIGTERM停止观察；正常最后stopped/exit0，阻塞输出无法交付最终行则有界output_error/exit1。每RPC30秒，交付10秒/8MiB行，停止后的最后行最多500ms，退避最多5秒；不承诺文件系统同步IO卡住时也可限时。初连失败、认证/协议/能力及输出错误明确退出；重连刷新不表示补齐瞬时通知或原子快照订阅。watch关闭只读连接不主动abort其它任务，不代表旧submit连接具有detach语义。
+
+实现及真实进程用例为src/control_machine.rs与tests/control_watch.rs；测试/原生组合和平台实测以本轮实际结果为准，不因源码存在称通过。
+
+## 双向机器会话
+
+`pilotdeck-control --url <ws-url> --token-file <file> connect` 接收逐行 JSON-RPC 2.0，请求需带 id；stdout 只有响应和通知。`initialize` 的 `protocolVersion` 为 `pilotdeck-connect/1`，返回实际 `describe_server` 与连接边界。`gateway.call` 的参数为 `{"method":"...","params":{...}}`；`run.submit`、`run.cancel`、`permission.respond` 分别接真实 `submit_turn`、`abort_turn`、`permission_decide`。其他交互与上传方法通过同连接 `gateway.call` 调用，避免权限应答丢失连接归属。
+
+流使用 `run.event` 通知（requestId、seq、final、event），最后再给对应请求响应；调用方必须检查 terminal.finishReason，取消不等同正常完成。至多64个未结请求、每行1MiB；无自动变更重放。EOF/中断关闭连接，沿用Gateway关闭可能取消活动turn的合同。断线后可显式新连接查询 `run_get`、`run_events`、历史与活动快照；本入口不提供 `/app/v1` 的默认detach或全局原子订阅语义。

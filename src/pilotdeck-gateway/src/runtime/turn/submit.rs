@@ -157,7 +157,7 @@ struct PumpContext<'a> {
     input: &'a JsValue,
     run: &'a RunRef,
     completion: &'a TurnCompletionHandle,
-    publisher: &'a TurnPublisher,
+    publisher: &'a Arc<TurnPublisher>,
     progress: &'a Mutex<SnapshotProgress>,
     timed_out: &'a AtomicBool,
     terminal: &'a TerminalClaim,
@@ -213,6 +213,12 @@ pub trait SubmitHost: Send + Sync {
         input: &'a JsValue,
         run: &'a RunRef,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>>;
+    fn sdk_permission_mode<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Option<JsString>> {
+        Box::pin(async { None })
+    }
     fn has_sdk_config(&self) -> bool;
     fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError>;
     fn set_sdk_config<'a>(
@@ -1040,7 +1046,20 @@ impl TurnSubmitter {
         }
         let mut actual_model = None;
         let mut stream = handle
-            .submit(prepared.input, prepared.options)
+            .submit_with_authority(
+                prepared.input,
+                prepared.options,
+                super::interaction::TurnInteractionAuthority {
+                    can_prompt: field(input, "canPrompt").as_bool(),
+                    sdk_permission_mode: self.host.sdk_permission_mode(&run.session_key).await,
+                    policy_can_prompt: (field(
+                        field(field(input, "sdkSessionConfig"), "managedPermissions"),
+                        "canPrompt",
+                    ) == &JsValue::Bool(false))
+                        .then_some(false),
+                    emit: publisher.permission_emitter(),
+                },
+            )
             .map_err(|error| SubmitError::new("gateway_submit_failed", error.message))?;
         while let Some(event) = stream
             .next()

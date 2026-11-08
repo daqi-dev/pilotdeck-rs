@@ -30,6 +30,8 @@ pub struct ResolvedSdkRuntime {
     pub project_root: PathBuf,
     pub snapshot: JsValue,
     pub plugin_runtime: Arc<PluginRuntime>,
+    /// Holds the published native project generation through SDK resolution.
+    pub lease: Option<crate::runtime::project::RuntimeLease>,
 }
 
 pub trait SdkRuntimeResolver: Send + Sync {
@@ -127,7 +129,7 @@ impl SdkTaskBudget for TaskBudgetStorePort {
 }
 
 /// The subset of `AbortSignal` used by `setSdkSessionConfig`.
-pub trait SdkAbortSignal {
+pub trait SdkAbortSignal: Send + Sync {
     fn throw_if_aborted(&self) -> Result<(), SdkSessionError>;
 }
 

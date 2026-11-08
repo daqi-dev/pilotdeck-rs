@@ -1468,6 +1468,30 @@ fn a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup() {
     );
 }
 
+#[test]
+fn failed_initialization_keeps_disposal_after_panicking_cleanup_and_huge_budget() {
+    for panic_cleanup in [false, true] {
+        let disposed = Arc::new(AtomicBool::new(false));
+        let marker = disposed.clone();
+        let result = TurnGateway::start_with_cleanup_budget(
+            TurnReplayOptions::new(), Duration::MAX,
+            move |coordinator| {
+                coordinator.set_after_dispose_hook(Arc::new(move || {
+                    marker.store(true, Ordering::SeqCst);
+                }));
+                Err(std::io::Error::other("preserve original builder failure"))
+            },
+            async move {
+                tokio::task::yield_now().await;
+                assert!(!panic_cleanup, "injected asynchronous cleanup panic");
+                Ok(())
+            },
+        );
+        assert_eq!(result.err().unwrap().to_string(), "preserve original builder failure");
+        assert!(disposed.load(Ordering::SeqCst));
+    }
+}
+
 /// #1746: the refusal branch carries services, so the host also disposes what
 /// it refuses — the owner it was handed is shut down, not just dropped.
 #[test]

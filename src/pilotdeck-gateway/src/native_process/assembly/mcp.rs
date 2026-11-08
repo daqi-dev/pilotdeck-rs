@@ -97,6 +97,7 @@ pub(super) fn build_mcp_gateway(
     build_project: &Arc<ProjectRuntimeRegistry>,
     permission_rule_sets: &Arc<GatewaySessionPermissionRuleSetRegistry>,
     build_mcp_config: &Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>>,
+    projects: Arc<SdkSessionProjects>,
 ) -> Arc<McpGateway> {
     // U6 MCP four-control gateway (#1319): wire the #1215 component
     // into the native request router. The SdkMcpConfig owns the
@@ -125,7 +126,7 @@ pub(super) fn build_mcp_gateway(
         session_plugins: Arc::new(NoSessionPlugins),
         permission_rule_sets: permission_rule_sets.clone(),
         environment: Arc::new(SystemEnvironment),
-        projects: SdkSessionProjects::shared(),
+        projects,
     }));
     // Publish the config so the prepare closure's sync_permission_rules
     // call (on each session lease acquire) can reach it.  The set

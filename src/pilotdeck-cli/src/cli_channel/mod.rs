@@ -21,9 +21,15 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
 }
 
 async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let Some(mut remote) = remote::connect(env, cwd).await else {
+    let mut remote = if let Some(remote) = remote::connect(env, cwd).await {
+        Channel::Remote(Box::new(remote))
+    } else {
         stderr_line("[pilotdeck] gateway server unavailable; using in-process mode.");
-        return Err(Failure::Todo("default CLI in-process Gateway"));
+        let options = super::local_host_options(env, cwd)?;
+        let client = pilotdeck_cli::tui::transport::Client::local(options, env.strings())
+            .await
+            .map_err(|e| Failure::Error(format!("Local Gateway failed: {e:?}")))?;
+        Channel::Local(client)
     };
     let session = format!("cli:project={}:default", cwd.to_string_lossy());
     let joined = argv.join(" ");
@@ -77,8 +83,54 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
             }
         }
     };
-    remote.close().await;
-    outcome.map(|()| 0)
+    let closed = remote.close().await;
+    outcome.and(closed).map(|()| 0)
+}
+
+enum Channel {
+    Remote(Box<remote::Remote>),
+    Local(pilotdeck_cli::tui::transport::Client),
+}
+impl Channel {
+    async fn idle(&mut self) -> Result<(), Failure> {
+        match self {
+            Self::Remote(remote) => remote.idle().await,
+            Self::Local(client) => {
+                client.wait_closed().await;
+                Err(Failure::Error("Gateway connection closed.".into()))
+            }
+        }
+    }
+    async fn submit(&mut self, session: &str, prompt: &str) -> Result<(), Failure> {
+        match self {
+            Self::Remote(remote) => remote.submit(session, prompt).await,
+            Self::Local(client) => {
+                let value = serde_json::json!({"sessionKey":session,"channelKey":"cli","message":prompt,"canPrompt":false});
+                let params = pilotdeck_protocol::parse_json(&value.to_string())
+                    .map_err(|e| Failure::Error(e.to_string()))?;
+                let mut stream = client
+                    .stream("submit_turn", params)
+                    .await
+                    .map_err(|e| Failure::Error(format!("{e:?}")))?;
+                while let Some(event) = stream.next().await {
+                    render::write(&event.map_err(|e| Failure::Error(format!("{e:?}")))?)?;
+                }
+                Ok(())
+            }
+        }
+    }
+    async fn close(&mut self) -> Result<(), Failure> {
+        match self {
+            Self::Remote(remote) => {
+                remote.close().await;
+                Ok(())
+            }
+            Self::Local(client) => client
+                .close()
+                .await
+                .map_err(|e| Failure::Error(format!("{e:?}"))),
+        }
+    }
 }
 
 /// Node readline accepts LF, CRLF, and bare CR, including delimiters split

@@ -67,7 +67,20 @@ impl NativeWsServer {
         token: String,
         version: String,
     ) -> Result<Self, ProxyError> {
-        if !crate::mutants::on("native-ws-bind-policy")
+        Self::bind_with_policy(address, host, token, version, None).await
+    }
+
+    // Only the legacy server embedding can select the separately validated
+    // host policy; the isolated native entry retains its loopback/high-port gate.
+    pub(crate) async fn bind_with_policy(
+        address: SocketAddr,
+        host: TurnGateway,
+        token: String,
+        version: String,
+        legacy_loopback: Option<bool>,
+    ) -> Result<Self, ProxyError> {
+        if legacy_loopback.is_none()
+            && !crate::mutants::on("native-ws-bind-policy")
             && (address.ip() != Ipv4Addr::LOCALHOST
                 || (address.port() != 0 && address.port() < 1024))
         {
@@ -88,9 +101,10 @@ impl NativeWsServer {
         // own Config construction.
         let http = native_http::Config {
             token: token.clone(),
-            loopback: ts_loopback_literal(address.ip()),
+            loopback: legacy_loopback.unwrap_or_else(|| ts_loopback_literal(address.ip())),
             static_root: None,
             webhook: None,
+            control: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -132,6 +146,11 @@ impl NativeWsServer {
     /// channel start/stop/reload is visible without rebinding.
     pub fn with_webhook(mut self, resolver: native_http::WebhookResolver) -> Self {
         self.http.webhook = Some(resolver);
+        self
+    }
+
+    pub(crate) fn with_control(mut self, handler: native_http::control::ControlHandler) -> Self {
+        self.http.control = Some(handler);
         self
     }
 

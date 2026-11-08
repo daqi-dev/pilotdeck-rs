@@ -256,6 +256,16 @@ impl TurnEventCoordinator {
     /// accepted before a sink panic or a `dispose` are dropped without any
     /// signal to their emitters.
     pub fn emit(&self, session_key: &JsString, event: &JsValue) -> bool {
+        self.emit_registered(session_key, event, None)
+    }
+    /// Keep a turn's trusted callback attached to its own registration even
+    /// after a newer turn has replaced the same session's sink.
+    pub(crate) fn emit_registered(
+        &self,
+        session_key: &JsString,
+        event: &JsValue,
+        expected: Option<&TurnSinkRegistration>,
+    ) -> bool {
         let marker_token = self.drain_token_on_this_thread(session_key);
         let (token, boundary) = {
             let mut state = lock(&self.state);
@@ -267,12 +277,18 @@ impl TurnEventCoordinator {
                 .sinks
                 .get(session_key)
                 .and_then(|registration| registration.upgrade())
+                .filter(|registration| {
+                    expected
+                        .is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))
+                })
                 .map(|registration| Arc::clone(&registration.sink))
             else {
                 // The host dropped the registration (or never started the
                 // session): TS looks a live sink up in its map, this port
                 // prunes the dead weak reference on the way out.
-                state.sinks.remove(session_key);
+                if expected.is_none() {
+                    state.sinks.remove(session_key);
+                }
                 return false;
             };
             // `with_run_id` panics on the null/undefined edge like the TS

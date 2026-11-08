@@ -1,0 +1,279 @@
+//! Authenticated management of one native source installation.
+use crate::update::{Error, Installation, RestartReply, RestartRequest, RuntimeClient};
+use http_body_util::BodyExt;
+use pilotdeck_gateway::native_process::{ControlHandler, ControlReply, ControlRequest};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+pub struct RestartManager {
+    state: Arc<Mutex<State>>,
+    trigger: tokio::sync::watch::Sender<bool>,
+    admission: Arc<tokio::sync::Semaphore>,
+}
+struct State {
+    root: PathBuf,
+    install_id: String,
+    running: String,
+    accepted: Option<(String, String)>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Input {
+    install_id: String,
+    expected_generation: String,
+    target_generation: String,
+}
+fn reply(status: u16, value: Value) -> ControlReply {
+    ControlReply {
+        status,
+        body: value.to_string(),
+    }
+}
+impl RestartManager {
+    pub fn new(installation: Installation) -> (Arc<Self>, tokio::sync::watch::Receiver<bool>) {
+        let (trigger, receiver) = tokio::sync::watch::channel(false);
+        (
+            Arc::new(Self {
+                state: Arc::new(Mutex::new(State {
+                    root: installation.root,
+                    install_id: installation.policy.install_id,
+                    running: installation.expected_generation,
+                    accepted: None,
+                })),
+                trigger,
+                admission: Arc::new(tokio::sync::Semaphore::new(1)),
+            }),
+            receiver,
+        )
+    }
+    pub fn handler(self: &Arc<Self>) -> ControlHandler {
+        let owner = self.clone();
+        Arc::new(move |request| {
+            let owner = owner.clone();
+            Box::pin(async move { owner.handle(request).await })
+        })
+    }
+    async fn handle(&self, request: ControlRequest) -> ControlReply {
+        if request.path == "/_control/context" {
+            return match self.state.lock() {
+                Ok(state) => reply(
+                    200,
+                    json!({"installId":state.install_id,"generation":state.running}),
+                ),
+                Err(_) => reply(503, json!({"error":"management_unavailable"})),
+            };
+        }
+        let input: Input = match serde_json::from_slice(&request.body) {
+            Ok(input) => input,
+            Err(_) => return reply(400, json!({"error":"invalid_restart_request"})),
+        };
+        let Ok(permit) = self.admission.clone().try_acquire_owned() else {
+            return reply(409, json!({"error":"restart_busy"}));
+        };
+        let state = self.state.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut state = state.lock().map_err(|_| "management_unavailable")?;
+            if input.install_id != state.install_id
+                || input.expected_generation != state.running
+                || input.target_generation == state.running
+            {
+                return Err("installation_mismatch");
+            }
+            if let Some((target, id)) = &state.accepted {
+                return if *target == input.target_generation {
+                    Ok((target.clone(), id.clone()))
+                } else {
+                    Err("restart_already_accepted")
+                };
+            }
+            // Reopen and hash the complete current generation before acknowledging.
+            // The running generation remains fixed even after `current` switches.
+            let installed = Installation::open(&state.root, &state.running)
+                .map_err(|_| "installation_unconfirmed")?;
+            if installed.policy.install_id != state.install_id
+                || installed.current.generation != input.target_generation
+            {
+                return Err("target_generation_mismatch");
+            }
+            let accepted = (input.target_generation, uuid::Uuid::new_v4().to_string());
+            state.accepted = Some(accepted.clone());
+            Ok(accepted)
+        })
+        .await;
+        match result {
+            Ok(Ok((target, id))) if self.trigger.send(true).is_ok() => reply(
+                202,
+                json!({"status":"accepted","restartId":id,"targetGeneration":target}),
+            ),
+            Ok(Ok(_)) => reply(503, json!({"error":"runtime_stopped"})),
+            Ok(Err(error)) => reply(409, json!({"error":error})),
+            Err(_) => reply(503, json!({"error":"management_unavailable"})),
+        }
+    }
+    /// Called only after the shared host's bounded switch completed successfully.
+    pub fn restart_executable(&self) -> Result<PathBuf, Error> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| Error::new("restartFailed", "Restart state is unavailable."))?;
+        let (target, _) = state
+            .accepted
+            .as_ref()
+            .ok_or_else(|| Error::new("restartFailed", "No restart was accepted."))?;
+        let installation = Installation::open(&state.root, &state.running)?;
+        if installation.policy.install_id != state.install_id
+            || installation.current.generation != *target
+        {
+            return Err(Error::new(
+                "restartFailed",
+                "Installed generation changed while the host was stopping. Restart manually.",
+            ));
+        }
+        Ok(state
+            .root
+            .join("generations")
+            .join(target)
+            .join("bin/pilotdeck"))
+    }
+}
+
+pub struct HttpRuntime {
+    pub address: SocketAddr,
+    pub token: String,
+}
+struct Driver(tokio::task::JoinHandle<Result<(), hyper::Error>>);
+impl Drop for Driver {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+impl HttpRuntime {
+    fn request(&self, method: &str, path: &str, body: String) -> Result<Value, Error> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::new("runtimeUnavailable", e.to_string()))?;
+        runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(15), async {
+                let socket = tokio::net::TcpStream::connect(self.address)
+                    .await
+                    .map_err(|e| {
+                        Error::new(
+                            if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                                "notRunning"
+                            } else {
+                                "runtimeUnavailable"
+                            },
+                            "Cannot connect to the running native service.",
+                        )
+                    })?;
+                let (mut sender, connection) =
+                    hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
+                        .await
+                        .map_err(|_| {
+                            Error::new(
+                                "runtimeUnavailable",
+                                "Native service HTTP handshake failed.",
+                            )
+                        })?;
+                let _driver = Driver(tokio::spawn(connection));
+                let request = hyper::Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("host", self.address.to_string())
+                    .header("authorization", format!("Bearer {}", self.token))
+                    .header("content-type", "application/json")
+                    .header("connection", "close")
+                    .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+                    .map_err(|_| {
+                        Error::new(
+                            "runtimeUnavailable",
+                            "Invalid native service authentication or request.",
+                        )
+                    })?;
+                let response = sender.send_request(request).await.map_err(|_| {
+                    Error::new("runtimeUnavailable", "Native service request failed.")
+                })?;
+                if !response.status().is_success() {
+                    return Err(Error::new(
+                        "runtimeUnavailable",
+                        format!(
+                            "Native service refused management request (HTTP {}).",
+                            response.status().as_u16()
+                        ),
+                    ));
+                }
+                let mut body = response.into_body();
+                let mut bytes = Vec::new();
+                while let Some(frame) = body.frame().await {
+                    let frame = frame.map_err(|_| {
+                        Error::new(
+                            "runtimeUnavailable",
+                            "Native service response was interrupted.",
+                        )
+                    })?;
+                    if let Ok(data) = frame.into_data() {
+                        if data.len() > 16384_usize.saturating_sub(bytes.len()) {
+                            return Err(Error::new(
+                                "runtimeUnavailable",
+                                "Native service response exceeds the management limit.",
+                            ));
+                        }
+                        bytes.extend_from_slice(&data);
+                    }
+                }
+                serde_json::from_slice(&bytes).map_err(|_| {
+                    Error::new(
+                        "runtimeUnavailable",
+                        "Native service returned invalid management JSON.",
+                    )
+                })
+            })
+            .await
+            .map_err(|_| {
+                Error::new(
+                    "runtimeUnavailable",
+                    "Native service management request timed out.",
+                )
+            })?
+        })
+    }
+}
+impl RuntimeClient for HttpRuntime {
+    fn available(&mut self, install_id: &str, expected_generation: &str) -> Result<bool, Error> {
+        let value = match self.request("GET", "/_control/context", String::new()) {
+            Ok(v) => v,
+            Err(e) if e.reason == "notRunning" => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        if value.get("installId").and_then(Value::as_str) != Some(install_id)
+            || value.get("generation").and_then(Value::as_str) != Some(expected_generation)
+        {
+            return Err(Error::new(
+                "runtimeMismatch",
+                "The running service belongs to another installation or generation.",
+            ));
+        }
+        Ok(true)
+    }
+    fn restart(&mut self, input: &RestartRequest) -> Result<RestartReply, Error> {
+        let value = self.request(
+            "POST",
+            "/_control/restart",
+            serde_json::to_string(input).map_err(|e| Error::new("restartFailed", e.to_string()))?,
+        )?;
+        serde_json::from_value(value).map_err(|_| {
+            Error::new(
+                "restartUnconfirmed",
+                "The native service did not confirm a restart.",
+            )
+        })
+    }
+}

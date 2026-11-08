@@ -1674,6 +1674,21 @@ impl RuntimeResources for BackgroundResources {
     }
 }
 
+// Native execution worlds publish this same project owner through the
+// standard family resource slot. The existing disposal body remains the one
+// owner of detached children; no second cleanup implementation is installed.
+pub struct BackgroundExecutionWorld {
+    pub resources: BackgroundResources,
+}
+impl crate::runtime::project::FamilyResource for BackgroundExecutionWorld {
+    fn dispose(&self) -> DisposeFuture<'_> {
+        RuntimeResources::dispose(&self.resources)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// A rejection from the SDK projections, as `{ name, code?, message,
 /// requires_host }`.
 ///
@@ -1851,10 +1866,24 @@ pub fn background_tasks_for_sdk(
 
 fn project_resources(
     runtime: &ProjectRuntime,
-) -> Result<&BackgroundResources, BackgroundProjectionError> {
+) -> Result<BackgroundResources, BackgroundProjectionError> {
+    if let Some(resources) = runtime.resources().get::<BackgroundResources>() {
+        return Ok(resources.clone());
+    }
     runtime
         .resources()
-        .get::<BackgroundResources>()
+        .get::<crate::runtime::project::ProjectResources>()
+        .and_then(|resources| {
+            resources
+                .context()
+                .resource(crate::runtime::project::Resource::ExecutionWorld)
+        })
+        .and_then(|resource| {
+            resource
+                .as_any()
+                .downcast_ref::<BackgroundExecutionWorld>()
+                .map(|world| world.resources.clone())
+        })
         .ok_or_else(|| BackgroundProjectionError {
             name: "Error".into(),
             code: None,
@@ -1871,7 +1900,7 @@ pub async fn stop_background_task_in_registry(
     task_id: &JsString,
 ) -> Result<JsObject, BackgroundProjectionError> {
     let runtime = registry.resolve(project_key)?;
-    stop_background_task_for_sdk(project_resources(&runtime)?, session_key, task_id).await
+    stop_background_task_for_sdk(&project_resources(&runtime)?, session_key, task_id).await
 }
 
 /// `ProjectRuntimeRegistry.backgroundTasksForSdk`: resolve, then project.
@@ -1883,7 +1912,7 @@ pub fn background_tasks_in_registry(
 ) -> Result<JsObject, BackgroundProjectionError> {
     let runtime = registry.resolve(project_key)?;
     Ok(background_tasks_for_sdk(
-        project_resources(&runtime)?,
+        &project_resources(&runtime)?,
         session_key,
         task_id,
     ))

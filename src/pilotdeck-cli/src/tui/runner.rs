@@ -254,7 +254,26 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
         return Err("pilotdeck tui requires an interactive output terminal.".into());
     }
     let client = Client::connect(url, token).await.map_err(error_text)?;
-    let settings = permission_settings::read(home).map_err(|e| e.to_string())?;
+    run_with_client(client, url, home, cwd).await
+}
+
+pub async fn run_with_client(
+    client: Client,
+    url: &str,
+    home: &Path,
+    cwd: &Path,
+) -> Result<u8, String> {
+    if !io::stdout().is_terminal() {
+        let _ = client.close().await;
+        return Err("pilotdeck tui requires an interactive output terminal.".into());
+    }
+    let settings = match permission_settings::read(home) {
+        Ok(settings) => settings,
+        Err(error) => {
+            let _ = client.close().await;
+            return Err(error.to_string());
+        }
+    };
     let mut state = State::default();
     if settings.skip_permissions {
         state.mode = "bypassPermissions".into();

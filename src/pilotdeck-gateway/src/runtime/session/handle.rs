@@ -47,6 +47,16 @@ pub trait LiveSession: Send + Sync {
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         Err(RuntimeError::new("Agent session submit is unavailable."))
     }
+    /// Gateway-only, typed authority. Legacy/session embedders continue using
+    /// submit; adapters that own interactive ports override this forwarding.
+    fn submit_with_authority(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        _authority: crate::runtime::turn::interaction::TurnInteractionAuthority,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit(input, options)
+    }
     /// #1457 `seedAgentReadState` against the live agent file state. `Ok(false)`
     /// is the stale-mtime outcome, not a failure; adapters without a mutable
     /// file state keep the explicit capability error.
@@ -330,6 +340,23 @@ impl LiveSessionHandle {
     ) -> Result<SessionSubmission, RuntimeError> {
         let activity = self.begin_activity()?;
         let stream = self.0.session.submit(input, options)?;
+        Ok(SessionSubmission {
+            stream,
+            _activity: Some(activity),
+        })
+    }
+
+    pub fn submit_with_authority(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: crate::runtime::turn::interaction::TurnInteractionAuthority,
+    ) -> Result<SessionSubmission, RuntimeError> {
+        let activity = self.begin_activity()?;
+        let stream = self
+            .0
+            .session
+            .submit_with_authority(input, options, authority)?;
         Ok(SessionSubmission {
             stream,
             _activity: Some(activity),

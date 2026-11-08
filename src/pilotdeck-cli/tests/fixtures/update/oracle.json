@@ -1,0 +1,804 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "anchors": {
+    "src/runtime/updateCommand.ts": "128c71844bac16a5c190b6117fff8683f661ae00ee493f664052b86df625a39f",
+    "ui/server/services/webUpdateCommand.js": "0878486726a7db6539fada973e0d55a1ea10e338643cabdcc80e89781576a4d0",
+    "ui/server/services/webUpdateService.js": "47f6cc236c893c1d1d9f323eaac786edaedcf97967b4ccdd41e3cd5a3b8841e0",
+    "ui/server/services/releaseService.js": "0ce4a7428428787af7a48195da2ab71a3428739791e864abd68691d8ae481c47",
+    "ui/server/services/updateRuntime.js": "9be908fad0e162c3ab231d71798572be1fefc75fb1a7dc00f4d26825641c860d",
+    "scripts/update-web.mjs": "801cb8c85271546a7352008591d2008f8d37cd681c56cad77852c402fca31d8e"
+  },
+  "normalization": [
+    "Only request updateId UUID is replaced during collection; output/error bytes unchanged."
+  ],
+  "blocked": [],
+  "rows": [
+    {
+      "name": "check",
+      "options": {
+        "checkOnly": true
+      },
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "check-restart-offline",
+      "options": {
+        "checkOnly": true,
+        "restart": true,
+        "noRestart": true
+      },
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "up-to-date",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "upToDate"
+        },
+        "restart": true
+      },
+      "code": 2,
+      "stdout": "Already at the latest Release.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "apply-manual",
+      "options": {
+        "noRestart": true
+      },
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nPrepared test build.\nUpdate prepared. Restart PilotDeck manually to load the new version.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        "check",
+        [
+          "apply",
+          {
+            "tagName": "v2026.09.07",
+            "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "restart-unavailable",
+      "options": {
+        "restart": true,
+        "noRestart": true
+      },
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\n",
+      "stderr": "No running Web service was found. Run update without --restart, then start PilotDeck manually.\n",
+      "error": {
+        "message": "No running Web service was found. Run update without --restart, then start PilotDeck manually.",
+        "reason": "restartUnavailable"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "apply-restart",
+      "options": {
+        "restart": true
+      },
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nPrepared test build.\nUpdate prepared; the running Web service accepted the restart request.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        "check",
+        [
+          "apply",
+          {
+            "tagName": "v2026.09.07",
+            "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "restart"
+      ]
+    },
+    {
+      "name": "apply-failure",
+      "options": {
+        "restart": true,
+        "applyError": {
+          "reason": "processStopFailed",
+          "message": "stop failed"
+        }
+      },
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\n",
+      "stderr": "stop failed\n",
+      "error": {
+        "message": "stop failed",
+        "reason": "processStopFailed"
+      },
+      "calls": [
+        "check",
+        [
+          "apply",
+          {
+            "tagName": "v2026.09.07",
+            "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      ]
+    },
+    {
+      "name": "restart-failure",
+      "options": {
+        "restart": true,
+        "restartError": "unreachable"
+      },
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nPrepared test build.\n",
+      "stderr": "Update prepared, but restart was not confirmed: unreachable Restart manually; do not repeat the update.\n",
+      "error": {
+        "message": "Update prepared, but restart was not confirmed: unreachable Restart manually; do not repeat the update.",
+        "reason": "restartFailed"
+      },
+      "calls": [
+        "check",
+        [
+          "apply",
+          {
+            "tagName": "v2026.09.07",
+            "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "restart"
+      ]
+    },
+    {
+      "name": "refused-development",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "development"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "development: Developer branches/worktrees and development runtimes do not support self-update.\n",
+      "error": {
+        "message": "development: Developer branches/worktrees and development runtimes do not support self-update.",
+        "reason": "development"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-localChanges",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "localChanges"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "localChanges: Local changes are present. Update this workspace manually.\n",
+      "error": {
+        "message": "localChanges: Local changes are present. Update this workspace manually.",
+        "reason": "localChanges"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-container",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "container"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "container: Container deployments must update their image manually.\n",
+      "error": {
+        "message": "container: Container deployments must update their image manually.",
+        "reason": "container"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-desktop",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "desktop"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "desktop: Use the desktop application settings to update this installation.\n",
+      "error": {
+        "message": "desktop: Use the desktop application settings to update this installation.",
+        "reason": "desktop"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-notGit",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "notGit"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "notGit: Self-update requires a standard Git deployment.\n",
+      "error": {
+        "message": "notGit: Self-update requires a standard Git deployment.",
+        "reason": "notGit"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-unofficial",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "unofficial"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "unofficial: This checkout does not use the official repository.\n",
+      "error": {
+        "message": "unofficial: This checkout does not use the official repository.",
+        "reason": "unofficial"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-shallow",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "shallow"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "shallow: Shallow Git checkouts do not support self-update.\n",
+      "error": {
+        "message": "shallow: Shallow Git checkouts do not support self-update.",
+        "reason": "shallow"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-unknownVersion",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "unknownVersion"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "unknownVersion: The current build version cannot be identified.\n",
+      "error": {
+        "message": "unknownVersion: The current build version cannot be identified.",
+        "reason": "unknownVersion"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-runtimeMismatch",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "runtimeMismatch"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "runtimeMismatch: The running version does not match the checkout/build. Restart it before checking again.\n",
+      "error": {
+        "message": "runtimeMismatch: The running version does not match the checkout/build. Restart it before checking again.",
+        "reason": "runtimeMismatch"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-ahead",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "ahead"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "ahead: This deployment is ahead of the latest Release. Automatic downgrades are disabled.\n",
+      "error": {
+        "message": "ahead: This deployment is ahead of the latest Release. Automatic downgrades are disabled.",
+        "reason": "ahead"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-diverged",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "diverged"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "diverged: This deployment has diverged from the Release. Update it manually.\n",
+      "error": {
+        "message": "diverged: This deployment has diverged from the Release. Update it manually.",
+        "reason": "diverged"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-lockBusy",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "lockBusy"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "lockBusy: Another update or an unconfirmed cleanup holds the update lock.\n",
+      "error": {
+        "message": "lockBusy: Another update or an unconfirmed cleanup holds the update lock.",
+        "reason": "lockBusy"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-restartRequired",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "restartRequired"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "restartRequired: An update is already prepared. Restart the service first.\n",
+      "error": {
+        "message": "restartRequired: An update is already prepared. Restart the service first.",
+        "reason": "restartRequired"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "refused-unknown-reason",
+      "options": {
+        "status": {
+          "canUpdate": false,
+          "reason": "unknown-reason"
+        },
+        "restart": true
+      },
+      "code": 1,
+      "stdout": "",
+      "stderr": "unknown-reason: The Release update is unavailable. See settings or update manually.\n",
+      "error": {
+        "message": "unknown-reason: The Release update is unavailable. See settings or update manually.",
+        "reason": "unknown-reason"
+      },
+      "calls": [
+        "check"
+      ]
+    },
+    {
+      "name": "http-stream-complete",
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nUpdate prepared; the running Web service accepted the restart request.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "check",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        },
+        {
+          "route": "apply",
+          "method": "POST",
+          "body": {
+            "target": {
+              "tagName": "v2026.09.07",
+              "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updateId": "<UPDATE_ID>"
+          },
+          "redirect": "error"
+        },
+        {
+          "route": "restart",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-recover-success",
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nUpdate connection interrupted; recovering the server task status...\nUpdate prepared; the running Web service accepted the restart request.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "check",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        },
+        {
+          "route": "apply",
+          "method": "POST",
+          "body": {
+            "target": {
+              "tagName": "v2026.09.07",
+              "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updateId": "<UPDATE_ID>"
+          },
+          "redirect": "error"
+        },
+        {
+          "route": "status",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "restart",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-recover-other",
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nUpdate connection interrupted; recovering the server task status...\n",
+      "stderr": "Update outcome is unconfirmed. Check settings before retrying or restarting.\n",
+      "error": {
+        "message": "Update outcome is unconfirmed. Check settings before retrying or restarting.",
+        "reason": "updateUnconfirmed"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "check",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        },
+        {
+          "route": "apply",
+          "method": "POST",
+          "body": {
+            "target": {
+              "tagName": "v2026.09.07",
+              "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updateId": "<UPDATE_ID>"
+          },
+          "redirect": "error"
+        },
+        {
+          "route": "status",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-recover-failed",
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nUpdate connection interrupted; recovering the server task status...\n",
+      "stderr": "The server reported that the update failed.\n",
+      "error": {
+        "message": "The server reported that the update failed.",
+        "reason": "buildFailed"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "check",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        },
+        {
+          "route": "apply",
+          "method": "POST",
+          "body": {
+            "target": {
+              "tagName": "v2026.09.07",
+              "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updateId": "<UPDATE_ID>"
+          },
+          "redirect": "error"
+        },
+        {
+          "route": "status",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-restart-rejected",
+      "code": 1,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\n",
+      "stderr": "Update prepared, but restart was not confirmed: The runtime did not accept the restart request. Restart manually. Restart manually; do not repeat the update.\n",
+      "error": {
+        "message": "Update prepared, but restart was not confirmed: The runtime did not accept the restart request. Restart manually. Restart manually; do not repeat the update.",
+        "reason": "restartFailed"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "check",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        },
+        {
+          "route": "apply",
+          "method": "POST",
+          "body": {
+            "target": {
+              "tagName": "v2026.09.07",
+              "sourceSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "updateId": "<UPDATE_ID>"
+          },
+          "redirect": "error"
+        },
+        {
+          "route": "restart",
+          "method": "POST",
+          "body": {},
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-wrong-context",
+      "code": 1,
+      "stdout": "",
+      "stderr": "SERVER_PORT points to another installation. Use the matching Web service.\n",
+      "error": {
+        "message": "SERVER_PORT points to another installation. Use the matching Web service.",
+        "reason": "differentInstallation"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-health-500",
+      "code": 1,
+      "stdout": "",
+      "stderr": "The configured Web port is not healthy. Check SERVER_PORT.\n",
+      "error": {
+        "message": "The configured Web port is not healthy. Check SERVER_PORT.",
+        "reason": "runtimeUnavailable"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-health-timeout",
+      "code": 1,
+      "stdout": "",
+      "stderr": "timed out\n",
+      "error": {
+        "message": "timed out",
+        "reason": null
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-auth-failed",
+      "code": 1,
+      "stdout": "",
+      "stderr": "Web update request failed (401). Use settings or check SERVER_PORT.\n",
+      "error": {
+        "message": "Web update request failed (401). Use settings or check SERVER_PORT.",
+        "reason": "runtimeUnavailable"
+      },
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        },
+        {
+          "route": "context",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-refused-offline",
+      "code": 0,
+      "stdout": "Release available: v2026.09.07 (aaaaaaaa)\nPrepared test build.\nUpdate prepared. Restart PilotDeck manually to load the new version.\n",
+      "stderr": "",
+      "error": null,
+      "calls": [
+        {
+          "route": "health",
+          "method": "GET",
+          "body": null,
+          "redirect": "error"
+        }
+      ]
+    },
+    {
+      "name": "http-invalid-port",
+      "code": 1,
+      "stdout": "",
+      "stderr": "SERVER_PORT must identify the local Web service.\n",
+      "error": {
+        "message": "SERVER_PORT must identify the local Web service.",
+        "reason": "invalidPort"
+      },
+      "calls": []
+    }
+  ]
+}

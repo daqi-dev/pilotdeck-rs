@@ -1,0 +1,185 @@
+use super::*;
+use crate::host::modules::capability::{ToolContext, ToolExecution};
+use crate::runtime::project::interaction_permission::TurnPermission;
+
+struct Harness {
+    execution: Arc<dyn ToolExecution>,
+    context: Arc<dyn ToolContext>,
+    permission: TurnPermission,
+    signal: Cancellation,
+    root: PathBuf,
+    _scratch: Scratch,
+}
+impl Drop for Harness {
+    fn drop(&mut self) { self.signal.cancel(); self.permission.close(); }
+}
+fn harness(decision: &'static str, mode: &'static str) -> Harness {
+    harness_with_sandbox(decision, mode, None)
+}
+fn harness_with_sandbox(decision: &'static str, mode: &'static str, sandbox: Option<&str>) -> Harness {
+    harness_with_sdk(decision, mode, sandbox, None)
+}
+fn harness_with_sdk(decision: &'static str, mode: &'static str, sandbox: Option<&str>, sdk: Option<&str>) -> Harness {
+    let coordinator = Arc::new(GatewayInteractionCoordinator::default());
+    let answerer = coordinator.clone();
+    let mut config = JsObject::new();
+    if let Some(mode) = sandbox { config.insert("sandboxMode".into(), mode.into()); }
+    let (scratch, tools, recorder, identity) = make_tools(config, coordinator,
+        RuleSetHandle::empty());
+    let root = tools.options.project.clone();
+    let tools = tools.with_permission_mode_source(Arc::new(move || Some(mode.into())));
+    let signal = Cancellation::new();
+    let ports = tools.turn_with_authority(&identity, recorder, signal.clone(),
+        Some(TurnInteractionAuthority { sdk_permission_mode: sdk.map(Into::into), can_prompt: None, policy_can_prompt: None,
+            emit: Arc::new(move |event| answerer.decide_permission(&"session".into(),
+                crate::runtime::interaction::PermissionDecision {
+                    request_id: event.get("requestId").unwrap().as_string().unwrap().clone(),
+                    decision: decision.into(), remember: None, reason: None }, None)) }));
+    let resource = InteractionPermission::default();
+    let mut router = crate::host::modules::ModuleRouter::default();
+    let catalog: Arc<dyn ToolCatalog> = ports.tool_execution.clone();
+    let permission = resource.bind_turn(identity.session_id, identity.run_id,
+        ports.interaction.permission, catalog, &mut router).unwrap();
+    ports.tool_execution.bind_turn_permission(permission.clone()).unwrap();
+    Harness { execution: ports.tool_execution, context: ports.tool_context,
+        permission, signal, root, _scratch: scratch }
+}
+async fn invoke(h: &Harness, name: &str, id: &str, input: JsValue) -> JsObject {
+    let context = h.context.prepare(JsValue::Undefined).await.unwrap();
+    let mut results = h.execution.execute_all(vec![ToolCall { id: id.into(), name: name.into(), input }], context).await.unwrap();
+    assert_eq!(results.len(), 1);
+    results.remove(0)
+}
+async fn approved(h: &Harness, name: &str, id: &str, input: JsValue) -> JsObject {
+    let answer = h.permission.request(name.into(), id.into(), input.clone(), vec![], h.signal.clone()).await.unwrap();
+    assert_eq!(answer.get("behavior"), Some(&"allow".into()));
+    invoke(h, name, id, input).await
+}
+fn success(result: &JsObject) { assert_eq!(result.get("type"), Some(&"success".into()), "{result:?}"); }
+
+#[tokio::test]
+async fn native_catalog_has_workspace_write_and_foreground_shell_families() {
+    let h = harness("allow", "default");
+    let tools = h.execution.list().await.unwrap();
+    for name in ["read_file", "glob", "grep", "get_current_time", "lsp", "write_file", "edit_file", "edit_notebook", "bash"] {
+        assert!(tools.iter().any(|t| t.fields().get("name") == Some(&name.into())), "missing {name}");
+    }
+}
+
+#[tokio::test]
+async fn real_write_edit_notebook_and_saved_bash_script_use_once_permissions() {
+    let h = harness("allow", "default");
+    success(&approved(&h, "write_file", "create", crate::metadata::object([
+        ("file_path", "created.txt".into()), ("content", "first\n".into())])).await);
+    assert_eq!(std::fs::read_to_string(h.root.join("created.txt")).unwrap(), "first\n");
+    success(&invoke(&h, "read_file", "read-created", crate::metadata::object([("file_path", "created.txt".into())])).await);
+    success(&approved(&h, "edit_file", "edit", crate::metadata::object([
+        ("file_path", "created.txt".into()), ("old_string", "first".into()), ("new_string", "second".into())])).await);
+    assert_eq!(std::fs::read_to_string(h.root.join("created.txt")).unwrap(), "second\n");
+    let notebook = r#"{"cells":[{"cell_type":"code","id":"cell-one","source":["1 + 1\n"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#;
+    success(&approved(&h, "write_file", "notebook", crate::metadata::object([
+        ("file_path", "probe.ipynb".into()), ("content", notebook.into())])).await);
+    success(&invoke(&h, "read_file", "read-notebook", crate::metadata::object([("file_path", "probe.ipynb".into())])).await);
+    success(&approved(&h, "edit_notebook", "edit-cell", crate::metadata::object([
+        ("notebook_path", "probe.ipynb".into()), ("cell_id", "cell-one".into()), ("new_source", "2 + 2\n".into())])).await);
+    assert!(std::fs::read_to_string(h.root.join("probe.ipynb")).unwrap().contains("2 + 2"));
+    success(&approved(&h, "write_file", "script", crate::metadata::object([
+        ("file_path", "run.sh".into()), ("content", "printf BASH-OK > bash.txt\ncat bash.txt\n".into())])).await);
+    let result = approved(&h, "bash", "shell", crate::metadata::object([
+        ("command", "bash run.sh".into()), ("timeout", JsValue::Number(5000.0))])).await;
+    success(&result);
+    assert!(format!("{result:?}").contains("BASH-OK"));
+    assert_eq!(std::fs::read_to_string(h.root.join("bash.txt")).unwrap(), "BASH-OK");
+    let replay = invoke(&h, "bash", "shell", crate::metadata::object([
+        ("command", "bash run.sh".into()), ("timeout", JsValue::Number(5000.0))])).await;
+    assert_ne!(replay.get("type"), Some(&"success".into()));
+}
+
+#[tokio::test]
+async fn deny_and_plan_leave_workspace_unchanged() {
+    let h = harness("deny", "default");
+    let input = crate::metadata::object([("file_path", "denied.txt".into()), ("content", "must not exist".into())]);
+    let answer = h.permission.request("write_file".into(), "deny".into(), input.clone(), vec![], h.signal.clone()).await.unwrap();
+    assert_eq!(answer.get("behavior"), Some(&"deny".into()));
+    let result = invoke(&h, "write_file", "deny", input).await;
+    assert_ne!(result.get("type"), Some(&"success".into()));
+    assert!(!h.root.join("denied.txt").exists());
+    let p = harness("allow", "plan");
+    let result = invoke(&p, "write_file", "plan-deny", crate::metadata::object([
+        ("file_path", "outside-plan.txt".into()), ("content", "must not exist".into())])).await;
+    assert_ne!(result.get("type"), Some(&"success".into()));
+    assert!(!p.root.join("outside-plan.txt").exists());
+}
+
+#[tokio::test]
+async fn native_bash_cancellation_drains_the_saved_script_and_its_child() {
+    let h = harness("allow", "default");
+    success(&approved(&h, "write_file", "pending-script", crate::metadata::object([
+        ("file_path", "pending.sh".into()), ("content", "printf STARTED > started.txt\nsleep 30\nprintf LATE > never.txt\n".into())])).await);
+    let input = crate::metadata::object([("command", "bash pending.sh".into()), ("timeout", JsValue::Number(5000.0))]);
+    let answer = h.permission.request("bash".into(), "cancel-shell".into(), input.clone(), vec![], h.signal.clone()).await.unwrap();
+    assert_eq!(answer.get("behavior"), Some(&"allow".into()));
+    let execution = h.execution.clone();
+    let context = h.context.prepare(JsValue::Undefined).await.unwrap();
+    let task = tokio::spawn(async move { execution.execute_all(vec![ToolCall {
+        id: "cancel-shell".into(), name: "bash".into(), input }], context).await });
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !h.root.join("started.txt").exists() {
+        assert!(tokio::time::Instant::now() < deadline, "shell never reached owned witness");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    h.signal.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(3), task).await.unwrap().unwrap().unwrap();
+    assert_ne!(result[0].get("type"), Some(&"success".into()));
+    assert!(!h.root.join("never.txt").exists());
+}
+
+#[tokio::test]
+async fn restricted_profiles_never_fall_back_to_unrestricted_native_effects() {
+    for mode in ["read-only", "workspace-write"] {
+        // bypass is deliberate: sandbox authority must remain stricter than
+        // permission approval and must be checked before native IO.
+        let h = harness_with_sandbox("allow", "bypassPermissions", Some(mode));
+        success(&invoke(&h, "read_file", "seed", crate::metadata::object([("file_path", "probe.txt".into())])).await);
+        let original = std::fs::read(h.root.join("probe.txt")).unwrap();
+        let notebook = r#"{"cells":[{"cell_type":"code","id":"one","source":["old\n"],"metadata":{},"outputs":[],"execution_count":null}],"metadata":{},"nbformat":4,"nbformat_minor":5}"#;
+        std::fs::write(h.root.join("guard.ipynb"), notebook).unwrap();
+        success(&invoke(&h, "read_file", "seed-notebook", crate::metadata::object([("file_path", "guard.ipynb".into())])).await);
+        let cases = [
+            ("bash", crate::metadata::object([("command", "printf BLOCKED > guard-bash.txt".into())])),
+            ("write_file", crate::metadata::object([("file_path", "guard-write.txt".into()), ("content", "BLOCKED".into())])),
+            ("edit_file", crate::metadata::object([("file_path", "probe.txt".into()), ("old_string", "PERMISSION-FIXTURE".into()), ("new_string", "BLOCKED".into())])),
+            ("edit_notebook", crate::metadata::object([("notebook_path", "guard.ipynb".into()), ("cell_id", "one".into()), ("new_source", "BLOCKED".into())])),
+        ];
+        for (name, input) in cases {
+            let result = invoke(&h, name, "restricted", input).await;
+            assert_ne!(result.get("type"), Some(&"success".into()), "{mode}: {name}");
+            assert!(format!("{result:?}").contains("Native execution-world sandbox is unavailable"), "{result:?}");
+        }
+        assert!(!h.root.join("guard-bash.txt").exists());
+        assert!(!h.root.join("guard-write.txt").exists());
+        assert_eq!(std::fs::read(h.root.join("probe.txt")).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(h.root.join("guard.ipynb")).unwrap(), notebook);
+    }
+}
+
+#[tokio::test]
+async fn sdk_permission_mode_controls_real_workspace_write() {
+    let allow = harness_with_sdk("deny", "default", None, Some("acceptEdits"));
+    let file = allow.root.join("sdk-allowed.txt").to_string_lossy().into_owned();
+    let input = crate::metadata::object([("file_path", file.as_str().into()), ("content", "allowed".into())]);
+    let answer = allow.permission.request("write_file".into(), "sdk-allow".into(), input.clone(), vec![], allow.signal.clone()).await.unwrap();
+    assert_eq!(answer.get("behavior"), Some(&"allow".into()));
+    success(&invoke(&allow, "write_file", "sdk-allow", input).await);
+    assert_eq!(std::fs::read_to_string(allow.root.join("sdk-allowed.txt")).unwrap(), "allowed");
+    let deny = harness_with_sdk("allow", "default", None, Some("dontAsk"));
+    let file = deny.root.join("sdk-denied.txt").to_string_lossy().into_owned();
+    let input = crate::metadata::object([("file_path", file.as_str().into()), ("content", "denied".into())]);
+    let answer = deny.permission.request("write_file".into(), "sdk-deny".into(), input.clone(), vec![], deny.signal.clone()).await.unwrap();
+    assert_eq!(answer.get("behavior"), Some(&"deny".into()));
+    assert_ne!(invoke(&deny, "write_file", "sdk-deny", input).await.get("type"), Some(&"success".into()));
+    assert!(!deny.root.join("sdk-denied.txt").exists());
+}
+
+#[path = "native_background_tools_tests.rs"]
+mod background_tool_tests;

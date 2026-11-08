@@ -43,6 +43,7 @@ pub struct ToolCall {
 
 /// Context construction is turn-bound; checkpoint/plan state is supplied by
 /// the later runtime adapter, never reconstructed from sidecar authority here.
+#[derive(Clone)]
 pub struct ToolInvocationContext {
     pub runtime: RuntimeContext,
     pub execution: RuntimeContext,
@@ -56,6 +57,14 @@ pub trait ToolContext: Send + Sync {
 
 /// Port implementations must return promptly and do I/O asynchronously.
 pub trait ToolExecution: ToolCatalog {
+    /// Host-only binding after the actual generation's permission resource is
+    /// installed. Remote descriptors cannot set or replace this authority.
+    fn bind_turn_permission(
+        &self,
+        _permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), crate::host::HostError> {
+        Ok(())
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -108,6 +117,15 @@ impl Handler {
     pub fn with_plan_todo(mut self, handler: Arc<dyn PlanTodoHandler>) -> Self {
         self.plan_todo = Some(handler);
         self
+    }
+    pub(crate) fn bind_turn_permission(
+        &self,
+        permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), crate::host::HostError> {
+        if let Some(ports) = &self.ports {
+            ports.execution.bind_turn_permission(permission)?;
+        }
+        Ok(())
     }
     /// Whether composition bound a tool execution port. TS types capability as
     /// a mandatory module, so an unbound port is a host assembly error; the

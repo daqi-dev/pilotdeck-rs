@@ -283,7 +283,7 @@ pub(super) fn flatten_message_budgeted(
                 timeline = JsValue::Undefined;
                 let suffix = format!("-thinking-{}-{}", ctx.message_index, output.len());
                 let mut o = base(ctx, &suffix, "assistant", "thinking");
-                o.insert("text".into(), required(block, "text")?.clone());
+                o.insert("text".into(), field(block, "text").clone());
                 let b = field(block, "blockId");
                 if truthy_string(b) {
                     o.insert("blockId".into(), b.clone());

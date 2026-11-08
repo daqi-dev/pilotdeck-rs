@@ -28,6 +28,9 @@ pub enum SchedulerMode {
 pub struct ToolRuntime {
     pub registry: ToolRegistry,
     permission: Arc<dyn PermissionDecision>,
+    turn_permission:
+        Arc<std::sync::OnceLock<crate::runtime::project::interaction_permission::TurnPermission>>,
+    native_sandbox: Option<JsString>,
     pub mode: SchedulerMode,
 }
 impl ToolRuntime {
@@ -39,9 +42,18 @@ impl ToolRuntime {
         Self {
             registry,
             permission,
+            turn_permission: Arc::default(),
             mode,
+            native_sandbox: None,
         }
     }
+    /// Explicit native fallback until an execution-world sandbox provider is
+    /// installed. Never silently execute a restricted profile unrestricted.
+    pub fn with_native_sandbox(mut self, mode: Option<JsString>) -> Self {
+        self.native_sandbox = mode;
+        self
+    }
+
     pub async fn execute_batch(
         &self,
         calls: Vec<ToolCall>,
@@ -212,6 +224,25 @@ impl ToolRuntime {
                 ),
             );
         };
+        if let Some(mode) = self
+            .native_sandbox
+            .as_ref()
+            .filter(|mode| mode.equals_str("read-only") || mode.equals_str("workspace-write"))
+            && (name.equals_str("bash")
+                || !matches!(tool.is_read_only(&call.input), Ok(JsValue::Bool(true))))
+        {
+            return fail(
+                &name,
+                ToolError::new(
+                    "unsupported_tool",
+                    format!(
+                        "Native execution-world sandbox is unavailable for sandboxMode '{}'; refusing unrestricted {} execution.",
+                        String::from_utf16_lossy(mode.units()),
+                        String::from_utf16_lossy(name.units())
+                    ),
+                ),
+            );
+        }
         let operation = async {
             let issues = validate_input(
                 &call.input,
@@ -258,15 +289,20 @@ impl ToolRuntime {
                 Ok(None) => {}
             }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
-            let decision = self
-                .permission
-                .decide(
-                    definition,
-                    call.input.clone(),
-                    Arc::new(context.clone()),
-                    call.id.clone(),
-                )
-                .await?;
+            let decision = if let Some(permission) = self.turn_permission.get() {
+                permission
+                    .decide_for_execution(definition, call.input.clone(), call.id.clone())
+                    .await?
+            } else {
+                self.permission
+                    .decide(
+                        definition,
+                        call.input.clone(),
+                        Arc::new(context.clone()),
+                        call.id.clone(),
+                    )
+                    .await?
+            };
             let kind = decision.get("type").and_then(JsValue::as_string);
             let message = decision
                 .get("message")
@@ -392,6 +428,15 @@ impl ToolCatalog for ToolRuntime {
     }
 }
 impl ToolExecution for ToolRuntime {
+    fn bind_turn_permission(
+        &self,
+        permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), HostError> {
+        permission.enable_native_execution()?;
+        self.turn_permission
+            .set(permission)
+            .map_err(|_| ModuleError::new("Tool execution is already bound to a turn.").into())
+    }
     fn execute_all(
         &self,
         calls: Vec<ToolCall>,

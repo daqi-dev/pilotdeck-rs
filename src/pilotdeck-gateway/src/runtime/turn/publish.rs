@@ -418,6 +418,25 @@ impl TurnPublisher {
         self.coordinator
             .emit(&self.publication.run.session_key, event)
     }
+    /// Host-only, weak per-turn delivery. It neither keeps an ended publisher
+    /// alive nor retargets an old callback to a new run's session sink.
+    pub fn permission_emitter(self: &Arc<Self>) -> Arc<dyn Fn(JsValue) -> bool + Send + Sync> {
+        let publisher = Arc::downgrade(self);
+        Arc::new(move |event| {
+            let Some(publisher) = publisher.upgrade() else {
+                return false;
+            };
+            let _pump = lock(&publisher.pump);
+            if lock(&publisher.publication.state).finishing {
+                return false;
+            }
+            publisher.coordinator.emit_registered(
+                &publisher.publication.run.session_key,
+                &event,
+                Some(&publisher._registration),
+            )
+        })
+    }
     /// Already-derived pump events, serialized with external emits and finish.
     pub fn gateway_event(&self, event: JsValue) -> bool {
         let _pump = lock(&self.pump);
@@ -565,3 +584,7 @@ fn persistence_failure(run: &JsString, preflight: bool) -> JsValue {
 #[cfg(test)]
 #[path = "publish_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "publish_permission_tests.rs"]
+mod permission_emitter_tests;

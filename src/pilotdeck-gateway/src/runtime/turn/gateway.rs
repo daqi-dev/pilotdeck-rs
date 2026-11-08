@@ -564,10 +564,22 @@ impl HostedConnection {
         text: String,
         input_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
+        self.enqueue_with_input_and_job_permit(text, input_permit, None)
+            .await
+    }
+    /// Retain transport byte and job permits until the real host job completes,
+    /// including if its external completion waiter is cancelled.
+    pub async fn enqueue_with_input_and_job_permit(
+        &self,
+        text: String,
+        input_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+        job_permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<Call<'static, Result<(), RequestError>>, RequestError> {
         // Field order also frees text before the lease on host-job cancellation.
         struct Input {
             text: String,
             permit: Option<tokio::sync::OwnedSemaphorePermit>,
+            _job_permit: Option<tokio::sync::OwnedSemaphorePermit>,
         }
         impl Drop for Input {
             fn drop(&mut self) {
@@ -579,6 +591,7 @@ impl HostedConnection {
         let mut input = Input {
             text,
             permit: input_permit,
+            _job_permit: job_permit,
         };
         if crate::mutants::on("ws-caps-admission-request-refund") {
             input.permit = None;
@@ -679,13 +692,10 @@ async fn dispose_initialization(
         .map(|services| services.interactions.clone());
     let (owner_bound, cleanup_bound) = initialization_teardown_bounds(teardown_deadline);
     if let Some(services) = services {
-        let shutdown_deadline = tokio::time::Instant::now() + owner_bound;
-        let _ =
-            tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
+        settle_initialization(async { services.submitter.owner.shutdown().await }, owner_bound).await;
     }
     if !skip_cleanup && let Some(cleanup) = cleanup {
-        let cleanup_deadline = tokio::time::Instant::now() + cleanup_bound;
-        let _ = tokio::time::timeout_at(cleanup_deadline, cleanup).await;
+        settle_initialization(cleanup, cleanup_bound).await;
     }
     if skip_teardown {
         return;
@@ -693,6 +703,17 @@ async fn dispose_initialization(
     coordinator.dispose();
     if let Some(interactions) = interactions {
         interactions.dispose(&"gateway_disposed".into());
+    }
+}
+
+// Failure reporting must preserve the original initialization error and run
+// the remaining disposals even if an embedding panics while being polled.
+async fn settle_initialization<T>(future: impl Future<Output = T>, budget: Duration) {
+    use futures_util::FutureExt;
+    let guarded = std::panic::AssertUnwindSafe(future).catch_unwind();
+    match tokio::time::Instant::now().checked_add(budget) {
+        Some(deadline) => { let _ = tokio::time::timeout_at(deadline, guarded).await; }
+        None => { let _ = guarded.await; }
     }
 }
 

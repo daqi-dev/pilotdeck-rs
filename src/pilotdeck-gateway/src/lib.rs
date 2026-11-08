@@ -1,6 +1,8 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
 mod api_web;
+#[cfg(unix)]
+pub mod atomic_file;
 // Unwired channel component; production assembly is a separate unit.
 pub mod channel;
 pub mod config;

@@ -824,3 +824,6 @@ async fn closing_permission_without_pending_queues_no_notice() {
     assert!(turn.take_discard_notices().is_empty());
     resource.dispose().await.unwrap();
 }
+
+#[path = "native_execution_tests.rs"]
+mod native_execution_tests;

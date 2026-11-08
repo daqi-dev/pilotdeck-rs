@@ -34,6 +34,7 @@ impl SdkRuntimeResolver for FixedResolver {
             project_root: self.root.clone(),
             snapshot: snapshot(),
             plugin_runtime: Arc::clone(&self.plugin_runtime),
+            lease: None,
         })
     }
 }
@@ -684,11 +685,10 @@ fn read_failure_message_uses_node_errno_text() {
 
 #[tokio::test]
 async fn abort_after_project_budget_write_keeps_ledger_and_retry_conflicts() {
-    struct FourthAbort(std::cell::Cell<usize>);
+    struct FourthAbort(std::sync::atomic::AtomicUsize);
     impl SdkAbortSignal for FourthAbort {
         fn throw_if_aborted(&self) -> Result<(), SdkSessionError> {
-            let calls = self.0.get() + 1;
-            self.0.set(calls);
+            let calls = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
             if calls >= 4 {
                 return Err(SdkSessionError::raw("Error", "aborted-fourth"));
             }
@@ -742,7 +742,7 @@ async fn abort_after_project_budget_write_keeps_ledger_and_retry_conflicts() {
             &"s".into(),
             &budget(5.0, Some(100.0)),
             None,
-            Some(&FourthAbort(std::cell::Cell::new(0))),
+            Some(&FourthAbort(std::sync::atomic::AtomicUsize::new(0))),
         )
         .await
         .unwrap_err();

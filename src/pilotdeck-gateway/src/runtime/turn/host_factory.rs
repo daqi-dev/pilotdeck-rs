@@ -196,7 +196,12 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
 }
 
-type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::hooks::Cancellation) -> SessionPorts
+type PortsFactory = dyn Fn(
+        &ExecutionIdentity,
+        Arc<Recorder>,
+        crate::runtime::hooks::Cancellation,
+        Option<super::interaction::TurnInteractionAuthority>,
+    ) -> SessionPorts
     + Send
     + Sync;
 
@@ -242,6 +247,30 @@ impl TurnHostFactory {
         + Sync
         + 'static,
     ) -> Self {
+        Self::new_with_authority(
+            registry,
+            deployment,
+            limits,
+            expected_module_id,
+            move |identity, recorder, signal, _authority| ports(identity, recorder, signal),
+        )
+    }
+
+    pub fn new_with_authority(
+        registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+        deployment: Deployment,
+        limits: Limits,
+        expected_module_id: Option<JsString>,
+        ports: impl Fn(
+            &ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+            Option<super::interaction::TurnInteractionAuthority>,
+        ) -> SessionPorts
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         Self {
             registry,
             deployment,
@@ -279,8 +308,8 @@ impl TurnHostFactory {
         history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
     ) -> LiveSessionAdapter {
         let ports = self.ports.clone();
-        self.ports = Arc::new(move |identity, recorder, signal| {
-            let mut ports = ports(identity, recorder.clone(), signal);
+        self.ports = Arc::new(move |identity, recorder, signal, authority| {
+            let mut ports = ports(identity, recorder.clone(), signal, authority);
             ports.recorder = Some(model_port::DurableRecorder {
                 recorder,
                 recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
@@ -291,14 +320,14 @@ impl TurnHostFactory {
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
         let factory = Arc::new(self);
-        let session = LiveSessionAdapter::with_interaction_signal(
+        let session = LiveSessionAdapter::with_interaction_authority(
             recorder,
             history,
-            move |identity, recorder, signal| {
+            move |identity, recorder, signal, authority| {
                 let factory = factory.clone();
                 Box::pin(async move {
                     factory
-                        .create_with_signal(&identity, recorder, signal)
+                        .create_with_authority(&identity, recorder, signal, authority)
                         .await
                 })
             },
@@ -339,6 +368,17 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
+        self.create_with_authority(identity, recorder, signal, None)
+            .await
+    }
+
+    pub async fn create_with_authority(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: crate::runtime::hooks::Cancellation,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+    ) -> Result<InteractionHost, HostError> {
         let (command, args, cwd, env) = match &self.deployment {
             Deployment::Stdio {
                 command,
@@ -363,7 +403,7 @@ impl TurnHostFactory {
             .registry
             .acquire(None)
             .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        let ports = (self.ports)(identity, recorder, signal);
+        let ports = (self.ports)(identity, recorder, signal, authority);
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.

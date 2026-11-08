@@ -4861,3 +4861,8 @@ setup现按TS独立env||join目录规则处理HOME未设，显式PILOT_HOME保�
 用户明确要求完成完整CLI并允许重计划，已同步最新main244bf5818且保全da297104b成果；按006计划和主仓 `_tmp/20261108-cli-completion/plan.md` 连续推进：Terra先接子代理历史，Sol并行准备update完整候选/实采，独立审计解LocalHost/权限与#1959实际接入，root统一整合和mbp2验证；产品只在canonical单写者串行落地，不新树、不动旧8e32、不向GitHub写。主关键路径仍是默认本地宿主/权限、旧server和update，不以parser或单片报告当全部完成；必要发行偏好已向人集中提问，其余工作继续。
 
 > 2026-11-08 15:20 CLI持续实施：已合并子代理历史和共享LocalHost候选并保存本机检查点；mbp2严格Gateway库clippy通过，history16测15过，thinking缺text投影与TS的undefined省略行为不符，正在修复，未标验收通过。LocalHost首轮测试编译的引用错误已修。并行候选还包括默认CLI/TUI内存连接、四件同代源码安装更新；权限每turn接线继续。冻结核验PASS（30项），原始证据主仓 `_tmp/20261108-cli-completion/verify-r{1,2}`；下一步修已知失败、串行整合候选并继续server/机器接口，全部仅本机提交、mbp2编译。
+
+
+### 2026-11-08 · CLI 完整实现继续（本机检查点，尚未收口）
+
+用户已确认源码安装、目标机编译，以及本轮完成CLI和机器能力、应用服务留前端阶段。已串行整合默认CLI/TUI本地宿主、旧server共享装配、四件同代源码update、原生settings/每轮model、交互权限与SDK模式、workspace和后台工具、schema/watch/connect；均只在唯一canonical改产品文件，候选原件留主仓 `_tmp/20261108-cli-completion/`。mbp2 r7更新9过1失败，Darwin僵尸进程组EPERM已用真实三组进程探针确认并修候选，另补整段stdout背压；r8模型helper可见性、r9新测试类型错误已修，r10正在组合编译测试，未冒称这些新片通过。新增按资源完成状态回收启动失败与panic清理回归；server实例发现、实际sandbox/后台持久化、Cron执行仍推进。checkpoint用于保全，未标完整CLI/A或真人实效完成；无本机Rust构建、无GitHub写入，旧8e32保留未动。

@@ -7,6 +7,7 @@ mod gateway_probe;
 mod gateway_setup;
 pub(crate) mod paths;
 pub(crate) mod sdk;
+mod server;
 pub(crate) mod skills;
 mod skills_migrate;
 #[cfg(test)]
@@ -156,7 +157,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
         Some("run" | "resume" | "sessions" | "settings" | "help" | "--help" | "-h") => {
             sdk::run_sdk_cli(argv, env, cwd)
         }
-        Some("server") => Err(Failure::Todo("pilotdeck server")),
+        Some("server") => server::run(&argv[1..], env, cwd),
         Some("gateway") => {
             if argv.get(1).map(String::as_str) == Some("setup") {
                 return gateway_setup::run(&argv[2..], env, cwd);
@@ -165,7 +166,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
             Ok(1)
         }
         Some("cron") => cron::run(&argv[1..], env, cwd),
-        Some("update") => Err(Failure::Todo("pilotdeck update")),
+        Some("update") => server::update(&argv[1..], env, cwd),
         Some("skills") => skills_migrate::run(&argv[1..], env, cwd),
         Some("chat") => chat_search::run(&argv[1..], env, cwd),
         Some("tui") => {
@@ -201,6 +202,28 @@ fn tui_stderr_nonblocking(message: &str) {
     }
 }
 
+fn local_host_options(
+    env: &Env,
+    cwd: &Path,
+) -> Result<pilotdeck_gateway::native_process::LocalHostOptions, Failure> {
+    let home = paths::resolve(cwd, &paths::pilot_home(env, cwd)?);
+    let sidecar = match env.string("PILOTDECK_RS_SIDECAR") {
+        Some(path) if !path.trim().is_empty() => paths::resolve(cwd, Path::new(&path)),
+        _ => std::env::current_exe()
+            .map_err(|e| Failure::Error(e.to_string()))?
+            .parent()
+            .ok_or_else(|| Failure::Error("CLI executable has no parent directory".into()))?
+            .join("pilotdeck-agent-loop-sidecar"),
+    };
+    Ok(pilotdeck_gateway::native_process::LocalHostOptions {
+        home,
+        project: cwd.to_path_buf(),
+        sidecar,
+        sidecar_args: Vec::new(),
+        drain_budget: std::time::Duration::from_secs(10),
+    })
+}
+
 fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let home = paths::resolve(cwd, &paths::pilot_home(env, cwd)?);
     #[cfg(unix)]
@@ -230,18 +253,28 @@ fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
         .build()
         .map_err(|e| Failure::Error(e.to_string()))?;
     runtime.block_on(async {
-        if !gateway_probe::healthy_at(&base).await {
-            return Err(Failure::Todo("TUI in-process Gateway"));
+        if gateway_probe::healthy_at(&base).await
+            && let Ok(token) = paths::gateway_token_path(env, cwd)
+                .and_then(|path| read_tui_token(&path).map_err(|e| Failure::Error(e.to_string())))
+        {
+            let token = String::from_utf8_lossy(&token);
+            let token = paths::js_trim(&token);
+            if !token.is_empty() {
+                let url = format!("ws://127.0.0.1:{}/ws", port as u16);
+                if let Ok(client) =
+                    pilotdeck_cli::tui::transport::Client::connect(&url, token).await
+                {
+                    return pilotdeck_cli::tui::runner::run_with_client(client, &url, &home, cwd)
+                        .await
+                        .map_err(Failure::Error);
+                }
+            }
         }
-        let token = read_tui_token(&paths::gateway_token_path(env, cwd)?)
-            .map_err(|_| Failure::Todo("TUI in-process Gateway"))?;
-        let token = String::from_utf8_lossy(&token);
-        let token = paths::js_trim(&token);
-        if token.is_empty() {
-            return Err(Failure::Todo("TUI in-process Gateway"));
-        }
-        let url = format!("ws://127.0.0.1:{}/ws", port as u16);
-        pilotdeck_cli::tui::runner::run(&url, token, &home, cwd)
+        let options = local_host_options(env, cwd)?;
+        let client = pilotdeck_cli::tui::transport::Client::local(options, env.strings())
+            .await
+            .map_err(|error| Failure::Error(format!("Local Gateway failed: {error:?}")))?;
+        pilotdeck_cli::tui::runner::run_with_client(client, "local", &home, cwd)
             .await
             .map_err(Failure::Error)
     })

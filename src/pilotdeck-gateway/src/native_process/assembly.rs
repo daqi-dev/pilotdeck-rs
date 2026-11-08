@@ -63,6 +63,7 @@ use std::{
 };
 
 mod cron;
+mod sdk_adapter;
 mod mcp;
 mod memory;
 pub(crate) mod snapshot;
@@ -461,6 +462,15 @@ async fn start_assembly(
     // (the prepare closure composing each session's agent config).
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
     let prepare_overrides = session_overrides.clone();
+    let sdk_projects = SdkSessionProjects::shared();
+    let sdk_options = crate::runtime::sdk_session::SdkSessionOptions::new(
+        options.project.clone(), options.project.clone(), env.clone(),
+        Arc::new(sdk_adapter::NativeSdkResolver { project: project.clone() }),
+    ).with_homedir(options.home.clone()).with_projects(sdk_projects.clone());
+    let sdk_port = Arc::new(sdk_adapter::NativeSdkPort {
+        registry: tokio::sync::Mutex::new(crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)),
+    });
+    let prepare_sdk = sdk_port.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -501,6 +511,7 @@ async fn start_assembly(
             let acquire_miss_report = prepare_acquire_miss_report.clone();
             let acquire_miss_reported = prepare_acquire_miss_reported.clone();
             let session_overrides = prepare_overrides.clone();
+            let sdk = prepare_sdk.clone();
             Box::pin(async move {
                 let lease = project.acquire(None)?;
                 let resources = lease
@@ -527,6 +538,15 @@ async fn start_assembly(
                         .ok_or_else(|| RuntimeError::new("Native LSP service has the wrong type."))?
                         .bind()?,
                 );
+                #[cfg(unix)]
+                let background_tasks = {
+                    let resource = staged.resource(Resource::ExecutionWorld)
+                        .ok_or_else(|| RuntimeError::new("Native execution world is missing."))?;
+                    resource.as_any()
+                        .downcast_ref::<crate::runtime::background::BackgroundExecutionWorld>()
+                        .ok_or_else(|| RuntimeError::new("Native execution world has the wrong type."))?
+                        .resources.tasks.clone()
+                };
                 let snapshot = staged.snapshot();
                 let agent = snapshot
                     .get("config")
@@ -534,6 +554,10 @@ async fn start_assembly(
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
                 let mut config = agent.as_object().cloned().unwrap_or_default();
+                if let Some(sdk) = sdk.prompt_config(&context.session_key).await {
+                    sdk_adapter::apply_prompt_config(&mut config, &sdk);
+                }
+
                 let selected = agent.get("model").cloned().unwrap_or(JsValue::Undefined);
                 for key in ["provider", "model"] {
                     config.insert(
@@ -603,6 +627,7 @@ async fn start_assembly(
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
+                let native_permission_rules = permission_lease.rules();
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
@@ -669,8 +694,11 @@ async fn start_assembly(
                             interactions,
                             lsp,
                         )?
-                        .with_permission_mode_source(permission_source.clone());
-                        Ok(TurnHostFactory::new_with_signal(
+                        .with_permission_mode_source(permission_source.clone())
+                        .with_permission_rules(native_permission_rules);
+                        #[cfg(unix)]
+                        let ports = ports.with_background_tasks(background_tasks);
+                        Ok(TurnHostFactory::new_with_authority(
                             project,
                             deployment,
                             crate::host::Limits {
@@ -678,8 +706,14 @@ async fn start_assembly(
                                 ..Default::default()
                             },
                             Some("pilotdeck-agent-loop".into()),
-                            move |identity, recorder, signal| {
-                                turn_ports(&ports, identity, recorder, signal)
+                            move |identity, recorder, signal, authority| match authority {
+                                Some(authority) => ports.turn_with_authority(
+                                    identity,
+                                    recorder,
+                                    signal,
+                                    Some(authority),
+                                ),
+                                None => turn_ports(&ports, identity, recorder, signal),
                             },
                         )
                         .with_agent_config(config)
@@ -799,14 +833,13 @@ async fn start_assembly(
     }
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
-    // #1746: exactly one teardown may run. The host polls this cleanup itself
-    // when initialization fails — `start_with_cleanup_budget` below hands it
-    // this embedding's `budget`, so the wait is never shorter than the timeout
-    // inside this closure — and the fallback below arms only when the host
-    // thread never started (runtime build or spawn failure), leaving the
-    // future dropped unpolled.
-    let cleanup_ran: Arc<std::sync::atomic::AtomicBool> = Arc::default();
-    let cleanup_fallback_ran = cleanup_ran.clone();
+    // Track completed resources, not merely entry into cleanup: cancellation
+    // before a later phase must not suppress that resource's failure fallback.
+    let factory_finished: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let project_finished: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let fallback_factory_finished = factory_finished.clone();
+    let fallback_project_finished = project_finished.clone();
+    let fallback_observer = cleanup_observer.clone();
     let build_factory = factory.clone();
     let build_project = project.clone();
     // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
@@ -930,6 +963,7 @@ async fn start_assembly(
             ));
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
+                sdk_config: Some(sdk_port.clone()),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             let services = Arc::new(super::services::Services {
@@ -946,6 +980,7 @@ async fn start_assembly(
                 &build_project,
                 &permission_rule_sets,
                 &build_mcp_config,
+                sdk_projects,
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
@@ -1078,9 +1113,6 @@ async fn start_assembly(
             })
         },
         async move {
-            if cleanup_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                return Ok(());
-            }
             // #1746: the host awaits this future on its own failure path before
             // reporting the error, so the deadline lives here; the shutdown
             // drain still bounds it by the embedding's shutdown budget.
@@ -1119,16 +1151,12 @@ async fn start_assembly(
                 )
                 .await;
                 let channel_flush = cleanup_channels.flush().await;
-                let sessions = cleanup_observer(
-                    "session",
-                    cleanup_factory.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
-                let project = cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
+                let sessions = cleanup_factory.dispose().await.map_err(|e| e.to_string());
+                factory_finished.store(true, std::sync::atomic::Ordering::Release);
+                let sessions = cleanup_observer("session", sessions).await;
+                let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                project_finished.store(true, std::sync::atomic::Ordering::Release);
+                let project = cleanup_observer("project", project).await;
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
@@ -1166,16 +1194,22 @@ async fn start_assembly(
             Ok(host)
         }
         Err(error) => {
-            // #1746: the host disposes the coordinator and polls the cleanup
-            // above before reporting a builder failure. This fallback owns the
-            // project/factory teardown only when the host thread never started
-            // — running it twice would dispose the same families twice.
-            if !cleanup_fallback_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            // The serial host has stopped polling its cleanup before reporting
+            // failure. Each unfinished resource gets its own bounded attempt;
+            // a stalled observer cannot repeat an already disposed resource.
+            if !fallback_factory_finished.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = tokio::time::timeout(budget, async {
-                    let _ = factory.dispose().await;
-                    project.dispose().await
-                })
-                .await;
+                    let result = factory.dispose().await.map_err(|e| e.to_string());
+                    fallback_factory_finished.store(true, std::sync::atomic::Ordering::Release);
+                    fallback_observer("session", result).await
+                }).await;
+            }
+            if !fallback_project_finished.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = tokio::time::timeout(budget, async {
+                    let result = project.dispose().await.map_err(|e| e.to_string());
+                    fallback_project_finished.store(true, std::sync::atomic::Ordering::Release);
+                    fallback_observer("project", result).await
+                }).await;
             }
             Err(error.into())
         }
@@ -1442,6 +1476,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_native_models()
             .with_context_memory()
             .with_tools_mcp()
+            .with_native_background_tasks()
             .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
                 pilot_home: options.home.clone(),

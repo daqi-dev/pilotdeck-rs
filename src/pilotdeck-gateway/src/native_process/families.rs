@@ -305,3 +305,10 @@ fn parse_title(response: &JsValue) -> Option<JsString> {
     title.truncate(80);
     (!title.is_empty()).then(|| JsString::from_utf16(title))
 }
+
+#[cfg(not(unix))]
+impl crate::runtime::project::Families {
+    pub(crate) fn with_native_background_tasks(self) -> Self {
+        self
+    }
+}

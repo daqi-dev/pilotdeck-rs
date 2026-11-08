@@ -1418,7 +1418,7 @@ impl SubmitHostServices for Services {
         }
         // The composition does not expose the SDK/model setter yet. Refuse
         // these before session admission instead of reporting a false selection.
-        for key in ["modelSelection", "modelOverride", "sdkConfig"] {
+        for key in ["sdkConfig"] {
             if input.get(key).is_some_and(|v| !v.is_undefined()) {
                 return Err(unavailable(
                     "Per-turn model/SDK overrides are not installed in this isolated process.",
@@ -1650,42 +1650,119 @@ impl SubmitHostServices for Services {
         &'a self,
         input: &'a JsValue,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+        let home = self.options.home.clone();
+        let project = self.options.project.clone();
+        let env = self.env.clone();
+        let input = input.clone();
         Box::pin(async move {
-            let metadata = crate::metadata::Metadata {
-                home: self.options.home.clone(),
-                cwd: std::path::PathBuf::new(),
-                files: crate::metadata::NativeFiles,
-            };
-            let params = object([
-                (
-                    "projectKey",
-                    JsValue::String(self.options.project.to_string_lossy().into_owned().into()),
-                ),
-                (
-                    "sessionKey",
-                    input
-                        .get("sessionKey")
-                        .cloned()
-                        .unwrap_or(JsValue::Undefined),
-                ),
-            ]);
-            let state =
-                crate::session_model::execute(&metadata, &params, &self.env).map_err(|e| {
+            static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+                std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+            let permit = SLOTS
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| failure(e.to_string()))?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let defined = |value: Option<&JsValue>| value.is_some_and(|v| !v.is_undefined());
+                let selected = input.get("modelSelection");
+                let override_model = input.get("modelOverride");
+                if defined(selected) && defined(override_model) {
+                    return Err(SubmitError::new(
+                        "INVALID_MODEL_OVERRIDE",
+                        "Specify modelSelection or modelOverride, not both.",
+                    ));
+                }
+                let requested = if defined(selected) {
+                    let value = selected.unwrap();
+                    if !matches!(value, JsValue::Object(_) | JsValue::Array(_)) {
+                        return Err(SubmitError::new(
+                            "INVALID_MODEL_OVERRIDE",
+                            "modelSelection must be an object.",
+                        ));
+                    }
+                    Some(value)
+                } else {
+                    override_model.filter(|v| match v {
+                        JsValue::Null | JsValue::Undefined => false,
+                        JsValue::Bool(b) => *b,
+                        JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
+                        JsValue::String(s) => !s.is_empty(),
+                        _ => true,
+                    })
+                };
+                let error = |e: crate::runtime::connection::RequestError| {
                     SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
-                })?;
-            let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
-            if saved.get("mode") == Some(&"model".into()) {
-                Ok(object([("source", "session".into()), ("selection", saved)]))
-            } else {
-                Ok(object([(
-                    "source",
-                    state
-                        .get("effective")
-                        .and_then(|v| v.get("source"))
-                        .cloned()
-                        .unwrap_or("default".into()),
-                )]))
-            }
+                };
+                let validate = |selection: &JsValue| -> Result<(), SubmitError> {
+                    super::methods::validate_selection_shape(selection).map_err(error)?;
+                    // The served project's snapshot, rather than the process
+                    // working directory or an independent model registry.
+                    let config = crate::config::load_project_bounded(
+                        &home,
+                        &project,
+                        &env,
+                        Some(project.to_string_lossy().as_ref()),
+                    )
+                    .map_err(|e| {
+                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                    })?;
+                    let catalog = crate::model_catalog::execute_loaded(config, &object([]), &env)
+                        .map_err(|e| {
+                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                    })?;
+                    super::methods::validate_selection_catalog(selection, &catalog).map_err(error)
+                };
+                if let Some(requested) = requested {
+                    validate(requested)?;
+                    let normalized = super::methods::normalize_selection(requested);
+                    if normalized.get("mode") == Some(&JsValue::from("auto")) {
+                        return Ok(object([("source", "router".into())]));
+                    }
+                    return Ok(object([
+                        ("source", "turn".into()),
+                        ("selection", normalized),
+                    ]));
+                }
+                let metadata = crate::metadata::Metadata {
+                    home: home.clone(),
+                    cwd: project.clone(),
+                    files: crate::metadata::NativeFiles,
+                };
+                let params = object([
+                    (
+                        "projectKey",
+                        JsValue::from(project.to_string_lossy().as_ref()),
+                    ),
+                    (
+                        "sessionKey",
+                        input
+                            .get("sessionKey")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ]);
+                let state =
+                    crate::session_model::execute(&metadata, &params, &env).map_err(|e| {
+                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                    })?;
+                let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
+                if saved.get("mode") == Some(&JsValue::from("model")) {
+                    validate(&saved)?;
+                    Ok(object([("source", "session".into()), ("selection", saved)]))
+                } else {
+                    Ok(object([(
+                        "source",
+                        state
+                            .get("effective")
+                            .and_then(|v| v.get("source"))
+                            .cloned()
+                            .unwrap_or("default".into()),
+                    )]))
+                }
+            })
+            .await
+            .map_err(|e| failure(e.to_string()))?
         })
     }
     fn record_failure<'a>(
@@ -1804,7 +1881,14 @@ pub struct NativeSettings {
 /// `bind_server` a recording server themselves AND assert both
 /// `has_notification_server()` and the difference from the production
 /// assembly.
+#[cfg(test)]
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
+    native_settings_with_writer(options, None)
+}
+fn native_settings_with_writer(
+    options: NativeSettingsOptions,
+    writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>>,
+) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
         router,
@@ -1830,7 +1914,11 @@ pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
     let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
         owner,
         apply_flag_settings: None,
-        update_settings: None,
+        update_settings: writer.map(|writer| crate::runtime::settings::UpdateSettings {
+            organization_denied: false,
+            writer,
+            store: store.clone(),
+        }),
         resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
@@ -1873,7 +1961,7 @@ pub fn native_settings_for_process(
     // `Some(home)` keeps direct callers (tests and future non-CLI
     // assemblies) anchored exactly like the CLI path.
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
-    let mut store_options = StoreOptions::new(pilot_home, served_project, env.clone());
+    let mut store_options = StoreOptions::new(pilot_home.clone(), served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
     let store = ConfigStore::new(store_options).map_err(|error| {
         std::io::Error::new(
@@ -1885,14 +1973,27 @@ pub fn native_settings_for_process(
             ),
         )
     })?;
-    Ok(native_settings(NativeSettingsOptions {
-        owner: owner.clone(),
-        router: Arc::new(owner),
-        registry: Arc::new(RegistryRefresh::new(project)),
-        store,
-        project_root: JsString::from(served_project.to_string_lossy().into_owned()),
-        log: Arc::new(ConsoleLog),
-    }))
+    #[cfg(unix)]
+    let writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>> = Some(Arc::new(
+        crate::runtime::settings::NativeLocalSettingsWriter {
+            home: pilot_home,
+            project: served_project.to_path_buf(),
+            env: env.clone(),
+        },
+    ));
+    #[cfg(not(unix))]
+    let writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>> = None;
+    Ok(native_settings_with_writer(
+        NativeSettingsOptions {
+            owner: owner.clone(),
+            router: Arc::new(owner),
+            registry: Arc::new(RegistryRefresh::new(project)),
+            store,
+            project_root: JsString::from(served_project.to_string_lossy().into_owned()),
+            log: Arc::new(ConsoleLog),
+        },
+        writer,
+    ))
 }
 
 /// fix-r4 window-injection seam (tests only): the open-first sequence in

@@ -11,6 +11,7 @@
 //! is replicated here rather than registered.
 use crate::{Body, ProxyError, http_proxy};
 use bytes::Bytes;
+pub(crate) mod control;
 use http_body_util::{BodyExt, Full};
 use std::{
     io,
@@ -106,6 +107,7 @@ pub(crate) struct Config {
     /// route reads the whole request body before dispatching, exactly
     /// `readBody(request)` + `await options.feishuWebhook(...)`.
     pub webhook: Option<WebhookResolver>,
+    pub control: Option<control::ControlHandler>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
@@ -127,6 +129,17 @@ pub(crate) async fn serve_with_body(
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
+    if config.control.is_some()
+        && matches!(
+            request_path(&request).as_str(),
+            "/_control/context" | "/_control/restart"
+        )
+    {
+        if let Some(rejection) = node_parser_admission(&request)? {
+            return finish(version, rejection);
+        }
+        return control::serve(request, config).await;
+    }
     let wants_body = config.webhook.is_some() && request_path(&request) == FEISHU_WEBHOOK_PATH;
     if !wants_body {
         return serve(&request, config).await;
