@@ -77,8 +77,8 @@ mod tests {
         assert_eq!(api.observer_definition(&spec,"research").unwrap_err().message,"Observer definition watcher requires a host observer-subagent launcher.".into());
         assert!(lock(&api.turn.registry.scopes).is_empty());
     }
-    #[test]
-    fn observer_scope_consumes_host_identity_and_keeps_empty_tools_plan_memory_disabled() {
+    #[tokio::test]
+    async fn observer_scope_consumes_host_identity_and_keeps_empty_tools_plan_memory_disabled() {
         let api=make_api(object([("cwd","/fixture-observer".into()),("permissionMode","bypassPermissions".into())]).as_object().unwrap().clone());
         let resources=ProjectRuntimeRegistry::new("/fixture-observer",Arc::new(|_:&std::path::Path,_:&mut ResourceBundle|Ok(())));
         api.turn.bind_generation(Arc::new(resources.acquire(None).unwrap())).unwrap();
@@ -96,5 +96,9 @@ mod tests {
         let normal=object([("allowedTools",JsValue::Array(vec![]))]).as_object().unwrap().clone();
         let (normal,_,_)=api.compose_child("research",&normal,&"default".into(),false,0.0,4.0,&"normal-session".into(),&"normal-id".into(),None,false).unwrap();
         assert!(normal.config.get("nativeObserver").is_none());
+        drop(scope);
+        drop(normal);
+        drop(api);
+        resources.dispose().await.unwrap();
     }
 }

@@ -57,7 +57,7 @@ use crate::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
     time::{Duration, SystemTime},
 };
@@ -1874,19 +1874,30 @@ pub(super) fn turn_ports(
     ports.turn(identity, recorder, signal)
 }
 
+// LocalGatewayBootConfig resolves explicit env first, then install-adjacent
+// skills, and finally <project>/skills. All consumers use the same result.
 pub(super) fn explicit_builtin_skills_root(options: &Options, env: &Env) -> Option<PathBuf> {
-    let configured = env
-        .get("PILOTDECK_BUNDLED_SKILLS_DIR")
-        .filter(|value| !value.is_empty())?;
-    let resolved = crate::runtime::tools::builtin::join(
-        &options.project.to_string_lossy().into_owned().into(),
-        &configured.as_str().into(),
-    );
-    Some(PathBuf::from(
-        resolved
-            .to_utf8()
-            .expect("captured filesystem paths are UTF-8"),
-    ))
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    builtin_skills_root_at(&options.project, env, exe_dir.as_deref())
+}
+
+pub(super) fn builtin_skills_root_at(project: &Path, env: &Env, exe_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(configured) = env.get("PILOTDECK_BUNDLED_SKILLS_DIR").filter(|value| !value.is_empty()) {
+        return crate::metadata::resolve_process_path(project, Path::new(configured)).ok();
+    }
+    if let Some(exe_dir) = exe_dir {
+        for relative in ["../skills", "../../skills"] {
+            if let Ok(candidate) = crate::metadata::resolve_process_path(project, &exe_dir.join(relative))
+                && candidate.exists()
+            {
+                return Some(candidate);
+            }
+        }
+    }
+    crate::metadata::resolve_process_path(project, Path::new("skills")).ok()
 }
 
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
