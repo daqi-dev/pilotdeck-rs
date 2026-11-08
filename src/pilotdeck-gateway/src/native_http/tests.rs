@@ -2044,27 +2044,60 @@ async fn read_response(client: &mut tokio::io::DuplexStream, what: &str) -> Stri
     text
 }
 
+/// #1250: the probe/tail helpers' shared internal advance — both
+/// `probe_still_open` and `eof_after_idle_close` arm a 50 ms read, then
+/// advance virtual time by this step before awaiting it (tokio polls the
+/// inner read before the delay, so an EOF latched during the advance
+/// wins). The family's window arithmetic below and the same-instant
+/// cell's half-close instant are both written in terms of this step, so
+/// the (5.99, 6.09] s judgment window stays recomputable from named
+/// constants alone.
+const IDLE_CLOSE_HELPER_ADVANCE_MS: u64 = 60;
+
 /// #1250: the 6 s keep-alive idle-close family's shared probe and tail
-/// windows — probe 10 ms short of the 6.000 s deadline (+5.99 s), then a 40 ms
-/// tail after the probe, for a judgment window of (5.99, 6.09] s: a close
-/// earlier than that fails the still-open probe's EOF, one later fails the
-/// tail read's still-open. Every cell of the family must use these instead of
-/// per-cell literals — the #1292 lane's loose 200 ms tails and the pre-#1250
-/// 700 ms tails were exactly that drift, silently widening the window.
-const IDLE_CLOSE_PROBE_ADVANCE: Duration = Duration::from_millis(5_930);
+/// windows. The arithmetic, recomputable from the named constants: the
+/// probe instant is `IDLE_CLOSE_PROBE_ADVANCE` plus `probe_still_open`'s
+/// internal `IDLE_CLOSE_HELPER_ADVANCE_MS` (5_930 + 60 = 5_990 ms, 10 ms
+/// short of the 6.000 s deadline), and the late-close bound is
+/// `IDLE_CLOSE_TAIL_WINDOW` plus `eof_after_idle_close`'s internal
+/// `IDLE_CLOSE_HELPER_ADVANCE_MS` (40 + 60 = 100 ms past the probe
+/// instant, 6.090 s) — a judgment window of (5.99, 6.09] s: a close
+/// earlier than that fails the still-open probe's EOF, one later fails
+/// the tail read's still-open. Every cell of the family must use these,
+/// or constants derived from them, instead of per-cell literals — the
+/// #1292 lane's loose 200 ms tails and the pre-#1250 700 ms tails were
+/// exactly that drift, silently widening the window.
+const IDLE_CLOSE_PROBE_ADVANCE_MS: u64 = 5_930;
+const IDLE_CLOSE_PROBE_ADVANCE: Duration = Duration::from_millis(IDLE_CLOSE_PROBE_ADVANCE_MS);
 const IDLE_CLOSE_TAIL_WINDOW: Duration = Duration::from_millis(40);
 
+/// #1250: the same-instant cell's half-close instant — exactly the windowed
+/// cells' probe instant (`IDLE_CLOSE_PROBE_ADVANCE` plus the probe
+/// helper's `IDLE_CLOSE_HELPER_ADVANCE_MS`), derived rather than
+/// re-spelled so the cell cannot drift from them when either source
+/// constant changes (`Duration` addition is not const, so the sum is
+/// spelled in milliseconds).
+const IDLE_CLOSE_PROBE_INSTANT: Duration =
+    Duration::from_millis(IDLE_CLOSE_PROBE_ADVANCE_MS + IDLE_CLOSE_HELPER_ADVANCE_MS);
+
+/// #1250: the same-instant cell's single crossing advance — 20 ms, i.e.
+/// 10 ms past the 6.000 s deadline, so the armed idle timer and the peer
+/// EOF both become ready inside the one `advance`. Kept independent of
+/// the window constants on purpose: that cell pins the same-instant race
+/// (whichever `select!` arm the runtime polls first), not a probe window.
+const IDLE_CLOSE_RACE_STEP: Duration = Duration::from_millis(20);
+
 /// #1250: probe for data/EOF at the current virtual time. The 50 ms timeout
-/// window is armed before its own 60 ms advance, so a still-open read resolves
-/// `Elapsed`, while an EOF latched by a close during the advance wins — tokio
-/// polls the inner future before the delay.
+/// window is armed before its own `IDLE_CLOSE_HELPER_ADVANCE_MS` advance, so a
+/// still-open read resolves `Elapsed`, while an EOF latched by a close during
+/// the advance wins — tokio polls the inner future before the delay.
 async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
     let mut probe = [0u8; 1];
     let pending = timeout(Duration::from_millis(50), client.read(&mut probe));
-    tokio::time::advance(Duration::from_millis(60)).await;
+    tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
@@ -2078,9 +2111,10 @@ async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
 
 /// #1250: advance virtual time past the idle deadline and read the latched
 /// EOF (a half-closed duplex keeps reading 0, so no window is needed). The
-/// read is itself bounded by a 50 ms timeout and one more 60 ms advance: a
-/// connection still open past the expected deadline fails here with the
-/// cell's own message instead of hanging until the harness wall guard.
+/// read is itself bounded by a 50 ms timeout and one more
+/// `IDLE_CLOSE_HELPER_ADVANCE_MS` advance: a connection still open past the
+/// expected deadline fails here with the cell's own message instead of
+/// hanging until the harness wall guard.
 async fn eof_after_idle_close(client: &mut tokio::io::DuplexStream, elapsed: Duration, what: &str) {
     tokio::time::advance(elapsed).await;
     for _ in 0..8 {
@@ -2088,7 +2122,7 @@ async fn eof_after_idle_close(client: &mut tokio::io::DuplexStream, elapsed: Dur
     }
     let mut probe = [0u8; 1];
     let pending = timeout(Duration::from_millis(50), client.read(&mut probe));
-    tokio::time::advance(Duration::from_millis(60)).await;
+    tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
@@ -2736,11 +2770,12 @@ async fn client_close_ends_connection_without_timer() {
 }
 
 /// #1250 (matrix S5×E2×E5 same instant): the idle deadline expiring and the
-/// client going away becoming ready at the same virtual moment — 10 ms shy
-/// of the 6 s deadline the client half-closes, then one 20 ms advance makes
-/// the idle timer and the peer EOF ready together. Whichever select! arm the
-/// runtime polls first, the serve future resolves `Ok` and never hangs
-/// (aligned cell; no dedicated mutant: both arms converge on the same
+/// client going away becoming ready at the same virtual moment — at the
+/// family probe's instant (`IDLE_CLOSE_PROBE_INSTANT`, 10 ms shy of the 6 s
+/// deadline) the client half-closes, then one `IDLE_CLOSE_RACE_STEP` advance
+/// makes the idle timer and the peer EOF ready together. Whichever select!
+/// arm the runtime polls first, the serve future resolves `Ok` and never
+/// hangs (aligned cell; no dedicated mutant: both arms converge on the same
 /// outcome).
 #[tokio::test(start_paused = true)]
 async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
@@ -2770,14 +2805,14 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
             .await
             .expect("#1250 write the health request");
         read_response(&mut client, "same-instant health").await;
-        tokio::time::advance(Duration::from_millis(5_990)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_INSTANT).await;
         client
             .shutdown()
             .await
             .expect("#1250 half-close 10 ms shy of the idle deadline");
         // Both the idle timer (deadline at +6 s) and the connection future
         // (peer EOF) become ready inside this single advance.
-        tokio::time::advance(Duration::from_millis(20)).await;
+        tokio::time::advance(IDLE_CLOSE_RACE_STEP).await;
         let served = task.await.expect("#1250 same-instant task join");
         assert!(
             served.is_ok(),
