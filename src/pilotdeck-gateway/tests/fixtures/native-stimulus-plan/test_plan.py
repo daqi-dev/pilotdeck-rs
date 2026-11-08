@@ -690,6 +690,72 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
         self.assertTrue(evidence['notes']['finalIndex'] == len(evidence['frames']) - 1, marker)
 
+    def test_driver_foreign_prefix_frame_does_not_attest_phase(self):
+        marker = '#2396 a same-type prefix frame keyed to another request never witnesses the phase'
+        case = 'no-registry-slow/status-slow/model'
+        foreign_prefix = frame('other-req', 9, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: p.loop('input', case + '#1', planPhase='model'),
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            foreign_prefix,
+            lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('writer', 'release', 'turn_timeout', 3),
+            lambda p: p.storage('writer', 'complete', 'turn_timeout', 4),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('model_request_started' in row for row in verdict['missing']),
+                        marker + ': ' + json.dumps(verdict['missing']))
+        self.assertTrue(evidence['notes']['prefixIndex'] is None, marker)
+
+    def test_driver_foreign_timeout_frame_keeps_timer_clear(self):
+        marker = '#2396 a foreign turn_timeout frame never flips this case\'s timer.clear note'
+        case = 'no-registry-fast/unknown-first/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        foreign_timeout = frame('other-req', 9, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 1, {'type': 'turn_completed'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            foreign_timeout,
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps, timeout_ms=30000)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+        self.assertTrue(evidence['notes']['noTimeoutFrameBeforeFinal'] is True, marker)
+
+    def test_plan_missing_request_id_attests_nothing(self):
+        marker = '#2396 evidence without a requestId is fail-closed: no frame of the case is attested'
+        case = 'no-registry-slow/status-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('writer', 'release', 'turn_timeout', 3),
+            lambda p: p.storage('writer', 'complete', 'turn_timeout', 4),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        del evidence['requestId']
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN', marker)
+
     def test_driver_order_edge_final_before_held_release(self):
         marker = '#2396 slowStatus: the final frame preceding the held release breaks the order edge'
         case = 'no-registry-slow/status-slow/model'
@@ -712,6 +778,41 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(verdict['status'] == 'NOT_RUN'
                         and any('outcome release before the final frame' in row
                                 for row in verdict['missing']), marker)
+
+    def test_driver_receipt_without_seq_attests_no_order(self):
+        marker = '#2396 a storage receipt without a seq lands the order edge in missing, not a KeyError'
+        case = 'registry-slow/status-fast-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+
+        def rearm_key(p):
+            arms = p.control('stimulus.json')
+            return arms['registry']['barrier']['key'], arms['registry']['barrier']['id']
+
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('registry', 'block', 'agent_status:turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: (self.assertEqual(p.control('release.json', storage=True), {'seq': 1}, marker),
+                       self.assertEqual(rearm_key(p), ('error:turn_timeout',
+                                                       case + '#1-r2'), marker),
+                       p.storage('registry', 'release', 'agent_status:turn_timeout', 3))[2],
+            lambda p: p.storage('registry', 'block', 'error:turn_timeout', 4, boundMs=8000),
+            lambda p: (self.assertEqual(p.control('release.json', storage=True), {'seq': 4}, marker),
+                       p.storage('registry', 'release', 'error:turn_timeout', 5), final)[2],
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        for receipt in evidence['storageReceipts']:
+            receipt.pop('seq', None)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('seq' in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
 
     def test_driver_slow_append_out_of_order_receipts_do_not_attest(self):
         marker = '#2396 slowAppend: an error block preceding the status release fails the sequence edges'

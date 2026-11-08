@@ -106,11 +106,16 @@ class BoundedHTTPServer(http.server.HTTPServer):
 
 
 class WireClient:
+    # A frame cut mid-parse is resumed here (receive docstring); the class
+    # default keeps the stubs that bypass __init__ working.
+    _frame = None
+
     def __init__(self, port, deadline):
         self.deadline = deadline
         self.socket = socket.create_connection(('127.0.0.1', port), timeout=self.remaining())
         self.buffer = b''
         self.rows = []
+        self._frame = None
         key = base64.b64encode(os.urandom(16)).decode()
         request = (f'GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n'
                    f'Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n')
@@ -133,6 +138,13 @@ class WireClient:
         a timeout returns None and the partial bytes stay buffered."""
         while len(self.buffer) < count:
             left = (until - time.monotonic()) if until is not None else self.remaining()
+            if until is not None and left <= 0:
+                # The cap expiring is a poll timeout, not the capture
+                # deadline: return None and let the next poll continue.
+                # Raising here aborted a whole capture because one frame
+                # landed on the select/timeout boundary (#2396 fix-r2, DS
+                # boundary P1 — observed live as a load flake).
+                return None
             w.need(left > 0, 'native driver deadline')
             self.socket.settimeout(left)
             try:
@@ -171,25 +183,42 @@ class WireClient:
     def receive(self, until=None):
         """One wire frame, or None when `until` (a monotonic cap) expires
         mid-frame. The single-argument read keeps the read(count) seam the
-        authentication/r11 stubs monkeypatch (#1140/#1809)."""
+        authentication/r11 stubs monkeypatch (#1140/#1809).
+
+        A frame cut mid-parse (head or extended length consumed, payload
+        still short) is remembered in ``self._frame`` and completed by the
+        next call — otherwise the already-consumed prefix was dropped and
+        the next poll re-parsed payload bytes as a new frame head,
+        permanently desynchronizing the stream (#2396 fix-r2, DS
+        boundary/concurrency P1). Only a complete, parsed frame is ever
+        recorded as a row.
+        """
         def capped(count):
             return self.read(count) if until is None else self.read(count, until)
 
-        head = capped(2)
-        if head is None:
-            return None
-        w.native.ws_profile('receive', {'opcode': head[0] & 15, 'fin': bool(head[0] & 128),
-                                         'rsv': (head[0] >> 4) & 7, 'masked': bool(head[1] & 128)})
-        code = head[1] & 127
-        length = code
-        extra = capped(2 if length == 126 else 8) if length >= 126 else b''
-        if extra is None:
-            return None
-        length = int.from_bytes(extra, 'big') if extra else length
-        w.need(length <= 4 * 1024 * 1024, 'oversized WS frame')
-        payload = capped(length)
+        frame = self._frame
+        if frame is None:
+            head = capped(2)
+            if head is None:
+                return None
+            w.native.ws_profile('receive', {'opcode': head[0] & 15, 'fin': bool(head[0] & 128),
+                                           'rsv': (head[0] >> 4) & 7, 'masked': bool(head[1] & 128)})
+            code = head[1] & 127
+            frame = {'head': head, 'code': code, 'extra': None, 'length': code}
+            self._frame = frame
+        if frame['extra'] is None and frame['length'] >= 126:
+            extra = capped(2 if frame['length'] == 126 else 8)
+            if extra is None:
+                return None  # resume here on the next poll
+            frame['extra'] = extra
+            frame['length'] = int.from_bytes(extra, 'big')
+        w.need(frame['length'] <= 4 * 1024 * 1024, 'oversized WS frame')
+        payload = capped(frame['length'])
         if payload is None:
             return None
+        self._frame = None
+        head, code, length, extra = (frame['head'], frame['code'],
+                                     frame['length'], frame['extra'] or b'')
         value = json.loads(payload)
         self.rows.append({'direction': 'receive', 'wireHex': (head + extra + payload).hex(),
                           'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,

@@ -196,6 +196,17 @@ def _loop(evidence, phase, key=None, site='loop'):
             and (key is None or receipt.get('key') == key)]
 
 
+def _seq_lt(before, after):
+    """True only when both receipts carry a numeric seq in strict order.
+
+    A receipt without a seq (synthetic or truncated evidence) never
+    attests an ordering edge — the edge lands in `absent` instead of
+    crashing the ruler (#2396 fix-r2, anthropic boundary P1).
+    """
+    a, b = before.get('seq'), after.get('seq')
+    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and a < b
+
+
 def _storage(evidence, site, phase, key):
     """Receipts at one storage boundary.
 
@@ -216,8 +227,15 @@ def _queued(evidence, site):
 
 
 def _frames(evidence, kind, event=None, code=None):
+    # This case's frames only: a foreign frame left in the buffer by the
+    # previous turn must not witness a phase target or a settlement
+    # (#2396 fix-r2, DS sibling P1). Fail-closed on a missing requestId —
+    # the collector always writes one.
+    request = evidence.get('requestId')
     found = []
     for frame in evidence.get('frames', []):
+        if request is None or frame.get('id') != request:
+            continue
         if frame.get('type') != kind:
             continue
         if event is not None and frame.get('event') != event:
@@ -279,15 +297,20 @@ def _plan_pids(evidence):
     plan_id = evidence.get('planId')
     return {receipt.get('pid') for receipt in evidence.get('loopReceipts', [])
             if receipt.get('site') == 'loop' and receipt.get('key') == plan_id
-            and receipt.get('phase') in ('input', 'wait')}
+            and receipt.get('phase') in ('input', 'wait')
+            and receipt.get('pid') is not None}
 
 
 def _final_frame(evidence):
-    """The final frames of this case's request, never another request's."""
+    """The final frames of this case's request, never another request's.
+
+    Fail-closed on a missing requestId: the collector always writes one,
+    so an evidence record without it attests nothing (#2396 fix-r2, DS
+    boundary P2)."""
     request = evidence.get('requestId')
     return [frame for frame in evidence.get('frames', [])
             if frame.get('final')
-            and (request is None or frame.get('id') == request)]
+            and request is not None and frame.get('id') == request]
 
 
 def _timer_cleared(evidence):
@@ -368,9 +391,9 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('control.status.fifo.checked (writer queued receipt)')
         if not fifo:
             absent.append('control.status.fifo.checked action')
-        if blocked and queued and not blocked[0]['seq'] < queued[0]['seq']:
+        if blocked and queued and not _seq_lt(blocked[0], queued[0]):
             absent.append('status.block.seq < queued.seq (FIFO follower)')
-        if queued and released and not queued[0]['seq'] < released[0]['seq']:
+        if queued and released and not _seq_lt(queued[0], released[0]):
             absent.append('queued.seq < status.release.seq')
         found += blocked[:1] + released[:1] + queued[:1] + fifo[:1]
         found += _storage(evidence, 'writer', 'complete', 'turn_timeout')[:1]
@@ -381,7 +404,7 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('status.block(gateway_submit_failed)')
         if not released:
             absent.append('status.release(gateway_submit_failed)')
-        if blocked and released and not blocked[0]['seq'] < released[0]['seq']:
+        if blocked and released and not _seq_lt(blocked[0], released[0]):
             absent.append('status.block.seq < status.release.seq')
         found += blocked[:1] + released[:1]
     elif name == 'slowAppend':
@@ -412,16 +435,16 @@ def _target_witnesses(stimulus, target, evidence):
             error_block = _storage(evidence, 'registry', 'block', 'error:' + base)
             error_release = _storage(evidence, 'registry', 'release', 'error:' + base)
             queued = _queued(evidence, 'registry')
-            if status_block and queued and not status_block[0]['seq'] < queued[0]['seq']:
+            if status_block and queued and not _seq_lt(status_block[0], queued[0]):
                 absent.append('registry.persist.block.seq < queued.seq (FIFO follower)')
             if status_block and status_release \
-                    and not status_block[0]['seq'] < status_release[0]['seq']:
+                    and not _seq_lt(status_block[0], status_release[0]):
                 absent.append('registry.persist.block.seq < release.seq (status append)')
             if status_release and error_block \
-                    and not status_release[0]['seq'] < error_block[0]['seq']:
+                    and not _seq_lt(status_release[0], error_block[0]):
                 absent.append('status release before the re-armed error block')
             if error_block and error_release \
-                    and not error_block[0]['seq'] < error_release[0]['seq']:
+                    and not _seq_lt(error_block[0], error_release[0]):
                 absent.append('error block.seq < release.seq')
             # Collector-side edge: the second barrier is armed before the
             # first is released, so the driver's fifo sighting precedes the
@@ -431,9 +454,11 @@ def _target_witnesses(stimulus, target, evidence):
             if fifo_action and rearm and not fifo_action[0]['monotonic'] < rearm[0]['monotonic']:
                 absent.append('control.registry.fifo.checked before rearm-storage')
             if rearm and status_block:
-                first_release = [action for action in evidence.get('controlActions', [])
-                                 if action.get('action') == 'release-storage'
-                                 and action.get('detail', {}).get('seq') == status_block[0]['seq']]
+                seq = status_block[0].get('seq')
+                first_release = [] if not isinstance(seq, (int, float)) else [
+                    action for action in evidence.get('controlActions', [])
+                    if action.get('action') == 'release-storage'
+                    and action.get('detail', {}).get('seq') == seq]
                 if first_release and not rearm[0]['monotonic'] < first_release[0]['monotonic']:
                     absent.append('rearm-storage before the first registry release')
         found += _queued(evidence, 'registry')[:1]
