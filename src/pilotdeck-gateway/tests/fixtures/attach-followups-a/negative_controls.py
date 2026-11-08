@@ -263,6 +263,24 @@ mutations = [
                     Ok(bytes) => bytes,''',
      'native_process::services_tests::grown_between_stat_and_read_hits_the_full_read_backstop',
      '#1448 a grown read must hit the full-read backstop and skip'),
+    # Review minimax boundary#1 / GLM sibling#1 (fix-r1): the row below was
+    # dropped from this list when the #1446 rows were added, leaving
+    # `lease_root_link_is_not_a_home` (#1468) with no kill row of its own —
+    # the `lease-root-hard-failure-restored` row above shares the call site
+    # but its own bound test is the #1459 ELOOP one, so a dead #1468 fixture
+    # would go unnoticed. The anchor is this row's own (the call site plus the
+    # comment line that follows it), so it never collides with the
+    # `lease-root-hard-failure-restored` anchor on the same source line.
+    ('lease-root-link-accepted', SERVICES,
+     '''    let lease_canon = crate::upload::canonical_home(&lease_lexical, project_dir, &project_canon);
+    // #1468: the second legitimate home of a lease object.''',
+     '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
+        Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
+        _ => None,
+    };
+    // #1468: the second legitimate home of a lease object.''',
+     'native_process::services_tests::lease_root_link_is_not_a_home',
+     '#1468 a lease root that is a link into the project must not become a home'),
 ]
 
 

@@ -447,9 +447,16 @@ impl UploadStore {
                     return Ok(updated);
                 }
             };
-            if !inside_root(&root_real, &dir) {
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
                 self.log_cleanup(format!(
-                    "[uploads] cancel skipped {}: outside the uploads root",
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
                 return Ok(updated);

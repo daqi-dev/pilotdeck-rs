@@ -2681,3 +2681,81 @@ fn upload_lease_release_surfaces_and_caches_a_realpath_failure() {
         "a cached release failure must not re-run the release"
     );
 }
+
+// fix-r1 (minimax concurrency#2 arbitration): the benign preplanted alias —
+// `<root>/upload-1` is a symlink to `<root>/upload-2` with no metadata
+// forgery. `read_at`'s identity check refuses the record it reads through the
+// link (its `uploadId` is the victim's), so the delete is never reached.
+#[test]
+fn upload_cancel_on_a_preplanted_alias_is_refused_at_the_identity_check() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p-alias-identity");
+    let h = golden_store(&project);
+    created(&h);
+    created(&h);
+    h.store
+        .write_part("upload-2", "file-1", &b"hello"[..])
+        .unwrap();
+    drop(h);
+    let root = project.join(".tmp/chat-uploads");
+    let victim = root.join("upload-2/files/file-1");
+    assert!(victim.exists());
+    fs::remove_dir_all(root.join("upload-1")).unwrap();
+    std::os::unix::fs::symlink(root.join("upload-2"), root.join("upload-1")).unwrap();
+    let store = golden_store(&project);
+    let e = store.store.cancel("upload-1").err().unwrap();
+    assert_eq!(
+        (e.code.as_str(), e.message_string().as_str()),
+        (
+            "UPLOAD_INTEGRITY_MISMATCH",
+            "Upload metadata identity does not match its directory."
+        )
+    );
+    assert!(
+        victim.exists(),
+        "a preplanted alias must not delete the victim's files"
+    );
+}
+
+// fix-r1 (minimax concurrency#2 arbitration): the adversarial alias — the
+// victim's metadata is forged to carry this upload's id, which an attacker
+// with write access inside the uploads root can produce. The identity check
+// passes, and the resolved path stays inside the root, so the containment
+// comparison alone waves the delete through and removes the other upload's
+// files with no race at all. The component walk refuses the linked `<id>`.
+// The forged record is corrupted either way by the mutate rewrite (the write
+// follows the link too — the registered write-path residual); what this pins
+// is that the *removal* does not happen.
+#[test]
+fn upload_cancel_does_not_delete_through_an_aliased_task_dir() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p-alias-delete");
+    let h = golden_store(&project);
+    created(&h);
+    created(&h);
+    h.store
+        .write_part("upload-2", "file-1", &b"hello"[..])
+        .unwrap();
+    drop(h);
+    let root = project.join(".tmp/chat-uploads");
+    let meta2 = root.join("upload-2/metadata.json");
+    let mut record = parse_json(&fs::read_to_string(&meta2).unwrap()).unwrap();
+    set(&mut record, "uploadId", text("upload-1"));
+    fs::write(&meta2, compact(&record)).unwrap();
+    let victim = root.join("upload-2/files/file-1");
+    assert!(victim.exists());
+    fs::remove_dir_all(root.join("upload-1")).unwrap();
+    std::os::unix::fs::symlink(root.join("upload-2"), root.join("upload-1")).unwrap();
+    let store = golden_store(&project);
+    let updated = store.store.cancel("upload-1").unwrap();
+    assert_eq!(status(&updated), "cancelled");
+    assert!(
+        victim.exists(),
+        "a cancel delete must not remove another upload's files through an aliased task dir"
+    );
+    let log = store.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("[uploads] cancel skipped"),
+        "the refused delete is logged: {log}"
+    );
+}

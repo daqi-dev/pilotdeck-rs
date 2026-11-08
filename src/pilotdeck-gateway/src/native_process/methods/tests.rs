@@ -3961,17 +3961,11 @@ async fn upload_methods_dispatch_to_the_wired_store() {
     let listed = project.clone();
     let store = Arc::new(crate::upload::UploadStore::new(
         crate::upload::UploadStoreOptions::new(
+            // #1441 (fix-r1, simplify#1): the production wiring closure —
+            // the dispatch test must not carry a hand copy of the
+            // dual-spelling rule that can drift from the real one.
             move |key: &pilotdeck_protocol::JsString| {
-                let requested = key
-                    .to_utf8()
-                    .map_err(|_| crate::upload::unknown_project_key(key))?;
-                let path = std::path::PathBuf::from(requested);
-                let canonical = std::fs::canonicalize(&owned).unwrap_or_else(|_| owned.clone());
-                let asked = std::fs::canonicalize(&path).unwrap_or(path.clone());
-                if asked != canonical && path != owned {
-                    return Err(crate::upload::unknown_project_key(key));
-                }
-                Ok(owned.clone())
+                super::super::assembly::upload_resolve_project(&owned, key)
             },
             move || Ok(vec![listed.clone()]),
         ),

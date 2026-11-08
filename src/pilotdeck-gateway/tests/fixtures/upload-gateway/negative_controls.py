@@ -109,6 +109,8 @@ CANCEL_ROOT_SWAP = (
     'upload::tests::upload_cancel_does_not_follow_a_root_swapped_mid_mutate')
 CANCEL_TASK_SWAP = (
     'upload::tests::upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate')
+CANCEL_ALIAS = (
+    'upload::tests::upload_cancel_does_not_delete_through_an_aliased_task_dir')
 LEASE_ID_SWAP = (
     'upload::tests::upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round')
 RELEASE_REALPATH = (
@@ -647,9 +649,16 @@ mutations = [
                     return Ok(updated);
                 }
             };
-            if !inside_root(&root_real, &dir) {
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
                 self.log_cleanup(format!(
-                    "[uploads] cancel skipped {}: outside the uploads root",
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
                 return Ok(updated);
@@ -659,18 +668,33 @@ mutations = [
             remove_tree(&task_dir(&updated).join("files"))?;
         }''', CANCEL_ROOT_SWAP,
      'a cancel delete must not follow a root swapped mid-mutate'),
-    # #1850: the plain-root gate alone is not enough: the record's task
-    # directory itself can be the swapped component, so only the per-entry
-    # `inside_root` comparison refuses the delete. The row drops that term.
-    ('cancel-inside-root-dropped', STORE, '''            if !inside_root(&root_real, &dir) {
+    # #1850 + fix-r1: the plain-root gate alone is not enough — the record's
+    # task directory itself can be the swapped component, so the delete needs
+    # the per-entry gate; the row drops the whole gate block.
+    ('cancel-delete-gate-dropped', STORE, '''            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
                 self.log_cleanup(format!(
-                    "[uploads] cancel skipped {}: outside the uploads root",
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
                     dir.display()
                 ));
                 return Ok(updated);
             }
 ''', '', CANCEL_TASK_SWAP,
      'a cancel delete must not follow a task dir swapped mid-mutate'),
+    # fix-r1 (minimax concurrency#2 arbitration): downgrading the component
+    # walk back to the containment-only comparison re-opens the deterministic
+    # cross-upload alias — the resolved path is inside the root, so only the
+    # link-component term refuses the delete.
+    ('cancel-alias-walk-downgraded', STORE,
+     '''            if canonical_home(&dir, &project, &root_real).is_none() {''',
+     '''            if !inside_root(&root_real, &dir) {''', CANCEL_ALIAS,
+     "a cancel delete must not remove another upload's files through an aliased task dir"),
     # #1850: the emptied `<id>` directory at the end of a lease round. The
     # entry sweep skips a linked `<id>` entirely, so `names` reads through the
     # link and finds the outside target empty; without the `inside_root` term
@@ -792,8 +816,10 @@ EXPECTED_NAMES = (
     'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',
     'cleanup-schedule-stop-on-failure',
     # #1850 的五条（cancel 删除点闸门 / 条目 containment / 空目录守卫 /
-    # release realpath 分支 / Err 缓存），与上面同一名册口径。
-    'cancel-remove-tree-ungated', 'cancel-inside-root-dropped',
+    # release realpath 分支 / Err 缓存）+ fix-r1 两条（cancel 删除闸门整块
+    # 删除 / 别名走查降级回 containment-only），与上面同一名册口径。
+    'cancel-remove-tree-ungated', 'cancel-delete-gate-dropped',
+    'cancel-alias-walk-downgraded',
     'cleanup-lease-id-guard-dropped', 'release-realpath-swallowed',
     'release-err-not-cached',
 )
