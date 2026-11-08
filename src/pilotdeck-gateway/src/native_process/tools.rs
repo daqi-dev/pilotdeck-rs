@@ -147,7 +147,7 @@ impl SessionTools {
             skills: Default::default(),
             context_runtime: None,
             options: options.clone(),
-            env: env_object(env),
+            env: {let mut env=env_object(env);env.insert("PILOT_HOME".into(),JsValue::String(options.home.to_string_lossy().into_owned().into()));env},
             binding,
             config,
             interactions,
@@ -423,6 +423,8 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
+        let mut read_env=self.env.clone();read_env.insert("PILOT_HOME".into(),JsValue::String(self.options.home.to_string_lossy().into_owned().into()));
+        tools.replace(Arc::new(builtin::read_file::ReadFileTool::with_permissions(self.binding.checkpoint.clone(),read_env))).expect("native read_file is registered");
         if self.user_dialog.is_some()
             && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds")
         {

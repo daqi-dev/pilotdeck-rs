@@ -5163,3 +5163,8 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 ### 2026-11-09 07:17 · SOP 错误与指令协议整合
 
 已逐SHA导入SOP typed错误投影六源与完整render/prepare五源，保retryability/details/UTF16、完整终端纠正与双换行前缀；实采8错误/12render/6context原件，待r122。r121首编仅两处新测试String转换失败，根已机械修，尚无运行证据；r120外部Read权限缺口audit正在修且不放松测试。固定0fd全Gateway分组前七组host136等实际通过但host探针PID身份变化触发保守停机，保留失败原件；api_web三例同bin短TMP已全部通过，仍不称原全量通过。新knowledge真实消费者与SDK生命周期实际入口联调并行准备；所有Rust仅mbp2，仅本机提交，CLI未完。
+
+
+### 2026-11-09 07:29 · 实际文件工具权限闭合
+
+逐SHA导入统一file predicate及Read/Write/Edit八文件片，native环境PILOT_HOME固定options.home、注册附件和会话allow仍保留；r120原额外目录反例不改，新增实际文件效果与TS八格predicate。尚待Rust首编；r122上个SOP批次全目标check通过，lib测试编译中。fullGateway后续已在确认旧测试进程全退出后接续，旧探针身份变化和长TMP失败原件保留。机器能力消费者独立审与真实SDK生命周期/知识链路继续，仅本机提交、Rust只mbp2，未称完整CLI完结。

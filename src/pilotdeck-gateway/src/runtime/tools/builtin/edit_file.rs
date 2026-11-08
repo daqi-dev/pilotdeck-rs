@@ -34,6 +34,9 @@ impl ToolDefinition for EditFileTool {
     fn fields(&self) -> &JsObject {
         &self.fields
     }
+    fn check_permissions<'a>(&'a self,input:&'a JsValue,permission:&'a crate::runtime::permission::PermissionContext)->crate::runtime::permission::PermissionFuture<'a,Option<JsValue>>{
+        super::file_permissions::write("edit_file",input,permission)
+    }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }

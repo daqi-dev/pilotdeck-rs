@@ -718,3 +718,20 @@ async fn sdk_ephemeral_turn_spills_under_temp_storage_without_moving_tool_cwd(){
     let budget=crate::runtime::context::tool_budget::ToolResultBudget::new(crate::runtime::context::tool_budget::ToolResultBudgetOptions{tool_results_dir:ports.tool_results_dir.clone(),max_result_size_chars:Some(1),max_result_size_tokens:Some(100),preview_bytes:Some(1)}).unwrap();
     let message=crate::metadata::object([("role","user".into()),("content",JsValue::Array(vec![crate::metadata::object([("type","tool_result".into()),("toolCallId","spill".into()),("content",JsValue::Array(vec![crate::metadata::object([("type","text".into()),("text","EPHEMERAL-LARGE-PAYLOAD".into())])]))])]))]);let result=budget.apply_to_message(&message,Some(&"turn".into())).await.unwrap();assert_ne!(result,message);assert!(ports.tool_results_dir.exists());assert!(!project.join(".pilotdeck/tool-results").exists());ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();sessions.close().await.unwrap();assert!(!root.path().exists());
 }
+
+#[tokio::test]
+async fn native_file_permission_predicates_preserve_registered_reads_explicit_rules_and_accept_edits_bounds(){
+    for authorization in["registered","session-rule","managed-im","extra-write","foreign-write"] {
+        let external=Scratch(std::env::temp_dir().join(format!("pdrs-file-permission-effect-{}",uuid::Uuid::new_v4())));std::fs::create_dir_all(&external.0).unwrap();let outside=external.0.join("read.txt");std::fs::write(&outside,"OUTSIDE-READ").unwrap();
+        let rules=RuleSetHandle::empty();if authorization=="session-rule"{rules.update_member("allow",|r|r.push(PermissionRule::new("session","allow","read_file").into()));}
+        let mut config=JsObject::new();if authorization=="extra-write"{config.insert("additionalWorkingDirectories".into(),JsValue::Array(vec![JsValue::String(external.0.to_string_lossy().into_owned().into())]));}
+        let(_scratch,tools,recorder,identity)=make_tools(config,Arc::default(),rules);let mut path=outside.clone();let writing=authorization.ends_with("write");
+        if authorization=="registered"{tools.binding.checkpoint.allow_read_files(&[outside.to_string_lossy().into_owned().into()]);}
+        if authorization=="managed-im"{path=tools.options.home.join("im-attachments/managed.txt");std::fs::create_dir_all(path.parent().unwrap()).unwrap();std::fs::write(&path,"MANAGED-READ").unwrap();}
+        if writing{path=external.0.join("new-write.txt");}
+        let ports=tools.turn_with_authority(&identity,recorder,Cancellation::new(),Some(TurnInteractionAuthority{permission_mode:None,base_permission_mode:None,sdk_hooks:None,sdk_permission_mode:writing.then(||"acceptEdits".into()),sdk_models:None,can_prompt:Some(false),policy_can_prompt:None,emit:Arc::new(|_|false)}));
+        let resource=InteractionPermission::default();let mut router=crate::host::modules::ModuleRouter::default();let permission=resource.bind_turn(identity.session_id,identity.run_id,ports.interaction.permission,ports.tool_execution.clone(),&mut router).unwrap();ports.tool_execution.bind_turn_permission(permission.clone()).unwrap();let invocation=ports.tool_context.prepare(JsValue::Undefined).await.unwrap();let result=ports.tool_execution.execute_all(vec![ToolCall{id:"file-call".into(),name:if writing{"write_file".into()}else{"read_file".into()},input:if writing {crate::metadata::object([("file_path",JsValue::String(path.to_string_lossy().into_owned().into())),("content","ACTUAL-WRITE".into())])}else{crate::metadata::object([("file_path",JsValue::String(path.to_string_lossy().into_owned().into()))])}}],invocation).await.unwrap();
+        assert_eq!(result[0].get("type")==Some(&"success".into()),authorization!="foreign-write","{authorization}: {result:?}");if writing{assert_eq!(path.exists(),authorization=="extra-write");if path.exists(){assert_eq!(std::fs::read_to_string(&path).unwrap(),"ACTUAL-WRITE");}}
+        permission.close();ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();
+    }
+}

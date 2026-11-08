@@ -15,6 +15,7 @@ pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
+pub(crate) mod file_permissions;
 pub mod send_attachment;
 pub mod structured;
 pub mod task;
