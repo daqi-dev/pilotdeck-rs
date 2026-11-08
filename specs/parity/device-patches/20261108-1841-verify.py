@@ -44,8 +44,10 @@ apparatus entry point uses, never a __pycache__ next to the baseline):
 --manifest and the registration file (20261108-1841.md) default to the copies
 next to this script. --out is created exclusively: an existing file is never
 overwritten, the run writes <name>.attempt-N.<ext> instead. Neither --out nor
---manifest may resolve inside the --evidence tree (asserted at entry,
-fix-r3): criterion 0 pins the exact file set, so a file written there would
+--manifest may sit inside or resolve inside the --evidence tree — as a
+symlink, in a directory that itself sits inside it, or by resolve() target
+(asserted at entry, fix-r3; the symlink and parent-directory readings are
+fix-r4): criterion 0 pins the exact file set, so a file written there would
 make the next recompute report it as unexpected and FAIL.
 
 Criteria (registration 20261108-1841.md):
@@ -911,14 +913,27 @@ def main() -> None:
     registration = script.parent / REGISTRATION_FILENAME
     manifest = (args.manifest or script.parent / MANIFEST_FILENAME).resolve()
 
-    # fix-r3, P2-a: criterion 0 pins the exact file set, so --out (or a
-    # --manifest copy) resolving inside --evidence would poison the anchored
-    # tree — the first run writes it, the next recompute reports it as an
-    # unexpected file and fake-FAILs. Asserted at entry, before any pin or
-    # criterion runs, never narrated only in the README.
+    # fix-r3, P2-a / fix-r4, P1 (review #2372, DS r3 concurrency#3 + MiniMax
+    # r3 boundary#2, coordinator e2e reproduced): criterion 0 pins the exact
+    # file set, so --out (or a --manifest copy) inside --evidence would poison
+    # the anchored tree — the first run writes it, the next recompute reports
+    # it as an unexpected file and fake-FAILs. The fix-r3 resolve()-only check
+    # judged the link's TARGET while the write goes to the LITERAL parent
+    # (POSIX O_CREAT|O_EXCL over a symlink is EEXIST, so the attempt-N file
+    # lands next to the link) — three checks now, any hit dies: the literal
+    # parent directory (main check, the actual write location), the symlink
+    # shape itself (is_symlink() is False for a nonexistent path, never
+    # raises), and the resolve() target (kept from fix-r3). The --manifest
+    # default branch is already resolved; walking the same guard is harmless.
+    # Asserted at entry, before any pin or criterion runs, never narrated
+    # only in the README.
     for name, path in (("--out", args.out), ("--manifest", manifest)):
-        if path is not None and path.resolve().is_relative_to(args.evidence):
-            die(f"{name} must not resolve inside the --evidence tree: {path} "
+        if path is not None and (
+            path.is_symlink()
+            or path.resolve().is_relative_to(args.evidence)
+            or path.parent.resolve().is_relative_to(args.evidence)
+        ):
+            die(f"{name} must not sit inside or resolve inside the --evidence tree: {path} "
                 f"(criterion 0 pins the exact file set)")
 
     # Registration pins (fix-r1): the patch file, this script and the corpus

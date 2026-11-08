@@ -87,7 +87,10 @@ verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录
 默认取 verify 脚本同目录的 `20261108-1841.md` / `20261108-1841-corpus-manifest.txt`，
 也可用 `--manifest` 显式指定；**`--out` 与 `--manifest` 都必须落在 `--evidence` 之外**
 ——判据 0 是精确文件集，结果 JSON 写进证据目录会让下一次复算报「unexpected file」假
-FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED）：
+FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED；fix-r4 起符号链接与父目录口径：
+`--out`/`--manifest` 本身是符号链接、或其所在目录落在 `--evidence` 内，均 FAIL-CLOSED
+——实际写入位置是未解析路径的父目录，`open("x")` 遇符号链接必 EEXIST、attempt 文件落
+在链接旁边）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
